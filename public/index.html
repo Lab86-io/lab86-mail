@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mail OS</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="appShell">
+      <aside class="rail">
+        <div class="identity">
+          <div class="logo">M</div>
+          <div>
+            <h1>Mail OS</h1>
+            <p id="health">Starting</p>
+          </div>
+        </div>
+
+        <label class="stackLabel">
+          <span>Account</span>
+          <select id="account"></select>
+        </label>
+
+        <button id="compose" class="composeButton">Compose</button>
+
+        <nav class="mailboxes" aria-label="Mailboxes">
+          <button data-query="in:inbox newer_than:30d" class="active">Inbox</button>
+          <button data-query="is:unread newer_than:30d">Unread</button>
+          <button data-query="is:important newer_than:60d">Important</button>
+          <button data-query="from:(icloud.com OR me.com) newer_than:365d">iCloud</button>
+          <button data-query="in:sent newer_than:365d">Sent</button>
+          <button data-query="in:drafts">Drafts</button>
+          <button data-query="-in:trash newer_than:365d">All Mail</button>
+          <button data-query="in:trash newer_than:365d">Trash</button>
+          <button data-query="newer_than:7d">This week</button>
+        </nav>
+
+        <section class="accountState">
+          <div class="statusRow">
+            <span class="dot"></span>
+            <span id="authState">GOG pending</span>
+          </div>
+          <p id="agentState">Agent: checking</p>
+        </section>
+      </aside>
+
+      <section class="aiTop">
+        <form id="aiChatForm" class="aiChat">
+          <span>AI</span>
+          <input id="aiChatInput" autocomplete="off" placeholder="Ask about this email or mailbox">
+          <button type="submit">Ask</button>
+        </form>
+      </section>
+
+      <section class="inboxPane">
+        <header class="topbar">
+          <form id="searchForm" class="searchBar">
+            <span>Search</span>
+            <input id="query" autocomplete="off" value="in:inbox newer_than:30d">
+            <button type="submit">Run</button>
+          </form>
+          <button id="refresh" class="iconButton" title="Refresh">Refresh</button>
+        </header>
+
+        <div class="inboxMeta">
+          <div>
+            <h2 id="listTitle">Inbox</h2>
+            <p id="listMeta">No messages loaded</p>
+          </div>
+          <div class="segmented">
+            <button data-query="is:unread newer_than:30d">Unread</button>
+            <button data-query="larger:1M newer_than:365d">Large</button>
+            <button data-query="has:attachment newer_than:90d">Files</button>
+          </div>
+        </div>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+      </section>
+
+      <section class="readerPane">
+        <header class="readerHeader">
+          <div class="subjectBlock">
+            <p id="messageAccount">No message selected</p>
+            <h2 id="subject">Choose an email</h2>
+            <p id="headers">Search an account, then select a row.</p>
+          </div>
+          <a id="gmailLink" class="secondaryButton" target="_blank" rel="noreferrer">Open in Gmail</a>
+        </header>
+
+        <div class="messageToolbar">
+          <button id="archiveMessage">Archive</button>
+          <button id="markRead">Mark read</button>
+          <button id="markUnread">Mark unread</button>
+          <button id="trashMessage">Trash</button>
+          <button id="summarize" data-agent-action="summarize">Summarize</button>
+          <button id="triage" data-agent-action="triage">Triage</button>
+          <button id="draft" data-agent-action="draft">Draft</button>
+          <button id="copyDraft">Copy</button>
+          <button id="sendDraft" class="sendButton">Send reply</button>
+        </div>
+
+        <div class="readerBody">
+          <iframe id="mailFrame" title="message body" sandbox="allow-popups allow-popups-to-escape-sandbox"></iframe>
+        </div>
+      </section>
+
+      <aside class="agentPane">
+        <header>
+          <div>
+            <p>Local agent</p>
+            <h2 id="agentTitle">Ready</h2>
+          </div>
+          <select id="agentEngine" title="Agent engine">
+            <option value="auto">Auto</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+            <option value="local">Local</option>
+          </select>
+        </header>
+
+        <textarea id="agentInstructions" class="agentInput" placeholder="Optional instruction for this email"></textarea>
+        <div id="agent" class="agentOutput">Select a message, then run summarize, triage, or draft.</div>
+        <textarea id="draftBox" class="draftBox" placeholder="Reply draft"></textarea>
+      </aside>
+
+      <section id="composeModal" class="composeModal" hidden>
+        <form id="composeForm" class="composeCard">
+          <header>
+            <h2>New message</h2>
+            <button id="closeCompose" type="button">Close</button>
+          </header>
+          <input id="composeTo" placeholder="To">
+          <input id="composeCc" placeholder="Cc">
+          <input id="composeSubject" placeholder="Subject">
+          <textarea id="composeBody" placeholder="Message"></textarea>
+          <footer>
+            <button type="submit" class="sendButton">Send</button>
+          </footer>
+        </form>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
