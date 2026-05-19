@@ -228,6 +228,21 @@ function MessageCard({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [replyOpen, setReplyOpen] = useState(false);
+  const [replyInitial, setReplyInitial] = useState('');
+  const pendingReplyBody = useClientStore((s) => s.pendingReplyBody);
+  const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
+
+  // When the AI agent calls ui_open_reply, the store gets a pending body.
+  // The latest message in the thread captures it, opens its reply composer,
+  // and clears the pending state so it doesn't fire again.
+  useEffect(() => {
+    if (!isLast) return;
+    if (pendingReplyBody == null) return;
+    setOpen(true);
+    setReplyOpen(true);
+    setReplyInitial(pendingReplyBody);
+    setPendingReplyBody(null);
+  }, [pendingReplyBody, isLast, setPendingReplyBody]);
   return (
     <motion.article
       layout
@@ -300,11 +315,15 @@ function MessageCard({
 
             {replyOpen ? (
               <InlineReply
-                onClose={() => setReplyOpen(false)}
+                onClose={() => {
+                  setReplyOpen(false);
+                  setReplyInitial('');
+                }}
                 account={account}
                 threadId={threadId}
                 messageId={message._id}
                 replyTo={shortFrom(message.from)}
+                initialBody={replyInitial}
               />
             ) : null}
           </motion.div>
@@ -339,15 +358,19 @@ function InlineReply({
   threadId,
   messageId,
   replyTo,
+  initialBody = '',
 }: {
   onClose: () => void;
   account: string;
   threadId: string;
   messageId: string;
   replyTo: string;
+  initialBody?: string;
 }) {
-  const [body, setBody] = useState('');
-  const [drafting, setDrafting] = useState(false);
+  const [body, setBody] = useState(initialBody);
+  useEffect(() => {
+    if (initialBody) setBody(initialBody);
+  }, [initialBody]);
 
   const draft = useMutation({
     mutationFn: async () => callTool<{ draft: string }>('draft_reply', { account, threadId }),

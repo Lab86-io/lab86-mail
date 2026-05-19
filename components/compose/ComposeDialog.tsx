@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Send as SendIcon, X, Sparkles } from 'lucide-react';
@@ -12,6 +12,7 @@ import { useClientStore } from '@/lib/client-state';
 export function ComposeDialog() {
   const open = useClientStore((s) => s.composeOpen);
   const setOpen = useClientStore((s) => s.setComposeOpen);
+  const prefill = useClientStore((s) => s.composePrefill);
   const account = useClientStore((s) => s.account);
 
   const [to, setTo] = useState('');
@@ -20,6 +21,24 @@ export function ComposeDialog() {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [showCc, setShowCc] = useState(false);
+
+  // When prefill arrives (typically from the AI agent's ui_open_compose call),
+  // populate the fields once on dialog open.
+  useEffect(() => {
+    if (open && prefill) {
+      if (prefill.to) setTo(prefill.to);
+      if (prefill.cc) {
+        setCc(prefill.cc);
+        setShowCc(true);
+      }
+      if (prefill.bcc) {
+        setBcc(prefill.bcc);
+        setShowCc(true);
+      }
+      if (prefill.subject) setSubject(prefill.subject);
+      if (prefill.body) setBody(prefill.body);
+    }
+  }, [open, prefill]);
 
   const send = useMutation({
     mutationFn: async () => callTool('send_message', { account, to, cc, bcc, subject, body }),

@@ -52,6 +52,15 @@ import { calendarFreeBusy, calendarSuggestTimes, calendarCreateEvent } from './c
 import { contactLookup, expandAlias } from './contacts';
 import { browserbaseSearch, browserbaseFetch } from './web';
 import { logAction, listAuditEntries } from './audit-tools';
+import {
+  uiFocusThread,
+  uiSetQuery,
+  uiOpenCompose,
+  uiOpenReply,
+  uiToast,
+  uiCloseBar,
+  uiSwitchAccount,
+} from './ui-tools';
 
 const allTools: AnyTool[] = [
   listAccounts,
@@ -107,6 +116,14 @@ const allTools: AnyTool[] = [
   browserbaseFetch,
   logAction,
   listAuditEntries,
+  // UI tools — server returns ack, client intercepts for the real mutation.
+  uiFocusThread,
+  uiSetQuery,
+  uiOpenCompose,
+  uiOpenReply,
+  uiToast,
+  uiCloseBar,
+  uiSwitchAccount,
 ];
 
 export const TOOLS: Record<string, AnyTool> = Object.fromEntries(allTools.map((t) => [t.name, t]));

@@ -3,6 +3,14 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export interface ComposePrefill {
+  to?: string;
+  cc?: string;
+  bcc?: string;
+  subject?: string;
+  body?: string;
+}
+
 export interface ClientState {
   account: string;
   query: string;
@@ -10,8 +18,11 @@ export interface ClientState {
   selectedIds: string[];
   paletteOpen: boolean;
   composeOpen: boolean;
+  composePrefill: ComposePrefill | null;
   shortcutsOpen: boolean;
   rightRailOpen: boolean;
+  aiBarOpen: boolean;
+  pendingReplyBody: string | null;
 
   setAccount: (account: string) => void;
   setQuery: (query: string) => void;
@@ -21,8 +32,11 @@ export interface ClientState {
   selectMany: (ids: string[]) => void;
   setPaletteOpen: (open: boolean) => void;
   setComposeOpen: (open: boolean) => void;
+  openCompose: (prefill?: ComposePrefill) => void;
   setShortcutsOpen: (open: boolean) => void;
   setRightRailOpen: (open: boolean) => void;
+  setAiBarOpen: (open: boolean) => void;
+  setPendingReplyBody: (body: string | null) => void;
 }
 
 export const useClientStore = create<ClientState>()(
@@ -34,8 +48,11 @@ export const useClientStore = create<ClientState>()(
       selectedIds: [],
       paletteOpen: false,
       composeOpen: false,
+      composePrefill: null,
       shortcutsOpen: false,
       rightRailOpen: true,
+      aiBarOpen: false,
+      pendingReplyBody: null,
 
       setAccount: (account) => set({ account }),
       setQuery: (query) => set({ query }),
@@ -49,9 +66,13 @@ export const useClientStore = create<ClientState>()(
       clearSelected: () => set({ selectedIds: [] }),
       selectMany: (ids) => set({ selectedIds: ids }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
-      setComposeOpen: (composeOpen) => set({ composeOpen }),
+      setComposeOpen: (composeOpen) =>
+        set((s) => ({ composeOpen, composePrefill: composeOpen ? s.composePrefill : null })),
+      openCompose: (prefill) => set({ composeOpen: true, composePrefill: prefill ?? null }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
       setRightRailOpen: (rightRailOpen) => set({ rightRailOpen }),
+      setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
+      setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
     }),
     {
       name: 'mail-os-ui',
