@@ -1,69 +1,94 @@
-# Mail OS
+# Mail OS · v2
 
-Local desktop web client for Jakob's hybrid mail setup.
+Local desktop web client for Jakob's hybrid Gmail setup, rebuilt from the ground up.
 
-Mail OS is intentionally tokenless: Google access stays in GOG, and this service calls
-`/home/jjalangtry/.local/bin/lab86-gog` for Gmail search, message rendering, and replies.
-
-The UI follows a Gmail-style workflow:
-
-- Left rail for Compose and mailbox/search shortcuts.
-- Top AI chat for questions about the selected email or current mailbox.
-- Message toolbar for archive, read/unread, trash, summarize, triage, draft, copy, and send.
-- Compose modal for new outbound mail.
-
-## Accounts
-
-- `jakob@lab86.io`: primary Google Workspace mailbox for forwarded/imported mail from iCloud and side Gmail accounts.
-- `jjalangtry@gmail.com`: direct account for original-account access and replies.
-- Any future Gmail/Workspace account can be added with `scripts/auth-google.sh <email>`.
+- **Backend:** single Next.js 16 + React 19 app, run on **Bun**. No SQL — storage is `@seald-io/nedb` (Mongo-style document store, JSON Lines on disk).
+- **AI:** OpenAI **GPT‑5.5** (primary) via Vercel **AI SDK 6**, with `@ai-sdk/anthropic` available as a fallback. API key is shared with `voice-agent` via `/home/jjalangtry/.config/lab86-private/voice-agent.env`.
+- **Tools:** ~53 typed, Zod-validated tools in `lib/tools/*`. Every UI action and every AI agent action go through the same registry. Introspectable via `GET /api/tools` and callable via `POST /api/tools/<name>`.
+- **Frontend:** shadcn/ui primitives, Motion 12 transitions, Lucide + Phosphor icons, TipTap (planned for compose), cmdk palette, Sonner toasts, next-themes, TanStack Query, Zustand.
+- **Mail access:** still tokenless — every Gmail/Calendar/Contacts call shells out to `/home/jjalangtry/.local/bin/lab86-gog`.
 
 ## Run
 
 ```bash
-cd /home/jjalangtry/services/mail-os
-npm start
+# dev
+PORT=18836 HOSTNAME=127.0.0.1 bun run dev
+
+# prod (used by mail-os.service)
+bun run build
+bun run start
 ```
 
-Open `http://127.0.0.1:18836/`.
+Open `http://127.0.0.1:18836/` (or the tailnet URL `https://mail.lab86.io/`).
 
-Tailnet URL:
+## Accounts
 
-`https://mail.lab86.io/`
-
-`mail.lab86.io` resolves to lab86's Tailscale IPs and is served by Caddy, not
-Cloudflare Tunnel.
-
-## Google Auth
-
-Use GOG's remote flow:
-
-```bash
-/home/jjalangtry/services/mail-os/scripts/auth-google-link.sh jakob@lab86.io
-/home/jjalangtry/services/mail-os/scripts/finish-google-auth.sh jakob@lab86.io
-```
-
-The first script prints the Google sign-in URL using the `jjalangtry-gmail`
-OAuth client by default. After approval, pass the returned redirect URL to the
-second script. Do not put callback URLs or OAuth codes into notes or chat logs.
-
-## AI
-
-The summarize, triage, and draft buttons use local device agents first:
-
-- `MAIL_OS_AGENT_ENGINE=auto`: prefer Claude if available, then Codex.
-- `MAIL_OS_AGENT_ENGINE=claude`: use `claude --print` with tools disabled.
-- `MAIL_OS_AGENT_ENGINE=codex`: use `codex exec` in read-only mode.
-- `MAIL_OS_AGENT_ENGINE=local`: deterministic fallback only.
-
-If both local agents fail and `/home/jjalangtry/.config/mail-os/mail-os.env`
-defines `OPENAI_API_KEY` and `OPENAI_MODEL`, Mail OS can fall back to OpenAI.
-Send still requires explicit browser confirmation.
+- `jjalangtry@gmail.com` — direct.
+- `jakob@lab86.io` — primary, holds forwarded / imported mail. (auth pending.)
+- Add more with `scripts/auth-google.sh <email>` after re-introducing the helper scripts from `_legacy/scripts/`.
 
 ## Service
 
-The user service is `mail-os.service`.
-
 ```bash
 systemctl --user status mail-os.service
+systemctl --user restart mail-os.service
 ```
+
+`mail-os.service` runs `bun run start` and pulls env from both:
+
+- `/home/jjalangtry/.config/mail-os/mail-os.env` — service-local overrides (port, GOG binary path, model names).
+- `/home/jjalangtry/.config/lab86-private/voice-agent.env` — `OPENAI_API_KEY` shared with the voice agent.
+
+## Architecture
+
+```
+app/                       Next.js App Router
+  api/healthz/route.ts     basic health (model + accounts + tool count)
+  api/tools/route.ts       GET → JSON schemas for every tool (Codex consumes this)
+  api/tools/[name]/route.ts POST → invoke any tool by name
+  api/agent/route.ts       UIMessage SSE stream — Vercel AI SDK 6 loop with all tools
+  page.tsx                 RSC entry → <AppShell />
+lib/
+  tools/                   the single source of truth
+    registry.ts            defineTool + invokeTool (audit-logged)
+    mail.ts                read tools (search, get_thread, get_message, list_labels, ...)
+    mail-mutate.ts         archive/trash/label/snooze/star/mark_read/...
+    compose.ts             send/reply/forward/draft/schedule_send/undo_send
+    ai.ts                  summarize_thread/triage_thread/draft_reply/bulk_triage/nl_search/...
+    memories.ts            remember/recall/forget/list_memories
+    calendar.ts            free_busy/suggest_times/create_event
+    contacts.ts            contact_lookup/expand_alias
+    web.ts                 browserbase_search/browserbase_fetch
+    audit-tools.ts         log_action/list_audit
+    index.ts               registry export — 53 tools total
+  ai/
+    client.ts              createOpenAI / createAnthropic, picks primary + fast models
+    system-prompt.ts       agent persona
+    loop.ts                streamText({ model, tools, stopWhen }) lifting registry → SDK
+  store/                   NeDB collections (threads, messages, chat, memories, audit, prefs, snooze, drafts)
+  gog/                     pool + Gmail JSON → typed Message/Thread normalize
+  send/                    in-memory queue used by undo_send
+  shared/                  Thread/Message/Memory types + date/format helpers
+  client-state.ts          Zustand store
+  api-client.ts            typed RPC over /api/tools/[name]
+components/
+  ui/                      shadcn primitives (Button, Input, Dialog, Tabs, ScrollArea, Command, ...)
+  shell/                   AppShell, Rail, AIBar, ThemeSwitcher, ShortcutsSheet, ShortcutsBinding
+  inbox/                   virtualized list with multi-select + bulk AI triage
+  thread/                  stacked conversation cards + AI summary card + inline reply
+  compose/                 ComposeDialog
+  palette/                 CommandPalette (cmdk)
+_legacy/                   the v1 codebase (frozen for reference / migration)
+```
+
+## AI bar
+
+Press `⌘K` (or click the pill at the top) to open the always-available agent. It uses all 53 tools — search, mutate, draft, send, schedule, calendar, contacts, browserbase research, memory. The AI has the same capabilities as a human clicking in the UI; mutating tools surface as confirmation cards before they fire.
+
+## Keyboard
+
+`j/k` next/prev · `o` open · `u/esc` close · `e` archive · `#` trash · `r` reply · `c` compose · `/` focus search · `s` summarize · `t` triage · `g i/u/s/d/t/a` mailbox jumps · `⌘K` AI bar · `⌘P` palette · `?` shortcut sheet.
+
+## The 35-item brainstorm
+
+See `/home/jjalangtry/.claude/plans/think-of-35-ways-zany-starlight.md` for the master plan. v2 ships ~30 of the 35 by virtue of the tool registry being the action surface; the rest layer in trivially.

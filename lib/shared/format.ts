@@ -1,0 +1,52 @@
+export function shortFrom(value: string | null | undefined): string {
+  return String(value || '')
+    .replace(/<.*?>/g, '')
+    .replaceAll('"', '')
+    .trim() || String(value || '');
+}
+
+export function fromInitials(value: string | null | undefined): string {
+  const clean = shortFrom(value || '?').trim();
+  const parts = clean.split(/[\s@<>]+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+export function fromColor(value: string | null | undefined): string {
+  const str = String(value || '').toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 50%, 50%)`;
+}
+
+export function dateToEpoch(value: number | string | null | undefined): number {
+  if (value == null) return 0;
+  if (typeof value === 'number') return value < 1e12 ? value * 1000 : value;
+  if (Number.isFinite(Number(value))) {
+    const n = Number(value);
+    return n < 1e12 ? n * 1000 : n;
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function formatDate(value: number | string | null | undefined): string {
+  if (!value) return '';
+  const epoch = typeof value === 'number' ? value : dateToEpoch(value);
+  if (!epoch) return '';
+  const date = new Date(epoch);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+  if (date.getFullYear() === now.getFullYear())
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: '2-digit' }).format(date);
+}
+
+export function gmailUrlFor(account: string, threadIdOrMessageId: string): string {
+  const u = encodeURIComponent(account);
+  const id = encodeURIComponent(threadIdOrMessageId);
+  return `https://mail.google.com/mail/u/${u}/#all/${id}`;
+}

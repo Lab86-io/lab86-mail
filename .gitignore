@@ -1,4 +1,36 @@
-data/
+# dependencies
 node_modules/
-.env
+.pnp
+.pnp.*
+.yarn/install-state.gz
+
+# next
+.next/
+out/
+build/
+dist/
+
+# misc
+.DS_Store
+*.pem
 *.log
+
+# data
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# env
+.env
+.env.local
+.env.*.local
+
+# bun
+bun.lockb
+.bun/
+
+# debug
+.swc/
+.turbo/
