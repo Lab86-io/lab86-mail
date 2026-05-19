@@ -7,6 +7,7 @@ import { RefreshCw, Search, Archive, Trash2, Sparkles, X, Loader2 } from 'lucide
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
@@ -71,20 +72,51 @@ export function Inbox() {
     }
   };
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['search', account, query],
+  // When account is the synthetic ALL_ACCOUNTS marker, fan out across every
+  // authed Gmail account and merge by date. Otherwise just hit one.
+  const { data: accountsData } = useQuery({
+    queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ items: ThreadRow[] }>('search_threads', { account, query, max: 50 }),
-    enabled: !!account,
+      callTool<{ accounts: { email: string; authed: boolean }[] }>('list_accounts'),
+    staleTime: 60_000,
+  });
+  const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
+
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['search', account, query, authedEmails.join(',')],
+    queryFn: async () => {
+      if (account === ALL_ACCOUNTS) {
+        const perAccount = Math.max(8, Math.ceil(50 / Math.max(authedEmails.length, 1)));
+        const results = await Promise.all(
+          authedEmails.map((email) =>
+            callTool<{ items: ThreadRow[] }>('search_threads', { account: email, query, max: perAccount })
+              .then((r) => r.items.map((it) => ({ ...it, account: email })))
+              .catch(() => [] as ThreadRow[]),
+          ),
+        );
+        const merged = results.flat();
+        merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+        return { items: merged.slice(0, 80) };
+      }
+      return callTool<{ items: ThreadRow[] }>('search_threads', { account, query, max: 50 });
+    },
+    enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
   });
 
   const items = data?.items || [];
 
+  // Each item knows its own account (set by the fan-out above), so bulk
+  // operations dispatch per-item using that account rather than the
+  // currently-selected one. Required for ALL_ACCOUNTS view.
+  const accountOfRow = (id: string) => items.find((it) => it._id === id)?.account || account;
+
   const bulkArchive = useMutation({
     mutationFn: async (ids: string[]) => {
-      for (const id of ids) {
-        await callTool('archive_thread', { account, threadId: id }).catch(() => undefined);
-      }
+      await Promise.allSettled(
+        ids.map((id) =>
+          callTool('archive_thread', { account: accountOfRow(id), threadId: id }),
+        ),
+      );
     },
     onSuccess: () => {
       toast.success(`Archived ${selectedIds.length}`);
@@ -95,9 +127,11 @@ export function Inbox() {
 
   const bulkTrash = useMutation({
     mutationFn: async (ids: string[]) => {
-      for (const id of ids) {
-        await callTool('trash_thread', { account, threadId: id }).catch(() => undefined);
-      }
+      await Promise.allSettled(
+        ids.map((id) =>
+          callTool('trash_thread', { account: accountOfRow(id), threadId: id }),
+        ),
+      );
     },
     onSuccess: () => {
       toast.success(`Trashed ${selectedIds.length}`);
@@ -221,12 +255,18 @@ export function Inbox() {
           <AnimatePresence initial={false} mode="popLayout">
             {items.map((it) => (
               <ThreadRowCard
-                key={it._id}
+                key={`${it.account}:${it._id}`}
                 item={it}
+                showAccount={account === ALL_ACCOUNTS}
                 selected={selectedIds.includes(it._id)}
                 active={selectedThreadId === it._id}
                 onToggle={() => toggleSelected(it._id)}
-                onClick={() => setSelectedThread(it._id)}
+                onClick={() => {
+                  if (it.account && it.account !== account) {
+                    useClientStore.getState().setAccount(it.account);
+                  }
+                  setSelectedThread(it._id);
+                }}
               />
             ))}
           </AnimatePresence>
@@ -242,12 +282,14 @@ function ThreadRowCard({
   active,
   onToggle,
   onClick,
+  showAccount,
 }: {
   item: ThreadRow;
   selected: boolean;
   active: boolean;
   onToggle: () => void;
   onClick: () => void;
+  showAccount?: boolean;
 }) {
   const triage = (item as any).triage;
   const priorityClass =
@@ -301,6 +343,11 @@ function ThreadRowCard({
 
       <div className="flex flex-col items-end gap-1">
         <span className="text-[11px] text-[var(--color-text-faint)]">{formatDate(date)}</span>
+        {showAccount && item.account ? (
+          <Badge variant="outline" className="font-mono text-[9px] normal-case">
+            {item.account.split('@')[0]}
+          </Badge>
+        ) : null}
         {(item.labels || []).slice(0, 1).map((l) =>
           l.startsWith('CATEGORY_') || l === 'INBOX' || l === 'UNREAD' ? null : (
             <Badge key={l} variant="outline">

@@ -32,8 +32,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { Streamdown } from 'streamdown';
 import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
@@ -344,7 +343,7 @@ export function AIBarSidebar() {
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
       className="relative flex h-full w-full flex-col overflow-hidden bg-[var(--color-bg-elevated)]"
     >
-      {busy ? <span className="border-beam" aria-hidden /> : null}
+      <TopProgressBar active={busy} />
 
       <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
         <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
@@ -449,6 +448,28 @@ function ThinkingDots() {
   );
 }
 
+// Indeterminate top progress bar (Linear-style sliding strip) instead of the
+// old border-beam. Active only while the agent is streaming.
+function TopProgressBar({ active }: { active: boolean }) {
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        'pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden transition-opacity duration-200',
+        active ? 'opacity-100' : 'opacity-0',
+      )}
+    >
+      <span className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-[var(--color-accent)] to-transparent [animation:topbar-slide_1.6s_ease-in-out_infinite]" />
+      <style>{`
+        @keyframes topbar-slide {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(400%); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function Suggestions({ onPick, threadFocused }: { onPick: (text: string) => void; threadFocused: boolean }) {
   const base = [
     { text: 'Do I have any emails from Tori Kogler? Open the latest.', icon: Search },
@@ -545,9 +566,12 @@ function Part({ part }: { part: any }) {
 
 function MarkdownText({ text }: { text: string }) {
   if (!text) return <span className="block h-3 w-12 rounded shimmer" />;
+  // Streamdown is Vercel's streaming-safe react-markdown drop-in with built-in
+  // GFM, code highlighting, math, mermaid, link safety, and an in-progress
+  // cursor — perfect for AI chat. We just give it our prose styles.
   return (
-    <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_a]:text-[var(--color-accent)] [&_a]:underline-offset-2 [&_a]:no-underline hover:[&_a]:underline [&_code]:rounded [&_code]:bg-[var(--color-bg-subtle)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[11.5px] [&_code]:font-medium [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--color-border)] [&_pre]:bg-[var(--color-bg-subtle)] [&_pre]:p-2.5 [&_pre]:text-[11.5px] [&_h1]:text-[14px] [&_h2]:text-[13.5px] [&_h3]:text-[13px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_ul>li]:my-0 [&_ol>li]:my-0 [&_ul]:pl-4 [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--color-text-muted)] [&_strong]:font-semibold [&_em]:italic [&_table]:border-collapse [&_table]:text-[12px] [&_th]:border [&_td]:border [&_th]:border-[var(--color-border)] [&_td]:border-[var(--color-border)] [&_th]:px-1.5 [&_td]:px-1.5 [&_th]:py-1 [&_td]:py-1 [&_th]:bg-[var(--color-bg-subtle)] [&_hr]:my-2 [&_hr]:border-[var(--color-border)]">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    <div className="prose prose-sm max-w-none break-words text-[13px] leading-relaxed text-[var(--color-text)] [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_a]:text-[var(--color-accent)] [&_a]:underline-offset-2 [&_a]:no-underline hover:[&_a]:underline [&_code]:break-words [&_code]:rounded [&_code]:bg-[var(--color-bg-subtle)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[11.5px] [&_code]:font-medium [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--color-border)] [&_pre]:bg-[var(--color-bg-subtle)] [&_pre]:p-2.5 [&_pre]:text-[11.5px] [&_pre_code]:whitespace-pre [&_pre_code]:break-normal [&_h1]:text-[14px] [&_h2]:text-[13.5px] [&_h3]:text-[13px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_ul>li]:my-0 [&_ol>li]:my-0 [&_ul]:pl-4 [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--color-text-muted)] [&_strong]:font-semibold [&_em]:italic [&_table]:block [&_table]:overflow-x-auto [&_table]:border-collapse [&_table]:text-[12px] [&_th]:border [&_td]:border [&_th]:border-[var(--color-border)] [&_td]:border-[var(--color-border)] [&_th]:px-1.5 [&_td]:px-1.5 [&_th]:py-1 [&_td]:py-1 [&_th]:bg-[var(--color-bg-subtle)] [&_hr]:my-2 [&_hr]:border-[var(--color-border)]">
+      <Streamdown parseIncompleteMarkdown>{text}</Streamdown>
     </div>
   );
 }

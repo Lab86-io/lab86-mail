@@ -1,35 +1,37 @@
 'use client';
 
+import BoringAvatar from 'boring-avatars';
 import { cn } from '@/lib/utils';
-import { fromColor, fromInitials } from '@/lib/shared/format';
+import { shortFrom } from '@/lib/shared/format';
+
+// Warm-gray + accent palette plucked to harmonize with our Linear-y theme.
+const PALETTE_LIGHT = ['#0b7285', '#2f7d55', '#b45309', '#b1483f', '#7c5dbf'];
+const PALETTE_DARK = ['#4cb7c8', '#5fb289', '#d49a4d', '#e1655c', '#a796d8'];
 
 export function Avatar({
   name,
   size = 28,
   className,
+  variant = 'beam',
 }: {
   name: string | null | undefined;
   size?: number;
   className?: string;
+  variant?: 'marble' | 'beam' | 'pixel' | 'sunset' | 'ring' | 'bauhaus';
 }) {
-  const color = fromColor(name || '');
-  const initials = fromInitials(name || '?');
+  const seed = shortFrom(name || 'unknown').toLowerCase() || 'unknown';
   return (
     <div
-      className={cn(
-        'grid shrink-0 select-none place-items-center rounded-full text-white shadow-[var(--shadow-soft)]',
-        className,
-      )}
-      style={{
-        width: size,
-        height: size,
-        background: color,
-        fontSize: Math.max(10, size * 0.4),
-        fontWeight: 600,
-        letterSpacing: '-0.02em',
-      }}
+      className={cn('shrink-0 overflow-hidden rounded-full shadow-[var(--shadow-soft)]', className)}
+      style={{ width: size, height: size }}
     >
-      {initials}
+      <BoringAvatar
+        size={size}
+        name={seed}
+        variant={variant}
+        colors={typeof document !== 'undefined' && document.documentElement.classList.contains('dark') ? PALETTE_DARK : PALETTE_LIGHT}
+        square={false}
+      />
     </div>
   );
 }

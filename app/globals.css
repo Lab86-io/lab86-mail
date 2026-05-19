@@ -122,29 +122,6 @@
 
 /* signature animations */
 @layer utilities {
-  @keyframes border-beam {
-    100% {
-      offset-distance: 100%;
-    }
-  }
-  .border-beam {
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    overflow: hidden;
-  }
-  .border-beam::after {
-    content: '';
-    position: absolute;
-    width: 28%;
-    aspect-ratio: 1;
-    offset-path: rect(0 100% 100% 0 round var(--radius-lg, 12px));
-    background: linear-gradient(90deg, transparent, var(--color-accent), transparent);
-    opacity: 0.7;
-    animation: border-beam 4s linear infinite;
-  }
-
   @keyframes shimmer {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }

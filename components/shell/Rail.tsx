@@ -14,6 +14,9 @@ import {
   Cloud,
   Calendar,
   Layers,
+  PanelRight,
+  PanelRightClose,
+  Mailbox,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
@@ -43,6 +46,8 @@ const MAILBOXES: MailboxItem[] = [
   { query: 'in:trash newer_than:365d', label: 'Trash', Icon: Trash2 },
 ];
 
+export const ALL_ACCOUNTS = '__all__';
+
 export function Rail() {
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
@@ -50,19 +55,29 @@ export function Rail() {
   const setQuery = useClientStore((s) => s.setQuery);
   const setComposeOpen = useClientStore((s) => s.setComposeOpen);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
+  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
 
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () => callTool<{ accounts: { email: string; authed: boolean; primary?: boolean }[] }>('list_accounts'),
   });
   const accounts = accountsData?.accounts || [];
+  const authedAccounts = accounts.filter((a) => a.authed);
+  const showAll = authedAccounts.length > 1;
 
   useEffect(() => {
     if (!account && accounts.length) {
-      const primary = accounts.find((a) => a.primary && a.authed) || accounts.find((a) => a.authed) || accounts[0];
+      // Default to the unified "all" view when multiple accounts are authed,
+      // otherwise pick the primary.
+      if (authedAccounts.length > 1) {
+        setAccount(ALL_ACCOUNTS);
+        return;
+      }
+      const primary = authedAccounts.find((a) => a.primary) || authedAccounts[0] || accounts[0];
       if (primary) setAccount(primary.email);
     }
-  }, [accounts, account, setAccount]);
+  }, [accounts, authedAccounts, account, setAccount]);
 
   return (
     <aside className="flex h-full w-full flex-col gap-3 bg-[var(--color-bg-subtle)] p-3 text-sm">
@@ -86,7 +101,6 @@ export function Rail() {
           Compose
         </span>
         <span className="text-[10px] text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]">c</span>
-        <span className="border-beam opacity-0 group-hover:opacity-100" aria-hidden />
       </button>
 
       <label className="flex flex-col gap-1 px-0.5">
@@ -96,6 +110,9 @@ export function Rail() {
           onChange={(e) => setAccount(e.target.value)}
           className="h-8 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-sm shadow-[var(--shadow-soft)]"
         >
+          {showAll ? (
+            <option value={ALL_ACCOUNTS}>All mailboxes · {authedAccounts.length}</option>
+          ) : null}
           {accounts.map((a) => (
             <option key={a.email} value={a.email} disabled={!a.authed}>
               {a.email}
@@ -132,6 +149,26 @@ export function Rail() {
       </nav>
 
       <div className="flex flex-col gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2 shadow-[var(--shadow-soft)]">
+        <button
+          type="button"
+          onClick={() => setAiBarOpen(!aiBarOpen)}
+          className={cn(
+            'flex items-center justify-between rounded-md px-2 py-1.5 text-[12px] font-medium transition-colors',
+            aiBarOpen
+              ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+          )}
+          title={aiBarOpen ? 'Hide agent (⌘K)' : 'Show agent (⌘K)'}
+        >
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            Agent
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
+            {aiBarOpen ? <PanelRightClose className="h-3 w-3" /> : <PanelRight className="h-3 w-3" />}
+            <kbd>⌘K</kbd>
+          </span>
+        </button>
         <ThemeSwitcher />
         <button
           type="button"

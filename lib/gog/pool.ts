@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execa } from 'execa';
 
 const GOG_BIN = process.env.MAIL_OS_GOG_BIN || '/home/jjalangtry/.local/bin/lab86-gog';
 
@@ -7,45 +7,33 @@ export interface RunOptions {
   timeoutMs?: number;
 }
 
-/**
- * Spawn lab86-gog once per call. Bun + Node make this fast enough that a
- * persistent pool is more complexity than it's worth for v2.0 — we can swap
- * this for a pooled worker later by changing only this module.
- */
 export async function runGog(args: string[], options: RunOptions = {}): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(GOG_BIN, args, {
-      env: process.env,
+  try {
+    const result = await execa(GOG_BIN, args, {
       timeout: options.timeoutMs ?? 60_000,
+      maxBuffer: 32 * 1024 * 1024,
+      input: options.stdin,
+      env: process.env,
+      // Use 'pipe' so we can read stdout while preserving its UTF-8 string form.
+      stdout: 'pipe',
+      stderr: 'pipe',
+      reject: true,
     });
-    let stdout = '';
-    let stderr = '';
-    const max = 32 * 1024 * 1024;
-    let received = 0;
-    child.stdout.on('data', (chunk) => {
-      received += chunk.length;
-      if (received > max) {
-        child.kill();
-        reject(new Error('gog stdout too large'));
-        return;
-      }
-      stdout += chunk.toString('utf8');
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
-    child.on('error', reject);
-    if (options.stdin) child.stdin.end(options.stdin);
-    child.on('close', (code) => {
-      if (code === 0) resolve(stdout.trim());
-      else {
-        const message = stderr.trim() || stdout.trim() || `gog exited ${code}`;
-        const err = new Error(message);
-        (err as any).code = code;
-        reject(err);
-      }
-    });
-  });
+    return result.stdout.trim();
+  } catch (err: any) {
+    // execa surfaces failures with a rich ExecaError shape (stdout/stderr/
+    // exitCode/shortMessage). We normalize to a plain Error with the most
+    // informative message available.
+    if (err && (err.stderr !== undefined || err.exitCode !== undefined || err.shortMessage)) {
+      const stderr = err.stderr ? String(err.stderr).trim() : '';
+      const stdout = err.stdout ? String(err.stdout).trim() : '';
+      const msg = stderr || stdout || err.shortMessage || err.message || 'gog failed';
+      const wrapped = new Error(msg);
+      (wrapped as any).code = err.exitCode ?? null;
+      throw wrapped;
+    }
+    throw err;
+  }
 }
 
 export async function runGogJson<T = any>(args: string[], options: RunOptions = {}): Promise<T | null> {
