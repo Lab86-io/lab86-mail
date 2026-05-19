@@ -1,9 +1,10 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
 import { ArrowUp, Sparkles, X, Square, ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import TextareaAutosize from 'react-textarea-autosize';
 import { useClientStore } from '@/lib/client-state';
@@ -20,9 +21,8 @@ export function AIBar({ extraSystem }: Props) {
   const account = useClientStore((s) => s.account);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
 
-  const { messages, sendMessage, status, stop, error } = useChat({
-    transport: undefined,
-  });
+  const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
+  const { messages, sendMessage, status, stop, error } = useChat({ transport });
 
   // Auto-focus when expanded.
   useEffect(() => {
