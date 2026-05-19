@@ -7,7 +7,7 @@ const config: NextConfig = {
       bodySizeLimit: '4mb',
     },
   },
-  serverExternalPackages: ['@seald-io/nedb', 'mailparser', 'isomorphic-dompurify'],
+  serverExternalPackages: ['@seald-io/nedb', 'mailparser'],
   // Long-running SSE responses
   poweredByHeader: false,
 };

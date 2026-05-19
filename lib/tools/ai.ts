@@ -56,15 +56,26 @@ export const summarizeThread = defineTool({
       'Thread:',
       concatThread(messages),
     ].join('\n');
-    const { text } = await generateText({
-      model: fastModel(),
-      system:
-        'You are Mail OS, Jakob\'s local email assistant. Be concrete. Never claim an action was performed; you can only reason.',
-      prompt,
-    });
-    const summary = text.trim();
-    await setThreadSummary(account, threadId, summary).catch(() => undefined);
-    return { summary, model: 'fast' };
+    try {
+      const { text } = await generateText({
+        model: fastModel(),
+        system:
+          'You are Mail OS, Jakob\'s local email assistant. Be concrete. Never claim an action was performed; you can only reason.',
+        prompt,
+      });
+      const summary = text.trim();
+      await setThreadSummary(account, threadId, summary).catch(() => undefined);
+      return { summary, model: 'fast' };
+    } catch (err: any) {
+      // Cloud model failed — most often insufficient_quota / rate limit / network.
+      // Fall back to a deterministic local summary so the UI never gets stuck.
+      const senders = [...new Set(messages.map((m) => m.from))].slice(0, 4).join(', ');
+      const last = messages[messages.length - 1];
+      const lastPreview = (last.textBody || last.snippet || '').replace(/\s+/g, ' ').slice(0, 320);
+      const summary = `${last.subject}\n\nThread with ${messages.length} message(s) between ${senders}. Latest from ${last.from}:\n\n${lastPreview}\n\n(AI summary unavailable: ${err?.message || 'model error'} — showing local fallback.)`;
+      await setThreadSummary(account, threadId, summary).catch(() => undefined);
+      return { summary, model: 'local-fallback' };
+    }
   },
 });
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import {
@@ -21,8 +21,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import TextareaAutosize from 'react-textarea-autosize';
-import DOMPurify from 'isomorphic-dompurify';
 import { callTool } from '@/lib/api-client';
+import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { useClientStore } from '@/lib/client-state';
 import { Avatar } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
@@ -46,9 +46,10 @@ export function ThreadView() {
 
   const summary = useQuery({
     queryKey: ['summary', account, threadId],
-    queryFn: async () => callTool<{ summary: string }>('summarize_thread', { account, threadId }),
+    queryFn: async () => callTool<{ summary: string; model: string }>('summarize_thread', { account, threadId }),
     enabled: !!account && !!threadId && (data?.messages?.length || 0) > 0,
     staleTime: 5 * 60_000,
+    retry: 0,
   });
 
   const archive = useMutation({
@@ -131,7 +132,13 @@ export function ThreadView() {
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        <SummaryCard data={summary.data?.summary || ''} loading={summary.isLoading} />
+        <SummaryCard
+          data={summary.data?.summary || ''}
+          model={summary.data?.model || ''}
+          loading={summary.isLoading}
+          error={summary.error ? (summary.error as Error).message : null}
+          onRetry={() => summary.refetch()}
+        />
         <LayoutGroup>
           <div className="mt-4 flex flex-col gap-2">
             {messages.map((m, i) => (
@@ -151,7 +158,19 @@ export function ThreadView() {
   );
 }
 
-function SummaryCard({ data, loading }: { data: string; loading: boolean }) {
+function SummaryCard({
+  data,
+  loading,
+  model,
+  error,
+  onRetry,
+}: {
+  data: string;
+  loading: boolean;
+  model: string;
+  error: string | null;
+  onRetry: () => void;
+}) {
   return (
     <motion.section
       layout
@@ -164,16 +183,31 @@ function SummaryCard({ data, loading }: { data: string; loading: boolean }) {
           <Sparkles className="h-2.5 w-2.5" />
           AI summary
         </span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">gpt-5.5-mini</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-[var(--color-text-faint)]">{model || 'gpt-5.5-mini'}</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="text-[10px] text-[var(--color-text-faint)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
+          >
+            retry
+          </button>
+        </div>
       </header>
-      {loading || !data ? (
+      {loading ? (
         <div className="space-y-1.5">
           <div className="h-3 w-3/4 rounded shimmer" />
           <div className="h-3 w-4/5 rounded shimmer" />
           <div className="h-3 w-2/3 rounded shimmer" />
         </div>
-      ) : (
+      ) : error ? (
+        <div className="text-[12px] text-[var(--color-danger)]">
+          Couldn't summarize: {error}
+        </div>
+      ) : data ? (
         <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-[var(--color-text)]">{data}</pre>
+      ) : (
+        <div className="text-[12px] text-[var(--color-text-muted)]">No summary yet.</div>
       )}
     </motion.section>
   );
@@ -281,15 +315,9 @@ function MessageCard({
 }
 
 function MessageBody({ html, text }: { html?: string; text?: string }) {
-  const safe = useMemo(() => {
-    if (html) {
-      return DOMPurify.sanitize(html, {
-        FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta'],
-        FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover'],
-        ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/)/i,
-      });
-    }
-    return null;
+  const [safe, setSafe] = useState<string | null>(null);
+  useEffect(() => {
+    if (html) setSafe(sanitizeEmailHtml(html));
   }, [html]);
   if (safe) {
     return (
@@ -298,6 +326,9 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
         dangerouslySetInnerHTML={{ __html: safe }}
       />
     );
+  }
+  if (html && !safe) {
+    return <div className="h-24 rounded shimmer" />;
   }
   return <pre className="whitespace-pre-wrap font-sans text-[13.5px]">{text || ''}</pre>;
 }
