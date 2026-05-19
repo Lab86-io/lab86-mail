@@ -3,6 +3,22 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  openStore,
+  upsertThreadFromSearchItem,
+  upsertMessage,
+  getCachedMessage,
+  getCachedThreadMessages,
+  setThreadSummary,
+  getThreadSummary,
+  listAllRecentThreads,
+  appendChat,
+  recentChat,
+  clearChat,
+  getPref,
+  setPref,
+} from './lib/store.js';
+import { openStream } from './lib/sse.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadDotEnv(path.join(__dirname, '.env'));
@@ -15,7 +31,10 @@ const CODEX_BIN = process.env.MAIL_OS_CODEX_BIN || 'codex';
 const CLAUDE_BIN = process.env.MAIL_OS_CLAUDE_BIN || 'claude';
 const AGENT_ENGINE = process.env.MAIL_OS_AGENT_ENGINE || 'auto';
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const DATA_DIR = path.join(__dirname, 'data');
 const MAX_BODY = 1024 * 1024;
+
+openStore(DATA_DIR);
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -309,32 +328,20 @@ function candidateEngines(requested) {
 
 async function runLocalAgent(action, message, instructions = '', requested = 'auto') {
   const prompt = buildAgentPrompt(action, message, instructions);
+  return runAgentWithPrompt(prompt, requested);
+}
+
+async function runAgentWithPrompt(prompt, requested = 'auto') {
   const errors = [];
   for (const engine of candidateEngines(requested)) {
     try {
       if (engine === 'claude' && commandAvailable(CLAUDE_BIN)) {
-        const args = [
-          '--print',
-          '--input-format', 'text',
-          '--output-format', 'text',
-          '--permission-mode', 'dontAsk',
-          '--tools', '',
-          '--no-session-persistence',
-        ];
-        if (process.env.MAIL_OS_CLAUDE_MODEL) args.push('--model', process.env.MAIL_OS_CLAUDE_MODEL);
+        const args = claudeArgs();
         const result = await runProcess(CLAUDE_BIN, args, { stdin: prompt, timeoutMs: 120000 });
         if (result) return { result, engine: 'claude' };
       }
       if (engine === 'codex' && commandAvailable(CODEX_BIN)) {
-        const args = [
-          'exec',
-          '--skip-git-repo-check',
-          '--ephemeral',
-          '--sandbox', 'read-only',
-          '--cd', __dirname,
-        ];
-        if (process.env.MAIL_OS_CODEX_MODEL) args.push('--model', process.env.MAIL_OS_CODEX_MODEL);
-        args.push('-');
+        const args = codexArgs();
         const result = await runProcess(CODEX_BIN, args, { stdin: prompt, timeoutMs: 120000 });
         if (result) return { result, engine: 'codex' };
       }
@@ -343,6 +350,75 @@ async function runLocalAgent(action, message, instructions = '', requested = 'au
     }
   }
   return { result: null, engine: 'local', errors };
+}
+
+function claudeArgs() {
+  const args = [
+    '--print',
+    '--input-format', 'text',
+    '--output-format', 'text',
+    '--permission-mode', 'dontAsk',
+    '--tools', '',
+    '--no-session-persistence',
+  ];
+  if (process.env.MAIL_OS_CLAUDE_MODEL) args.push('--model', process.env.MAIL_OS_CLAUDE_MODEL);
+  return args;
+}
+
+function codexArgs() {
+  const args = [
+    'exec',
+    '--skip-git-repo-check',
+    '--ephemeral',
+    '--sandbox', 'read-only',
+    '--cd', __dirname,
+  ];
+  if (process.env.MAIL_OS_CODEX_MODEL) args.push('--model', process.env.MAIL_OS_CODEX_MODEL);
+  args.push('-');
+  return args;
+}
+
+function streamAgent(prompt, requested, { onChunk, onError }) {
+  const engines = candidateEngines(requested);
+  let buffer = '';
+  return new Promise((resolve) => {
+    const tryNext = (index, errors) => {
+      if (index >= engines.length) return resolve({ result: buffer.trim() || null, engine: 'local', errors });
+      const engine = engines[index];
+      const bin = engine === 'claude' ? CLAUDE_BIN : CODEX_BIN;
+      if (!commandAvailable(bin)) return tryNext(index + 1, errors);
+      const args = engine === 'claude' ? claudeArgs() : codexArgs();
+      const child = spawn(bin, args, {
+        cwd: __dirname,
+        env: process.env,
+        timeout: 180000,
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      let localBuffer = '';
+      child.stdout.on('data', chunk => {
+        const text = chunk.toString('utf8');
+        localBuffer += text;
+        buffer += text;
+        try { onChunk(text, engine); } catch {}
+      });
+      child.stderr.on('data', () => {});
+      child.on('error', err => {
+        errors.push(`${engine}: ${err.message}`);
+        tryNext(index + 1, errors);
+      });
+      child.on('close', code => {
+        if (code === 0 && localBuffer.trim()) {
+          resolve({ result: localBuffer.trim(), engine, errors });
+        } else {
+          errors.push(`${engine}: exit ${code}`);
+          buffer = '';
+          tryNext(index + 1, errors);
+        }
+      });
+      child.stdin.end(prompt);
+    };
+    tryNext(0, []);
+  });
 }
 
 async function maybeOpenAI(task, message, instructions = '') {
@@ -371,6 +447,22 @@ async function maybeOpenAI(task, message, instructions = '') {
   if (!response.ok) throw new Error(`OpenAI request failed: ${response.status}`);
   const data = await response.json();
   return data.output_text || data.output?.flatMap(item => item.content || []).map(item => item.text || '').join('\n') || null;
+}
+
+function parseBulkVerdicts(text, items) {
+  const verdicts = items.map((it, i) => ({ index: i + 1, id: it.id, priority: 2, action: 'read', reason: '' }));
+  if (!text) return verdicts;
+  const lines = String(text).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/^(\d+)\.\s*priority\s*=\s*([1-3])\s+action\s*=\s*([a-z]+)\s+reason\s*=\s*(.*)$/i);
+    if (!m) continue;
+    const idx = Number(m[1]) - 1;
+    if (idx < 0 || idx >= verdicts.length) continue;
+    verdicts[idx].priority = Number(m[2]);
+    verdicts[idx].action = m[3].toLowerCase();
+    verdicts[idx].reason = m[4].trim();
+  }
+  return verdicts;
 }
 
 function localSummary(message) {
@@ -419,16 +511,219 @@ async function handleApi(req, res, url) {
       const max = Math.min(Number(url.searchParams.get('max') || 25), 50);
       const raw = await runGogJson(['--account', account, '--json', '--results-only', 'gmail', 'search', query, '--max', String(max), '--no-input']);
       const items = coerceItems(raw).map(item => normalizeSearchItem(item, account)).filter(item => item.id);
+      for (const item of items) {
+        try { upsertThreadFromSearchItem(account, item); } catch {}
+      }
       return json(res, 200, { ok: true, query, account, items });
     }
 
     if (url.pathname === '/api/message') {
       const account = required(url.searchParams.get('account'), 'account');
       const id = required(url.searchParams.get('id'), 'id');
+      const cached = getCachedMessage(account, id);
+      if (cached && cached.html && Date.now() - cached.cachedAt < 30 * 60 * 1000) {
+        cached.gmailUrl = gmailUrl(account, cached);
+        return json(res, 200, { ok: true, message: cached, cached: true });
+      }
       const raw = await runGogJson(['--account', account, '--json', 'gmail', 'get', id, '--format', 'full', '--no-input']);
       const message = normalizeMessage(raw, account);
       message.gmailUrl = gmailUrl(account, message);
+      try { upsertMessage(account, message); } catch {}
       return json(res, 200, { ok: true, message });
+    }
+
+    if (url.pathname === '/api/thread') {
+      const account = required(url.searchParams.get('account'), 'account');
+      const id = required(url.searchParams.get('id'), 'id');
+      const refresh = url.searchParams.get('refresh') === '1';
+      let messages = refresh ? [] : getCachedThreadMessages(account, id);
+      let summaryRow = getThreadSummary(account, id);
+      if (!messages.length) {
+        const raw = await runGogJson(['--account', account, '--json', 'gmail', 'thread', 'get', id, '--full', '--no-input']);
+        const threadObj = raw?.thread || raw?.result || raw?.data || raw;
+        const rawMessages = threadObj?.messages || [];
+        messages = rawMessages.map(item => {
+          const normalized = normalizeMessage(item, account);
+          try { upsertMessage(account, normalized); } catch {}
+          return normalized;
+        });
+        summaryRow = getThreadSummary(account, id);
+      }
+      const subject = messages[0]?.subject || '(no subject)';
+      return json(res, 200, {
+        ok: true,
+        thread: {
+          id,
+          account,
+          subject,
+          messages,
+          gmailUrl: gmailUrl(account, { threadId: id, id }),
+          summary: summaryRow?.summary || null,
+          summaryAt: summaryRow?.summaryAt || null,
+        },
+      });
+    }
+
+    if (url.pathname === '/api/agent/stream' && req.method === 'POST') {
+      const body = await readBody(req);
+      const action = body.action || 'summarize';
+      const message = body.message || {};
+      const engine = body.engine || 'auto';
+      const stream = openStream(res);
+      stream.send('start', { action, engine });
+      const prompt = buildAgentPrompt(action, message, body.instructions || '');
+      const onChunk = (text, eng) => stream.send('chunk', { text, engine: eng });
+      const agent = await streamAgent(prompt, engine, { onChunk });
+      let finalText = agent.result;
+      if (!finalText) {
+        if (action === 'draft') finalText = await maybeOpenAI('Write a reply draft.', message, body.instructions || '') || localDraft(message, body.instructions || '');
+        else if (action === 'chat') finalText = await maybeOpenAI('Answer the email assistant prompt.', message, body.instructions || '') || localSummary(message);
+        else finalText = await maybeOpenAI('Summarize the email and call out the likely next action.', message, body.instructions || '') || localSummary(message);
+        stream.send('chunk', { text: finalText, engine: 'fallback' });
+      }
+      stream.send('done', { engine: agent.engine, errors: agent.errors || [], result: finalText });
+      stream.close();
+      return;
+    }
+
+    if (url.pathname === '/api/thread/summarize' && req.method === 'POST') {
+      const body = await readBody(req);
+      const account = required(body.account, 'account');
+      const threadId = required(body.threadId, 'threadId');
+      const engine = body.engine || 'auto';
+      const messages = getCachedThreadMessages(account, threadId);
+      if (!messages.length) {
+        try {
+          const raw = await runGogJson(['--account', account, '--json', 'gmail', 'thread', 'get', threadId, '--full', '--no-input']);
+          const threadObj = raw?.thread || raw?.result || raw?.data || raw;
+          for (const item of threadObj?.messages || []) {
+            const normalized = normalizeMessage(item, account);
+            upsertMessage(account, normalized);
+          }
+        } catch {}
+      }
+      const all = getCachedThreadMessages(account, threadId);
+      const concatenated = all.map((m, i) =>
+        `--- Message ${i + 1} of ${all.length} ---\nFrom: ${m.from}\nTo: ${m.to}\nDate: ${m.date}\nSubject: ${m.subject}\n\n${(m.text || m.snippet || '').slice(0, 4000)}`
+      ).join('\n\n').slice(0, 24000);
+      const stream = openStream(res);
+      stream.send('start', { engine });
+      const prompt = [
+        'You are Mail OS. Summarize this email thread for Jakob.',
+        'Format strictly as: 1-line headline, then sections: "Who participated", "What was decided", "Open questions", "Suggested next action".',
+        'Keep total under 220 words. Be concrete.',
+        '',
+        'Thread:',
+        concatenated,
+      ].join('\n');
+      const onChunk = (text, eng) => stream.send('chunk', { text, engine: eng });
+      const agent = await streamAgent(prompt, engine, { onChunk });
+      let finalText = agent.result;
+      if (!finalText) {
+        finalText = await maybeOpenAI('Summarize this email thread.', { subject: all[0]?.subject || '', text: concatenated, from: all[0]?.from || '', to: all[0]?.to || '' }, '');
+        if (!finalText) finalText = `Thread with ${all.length} messages between ${[...new Set(all.map(m => m.from))].join(', ')}.`;
+        stream.send('chunk', { text: finalText, engine: 'fallback' });
+      }
+      try { setThreadSummary(account, threadId, finalText); } catch {}
+      stream.send('done', { engine: agent.engine, result: finalText, errors: agent.errors || [] });
+      stream.close();
+      return;
+    }
+
+    if (url.pathname === '/api/thread/chat' && req.method === 'POST') {
+      const body = await readBody(req);
+      const account = body.account || '';
+      const threadId = body.threadId || '';
+      const engine = body.engine || 'auto';
+      const userMessage = required(body.message, 'message');
+      const messages = threadId ? getCachedThreadMessages(account, threadId) : [];
+      const history = recentChat(account, threadId, 12);
+      appendChat(account, threadId, 'user', userMessage);
+      const concatenated = messages.map((m, i) =>
+        `--- Msg ${i + 1} ---\nFrom: ${m.from}\nSubject: ${m.subject}\n\n${(m.text || m.snippet || '').slice(0, 2500)}`
+      ).join('\n\n').slice(0, 14000);
+      const historyText = history.map(h => `${h.role === 'user' ? 'Jakob' : 'Assistant'}: ${h.content}`).join('\n\n').slice(0, 6000);
+      const promptParts = [
+        'You are Mail OS, Jakob\'s local email assistant. You can reason about the thread below but cannot send/archive/delete.',
+        'Reply directly. Be concrete. If Jakob asks you to draft something, return the draft text only.',
+      ];
+      if (concatenated) promptParts.push('', 'Current thread:', concatenated);
+      if (historyText) promptParts.push('', 'Prior conversation:', historyText);
+      promptParts.push('', `Jakob: ${userMessage}`, '', 'Assistant:');
+      const prompt = promptParts.join('\n');
+      const stream = openStream(res);
+      stream.send('start', { engine });
+      let finalText = '';
+      const onChunk = (text, eng) => { finalText += text; stream.send('chunk', { text, engine: eng }); };
+      const agent = await streamAgent(prompt, engine, { onChunk });
+      if (!agent.result) {
+        const fallback = await maybeOpenAI('Answer this email-assistant question for Jakob.', { subject: messages[0]?.subject || 'Chat', text: `${historyText}\n\nQ: ${userMessage}`, from: '', to: '' }, '');
+        finalText = fallback || `I don't have an answer right now. The thread has ${messages.length} message(s).`;
+        stream.send('chunk', { text: finalText, engine: 'fallback' });
+      } else {
+        finalText = agent.result;
+      }
+      try { appendChat(account, threadId, 'assistant', finalText); } catch {}
+      stream.send('done', { engine: agent.engine, result: finalText, errors: agent.errors || [] });
+      stream.close();
+      return;
+    }
+
+    if (url.pathname === '/api/thread/chat/history') {
+      const account = url.searchParams.get('account') || '';
+      const threadId = url.searchParams.get('threadId') || '';
+      return json(res, 200, { ok: true, messages: recentChat(account, threadId, 50) });
+    }
+
+    if (url.pathname === '/api/thread/chat/clear' && req.method === 'POST') {
+      const body = await readBody(req);
+      clearChat(body.account || '', body.threadId || '');
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === '/api/bulk/triage' && req.method === 'POST') {
+      const body = await readBody(req);
+      const items = Array.isArray(body.items) ? body.items.slice(0, 25) : [];
+      if (!items.length) return json(res, 200, { ok: true, verdicts: [] });
+      const engine = body.engine || 'auto';
+      const lines = items.map((it, i) => `${i + 1}. From: ${it.from || ''} | Subject: ${it.subject || '(no subject)'} | Snippet: ${(it.snippet || '').slice(0, 200)}`).join('\n');
+      const prompt = [
+        'You are Mail OS triaging a batch of emails for Jakob.',
+        'For each numbered item return one line in the exact form:',
+        '<number>. priority=<1|2|3> action=<reply|read|archive|delegate|wait> reason=<short reason>',
+        'No prose before or after. Just one line per item.',
+        '',
+        'Items:',
+        lines,
+      ].join('\n');
+      const stream = openStream(res);
+      stream.send('start', { engine, count: items.length });
+      let buffer = '';
+      const onChunk = (text, eng) => { buffer += text; stream.send('chunk', { text, engine: eng }); };
+      const agent = await streamAgent(prompt, engine, { onChunk });
+      const final = agent.result || buffer;
+      const verdicts = parseBulkVerdicts(final, items);
+      stream.send('done', { engine: agent.engine, verdicts, errors: agent.errors || [] });
+      stream.close();
+      return;
+    }
+
+    if (url.pathname === '/api/prefs') {
+      if (req.method === 'GET') {
+        const key = url.searchParams.get('key');
+        if (!key) throw new Error('key required');
+        return json(res, 200, { ok: true, value: getPref(key, null) });
+      }
+      if (req.method === 'POST') {
+        const body = await readBody(req);
+        setPref(required(body.key, 'key'), body.value ?? '');
+        return json(res, 200, { ok: true });
+      }
+    }
+
+    if (url.pathname === '/api/recent-threads') {
+      const limit = Math.min(Number(url.searchParams.get('limit') || 60), 200);
+      return json(res, 200, { ok: true, threads: listAllRecentThreads(limit) });
     }
 
     if (url.pathname === '/api/agent' && req.method === 'POST') {

@@ -24,7 +24,10 @@
           <select id="account"></select>
         </label>
 
-        <button id="compose" class="composeButton">Compose</button>
+        <button id="compose" class="composeButton">
+          <span class="composeIcon">＋</span> Compose
+          <kbd class="kbd">c</kbd>
+        </button>
 
         <nav class="mailboxes" aria-label="Mailboxes">
           <button data-query="in:inbox newer_than:30d" class="active">Inbox</button>
@@ -44,25 +47,31 @@
             <span id="authState">GOG pending</span>
           </div>
           <p id="agentState">Agent: checking</p>
+          <div class="themeToggle" role="group" aria-label="Theme">
+            <button data-theme="light" title="Light">☀</button>
+            <button data-theme="auto" title="Auto" class="active">A</button>
+            <button data-theme="dark" title="Dark">☾</button>
+          </div>
+          <button id="openShortcuts" class="ghostButton" title="Keyboard shortcuts">⌨ Shortcuts <kbd class="kbd">?</kbd></button>
         </section>
       </aside>
 
       <section class="aiTop">
-        <form id="aiChatForm" class="aiChat">
-          <span>AI</span>
-          <input id="aiChatInput" autocomplete="off" placeholder="Ask about this email or mailbox">
-          <button type="submit">Ask</button>
-        </form>
+        <button id="openPalette" class="paletteTrigger" title="Command palette">
+          <span class="searchIcon">⌘</span>
+          <span class="paletteHint">Jump to anything…</span>
+          <kbd class="kbd">⌘K</kbd>
+        </button>
       </section>
 
       <section class="inboxPane">
         <header class="topbar">
           <form id="searchForm" class="searchBar">
             <span>Search</span>
-            <input id="query" autocomplete="off" value="in:inbox newer_than:30d">
+            <input id="query" autocomplete="off" value="in:inbox newer_than:30d" placeholder="Gmail query or natural language">
             <button type="submit">Run</button>
           </form>
-          <button id="refresh" class="iconButton" title="Refresh">Refresh</button>
+          <button id="refresh" class="iconButton" title="Refresh">↻</button>
         </header>
 
         <div class="inboxMeta">
@@ -77,41 +86,59 @@
           </div>
         </div>
 
+        <div id="bulkBar" class="bulkBar" hidden>
+          <span id="bulkCount">0 selected</span>
+          <button id="bulkArchive">Archive</button>
+          <button id="bulkRead">Mark read</button>
+          <button id="bulkTrash">Trash</button>
+          <button id="bulkTriage" class="bulkAi">AI: Triage</button>
+          <button id="bulkClear" class="ghostButton">Clear</button>
+        </div>
+
         <div id="messages" class="messages" aria-live="polite"></div>
       </section>
 
       <section class="readerPane">
         <header class="readerHeader">
           <div class="subjectBlock">
-            <p id="messageAccount">No message selected</p>
+            <p id="messageAccount">No thread selected</p>
             <h2 id="subject">Choose an email</h2>
             <p id="headers">Search an account, then select a row.</p>
           </div>
-          <a id="gmailLink" class="secondaryButton" target="_blank" rel="noreferrer">Open in Gmail</a>
+          <div class="readerActions">
+            <a id="gmailLink" class="secondaryButton" target="_blank" rel="noreferrer">Open in Gmail</a>
+          </div>
         </header>
 
         <div class="messageToolbar">
-          <button id="archiveMessage">Archive</button>
-          <button id="markRead">Mark read</button>
-          <button id="markUnread">Mark unread</button>
-          <button id="trashMessage">Trash</button>
+          <button id="archiveMessage" title="Archive (e)">Archive</button>
+          <button id="markRead" title="Mark read">Read</button>
+          <button id="markUnread" title="Mark unread">Unread</button>
+          <button id="trashMessage" title="Trash (#)">Trash</button>
           <button id="summarize" data-agent-action="summarize">Summarize</button>
           <button id="triage" data-agent-action="triage">Triage</button>
-          <button id="draft" data-agent-action="draft">Draft</button>
+          <button id="draft" data-agent-action="draft">Draft reply (r)</button>
           <button id="copyDraft">Copy</button>
           <button id="sendDraft" class="sendButton">Send reply</button>
         </div>
 
         <div class="readerBody">
-          <iframe id="mailFrame" title="message body" sandbox="allow-popups allow-popups-to-escape-sandbox"></iframe>
+          <div id="threadSummary" class="threadSummary" hidden>
+            <header>
+              <span class="aiBadge">AI summary</span>
+              <button id="resummarize" class="ghostButton" title="Re-run summary">↻ Refresh</button>
+            </header>
+            <div id="threadSummaryText" class="summaryText"></div>
+          </div>
+          <div id="threadList" class="threadList"></div>
         </div>
       </section>
 
       <aside class="agentPane">
-        <header>
+        <header class="agentHeader">
           <div>
-            <p>Local agent</p>
-            <h2 id="agentTitle">Ready</h2>
+            <p>AI assistant</p>
+            <h2 id="agentTitle">Per-thread chat</h2>
           </div>
           <select id="agentEngine" title="Agent engine">
             <option value="auto">Auto</option>
@@ -121,9 +148,31 @@
           </select>
         </header>
 
-        <textarea id="agentInstructions" class="agentInput" placeholder="Optional instruction for this email"></textarea>
-        <div id="agent" class="agentOutput">Select a message, then run summarize, triage, or draft.</div>
-        <textarea id="draftBox" class="draftBox" placeholder="Reply draft"></textarea>
+        <div class="agentTabs" role="tablist">
+          <button data-tab="chat" class="active" role="tab">Chat</button>
+          <button data-tab="actions" role="tab">Actions</button>
+          <button data-tab="draft" role="tab">Draft</button>
+        </div>
+
+        <section data-tab-panel="chat" class="tabPanel active">
+          <div id="chatScroll" class="chatScroll" aria-live="polite"></div>
+          <form id="chatForm" class="chatForm">
+            <textarea id="chatInput" placeholder="Ask about this thread… (Shift+Enter for newline)" rows="2"></textarea>
+            <div class="chatRow">
+              <button id="clearChat" type="button" class="ghostButton" title="Clear chat history">Clear</button>
+              <button type="submit" class="sendButton">Send</button>
+            </div>
+          </form>
+        </section>
+
+        <section data-tab-panel="actions" class="tabPanel">
+          <textarea id="agentInstructions" class="agentInput" placeholder="Optional instruction for the next AI action"></textarea>
+          <div id="agent" class="agentOutput">Select a message, then run summarize, triage, or draft.</div>
+        </section>
+
+        <section data-tab-panel="draft" class="tabPanel">
+          <textarea id="draftBox" class="draftBox" placeholder="Reply draft (use Draft button to AI-generate; edit before Send)"></textarea>
+        </section>
       </aside>
 
       <section id="composeModal" class="composeModal" hidden>
@@ -141,6 +190,44 @@
           </footer>
         </form>
       </section>
+
+      <section id="palette" class="palette" hidden>
+        <div class="paletteCard" role="dialog" aria-label="Command palette">
+          <input id="paletteInput" placeholder="Search threads, mailboxes, actions… Type 'ai:' for AI commands" autocomplete="off">
+          <div id="paletteResults" class="paletteResults"></div>
+          <footer class="paletteFooter">
+            <kbd>↑↓</kbd> navigate <kbd>↵</kbd> select <kbd>esc</kbd> close
+          </footer>
+        </div>
+      </section>
+
+      <section id="shortcutSheet" class="shortcutSheet" hidden>
+        <div class="shortcutCard">
+          <header><h2>Keyboard shortcuts</h2><button id="closeShortcuts" type="button">Close</button></header>
+          <div class="shortcutGrid">
+            <div><kbd>j</kbd> / <kbd>↓</kbd></div><div>Next message</div>
+            <div><kbd>k</kbd> / <kbd>↑</kbd></div><div>Previous message</div>
+            <div><kbd>↵</kbd> / <kbd>o</kbd></div><div>Open selected</div>
+            <div><kbd>u</kbd> / <kbd>esc</kbd></div><div>Back / close</div>
+            <div><kbd>e</kbd></div><div>Archive</div>
+            <div><kbd>#</kbd></div><div>Trash</div>
+            <div><kbd>r</kbd></div><div>Draft reply</div>
+            <div><kbd>R</kbd></div><div>Reply-all (compose)</div>
+            <div><kbd>c</kbd></div><div>Compose</div>
+            <div><kbd>/</kbd></div><div>Focus search</div>
+            <div><kbd>x</kbd></div><div>Toggle selection</div>
+            <div><kbd>s</kbd></div><div>Summarize</div>
+            <div><kbd>t</kbd></div><div>Triage</div>
+            <div><kbd>g</kbd> <kbd>i</kbd></div><div>Go to Inbox</div>
+            <div><kbd>g</kbd> <kbd>u</kbd></div><div>Go to Unread</div>
+            <div><kbd>g</kbd> <kbd>s</kbd></div><div>Go to Sent</div>
+            <div><kbd>⌘K</kbd></div><div>Command palette</div>
+            <div><kbd>?</kbd></div><div>This sheet</div>
+          </div>
+        </div>
+      </section>
+
+      <div id="toast" class="toast" hidden></div>
     </main>
     <script src="/app.js" type="module"></script>
   </body>
