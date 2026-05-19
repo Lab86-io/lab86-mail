@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'motion/react';
-import { RefreshCw, Search, Archive, Trash2, Sparkles, X } from 'lucide-react';
+import { RefreshCw, Search, Archive, Trash2, Sparkles, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -38,8 +38,38 @@ export function Inbox() {
 
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState(query);
+  const [translating, setTranslating] = useState(false);
 
   useEffect(() => setSearchInput(query), [query]);
+
+  // Heuristic: a Gmail query has at least one operator. Natural language doesn't.
+  const looksLikeGmailQuery = (s: string) =>
+    /\b(from|to|cc|bcc|subject|is|in|has|label|larger|smaller|newer_than|older_than|after|before|filename|deliveredto|list)\s*:/i.test(s);
+
+  const submitSearch = async () => {
+    const raw = searchInput.trim();
+    if (!raw) return;
+    if (looksLikeGmailQuery(raw)) {
+      setQuery(raw);
+      return;
+    }
+    // Natural language — translate via nl_search, then run.
+    setTranslating(true);
+    try {
+      const { query: translated } = await callTool<{ query: string; model: string }>('nl_search', {
+        description: raw,
+      });
+      const finalQuery = translated && translated.trim() ? translated.trim() : raw;
+      setQuery(finalQuery);
+      setSearchInput(finalQuery);
+      toast.success(`Searching · ${finalQuery}`);
+    } catch (err: any) {
+      toast.error(`Could not translate: ${err?.message || 'unknown error'}`);
+      setQuery(raw);
+    } finally {
+      setTranslating(false);
+    }
+  };
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['search', account, query],
@@ -106,17 +136,21 @@ export function Inbox() {
     <section className="flex h-full flex-col bg-[var(--color-bg)]">
       <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
         <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+          {translating ? (
+            <Loader2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-[var(--color-accent)]" />
+          ) : (
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+          )}
           <input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
-                setQuery(searchInput);
+                submitSearch();
               }
             }}
-            placeholder='Gmail query or natural language ("emails from board members last quarter")'
+            placeholder='Gmail query, or just say what you want ("emails from board members last quarter")'
             className="h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] pl-8 pr-3 text-[13px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30"
           />
         </div>

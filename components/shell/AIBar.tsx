@@ -27,10 +27,11 @@ import {
   AlarmClock,
   CheckCircle2,
   Loader2,
+  Trash,
+  MessageSquarePlus,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import TextareaAutosize from 'react-textarea-autosize';
@@ -152,11 +153,51 @@ function toolMeta(name: string) {
   return { Icon, verb, isUi };
 }
 
-export function AIBar() {
+// ---------- Shared chat instance via a tiny store-aware hook ----------
+// Both the trigger and the sidebar use this. The sidebar is the only one
+// that renders messages; the trigger just toggles open state.
+function useAgentChat() {
+  const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
+  return useChat({ transport });
+}
+
+// ---------- Trigger: the pill at the top of the app shell ----------
+export function AIBarTrigger() {
+  const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
+  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+
+  // ⌘K toggles the sidebar.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setAiBarOpen(!aiBarOpen);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [setAiBarOpen, aiBarOpen]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => setAiBarOpen(!aiBarOpen)}
+      className="group relative flex h-8 w-full max-w-[640px] items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-left text-[13px] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
+      title="Toggle AI agent sidebar (⌘K)"
+    >
+      <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent)]" />
+      <span className="flex-1 truncate">
+        Ask Mail OS anything — search, summarize, draft, send…
+      </span>
+      <kbd>⌘K</kbd>
+    </button>
+  );
+}
+
+// ---------- Sidebar: the actual agent panel, lives on the right side ----------
+export function AIBarSidebar() {
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
-  const [input, setInput] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const account = useClientStore((s) => s.account);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
 
@@ -167,29 +208,38 @@ export function AIBar() {
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   const qc = useQueryClient();
 
-  const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
-  const { messages, sendMessage, status, stop, error } = useChat({ transport });
+  const [input, setInput] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-focus when overlay opens
+  const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
+  const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport });
+
+  // Auto-scroll to bottom on new messages / streaming.
   useEffect(() => {
-    if (aiBarOpen) textareaRef.current?.focus();
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, status]);
+
+  // Auto-focus the textarea when the sidebar opens.
+  useEffect(() => {
+    if (aiBarOpen) requestAnimationFrame(() => textareaRef.current?.focus());
   }, [aiBarOpen]);
 
-  // ⌘K opens, Esc closes
+  // Esc closes the sidebar if it's open.
   useEffect(() => {
+    if (!aiBarOpen) return;
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setAiBarOpen(true);
+      if (e.key === 'Escape' && document.activeElement !== textareaRef.current) {
+        setAiBarOpen(false);
       }
-      if (e.key === 'Escape' && aiBarOpen) setAiBarOpen(false);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [aiBarOpen, setAiBarOpen]);
 
-  // --- UI tool intercept: when the agent emits a ui_* tool call,
-  // run the actual UI mutation here in the client. ---
+  // --- UI tool intercept ---
   const handled = useRef<Set<string>>(new Set());
   useEffect(() => {
     for (const m of messages) {
@@ -227,7 +277,9 @@ export function AIBar() {
             const fn = (toast as any)[kind] || toast;
             fn(args.message || '');
           } else if (name === 'ui_close_bar') {
-            setTimeout(() => setAiBarOpen(false), 350);
+            // The bar is now the persistent sidebar; only close on explicit
+            // request, with a delay so the user sees the final assistant text.
+            setTimeout(() => setAiBarOpen(false), 1200);
           } else if (name === 'ui_switch_account' && args.account) {
             setAccount(args.account);
           }
@@ -279,149 +331,148 @@ export function AIBar() {
 
   const busy = status === 'streaming' || status === 'submitted';
 
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // The sidebar is always mounted but width is controlled by the grid; we
+  // render nothing inside when closed to keep the DOM cheap.
+  if (!aiBarOpen) return null;
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setAiBarOpen(true)}
-        className="group relative flex h-8 w-full max-w-[640px] items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-left text-[13px] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
-        title="Open AI command bar (⌘K)"
+    <motion.section
+      key="aibar-sidebar"
+      initial={{ x: 20, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: 20, opacity: 0 }}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      className="relative flex h-full w-full flex-col overflow-hidden bg-[var(--color-bg-elevated)]"
+    >
+      {busy ? <span className="border-beam" aria-hidden /> : null}
+
+      <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
+        <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+          <div className="relative grid h-5 w-5 place-items-center rounded-md bg-[var(--color-accent-soft)]">
+            <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
+            {busy ? (
+              <span className="absolute inset-0 rounded-md bg-[var(--color-accent)]/20 animate-pulse" />
+            ) : null}
+          </div>
+          <span className="font-medium text-[var(--color-text)]">Agent</span>
+          <span className="text-[var(--color-text-faint)]">·</span>
+          <span>gpt-5.5</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setMessages([])}
+            className="grid h-6 w-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+            title="Clear conversation"
+          >
+            <Trash className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setAiBarOpen(false)}
+            className="grid h-6 w-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+            title="Close (⌘K)"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </header>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
+        {messages.length === 0 ? (
+          <Suggestions onPick={submit} threadFocused={!!selectedThreadId} />
+        ) : (
+          <div className="flex flex-col gap-4">
+            {messages.map((m) => <MessageView key={m.id} message={m} />)}
+            {busy && messages[messages.length - 1]?.role === 'user' ? <ThinkingDots /> : null}
+          </div>
+        )}
+        {error ? (
+          <div className="mt-3 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
+            {error.message}
+          </div>
+        ) : null}
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit(input);
+        }}
+        className="flex items-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2.5"
       >
-        <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent)]" />
-        <span className="flex-1 truncate">
-          Ask Mail OS anything — search, summarize, draft, send…
-        </span>
-        <kbd>⌘K</kbd>
-      </button>
-
-      {mounted
-        ? createPortal(
-            <AnimatePresence>
-              {aiBarOpen ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="fixed inset-0 z-[80] flex justify-center bg-black/40 px-4 pt-[8vh] backdrop-blur-md"
-                  onMouseDown={(e) => {
-                    if (e.target === e.currentTarget) setAiBarOpen(false);
-                  }}
-                >
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                    transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                    className="relative flex h-fit w-full max-w-[760px] flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]"
-                  >
-                    {busy ? <span className="border-beam" aria-hidden /> : null}
-
-                    <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3.5 py-2">
-                      <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
-                        <div className="relative grid h-5 w-5 place-items-center rounded-md bg-[var(--color-accent-soft)]">
-                          <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
-                          {busy ? (
-                            <span className="absolute inset-0 rounded-md bg-[var(--color-accent)]/20 animate-pulse" />
-                          ) : null}
-                        </div>
-                        <span className="font-medium text-[var(--color-text)]">Mail OS · Agent</span>
-                        <span className="text-[var(--color-text-faint)]">·</span>
-                        <span>gpt-5.5</span>
-                        {selectedThreadId ? (
-                          <>
-                            <span className="text-[var(--color-text-faint)]">·</span>
-                            <span className="font-mono text-[10px]">thread {selectedThreadId.slice(-8)}</span>
-                          </>
-                        ) : null}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setAiBarOpen(false)}
-                        className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </header>
-
-                    <div className="flex max-h-[60vh] min-h-[140px] flex-col gap-4 overflow-y-auto px-4 py-4">
-                      {messages.length === 0 ? (
-                        <Suggestions onPick={submit} />
-                      ) : (
-                        messages.map((m) => <MessageView key={m.id} message={m} />)
-                      )}
-                      {error ? (
-                        <div className="rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-3 py-2 text-[12px] text-[var(--color-danger)]">
-                          {error.message}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        submit(input);
-                      }}
-                      className="flex items-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3"
-                    >
-                      <TextareaAutosize
-                        ref={textareaRef}
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            submit(input);
-                          }
-                        }}
-                        placeholder="Find emails, draft a reply, schedule a meeting, label receipts, anything…"
-                        maxRows={6}
-                        minRows={1}
-                        className="flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-[var(--color-text-faint)]"
-                      />
-                      {busy ? (
-                        <button
-                          type="button"
-                          onClick={() => stop()}
-                          className="grid h-8 w-8 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-danger)] hover:bg-[var(--color-bg-muted)]"
-                          title="Stop"
-                        >
-                          <Square className="h-3.5 w-3.5" fill="currentColor" />
-                        </button>
-                      ) : (
-                        <button
-                          type="submit"
-                          disabled={!input.trim()}
-                          className="grid h-8 w-8 place-items-center rounded-md bg-[var(--color-accent)] text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-                          title="Send"
-                        >
-                          <ArrowUp className="h-4 w-4" />
-                        </button>
-                      )}
-                    </form>
-                  </motion.div>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>,
-            document.body,
-          )
-        : null}
-    </>
+        <TextareaAutosize
+          ref={textareaRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              submit(input);
+            }
+          }}
+          placeholder="Find, draft, schedule, label, anything…"
+          maxRows={8}
+          minRows={1}
+          className="flex-1 resize-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[13px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30 placeholder:text-[var(--color-text-faint)]"
+        />
+        {busy ? (
+          <button
+            type="button"
+            onClick={() => stop()}
+            className="grid h-8 w-8 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-danger)] hover:bg-[var(--color-bg-muted)]"
+            title="Stop"
+          >
+            <Square className="h-3.5 w-3.5" fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!input.trim()}
+            className="grid h-8 w-8 place-items-center rounded-md bg-[var(--color-accent)] text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+            title="Send"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        )}
+      </form>
+    </motion.section>
   );
 }
 
-function Suggestions({ onPick }: { onPick: (text: string) => void }) {
-  const suggestions = [
+function ThinkingDots() {
+  return (
+    <div className="flex items-center gap-1.5 px-1 text-[11px] text-[var(--color-text-faint)]">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      Thinking…
+    </div>
+  );
+}
+
+function Suggestions({ onPick, threadFocused }: { onPick: (text: string) => void; threadFocused: boolean }) {
+  const base = [
     { text: 'Do I have any emails from Tori Kogler? Open the latest.', icon: Search },
     { text: 'Triage my newest 25 inbox threads', icon: Sparkles },
     { text: 'Summarize unread from this week', icon: Sparkles },
     { text: 'Find every Stripe receipt from 2025 and label them Receipts/2025', icon: Tag },
-    { text: 'Compose a polite no to the last message from Alice', icon: Pencil },
   ];
+  const threadOnly = [
+    { text: 'Summarize this thread', icon: Sparkles },
+    { text: 'Draft a polite no to the latest message', icon: Pencil },
+    { text: 'Extract action items', icon: MessageSquarePlus },
+  ];
+  const suggestions = threadFocused ? threadOnly : base;
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2.5">
+      <div className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60 px-3 py-2.5">
+        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text)]">
+          <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
+          What I can do
+        </div>
+        <p className="text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
+          Search, summarize, triage, label, snooze, draft replies, schedule sends, look up contacts and calendar, research links on the web — and drive your inbox in real time as I work.
+        </p>
+      </div>
       <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Try</div>
       {suggestions.map((s) => {
         const Icon = s.icon;
@@ -430,10 +481,10 @@ function Suggestions({ onPick }: { onPick: (text: string) => void }) {
             key={s.text}
             type="button"
             onClick={() => onPick(s.text)}
-            className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-left text-[13px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-2 text-left text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           >
-            <Icon className="h-3 w-3 text-[var(--color-accent)]" />
-            {s.text}
+            <Icon className="h-3 w-3 shrink-0 text-[var(--color-accent)]" />
+            <span className="line-clamp-2">{s.text}</span>
           </button>
         );
       })}
@@ -444,14 +495,11 @@ function Suggestions({ onPick }: { onPick: (text: string) => void }) {
 function MessageView({ message }: { message: any }) {
   const isUser = message.role === 'user';
   if (isUser) {
-    const text = (message.parts || [])
-      .filter((p: any) => p.type === 'text')
-      .map((p: any) => p.text)
-      .join('');
+    const text = userTextFromMessage(message);
     return (
       <div className="flex justify-end">
-        <div className="max-w-[88%] rounded-2xl rounded-br-md bg-[var(--color-accent-soft)] px-3.5 py-2 text-[13.5px] leading-relaxed text-[var(--color-text)]">
-          {text}
+        <div className="max-w-[88%] rounded-2xl rounded-br-md bg-[var(--color-accent-soft)] px-3 py-1.5 text-[13px] leading-relaxed text-[var(--color-text)] shadow-[var(--shadow-soft)]">
+          {text || <span className="italic text-[var(--color-text-faint)]">(empty)</span>}
         </div>
       </div>
     );
@@ -462,7 +510,7 @@ function MessageView({ message }: { message: any }) {
         <Sparkles className="h-2.5 w-2.5 text-[var(--color-accent)]" />
         Mail OS
       </div>
-      <div className="flex flex-col gap-2.5">
+      <div className="flex flex-col gap-2">
         {(message.parts || []).map((part: any, i: number) => (
           <Part key={`${message.id}-${i}`} part={part} />
         ))}
@@ -471,9 +519,21 @@ function MessageView({ message }: { message: any }) {
   );
 }
 
+function userTextFromMessage(message: any): string {
+  // Be defensive: AI SDK 6 normally uses { parts: [{type:'text', text}] }, but
+  // older shapes used { content: string } or { text: string }.
+  if (typeof message?.content === 'string') return message.content;
+  if (typeof message?.text === 'string') return message.text;
+  const parts = Array.isArray(message?.parts) ? message.parts : [];
+  return parts
+    .filter((p: any) => p && p.type === 'text')
+    .map((p: any) => p.text || '')
+    .join('');
+}
+
 function Part({ part }: { part: any }) {
   const type = part.type;
-  if (type === 'text' && part.text) return <MarkdownText text={part.text} />;
+  if (type === 'text') return <MarkdownText text={part.text || ''} />;
   if (type === 'reasoning' || type === 'thinking')
     return <ReasoningBlock text={part.text || part.reasoning || ''} />;
   if (typeof type === 'string' && (type.startsWith('tool-') || type === 'dynamic-tool')) {
@@ -484,8 +544,9 @@ function Part({ part }: { part: any }) {
 }
 
 function MarkdownText({ text }: { text: string }) {
+  if (!text) return <span className="block h-3 w-12 rounded shimmer" />;
   return (
-    <div className="prose prose-sm max-w-none text-[13.5px] leading-relaxed text-[var(--color-text)] [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_a]:text-[var(--color-accent)] [&_a]:underline-offset-2 [&_a]:no-underline hover:[&_a]:underline [&_code]:rounded [&_code]:bg-[var(--color-bg-subtle)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[12px] [&_code]:font-medium [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--color-border)] [&_pre]:bg-[var(--color-bg-subtle)] [&_pre]:p-3 [&_pre]:text-[12px] [&_h1]:text-[15px] [&_h2]:text-[14px] [&_h3]:text-[13.5px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_ul]:my-2 [&_ol]:my-2 [&_ul>li]:my-0.5 [&_ol>li]:my-0.5 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--color-text-muted)] [&_strong]:font-semibold [&_em]:italic [&_table]:border-collapse [&_th]:border [&_td]:border [&_th]:border-[var(--color-border)] [&_td]:border-[var(--color-border)] [&_th]:px-2 [&_td]:px-2 [&_th]:py-1 [&_td]:py-1 [&_th]:bg-[var(--color-bg-subtle)] [&_hr]:my-3 [&_hr]:border-[var(--color-border)]">
+    <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_a]:text-[var(--color-accent)] [&_a]:underline-offset-2 [&_a]:no-underline hover:[&_a]:underline [&_code]:rounded [&_code]:bg-[var(--color-bg-subtle)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[11.5px] [&_code]:font-medium [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--color-border)] [&_pre]:bg-[var(--color-bg-subtle)] [&_pre]:p-2.5 [&_pre]:text-[11.5px] [&_h1]:text-[14px] [&_h2]:text-[13.5px] [&_h3]:text-[13px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_ul>li]:my-0 [&_ol>li]:my-0 [&_ul]:pl-4 [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--color-text-muted)] [&_strong]:font-semibold [&_em]:italic [&_table]:border-collapse [&_table]:text-[12px] [&_th]:border [&_td]:border [&_th]:border-[var(--color-border)] [&_td]:border-[var(--color-border)] [&_th]:px-1.5 [&_td]:px-1.5 [&_th]:py-1 [&_td]:py-1 [&_th]:bg-[var(--color-bg-subtle)] [&_hr]:my-2 [&_hr]:border-[var(--color-border)]">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
     </div>
   );
@@ -498,14 +559,14 @@ function ReasoningBlock({ text }: { text: string }) {
     <button
       type="button"
       onClick={() => setOpen((v) => !v)}
-      className="flex w-fit flex-col gap-1 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60 px-2 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]"
+      className="flex w-fit flex-col gap-1 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60 px-2 py-1.5 text-left text-[11px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]"
     >
       <div className="flex items-center gap-1.5">
         {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         <Brain className="h-3 w-3" />
         <span>{open ? 'Thinking' : `Thinking · ${text.split(/\s+/).length} words`}</span>
       </div>
-      {open ? <p className="mt-1 max-w-[640px] whitespace-pre-wrap text-[var(--color-text-muted)]">{text}</p> : null}
+      {open ? <p className="mt-1 max-w-[360px] whitespace-pre-wrap text-[var(--color-text-muted)]">{text}</p> : null}
     </button>
   );
 }
@@ -529,7 +590,7 @@ function ToolCard({ part }: { part: any }) {
   return (
     <div
       className={cn(
-        'flex flex-col gap-1 rounded-lg border px-3 py-2 text-[12px] transition-colors',
+        'flex flex-col gap-1 rounded-md border px-2.5 py-1.5 text-[11.5px] transition-colors',
         meta.isUi
           ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)]/40'
           : 'border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60',
@@ -543,38 +604,30 @@ function ToolCard({ part }: { part: any }) {
       >
         <div
           className={cn(
-            'grid h-5 w-5 place-items-center rounded',
+            'grid h-4 w-4 shrink-0 place-items-center rounded',
             meta.isUi ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]' : 'bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]',
             isError && 'bg-[var(--color-danger)]/20 text-[var(--color-danger)]',
           )}
         >
-          <Icon className="h-3 w-3" />
+          <Icon className="h-2.5 w-2.5" />
         </div>
-        <div className="flex flex-1 items-baseline gap-2">
+        <div className="flex flex-1 items-baseline gap-1.5 truncate">
           <span className="font-medium text-[var(--color-text)]">{meta.verb}</span>
           {summary ? <span className="truncate text-[var(--color-text-muted)]">{summary}</span> : null}
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)]">
+        <div className="flex shrink-0 items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
           {isPending ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>{isStreamingInput ? 'streaming' : 'running'}</span>
-            </>
+            <Loader2 className="h-2.5 w-2.5 animate-spin" />
           ) : isDone ? (
-            <>
-              <CheckCircle2 className="h-3 w-3 text-[var(--color-success)]" />
-              <span>done</span>
-            </>
+            <CheckCircle2 className="h-2.5 w-2.5 text-[var(--color-success)]" />
           ) : isError ? (
-            <span className="text-[var(--color-danger)]">error</span>
-          ) : (
-            <span>{state}</span>
-          )}
-          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <span className="text-[var(--color-danger)]">err</span>
+          ) : null}
+          {open ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
         </div>
       </button>
       {open ? (
-        <div className="mt-1 flex flex-col gap-1.5 border-t border-[var(--color-border)] pt-2 font-mono text-[10.5px]">
+        <div className="mt-1 flex flex-col gap-1 border-t border-[var(--color-border)] pt-1.5 font-mono text-[10px]">
           {args ? (
             <div>
               <div className="mb-0.5 text-[var(--color-text-faint)]">input</div>
@@ -586,7 +639,7 @@ function ToolCard({ part }: { part: any }) {
           {isDone && out !== undefined ? (
             <div>
               <div className="mb-0.5 text-[var(--color-text-faint)]">output</div>
-              <pre className="max-h-64 overflow-x-auto overflow-y-auto whitespace-pre-wrap text-[var(--color-text-muted)]">
+              <pre className="max-h-44 overflow-x-auto overflow-y-auto whitespace-pre-wrap text-[var(--color-text-muted)]">
                 {JSON.stringify(out, null, 2)}
               </pre>
             </div>
@@ -606,7 +659,7 @@ function summaryFor(name: string, args: any, out: any): string {
     if (name === 'search_threads' || name === 'nl_search') {
       const q = args.query || args.description;
       const n = out?.items?.length ?? out?.threads?.length;
-      return q ? (n != null ? `"${q}" · ${n} result${n === 1 ? '' : 's'}` : `"${q}"`) : '';
+      return q ? (n != null ? `"${q}" · ${n}` : `"${q}"`) : '';
     }
     if (name === 'get_thread') return `${args.threadId?.slice(-8) ?? ''}`;
     if (name === 'ui_focus_thread') return `${args.threadId?.slice(-8) ?? ''}`;
