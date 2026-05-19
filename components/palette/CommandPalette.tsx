@@ -52,7 +52,7 @@ export function CommandPalette() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-[600px] overflow-hidden p-0" showClose={false}>
+      <DialogContent className="max-w-[600px] overflow-hidden p-0" showCloseButton={false}>
         <Command shouldFilter>
           <CommandInput placeholder="Search threads, accounts, actions…" />
           <CommandList>
