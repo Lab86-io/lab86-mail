@@ -4,6 +4,7 @@ import { useChat } from '@ai-sdk/react';
 import { ArrowUp, Sparkles, X, Square, ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import TextareaAutosize from 'react-textarea-autosize';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
@@ -59,6 +60,9 @@ export function AIBar({ extraSystem }: Props) {
 
   const busy = status === 'streaming' || status === 'submitted';
 
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   return (
     <>
       <button
@@ -74,25 +78,27 @@ export function AIBar({ extraSystem }: Props) {
         <kbd>⌘K</kbd>
       </button>
 
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[80] grid place-items-start justify-center bg-black/30 px-4 pt-[8vh] backdrop-blur-sm"
-            onMouseDown={(e) => {
-              if (e.target === e.currentTarget) setOpen(false);
-            }}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: -6, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -6, scale: 0.98 }}
-              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-              className="relative flex w-full max-w-[720px] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]"
-            >
-              {busy ? <span className="border-beam" aria-hidden /> : null}
+      {mounted
+        ? createPortal(
+            <AnimatePresence>
+              {open ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[80] flex justify-center bg-black/40 px-4 pt-[8vh] backdrop-blur-md"
+                  onMouseDown={(e) => {
+                    if (e.target === e.currentTarget) setOpen(false);
+                  }}
+                >
+                  <motion.div
+                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                    transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                    className="relative flex h-fit w-full max-w-[720px] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]"
+                  >
+                    {busy ? <span className="border-beam" aria-hidden /> : null}
 
               <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2">
                 <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
@@ -171,10 +177,13 @@ export function AIBar({ extraSystem }: Props) {
                   </button>
                 )}
               </form>
-            </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+                  </motion.div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

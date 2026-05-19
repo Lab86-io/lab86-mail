@@ -65,7 +65,7 @@ export function Rail() {
   }, [accounts, account, setAccount]);
 
   return (
-    <aside className="flex h-full w-[228px] flex-col gap-3 bg-[var(--color-bg-subtle)] p-3 text-sm">
+    <aside className="flex h-full w-full flex-col gap-3 bg-[var(--color-bg-subtle)] p-3 text-sm">
       <div className="flex items-center gap-2.5 px-1 pt-1">
         <div className="grid h-7 w-7 place-items-center rounded-md bg-[var(--color-accent)] font-mono text-[12px] font-bold text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)]">
           M
