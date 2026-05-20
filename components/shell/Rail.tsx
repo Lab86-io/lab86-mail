@@ -11,7 +11,6 @@ import {
   Keyboard,
   Layers,
   MailOpen,
-  PanelLeftClose,
   Pencil,
   Plus,
   Send,
@@ -19,9 +18,21 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect } from 'react';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarTrigger,
+} from '@/components/ui/sidebar';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { cn } from '@/lib/utils';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 interface MailboxItem {
@@ -55,7 +66,6 @@ export function Rail() {
   const setQuery = useClientStore((s) => s.setQuery);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
-  const setRailOpen = useClientStore((s) => s.setRailOpen);
 
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
@@ -80,71 +90,74 @@ export function Rail() {
   }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 
   return (
-    <aside className="flex h-full w-full flex-col gap-3 bg-[var(--color-bg-subtle)] p-3 text-sm">
-      <div className="flex items-center justify-between gap-2 px-1 pt-1">
-        <span className="text-[15px] font-semibold tracking-tight text-[var(--color-text)]">
-          Lab86 Mail
-        </span>
-        <button
-          type="button"
-          onClick={() => setRailOpen(false)}
-          className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-          title="Collapse navigation rail"
-        >
-          <PanelLeftClose className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => openComposeNew()}
-        className="group relative flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-left text-sm font-medium shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]"
-      >
-        <span className="flex items-center gap-2">
-          <Plus className="h-4 w-4" />
-          Compose
-        </span>
-        <span className="text-[10px] text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]">
-          c
-        </span>
-      </button>
-
-      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-0.5">
-        <div className="px-1 pb-1 pt-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
-          Mailboxes
+    <Sidebar collapsible="icon" className="bg-[var(--color-bg-subtle)]">
+      <SidebarHeader className="gap-3">
+        {/* Title bar: the title only shows when expanded; the trigger stays put
+            and centers itself when collapsed so it doubles as the expand button. */}
+        <div className="flex items-center justify-between gap-2 px-1 pt-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+          <span className="text-[15px] font-semibold tracking-tight text-[var(--color-text)] group-data-[collapsible=icon]:hidden">
+            Lab86 Mail
+          </span>
+          <SidebarTrigger
+            title="Toggle navigation rail"
+            className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+          />
         </div>
-        {MAILBOXES.map(({ query: q, label, Icon }) => {
-          const active = q === query;
-          return (
-            <button
-              key={q}
-              type="button"
-              onClick={() => setQuery(q)}
-              className={cn(
-                'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors',
-                active
-                  ? 'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]'
-                  : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]/60 hover:text-[var(--color-text)]',
-              )}
-            >
-              <Icon className="h-3.5 w-3.5 opacity-70" />
-              {label}
-            </button>
-          );
-        })}
-      </nav>
 
-      <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)]">
-        <ThemeSwitcher />
-        <button
-          type="button"
-          onClick={() => setShortcutsOpen(true)}
-          className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-          title="Keyboard shortcuts (?)"
-        >
-          <Keyboard className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </aside>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              variant="outline"
+              tooltip="Compose"
+              onClick={() => openComposeNew()}
+              className="font-medium shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]"
+            >
+              <Plus />
+              <span>Compose</span>
+              <span className="ml-auto text-[10px] text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden">
+                c
+              </span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Mailboxes</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {MAILBOXES.map(({ query: q, label, Icon }) => (
+                <SidebarMenuItem key={q}>
+                  <SidebarMenuButton
+                    isActive={q === query}
+                    tooltip={label}
+                    onClick={() => setQuery(q)}
+                    className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                  >
+                    <Icon />
+                    <span>{label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter>
+        <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
+          <ThemeSwitcher />
+          <button
+            type="button"
+            onClick={() => setShortcutsOpen(true)}
+            className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            title="Keyboard shortcuts (?)"
+          >
+            <Keyboard className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </SidebarFooter>
+    </Sidebar>
   );
 }

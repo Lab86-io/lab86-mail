@@ -41,6 +41,7 @@ export interface ClientState {
   shortcutsOpen: boolean;
   rightRailOpen: boolean;
   railOpen: boolean;
+  railWidth: number;
   aiBarOpen: boolean;
   pendingReplyBody: string | null;
 
@@ -65,6 +66,7 @@ export interface ClientState {
   setShortcutsOpen: (open: boolean) => void;
   setRightRailOpen: (open: boolean) => void;
   setRailOpen: (open: boolean) => void;
+  setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
   setPendingReplyBody: (body: string | null) => void;
 }
@@ -104,6 +106,7 @@ export const useClientStore = create<ClientState>()(
       shortcutsOpen: false,
       rightRailOpen: true,
       railOpen: true,
+      railWidth: 240,
       aiBarOpen: false,
       pendingReplyBody: null,
 
@@ -147,6 +150,7 @@ export const useClientStore = create<ClientState>()(
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
       setRightRailOpen: (rightRailOpen) => set({ rightRailOpen }),
       setRailOpen: (railOpen) => set({ railOpen }),
+      setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
     }),
@@ -167,6 +171,7 @@ export const useClientStore = create<ClientState>()(
         query: s.query,
         rightRailOpen: s.rightRailOpen,
         railOpen: s.railOpen,
+        railWidth: s.railWidth,
       }),
     },
   ),
