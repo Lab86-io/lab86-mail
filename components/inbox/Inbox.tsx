@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'motion/react';
-import { RefreshCw, Search, Archive, Trash2, Sparkles, X, Loader2 } from 'lucide-react';
+import { RefreshCw, Search, Archive, Trash2, Gauge, Inbox as InboxIcon, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -13,6 +13,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatDate, shortFrom } from '@/lib/shared/format';
+
+// An empty search means "show everything" — map it to Gmail's All Mail
+// (everything except Trash). Matches the "All mail" mailbox in the rail.
+const ALL_MAIL_QUERY = '-in:trash newer_than:365d';
 
 interface ThreadRow {
   _id: string;
@@ -41,7 +45,14 @@ export function Inbox() {
   const [searchInput, setSearchInput] = useState(query);
   const [translating, setTranslating] = useState(false);
 
-  useEffect(() => setSearchInput(query), [query]);
+  // Reflect the active query in the bar — but show All Mail as an empty bar
+  // (placeholder), so "all mail" reads as "no filter" instead of raw syntax.
+  useEffect(() => setSearchInput(query === ALL_MAIL_QUERY ? '' : query), [query]);
+
+  const clearSearch = () => {
+    setSearchInput('');
+    setQuery(ALL_MAIL_QUERY);
+  };
 
   // Heuristic: a Gmail query has at least one operator. Natural language doesn't.
   const looksLikeGmailQuery = (s: string) =>
@@ -49,7 +60,11 @@ export function Inbox() {
 
   const submitSearch = async () => {
     const raw = searchInput.trim();
-    if (!raw) return;
+    if (!raw) {
+      // Empty search = all mail, instead of silently doing nothing.
+      setQuery(ALL_MAIL_QUERY);
+      return;
+    }
     if (looksLikeGmailQuery(raw)) {
       setQuery(raw);
       return;
@@ -182,11 +197,28 @@ export function Inbox() {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 submitSearch();
+              } else if (e.key === 'Escape' && searchInput) {
+                e.preventDefault();
+                clearSearch();
               }
             }}
             placeholder='Gmail query, or just say what you want ("emails from board members last quarter")'
-            className="h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] pl-8 pr-3 text-[13px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30"
+            className={cn(
+              'h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] pl-8 text-[13px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30',
+              searchInput ? 'pr-8' : 'pr-3',
+            )}
           />
+          {searchInput ? (
+            <button
+              type="button"
+              onClick={clearSearch}
+              className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+              title="Clear search (show all mail)"
+            >
+              <X className="h-3 w-3" />
+              <span className="sr-only">Clear search</span>
+            </button>
+          ) : null}
         </div>
         <button
           type="button"
@@ -231,7 +263,7 @@ export function Inbox() {
               onClick={() => bulkTriage.mutate()}
               className="flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
             >
-              <Sparkles className="h-3 w-3" />
+              <Gauge className="h-3 w-3" />
               AI: triage
             </button>
             <button
@@ -381,7 +413,7 @@ function EmptyState({ account }: { account: string }) {
     <div className="grid flex-1 place-items-center px-6 py-12 text-center">
       <div className="flex flex-col items-center gap-2">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-[var(--color-bg-subtle)]">
-          <Sparkles className="h-4 w-4 text-[var(--color-text-faint)]" />
+          <InboxIcon className="h-4 w-4 text-[var(--color-text-faint)]" />
         </div>
         <h3 className="text-sm font-medium text-[var(--color-text)]">Nothing here yet</h3>
         <p className="max-w-[280px] text-[12px] text-[var(--color-text-muted)]">

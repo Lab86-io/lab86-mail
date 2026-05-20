@@ -1,41 +1,64 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
+import { useQueryClient } from '@tanstack/react-query';
 import { DefaultChatTransport } from 'ai';
 import {
-  ArrowUp,
-  Sparkles,
-  X,
-  Square,
-  ChevronDown,
-  ChevronRight,
-  Search,
-  Mail,
-  MailOpen,
+  AlarmClock,
   Archive,
-  Trash2,
-  Send,
-  Star,
-  Pencil,
-  Tag,
+  Bell,
   Brain,
   Calendar,
-  User,
-  Globe,
-  History,
-  Eye,
-  AlarmClock,
   CheckCircle2,
+  ChevronDown,
+  Eye,
+  Gauge,
+  Globe,
+  Languages,
+  ListChecks,
   Loader2,
+  Mail,
+  MailOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Pencil,
+  ScrollText,
+  Search,
+  Send,
+  ShieldCheck,
+  Star,
+  Tag,
   Trash,
-  MessageSquarePlus,
+  Trash2,
+  User,
+  Wrench,
+  X,
+  XCircle,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Streamdown } from 'streamdown';
-import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
-import { useQueryClient } from '@tanstack/react-query';
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from '@/components/ai-elements/conversation';
+import { Loader } from '@/components/ai-elements/loader';
+import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message';
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputFooter,
+  type PromptInputMessage,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+} from '@/components/ai-elements/prompt-input';
+import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning';
+import { Suggestion } from '@/components/ai-elements/suggestion';
+import { Tool, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool';
+import { Button } from '@/components/ui/button';
+import { CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -73,13 +96,13 @@ const TOOL_ICONS: Record<string, any> = {
   schedule_send: AlarmClock,
   cancel_scheduled: AlarmClock,
   undo_send: AlarmClock,
-  summarize_thread: Sparkles,
-  triage_thread: Sparkles,
+  summarize_thread: ScrollText,
+  triage_thread: Gauge,
   draft_reply: Pencil,
-  bulk_triage: Sparkles,
-  extract_action_items: Sparkles,
-  translate_thread: Sparkles,
-  pre_send_critique: Sparkles,
+  bulk_triage: ListChecks,
+  extract_action_items: ListChecks,
+  translate_thread: Languages,
+  pre_send_critique: ShieldCheck,
   remember: Brain,
   recall: Brain,
   forget: Brain,
@@ -91,13 +114,13 @@ const TOOL_ICONS: Record<string, any> = {
   expand_alias: User,
   browserbase_search: Globe,
   browserbase_fetch: Globe,
-  log_action: History,
-  list_audit: History,
+  log_action: ListChecks,
+  list_audit: ListChecks,
   ui_focus_thread: Eye,
   ui_set_query: Search,
   ui_open_compose: Pencil,
   ui_open_reply: Send,
-  ui_toast: Sparkles,
+  ui_toast: Bell,
   ui_close_bar: X,
   ui_switch_account: User,
 };
@@ -146,24 +169,17 @@ const TOOL_VERBS: Record<string, string> = {
 };
 
 function toolMeta(name: string) {
-  const Icon = TOOL_ICONS[name] || Sparkles;
+  const Icon = TOOL_ICONS[name] || Wrench;
   const verb = TOOL_VERBS[name] || name.replaceAll('_', ' ');
   const isUi = name.startsWith('ui_');
   return { Icon, verb, isUi };
-}
-
-// ---------- Shared chat instance via a tiny store-aware hook ----------
-// Both the trigger and the sidebar use this. The sidebar is the only one
-// that renders messages; the trigger just toggles open state.
-function useAgentChat() {
-  const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
-  return useChat({ transport });
 }
 
 // ---------- Trigger: the pill at the top of the app shell ----------
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  const Icon = aiBarOpen ? PanelRightClose : PanelRightOpen;
 
   // ⌘K toggles the sidebar.
   useEffect(() => {
@@ -181,14 +197,14 @@ export function AIBarTrigger() {
     <button
       type="button"
       onClick={() => setAiBarOpen(!aiBarOpen)}
-      className="group relative flex h-8 w-full max-w-[640px] items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-left text-[13px] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
-      title="Toggle AI agent sidebar (⌘K)"
+      className={cn(
+        'absolute top-16 z-30 grid h-8 w-8 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-[right,background-color,color,border-color] duration-200 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+        aiBarOpen ? 'right-[406px]' : 'right-3',
+      )}
+      title={aiBarOpen ? 'Close agent sidebar (⌘K)' : 'Open agent sidebar (⌘K)'}
     >
-      <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent)]" />
-      <span className="flex-1 truncate">
-        Ask Mail OS anything — search, summarize, draft, send…
-      </span>
-      <kbd>⌘K</kbd>
+      <Icon className="h-3.5 w-3.5" />
+      <span className="sr-only">{aiBarOpen ? 'Close agent sidebar' : 'Open agent sidebar'}</span>
     </button>
   );
 }
@@ -208,31 +224,25 @@ export function AIBarSidebar() {
   const qc = useQueryClient();
 
   const [input, setInput] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputWrapRef = useRef<HTMLDivElement>(null);
 
   const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
   const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport });
 
-  // Auto-scroll to bottom on new messages / streaming.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, status]);
-
   // Auto-focus the textarea when the sidebar opens.
   useEffect(() => {
-    if (aiBarOpen) requestAnimationFrame(() => textareaRef.current?.focus());
+    if (aiBarOpen)
+      requestAnimationFrame(() => inputWrapRef.current?.querySelector('textarea')?.focus());
   }, [aiBarOpen]);
 
-  // Esc closes the sidebar if it's open.
+  // Esc closes the sidebar if it's open — unless the user is typing in the
+  // prompt, where Esc should be a no-op.
   useEffect(() => {
     if (!aiBarOpen) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && document.activeElement !== textareaRef.current) {
-        setAiBarOpen(false);
-      }
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
+      if (e.key === 'Escape' && !typing) setAiBarOpen(false);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -315,24 +325,35 @@ export function AIBarSidebar() {
     }
   }, [messages, qc]);
 
-  const submit = (text: string) => {
-    if (!text.trim()) return;
+  const busy = status === 'streaming' || status === 'submitted';
+
+  const send = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || busy) return;
     setInput('');
     const contextLines = [
       account ? `Active account: ${account}` : '',
       selectedThreadId ? `Currently focused thread id: ${selectedThreadId}` : '',
-    ].filter(Boolean).join('\n');
-    sendMessage(
-      { text },
-      { body: { extraSystem: contextLines || undefined } } as any,
-    );
+    ]
+      .filter(Boolean)
+      .join('\n');
+    sendMessage({ text: trimmed }, { body: { extraSystem: contextLines || undefined } } as any);
   };
 
-  const busy = status === 'streaming' || status === 'submitted';
+  const handleSubmit = (message: PromptInputMessage) => {
+    if (busy) {
+      stop();
+      return;
+    }
+    send(message.text || '');
+  };
 
   // The sidebar is always mounted but width is controlled by the grid; we
   // render nothing inside when closed to keep the DOM cheap.
   if (!aiBarOpen) return null;
+
+  const last = messages[messages.length - 1];
+  const showLoader = busy && (last?.role !== 'assistant' || !hasVisibleContent(last));
 
   return (
     <motion.section
@@ -345,111 +366,113 @@ export function AIBarSidebar() {
     >
       <TopProgressBar active={busy} />
 
-      <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
-        <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
-          <div className="relative grid h-5 w-5 place-items-center rounded-md bg-[var(--color-accent-soft)]">
-            <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
-            {busy ? (
-              <span className="absolute inset-0 rounded-md bg-[var(--color-accent)]/20 animate-pulse" />
-            ) : null}
-          </div>
+      <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2.5">
+        <div className="flex items-baseline gap-1.5 text-[13px]">
           <span className="font-medium text-[var(--color-text)]">Agent</span>
           <span className="text-[var(--color-text-faint)]">·</span>
-          <span>gpt-5.5</span>
+          <span className="text-[11.5px] text-[var(--color-text-muted)]">gpt-5.5</span>
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
+        <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setMessages([])}
-            className="grid h-6 w-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
             title="Clear conversation"
+            className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
           >
             <Trash className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
+            <span className="sr-only">Clear conversation</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setAiBarOpen(false)}
-            className="grid h-6 w-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
             title="Close (⌘K)"
+            className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
           >
             <X className="h-3.5 w-3.5" />
-          </button>
+            <span className="sr-only">Close</span>
+          </Button>
         </div>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
-        {messages.length === 0 ? (
-          <Suggestions onPick={submit} threadFocused={!!selectedThreadId} />
-        ) : (
-          <div className="flex flex-col gap-4">
-            {messages.map((m) => <MessageView key={m.id} message={m} />)}
-            {busy && messages[messages.length - 1]?.role === 'user' ? <ThinkingDots /> : null}
+      {messages.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-5 overflow-y-auto px-5 py-8 text-center">
+          <div className="space-y-1.5">
+            <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
+            <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+              Search, triage, summarize, draft replies, schedule sends, look up contacts and
+              calendar, research links — and act across your inbox in real time.
+            </p>
           </div>
-        )}
-        {error ? (
-          <div className="mt-3 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
-            {error.message}
+          <div className="flex w-full max-w-[320px] flex-col gap-2">
+            {(selectedThreadId ? THREAD_SUGGESTIONS : BASE_SUGGESTIONS).map((s) => (
+              <Suggestion
+                key={s}
+                suggestion={s}
+                onClick={send}
+                className="h-auto w-full justify-start whitespace-normal rounded-lg border-[var(--color-border)] px-3 py-2 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              />
+            ))}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : (
+        <Conversation className="flex-1">
+          <ConversationContent className="gap-4">
+            {messages.map((m) => (
+              <MessageView key={m.id} message={m} />
+            ))}
+            {showLoader ? (
+              <div className="flex items-center gap-2 px-1 text-[12px] text-[var(--color-text-muted)]">
+                <Loader size={14} />
+                <span>Working…</span>
+              </div>
+            ) : null}
+            {error ? (
+              <div className="rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
+                {error.message}
+              </div>
+            ) : null}
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
+      )}
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit(input);
-        }}
-        className="flex items-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2.5"
-      >
-        <TextareaAutosize
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit(input);
-            }
-          }}
-          placeholder="Find, draft, schedule, label, anything…"
-          maxRows={8}
-          minRows={1}
-          className="flex-1 resize-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[13px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30 placeholder:text-[var(--color-text-faint)]"
-        />
-        {busy ? (
-          <button
-            type="button"
-            onClick={() => stop()}
-            className="grid h-8 w-8 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-danger)] hover:bg-[var(--color-bg-muted)]"
-            title="Stop"
-          >
-            <Square className="h-3.5 w-3.5" fill="currentColor" />
-          </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!input.trim()}
-            className="grid h-8 w-8 place-items-center rounded-md bg-[var(--color-accent)] text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-            title="Send"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-        )}
-      </form>
+      <div ref={inputWrapRef} className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2.5">
+        <PromptInput onSubmit={handleSubmit}>
+          <PromptInputBody>
+            <PromptInputTextarea
+              value={input}
+              onChange={(e) => setInput(e.currentTarget.value)}
+              placeholder="Find, draft, schedule, label, anything…"
+              className="max-h-40 min-h-11 text-[13px]"
+            />
+          </PromptInputBody>
+          <PromptInputFooter>
+            <PromptInputTools />
+            <PromptInputSubmit status={status} disabled={!busy && !input.trim()} />
+          </PromptInputFooter>
+        </PromptInput>
+      </div>
     </motion.section>
   );
 }
 
-function ThinkingDots() {
-  return (
-    <div className="flex items-center gap-1.5 px-1 text-[11px] text-[var(--color-text-faint)]">
-      <Loader2 className="h-3 w-3 animate-spin" />
-      Thinking…
-    </div>
-  );
-}
+const BASE_SUGGESTIONS = [
+  'Do I have any emails from Tori Kogler? Open the latest.',
+  'Triage my newest 25 inbox threads',
+  'Summarize unread from this week',
+  'Find every Stripe receipt from 2025 and label them Receipts/2025',
+];
 
-// Indeterminate top progress bar (Linear-style sliding strip) instead of the
-// old border-beam. Active only while the agent is streaming.
+const THREAD_SUGGESTIONS = [
+  'Summarize this thread',
+  'Draft a polite no to the latest message',
+  'Extract action items',
+];
+
+// Indeterminate top progress bar (Linear-style sliding strip). Active only
+// while the agent is streaming.
 function TopProgressBar({ active }: { active: boolean }) {
   return (
     <div
@@ -470,47 +493,18 @@ function TopProgressBar({ active }: { active: boolean }) {
   );
 }
 
-function Suggestions({ onPick, threadFocused }: { onPick: (text: string) => void; threadFocused: boolean }) {
-  const base = [
-    { text: 'Do I have any emails from Tori Kogler? Open the latest.', icon: Search },
-    { text: 'Triage my newest 25 inbox threads', icon: Sparkles },
-    { text: 'Summarize unread from this week', icon: Sparkles },
-    { text: 'Find every Stripe receipt from 2025 and label them Receipts/2025', icon: Tag },
-  ];
-  const threadOnly = [
-    { text: 'Summarize this thread', icon: Sparkles },
-    { text: 'Draft a polite no to the latest message', icon: Pencil },
-    { text: 'Extract action items', icon: MessageSquarePlus },
-  ];
-  const suggestions = threadFocused ? threadOnly : base;
-  return (
-    <div className="flex flex-col gap-2.5">
-      <div className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60 px-3 py-2.5">
-        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text)]">
-          <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
-          What I can do
-        </div>
-        <p className="text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
-          Search, summarize, triage, label, snooze, draft replies, schedule sends, look up contacts and calendar, research links on the web — and drive your inbox in real time as I work.
-        </p>
-      </div>
-      <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Try</div>
-      {suggestions.map((s) => {
-        const Icon = s.icon;
-        return (
-          <button
-            key={s.text}
-            type="button"
-            onClick={() => onPick(s.text)}
-            className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-2 text-left text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-          >
-            <Icon className="h-3 w-3 shrink-0 text-[var(--color-accent)]" />
-            <span className="line-clamp-2">{s.text}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
+function hasVisibleContent(message: any): boolean {
+  if (!message) return false;
+  if (message.role === 'user') return true;
+  for (const part of message.parts || []) {
+    const type = part?.type;
+    if (type === 'text' && (part.text || '').trim()) return true;
+    if ((type === 'reasoning' || type === 'thinking') && (part.text || part.reasoning || '').trim())
+      return true;
+    if (typeof type === 'string' && (type.startsWith('tool-') || type === 'dynamic-tool'))
+      return true;
+  }
+  return false;
 }
 
 function MessageView({ message }: { message: any }) {
@@ -518,25 +512,22 @@ function MessageView({ message }: { message: any }) {
   if (isUser) {
     const text = userTextFromMessage(message);
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[88%] rounded-2xl rounded-br-md bg-[var(--color-accent-soft)] px-3 py-1.5 text-[13px] leading-relaxed text-[var(--color-text)] shadow-[var(--shadow-soft)]">
+      <Message from="user">
+        <MessageContent className="whitespace-pre-wrap text-[13px] leading-relaxed">
           {text || <span className="italic text-[var(--color-text-faint)]">(empty)</span>}
-        </div>
-      </div>
+        </MessageContent>
+      </Message>
     );
   }
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
-        <Sparkles className="h-2.5 w-2.5 text-[var(--color-accent)]" />
-        Mail OS
-      </div>
-      <div className="flex flex-col gap-2">
+    <Message from="assistant">
+      <MessageContent>
         {(message.parts || []).map((part: any, i: number) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: message parts are append-only during streaming and have no stable id
           <Part key={`${message.id}-${i}`} part={part} />
         ))}
-      </div>
-    </div>
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -554,126 +545,91 @@ function userTextFromMessage(message: any): string {
 
 function Part({ part }: { part: any }) {
   const type = part.type;
-  if (type === 'text') return <MarkdownText text={part.text || ''} />;
-  if (type === 'reasoning' || type === 'thinking')
-    return <ReasoningBlock text={part.text || part.reasoning || ''} />;
+  if (type === 'text') {
+    const text = part.text || '';
+    // Skip empty text parts entirely. The model emits these between tool calls;
+    // rendering a placeholder for each is what produced the old "loading bar
+    // flashing between every tool call".
+    if (!text.trim()) return null;
+    return (
+      <MessageResponse className="text-[13px] leading-relaxed [&_a]:text-[var(--color-accent)]">
+        {text}
+      </MessageResponse>
+    );
+  }
+  if (type === 'reasoning' || type === 'thinking') {
+    const text = part.text || part.reasoning || '';
+    if (!text.trim()) return null;
+    return (
+      <Reasoning className="w-full">
+        <ReasoningTrigger />
+        <ReasoningContent>{text}</ReasoningContent>
+      </Reasoning>
+    );
+  }
   if (typeof type === 'string' && (type.startsWith('tool-') || type === 'dynamic-tool')) {
     return <ToolCard part={part} />;
   }
-  if (type === 'step-start' || type === 'step-end') return null;
   return null;
 }
 
-function MarkdownText({ text }: { text: string }) {
-  if (!text) return <span className="block h-3 w-12 rounded shimmer" />;
-  // Streamdown is Vercel's streaming-safe react-markdown drop-in with built-in
-  // GFM, code highlighting, math, mermaid, link safety, and an in-progress
-  // cursor — perfect for AI chat. We just give it our prose styles.
-  return (
-    <div className="prose prose-sm max-w-none break-words text-[13px] leading-relaxed text-[var(--color-text)] [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_a]:text-[var(--color-accent)] [&_a]:underline-offset-2 [&_a]:no-underline hover:[&_a]:underline [&_code]:break-words [&_code]:rounded [&_code]:bg-[var(--color-bg-subtle)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[11.5px] [&_code]:font-medium [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--color-border)] [&_pre]:bg-[var(--color-bg-subtle)] [&_pre]:p-2.5 [&_pre]:text-[11.5px] [&_pre_code]:whitespace-pre [&_pre_code]:break-normal [&_h1]:text-[14px] [&_h2]:text-[13.5px] [&_h3]:text-[13px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_ul>li]:my-0 [&_ol>li]:my-0 [&_ul]:pl-4 [&_ol]:pl-4 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--color-text-muted)] [&_strong]:font-semibold [&_em]:italic [&_table]:block [&_table]:overflow-x-auto [&_table]:border-collapse [&_table]:text-[12px] [&_th]:border [&_td]:border [&_th]:border-[var(--color-border)] [&_td]:border-[var(--color-border)] [&_th]:px-1.5 [&_td]:px-1.5 [&_th]:py-1 [&_td]:py-1 [&_th]:bg-[var(--color-bg-subtle)] [&_hr]:my-2 [&_hr]:border-[var(--color-border)]">
-      <Streamdown parseIncompleteMarkdown>{text}</Streamdown>
-    </div>
-  );
-}
-
-function ReasoningBlock({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  if (!text) return null;
-  return (
-    <button
-      type="button"
-      onClick={() => setOpen((v) => !v)}
-      className="flex w-fit flex-col gap-1 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60 px-2 py-1.5 text-left text-[11px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]"
-    >
-      <div className="flex items-center gap-1.5">
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        <Brain className="h-3 w-3" />
-        <span>{open ? 'Thinking' : `Thinking · ${text.split(/\s+/).length} words`}</span>
-      </div>
-      {open ? <p className="mt-1 max-w-[360px] whitespace-pre-wrap text-[var(--color-text-muted)]">{text}</p> : null}
-    </button>
-  );
+function ToolStatus({ state }: { state: string }) {
+  if (state === 'input-streaming' || state === 'input-available')
+    return <Loader2 className="size-3 shrink-0 animate-spin text-[var(--color-text-faint)]" />;
+  if (state === 'output-available')
+    return <CheckCircle2 className="size-3 shrink-0 text-[var(--color-success)]" />;
+  if (state === 'output-error') return <XCircle className="size-3 shrink-0 text-[var(--color-danger)]" />;
+  return null;
 }
 
 function ToolCard({ part }: { part: any }) {
-  const [open, setOpen] = useState(false);
   const name = part.toolName || (typeof part.type === 'string' ? part.type.replace(/^tool-/, '') : 'tool');
-  const state = part.state || 'unknown';
-  const meta = toolMeta(name);
-  const Icon = meta.Icon;
-
-  const isStreamingInput = state === 'input-streaming';
-  const isPending = state === 'input-available' || state === 'input-streaming';
-  const isDone = state === 'output-available';
-  const isError = state === 'output-error';
-
-  const args = part.input;
-  const out = part.output;
-  const summary = summaryFor(name, args, out);
+  const state = part.state || 'input-available';
+  const { Icon, verb, isUi } = toolMeta(name);
+  const summary = summaryFor(name, part.input, part.output);
+  const hasDetail = part.input !== undefined || part.output !== undefined || part.errorText;
 
   return (
-    <div
+    <Tool
       className={cn(
-        'flex flex-col gap-1 rounded-md border px-2.5 py-1.5 text-[11.5px] transition-colors',
-        meta.isUi
-          ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)]/40'
-          : 'border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60',
-        isError && 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10',
+        'mb-0 overflow-hidden rounded-md border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60 text-[12px]',
+        isUi && 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)]/40',
+        state === 'output-error' && 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5',
       )}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 text-left"
+      <CollapsibleTrigger
+        disabled={!hasDetail}
+        className="group flex w-full items-center gap-2 px-2.5 py-1.5 text-left disabled:cursor-default"
       >
-        <div
+        <span
           className={cn(
-            'grid h-4 w-4 shrink-0 place-items-center rounded',
-            meta.isUi ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]' : 'bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]',
-            isError && 'bg-[var(--color-danger)]/20 text-[var(--color-danger)]',
+            'grid size-5 shrink-0 place-items-center rounded',
+            isUi
+              ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+              : 'bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]',
+            state === 'output-error' && 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]',
           )}
         >
-          <Icon className="h-2.5 w-2.5" />
-        </div>
-        <div className="flex flex-1 items-baseline gap-1.5 truncate">
-          <span className="font-medium text-[var(--color-text)]">{meta.verb}</span>
-          {summary ? <span className="truncate text-[var(--color-text-muted)]">{summary}</span> : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
-          {isPending ? (
-            <Loader2 className="h-2.5 w-2.5 animate-spin" />
-          ) : isDone ? (
-            <CheckCircle2 className="h-2.5 w-2.5 text-[var(--color-success)]" />
-          ) : isError ? (
-            <span className="text-[var(--color-danger)]">err</span>
-          ) : null}
-          {open ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
-        </div>
-      </button>
-      {open ? (
-        <div className="mt-1 flex flex-col gap-1 border-t border-[var(--color-border)] pt-1.5 font-mono text-[10px]">
-          {args ? (
-            <div>
-              <div className="mb-0.5 text-[var(--color-text-faint)]">input</div>
-              <pre className="overflow-x-auto whitespace-pre-wrap text-[var(--color-text-muted)]">
-                {JSON.stringify(args, null, 2)}
-              </pre>
-            </div>
-          ) : null}
-          {isDone && out !== undefined ? (
-            <div>
-              <div className="mb-0.5 text-[var(--color-text-faint)]">output</div>
-              <pre className="max-h-44 overflow-x-auto overflow-y-auto whitespace-pre-wrap text-[var(--color-text-muted)]">
-                {JSON.stringify(out, null, 2)}
-              </pre>
-            </div>
-          ) : null}
-          {isError && part.errorText ? (
-            <div className="text-[var(--color-danger)]">{part.errorText}</div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+          <Icon className="size-3" />
+        </span>
+        <span className="font-medium text-[var(--color-text)]">{verb}</span>
+        {summary ? (
+          <span className="min-w-0 flex-1 truncate text-[var(--color-text-muted)]">{summary}</span>
+        ) : (
+          <span className="flex-1" />
+        )}
+        <ToolStatus state={state} />
+        {hasDetail ? (
+          <ChevronDown className="size-3 shrink-0 text-[var(--color-text-faint)] transition-transform group-data-[state=open]:rotate-180" />
+        ) : null}
+      </CollapsibleTrigger>
+      <ToolContent>
+        {part.input !== undefined ? <ToolInput input={part.input} /> : null}
+        {part.output !== undefined || part.errorText ? (
+          <ToolOutput output={part.output} errorText={part.errorText} />
+        ) : null}
+      </ToolContent>
+    </Tool>
   );
 }
 
@@ -693,8 +649,7 @@ function summaryFor(name: string, args: any, out: any): string {
     if (name === 'archive_thread' || name === 'trash_thread') return args.threadId?.slice(-8) ?? '';
     if (name === 'send_message' || name === 'reply' || name === 'reply_all')
       return `to ${args.to || args.messageId?.slice(-8) || ''}`;
-    if (name === 'snooze_thread' && args.untilTs)
-      return new Date(args.untilTs).toLocaleString();
+    if (name === 'snooze_thread' && args.untilTs) return new Date(args.untilTs).toLocaleString();
     if (name === 'summarize_thread' || name === 'triage_thread' || name === 'draft_reply')
       return `${args.threadId?.slice(-8) ?? ''}`;
     if (name === 'remember' || name === 'recall' || name === 'forget') return args.email;

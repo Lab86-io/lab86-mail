@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Send as SendIcon, X, Sparkles } from 'lucide-react';
+import { Send as SendIcon, X, PenLine } from 'lucide-react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { callTool } from '@/lib/api-client';
@@ -98,7 +98,7 @@ export function ComposeDialog() {
             type="button"
             className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]"
           >
-            <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
+            <PenLine className="h-3 w-3 text-[var(--color-accent)]" />
             AI assist
           </button>
           <button

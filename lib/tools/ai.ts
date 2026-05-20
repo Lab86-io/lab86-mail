@@ -43,15 +43,15 @@ export const summarizeThread = defineTool({
     const messages = await loadThread(account, threadId);
     if (!messages.length) return { summary: '(empty thread)', model: 'none' };
     if (!hasAi()) {
-      const summary = `Thread "${messages[0].subject}" with ${messages.length} message(s) between ${[
-        ...new Set(messages.map((m) => m.from)),
-      ].join(', ')}.`;
+      const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
+      const summary = `${messages[0].subject} — ${messages.length} message(s) with ${senders}.`;
       await setThreadSummary(account, threadId, summary).catch(() => undefined);
       return { summary, model: 'local' };
     }
     const prompt = [
-      'Summarize this email thread for Jakob.',
-      'Output strictly: 1-line headline, then sections "Who participated", "What was decided", "Open questions", "Suggested next action". Keep under 220 words.',
+      'Summarize this email thread for Jakob as a tight TL;DR.',
+      'Output: one plain sentence (max ~25 words) capturing the gist. Then, ONLY if the thread genuinely warrants it, up to 3 short bullets (each "- ", max ~12 words) for the key facts, asks, or deadlines.',
+      'No headings, no preamble, no sign-off. Omit the bullets entirely for simple threads.',
       '',
       'Thread:',
       concatThread(messages),
@@ -69,10 +69,9 @@ export const summarizeThread = defineTool({
     } catch (err: any) {
       // Cloud model failed — most often insufficient_quota / rate limit / network.
       // Fall back to a deterministic local summary so the UI never gets stuck.
-      const senders = [...new Set(messages.map((m) => m.from))].slice(0, 4).join(', ');
+      const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
       const last = messages[messages.length - 1];
-      const lastPreview = (last.textBody || last.snippet || '').replace(/\s+/g, ' ').slice(0, 320);
-      const summary = `${last.subject}\n\nThread with ${messages.length} message(s) between ${senders}. Latest from ${last.from}:\n\n${lastPreview}\n\n(AI summary unavailable: ${err?.message || 'model error'} — showing local fallback.)`;
+      const summary = `${last.subject} — ${messages.length} message(s) with ${senders}; latest from ${last.from}.\n\n(AI summary unavailable: ${err?.message || 'model error'}.)`;
       await setThreadSummary(account, threadId, summary).catch(() => undefined);
       return { summary, model: 'local-fallback' };
     }

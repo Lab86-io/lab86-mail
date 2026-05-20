@@ -1,29 +1,27 @@
 'use client';
 
-import {
-  Inbox,
-  MailOpen,
-  Star,
-  Send,
-  Pencil,
-  Archive,
-  Trash2,
-  AlarmClock,
-  Sparkles,
-  Plus,
-  Cloud,
-  Calendar,
-  Layers,
-  PanelRight,
-  PanelRightClose,
-  Mailbox,
-} from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import {
+  AlarmClock,
+  Archive,
+  Calendar,
+  Cloud,
+  Inbox,
+  Keyboard,
+  Layers,
+  MailOpen,
+  Pencil,
+  Plus,
+  Flag,
+  Send,
+  Star,
+  Trash2,
+} from 'lucide-react';
 import { useEffect } from 'react';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { ThemeSwitcher } from './ThemeSwitcher';
 import { cn } from '@/lib/utils';
+import { ThemeSwitcher } from './ThemeSwitcher';
 
 interface MailboxItem {
   query: string;
@@ -35,7 +33,7 @@ const MAILBOXES: MailboxItem[] = [
   { query: 'in:inbox newer_than:30d', label: 'Inbox', Icon: Inbox },
   { query: 'is:unread newer_than:30d', label: 'Unread', Icon: MailOpen },
   { query: 'is:starred newer_than:365d', label: 'Starred', Icon: Star },
-  { query: 'is:important newer_than:60d', label: 'Important', Icon: Sparkles },
+  { query: 'is:important newer_than:60d', label: 'Important', Icon: Flag },
   { query: 'from:(icloud.com OR me.com) newer_than:365d', label: 'iCloud', Icon: Cloud },
   { query: 'has:attachment newer_than:90d', label: 'Attachments', Icon: Layers },
   { query: 'newer_than:7d', label: 'This week', Icon: Calendar },
@@ -55,8 +53,6 @@ export function Rail() {
   const setQuery = useClientStore((s) => s.setQuery);
   const setComposeOpen = useClientStore((s) => s.setComposeOpen);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
-  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
-  const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
 
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
@@ -148,35 +144,15 @@ export function Rail() {
         })}
       </nav>
 
-      <div className="flex flex-col gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2 shadow-[var(--shadow-soft)]">
-        <button
-          type="button"
-          onClick={() => setAiBarOpen(!aiBarOpen)}
-          className={cn(
-            'flex items-center justify-between rounded-md px-2 py-1.5 text-[12px] font-medium transition-colors',
-            aiBarOpen
-              ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
-          )}
-          title={aiBarOpen ? 'Hide agent (⌘K)' : 'Show agent (⌘K)'}
-        >
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5" />
-            Agent
-          </span>
-          <span className="flex items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
-            {aiBarOpen ? <PanelRightClose className="h-3 w-3" /> : <PanelRight className="h-3 w-3" />}
-            <kbd>⌘K</kbd>
-          </span>
-        </button>
+      <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)]">
         <ThemeSwitcher />
         <button
           type="button"
           onClick={() => setShortcutsOpen(true)}
-          className="flex items-center justify-between rounded px-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          title="Keyboard shortcuts (?)"
         >
-          <span>Keyboard shortcuts</span>
-          <kbd>?</kbd>
+          <Keyboard className="h-3.5 w-3.5" />
         </button>
       </div>
     </aside>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Inbox, MailOpen, Star, Send, Pencil, Sparkles, Moon, Sun, Cloud, AlarmClock } from 'lucide-react';
+import { Inbox, MailOpen, Star, Send, Pencil, Flag, Paperclip, Gauge, ScrollText, Moon, Sun, Cloud, AlarmClock } from 'lucide-react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Command, CommandInput, CommandList, CommandGroup, CommandItem, CommandEmpty, CommandShortcut } from '@/components/ui/command';
 import { useClientStore } from '@/lib/client-state';
@@ -63,9 +63,9 @@ export function CommandPalette() {
                 ['in:inbox newer_than:30d', 'Inbox', Inbox],
                 ['is:unread newer_than:30d', 'Unread', MailOpen],
                 ['is:starred newer_than:365d', 'Starred', Star],
-                ['is:important newer_than:60d', 'Important', Sparkles],
+                ['is:important newer_than:60d', 'Important', Flag],
                 ['from:(icloud.com OR me.com) newer_than:365d', 'iCloud', Cloud],
-                ['has:attachment newer_than:90d', 'Attachments', Sparkles],
+                ['has:attachment newer_than:90d', 'Attachments', Paperclip],
                 ['in:sent newer_than:365d', 'Sent', Send],
                 ['in:drafts', 'Drafts', Pencil],
                 ['label:MailOS/Snoozed', 'Snoozed', AlarmClock],
@@ -78,7 +78,7 @@ export function CommandPalette() {
 
             <CommandGroup heading="AI">
               <CommandItem value="ai compose" onSelect={() => run(() => setComposeOpen(true))}>
-                <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent)]" /> Compose new message
+                <Pencil className="h-3.5 w-3.5 text-[var(--color-accent)]" /> Compose new message
                 <CommandShortcut>c</CommandShortcut>
               </CommandItem>
               <CommandItem
@@ -90,7 +90,7 @@ export function CommandPalette() {
                   })
                 }
               >
-                <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent)]" /> AI · triage newest 25
+                <Gauge className="h-3.5 w-3.5 text-[var(--color-accent)]" /> AI · triage newest 25
               </CommandItem>
               <CommandItem
                 value="ai daily digest"
@@ -100,7 +100,7 @@ export function CommandPalette() {
                   })
                 }
               >
-                <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent)]" /> AI · summarize today
+                <ScrollText className="h-3.5 w-3.5 text-[var(--color-accent)]" /> AI · summarize today
               </CommandItem>
             </CommandGroup>
 

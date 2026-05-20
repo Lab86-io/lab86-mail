@@ -21,6 +21,7 @@ export interface ClientState {
   composePrefill: ComposePrefill | null;
   shortcutsOpen: boolean;
   rightRailOpen: boolean;
+  railOpen: boolean;
   aiBarOpen: boolean;
   pendingReplyBody: string | null;
 
@@ -35,6 +36,7 @@ export interface ClientState {
   openCompose: (prefill?: ComposePrefill) => void;
   setShortcutsOpen: (open: boolean) => void;
   setRightRailOpen: (open: boolean) => void;
+  setRailOpen: (open: boolean) => void;
   setAiBarOpen: (open: boolean) => void;
   setPendingReplyBody: (body: string | null) => void;
 }
@@ -51,6 +53,7 @@ export const useClientStore = create<ClientState>()(
       composePrefill: null,
       shortcutsOpen: false,
       rightRailOpen: true,
+      railOpen: true,
       aiBarOpen: false,
       pendingReplyBody: null,
 
@@ -71,12 +74,18 @@ export const useClientStore = create<ClientState>()(
       openCompose: (prefill) => set({ composeOpen: true, composePrefill: prefill ?? null }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
       setRightRailOpen: (rightRailOpen) => set({ rightRailOpen }),
+      setRailOpen: (railOpen) => set({ railOpen }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
     }),
     {
       name: 'mail-os-ui',
-      partialize: (s) => ({ account: s.account, query: s.query, rightRailOpen: s.rightRailOpen }),
+      partialize: (s) => ({
+        account: s.account,
+        query: s.query,
+        rightRailOpen: s.rightRailOpen,
+        railOpen: s.railOpen,
+      }),
     },
   ),
 );

@@ -7,25 +7,31 @@ import {
   Archive,
   Trash2,
   Mail,
-  MailOpen,
-  Star,
   ChevronDown,
   ChevronRight,
+  Download,
   ExternalLink,
-  Sparkles,
+  File as FileIcon,
+  FileArchive,
+  FileAudio,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
+  PenLine,
   Reply,
   Forward,
   Send as SendIcon,
   X,
-  AlarmClock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import TextareaAutosize from 'react-textarea-autosize';
+import { MessageResponse } from '@/components/ai-elements/message';
 import { callTool } from '@/lib/api-client';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { useClientStore } from '@/lib/client-state';
 import { Avatar } from '@/components/ui/avatar';
-import { cn } from '@/lib/utils';
+import type { Attachment } from '@/lib/shared/types';
 import { formatDate, shortFrom, gmailUrlFor } from '@/lib/shared/format';
 
 export function ThreadView() {
@@ -179,9 +185,8 @@ function SummaryCard({
       className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3"
     >
       <header className="mb-1.5 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent)]">
-          <Sparkles className="h-2.5 w-2.5" />
-          AI summary
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
+          Summary
         </span>
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-[var(--color-text-faint)]">{model || 'gpt-5.5-mini'}</span>
@@ -205,7 +210,9 @@ function SummaryCard({
           Couldn't summarize: {error}
         </div>
       ) : data ? (
-        <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-[var(--color-text)]">{data}</pre>
+        <MessageResponse className="text-[12.5px] leading-relaxed text-[var(--color-text)] [&_p]:my-0 [&_ul]:mt-1 [&_ul]:mb-0 [&_ul]:pl-4 [&_li]:my-0.5 [&_li]:marker:text-[var(--color-text-faint)]">
+          {data}
+        </MessageResponse>
       ) : (
         <div className="text-[12px] text-[var(--color-text-muted)]">No summary yet.</div>
       )}
@@ -285,6 +292,7 @@ function MessageCard({
           >
             <div className="px-4 py-3">
               <MessageBody html={message.htmlBody} text={message.textBody} />
+              <Attachments attachments={message.attachments} messageId={message._id} account={account} />
             </div>
             {isLast ? (
               <div className="flex items-center gap-1.5 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
@@ -352,6 +360,82 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
   return <pre className="whitespace-pre-wrap font-sans text-[13.5px]">{text || ''}</pre>;
 }
 
+function Attachments({
+  attachments,
+  messageId,
+  account,
+}: {
+  attachments?: Attachment[];
+  messageId: string;
+  account: string;
+}) {
+  const list = (attachments || []).filter((a) => a.attachmentId);
+  if (!list.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-3">
+      {list.map((att, i) => {
+        const href = `/api/attachments/${encodeURIComponent(messageId)}/${encodeURIComponent(
+          att.attachmentId,
+        )}?account=${encodeURIComponent(account)}&name=${encodeURIComponent(
+          att.filename,
+        )}&mime=${encodeURIComponent(att.mimeType)}`;
+        const ext = (att.filename.split('.').pop() || '').slice(0, 5).toUpperCase();
+        const meta = [ext, formatBytes(att.size)].filter(Boolean).join(' · ');
+        return (
+          <a
+            key={att.attachmentId || i}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            download={att.filename}
+            title={`Download ${att.filename}`}
+            className="group flex max-w-[260px] items-center gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5 transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)]"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--color-bg-muted)] text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
+              <AttachmentIcon mime={att.mimeType} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12px] font-medium text-[var(--color-text)]">
+                {att.filename}
+              </span>
+              {meta ? (
+                <span className="block text-[10.5px] text-[var(--color-text-faint)]">{meta}</span>
+              ) : null}
+            </span>
+            <Download className="size-3.5 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)]" />
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+function AttachmentIcon({ mime }: { mime: string }) {
+  const m = (mime || '').toLowerCase();
+  const cls = 'size-4';
+  if (m.startsWith('image/')) return <FileImage className={cls} />;
+  if (m === 'application/pdf') return <FileText className={cls} />;
+  if (m.startsWith('audio/')) return <FileAudio className={cls} />;
+  if (m.startsWith('video/')) return <FileVideo className={cls} />;
+  if (/(zip|compressed|tar|rar|7z|gzip)/.test(m)) return <FileArchive className={cls} />;
+  if (/(sheet|excel|csv|numbers)/.test(m)) return <FileSpreadsheet className={cls} />;
+  if (m.startsWith('text/') || /(document|word|pdf|rtf)/.test(m)) return <FileText className={cls} />;
+  return <FileIcon className={cls} />;
+}
+
+function formatBytes(n: number): string {
+  if (!n || n < 0) return '';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = n;
+  let i = -1;
+  do {
+    value /= 1024;
+    i++;
+  } while (value >= 1024 && i < units.length - 1);
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`;
+}
+
 function InlineReply({
   onClose,
   account,
@@ -415,7 +499,7 @@ function InlineReply({
           disabled={draft.isPending}
           className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-1 text-[11.5px] hover:bg-[var(--color-bg-muted)]"
         >
-          <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
+          <PenLine className="h-3 w-3 text-[var(--color-accent)]" />
           {draft.isPending ? 'Drafting…' : 'AI draft'}
         </button>
         <button
