@@ -146,7 +146,16 @@ export async function POST(req: NextRequest) {
       args = buildSendArgs({ account, to, cc, bcc, subject, body, html, from, attachmentPaths });
     }
 
-    await runGogJson<any>(args, { timeoutMs: 120_000 });
+    const rawSend = await runGogJson<any>(args, { timeoutMs: 120_000 });
+    const sent = await resolveSentMessage({
+      account,
+      mode: mode || 'new',
+      to,
+      subject,
+      threadId,
+      messageId,
+      rawSend,
+    });
     await writeAudit({
       tool: `compose_route:${mode || 'new'}`,
       account,
@@ -163,7 +172,7 @@ export async function POST(req: NextRequest) {
       result: 'ok',
       agent: 'user',
     }).catch(() => undefined);
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, sent });
   } catch (err: any) {
     await writeAudit({
       tool: `compose_route:${mode || 'new'}`,
@@ -177,6 +186,131 @@ export async function POST(req: NextRequest) {
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+async function resolveSentMessage({
+  account,
+  mode,
+  to,
+  subject,
+  threadId,
+  messageId,
+  rawSend,
+}: {
+  account: string;
+  mode: string;
+  to: string;
+  subject: string;
+  threadId?: string;
+  messageId?: string;
+  rawSend: any;
+}) {
+  const fromSend = extractIds(rawSend);
+  if (fromSend.threadId || fromSend.messageId) {
+    return {
+      account,
+      threadId: fromSend.threadId || threadId || fromSend.messageId,
+      messageId: fromSend.messageId || fromSend.threadId || messageId,
+    };
+  }
+
+  if ((mode === 'reply' || mode === 'reply_all') && threadId) {
+    return { account, threadId, messageId: messageId || threadId };
+  }
+
+  // Gmail search indexing can lag just after send. Poll briefly so the UI can
+  // open the exact sent thread instead of dropping back to the previously-read
+  // message. Search by recipient as well as subject because Gmail subject
+  // search is exact enough to be brittle with emoji/punctuation differences.
+  const recipient = firstEmail(to);
+  const subjectText = subject.trim();
+  const queries = [
+    recipient && subjectText
+      ? `in:sent newer_than:2d to:${gmailTerm(recipient)} subject:${gmailQuote(subjectText)}`
+      : '',
+    recipient ? `in:sent newer_than:2d to:${gmailTerm(recipient)}` : '',
+    subjectText ? `in:sent newer_than:2d subject:${gmailQuote(subjectText)}` : '',
+    'in:sent newer_than:2d',
+  ].filter(Boolean);
+  const wantedSubject = normalizeSubject(subjectText);
+  for (let i = 0; i < 12; i++) {
+    if (i > 0) await sleep(750);
+    try {
+      for (const query of queries) {
+        const raw = await runGogJson<any>([
+          '--account',
+          account,
+          '--json',
+          '--results-only',
+          'gmail',
+          'search',
+          '--max',
+          '10',
+          '--no-input',
+          '--',
+          query,
+        ]);
+        const candidates = coerceList(raw)
+          .map((item) => ({
+            id: String(item.threadId || item.thread_id || item.id || item.messageId || item.message_id || ''),
+            messageId: String(item.messageId || item.message_id || item.id || ''),
+            subject: String(item.subject || item.Subject || ''),
+            date: Number(item.internalDate || item.internal_date || Date.parse(item.date || item.Date || '') || 0),
+          }))
+          .filter((item) => item.id)
+          .sort((a, b) => b.date - a.date);
+        const chosen =
+          (wantedSubject && candidates.find((item) => normalizeSubject(item.subject) === wantedSubject)) ||
+          candidates[0];
+        if (chosen) return { account, threadId: chosen.id, messageId: chosen.messageId || chosen.id };
+      }
+    } catch {}
+  }
+
+  return { account, threadId: threadId || messageId || null, messageId: messageId || null };
+}
+
+function extractIds(raw: any): { threadId?: string; messageId?: string } {
+  const obj = raw?.message || raw?.result || raw?.data || raw?.sent || raw;
+  return {
+    threadId: obj?.threadId || obj?.thread_id || obj?.thread?.id,
+    messageId: obj?.id || obj?.messageId || obj?.message_id,
+  };
+}
+
+function coerceList(raw: any): any[] {
+  if (Array.isArray(raw)) return raw;
+  if (Array.isArray(raw?.messages)) return raw.messages;
+  if (Array.isArray(raw?.threads)) return raw.threads;
+  if (Array.isArray(raw?.results)) return raw.results;
+  if (Array.isArray(raw?.items)) return raw.items;
+  if (Array.isArray(raw?.data)) return raw.data;
+  return [];
+}
+
+function gmailQuote(s: string): string {
+  return `"${String(s).replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+}
+
+function gmailTerm(s: string): string {
+  return /\s/.test(s) ? gmailQuote(s) : s;
+}
+
+function firstEmail(value: string): string {
+  const match = String(value || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match?.[0] || String(value || '').split(',')[0]?.trim() || '';
+}
+
+function normalizeSubject(value: string): string {
+  return String(value || '')
+    .replace(/^(re|fwd?):\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function escapeHtml(s: string): string {

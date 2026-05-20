@@ -20,6 +20,7 @@ export async function GET(
   const account = url.searchParams.get('account') || '';
   const filename = sanitizeFilename(url.searchParams.get('name') || 'attachment');
   const mime = url.searchParams.get('mime') || 'application/octet-stream';
+  const disposition = url.searchParams.get('preview') === '1' ? 'inline' : 'attachment';
 
   if (!account || !messageId || !attachmentId) {
     return new Response('account, messageId and attachmentId are required', { status: 400 });
@@ -58,7 +59,7 @@ export async function GET(
     return new Response(new Uint8Array(bytes), {
       headers: {
         'content-type': mime,
-        'content-disposition': `attachment; filename="${filename.replaceAll('"', '')}"`,
+        'content-disposition': `${disposition}; filename="${filename.replaceAll('"', '')}"`,
         'content-length': String(bytes.byteLength),
         'cache-control': 'private, no-store',
       },

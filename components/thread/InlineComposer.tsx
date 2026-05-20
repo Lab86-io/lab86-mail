@@ -21,7 +21,7 @@ import { MessageResponse } from '@/components/ai-elements/message';
 import { Avatar } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { callTool } from '@/lib/api-client';
-import type { ComposeMode } from '@/lib/client-state';
+import { useClientStore, type ComposeMode } from '@/lib/client-state';
 import { sanitizeOutgoingHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { cn } from '@/lib/utils';
@@ -52,7 +52,7 @@ interface InlineComposerProps {
   // the body field from initialPrefill.body. Lets the agent's draft_reply
   // overwrite the textarea even when the composer is already mounted.
   prefillNonce?: number;
-  onSent?: () => void;
+  onSent?: (sent?: SentMessageRef) => void;
   onClose?: () => void;
   // Optional visual variant: the always-open top reply box uses 'dashed';
   // the new-message pane and forward use 'card' for a heavier frame.
@@ -60,6 +60,12 @@ interface InlineComposerProps {
 }
 
 type Phase = 'draft' | 'sending' | 'sent';
+
+interface SentMessageRef {
+  account?: string;
+  threadId?: string | null;
+  messageId?: string | null;
+}
 
 export function InlineComposer({
   mode,
@@ -136,6 +142,8 @@ export function InlineComposer({
   }, [prefillNonce]);
 
   const queryClient = useQueryClient();
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
 
   const send = useMutation({
     mutationFn: async () => {
@@ -172,8 +180,9 @@ export function InlineComposer({
       return data;
     },
     onMutate: () => setPhase('sending'),
-    onSuccess: () => {
+    onSuccess: (data) => {
       setPhase('sent');
+      const sent = data?.sent as SentMessageRef | undefined;
       // Brief solid-border flash then hand control back to the parent.
       window.setTimeout(() => {
         setPhase('draft');
@@ -188,7 +197,9 @@ export function InlineComposer({
         toast.success('Sent');
         queryClient.invalidateQueries({ queryKey: ['thread'] });
         queryClient.invalidateQueries({ queryKey: ['search'] });
-        onSent?.();
+        if (sent?.account) setThreadAccount(sent.account);
+        if (sent?.threadId) setSelectedThread(sent.threadId);
+        onSent?.(sent);
       }, 700);
     },
     onError: (err: any) => {

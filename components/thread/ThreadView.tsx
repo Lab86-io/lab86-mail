@@ -19,6 +19,14 @@ import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
@@ -461,7 +469,7 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
   if (safe) {
     return (
       <div
-        className="prose prose-sm max-w-none break-words text-[13.5px] text-[var(--color-text)] [&_a]:text-[var(--color-accent)] [&_a]:underline [&_a]:underline-offset-2 [&_img]:max-w-full [&_pre]:whitespace-pre-wrap [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--color-text-muted)]"
+        className="email-body break-words text-[13.5px] text-[var(--color-text)]"
         dangerouslySetInnerHTML={{ __html: safe }}
       />
     );
@@ -469,7 +477,20 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
   if (html && !safe) {
     return <div className="h-24 rounded shimmer" />;
   }
-  return <pre className="whitespace-pre-wrap font-sans text-[13.5px]">{text || ''}</pre>;
+  return <PlainTextBody text={text || ''} />;
+}
+
+function PlainTextBody({ text }: { text: string }) {
+  const paragraphs = String(text || '').split(/\r?\n\s*\r?\n/);
+  return (
+    <div className="email-body break-words text-[13.5px] text-[var(--color-text)]">
+      {paragraphs.map((paragraph, index) => (
+        <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap">
+          {paragraph}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 function Attachments({
@@ -482,42 +503,195 @@ function Attachments({
   account: string;
 }) {
   const list = (attachments || []).filter((a) => a.attachmentId);
+  const [preview, setPreview] = useState<AttachmentPreviewItem | null>(null);
   if (!list.length) return null;
   return (
-    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-3">
-      {list.map((att, i) => {
-        const href = `/api/attachments/${encodeURIComponent(messageId)}/${encodeURIComponent(
-          att.attachmentId,
-        )}?account=${encodeURIComponent(account)}&name=${encodeURIComponent(
-          att.filename,
-        )}&mime=${encodeURIComponent(att.mimeType)}`;
-        const ext = (att.filename.split('.').pop() || '').slice(0, 5).toUpperCase();
-        const meta = [ext, formatBytes(att.size)].filter(Boolean).join(' · ');
-        return (
-          <a
-            key={att.attachmentId || i}
-            href={href}
-            target="_blank"
-            rel="noreferrer"
-            download={att.filename}
-            title={`Download ${att.filename}`}
-            className="group flex max-w-[260px] items-center gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5 transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)]"
-          >
-            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--color-bg-muted)] text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
-              <AttachmentIcon mime={att.mimeType} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] font-medium text-[var(--color-text)]">
-                {att.filename}
-              </span>
-              {meta ? (
-                <span className="block text-[10.5px] text-[var(--color-text-faint)]">{meta}</span>
-              ) : null}
-            </span>
-            <Download className="size-3.5 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)]" />
-          </a>
-        );
-      })}
+    <>
+      <TooltipProvider delayDuration={250}>
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-3">
+          {list.map((att, i) => {
+            const href = attachmentHref({ account, messageId, attachment: att, preview: false });
+            const previewHref = attachmentHref({ account, messageId, attachment: att, preview: true });
+            const item = attachmentPreviewItem(att, href, previewHref);
+            return (
+              <div
+                key={att.attachmentId || i}
+                className="group flex max-w-[300px] items-stretch overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)]"
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setPreview(item)}
+                      title={`Preview ${att.filename}`}
+                      className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
+                    >
+                      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--color-bg-muted)] text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
+                        <AttachmentIcon mime={att.mimeType} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-medium text-[var(--color-text)]">
+                          {att.filename}
+                        </span>
+                        {item.meta ? (
+                          <span className="block text-[10.5px] text-[var(--color-text-faint)]">{item.meta}</span>
+                        ) : null}
+                      </span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    align="start"
+                    className="border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2 text-[var(--color-text)] shadow-[var(--shadow-pop)]"
+                  >
+                    <AttachmentPreview item={item} compact />
+                  </TooltipContent>
+                </Tooltip>
+                <a
+                  href={href}
+                  download={att.filename}
+                  title={`Download ${att.filename}`}
+                  className="grid min-h-[48px] w-10 shrink-0 place-items-center border-l border-[var(--color-border)] text-[var(--color-text-faint)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+                >
+                  <Download className="size-3.5" />
+                </a>
+              </div>
+            );
+          })}
+        </div>
+      </TooltipProvider>
+      <Dialog open={!!preview} onOpenChange={(open) => !open && setPreview(null)}>
+        <DialogContent className="max-h-[92vh] gap-3 overflow-hidden p-0 sm:max-w-[min(1000px,92vw)]">
+          {preview ? (
+            <>
+              <DialogHeader className="border-b border-[var(--color-border)] px-4 py-3 pr-11">
+                <DialogTitle className="truncate text-[14px]">{preview.filename}</DialogTitle>
+                <DialogDescription className="text-[11px]">{preview.meta || preview.mime}</DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 px-4 pb-4">
+                <AttachmentPreview item={preview} />
+                <div className="mt-3 flex justify-end gap-2">
+                  <a
+                    href={preview.downloadHref}
+                    download={preview.filename}
+                    className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)]"
+                  >
+                    <Download className="size-3.5" />
+                    Download
+                  </a>
+                  <a
+                    href={preview.previewHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+                  >
+                    <ExternalLink className="size-3.5" />
+                    Open
+                  </a>
+                </div>
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+type AttachmentPreviewItem = {
+  filename: string;
+  mime: string;
+  meta: string;
+  downloadHref: string;
+  previewHref: string;
+  previewKind: 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'unknown';
+};
+
+function attachmentHref({
+  account,
+  messageId,
+  attachment,
+  preview,
+}: {
+  account: string;
+  messageId: string;
+  attachment: Attachment;
+  preview: boolean;
+}) {
+  const href = `/api/attachments/${encodeURIComponent(messageId)}/${encodeURIComponent(
+    attachment.attachmentId,
+  )}?account=${encodeURIComponent(account)}&name=${encodeURIComponent(
+    attachment.filename,
+  )}&mime=${encodeURIComponent(attachment.mimeType)}`;
+  return preview ? `${href}&preview=1` : href;
+}
+
+function attachmentPreviewItem(att: Attachment, downloadHref: string, previewHref: string): AttachmentPreviewItem {
+  const mime = (att.mimeType || '').toLowerCase();
+  const ext = (att.filename.split('.').pop() || '').slice(0, 5).toUpperCase();
+  const meta = [ext, formatBytes(att.size)].filter(Boolean).join(' · ');
+  let previewKind: AttachmentPreviewItem['previewKind'] = 'unknown';
+  if (mime.startsWith('image/')) previewKind = 'image';
+  else if (mime === 'application/pdf') previewKind = 'pdf';
+  else if (mime.startsWith('text/') || /(json|xml|csv|markdown)/.test(mime)) previewKind = 'text';
+  else if (mime.startsWith('video/')) previewKind = 'video';
+  else if (mime.startsWith('audio/')) previewKind = 'audio';
+  return {
+    filename: att.filename,
+    mime: att.mimeType || 'application/octet-stream',
+    meta,
+    downloadHref,
+    previewHref,
+    previewKind,
+  };
+}
+
+function AttachmentPreview({ item, compact = false }: { item: AttachmentPreviewItem; compact?: boolean }) {
+  const frameClass = compact
+    ? 'h-40 w-64 rounded border border-[var(--color-border)] bg-[var(--color-bg)]'
+    : 'h-[min(68vh,760px)] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]';
+
+  if (item.previewKind === 'image') {
+    const className = compact
+      ? 'grid h-40 w-64 place-items-center overflow-hidden rounded border border-[var(--color-border)] bg-[var(--color-bg)]'
+      : 'grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]';
+    return (
+      <div className={className}>
+        <img src={item.previewHref} alt={item.filename} className="max-h-full max-w-full object-contain" />
+      </div>
+    );
+  }
+
+  if (item.previewKind === 'pdf' || item.previewKind === 'text') {
+    return <iframe title={item.filename} src={item.previewHref} className={frameClass} />;
+  }
+
+  if (item.previewKind === 'video') {
+    return <video src={item.previewHref} controls className={frameClass} />;
+  }
+
+  if (item.previewKind === 'audio') {
+    return (
+      <div className="grid min-h-40 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+        <audio src={item.previewHref} controls className="w-full" />
+      </div>
+    );
+  }
+
+  const className = compact
+    ? 'grid h-40 w-64 place-items-center rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-center'
+    : 'grid min-h-[260px] place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-6 text-center';
+  return (
+    <div className={className}>
+      <div className="flex max-w-sm flex-col items-center gap-2">
+        <span className="grid size-12 place-items-center rounded-lg bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+          <AttachmentIcon mime={item.mime} className="size-5" />
+        </span>
+        <div className="text-[12px] font-medium text-[var(--color-text)]">Preview unavailable</div>
+        <div className="text-[11px] text-[var(--color-text-muted)]">
+          This file type can still be opened or downloaded.
+        </div>
+      </div>
     </div>
   );
 }
