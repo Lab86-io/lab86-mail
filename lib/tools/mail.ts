@@ -2,9 +2,9 @@ import { z } from 'zod';
 import { defineTool } from './registry';
 import { runGogJson } from '../gog/pool';
 import { normalizeGogMessage, normalizeGogSearchItem } from '../gog/normalize';
-import { upsertThread, getThread as getThreadRecord, listRecentThreads, listThreadsForAccount } from '../store/threads';
+import { upsertThread, listRecentThreads, listThreadsForAccount } from '../store/threads';
 import { upsertMessage as upsertMessageRecord, getMessage as getMessageRecord, getThreadMessages } from '../store/messages';
-import type { Account, Thread, Message, LabelRecord } from '../shared/types';
+import type { Account, Thread, LabelRecord } from '../shared/types';
 
 const ACCOUNT_LIST = (process.env.MAIL_OS_ACCOUNTS || 'jjalangtry@gmail.com,jakob@lab86.io')
   .split(',')
@@ -125,8 +125,23 @@ export const getThread = defineTool({
       ]);
       const threadObj = raw?.thread || raw?.result || raw?.data || raw;
       const arr: any[] = threadObj?.messages || [];
-      messages = arr.map((m) => normalizeGogMessage(m, account));
+      messages = arr
+        .map((m) => normalizeGogMessage(m, account))
+        .filter((m) => m._id)
+        .sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
       for (const m of messages) await upsertMessageRecord(m).catch(() => undefined);
+      const newest = messages[messages.length - 1];
+      if (newest) {
+        await upsertThread(account, {
+          _id: threadId,
+          subject: newest.subject || messages[0]?.subject || '(no subject)',
+          fromAddress: newest.from,
+          lastDate: newest.date,
+          snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+          labels: newest.labels || [],
+          unread: messages.some((m) => m.labels?.includes('UNREAD')),
+        }).catch(() => undefined);
+      }
     }
     return {
       account,

@@ -1,18 +1,18 @@
 'use client';
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Archive, Gauge, Inbox as InboxIcon, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'motion/react';
-import { RefreshCw, Search, Archive, Trash2, Gauge, Inbox as InboxIcon, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { callTool } from '@/lib/api-client';
-import { useClientStore } from '@/lib/client-state';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { callTool } from '@/lib/api-client';
+import { useClientStore } from '@/lib/client-state';
+import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
-import { formatDate, shortFrom } from '@/lib/shared/format';
 
 // An empty search (or the clear button / Esc) returns to the default unified
 // inbox view across all mailboxes.
@@ -57,7 +57,9 @@ export function Inbox() {
 
   // Heuristic: a Gmail query has at least one operator. Natural language doesn't.
   const looksLikeGmailQuery = (s: string) =>
-    /\b(from|to|cc|bcc|subject|is|in|has|label|larger|smaller|newer_than|older_than|after|before|filename|deliveredto|list)\s*:/i.test(s);
+    /\b(from|to|cc|bcc|subject|is|in|has|label|larger|smaller|newer_than|older_than|after|before|filename|deliveredto|list)\s*:/i.test(
+      s,
+    );
 
   const submitSearch = async () => {
     const raw = searchInput.trim();
@@ -92,8 +94,7 @@ export function Inbox() {
   // authed Gmail account and merge by date. Otherwise just hit one.
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
-    queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean }[] }>('list_accounts'),
+    queryFn: async () => callTool<{ accounts: { email: string; authed: boolean }[] }>('list_accounts'),
     staleTime: 60_000,
   });
   const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
@@ -117,9 +118,62 @@ export function Inbox() {
       return callTool<{ items: ThreadRow[] }>('search_threads', { account, query, max: 50 });
     },
     enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
+    // Inbox freshness: any cached search result is treated as stale right
+    // away, so re-mounts, window focus, and reconnects always re-hit Gmail.
+    staleTime: 0,
+    // Background poll while the tab is in the foreground. `refetchInterval`
+    // pauses automatically when the document is hidden (browser default).
+    refetchInterval: 30_000,
+    // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
+    refetchIntervalInBackground: false,
   });
 
+  // Tabbing back to the window is the most natural "any new mail?" signal.
+  // React Query already refetches active queries on focus (we enabled the
+  // default), but we additionally invalidate the per-thread cache so the
+  // currently-open thread also picks up any new replies.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      queryClient.invalidateQueries({ queryKey: ['search'] });
+      queryClient.invalidateQueries({ queryKey: ['thread'] });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [queryClient]);
+
   const items = data?.items || [];
+
+  // Once we know the visible senders, fetch their Google profile photos.
+  // The lookup is best-effort: contacts + the user's own accounts resolve,
+  // everyone else stays on the boring-avatar. Cached server-side for ~7 days
+  // (including negative results) so this is essentially free after first load.
+  const primaryAccount = useClientStore((s) => s.primaryAccount);
+  const photoAccount =
+    primaryAccount && primaryAccount !== ALL_ACCOUNTS
+      ? primaryAccount
+      : account && account !== ALL_ACCOUNTS
+        ? account
+        : '';
+  const photoEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const it of items) {
+      const email = emailFromHeader(it.from || it.fromAddress);
+      if (email) set.add(email);
+    }
+    return [...set].sort();
+  }, [items]);
+  const photosQuery = useQuery({
+    queryKey: ['photos', photoAccount, photoEmails.join(',')],
+    queryFn: async () =>
+      callTool<{ photos: Record<string, string | null> }>('resolve_photos', {
+        account: photoAccount,
+        emails: photoEmails,
+      }),
+    enabled: !!photoAccount && photoEmails.length > 0,
+    staleTime: 24 * 60 * 60_000,
+  });
+  const photos = photosQuery.data?.photos || {};
 
   // Each item knows its own account (set by the fan-out above), so bulk
   // operations dispatch per-item using that account rather than the
@@ -129,9 +183,7 @@ export function Inbox() {
   const bulkArchive = useMutation({
     mutationFn: async (ids: string[]) => {
       await Promise.allSettled(
-        ids.map((id) =>
-          callTool('archive_thread', { account: accountOfRow(id), threadId: id }),
-        ),
+        ids.map((id) => callTool('archive_thread', { account: accountOfRow(id), threadId: id })),
       );
     },
     onSuccess: () => {
@@ -144,9 +196,7 @@ export function Inbox() {
   const bulkTrash = useMutation({
     mutationFn: async (ids: string[]) => {
       await Promise.allSettled(
-        ids.map((id) =>
-          callTool('trash_thread', { account: accountOfRow(id), threadId: id }),
-        ),
+        ids.map((id) => callTool('trash_thread', { account: accountOfRow(id), threadId: id })),
       );
     },
     onSuccess: () => {
@@ -174,7 +224,11 @@ export function Inbox() {
         if (!old?.items) return old;
         const updated = old.items.map((it: any) => {
           const v = res.verdicts.find((x: any) => x.id === it._id);
-          if (v) return { ...it, triage: { priority: v.priority, action: v.action, reason: v.reason, at: Date.now() } };
+          if (v)
+            return {
+              ...it,
+              triage: { priority: v.priority, action: v.action, reason: v.reason, at: Date.now() },
+            };
           return it;
         });
         return { ...old, items: updated };
@@ -286,22 +340,26 @@ export function Inbox() {
           <EmptyState account={account} />
         ) : (
           <AnimatePresence initial={false} mode="popLayout">
-            {items.map((it) => (
-              <ThreadRowCard
-                key={`${it.account}:${it._id}`}
-                item={it}
-                showAccount={account === ALL_ACCOUNTS}
-                selected={selectedIds.includes(it._id)}
-                active={selectedThreadId === it._id}
-                onToggle={() => toggleSelected(it._id)}
-                onClick={() => {
-                  // Unified inbox stays put; just remember which mailbox this
-                  // thread belongs to so the reader can load/reply correctly.
-                  setThreadAccount(it.account || account);
-                  setSelectedThread(it._id);
-                }}
-              />
-            ))}
+            {items.map((it) => {
+              const senderEmail = emailFromHeader(it.from || it.fromAddress);
+              return (
+                <ThreadRowCard
+                  key={`${it.account}:${it._id}`}
+                  item={it}
+                  photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                  showAccount={account === ALL_ACCOUNTS}
+                  selected={selectedIds.includes(it._id)}
+                  active={selectedThreadId === it._id}
+                  onToggle={() => toggleSelected(it._id)}
+                  onClick={() => {
+                    // Unified inbox stays put; just remember which mailbox this
+                    // thread belongs to so the reader can load/reply correctly.
+                    setThreadAccount(it.account || account);
+                    setSelectedThread(it._id);
+                  }}
+                />
+              );
+            })}
           </AnimatePresence>
         )}
       </div>
@@ -311,6 +369,7 @@ export function Inbox() {
 
 function ThreadRowCard({
   item,
+  photoUrl,
   selected,
   active,
   onToggle,
@@ -318,6 +377,7 @@ function ThreadRowCard({
   showAccount,
 }: {
   item: ThreadRow;
+  photoUrl?: string | null;
   selected: boolean;
   active: boolean;
   onToggle: () => void;
@@ -326,7 +386,11 @@ function ThreadRowCard({
 }) {
   const triage = (item as any).triage;
   const priorityClass =
-    triage?.priority === 1 ? 'bg-[var(--color-prio-1)]' : triage?.priority === 2 ? 'bg-[var(--color-prio-2)]' : '';
+    triage?.priority === 1
+      ? 'bg-[var(--color-prio-1)]'
+      : triage?.priority === 2
+        ? 'bg-[var(--color-prio-2)]'
+        : '';
   const senderLabel = shortFrom(item.from || item.fromAddress || '');
   const date = (item.date as any) || item.lastDate || 0;
 
@@ -351,7 +415,7 @@ function ThreadRowCard({
         <Checkbox checked={selected} onCheckedChange={() => onToggle()} />
       </div>
 
-      <Avatar name={senderLabel || item.account} size={26} />
+      <Avatar name={senderLabel || item.account} src={photoUrl} size={26} />
 
       <div className="flex min-w-0 flex-col gap-0.5">
         <div className="flex items-center gap-2">
@@ -363,10 +427,16 @@ function ThreadRowCard({
           >
             {senderLabel || item.account}
           </span>
-          {item.unread ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" /> : null}
+          {item.unread ? (
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" />
+          ) : null}
         </div>
-        <span className="truncate text-[13px] text-[var(--color-text)]">{item.subject || '(no subject)'}</span>
-        <span className="line-clamp-1 text-[11.5px] text-[var(--color-text-muted)]">{item.snippet || ''}</span>
+        <span className="truncate text-[13px] text-[var(--color-text)]">
+          {item.subject || '(no subject)'}
+        </span>
+        <span className="line-clamp-1 text-[11.5px] text-[var(--color-text-muted)]">
+          {item.snippet || ''}
+        </span>
         {triage?.reason ? (
           <span className="mt-0.5 line-clamp-1 text-[11px] text-[var(--color-accent)]">
             AI · {triage.action} · {triage.reason}
@@ -397,7 +467,10 @@ function SkeletonRows() {
   return (
     <div className="flex flex-col">
       {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="grid grid-cols-[28px_1fr] gap-3 border-b border-[var(--color-border)] px-3 py-3">
+        <div
+          key={i}
+          className="grid grid-cols-[28px_1fr] gap-3 border-b border-[var(--color-border)] px-3 py-3"
+        >
           <div className="h-6 w-6 rounded-full shimmer" />
           <div className="flex flex-col gap-1.5">
             <div className="h-3 w-2/5 rounded shimmer" />
@@ -418,7 +491,9 @@ function EmptyState({ account }: { account: string }) {
         </div>
         <h3 className="text-sm font-medium text-[var(--color-text)]">Nothing here yet</h3>
         <p className="max-w-[280px] text-[12px] text-[var(--color-text-muted)]">
-          {account ? 'Try a different search or mailbox.' : 'Connect a Gmail account in /scripts/auth-google.sh.'}
+          {account
+            ? 'Try a different search or mailbox.'
+            : 'Connect a Gmail account in /scripts/auth-google.sh.'}
         </p>
       </div>
     </div>

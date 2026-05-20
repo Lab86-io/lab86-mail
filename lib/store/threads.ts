@@ -2,19 +2,20 @@ import { db, findMany, findOne, upsert } from './db';
 import type { Thread } from '../shared/types';
 
 export async function upsertThread(account: string, partial: Partial<Thread> & { _id: string }) {
+  const existing = await getThread(account, partial._id);
   const merged: Thread = {
     _id: partial._id,
     account,
-    subject: partial.subject || '',
-    fromAddress: partial.fromAddress || '',
-    lastDate: partial.lastDate || 0,
-    snippet: partial.snippet || '',
-    labels: partial.labels || [],
-    unread: partial.unread ?? false,
-    starred: partial.starred ?? false,
-    summary: partial.summary ?? null,
-    summaryAt: partial.summaryAt ?? null,
-    triage: partial.triage ?? null,
+    subject: partial.subject ?? existing?.subject ?? '',
+    fromAddress: partial.fromAddress ?? existing?.fromAddress ?? '',
+    lastDate: partial.lastDate ?? existing?.lastDate ?? 0,
+    snippet: partial.snippet ?? existing?.snippet ?? '',
+    labels: partial.labels ?? existing?.labels ?? [],
+    unread: partial.unread ?? existing?.unread ?? false,
+    starred: partial.starred ?? existing?.starred ?? false,
+    summary: partial.summary ?? existing?.summary ?? null,
+    summaryAt: partial.summaryAt ?? existing?.summaryAt ?? null,
+    triage: partial.triage ?? existing?.triage ?? null,
     cachedAt: Date.now(),
   };
   await upsert(db().threads, { _id: merged._id, account }, merged);

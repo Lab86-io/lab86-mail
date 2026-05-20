@@ -1,8 +1,15 @@
 import { z } from 'zod';
-import { defineTool } from './registry';
+import { buildReplyArgs, buildSendArgs } from '../compose/gog-args';
 import { runGogJson } from '../gog/pool';
-import { saveDraft as saveDraftRecord, getDraft, deleteDraft as deleteDraftRecord, listDrafts } from '../store/drafts';
 import type { Draft } from '../shared/types';
+import {
+  deleteDraft as deleteDraftRecord,
+  getDraft,
+  listDrafts,
+  saveDraft as saveDraftRecord,
+} from '../store/drafts';
+import { getMessage as getMessageRecord } from '../store/messages';
+import { defineTool } from './registry';
 
 const SendBase = z.object({
   account: z.string(),
@@ -26,15 +33,8 @@ export const sendMessage = defineTool({
   mutating: true,
   input: SendBase,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, to, cc, bcc, subject, body, from }) {
-    const args = [
-      '--account', account, '--json', 'gmail', 'send',
-      '--to', to, '--subject', subject, '--body', body, '--no-input',
-    ];
-    if (cc) args.push('--cc', cc);
-    if (bcc) args.push('--bcc', bcc);
-    if (from) args.push('--from', from);
-    await gmailSend(args);
+  async handler({ account, to, cc, bcc, subject, body, html, from }) {
+    await gmailSend(buildSendArgs({ account, to, cc, bcc, subject, body, html, from }));
     return { ok: true };
   },
 });
@@ -49,17 +49,12 @@ export const replyMessage = defineTool({
     messageId: z.string(),
     threadId: z.string().optional(),
     body: z.string(),
+    html: z.string().optional(),
     from: z.string().optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, from }) {
-    const args = [
-      '--account', account, '--json', 'gmail', 'send',
-      '--reply-to-message-id', messageId, '--body', body, '--no-input',
-    ];
-    if (threadId) args.push('--thread-id', threadId);
-    if (from) args.push('--from', from);
-    await gmailSend(args);
+  async handler({ account, messageId, threadId, body, html, from }) {
+    await gmailSend(buildReplyArgs({ account, messageId, threadId, body, html, from }));
     return { ok: true };
   },
 });
@@ -74,45 +69,95 @@ export const replyAllMessage = defineTool({
     messageId: z.string(),
     threadId: z.string().optional(),
     body: z.string(),
+    html: z.string().optional(),
     from: z.string().optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, from }) {
-    const args = [
-      '--account', account, '--json', 'gmail', 'send',
-      '--reply-to-message-id', messageId, '--reply-all', '--body', body, '--no-input',
-    ];
-    if (threadId) args.push('--thread-id', threadId);
-    if (from) args.push('--from', from);
-    await gmailSend(args);
+  async handler({ account, messageId, threadId, body, html, from }) {
+    await gmailSend(buildReplyArgs({ account, messageId, threadId, body, html, from, replyAll: true }));
     return { ok: true };
   },
 });
 
+// gog does not have a native --forward-message-id flag, so we synthesize the
+// quoted-body forward ourselves: fetch the original message (from local cache),
+// prepend a "Forwarded message" header block, and send as a fresh email.
+// v1 limitation: original attachments are *not* re-carried; treat that as a
+// follow-up (the gog `gmail attachment` command can re-download them).
 export const forwardMessage = defineTool({
   name: 'forward',
-  description: 'Forward a message to one or more recipients.',
+  description:
+    'Forward a message to one or more recipients. Synthesizes a quoted body from the original message; original attachments are not re-carried.',
   category: 'compose',
   mutating: true,
   input: z.object({
     account: z.string(),
     messageId: z.string(),
     to: z.string(),
+    cc: z.string().optional(),
+    bcc: z.string().optional(),
     body: z.string().optional(),
+    html: z.string().optional(),
     from: z.string().optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, to, body, from }) {
-    const args = [
-      '--account', account, '--json', 'gmail', 'send',
-      '--forward-message-id', messageId, '--to', to, '--no-input',
-    ];
-    if (body) args.push('--body', body);
-    if (from) args.push('--from', from);
-    await gmailSend(args);
+  async handler({ account, messageId, to, cc, bcc, body, html, from }) {
+    const original = await getMessageRecord(account, messageId);
+    if (!original)
+      throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
+    const fwdSubject = original.subject?.startsWith('Fwd:')
+      ? original.subject
+      : `Fwd: ${original.subject || '(no subject)'}`;
+    const headerBlock = [
+      '---------- Forwarded message ----------',
+      `From: ${original.from}`,
+      `Date: ${new Date(original.date).toISOString()}`,
+      `Subject: ${original.subject || ''}`,
+      `To: ${original.to || ''}`,
+      original.cc ? `Cc: ${original.cc}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const quotedText = [body || '', '', headerBlock, '', original.textBody || ''].join('\n');
+    const quotedHtml = html
+      ? [
+          html,
+          '<br/><br/>',
+          `<div style="border-left:2px solid #ccc;padding-left:.6em;color:#666">`,
+          `<div>---------- Forwarded message ----------</div>`,
+          `<div>From: ${escapeHtml(original.from)}</div>`,
+          `<div>Date: ${new Date(original.date).toISOString()}</div>`,
+          `<div>Subject: ${escapeHtml(original.subject || '')}</div>`,
+          `<div>To: ${escapeHtml(original.to || '')}</div>`,
+          original.cc ? `<div>Cc: ${escapeHtml(original.cc)}</div>` : '',
+          `</div>`,
+          original.htmlBody || `<pre>${escapeHtml(original.textBody || '')}</pre>`,
+        ].join('')
+      : undefined;
+    await gmailSend(
+      buildSendArgs({
+        account,
+        to,
+        cc,
+        bcc,
+        subject: fwdSubject,
+        body: quotedText,
+        html: quotedHtml,
+        from,
+      }),
+    );
     return { ok: true };
   },
 });
+
+function escapeHtml(s: string): string {
+  return String(s || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
 export const saveDraftTool = defineTool({
   name: 'save_draft',

@@ -3,23 +3,40 @@ import { generateText } from 'ai';
 import { defineTool } from './registry';
 import { fastModel, hasAi, primaryModel } from '../ai/client';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
-import { setThreadSummary, setThreadTriage } from '../store/threads';
+import { setThreadSummary, setThreadTriage, upsertThread } from '../store/threads';
 import { recallSender } from '../store/memories';
 import { runGogJson } from '../gog/pool';
 import { normalizeGogMessage } from '../gog/normalize';
 
 async function loadThread(account: string, threadId: string) {
-  let messages = await getThreadMessages(account, threadId);
-  if (!messages.length) {
+  try {
     const raw = await runGogJson<any>([
       '--account', account, '--json', 'gmail', 'thread', 'get', threadId, '--full', '--no-input',
     ]);
     const threadObj = raw?.thread || raw?.result || raw?.data || raw;
     const arr: any[] = threadObj?.messages || [];
-    messages = arr.map((m) => normalizeGogMessage(m, account));
+    const messages = arr
+      .map((m) => normalizeGogMessage(m, account))
+      .filter((m) => m._id)
+      .sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
     for (const m of messages) await upsertMessageRecord(m).catch(() => undefined);
+    const newest = messages[messages.length - 1];
+    if (newest) {
+      await upsertThread(account, {
+        _id: threadId,
+        subject: newest.subject || messages[0]?.subject || '(no subject)',
+        fromAddress: newest.from,
+        lastDate: newest.date,
+        snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+        labels: newest.labels || [],
+        unread: messages.some((m) => m.labels?.includes('UNREAD')),
+      }).catch(() => undefined);
+    }
+    return messages;
+  } catch {
+    const cached = await getThreadMessages(account, threadId);
+    return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
   }
-  return messages;
 }
 
 function concatThread(messages: any[], maxChars = 24_000): string {

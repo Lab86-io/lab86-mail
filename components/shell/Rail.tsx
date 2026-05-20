@@ -6,13 +6,14 @@ import {
   Archive,
   Calendar,
   Cloud,
+  Flag,
   Inbox,
   Keyboard,
   Layers,
   MailOpen,
+  PanelLeftClose,
   Pencil,
   Plus,
-  Flag,
   Send,
   Star,
   Trash2,
@@ -52,12 +53,14 @@ export function Rail() {
   const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
   const query = useClientStore((s) => s.query);
   const setQuery = useClientStore((s) => s.setQuery);
-  const setComposeOpen = useClientStore((s) => s.setComposeOpen);
+  const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
+  const setRailOpen = useClientStore((s) => s.setRailOpen);
 
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
-    queryFn: async () => callTool<{ accounts: { email: string; authed: boolean; primary?: boolean }[] }>('list_accounts'),
+    queryFn: async () =>
+      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean }[] }>('list_accounts'),
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
@@ -78,26 +81,32 @@ export function Rail() {
 
   return (
     <aside className="flex h-full w-full flex-col gap-3 bg-[var(--color-bg-subtle)] p-3 text-sm">
-      <div className="flex items-center gap-2.5 px-1 pt-1">
-        <div className="grid h-7 w-7 place-items-center rounded-md bg-[var(--color-accent)] font-mono text-[12px] font-bold text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)]">
-          M
-        </div>
-        <div className="flex flex-col leading-tight">
-          <span className="font-semibold tracking-tight">Mail OS</span>
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">v2 · personal</span>
-        </div>
+      <div className="flex items-center justify-between gap-2 px-1 pt-1">
+        <span className="text-[15px] font-semibold tracking-tight text-[var(--color-text)]">
+          Lab86 Mail
+        </span>
+        <button
+          type="button"
+          onClick={() => setRailOpen(false)}
+          className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+          title="Collapse navigation rail"
+        >
+          <PanelLeftClose className="h-3.5 w-3.5" />
+        </button>
       </div>
 
       <button
         type="button"
-        onClick={() => setComposeOpen(true)}
+        onClick={() => openComposeNew()}
         className="group relative flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-left text-sm font-medium shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]"
       >
         <span className="flex items-center gap-2">
           <Plus className="h-4 w-4" />
           Compose
         </span>
-        <span className="text-[10px] text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]">c</span>
+        <span className="text-[10px] text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]">
+          c
+        </span>
       </button>
 
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-0.5">

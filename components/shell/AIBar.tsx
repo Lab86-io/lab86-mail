@@ -19,7 +19,6 @@ import {
   Loader2,
   Mail,
   MailOpen,
-  PanelRightClose,
   PanelRightOpen,
   Pencil,
   ScrollText,
@@ -57,9 +56,9 @@ import {
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning';
 import { Suggestion } from '@/components/ai-elements/suggestion';
 import { Tool, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool';
+import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Button } from '@/components/ui/button';
 import { CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -180,7 +179,6 @@ function toolMeta(name: string) {
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
-  const Icon = aiBarOpen ? PanelRightClose : PanelRightOpen;
 
   // ⌘K toggles the sidebar.
   useEffect(() => {
@@ -194,18 +192,19 @@ export function AIBarTrigger() {
     return () => window.removeEventListener('keydown', handler);
   }, [setAiBarOpen, aiBarOpen]);
 
+  // When the sidebar is open it owns its own pane and Close button, so we
+  // only render this floating trigger while it's closed.
+  if (aiBarOpen) return null;
+
   return (
     <button
       type="button"
-      onClick={() => setAiBarOpen(!aiBarOpen)}
-      className={cn(
-        'absolute top-16 z-30 grid h-8 w-8 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-[right,background-color,color,border-color] duration-200 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
-        aiBarOpen ? 'right-[406px]' : 'right-3',
-      )}
-      title={aiBarOpen ? 'Close agent sidebar (⌘K)' : 'Open agent sidebar (⌘K)'}
+      onClick={() => setAiBarOpen(true)}
+      className="absolute right-3 top-3 z-30 grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+      title="Open agent sidebar (⌘K)"
     >
-      <Icon className="h-3.5 w-3.5" />
-      <span className="sr-only">{aiBarOpen ? 'Close agent sidebar' : 'Open agent sidebar'}</span>
+      <PanelRightOpen className="h-3.5 w-3.5" />
+      <span className="sr-only">Open agent sidebar</span>
     </button>
   );
 }
@@ -220,7 +219,7 @@ export function AIBarSidebar() {
 
   const setQuery = useClientStore((s) => s.setQuery);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
-  const openCompose = useClientStore((s) => s.openCompose);
+  const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   const qc = useQueryClient();
@@ -233,8 +232,7 @@ export function AIBarSidebar() {
 
   // Auto-focus the textarea when the sidebar opens.
   useEffect(() => {
-    if (aiBarOpen)
-      requestAnimationFrame(() => inputWrapRef.current?.querySelector('textarea')?.focus());
+    if (aiBarOpen) requestAnimationFrame(() => inputWrapRef.current?.querySelector('textarea')?.focus());
   }, [aiBarOpen]);
 
   // Esc closes the sidebar if it's open — unless the user is typing in the
@@ -274,7 +272,7 @@ export function AIBarSidebar() {
           } else if (name === 'ui_set_query' && args.query) {
             setQuery(args.query);
           } else if (name === 'ui_open_compose') {
-            openCompose({
+            openComposeNew({
               to: args.to,
               cc: args.cc,
               bcc: args.bcc,
@@ -299,7 +297,15 @@ export function AIBarSidebar() {
         } catch {}
       }
     }
-  }, [messages, setQuery, setSelectedThread, openCompose, setThreadAccount, setPendingReplyBody, setAiBarOpen]);
+  }, [
+    messages,
+    setQuery,
+    setSelectedThread,
+    openComposeNew,
+    setThreadAccount,
+    setPendingReplyBody,
+    setAiBarOpen,
+  ]);
 
   // Refresh server queries when any mutating mail tool finishes.
   useEffect(() => {
@@ -413,8 +419,8 @@ export function AIBarSidebar() {
           <div className="space-y-1.5">
             <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
             <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-              Search, triage, summarize, draft replies, schedule sends, look up contacts and
-              calendar, research links — and act across your inbox in real time.
+              Search, triage, summarize, draft replies, schedule sends, look up contacts and calendar,
+              research links — and act across your inbox in real time.
             </p>
           </div>
           <div className="flex w-full max-w-[320px] flex-col gap-2">
@@ -450,7 +456,10 @@ export function AIBarSidebar() {
         </Conversation>
       )}
 
-      <div ref={inputWrapRef} className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2.5">
+      <div
+        ref={inputWrapRef}
+        className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2.5"
+      >
         <PromptInput onSubmit={handleSubmit}>
           <PromptInputBody>
             <PromptInputTextarea
@@ -513,8 +522,7 @@ function hasVisibleContent(message: any): boolean {
     if (type === 'text' && (part.text || '').trim()) return true;
     if ((type === 'reasoning' || type === 'thinking') && (part.text || part.reasoning || '').trim())
       return true;
-    if (typeof type === 'string' && (type.startsWith('tool-') || type === 'dynamic-tool'))
-      return true;
+    if (typeof type === 'string' && (type.startsWith('tool-') || type === 'dynamic-tool')) return true;
   }
   return false;
 }

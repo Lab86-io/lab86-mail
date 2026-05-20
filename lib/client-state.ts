@@ -11,6 +11,19 @@ export interface ComposePrefill {
   body?: string;
 }
 
+export type ComposeMode = 'new' | 'reply' | 'reply_all' | 'forward';
+
+export interface ComposeState {
+  mode: ComposeMode | null;
+  prefill: ComposePrefill | null;
+  anchorThreadId: string | null;
+  anchorMessageId: string | null;
+  anchorAccount: string | null;
+  // Bumped on each open so the inline composer's hooks can reset and re-seed
+  // even when re-opened on the same anchor.
+  nonce: number;
+}
+
 export interface ClientState {
   account: string;
   // The concrete account that owns the currently-open thread. The inbox runs
@@ -24,8 +37,7 @@ export interface ClientState {
   selectedThreadId: string | null;
   selectedIds: string[];
   paletteOpen: boolean;
-  composeOpen: boolean;
-  composePrefill: ComposePrefill | null;
+  compose: ComposeState;
   shortcutsOpen: boolean;
   rightRailOpen: boolean;
   railOpen: boolean;
@@ -41,14 +53,30 @@ export interface ClientState {
   clearSelected: () => void;
   selectMany: (ids: string[]) => void;
   setPaletteOpen: (open: boolean) => void;
-  setComposeOpen: (open: boolean) => void;
-  openCompose: (prefill?: ComposePrefill) => void;
+  openComposeNew: (prefill?: ComposePrefill) => void;
+  openComposeReply: (input: {
+    mode: 'reply' | 'reply_all' | 'forward';
+    threadId: string;
+    messageId: string;
+    account: string;
+    prefill?: ComposePrefill;
+  }) => void;
+  closeCompose: () => void;
   setShortcutsOpen: (open: boolean) => void;
   setRightRailOpen: (open: boolean) => void;
   setRailOpen: (open: boolean) => void;
   setAiBarOpen: (open: boolean) => void;
   setPendingReplyBody: (body: string | null) => void;
 }
+
+const initialCompose: ComposeState = {
+  mode: null,
+  prefill: null,
+  anchorThreadId: null,
+  anchorMessageId: null,
+  anchorAccount: null,
+  nonce: 0,
+};
 
 export const useClientStore = create<ClientState>()(
   persist(
@@ -60,8 +88,7 @@ export const useClientStore = create<ClientState>()(
       selectedThreadId: null,
       selectedIds: [],
       paletteOpen: false,
-      composeOpen: false,
-      composePrefill: null,
+      compose: initialCompose,
       shortcutsOpen: false,
       rightRailOpen: true,
       railOpen: true,
@@ -82,9 +109,29 @@ export const useClientStore = create<ClientState>()(
       clearSelected: () => set({ selectedIds: [] }),
       selectMany: (ids) => set({ selectedIds: ids }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
-      setComposeOpen: (composeOpen) =>
-        set((s) => ({ composeOpen, composePrefill: composeOpen ? s.composePrefill : null })),
-      openCompose: (prefill) => set({ composeOpen: true, composePrefill: prefill ?? null }),
+      openComposeNew: (prefill) =>
+        set((s) => ({
+          compose: {
+            mode: 'new',
+            prefill: prefill ?? null,
+            anchorThreadId: null,
+            anchorMessageId: null,
+            anchorAccount: null,
+            nonce: s.compose.nonce + 1,
+          },
+        })),
+      openComposeReply: ({ mode, threadId, messageId, account, prefill }) =>
+        set((s) => ({
+          compose: {
+            mode,
+            prefill: prefill ?? null,
+            anchorThreadId: threadId,
+            anchorMessageId: messageId,
+            anchorAccount: account,
+            nonce: s.compose.nonce + 1,
+          },
+        })),
+      closeCompose: () => set({ compose: { ...initialCompose } }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
       setRightRailOpen: (rightRailOpen) => set({ rightRailOpen }),
       setRailOpen: (railOpen) => set({ railOpen }),

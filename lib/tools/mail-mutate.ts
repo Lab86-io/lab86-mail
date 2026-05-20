@@ -25,7 +25,10 @@ export const archiveThread = defineTool({
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }) {
-    await gmailMutate(['--account', account, '--json', 'gmail', 'thread', threadId, 'archive', '--no-input']);
+    await gmailMutate([
+      '--account', account, '--json', 'gmail', 'thread', 'modify', threadId,
+      '--remove', 'INBOX', '--no-input',
+    ]);
     return { ok: true };
   },
 });
@@ -38,7 +41,10 @@ export const trashThread = defineTool({
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }) {
-    await gmailMutate(['--account', account, '--json', 'gmail', 'thread', threadId, 'trash', '--no-input']);
+    await gmailMutate([
+      '--account', account, '--json', 'gmail', 'thread', 'modify', threadId,
+      '--add', 'TRASH', '--remove', 'INBOX', '--no-input',
+    ]);
     return { ok: true };
   },
 });
@@ -51,7 +57,10 @@ export const restoreFromTrash = defineTool({
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }) {
-    await gmailMutate(['--account', account, '--json', 'gmail', 'thread', threadId, 'untrash', '--no-input']);
+    await gmailMutate([
+      '--account', account, '--json', 'gmail', 'thread', 'modify', threadId,
+      '--remove', 'TRASH', '--add', 'INBOX', '--no-input',
+    ]);
     return { ok: true };
   },
 });
@@ -91,7 +100,7 @@ export const starMessage = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }) {
     await gmailMutate([
-      '--account', account, '--json', 'gmail', 'messages', 'label', messageId, '--add', 'STARRED', '--no-input',
+      '--account', account, '--json', 'gmail', 'messages', 'modify', messageId, '--add', 'STARRED', '--no-input',
     ]);
     return { ok: true };
   },
@@ -106,7 +115,7 @@ export const unstarMessage = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }) {
     await gmailMutate([
-      '--account', account, '--json', 'gmail', 'messages', 'label', messageId, '--remove', 'STARRED', '--no-input',
+      '--account', account, '--json', 'gmail', 'messages', 'modify', messageId, '--remove', 'STARRED', '--no-input',
     ]);
     return { ok: true };
   },
@@ -121,7 +130,7 @@ export const addLabel = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId, label }) {
     await gmailMutate([
-      '--account', account, '--json', 'gmail', 'messages', 'label', messageId, '--add', label, '--no-input',
+      '--account', account, '--json', 'gmail', 'messages', 'modify', messageId, '--add', label, '--no-input',
     ]);
     return { ok: true };
   },
@@ -136,7 +145,7 @@ export const removeLabel = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId, label }) {
     await gmailMutate([
-      '--account', account, '--json', 'gmail', 'messages', 'label', messageId, '--remove', label, '--no-input',
+      '--account', account, '--json', 'gmail', 'messages', 'modify', messageId, '--remove', label, '--no-input',
     ]);
     return { ok: true };
   },
@@ -164,7 +173,7 @@ export const muteThread = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }) {
     await gmailMutate([
-      '--account', account, '--json', 'gmail', 'thread', threadId, 'modify', '--add', 'MUTE', '--no-input',
+      '--account', account, '--json', 'gmail', 'thread', 'modify', threadId, '--add', 'MUTE', '--no-input',
     ]);
     return { ok: true };
   },
@@ -187,7 +196,7 @@ export const snoozeThreadTool = defineTool({
     // Optional: also label in Gmail so the user can see it in the web UI.
     try {
       await gmailMutate([
-        '--account', account, '--json', 'gmail', 'messages', 'label', messageId,
+        '--account', account, '--json', 'gmail', 'messages', 'modify', messageId,
         '--add', 'MailOS/Snoozed', '--remove', 'INBOX', '--no-input',
       ]);
     } catch {}
@@ -206,7 +215,7 @@ export const unsnoozeThreadTool = defineTool({
     await unsnoozeByMessage(account, messageId);
     try {
       await gmailMutate([
-        '--account', account, '--json', 'gmail', 'messages', 'label', messageId,
+        '--account', account, '--json', 'gmail', 'messages', 'modify', messageId,
         '--remove', 'MailOS/Snoozed', '--add', 'INBOX', '--no-input',
       ]);
     } catch {}

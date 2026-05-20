@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { toast } from 'sonner';
-import { useClientStore } from '@/lib/client-state';
 import { callTool } from '@/lib/api-client';
+import { useClientStore } from '@/lib/client-state';
 
 const editable = (el: EventTarget | null) => {
   if (!el || !(el instanceof HTMLElement)) return false;
@@ -20,12 +20,14 @@ export function ShortcutsBinding() {
   const inboxAccount = useClientStore((s) => s.account);
   const account = threadAccount || inboxAccount;
   const setQuery = useClientStore((s) => s.setQuery);
-  const setComposeOpen = useClientStore((s) => s.setComposeOpen);
+  const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const paletteOpen = useClientStore((s) => s.paletteOpen);
   const setPaletteOpen = useClientStore((s) => s.setPaletteOpen);
+  const composeMode = useClientStore((s) => s.compose.mode);
+  const closeCompose = useClientStore((s) => s.closeCompose);
   const qc = useQueryClient();
 
   useEffect(() => {
@@ -38,6 +40,10 @@ export function ShortcutsBinding() {
         setPaletteOpen(true);
         return;
       }
+      // Let browser/OS editing shortcuts work everywhere: copy, paste, select
+      // all, undo/redo, save, find, open link in new tab, etc. The single-key
+      // mail shortcuts below are only for unmodified keys.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       // ⌘K → AI bar (handled inside AIBar; let it through)
       // 'g' sequence
       if (e.key === 'g') {
@@ -67,7 +73,7 @@ export function ShortcutsBinding() {
       switch (e.key) {
         case 'c':
           e.preventDefault();
-          setComposeOpen(true);
+          openComposeNew();
           break;
         case '/':
           e.preventDefault();
@@ -78,8 +84,9 @@ export function ShortcutsBinding() {
           setShortcutsOpen(true);
           break;
         case 'u':
-          if (selectedThreadId) {
+          if (composeMode || selectedThreadId) {
             e.preventDefault();
+            closeCompose();
             setSelectedThread(null);
           }
           break;
@@ -117,13 +124,26 @@ export function ShortcutsBinding() {
           break;
         case 'Escape':
           if (paletteOpen) setPaletteOpen(false);
+          else if (composeMode) closeCompose();
           else if (selectedThreadId) setSelectedThread(null);
           break;
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [account, selectedThreadId, paletteOpen, setQuery, setComposeOpen, setShortcutsOpen, setSelectedThread, setPaletteOpen, qc]);
+  }, [
+    account,
+    selectedThreadId,
+    paletteOpen,
+    composeMode,
+    setQuery,
+    openComposeNew,
+    setShortcutsOpen,
+    setSelectedThread,
+    setPaletteOpen,
+    closeCompose,
+    qc,
+  ]);
 
   return null;
 }

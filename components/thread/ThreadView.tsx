@@ -1,46 +1,46 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
-  Trash2,
-  Mail,
   ChevronDown,
   ChevronRight,
   Download,
   ExternalLink,
-  File as FileIcon,
-  FileArchive,
-  FileAudio,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileVideo,
-  PenLine,
-  Reply,
   Forward,
-  Send as SendIcon,
+  Mail,
+  Reply,
+  Trash2,
   X,
 } from 'lucide-react';
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import TextareaAutosize from 'react-textarea-autosize';
 import { MessageResponse } from '@/components/ai-elements/message';
-import { callTool } from '@/lib/api-client';
-import { sanitizeEmailHtml } from '@/lib/sanitize';
-import { useClientStore } from '@/lib/client-state';
+import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
+import { callTool } from '@/lib/api-client';
+import { useClientStore } from '@/lib/client-state';
+import { sanitizeEmailHtml } from '@/lib/sanitize';
+import { formatBytes } from '@/lib/shared/files';
+import { emailFromHeader, formatDate, gmailUrlFor, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
-import { formatDate, shortFrom, gmailUrlFor } from '@/lib/shared/format';
+import { AttachmentIcon } from './attachment-chip';
+import { InlineComposer } from './InlineComposer';
 
 export function ThreadView() {
   // The inbox runs unified; the open thread carries its own concrete account.
   const threadAccount = useClientStore((s) => s.threadAccount);
   const inboxAccount = useClientStore((s) => s.account);
+  const primaryAccount = useClientStore((s) => s.primaryAccount);
   const account = threadAccount || inboxAccount;
   const threadId = useClientStore((s) => s.selectedThreadId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const compose = useClientStore((s) => s.compose);
+  const openComposeReply = useClientStore((s) => s.openComposeReply);
+  const closeCompose = useClientStore((s) => s.closeCompose);
+  const pendingReplyBody = useClientStore((s) => s.pendingReplyBody);
+  const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -49,16 +49,9 @@ export function ThreadView() {
       callTool<{ threadId: string; subject: string; messages: any[] }>('get_thread', {
         account,
         threadId,
+        refresh: true,
       }),
     enabled: !!account && !!threadId,
-  });
-
-  const summary = useQuery({
-    queryKey: ['summary', account, threadId],
-    queryFn: async () => callTool<{ summary: string; model: string }>('summarize_thread', { account, threadId }),
-    enabled: !!account && !!threadId && (data?.messages?.length || 0) > 0,
-    staleTime: 5 * 60_000,
-    retry: 0,
   });
 
   const archive = useMutation({
@@ -79,6 +72,114 @@ export function ThreadView() {
     },
   });
 
+  // Collect every sender visible in this thread up front so we can resolve
+  // photos once, then pass them down to each card. (Same nedb-cached batch
+  // tool the inbox uses.)
+  const messages = useMemo(
+    () => [...(data?.messages || [])].sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0)),
+    [data?.messages],
+  );
+  const lastMessage = messages[messages.length - 1];
+  const latestMessageStamp = `${lastMessage?._id || ''}:${lastMessage?.date || 0}:${messages.length}`;
+  const summary = useQuery({
+    queryKey: ['summary', account, threadId, latestMessageStamp],
+    queryFn: async () =>
+      callTool<{ summary: string; model: string }>('summarize_thread', { account, threadId }),
+    enabled: !!account && !!threadId && messages.length > 0,
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+  const ordered = useMemo(() => [...messages].reverse(), [messages]);
+
+  const photoAccount =
+    primaryAccount && primaryAccount !== ALL_ACCOUNTS
+      ? primaryAccount
+      : account && account !== ALL_ACCOUNTS
+        ? account
+        : '';
+  const photoEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of messages) {
+      const email = emailFromHeader(m?.from);
+      if (email) set.add(email);
+    }
+    return [...set].sort();
+  }, [messages]);
+  const photosQuery = useQuery({
+    queryKey: ['photos', photoAccount, photoEmails.join(',')],
+    queryFn: async () =>
+      callTool<{ photos: Record<string, string | null> }>('resolve_photos', {
+        account: photoAccount,
+        emails: photoEmails,
+      }),
+    enabled: !!photoAccount && photoEmails.length > 0,
+    staleTime: 24 * 60 * 60_000,
+  });
+  const photos = photosQuery.data?.photos || {};
+
+  // The in-thread composer is hidden by default and only mounts when the user
+  // explicitly hits Reply / Reply-all / Forward (header buttons) or the AI
+  // agent fires ui_open_reply. Both paths flow through the store's compose
+  // state so there's a single source of truth.
+  const newest = ordered[0];
+  const replyAnchor = newest?._id || null;
+  const replyLabel = newest ? shortFrom(newest.from) : undefined;
+  useEffect(() => {
+    if (pendingReplyBody == null) return;
+    if (!threadId || !replyAnchor) return;
+    openComposeReply({
+      mode: 'reply',
+      threadId,
+      messageId: replyAnchor,
+      account,
+      prefill: { body: pendingReplyBody },
+    });
+    setPendingReplyBody(null);
+  }, [pendingReplyBody, threadId, replyAnchor, account, openComposeReply, setPendingReplyBody]);
+
+  const startReply = (replyMode: 'reply' | 'reply_all' | 'forward') => {
+    if (!threadId || !replyAnchor) return;
+    openComposeReply({ mode: replyMode, threadId, messageId: replyAnchor, account });
+  };
+
+  // Compose 'new' takes the entire reading pane. We honor it regardless of
+  // whether a thread is open — this is the user's "I'm writing a new
+  // message" state.
+  if (compose.mode === 'new') {
+    const fromAccount = compose.anchorAccount
+      ? compose.anchorAccount
+      : primaryAccount && primaryAccount !== ALL_ACCOUNTS
+        ? primaryAccount
+        : account && account !== ALL_ACCOUNTS
+          ? account
+          : '';
+    return (
+      <div className="flex h-full flex-col bg-[var(--color-bg)]">
+        <header className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3">
+          <h1 className="truncate text-[15px] font-semibold leading-tight">New message</h1>
+          <button
+            type="button"
+            onClick={() => closeCompose()}
+            className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            title="Close"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </header>
+        <div className="flex-1 overflow-y-auto px-5 py-6">
+          <InlineComposer
+            mode="new"
+            account={fromAccount}
+            initialPrefill={compose.prefill || undefined}
+            prefillNonce={compose.nonce}
+            onSent={() => closeCompose()}
+            onClose={() => closeCompose()}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (!threadId) {
     return (
       <div className="grid h-full place-items-center text-center text-[12px] text-[var(--color-text-muted)]">
@@ -86,7 +187,9 @@ export function ThreadView() {
           <div className="grid h-12 w-12 place-items-center rounded-full bg-[var(--color-bg-subtle)]">
             <Mail className="h-5 w-5 text-[var(--color-text-faint)]" />
           </div>
-          <p className="max-w-[280px]">Select a thread to read. <kbd>j</kbd>/<kbd>k</kbd> to navigate.</p>
+          <p className="max-w-[280px]">
+            Select a thread to read. <kbd>j</kbd>/<kbd>k</kbd> to navigate.
+          </p>
         </div>
       </div>
     );
@@ -102,8 +205,15 @@ export function ThreadView() {
     );
   }
 
-  const messages = data.messages || [];
-  const lastMessage = messages[messages.length - 1];
+  // Only mount the composer when the store has an active reply/forward
+  // anchored at this thread. The user hits Reply/Reply-all/Forward in the
+  // header (or the AI agent calls ui_open_reply) to populate it.
+  const composeForThisThread = compose.mode && compose.anchorThreadId === threadId ? compose : null;
+  const activeMode = composeForThisThread?.mode as 'reply' | 'reply_all' | 'forward' | undefined;
+  const activeAnchorMessageId = composeForThisThread?.anchorMessageId;
+  const activeAccount = composeForThisThread?.anchorAccount || account;
+  const activePrefill = composeForThisThread?.prefill || undefined;
+  const activeNonce = composeForThisThread?.nonce ?? 0;
 
   return (
     <div className="flex h-full flex-col bg-[var(--color-bg)]">
@@ -111,7 +221,9 @@ export function ThreadView() {
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold leading-tight">{data.subject}</h1>
           <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]">
-            <span>{messages.length} message{messages.length === 1 ? '' : 's'}</span>
+            <span>
+              {messages.length} message{messages.length === 1 ? '' : 's'}
+            </span>
             <span>·</span>
             <span>{shortFrom(lastMessage?.from)}</span>
             <span>·</span>
@@ -119,6 +231,37 @@ export function ThreadView() {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => startReply('reply')}
+            disabled={!replyAnchor}
+            className="flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11.5px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] disabled:opacity-50"
+            title="Reply (r)"
+          >
+            <Reply className="h-3.5 w-3.5" />
+            Reply
+          </button>
+          <button
+            type="button"
+            onClick={() => startReply('reply_all')}
+            disabled={!replyAnchor}
+            className="flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11.5px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] disabled:opacity-50"
+            title="Reply all"
+          >
+            <Reply className="h-3.5 w-3.5" />
+            Reply all
+          </button>
+          <button
+            type="button"
+            onClick={() => startReply('forward')}
+            disabled={!replyAnchor}
+            className="flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)] disabled:opacity-50"
+            title="Forward"
+          >
+            <Forward className="h-3.5 w-3.5" />
+            Forward
+          </button>
+          <span className="mx-1 h-5 w-px bg-[var(--color-border)]" aria-hidden />
           <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
             <Archive className="h-3.5 w-3.5" />
           </IconBtn>
@@ -148,18 +291,38 @@ export function ThreadView() {
           error={summary.error ? (summary.error as Error).message : null}
           onRetry={() => summary.refetch()}
         />
+
+        {composeForThisThread && activeMode && activeAnchorMessageId ? (
+          <div className="mt-4">
+            <InlineComposer
+              key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
+              mode={activeMode}
+              account={activeAccount}
+              threadId={threadId}
+              anchorMessageId={activeAnchorMessageId}
+              replyToLabel={replyLabel}
+              initialPrefill={activePrefill}
+              prefillNonce={activeNonce}
+              onSent={() => closeCompose()}
+              onClose={() => closeCompose()}
+            />
+          </div>
+        ) : null}
+
         <LayoutGroup>
           <div className="mt-4 flex flex-col gap-2">
-            {messages.map((m, i) => (
-              <MessageCard
-                key={m._id}
-                message={m}
-                defaultOpen={i === messages.length - 1}
-                threadId={threadId}
-                isLast={i === messages.length - 1}
-                account={account}
-              />
-            ))}
+            {ordered.map((m, i) => {
+              const email = emailFromHeader(m?.from);
+              return (
+                <MessageCard
+                  key={m._id}
+                  message={m}
+                  defaultOpen={i === 0}
+                  account={account}
+                  photoUrl={email ? (photos[email] ?? null) : null}
+                />
+              );
+            })}
           </div>
         </LayoutGroup>
       </div>
@@ -209,9 +372,7 @@ function SummaryCard({
           <div className="h-3 w-2/3 rounded shimmer" />
         </div>
       ) : error ? (
-        <div className="text-[12px] text-[var(--color-danger)]">
-          Couldn't summarize: {error}
-        </div>
+        <div className="text-[12px] text-[var(--color-danger)]">Couldn't summarize: {error}</div>
       ) : data ? (
         <MessageResponse className="text-[12.5px] leading-relaxed text-[var(--color-text)] [&_p]:my-0 [&_ul]:mt-1 [&_ul]:mb-0 [&_ul]:pl-4 [&_li]:my-0.5 [&_li]:marker:text-[var(--color-text-faint)]">
           {data}
@@ -226,33 +387,15 @@ function SummaryCard({
 function MessageCard({
   message,
   defaultOpen,
-  isLast,
-  threadId,
   account,
+  photoUrl,
 }: {
   message: any;
   defaultOpen: boolean;
-  isLast: boolean;
-  threadId: string;
   account: string;
+  photoUrl?: string | null;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const [replyOpen, setReplyOpen] = useState(false);
-  const [replyInitial, setReplyInitial] = useState('');
-  const pendingReplyBody = useClientStore((s) => s.pendingReplyBody);
-  const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
-
-  // When the AI agent calls ui_open_reply, the store gets a pending body.
-  // The latest message in the thread captures it, opens its reply composer,
-  // and clears the pending state so it doesn't fire again.
-  useEffect(() => {
-    if (!isLast) return;
-    if (pendingReplyBody == null) return;
-    setOpen(true);
-    setReplyOpen(true);
-    setReplyInitial(pendingReplyBody);
-    setPendingReplyBody(null);
-  }, [pendingReplyBody, isLast, setPendingReplyBody]);
   return (
     <motion.article
       layout
@@ -264,7 +407,7 @@ function MessageCard({
         onClick={() => setOpen((v) => !v)}
         className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 px-3 py-2 text-left"
       >
-        <Avatar name={shortFrom(message.from)} size={26} />
+        <Avatar name={shortFrom(message.from)} src={photoUrl} size={26} />
         <div className="flex min-w-0 flex-col gap-0">
           <div className="flex items-center gap-2 truncate">
             <span className="truncate text-[13px] font-semibold text-[var(--color-text)]">
@@ -275,12 +418,18 @@ function MessageCard({
             </span>
           </div>
           {!open ? (
-            <span className="line-clamp-1 text-[11.5px] text-[var(--color-text-muted)]">{message.snippet}</span>
+            <span className="line-clamp-1 text-[11.5px] text-[var(--color-text-muted)]">
+              {message.snippet}
+            </span>
           ) : null}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-[var(--color-text-faint)]">{formatDate(message.date)}</span>
-          {open ? <ChevronDown className="h-3.5 w-3.5 text-[var(--color-text-faint)]" /> : <ChevronRight className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />}
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />
+          )}
         </div>
       </button>
 
@@ -297,46 +446,6 @@ function MessageCard({
               <MessageBody html={message.htmlBody} text={message.textBody} />
               <Attachments attachments={message.attachments} messageId={message._id} account={account} />
             </div>
-            {isLast ? (
-              <div className="flex items-center gap-1.5 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
-                <button
-                  type="button"
-                  onClick={() => setReplyOpen(true)}
-                  className="flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
-                >
-                  <Reply className="h-3 w-3" />
-                  Reply
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11.5px] hover:bg-[var(--color-bg-subtle)]"
-                >
-                  <Reply className="h-3 w-3" />
-                  Reply all
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11.5px] hover:bg-[var(--color-bg-subtle)]"
-                >
-                  <Forward className="h-3 w-3" />
-                  Forward
-                </button>
-              </div>
-            ) : null}
-
-            {replyOpen ? (
-              <InlineReply
-                onClose={() => {
-                  setReplyOpen(false);
-                  setReplyInitial('');
-                }}
-                account={account}
-                threadId={threadId}
-                messageId={message._id}
-                replyTo={shortFrom(message.from)}
-                initialBody={replyInitial}
-              />
-            ) : null}
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -410,112 +519,6 @@ function Attachments({
         );
       })}
     </div>
-  );
-}
-
-function AttachmentIcon({ mime }: { mime: string }) {
-  const m = (mime || '').toLowerCase();
-  const cls = 'size-4';
-  if (m.startsWith('image/')) return <FileImage className={cls} />;
-  if (m === 'application/pdf') return <FileText className={cls} />;
-  if (m.startsWith('audio/')) return <FileAudio className={cls} />;
-  if (m.startsWith('video/')) return <FileVideo className={cls} />;
-  if (/(zip|compressed|tar|rar|7z|gzip)/.test(m)) return <FileArchive className={cls} />;
-  if (/(sheet|excel|csv|numbers)/.test(m)) return <FileSpreadsheet className={cls} />;
-  if (m.startsWith('text/') || /(document|word|pdf|rtf)/.test(m)) return <FileText className={cls} />;
-  return <FileIcon className={cls} />;
-}
-
-function formatBytes(n: number): string {
-  if (!n || n < 0) return '';
-  if (n < 1024) return `${n} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = n;
-  let i = -1;
-  do {
-    value /= 1024;
-    i++;
-  } while (value >= 1024 && i < units.length - 1);
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`;
-}
-
-function InlineReply({
-  onClose,
-  account,
-  threadId,
-  messageId,
-  replyTo,
-  initialBody = '',
-}: {
-  onClose: () => void;
-  account: string;
-  threadId: string;
-  messageId: string;
-  replyTo: string;
-  initialBody?: string;
-}) {
-  const [body, setBody] = useState(initialBody);
-  useEffect(() => {
-    if (initialBody) setBody(initialBody);
-  }, [initialBody]);
-
-  const draft = useMutation({
-    mutationFn: async () => callTool<{ draft: string }>('draft_reply', { account, threadId }),
-    onSuccess: (res) => setBody((b) => b || res.draft),
-  });
-
-  const send = useMutation({
-    mutationFn: async () =>
-      callTool('reply', { account, messageId, threadId, body }),
-    onSuccess: () => {
-      toast.success(`Sent to ${replyTo}`);
-      onClose();
-    },
-    onError: (err: any) => toast.error(err?.message || 'Send failed'),
-  });
-
-  return (
-    <motion.div
-      initial={{ height: 0, opacity: 0 }}
-      animate={{ height: 'auto', opacity: 1 }}
-      exit={{ height: 0, opacity: 0 }}
-      className="border-t border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
-    >
-      <div className="mb-1.5 flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span>Replying to {replyTo}</span>
-        <button onClick={onClose} className="hover:text-[var(--color-text)]">
-          <X className="h-3 w-3" />
-        </button>
-      </div>
-      <TextareaAutosize
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        minRows={3}
-        maxRows={12}
-        placeholder="Write your reply… or click AI Draft."
-        className="w-full resize-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[13px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30"
-      />
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => draft.mutate()}
-          disabled={draft.isPending}
-          className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-1 text-[11.5px] hover:bg-[var(--color-bg-muted)]"
-        >
-          <PenLine className="h-3 w-3 text-[var(--color-accent)]" />
-          {draft.isPending ? 'Drafting…' : 'AI draft'}
-        </button>
-        <button
-          type="button"
-          onClick={() => send.mutate()}
-          disabled={!body.trim() || send.isPending}
-          className="ml-auto flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-3 py-1 text-[11.5px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-        >
-          <SendIcon className="h-3 w-3" />
-          {send.isPending ? 'Sending…' : 'Send'}
-        </button>
-      </div>
-    </motion.div>
   );
 }
 

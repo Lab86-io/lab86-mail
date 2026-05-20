@@ -49,7 +49,7 @@ export const uiSetQuery = defineTool({
 export const uiOpenCompose = defineTool({
   name: 'ui_open_compose',
   description:
-    'Open the Compose dialog in the UI, optionally pre-populated. Use when the user asks to write/draft/compose a new email. The user reviews and clicks Send themselves — never claim the message was sent.',
+    'Open the inline compose pane in the UI, optionally pre-populated. Use when the user asks to write/draft/compose a new email. The user reviews and clicks Send themselves — never claim the message was sent.',
   category: 'meta',
   mutating: false,
   input: z.object({
@@ -61,7 +61,7 @@ export const uiOpenCompose = defineTool({
   }),
   output: ack,
   async handler() {
-    return { acknowledged: true as const, hint: 'Compose dialog opened — user will review and send.' };
+    return { acknowledged: true as const, hint: 'Compose pane opened — user will review and send.' };
   },
 });
 
@@ -82,7 +82,8 @@ export const uiOpenReply = defineTool({
 
 export const uiToast = defineTool({
   name: 'ui_toast',
-  description: 'Show a toast notification to the user. Use sparingly for important confirmations or warnings.',
+  description:
+    'Show a toast notification to the user. Use sparingly for important confirmations or warnings.',
   category: 'meta',
   mutating: false,
   input: z.object({
@@ -97,7 +98,8 @@ export const uiToast = defineTool({
 
 export const uiCloseBar = defineTool({
   name: 'ui_close_bar',
-  description: 'Dismiss the AI bar overlay. Call this when the work is fully complete and the user should look at the page.',
+  description:
+    'Dismiss the AI bar overlay. Call this when the work is fully complete and the user should look at the page.',
   category: 'meta',
   mutating: false,
   input: z.object({}).optional(),
@@ -109,7 +111,7 @@ export const uiCloseBar = defineTool({
 
 export const uiSwitchAccount = defineTool({
   name: 'ui_switch_account',
-  description: "Switch the active account in the UI to a different connected Gmail account.",
+  description: 'Switch the active account in the UI to a different connected Gmail account.',
   category: 'meta',
   mutating: false,
   input: z.object({ account: z.string() }),

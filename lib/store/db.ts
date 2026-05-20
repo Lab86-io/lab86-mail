@@ -13,6 +13,7 @@ let instances: {
   prefs: Datastore;
   snooze: Datastore;
   drafts: Datastore;
+  photos: Datastore;
 } | null = null;
 
 function ensureDir(dir: string) {
@@ -50,17 +51,14 @@ export function db() {
     prefs: open('prefs', []),
     snooze: open('snooze', [{ fieldName: 'untilTs' }]),
     drafts: open('drafts', [{ fieldName: 'account' }, { fieldName: 'updatedAt' }]),
+    photos: open('photos', [{ fieldName: 'email', unique: true }]),
   };
   return instances;
 }
 
 // Generic helpers — typed wrappers around NeDB's callback API via promises.
-export async function upsert<T extends { _id?: string }>(
-  store: Datastore,
-  query: Record<string, unknown>,
-  doc: T,
-): Promise<void> {
-  await store.updateAsync(query, { $set: doc }, { upsert: true });
+export async function upsert<T>(store: Datastore, query: Record<string, unknown>, doc: T): Promise<void> {
+  await store.updateAsync(query, { $set: doc as Record<string, unknown> }, { upsert: true });
 }
 
 export async function findOne<T>(store: Datastore, query: Record<string, unknown>): Promise<T | null> {

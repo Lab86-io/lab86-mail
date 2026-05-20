@@ -50,6 +50,7 @@
     "linkifyjs": "^4.3.3",
     "lucide-react": "^1.16.0",
     "mailparser": "3.9.8",
+    "marked": "^18.0.4",
     "mime-types": "3.0.2",
     "motion": "^12.39.0",
     "nanoid": "^5.1.11",

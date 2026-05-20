@@ -1,8 +1,23 @@
 export function shortFrom(value: string | null | undefined): string {
-  return String(value || '')
-    .replace(/<.*?>/g, '')
-    .replaceAll('"', '')
-    .trim() || String(value || '');
+  return (
+    String(value || '')
+      .replace(/<.*?>/g, '')
+      .replaceAll('"', '')
+      .trim() || String(value || '')
+  );
+}
+
+// Pulls the bare email out of a header value like `"Tori" <tori@example.com>`,
+// or returns a lowercase email if the value is already bare. Returns null when
+// nothing email-shaped is present.
+export function emailFromHeader(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const angle = raw.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/);
+  if (angle) return angle[1].toLowerCase();
+  const plain = raw.match(/[\w.+-]+@[\w.-]+\.[\w.-]+/);
+  return plain ? plain[0].toLowerCase() : null;
 }
 
 export function fromInitials(value: string | null | undefined): string {

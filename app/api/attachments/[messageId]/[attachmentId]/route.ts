@@ -3,27 +3,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { NextRequest } from 'next/server';
 import { runGog } from '@/lib/gog/pool';
+import { sanitizeFilename } from '@/lib/shared/files';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-function sanitizeFilename(name: string): string {
-  // Drop control chars and path/forbidden characters while keeping spaces,
-  // hyphens, and unicode so filenames stay readable. Done char-by-char to
-  // avoid embedding control characters in a regex.
-  const forbidden = '/\\:*?"<>|';
-  const cleaned = Array.from(name)
-    .map((ch) => {
-      const code = ch.codePointAt(0) ?? 0;
-      if (code < 0x20 || code === 0x7f) return '';
-      return forbidden.includes(ch) ? '_' : ch;
-    })
-    .join('')
-    .replace(/^\.+/, '')
-    .trim()
-    .slice(0, 200);
-  return cleaned || 'attachment';
-}
 
 // Streams a single Gmail attachment. gog downloads it to a temp dir (it has no
 // stdout/base64 mode for binaries), which we then read back and hand to the

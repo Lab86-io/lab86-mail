@@ -1,13 +1,35 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Inbox, MailOpen, Star, Send, Pencil, Flag, Paperclip, Gauge, ScrollText, Moon, Sun, Cloud, AlarmClock } from 'lucide-react';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
-import { Command, CommandInput, CommandList, CommandGroup, CommandItem, CommandEmpty, CommandShortcut } from '@/components/ui/command';
-import { useClientStore } from '@/lib/client-state';
-import { callTool } from '@/lib/api-client';
+import {
+  AlarmClock,
+  Cloud,
+  Flag,
+  Gauge,
+  Inbox,
+  MailOpen,
+  Moon,
+  Paperclip,
+  Pencil,
+  ScrollText,
+  Send,
+  Star,
+  Sun,
+} from 'lucide-react';
 import { useTheme } from 'next-themes';
+import { useEffect, useMemo } from 'react';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from '@/components/ui/command';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { callTool } from '@/lib/api-client';
+import { useClientStore } from '@/lib/client-state';
 import { shortFrom } from '@/lib/shared/format';
 
 export function CommandPalette() {
@@ -15,7 +37,7 @@ export function CommandPalette() {
   const setOpen = useClientStore((s) => s.setPaletteOpen);
   const setQuery = useClientStore((s) => s.setQuery);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
-  const setComposeOpen = useClientStore((s) => s.setComposeOpen);
+  const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const { setTheme } = useTheme();
 
@@ -70,7 +92,7 @@ export function CommandPalette() {
             </CommandGroup>
 
             <CommandGroup heading="AI">
-              <CommandItem value="ai compose" onSelect={() => run(() => setComposeOpen(true))}>
+              <CommandItem value="ai compose" onSelect={() => run(() => openComposeNew())}>
                 <Pencil className="h-3.5 w-3.5 text-[var(--color-accent)]" /> Compose new message
                 <CommandShortcut>c</CommandShortcut>
               </CommandItem>
@@ -79,7 +101,9 @@ export function CommandPalette() {
                 onSelect={() =>
                   run(() => {
                     setOpen(false);
-                    document.dispatchEvent(new CustomEvent('mail-os:ask', { detail: 'Triage my newest 25 inbox threads' }));
+                    document.dispatchEvent(
+                      new CustomEvent('mail-os:ask', { detail: 'Triage my newest 25 inbox threads' }),
+                    );
                   })
                 }
               >
@@ -89,7 +113,11 @@ export function CommandPalette() {
                 value="ai daily digest"
                 onSelect={() =>
                   run(() => {
-                    document.dispatchEvent(new CustomEvent('mail-os:ask', { detail: 'Summarize my unread from today and propose 3 replies' }));
+                    document.dispatchEvent(
+                      new CustomEvent('mail-os:ask', {
+                        detail: 'Summarize my unread from today and propose 3 replies',
+                      }),
+                    );
                   })
                 }
               >
@@ -112,7 +140,9 @@ export function CommandPalette() {
                   >
                     <div className="flex min-w-0 flex-col">
                       <span className="truncate text-[12.5px]">{t.subject || '(no subject)'}</span>
-                      <span className="truncate text-[10.5px] text-[var(--color-text-faint)]">{shortFrom(t.fromAddress)}</span>
+                      <span className="truncate text-[10.5px] text-[var(--color-text-faint)]">
+                        {shortFrom(t.fromAddress)}
+                      </span>
                     </div>
                   </CommandItem>
                 ))}

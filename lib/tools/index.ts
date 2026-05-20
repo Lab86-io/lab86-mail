@@ -1,66 +1,67 @@
-import type { AnyTool } from './registry';
 import {
-  listAccounts,
-  searchThreads,
-  getThread,
+  bulkTriage,
+  draftReply,
+  extractActionItems,
+  nlSearch,
+  preSendCritique,
+  summarizeThread,
+  translateThread,
+  triageThread,
+} from './ai';
+import { listAuditEntries, logAction } from './audit-tools';
+import { calendarCreateEvent, calendarFreeBusy, calendarSuggestTimes } from './calendar';
+import {
+  cancelScheduled,
+  deleteDraftTool,
+  forwardMessage,
+  listDraftsTool,
+  replyAllMessage,
+  replyMessage,
+  saveDraftTool,
+  scheduleSend,
+  sendMessage,
+  undoSend,
+  updateDraft,
+} from './compose';
+import { contactLookup, expandAlias } from './contacts';
+import {
   getMessage,
-  listLabels,
-  listAttachments,
-  recentThreadsCached,
+  getThread,
+  listAccounts,
   listAccountThreads,
+  listAttachments,
+  listLabels,
+  recentThreadsCached,
+  searchThreads,
 } from './mail';
 import {
+  addLabel,
   archiveThread,
-  trashThread,
-  restoreFromTrash,
+  createLabel,
   markRead,
   markUnread,
-  starMessage,
-  unstarMessage,
-  addLabel,
-  removeLabel,
-  createLabel,
   muteThread,
+  removeLabel,
+  restoreFromTrash,
   snoozeThreadTool,
+  starMessage,
+  trashThread,
   unsnoozeThreadTool,
+  unstarMessage,
 } from './mail-mutate';
+import { forget, listMemories, recall, remember } from './memories';
+import { resolvePhotos } from './photos';
+import type { AnyTool } from './registry';
 import {
-  sendMessage,
-  replyMessage,
-  replyAllMessage,
-  forwardMessage,
-  saveDraftTool,
-  updateDraft,
-  deleteDraftTool,
-  listDraftsTool,
-  scheduleSend,
-  cancelScheduled,
-  undoSend,
-} from './compose';
-import {
-  summarizeThread,
-  triageThread,
-  draftReply,
-  bulkTriage,
-  extractActionItems,
-  translateThread,
-  preSendCritique,
-  nlSearch,
-} from './ai';
-import { remember, recall, forget, listMemories } from './memories';
-import { calendarFreeBusy, calendarSuggestTimes, calendarCreateEvent } from './calendar';
-import { contactLookup, expandAlias } from './contacts';
-import { browserbaseSearch, browserbaseFetch } from './web';
-import { logAction, listAuditEntries } from './audit-tools';
-import {
+  uiCloseBar,
   uiFocusThread,
-  uiSetQuery,
   uiOpenCompose,
   uiOpenReply,
-  uiToast,
-  uiCloseBar,
+  uiSetQuery,
   uiSwitchAccount,
+  uiToast,
 } from './ui-tools';
+import { browserbaseFetch, browserbaseSearch } from './web';
 
 const allTools: AnyTool[] = [
   listAccounts,
@@ -112,6 +113,7 @@ const allTools: AnyTool[] = [
   calendarCreateEvent,
   contactLookup,
   expandAlias,
+  resolvePhotos,
   browserbaseSearch,
   browserbaseFetch,
   logAction,
