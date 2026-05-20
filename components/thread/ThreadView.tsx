@@ -33,6 +33,7 @@ import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { emailFromHeader, formatDate, gmailUrlFor, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
+import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
 import { InlineComposer } from './InlineComposer';
 
@@ -49,6 +50,7 @@ export function ThreadView() {
   const closeCompose = useClientStore((s) => s.closeCompose);
   const pendingReplyBody = useClientStore((s) => s.pendingReplyBody);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
+  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -163,7 +165,12 @@ export function ThreadView() {
           : '';
     return (
       <div className="flex h-full flex-col bg-[var(--color-bg)]">
-        <header className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3">
+        <header
+          className={cn(
+            'flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+            !aiBarOpen && 'pr-12',
+          )}
+        >
           <h1 className="truncate text-[15px] font-semibold leading-tight">New message</h1>
           <button
             type="button"
@@ -205,7 +212,7 @@ export function ThreadView() {
 
   if (isLoading || !data) {
     return (
-      <div className="space-y-3 p-4">
+      <div className={cn('space-y-3 p-4', !aiBarOpen && 'pr-12')}>
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="h-24 rounded-lg shimmer" />
         ))}
@@ -225,7 +232,12 @@ export function ThreadView() {
 
   return (
     <div className="flex h-full flex-col bg-[var(--color-bg)]">
-      <header className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3">
+      <header
+        className={cn(
+          'flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+          !aiBarOpen && 'pr-12',
+        )}
+      >
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold leading-tight">{data.subject}</h1>
           <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]">

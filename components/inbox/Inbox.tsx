@@ -1,9 +1,9 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, Gauge, Inbox as InboxIcon, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 // An empty search (or the clear button / Esc) returns to the default unified
 // inbox view across all mailboxes.
 const DEFAULT_QUERY = 'in:inbox newer_than:30d';
+const INBOX_PAGE_SIZE = 50;
 
 interface ThreadRow {
   _id: string;
@@ -31,6 +32,16 @@ interface ThreadRow {
   unread?: boolean;
 }
 
+interface SearchThreadsResult {
+  items: ThreadRow[];
+  nextPageToken?: string;
+}
+
+interface InboxPage {
+  items: ThreadRow[];
+  nextPageTokens: Record<string, string>;
+}
+
 export function Inbox() {
   const account = useClientStore((s) => s.account);
   const query = useClientStore((s) => s.query);
@@ -41,10 +52,15 @@ export function Inbox() {
   const selectedIds = useClientStore((s) => s.selectedIds);
   const toggleSelected = useClientStore((s) => s.toggleSelected);
   const clearSelected = useClientStore((s) => s.clearSelected);
+  const railOpen = useClientStore((s) => s.railOpen);
+  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  const composeMode = useClientStore((s) => s.compose.mode);
 
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState(query);
   const [translating, setTranslating] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // Reflect the active query in the bar — but show All Mail as an empty bar
   // (placeholder), so "all mail" reads as "no filter" instead of raw syntax.
@@ -99,24 +115,61 @@ export function Inbox() {
   });
   const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
     queryKey: ['search', account, query, authedEmails.join(',')],
-    queryFn: async () => {
+    initialPageParam: {} as Record<string, string>,
+    queryFn: async ({ pageParam }): Promise<InboxPage> => {
+      const pageTokens = pageParam as Record<string, string>;
       if (account === ALL_ACCOUNTS) {
-        const perAccount = Math.max(8, Math.ceil(50 / Math.max(authedEmails.length, 1)));
+        const initialPage = Object.keys(pageTokens).length === 0;
+        const emailsToFetch = initialPage ? authedEmails : authedEmails.filter((email) => pageTokens[email]);
+        const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(authedEmails.length, 1)));
         const results = await Promise.all(
-          authedEmails.map((email) =>
-            callTool<{ items: ThreadRow[] }>('search_threads', { account: email, query, max: perAccount })
-              .then((r) => r.items.map((it) => ({ ...it, account: email })))
-              .catch(() => [] as ThreadRow[]),
+          emailsToFetch.map((email) =>
+            callTool<SearchThreadsResult>('search_threads', {
+              account: email,
+              query,
+              max: perAccount,
+              pageToken: pageTokens[email],
+            })
+              .then((r) => ({
+                email,
+                items: r.items.map((it) => ({ ...it, account: email })),
+                nextPageToken: r.nextPageToken,
+              }))
+              .catch(() => ({ email, items: [] as ThreadRow[], nextPageToken: undefined })),
           ),
         );
-        const merged = results.flat();
+        const merged = results.flatMap((result) => result.items);
         merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
-        return { items: merged.slice(0, 80) };
+        const nextPageTokens = Object.fromEntries(
+          results
+            .filter((result) => result.nextPageToken)
+            .map((result) => [result.email, result.nextPageToken as string]),
+        );
+        return { items: merged, nextPageTokens };
       }
-      return callTool<{ items: ThreadRow[] }>('search_threads', { account, query, max: 50 });
+      const result = await callTool<SearchThreadsResult>('search_threads', {
+        account,
+        query,
+        max: INBOX_PAGE_SIZE,
+        pageToken: pageTokens[account],
+      });
+      return {
+        items: result.items.map((it) => ({ ...it, account })),
+        nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
+      };
     },
+    getNextPageParam: (lastPage) =>
+      Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
     enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
     // Inbox freshness: any cached search result is treated as stale right
     // away, so re-mounts, window focus, and reconnects always re-hit Gmail.
@@ -147,7 +200,31 @@ export function Inbox() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [queryClient]);
 
-  const items = data?.items || [];
+  const items = useMemo(() => {
+    const byKey = new Map<string, ThreadRow>();
+    for (const item of data?.pages.flatMap((page) => page.items) || []) {
+      byKey.set(`${item.account || account}:${item._id}`, item);
+    }
+    return [...byKey.values()].sort(
+      (a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
+    );
+  }, [account, data?.pages]);
+  const readerVisible = !!(selectedThreadId || composeMode);
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    const target = loadMoreRef.current;
+    if (!root || !target || !hasNextPage || isFetchingNextPage) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) fetchNextPage();
+      },
+      { root, rootMargin: '600px 0px 600px 0px' },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   // Once we know the visible senders, fetch their Google profile photos.
   // The lookup is best-effort: contacts + the user's own accounts resolve,
@@ -225,25 +302,19 @@ export function Inbox() {
     },
     onSuccess: (res) => {
       toast.success(`Triaged ${res.verdicts.length}`);
-      queryClient.setQueryData(['search', account, query], (old: any) => {
-        if (!old?.items) return old;
-        const updated = old.items.map((it: any) => {
-          const v = res.verdicts.find((x: any) => x.id === it._id);
-          if (v)
-            return {
-              ...it,
-              triage: { priority: v.priority, action: v.action, reason: v.reason, at: Date.now() },
-            };
-          return it;
-        });
-        return { ...old, items: updated };
-      });
+      queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
 
   return (
     <section className="flex h-full flex-col bg-[var(--color-bg)]">
-      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
+      <div
+        className={cn(
+          'flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5',
+          !railOpen && 'pl-12',
+          !aiBarOpen && !readerVisible && 'pr-12',
+        )}
+      >
         <div className="relative flex-1">
           {translating ? (
             <Loader2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-[var(--color-accent)]" />
@@ -285,7 +356,7 @@ export function Inbox() {
           onClick={refreshInbox}
           className={cn(
             'grid h-8 w-8 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]',
-            isFetching && 'animate-spin',
+            isFetching && !isFetchingNextPage && 'animate-spin',
           )}
           title="Refresh"
         >
@@ -338,34 +409,38 @@ export function Inbox() {
         ) : null}
       </AnimatePresence>
 
-      <div className="flex flex-1 flex-col overflow-y-auto">
+      <div ref={scrollRef} className="flex flex-1 flex-col overflow-y-auto">
         {isLoading ? (
           <SkeletonRows />
         ) : items.length === 0 ? (
           <EmptyState account={account} />
         ) : (
-          <AnimatePresence initial={false} mode="popLayout">
-            {items.map((it) => {
-              const senderEmail = emailFromHeader(it.from || it.fromAddress);
-              return (
-                <ThreadRowCard
-                  key={`${it.account}:${it._id}`}
-                  item={it}
-                  photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
-                  showAccount={account === ALL_ACCOUNTS}
-                  selected={selectedIds.includes(it._id)}
-                  active={selectedThreadId === it._id}
-                  onToggle={() => toggleSelected(it._id)}
-                  onClick={() => {
-                    // Unified inbox stays put; just remember which mailbox this
-                    // thread belongs to so the reader can load/reply correctly.
-                    setThreadAccount(it.account || account);
-                    setSelectedThread(it._id);
-                  }}
-                />
-              );
-            })}
-          </AnimatePresence>
+          <>
+            <AnimatePresence initial={false} mode="popLayout">
+              {items.map((it) => {
+                const senderEmail = emailFromHeader(it.from || it.fromAddress);
+                return (
+                  <ThreadRowCard
+                    key={`${it.account}:${it._id}`}
+                    item={it}
+                    photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                    showAccount={account === ALL_ACCOUNTS}
+                    selected={selectedIds.includes(it._id)}
+                    active={selectedThreadId === it._id}
+                    onToggle={() => toggleSelected(it._id)}
+                    onClick={() => {
+                      // Unified inbox stays put; just remember which mailbox this
+                      // thread belongs to so the reader can load/reply correctly.
+                      setThreadAccount(it.account || account);
+                      setSelectedThread(it._id);
+                    }}
+                  />
+                );
+              })}
+            </AnimatePresence>
+            <div ref={loadMoreRef} className="min-h-1" aria-hidden />
+            {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
+          </>
         )}
       </div>
     </section>
@@ -468,10 +543,10 @@ function ThreadRowCard({
   );
 }
 
-function SkeletonRows() {
+function SkeletonRows({ count = 8 }: { count?: number }) {
   return (
     <div className="flex flex-col">
-      {Array.from({ length: 8 }).map((_, i) => (
+      {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
           className="grid grid-cols-[28px_1fr] gap-3 border-b border-[var(--color-border)] px-3 py-3"

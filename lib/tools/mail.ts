@@ -59,28 +59,31 @@ export const searchThreads = defineTool({
     account: z.string().describe('Email of the account to search'),
     query: z.string().default('in:inbox newer_than:30d').describe('Gmail search query'),
     max: z.number().int().min(1).max(80).default(30),
+    pageToken: z.string().optional(),
   }),
   output: z.object({
     account: z.string(),
     query: z.string(),
     items: z.array(z.any()),
+    nextPageToken: z.string().optional(),
   }),
-  async handler({ account, query, max }) {
-    const raw = await runGogJson<any>([
+  async handler({ account, query, max, pageToken }) {
+    const args = [
       '--account',
       account,
       '--json',
-      '--results-only',
       'gmail',
       'search',
       '--max',
       String(max),
+      ...(pageToken ? ['--page', pageToken] : []),
       '--no-input',
       // End-of-flags separator so queries starting with "-" (e.g. -in:trash,
       // -label:foo) aren't misparsed by the CLI as flags.
       '--',
       query,
-    ]);
+    ];
+    const raw = await runGogJson<any>(args);
     const list = coerceList(raw);
     const items: (Partial<Thread> & { _id: string })[] = [];
     for (const it of list) {
@@ -89,7 +92,7 @@ export const searchThreads = defineTool({
       items.push(norm);
       await upsertThread(account, norm).catch(() => undefined);
     }
-    return { account, query, items };
+    return { account, query, items, nextPageToken: coerceNextPageToken(raw) };
   },
 });
 
@@ -253,5 +256,19 @@ function coerceList(raw: any): any[] {
   if (Array.isArray(raw?.items)) return raw.items;
   if (Array.isArray(raw?.labels)) return raw.labels;
   if (Array.isArray(raw?.data)) return raw.data;
+  if (Array.isArray(raw?.result)) return raw.result;
   return [];
+}
+
+function coerceNextPageToken(raw: any): string | undefined {
+  const token =
+    raw?.nextPageToken ||
+    raw?.next_page_token ||
+    raw?.pageToken ||
+    raw?.page_token ||
+    raw?.result?.nextPageToken ||
+    raw?.result?.next_page_token ||
+    raw?.data?.nextPageToken ||
+    raw?.data?.next_page_token;
+  return typeof token === 'string' && token ? token : undefined;
 }
