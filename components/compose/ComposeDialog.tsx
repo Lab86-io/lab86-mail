@@ -8,12 +8,16 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 
 export function ComposeDialog() {
   const open = useClientStore((s) => s.composeOpen);
   const setOpen = useClientStore((s) => s.setComposeOpen);
   const prefill = useClientStore((s) => s.composePrefill);
   const account = useClientStore((s) => s.account);
+  const primaryAccount = useClientStore((s) => s.primaryAccount);
+  // The inbox view is unified, so a new message sends from the primary mailbox.
+  const fromAccount = account && account !== ALL_ACCOUNTS ? account : primaryAccount;
 
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
@@ -41,7 +45,7 @@ export function ComposeDialog() {
   }, [open, prefill]);
 
   const send = useMutation({
-    mutationFn: async () => callTool('send_message', { account, to, cc, bcc, subject, body }),
+    mutationFn: async () => callTool('send_message', { account: fromAccount, to, cc, bcc, subject, body }),
     onSuccess: () => {
       toast.success(`Sent to ${to}`);
       setOpen(false);
@@ -59,7 +63,7 @@ export function ComposeDialog() {
       <DialogContent className="max-w-[720px] p-0">
         <header className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2.5">
           <DialogTitle className="text-[13px] font-medium">
-            New message <span className="text-[var(--color-text-faint)]">· from {account}</span>
+            New message <span className="text-[var(--color-text-faint)]">· from {fromAccount}</span>
           </DialogTitle>
           <button onClick={() => setOpen(false)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="h-4 w-4" />

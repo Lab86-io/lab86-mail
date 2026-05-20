@@ -16,15 +16,8 @@ export function CommandPalette() {
   const setQuery = useClientStore((s) => s.setQuery);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setComposeOpen = useClientStore((s) => s.setComposeOpen);
-  const account = useClientStore((s) => s.account);
-  const setAccount = useClientStore((s) => s.setAccount);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const { setTheme } = useTheme();
-
-  const { data: accountsData } = useQuery({
-    queryKey: ['accounts'],
-    queryFn: async () => callTool<{ accounts: any[] }>('list_accounts'),
-    enabled: open,
-  });
 
   const { data: recent } = useQuery({
     queryKey: ['recent-threads'],
@@ -104,23 +97,6 @@ export function CommandPalette() {
               </CommandItem>
             </CommandGroup>
 
-            {(accountsData?.accounts || []).filter((a: any) => a.authed).length > 1 ? (
-              <CommandGroup heading="Accounts">
-                {(accountsData?.accounts || [])
-                  .filter((a: any) => a.authed)
-                  .map((a: any) => (
-                    <CommandItem
-                      key={a.email}
-                      value={`account ${a.email}`}
-                      onSelect={() => run(() => setAccount(a.email))}
-                    >
-                      <span className={account === a.email ? 'font-semibold' : ''}>{a.email}</span>
-                      {a.primary ? <CommandShortcut>primary</CommandShortcut> : null}
-                    </CommandItem>
-                  ))}
-              </CommandGroup>
-            ) : null}
-
             {(recent?.threads || []).length ? (
               <CommandGroup heading="Recent threads">
                 {(recent?.threads || []).slice(0, 12).map((t: any) => (
@@ -129,7 +105,7 @@ export function CommandPalette() {
                     value={`thread ${t.subject} ${shortFrom(t.fromAddress)}`}
                     onSelect={() =>
                       run(() => {
-                        if (t.account) setAccount(t.account);
+                        if (t.account) setThreadAccount(t.account);
                         setSelectedThread(t._id);
                       })
                     }

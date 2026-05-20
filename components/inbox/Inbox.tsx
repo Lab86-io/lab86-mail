@@ -14,9 +14,9 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatDate, shortFrom } from '@/lib/shared/format';
 
-// An empty search means "show everything" — map it to Gmail's All Mail
-// (everything except Trash). Matches the "All mail" mailbox in the rail.
-const ALL_MAIL_QUERY = '-in:trash newer_than:365d';
+// An empty search (or the clear button / Esc) returns to the default unified
+// inbox view across all mailboxes.
+const DEFAULT_QUERY = 'in:inbox newer_than:30d';
 
 interface ThreadRow {
   _id: string;
@@ -37,6 +37,7 @@ export function Inbox() {
   const setQuery = useClientStore((s) => s.setQuery);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const selectedIds = useClientStore((s) => s.selectedIds);
   const toggleSelected = useClientStore((s) => s.toggleSelected);
   const clearSelected = useClientStore((s) => s.clearSelected);
@@ -47,11 +48,11 @@ export function Inbox() {
 
   // Reflect the active query in the bar — but show All Mail as an empty bar
   // (placeholder), so "all mail" reads as "no filter" instead of raw syntax.
-  useEffect(() => setSearchInput(query === ALL_MAIL_QUERY ? '' : query), [query]);
+  useEffect(() => setSearchInput(query === DEFAULT_QUERY ? '' : query), [query]);
 
   const clearSearch = () => {
     setSearchInput('');
-    setQuery(ALL_MAIL_QUERY);
+    setQuery(DEFAULT_QUERY);
   };
 
   // Heuristic: a Gmail query has at least one operator. Natural language doesn't.
@@ -61,8 +62,8 @@ export function Inbox() {
   const submitSearch = async () => {
     const raw = searchInput.trim();
     if (!raw) {
-      // Empty search = all mail, instead of silently doing nothing.
-      setQuery(ALL_MAIL_QUERY);
+      // Empty search returns to the unified inbox, instead of doing nothing.
+      setQuery(DEFAULT_QUERY);
       return;
     }
     if (looksLikeGmailQuery(raw)) {
@@ -294,9 +295,9 @@ export function Inbox() {
                 active={selectedThreadId === it._id}
                 onToggle={() => toggleSelected(it._id)}
                 onClick={() => {
-                  if (it.account && it.account !== account) {
-                    useClientStore.getState().setAccount(it.account);
-                  }
+                  // Unified inbox stays put; just remember which mailbox this
+                  // thread belongs to so the reader can load/reply correctly.
+                  setThreadAccount(it.account || account);
                   setSelectedThread(it._id);
                 }}
               />

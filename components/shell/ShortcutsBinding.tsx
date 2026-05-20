@@ -14,7 +14,11 @@ const editable = (el: EventTarget | null) => {
 };
 
 export function ShortcutsBinding() {
-  const account = useClientStore((s) => s.account);
+  // Thread shortcuts (archive/trash/triage/summary) act on the open thread, so
+  // they use that thread's concrete account, not the unified inbox marker.
+  const threadAccount = useClientStore((s) => s.threadAccount);
+  const inboxAccount = useClientStore((s) => s.account);
+  const account = threadAccount || inboxAccount;
   const setQuery = useClientStore((s) => s.setQuery);
   const setComposeOpen = useClientStore((s) => s.setComposeOpen);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);

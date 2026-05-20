@@ -73,10 +73,13 @@ export const searchThreads = defineTool({
       '--results-only',
       'gmail',
       'search',
-      query,
       '--max',
       String(max),
       '--no-input',
+      // End-of-flags separator so queries starting with "-" (e.g. -in:trash,
+      // -label:foo) aren't misparsed by the CLI as flags.
+      '--',
+      query,
     ]);
     const list = coerceList(raw);
     const items: (Partial<Thread> & { _id: string })[] = [];

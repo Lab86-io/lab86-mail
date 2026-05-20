@@ -35,7 +35,10 @@ import type { Attachment } from '@/lib/shared/types';
 import { formatDate, shortFrom, gmailUrlFor } from '@/lib/shared/format';
 
 export function ThreadView() {
-  const account = useClientStore((s) => s.account);
+  // The inbox runs unified; the open thread carries its own concrete account.
+  const threadAccount = useClientStore((s) => s.threadAccount);
+  const inboxAccount = useClientStore((s) => s.account);
+  const account = threadAccount || inboxAccount;
   const threadId = useClientStore((s) => s.selectedThreadId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const queryClient = useQueryClient();

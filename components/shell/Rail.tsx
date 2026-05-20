@@ -49,6 +49,7 @@ export const ALL_ACCOUNTS = '__all__';
 export function Rail() {
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
+  const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
   const query = useClientStore((s) => s.query);
   const setQuery = useClientStore((s) => s.setQuery);
   const setComposeOpen = useClientStore((s) => s.setComposeOpen);
@@ -60,20 +61,20 @@ export function Rail() {
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
-  const showAll = authedAccounts.length > 1;
 
+  // The inbox is always the unified "all mailboxes" view — there's no account
+  // selector. We still resolve the primary account (compose "from") and force
+  // ALL_ACCOUNTS whenever more than one mailbox is authed.
   useEffect(() => {
-    if (!account && accounts.length) {
-      // Default to the unified "all" view when multiple accounts are authed,
-      // otherwise pick the primary.
-      if (authedAccounts.length > 1) {
-        setAccount(ALL_ACCOUNTS);
-        return;
-      }
-      const primary = authedAccounts.find((a) => a.primary) || authedAccounts[0] || accounts[0];
-      if (primary) setAccount(primary.email);
+    if (!accounts.length) return;
+    const primary = authedAccounts.find((a) => a.primary) || authedAccounts[0] || accounts[0];
+    if (primary) setPrimaryAccount(primary.email);
+    if (authedAccounts.length > 1) {
+      if (account !== ALL_ACCOUNTS) setAccount(ALL_ACCOUNTS);
+    } else if (!account && primary) {
+      setAccount(primary.email);
     }
-  }, [accounts, authedAccounts, account, setAccount]);
+  }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 
   return (
     <aside className="flex h-full w-full flex-col gap-3 bg-[var(--color-bg-subtle)] p-3 text-sm">
@@ -98,26 +99,6 @@ export function Rail() {
         </span>
         <span className="text-[10px] text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]">c</span>
       </button>
-
-      <label className="flex flex-col gap-1 px-0.5">
-        <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Account</span>
-        <select
-          value={account}
-          onChange={(e) => setAccount(e.target.value)}
-          className="h-8 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-sm shadow-[var(--shadow-soft)]"
-        >
-          {showAll ? (
-            <option value={ALL_ACCOUNTS}>All mailboxes · {authedAccounts.length}</option>
-          ) : null}
-          {accounts.map((a) => (
-            <option key={a.email} value={a.email} disabled={!a.authed}>
-              {a.email}
-              {a.primary ? ' · primary' : ''}
-              {!a.authed ? ' (needs auth)' : ''}
-            </option>
-          ))}
-        </select>
-      </label>
 
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-0.5">
         <div className="px-1 pb-1 pt-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">

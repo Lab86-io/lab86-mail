@@ -59,6 +59,7 @@ import { Suggestion } from '@/components/ai-elements/suggestion';
 import { Tool, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool';
 import { Button } from '@/components/ui/button';
 import { CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -214,12 +215,13 @@ export function AIBarSidebar() {
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const account = useClientStore((s) => s.account);
+  const threadAccount = useClientStore((s) => s.threadAccount);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
 
   const setQuery = useClientStore((s) => s.setQuery);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const openCompose = useClientStore((s) => s.openCompose);
-  const setAccount = useClientStore((s) => s.setAccount);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   const qc = useQueryClient();
 
@@ -267,7 +269,7 @@ export function AIBarSidebar() {
         const args = (part as any).input || {};
         try {
           if (name === 'ui_focus_thread' && args.threadId) {
-            if (args.account) setAccount(args.account);
+            if (args.account) setThreadAccount(args.account);
             setSelectedThread(args.threadId);
           } else if (name === 'ui_set_query' && args.query) {
             setQuery(args.query);
@@ -290,12 +292,14 @@ export function AIBarSidebar() {
             // request, with a delay so the user sees the final assistant text.
             setTimeout(() => setAiBarOpen(false), 1200);
           } else if (name === 'ui_switch_account' && args.account) {
-            setAccount(args.account);
+            // Unified inbox: route the agent's account choice to the operating
+            // (thread) account rather than collapsing the inbox view.
+            setThreadAccount(args.account);
           }
         } catch {}
       }
     }
-  }, [messages, setQuery, setSelectedThread, openCompose, setAccount, setPendingReplyBody, setAiBarOpen]);
+  }, [messages, setQuery, setSelectedThread, openCompose, setThreadAccount, setPendingReplyBody, setAiBarOpen]);
 
   // Refresh server queries when any mutating mail tool finishes.
   useEffect(() => {
@@ -331,8 +335,16 @@ export function AIBarSidebar() {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     setInput('');
+    const activeAccount =
+      threadAccount && threadAccount !== ALL_ACCOUNTS
+        ? threadAccount
+        : account && account !== ALL_ACCOUNTS
+          ? account
+          : '';
     const contextLines = [
-      account ? `Active account: ${account}` : '',
+      activeAccount
+        ? `Active account: ${activeAccount}`
+        : 'Working across all mailboxes (call list_accounts to enumerate).',
       selectedThreadId ? `Currently focused thread id: ${selectedThreadId}` : '',
     ]
       .filter(Boolean)
