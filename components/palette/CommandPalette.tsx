@@ -102,7 +102,7 @@ export function CommandPalette() {
                   run(() => {
                     setOpen(false);
                     document.dispatchEvent(
-                      new CustomEvent('mail-os:ask', { detail: 'Triage my newest 25 inbox threads' }),
+                      new CustomEvent('lab86-mail:ask', { detail: 'Triage my newest 25 inbox threads' }),
                     );
                   })
                 }
@@ -114,7 +114,7 @@ export function CommandPalette() {
                 onSelect={() =>
                   run(() => {
                     document.dispatchEvent(
-                      new CustomEvent('mail-os:ask', {
+                      new CustomEvent('lab86-mail:ask', {
                         detail: 'Summarize my unread from today and propose 3 replies',
                       }),
                     );

@@ -6,7 +6,7 @@ import { upsertThread, listRecentThreads, listThreadsForAccount } from '../store
 import { upsertMessage as upsertMessageRecord, getMessage as getMessageRecord, getThreadMessages } from '../store/messages';
 import type { Account, Thread, LabelRecord } from '../shared/types';
 
-const ACCOUNT_LIST = (process.env.MAIL_OS_ACCOUNTS || 'jjalangtry@gmail.com,jakob@lab86.io')
+const ACCOUNT_LIST = (process.env.LAB86_MAIL_ACCOUNTS || process.env.MAIL_OS_ACCOUNTS || 'jjalangtry@gmail.com,jakob@lab86.io')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);

@@ -1,4 +1,4 @@
-# Mail OS · v2
+# lab86-mail · v2
 
 Local desktop web client for Jakob's hybrid Gmail setup, rebuilt from the ground up.
 
@@ -14,12 +14,18 @@ Local desktop web client for Jakob's hybrid Gmail setup, rebuilt from the ground
 # dev
 PORT=18836 HOSTNAME=127.0.0.1 bun run dev
 
-# prod (used by mail-os.service)
+# prod (used by lab86-mail.service)
 bun run build
 bun run start
 ```
 
 Open `http://127.0.0.1:18836/` (or the tailnet URL `https://mail.lab86.io/`).
+
+## Favicon
+
+The mail favicon is based on Iconify's Feather `fe:mail` icon by Megumi Hano,
+licensed MIT with commercial use allowed and no attribution required:
+`https://icon-sets.iconify.design/fe/mail/`.
 
 ## Accounts
 
@@ -30,13 +36,13 @@ Open `http://127.0.0.1:18836/` (or the tailnet URL `https://mail.lab86.io/`).
 ## Service
 
 ```bash
-systemctl --user status mail-os.service
-systemctl --user restart mail-os.service
+systemctl --user status lab86-mail.service
+systemctl --user restart lab86-mail.service
 ```
 
-`mail-os.service` runs `bun run start` and pulls env from both:
+`lab86-mail.service` runs `bun run start` and pulls env from both:
 
-- `/home/jjalangtry/.config/mail-os/mail-os.env` — service-local overrides (port, GOG binary path, model names).
+- `/home/jjalangtry/.config/lab86-mail/lab86-mail.env` — service-local overrides (port, GOG binary path, model names).
 - `/home/jjalangtry/.config/lab86-private/voice-agent.env` — `OPENAI_API_KEY` shared with the voice agent.
 
 ## Architecture

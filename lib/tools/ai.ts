@@ -77,7 +77,7 @@ export const summarizeThread = defineTool({
       const { text } = await generateText({
         model: fastModel(),
         system:
-          'You are Mail OS, Jakob\'s local email assistant. Be concrete. Never claim an action was performed; you can only reason.',
+          'You are lab86-mail, Jakob\'s local email assistant. Be concrete. Never claim an action was performed; you can only reason.',
         prompt,
       });
       const summary = text.trim();
@@ -131,7 +131,7 @@ export const triageThread = defineTool({
     ].join('\n');
     const { text } = await generateText({
       model: fastModel(),
-      system: 'You are Mail OS triaging email. Output only valid JSON.',
+      system: 'You are lab86-mail triaging email. Output only valid JSON.',
       prompt,
     });
     let parsed: any = {};
@@ -183,7 +183,7 @@ export const draftReply = defineTool({
     ].filter(Boolean).join('\n');
     const { text } = await generateText({
       model: primaryModel(),
-      system: 'You are Mail OS drafting on Jakob\'s behalf. Never claim the message was sent.',
+      system: 'You are lab86-mail drafting on Jakob\'s behalf. Never claim the message was sent.',
       prompt,
     });
     return { draft: text.trim(), model: 'primary' };
@@ -234,7 +234,7 @@ export const bulkTriage = defineTool({
     ].join('\n');
     const { text } = await generateText({
       model: fastModel(),
-      system: 'You are Mail OS triaging email in bulk. Output only JSON objects, one per line.',
+      system: 'You are lab86-mail triaging email in bulk. Output only JSON objects, one per line.',
       prompt,
     });
     const verdicts: any[] = [];
@@ -275,7 +275,7 @@ export const extractActionItems = defineTool({
     }
     const { text } = await generateText({
       model: fastModel(),
-      system: 'You are Mail OS. Extract concrete action items as a plain bullet list. No prose.',
+      system: 'You are lab86-mail. Extract concrete action items as a plain bullet list. No prose.',
       prompt: ['Extract action items as a bullet list. One per line, prefixed with "- ".', '', concatThread(messages)].join('\n'),
     });
     const items = text.split('\n').map((l) => l.replace(/^[-•*]\s*/, '').trim()).filter(Boolean);

@@ -62,7 +62,7 @@ let db = null;
 export function openStore(dataDir) {
   if (db) return db;
   fs.mkdirSync(dataDir, { recursive: true });
-  const file = path.join(dataDir, 'mail-os.sqlite');
+  const file = path.join(dataDir, 'lab86-mail.sqlite');
   db = new Database(file);
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');

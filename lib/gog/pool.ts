@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 
-const GOG_BIN = process.env.MAIL_OS_GOG_BIN || '/home/jjalangtry/.local/bin/lab86-gog';
+const GOG_BIN = process.env.LAB86_MAIL_GOG_BIN || process.env.MAIL_OS_GOG_BIN || '/home/jjalangtry/.local/bin/lab86-gog';
 
 export interface RunOptions {
   stdin?: string;

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Datastore from '@seald-io/nedb';
 
-const DATA_DIR = process.env.MAIL_OS_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_DIR = process.env.LAB86_MAIL_DATA_DIR || process.env.MAIL_OS_DATA_DIR || path.join(process.cwd(), 'data');
 
 let instances: {
   threads: Datastore;

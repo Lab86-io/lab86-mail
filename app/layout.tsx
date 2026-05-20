@@ -7,10 +7,14 @@ import { QueryProvider } from '@/components/shell/QueryProvider';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Mail OS',
-  description: 'AI-native local email client for Jakob',
+  title: 'lab86-mail',
+  description: 'AI-native Lab86 mail client for Jakob',
   icons: {
-    icon: '/favicon.svg',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/apple-touch-icon.png',
   },
 };
 

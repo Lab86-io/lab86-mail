@@ -78,6 +78,18 @@ const initialCompose: ComposeState = {
   nonce: 0,
 };
 
+const PERSIST_KEY = 'lab86-mail-ui';
+const LEGACY_PERSIST_KEY = 'mail-os-ui';
+
+if (typeof window !== 'undefined') {
+  try {
+    if (!window.localStorage.getItem(PERSIST_KEY)) {
+      const legacy = window.localStorage.getItem(LEGACY_PERSIST_KEY);
+      if (legacy) window.localStorage.setItem(PERSIST_KEY, legacy);
+    }
+  } catch {}
+}
+
 export const useClientStore = create<ClientState>()(
   persist(
     (set) => ({
@@ -139,7 +151,7 @@ export const useClientStore = create<ClientState>()(
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
     }),
     {
-      name: 'mail-os-ui',
+      name: PERSIST_KEY,
       version: 1,
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the

@@ -710,7 +710,7 @@ function applyTheme(setting) {
 }
 
 function initTheme() {
-  const saved = localStorage.getItem('mail-os.theme') || 'auto';
+  const saved = localStorage.getItem('lab86-mail.theme') || 'auto';
   applyTheme(saved);
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if ((document.documentElement.dataset.theme || 'auto') === 'auto') applyTheme('auto');
@@ -747,8 +747,8 @@ async function buildPaletteItems(query) {
     items.push({ kind: 'ai', label: 'AI · Triage this thread', action: () => runAgent('triage') });
   }
   items.push({ kind: 'ai', label: 'AI · Compose new', hint: 'opens composer', action: () => openCompose() });
-  items.push({ kind: 'view', label: 'Toggle theme · Dark', action: () => { localStorage.setItem('mail-os.theme', 'dark'); applyTheme('dark'); } });
-  items.push({ kind: 'view', label: 'Toggle theme · Light', action: () => { localStorage.setItem('mail-os.theme', 'light'); applyTheme('light'); } });
+  items.push({ kind: 'view', label: 'Toggle theme · Dark', action: () => { localStorage.setItem('lab86-mail.theme', 'dark'); applyTheme('dark'); } });
+  items.push({ kind: 'view', label: 'Toggle theme · Light', action: () => { localStorage.setItem('lab86-mail.theme', 'light'); applyTheme('light'); } });
   items.push({ kind: 'view', label: 'Show keyboard shortcuts', action: () => { els.shortcutSheet.hidden = false; } });
   // Recent threads from server cache
   try {
@@ -940,7 +940,7 @@ function wireEvents() {
   document.querySelectorAll('.themeToggle button').forEach(b => {
     b.addEventListener('click', () => {
       const t = b.dataset.theme;
-      localStorage.setItem('mail-os.theme', t);
+      localStorage.setItem('lab86-mail.theme', t);
       applyTheme(t);
     });
   });

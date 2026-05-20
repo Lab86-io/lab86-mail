@@ -22,7 +22,7 @@ import { openStream } from './lib/sse.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadDotEnv(path.join(__dirname, '.env'));
-loadDotEnv('/home/jjalangtry/.config/mail-os/mail-os.env');
+loadDotEnv('/home/jjalangtry/.config/lab86-mail/lab86-mail.env');
 
 const HOST = process.env.MAIL_OS_HOST || '127.0.0.1';
 const PORT = Number(process.env.MAIL_OS_PORT || 18836);
@@ -307,7 +307,7 @@ function buildAgentPrompt(action, message, instructions = '') {
     ? 'Return only the reply draft body. Do not include analysis or claim it was sent.'
     : 'Return compact sections: Priority, Summary, Next action, Reply posture. Keep it under 180 words.';
   return [
-    'You are Mail OS, a local email operations agent for Jakob.',
+    'You are lab86-mail, a local email operations agent for Jakob.',
     'You can reason over the email text, but you cannot send, archive, delete, or mutate anything.',
     'Be concrete. If details are missing, say what is missing.',
     `Task: ${task}`,
@@ -489,7 +489,7 @@ async function handleApi(req, res, url) {
       const acc = await accounts();
       return json(res, 200, {
         ok: true,
-        service: 'mail-os',
+        service: 'lab86-mail',
         accounts: acc.length,
         authed: acc.filter(item => item.authed).map(item => item.email),
         gog: fs.existsSync(GOG_BIN),
@@ -609,7 +609,7 @@ async function handleApi(req, res, url) {
       const stream = openStream(res);
       stream.send('start', { engine });
       const prompt = [
-        'You are Mail OS. Summarize this email thread for Jakob.',
+        'You are lab86-mail. Summarize this email thread for Jakob.',
         'Format strictly as: 1-line headline, then sections: "Who participated", "What was decided", "Open questions", "Suggested next action".',
         'Keep total under 220 words. Be concrete.',
         '',
@@ -644,7 +644,7 @@ async function handleApi(req, res, url) {
       ).join('\n\n').slice(0, 14000);
       const historyText = history.map(h => `${h.role === 'user' ? 'Jakob' : 'Assistant'}: ${h.content}`).join('\n\n').slice(0, 6000);
       const promptParts = [
-        'You are Mail OS, Jakob\'s local email assistant. You can reason about the thread below but cannot send/archive/delete.',
+        'You are lab86-mail, Jakob\'s local email assistant. You can reason about the thread below but cannot send/archive/delete.',
         'Reply directly. Be concrete. If Jakob asks you to draft something, return the draft text only.',
       ];
       if (concatenated) promptParts.push('', 'Current thread:', concatenated);
@@ -688,7 +688,7 @@ async function handleApi(req, res, url) {
       const engine = body.engine || 'auto';
       const lines = items.map((it, i) => `${i + 1}. From: ${it.from || ''} | Subject: ${it.subject || '(no subject)'} | Snippet: ${(it.snippet || '').slice(0, 200)}`).join('\n');
       const prompt = [
-        'You are Mail OS triaging a batch of emails for Jakob.',
+        'You are lab86-mail triaging a batch of emails for Jakob.',
         'For each numbered item return one line in the exact form:',
         '<number>. priority=<1|2|3> action=<reply|read|archive|delegate|wait> reason=<short reason>',
         'No prose before or after. Just one line per item.',
@@ -857,5 +857,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`mail-os listening on http://${HOST}:${PORT}`);
+  console.log(`lab86-mail listening on http://${HOST}:${PORT}`);
 });

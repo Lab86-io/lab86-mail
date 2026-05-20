@@ -2,8 +2,14 @@ import { z } from 'zod';
 import { spawn } from 'node:child_process';
 import { defineTool } from './registry';
 
-const BROWSERBASE_SEARCH = process.env.MAIL_OS_BROWSERBASE_SEARCH || '/home/jjalangtry/.local/bin/browserbase-search';
-const BROWSERBASE_FETCH = process.env.MAIL_OS_BROWSERBASE_FETCH || '/home/jjalangtry/.local/bin/browserbase-fetch';
+const BROWSERBASE_SEARCH =
+  process.env.LAB86_MAIL_BROWSERBASE_SEARCH ||
+  process.env.MAIL_OS_BROWSERBASE_SEARCH ||
+  '/home/jjalangtry/.local/bin/browserbase-search';
+const BROWSERBASE_FETCH =
+  process.env.LAB86_MAIL_BROWSERBASE_FETCH ||
+  process.env.MAIL_OS_BROWSERBASE_FETCH ||
+  '/home/jjalangtry/.local/bin/browserbase-fetch';
 
 function runCli(bin: string, args: string[], timeoutMs = 45_000): Promise<string> {
   return new Promise((resolve, reject) => {

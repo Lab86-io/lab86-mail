@@ -20,8 +20,8 @@ export const openrouter = OPENROUTER_KEY
       baseURL: OPENROUTER_BASE_URL,
       // Recommended (and used to attribute usage in OpenRouter dashboards):
       headers: {
-        'HTTP-Referer': process.env.MAIL_OS_PUBLIC_URL || 'https://mail.lab86.io',
-        'X-Title': 'Mail OS',
+        'HTTP-Referer': process.env.LAB86_MAIL_PUBLIC_URL || process.env.MAIL_OS_PUBLIC_URL || 'https://mail.lab86.io',
+        'X-Title': 'lab86-mail',
       },
     })
   : null;
@@ -29,14 +29,14 @@ export const openai = OPENAI_KEY ? createOpenAI({ apiKey: OPENAI_KEY }) : null;
 export const anthropic = ANTHROPIC_KEY ? createAnthropic({ apiKey: ANTHROPIC_KEY }) : null;
 
 function pickPrimaryModel() {
-  if (openrouter) return process.env.MAIL_OS_OPENAI_MODEL || OPENROUTER_DEFAULT_PRIMARY;
-  if (openai) return process.env.MAIL_OS_OPENAI_MODEL || OPENAI_DEFAULT_PRIMARY;
+  if (openrouter) return process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || OPENROUTER_DEFAULT_PRIMARY;
+  if (openai) return process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || OPENAI_DEFAULT_PRIMARY;
   return '';
 }
 
 function pickFastModel() {
-  if (openrouter) return process.env.MAIL_OS_OPENAI_FAST_MODEL || OPENROUTER_DEFAULT_FAST;
-  if (openai) return process.env.MAIL_OS_OPENAI_FAST_MODEL || OPENAI_DEFAULT_FAST;
+  if (openrouter) return process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || OPENROUTER_DEFAULT_FAST;
+  if (openai) return process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || OPENAI_DEFAULT_FAST;
   return '';
 }
 

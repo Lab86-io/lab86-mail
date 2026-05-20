@@ -30,7 +30,7 @@ export function AppShell() {
     ...(aiBarOpen ? ['ai'] : []),
   ];
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: `mail-os-shell-v2:${permutation}`,
+    id: `lab86-mail-shell-v2:${permutation}`,
     panelIds,
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   });

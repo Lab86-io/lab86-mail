@@ -12,7 +12,7 @@ export async function GET() {
   } catch {}
   return NextResponse.json({
     ok: true,
-    service: 'mail-os',
+    service: 'lab86-mail',
     version: '2.0.0',
     accounts: accounts.accounts.length,
     authed: accounts.accounts.filter((a: any) => a.authed).map((a: any) => a.email),

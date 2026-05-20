@@ -1,8 +1,8 @@
-# Mail OS
+# lab86-mail
 
 Local desktop web client for Jakob's hybrid mail setup.
 
-Mail OS is intentionally tokenless: Google access stays in GOG, and this service calls
+lab86-mail is intentionally tokenless: Google access stays in GOG, and this service calls
 `/home/jjalangtry/.local/bin/lab86-gog` for Gmail search, message rendering, and replies.
 
 The UI follows a Gmail-style workflow:
@@ -21,7 +21,7 @@ The UI follows a Gmail-style workflow:
 ## Run
 
 ```bash
-cd /home/jjalangtry/services/mail-os
+cd /home/jjalangtry/services/lab86-mail
 npm start
 ```
 
@@ -39,8 +39,8 @@ Cloudflare Tunnel.
 Use GOG's remote flow:
 
 ```bash
-/home/jjalangtry/services/mail-os/scripts/auth-google-link.sh jakob@lab86.io
-/home/jjalangtry/services/mail-os/scripts/finish-google-auth.sh jakob@lab86.io
+/home/jjalangtry/services/lab86-mail/scripts/auth-google-link.sh jakob@lab86.io
+/home/jjalangtry/services/lab86-mail/scripts/finish-google-auth.sh jakob@lab86.io
 ```
 
 The first script prints the Google sign-in URL using the `jjalangtry-gmail`
@@ -56,14 +56,14 @@ The summarize, triage, and draft buttons use local device agents first:
 - `MAIL_OS_AGENT_ENGINE=codex`: use `codex exec` in read-only mode.
 - `MAIL_OS_AGENT_ENGINE=local`: deterministic fallback only.
 
-If both local agents fail and `/home/jjalangtry/.config/mail-os/mail-os.env`
-defines `OPENAI_API_KEY` and `OPENAI_MODEL`, Mail OS can fall back to OpenAI.
+If both local agents fail and `/home/jjalangtry/.config/lab86-mail/lab86-mail.env`
+defines `OPENAI_API_KEY` and `OPENAI_MODEL`, lab86-mail can fall back to OpenAI.
 Send still requires explicit browser confirmation.
 
 ## Service
 
-The user service is `mail-os.service`.
+The user service is `lab86-mail.service`.
 
 ```bash
-systemctl --user status mail-os.service
+systemctl --user status lab86-mail.service
 ```
