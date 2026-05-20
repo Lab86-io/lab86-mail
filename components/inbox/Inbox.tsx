@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, Gauge, Inbox as InboxIcon, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
@@ -45,9 +45,6 @@ export function Inbox() {
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState(query);
   const [translating, setTranslating] = useState(false);
-  const [pullDistance, setPullDistance] = useState(0);
-  const pullStartY = useRef<number | null>(null);
-  const pullStartedAtTop = useRef(false);
 
   // Reflect the active query in the bar — but show All Mail as an empty bar
   // (placeholder), so "all mail" reads as "no filter" instead of raw syntax.
@@ -134,26 +131,6 @@ export function Inbox() {
   const refreshInbox = () => {
     queryClient.invalidateQueries({ queryKey: ['thread'] });
     refetch();
-  };
-
-  const beginPullRefresh = (e: React.TouchEvent<HTMLDivElement>) => {
-    const target = e.currentTarget;
-    pullStartY.current = e.touches[0]?.clientY ?? null;
-    pullStartedAtTop.current = target.scrollTop <= 0;
-  };
-
-  const trackPullRefresh = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (!pullStartedAtTop.current || pullStartY.current == null || e.currentTarget.scrollTop > 0) return;
-    const delta = (e.touches[0]?.clientY ?? pullStartY.current) - pullStartY.current;
-    setPullDistance(delta > 0 ? Math.min(delta, 112) : 0);
-  };
-
-  const finishPullRefresh = () => {
-    const shouldRefresh = pullDistance >= 72;
-    pullStartY.current = null;
-    pullStartedAtTop.current = false;
-    setPullDistance(0);
-    if (shouldRefresh) refreshInbox();
   };
 
   // Tabbing back to the window is the most natural "any new mail?" signal.
@@ -361,25 +338,7 @@ export function Inbox() {
         ) : null}
       </AnimatePresence>
 
-      <div
-        className="relative flex flex-1 flex-col overflow-y-auto overscroll-contain"
-        onTouchStart={beginPullRefresh}
-        onTouchMove={trackPullRefresh}
-        onTouchEnd={finishPullRefresh}
-        onTouchCancel={finishPullRefresh}
-      >
-        <div
-          className="pointer-events-none absolute left-1/2 top-2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-opacity"
-          style={{
-            opacity: pullDistance > 8 || isFetching ? 1 : 0,
-            transform: `translate(-50%, ${Math.max(0, pullDistance / 3)}px)`,
-          }}
-        >
-          <RefreshCw
-            className={cn('h-3 w-3', (isFetching || pullDistance >= 72) && 'animate-spin text-[var(--color-accent)]')}
-          />
-          {pullDistance >= 72 ? 'Release to refresh' : isFetching ? 'Refreshing' : 'Pull to refresh'}
-        </div>
+      <div className="flex flex-1 flex-col overflow-y-auto">
         {isLoading ? (
           <SkeletonRows />
         ) : items.length === 0 ? (
