@@ -139,16 +139,73 @@ function labelForQuery(query) {
 function frameDoc(html) {
   const dark = document.documentElement.dataset.themeApplied === 'dark';
   const bg = dark ? '#161f29' : '#ffffff';
+  const surface = dark ? '#1b2531' : '#f8fafc';
+  const border = dark ? '#2f3f51' : '#dce3e8';
   const fg = dark ? '#e3eaef' : '#162029';
+  const muted = dark ? '#9fb0bd' : '#63717d';
   const link = dark ? '#7fd0e3' : '#0b7285';
+  const darkOverrides = dark ? `
+    body [style*="background:#fff" i],
+    body [style*="background: #fff" i],
+    body [style*="background-color:#fff" i],
+    body [style*="background-color: #fff" i],
+    body [style*="background:#ffffff" i],
+    body [style*="background: #ffffff" i],
+    body [style*="background-color:#ffffff" i],
+    body [style*="background-color: #ffffff" i],
+    body [style*="background:rgb(255,255,255)" i],
+    body [style*="background: rgb(255,255,255)" i],
+    body [style*="background-color:rgb(255,255,255)" i],
+    body [style*="background-color: rgb(255,255,255)" i],
+    body [style*="background:rgb(255, 255, 255)" i],
+    body [style*="background: rgb(255, 255, 255)" i],
+    body [style*="background-color:rgb(255, 255, 255)" i],
+    body [style*="background-color: rgb(255, 255, 255)" i] {
+      background:${surface} !important;
+      border-color:${border} !important;
+    }
+    body [style*="color:#fff" i],
+    body [style*="color: #fff" i],
+    body [style*="color:#ffffff" i],
+    body [style*="color: #ffffff" i],
+    body [style*="color:white" i],
+    body [style*="color: white" i],
+    body [style*="color:rgb(255,255,255)" i],
+    body [style*="color: rgb(255,255,255)" i],
+    body [style*="color:rgb(255, 255, 255)" i],
+    body [style*="color: rgb(255, 255, 255)" i] {
+      color:${fg} !important;
+    }
+  ` : '';
   // The injected script reports body height for auto-sizing the iframe.
-  return `<!doctype html><html><head><base target="_blank"><style>
+  return `<!doctype html><html><head><base target="_blank"><meta name="color-scheme" content="${dark ? 'dark' : 'light'}"><style>
+    :root{color-scheme:${dark ? 'dark' : 'light'}}
     html,body{margin:0;padding:0;background:${bg};color:${fg};font-family:Inter,Arial,sans-serif;line-height:1.5}
     body{margin:16px 18px}
     img,table{max-width:100%}
+    table,td,th{border-color:${border}}
     pre{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     a{color:${link}}
-    blockquote{border-left:3px solid ${dark?'#2a3845':'#dce3e8'};margin:8px 0;padding:6px 12px;color:${dark?'#9fb0bd':'#63717d'}}
+    blockquote{border-left:3px solid ${border};margin:8px 0;padding:6px 12px;color:${muted}}
+    [style*="background:#fff" i],
+    [style*="background: #fff" i],
+    [style*="background-color:#fff" i],
+    [style*="background-color: #fff" i],
+    [style*="background:#ffffff" i],
+    [style*="background: #ffffff" i],
+    [style*="background-color:#ffffff" i],
+    [style*="background-color: #ffffff" i],
+    [style*="background:rgb(255,255,255)" i],
+    [style*="background: rgb(255,255,255)" i],
+    [style*="background-color:rgb(255,255,255)" i],
+    [style*="background-color: rgb(255,255,255)" i],
+    [style*="background:rgb(255, 255, 255)" i],
+    [style*="background: rgb(255, 255, 255)" i],
+    [style*="background-color:rgb(255, 255, 255)" i],
+    [style*="background-color: rgb(255, 255, 255)" i] {
+      box-shadow: inset 0 0 0 1px ${border};
+    }
+    ${darkOverrides}
   </style></head><body>${html || ''}</body></html>`;
 }
 
