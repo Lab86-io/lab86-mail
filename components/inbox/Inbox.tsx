@@ -1,6 +1,6 @@
 'use client';
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, Gauge, Inbox as InboxIcon, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -30,6 +30,15 @@ interface ThreadRow {
   snippet?: string;
   labels?: string[];
   unread?: boolean;
+}
+
+interface ThreadMessage {
+  _id: string;
+  from?: string;
+  to?: string;
+  cc?: string;
+  bcc?: string;
+  date?: number | string;
 }
 
 interface SearchThreadsResult {
@@ -257,6 +266,30 @@ export function Inbox() {
   });
   const photos = photosQuery.data?.photos || {};
 
+  const participantRows = useMemo(() => items.slice(0, 24), [items]);
+  const participantQueries = useQueries({
+    queries: participantRows.map((item) => ({
+      queryKey: ['thread-participants', item.account || account, item._id],
+      queryFn: async () =>
+        callTool<{ messages: ThreadMessage[] }>('get_thread', {
+          account: item.account || account,
+          threadId: item._id,
+          refresh: false,
+        }),
+      enabled: !!(item.account || account) && !!item._id,
+      staleTime: 2 * 60_000,
+    })),
+  });
+  const participantLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    participantRows.forEach((item, index) => {
+      const messages = participantQueries[index]?.data?.messages || [];
+      const label = formatThreadParticipants(messages, item.account || account, item.from || item.fromAddress);
+      if (label) labels.set(`${item.account || account}:${item._id}`, label);
+    });
+    return labels;
+  }, [account, participantQueries, participantRows]);
+
   // Each item knows its own account (set by the fan-out above), so bulk
   // operations dispatch per-item using that account rather than the
   // currently-selected one. Required for ALL_ACCOUNTS view.
@@ -423,6 +456,7 @@ export function Inbox() {
                   <ThreadRowCard
                     key={`${it.account}:${it._id}`}
                     item={it}
+                    participantLabel={participantLabels.get(`${it.account || account}:${it._id}`)}
                     photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
                     showAccount={account === ALL_ACCOUNTS}
                     selected={selectedIds.includes(it._id)}
@@ -449,6 +483,7 @@ export function Inbox() {
 
 function ThreadRowCard({
   item,
+  participantLabel,
   photoUrl,
   selected,
   active,
@@ -457,6 +492,7 @@ function ThreadRowCard({
   showAccount,
 }: {
   item: ThreadRow;
+  participantLabel?: string;
   photoUrl?: string | null;
   selected: boolean;
   active: boolean;
@@ -472,6 +508,7 @@ function ThreadRowCard({
         ? 'bg-[var(--color-prio-2)]'
         : '';
   const senderLabel = shortFrom(item.from || item.fromAddress || '');
+  const displaySenderLabel = participantLabel || senderLabel || item.account || '';
   const date = (item.date as any) || item.lastDate || 0;
 
   return (
@@ -505,7 +542,7 @@ function ThreadRowCard({
               item.unread ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text)]',
             )}
           >
-            {senderLabel || item.account}
+            {displaySenderLabel}
           </span>
           {item.unread ? (
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" />
@@ -578,4 +615,65 @@ function EmptyState({ account }: { account: string }) {
       </div>
     </div>
   );
+}
+
+function formatThreadParticipants(
+  messages: ThreadMessage[],
+  account: string,
+  fallbackFrom?: string,
+): string {
+  const ordered = [...messages].sort((a, b) => Number(b.date || 0) - Number(a.date || 0));
+  const newestSender = ordered[0]?.from || fallbackFrom || '';
+  const participants = new Map<string, string>();
+
+  const addHeaderList = (header: string | undefined) => {
+    for (const part of splitAddressHeader(header)) {
+      const email = emailFromHeader(part);
+      const key = email || shortFrom(part).toLowerCase();
+      if (!key || participants.has(key)) continue;
+      participants.set(key, formatParticipantName(part, account));
+    }
+  };
+
+  addHeaderList(newestSender);
+  for (const message of ordered) {
+    addHeaderList(message.from);
+    addHeaderList(message.to);
+    addHeaderList(message.cc);
+    addHeaderList(message.bcc);
+  }
+
+  const names = [...participants.values()].filter(Boolean);
+  if (!names.length) return shortFrom(fallbackFrom || '');
+  const visible = names.slice(0, 4);
+  const remaining = names.length - visible.length;
+  return remaining > 0 ? `${visible.join(', ')} +${remaining}` : visible.join(', ');
+}
+
+function splitAddressHeader(header: string | undefined): string[] {
+  const raw = String(header || '').trim();
+  if (!raw) return [];
+  const parts: string[] = [];
+  let current = '';
+  let quoted = false;
+  let depth = 0;
+  for (const char of raw) {
+    if (char === '"') quoted = !quoted;
+    if (!quoted && char === '<') depth += 1;
+    if (!quoted && char === '>' && depth > 0) depth -= 1;
+    if (!quoted && depth === 0 && char === ',') {
+      if (current.trim()) parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+function formatParticipantName(value: string, account: string): string {
+  const email = emailFromHeader(value);
+  if (email && email === account.toLowerCase()) return 'me';
+  return shortFrom(value);
 }

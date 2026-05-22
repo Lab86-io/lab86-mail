@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Pencil as EditIcon,
+  ExternalLink,
   Eye,
   Forward as ForwardIcon,
   Paperclip,
@@ -19,9 +20,16 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { Avatar } from '@/components/ui/avatar';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { callTool } from '@/lib/api-client';
-import { useClientStore, type ComposeMode } from '@/lib/client-state';
+import { type ComposeMode, useClientStore } from '@/lib/client-state';
 import { sanitizeOutgoingHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { cn } from '@/lib/utils';
@@ -92,6 +100,7 @@ export function InlineComposer({
   const [tab, setTab] = useState<'write' | 'preview'>('write');
   const [phase, setPhase] = useState<Phase>('draft');
   const [files, setFiles] = useState<File[]>([]);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [composerMode, setComposerMode] = useState<ComposeMode>(mode);
   const [fromAccount, setFromAccount] = useState<string>(account);
 
@@ -188,6 +197,7 @@ export function InlineComposer({
         setPhase('draft');
         setBody('');
         setFiles([]);
+        setPreviewFile(null);
         if (mode === 'new' || mode === 'forward') {
           setTo('');
           setCc('');
@@ -451,6 +461,7 @@ export function InlineComposer({
             <FileChip
               key={`${f.name}-${f.size}`}
               file={f}
+              onPreview={() => setPreviewFile(f)}
               onRemove={() => setFiles((arr) => arr.filter((x) => x !== f))}
             />
           ))}
@@ -497,6 +508,12 @@ export function InlineComposer({
           {phase === 'sending' ? 'Sending…' : phase === 'sent' ? 'Sent' : 'Send'}
         </button>
       </footer>
+
+      <Dialog open={!!previewFile} onOpenChange={(open) => !open && setPreviewFile(null)}>
+        <DialogContent className="max-h-[92vh] gap-3 overflow-hidden p-0 sm:max-w-[min(1000px,92vw)]">
+          {previewFile ? <DraftAttachmentPreviewDialog file={previewFile} /> : null}
+        </DialogContent>
+      </Dialog>
     </motion.section>
   );
 }
@@ -578,24 +595,117 @@ function ModeChip({
   );
 }
 
-function FileChip({ file, onRemove }: { file: File; onRemove: () => void }) {
+function FileChip({
+  file,
+  onPreview,
+  onRemove,
+}: {
+  file: File;
+  onPreview: () => void;
+  onRemove: () => void;
+}) {
   return (
-    <div className="group flex max-w-[260px] items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[11.5px]">
-      <span className="grid size-5 shrink-0 place-items-center rounded bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
-        <AttachmentIcon mime={file.type} className="size-3" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium text-[var(--color-text)]">{file.name}</span>
-        <span className="block text-[10px] text-[var(--color-text-faint)]">{formatBytes(file.size)}</span>
-      </span>
+    <div className="group flex max-w-[260px] items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[11.5px]">
+      <button
+        type="button"
+        onClick={onPreview}
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left hover:bg-[var(--color-bg-muted)]"
+        title={`Preview ${file.name}`}
+      >
+        <span className="grid size-5 shrink-0 place-items-center rounded bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+          <AttachmentIcon mime={file.type} className="size-3" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium text-[var(--color-text)]">{file.name}</span>
+          <span className="block text-[10px] text-[var(--color-text-faint)]">{formatBytes(file.size)}</span>
+        </span>
+      </button>
       <button
         type="button"
         onClick={onRemove}
-        className="grid h-4 w-4 place-items-center rounded text-[var(--color-text-faint)] opacity-0 transition-opacity hover:text-[var(--color-text)] group-hover:opacity-100"
+        className="mr-1 grid h-5 w-5 shrink-0 place-items-center rounded text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-hover:opacity-100"
         title="Remove"
       >
         <X className="h-3 w-3" />
       </button>
     </div>
   );
+}
+
+function DraftAttachmentPreviewDialog({ file }: { file: File }) {
+  const url = useObjectUrl(file);
+  const mime = file.type || 'application/octet-stream';
+  const meta = [mime, formatBytes(file.size)].filter(Boolean).join(' · ');
+
+  return (
+    <>
+      <DialogHeader className="border-b border-[var(--color-border)] px-4 py-3 pr-11">
+        <DialogTitle className="truncate text-[14px]">{file.name}</DialogTitle>
+        <DialogDescription className="text-[11px]">{meta}</DialogDescription>
+      </DialogHeader>
+      <div className="min-h-0 px-4 pb-4">
+        {url ? <DraftAttachmentPreview file={file} url={url} /> : <div className="h-60 rounded shimmer" />}
+        {url ? (
+          <div className="mt-3 flex justify-end">
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            >
+              <ExternalLink className="size-3.5" />
+              Open
+            </a>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function DraftAttachmentPreview({ file, url }: { file: File; url: string }) {
+  const mime = (file.type || '').toLowerCase();
+  const frameClass =
+    'h-[min(68vh,760px)] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]';
+
+  if (mime.startsWith('image/')) {
+    return (
+      <div className="grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+        {/* biome-ignore lint/performance/noImgElement: blob URLs from local draft files cannot be optimized by next/image. */}
+        <img src={url} alt={file.name} className="max-h-full max-w-full object-contain" />
+      </div>
+    );
+  }
+
+  if (mime === 'application/pdf' || mime.startsWith('text/') || /(json|xml|csv|markdown)/.test(mime)) {
+    return <iframe title={file.name} src={url} className={frameClass} />;
+  }
+
+  return (
+    <div className="grid min-h-[260px] place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-6 text-center">
+      <div className="flex max-w-sm flex-col items-center gap-2">
+        <span className="grid size-12 place-items-center rounded-lg bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+          <AttachmentIcon mime={mime} className="size-5" />
+        </span>
+        <div className="text-[12px] font-medium text-[var(--color-text)]">Preview unavailable</div>
+        <div className="text-[11px] text-[var(--color-text-muted)]">
+          This file type can still be opened by the browser.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useObjectUrl(file: File | null) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) {
+      setUrl(null);
+      return;
+    }
+    const nextUrl = URL.createObjectURL(file);
+    setUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [file]);
+  return url;
 }

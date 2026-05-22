@@ -208,6 +208,11 @@
 @layer components {
   .email-body {
     line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+
+  .email-body * {
+    max-width: 100%;
   }
 
   .email-body > :first-child {
@@ -294,8 +299,11 @@
   }
 
   .email-body table {
+    display: block;
     margin: 0.75rem 0;
-    width: 100%;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
     border-collapse: collapse;
     font-size: 0.95em;
   }
@@ -319,8 +327,19 @@
   }
 
   .email-body img {
+    display: inline-block;
     max-width: 100%;
+    max-height: 420px;
     height: auto;
+    object-fit: contain;
+    vertical-align: middle;
+  }
+
+  .email-body img:not([src]),
+  .email-body img[src=""],
+  .email-body img[src^="cid:"],
+  .email-body img[src^="file:"] {
+    display: none;
   }
 
   .email-body [style*="background:#fff" i],
