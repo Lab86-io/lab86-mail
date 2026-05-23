@@ -1,16 +1,46 @@
 'use client';
 
 import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, Gauge, Inbox as InboxIcon, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import {
+  Archive,
+  CheckCircle2,
+  Gauge,
+  Inbox as InboxIcon,
+  RefreshCw,
+  Search,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import {
+  Confirmation,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRequest,
+  ConfirmationTitle,
+} from '@/components/ai-elements/confirmation';
+import { OrbitRing } from '@/components/loading-ui/orbit-ring';
+import { Ring } from '@/components/loading-ui/ring';
+import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { AnimatedList } from '@/components/ui/animated-list';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { BorderBeam } from '@/components/ui/border-beam';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
+import { MagicCard } from '@/components/ui/magic-card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ShineBorder } from '@/components/ui/shine-border';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +48,7 @@ import { cn } from '@/lib/utils';
 // inbox view across all mailboxes.
 const DEFAULT_QUERY = 'in:inbox newer_than:30d';
 const INBOX_PAGE_SIZE = 50;
+const SKELETON_ROW_KEYS = Array.from({ length: 12 }, (_, index) => `skeleton-row-${index + 1}`);
 
 interface ThreadRow {
   _id: string;
@@ -30,6 +61,7 @@ interface ThreadRow {
   snippet?: string;
   labels?: string[];
   unread?: boolean;
+  smartCategory?: any;
 }
 
 interface ThreadMessage {
@@ -55,6 +87,15 @@ export function Inbox() {
   const account = useClientStore((s) => s.account);
   const query = useClientStore((s) => s.query);
   const setQuery = useClientStore((s) => s.setQuery);
+  const smartCategory = useClientStore((s) => s.smartCategory);
+  const setSmartCategory = useClientStore((s) => s.setSmartCategory);
+  const searchDraft = useClientStore((s) => s.searchDraft);
+  const setSearchDraft = useClientStore((s) => s.setSearchDraft);
+  const nlSearchIntent = useClientStore((s) => s.nlSearchIntent);
+  const translatedQuery = useClientStore((s) => s.translatedQuery);
+  const setTranslatedSearch = useClientStore((s) => s.setTranslatedSearch);
+  const queryError = useClientStore((s) => s.queryError);
+  const setQueryError = useClientStore((s) => s.setQueryError);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -66,18 +107,30 @@ export function Inbox() {
   const composeMode = useClientStore((s) => s.compose.mode);
 
   const queryClient = useQueryClient();
-  const [searchInput, setSearchInput] = useState(query);
+  const [searchInput, setSearchInput] = useState(searchDraft || (query === DEFAULT_QUERY ? '' : query));
   const [translating, setTranslating] = useState(false);
+  const [tab, setTab] = useState('list');
+  const [labelPreview, setLabelPreview] = useState<ThreadRow | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // Reflect the active query in the bar — but show All Mail as an empty bar
   // (placeholder), so "all mail" reads as "no filter" instead of raw syntax.
-  useEffect(() => setSearchInput(query === DEFAULT_QUERY ? '' : query), [query]);
+  useEffect(() => {
+    if (smartCategory) {
+      setSearchInput(searchDraft || '');
+      return;
+    }
+    setSearchInput(searchDraft || (query === DEFAULT_QUERY ? '' : query));
+  }, [query, searchDraft, smartCategory]);
 
   const clearSearch = () => {
     setSearchInput('');
+    setSearchDraft('');
+    setTranslatedSearch(null, null, 'category');
+    setQueryError(null);
     setQuery(DEFAULT_QUERY);
+    setSmartCategory('main');
   };
 
   // Heuristic: a Gmail query has at least one operator. Natural language doesn't.
@@ -86,15 +139,20 @@ export function Inbox() {
       s,
     );
 
-  const submitSearch = async () => {
-    const raw = searchInput.trim();
+  const runSearch = async (input: string) => {
+    const raw = input.trim();
     if (!raw) {
       // Empty search returns to the unified inbox, instead of doing nothing.
+      setSearchDraft('');
+      setTranslatedSearch(null, null, 'category');
       setQuery(DEFAULT_QUERY);
+      setSmartCategory('main');
       return;
     }
+    setSearchDraft(raw);
     if (looksLikeGmailQuery(raw)) {
       setQuery(raw);
+      setTranslatedSearch(null, raw, 'gmail');
       return;
     }
     // Natural language — translate via nl_search, then run.
@@ -103,17 +161,19 @@ export function Inbox() {
       const { query: translated } = await callTool<{ query: string; model: string }>('nl_search', {
         description: raw,
       });
-      const finalQuery = translated && translated.trim() ? translated.trim() : raw;
+      const finalQuery = translated?.trim() ? translated.trim() : raw;
       setQuery(finalQuery);
-      setSearchInput(finalQuery);
+      setSearchDraft(raw);
+      setTranslatedSearch(raw, finalQuery, 'natural_language');
       toast.success(`Searching · ${finalQuery}`);
     } catch (err: any) {
       toast.error(`Could not translate: ${err?.message || 'unknown error'}`);
-      setQuery(raw);
+      setQueryError(err?.message || 'Could not translate search');
     } finally {
       setTranslating(false);
     }
   };
+  const submitSearch = () => runSearch(searchInput);
 
   // When account is the synthetic ALL_ACCOUNTS marker, fan out across every
   // authed Gmail account and merge by date. Otherwise just hit one.
@@ -124,71 +184,71 @@ export function Inbox() {
   });
   const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
 
-  const {
-    data,
-    isLoading,
-    isFetching,
-    isFetchingNextPage,
-    hasNextPage,
-    fetchNextPage,
-    refetch,
-  } = useInfiniteQuery({
-    queryKey: ['search', account, query, authedEmails.join(',')],
-    initialPageParam: {} as Record<string, string>,
-    queryFn: async ({ pageParam }): Promise<InboxPage> => {
-      const pageTokens = pageParam as Record<string, string>;
-      if (account === ALL_ACCOUNTS) {
-        const initialPage = Object.keys(pageTokens).length === 0;
-        const emailsToFetch = initialPage ? authedEmails : authedEmails.filter((email) => pageTokens[email]);
-        const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(authedEmails.length, 1)));
-        const results = await Promise.all(
-          emailsToFetch.map((email) =>
-            callTool<SearchThreadsResult>('search_threads', {
-              account: email,
-              query,
-              max: perAccount,
-              pageToken: pageTokens[email],
-            })
-              .then((r) => ({
-                email,
-                items: r.items.map((it) => ({ ...it, account: email })),
-                nextPageToken: r.nextPageToken,
-              }))
-              .catch(() => ({ email, items: [] as ThreadRow[], nextPageToken: undefined })),
-          ),
+  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
+    useInfiniteQuery({
+      queryKey: ['search', account, query, smartCategory, authedEmails.join(',')],
+      initialPageParam: {} as Record<string, string>,
+      queryFn: async ({ pageParam }): Promise<InboxPage> => {
+        const pageTokens = pageParam as Record<string, string>;
+        if (account === ALL_ACCOUNTS) {
+          const initialPage = Object.keys(pageTokens).length === 0;
+          const emailsToFetch = initialPage
+            ? authedEmails
+            : authedEmails.filter((email) => pageTokens[email]);
+          const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(authedEmails.length, 1)));
+          const results = await Promise.all(
+            emailsToFetch.map((email) =>
+              callTool<SearchThreadsResult>(smartCategory ? 'list_smart_category' : 'search_threads', {
+                account: email,
+                category: smartCategory,
+                query,
+                max: perAccount,
+                pageToken: pageTokens[email],
+              })
+                .then((r) => ({
+                  email,
+                  items: r.items.map((it) => ({ ...it, account: email })),
+                  nextPageToken: r.nextPageToken,
+                }))
+                .catch(() => ({ email, items: [] as ThreadRow[], nextPageToken: undefined })),
+            ),
+          );
+          const merged = results.flatMap((result) => result.items);
+          merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+          const nextPageTokens = Object.fromEntries(
+            results
+              .filter((result) => result.nextPageToken)
+              .map((result) => [result.email, result.nextPageToken as string]),
+          );
+          return { items: merged, nextPageTokens };
+        }
+        const result = await callTool<SearchThreadsResult>(
+          smartCategory ? 'list_smart_category' : 'search_threads',
+          {
+            account,
+            category: smartCategory,
+            query,
+            max: INBOX_PAGE_SIZE,
+            pageToken: pageTokens[account],
+          },
         );
-        const merged = results.flatMap((result) => result.items);
-        merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
-        const nextPageTokens = Object.fromEntries(
-          results
-            .filter((result) => result.nextPageToken)
-            .map((result) => [result.email, result.nextPageToken as string]),
-        );
-        return { items: merged, nextPageTokens };
-      }
-      const result = await callTool<SearchThreadsResult>('search_threads', {
-        account,
-        query,
-        max: INBOX_PAGE_SIZE,
-        pageToken: pageTokens[account],
-      });
-      return {
-        items: result.items.map((it) => ({ ...it, account })),
-        nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
-      };
-    },
-    getNextPageParam: (lastPage) =>
-      Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
-    enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
-    // Inbox freshness: any cached search result is treated as stale right
-    // away, so re-mounts, window focus, and reconnects always re-hit Gmail.
-    staleTime: 0,
-    // Background poll while the tab is in the foreground. `refetchInterval`
-    // pauses automatically when the document is hidden (browser default).
-    refetchInterval: 30_000,
-    // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
-    refetchIntervalInBackground: false,
-  });
+        return {
+          items: result.items.map((it) => ({ ...it, account })),
+          nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
+        };
+      },
+      getNextPageParam: (lastPage) =>
+        Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
+      enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
+      // Inbox freshness: any cached search result is treated as stale right
+      // away, so re-mounts, window focus, and reconnects always re-hit Gmail.
+      staleTime: 0,
+      // Background poll while the tab is in the foreground. `refetchInterval`
+      // pauses automatically when the document is hidden (browser default).
+      refetchInterval: 30_000,
+      // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
+      refetchIntervalInBackground: false,
+    });
 
   const refreshInbox = () => {
     queryClient.invalidateQueries({ queryKey: ['thread'] });
@@ -284,7 +344,11 @@ export function Inbox() {
     const labels = new Map<string, string>();
     participantRows.forEach((item, index) => {
       const messages = participantQueries[index]?.data?.messages || [];
-      const label = formatThreadParticipants(messages, item.account || account, item.from || item.fromAddress);
+      const label = formatThreadParticipants(
+        messages,
+        item.account || account,
+        item.from || item.fromAddress,
+      );
       if (label) labels.set(`${item.account || account}:${item._id}`, label);
     });
     return labels;
@@ -339,62 +403,124 @@ export function Inbox() {
     },
   });
 
+  const applyLabels = useMutation({
+    mutationFn: async (item: ThreadRow) => {
+      const labels = labelsForSmartCategory((item as any).smartCategory);
+      if (!labels.length) throw new Error('No smart labels available');
+      return callTool('apply_smart_labels', {
+        account: item.account || account,
+        items: [{ threadId: item._id, labels }],
+      });
+    },
+    onSuccess: () => {
+      toast.success('Smart labels applied');
+      setLabelPreview(null);
+      queryClient.invalidateQueries({ queryKey: ['search'] });
+      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+    },
+    onError: (err: any) => toast.error(`Could not apply labels: ${err?.message || 'unknown error'}`),
+  });
+  const markReview = useMutation({
+    mutationFn: async (item: ThreadRow) =>
+      callTool('set_smart_category', {
+        account: item.account || account,
+        threadId: item._id,
+        category: 'review',
+        reason: 'Marked for review from the board.',
+      }),
+    onSuccess: () => {
+      toast.success('Moved to Review');
+      queryClient.invalidateQueries({ queryKey: ['search'] });
+      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+    },
+  });
+
   return (
     <section className="flex h-full flex-col bg-[var(--color-bg)]">
       <div
         className={cn(
-          'flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5',
+          'flex flex-col gap-2 border-b border-[var(--color-border)] px-3 py-2.5',
           !railOpen && 'pl-12',
           !aiBarOpen && !readerVisible && 'pr-12',
         )}
       >
-        <div className="relative flex-1">
-          {translating ? (
-            <Loader2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-[var(--color-accent)]" />
-          ) : (
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
-          )}
-          <input
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                submitSearch();
-              } else if (e.key === 'Escape' && searchInput) {
-                e.preventDefault();
-                clearSearch();
-              }
-            }}
-            placeholder='Gmail query, or just say what you want ("emails from board members last quarter")'
+        <div className="flex items-center gap-2">
+          <InputGroup className="relative flex-1 overflow-hidden bg-[var(--color-bg-elevated)]">
+            {translating ? <BorderBeam size={80} duration={3} colorFrom="#4cb7c8" colorTo="#7c3aed" /> : null}
+            <InputGroupAddon>
+              {translating ? (
+                <OrbitRing className="size-4 text-[var(--color-accent)]" />
+              ) : (
+                <Search className="size-4 text-[var(--color-text-faint)]" />
+              )}
+            </InputGroupAddon>
+            <InputGroupInput
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  submitSearch();
+                } else if (e.key === 'Escape' && searchInput) {
+                  e.preventDefault();
+                  clearSearch();
+                }
+              }}
+              placeholder='Ask for mail or type Gmail syntax, e.g. "order updates from this week"'
+              className="text-[13px]"
+            />
+            {searchInput ? (
+              <InputGroupAddon align="inline-end">
+                <InputGroupButton size="icon-xs" onClick={clearSearch} title="Clear search">
+                  <X className="size-3" />
+                  <span className="sr-only">Clear search</span>
+                </InputGroupButton>
+              </InputGroupAddon>
+            ) : null}
+          </InputGroup>
+          <button
+            type="button"
+            onClick={refreshInbox}
             className={cn(
-              'h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] pl-8 text-[13px] outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30',
-              searchInput ? 'pr-8' : 'pr-3',
+              'grid h-9 w-9 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]',
+              isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
             )}
-          />
-          {searchInput ? (
-            <button
-              type="button"
-              onClick={clearSearch}
-              className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-              title="Clear search (show all mail)"
-            >
-              <X className="h-3 w-3" />
-              <span className="sr-only">Clear search</span>
-            </button>
-          ) : null}
+            title="Refresh"
+          >
+            {isFetching && !isFetchingNextPage ? (
+              <Ring className="size-4" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={refreshInbox}
-          className={cn(
-            'grid h-8 w-8 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]',
-            isFetching && !isFetchingNextPage && 'animate-spin',
-          )}
-          title="Refresh"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex min-h-6 flex-wrap items-center gap-1.5">
+          {smartCategory ? (
+            <Badge variant="secondary" className="gap-1">
+              {SMART_CATEGORY_LABELS[smartCategory as keyof typeof SMART_CATEGORY_LABELS] || smartCategory}
+            </Badge>
+          ) : null}
+          {nlSearchIntent ? <Badge variant="outline">Asked: {nlSearchIntent}</Badge> : null}
+          {translatedQuery && !smartCategory ? (
+            <Badge variant="outline" className="gap-1">
+              Filter: <span className="font-mono">{translatedQuery}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setTranslatedSearch(nlSearchIntent, null, 'category');
+                  setQuery(DEFAULT_QUERY);
+                  setSmartCategory('main');
+                }}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ) : null}
+          {translating ? (
+            <TextShimmer className="text-[11px] text-[var(--color-accent)]">Translating filter</TextShimmer>
+          ) : null}
+          {queryError ? <span className="text-[11px] text-[var(--color-danger)]">{queryError}</span> : null}
+        </div>
       </div>
 
       <AnimatePresence>
@@ -442,41 +568,98 @@ export function Inbox() {
         ) : null}
       </AnimatePresence>
 
-      <div ref={scrollRef} className="flex flex-1 flex-col overflow-y-auto">
-        {isLoading ? (
-          <SkeletonRows />
-        ) : items.length === 0 ? (
-          <EmptyState account={account} />
-        ) : (
-          <>
-            <AnimatePresence initial={false} mode="popLayout">
-              {items.map((it) => {
-                const senderEmail = emailFromHeader(it.from || it.fromAddress);
-                return (
-                  <ThreadRowCard
-                    key={`${it.account}:${it._id}`}
-                    item={it}
-                    participantLabel={participantLabels.get(`${it.account || account}:${it._id}`)}
-                    photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
-                    showAccount={account === ALL_ACCOUNTS}
-                    selected={selectedIds.includes(it._id)}
-                    active={selectedThreadId === it._id}
-                    onToggle={() => toggleSelected(it._id)}
-                    onClick={() => {
-                      // Unified inbox stays put; just remember which mailbox this
-                      // thread belongs to so the reader can load/reply correctly.
-                      setThreadAccount(it.account || account);
-                      setSelectedThread(it._id);
-                    }}
-                  />
-                );
-              })}
-            </AnimatePresence>
-            <div ref={loadMoreRef} className="min-h-1" aria-hidden />
-            {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
-          </>
-        )}
-      </div>
+      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+        <div className="border-b border-[var(--color-border)] px-3 py-2">
+          <TabsList className="h-7">
+            <TabsTrigger value="list" className="h-6 px-2 text-[11.5px]">
+              List
+            </TabsTrigger>
+            <TabsTrigger value="board" className="h-6 px-2 text-[11.5px]">
+              Board
+            </TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent value="list" className="m-0 min-h-0 flex-1">
+          <div ref={scrollRef} className="flex h-full flex-1 flex-col overflow-y-auto">
+            {isLoading ? (
+              <SkeletonRows />
+            ) : items.length === 0 ? (
+              translatedQuery || nlSearchIntent ? (
+                <SearchEmptyState
+                  onClear={clearSearch}
+                  onEditGenerated={() => {
+                    const editable = translatedQuery || query;
+                    setSmartCategory(null);
+                    setSearchInput(editable);
+                    setSearchDraft(editable);
+                    setTranslatedSearch(null, editable, 'gmail');
+                  }}
+                  onRetryOriginal={() => {
+                    if (!nlSearchIntent) return;
+                    setSearchInput(nlSearchIntent);
+                    runSearch(nlSearchIntent);
+                  }}
+                  onUseRaw={() => {
+                    if (nlSearchIntent) {
+                      setQuery(nlSearchIntent);
+                      setSearchInput(nlSearchIntent);
+                    }
+                  }}
+                />
+              ) : (
+                <EmptyState account={account} />
+              )
+            ) : (
+              <>
+                <AnimatePresence initial={false} mode="popLayout">
+                  {items.map((it) => {
+                    const senderEmail = emailFromHeader(it.from || it.fromAddress);
+                    return (
+                      <ThreadRowCard
+                        key={`${it.account}:${it._id}`}
+                        item={it}
+                        participantLabel={participantLabels.get(`${it.account || account}:${it._id}`)}
+                        photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                        showAccount={account === ALL_ACCOUNTS}
+                        selected={selectedIds.includes(it._id)}
+                        active={selectedThreadId === it._id}
+                        onToggle={() => toggleSelected(it._id)}
+                        onApplyLabels={() => setLabelPreview(it)}
+                        onClick={() => {
+                          // Unified inbox stays put; just remember which mailbox this
+                          // thread belongs to so the reader can load/reply correctly.
+                          setThreadAccount(it.account || account);
+                          setSelectedThread(it._id);
+                        }}
+                      />
+                    );
+                  })}
+                </AnimatePresence>
+                <div ref={loadMoreRef} className="min-h-1" aria-hidden />
+                {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
+              </>
+            )}
+          </div>
+        </TabsContent>
+        <TabsContent value="board" className="m-0 min-h-0 flex-1 overflow-y-auto">
+          <SmartBoard
+            items={items}
+            account={account}
+            onOpen={(it) => {
+              setThreadAccount(it.account || account);
+              setSelectedThread(it._id);
+            }}
+            onApplyLabels={setLabelPreview}
+            onNotThis={(item) => markReview.mutate(item)}
+          />
+        </TabsContent>
+      </Tabs>
+      <LabelConfirmDialog
+        item={labelPreview}
+        applying={applyLabels.isPending}
+        onClose={() => setLabelPreview(null)}
+        onApply={(item) => applyLabels.mutate(item)}
+      />
     </section>
   );
 }
@@ -489,6 +672,7 @@ function ThreadRowCard({
   active,
   onToggle,
   onClick,
+  onApplyLabels,
   showAccount,
 }: {
   item: ThreadRow;
@@ -498,9 +682,11 @@ function ThreadRowCard({
   active: boolean;
   onToggle: () => void;
   onClick: () => void;
+  onApplyLabels: () => void;
   showAccount?: boolean;
 }) {
   const triage = (item as any).triage;
+  const smart = (item as any).smartCategory;
   const priorityClass =
     triage?.priority === 1
       ? 'bg-[var(--color-prio-1)]'
@@ -512,10 +698,17 @@ function ThreadRowCard({
   const date = (item.date as any) || item.lastDate || 0;
 
   return (
-    <motion.button
+    <motion.div
       layout
-      type="button"
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      role="button"
+      tabIndex={0}
       initial={{ opacity: 0, filter: 'blur(6px)' }}
       animate={{ opacity: 1, filter: 'blur(0)' }}
       exit={{ opacity: 0, filter: 'blur(4px)' }}
@@ -528,8 +721,12 @@ function ThreadRowCard({
     >
       <span className={cn('absolute left-0 top-2.5 bottom-2.5 w-0.5 rounded-r-full', priorityClass)} />
 
-      <div className="flex h-full items-start pt-0.5" onClick={(e) => e.stopPropagation()}>
-        <Checkbox checked={selected} onCheckedChange={() => onToggle()} />
+      <div className="flex h-full items-start pt-0.5">
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggle()}
+          onClick={(e) => e.stopPropagation()}
+        />
       </div>
 
       <Avatar name={senderLabel || item.account} src={photoUrl} size={26} />
@@ -559,10 +756,38 @@ function ThreadRowCard({
             AI · {triage.action} · {triage.reason}
           </span>
         ) : null}
+        {smart?.reason ? (
+          <span className="mt-0.5 line-clamp-1 text-[11px] text-[var(--color-text-muted)]">
+            Smart · {smart.reason}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-col items-end gap-1">
         <span className="text-[11px] text-[var(--color-text-faint)]">{formatDate(date)}</span>
+        {smart?.primary ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="inline-flex cursor-help" onClick={(e) => e.stopPropagation()}>
+                <Badge variant="secondary" className="max-w-24 truncate text-[9px]">
+                  {SMART_CATEGORY_LABELS[smart.primary as keyof typeof SMART_CATEGORY_LABELS] ||
+                    smart.primary}
+                </Badge>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 text-[12px]">
+              <div className="space-y-2">
+                <div className="font-medium text-[var(--color-text)]">Why this is here</div>
+                <p className="text-[var(--color-text-muted)]">{smart.reason}</p>
+                <div className="flex flex-wrap gap-1">
+                  <Badge variant="outline">{Math.round((smart.confidence || 0) * 100)}%</Badge>
+                  {smart.needsAttention ? <Badge variant="outline">needs attention</Badge> : null}
+                  {smart.isHumanLike ? <Badge variant="outline">human-like</Badge> : null}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : null}
         {showAccount && item.account ? (
           <Badge variant="outline" className="font-mono text-[9px] normal-case">
             {item.account.split('@')[0]}
@@ -575,17 +800,30 @@ function ThreadRowCard({
             </Badge>
           ),
         )}
+        {smart ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onApplyLabels();
+            }}
+            className="mt-0.5 inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+          >
+            <Tag className="size-3" />
+            Label
+          </button>
+        ) : null}
       </div>
-    </motion.button>
+    </motion.div>
   );
 }
 
 function SkeletonRows({ count = 8 }: { count?: number }) {
   return (
     <div className="flex flex-col">
-      {Array.from({ length: count }).map((_, i) => (
+      {SKELETON_ROW_KEYS.slice(0, count).map((key) => (
         <div
-          key={i}
+          key={key}
           className="grid grid-cols-[28px_1fr] gap-3 border-b border-[var(--color-border)] px-3 py-3"
         >
           <div className="h-6 w-6 rounded-full shimmer" />
@@ -601,27 +839,242 @@ function SkeletonRows({ count = 8 }: { count?: number }) {
 
 function EmptyState({ account }: { account: string }) {
   return (
-    <div className="grid flex-1 place-items-center px-6 py-12 text-center">
-      <div className="flex flex-col items-center gap-2">
-        <div className="grid h-10 w-10 place-items-center rounded-full bg-[var(--color-bg-subtle)]">
+    <Empty className="grid flex-1 place-items-center px-6 py-12 text-center">
+      <EmptyHeader>
+        <EmptyMedia>
           <InboxIcon className="h-4 w-4 text-[var(--color-text-faint)]" />
-        </div>
-        <h3 className="text-sm font-medium text-[var(--color-text)]">Nothing here yet</h3>
-        <p className="max-w-[280px] text-[12px] text-[var(--color-text-muted)]">
+        </EmptyMedia>
+        <EmptyTitle>Nothing here yet</EmptyTitle>
+        <EmptyDescription>
           {account
-            ? 'Try a different search or mailbox.'
+            ? 'Try a different search, smart category, or mailbox.'
             : 'Connect a Gmail account in /scripts/auth-google.sh.'}
-        </p>
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+function SearchEmptyState({
+  onClear,
+  onEditGenerated,
+  onRetryOriginal,
+  onUseRaw,
+}: {
+  onClear: () => void;
+  onEditGenerated: () => void;
+  onRetryOriginal: () => void;
+  onUseRaw: () => void;
+}) {
+  return (
+    <Empty className="grid flex-1 place-items-center px-6 py-12 text-center">
+      <EmptyHeader>
+        <EmptyMedia>
+          <Search className="h-4 w-4 text-[var(--color-text-faint)]" />
+        </EmptyMedia>
+        <EmptyTitle>No mail matched that generated filter</EmptyTitle>
+        <EmptyDescription>
+          The original wording is still preserved. Edit the generated pill, retry from the same wording, or
+          clear it.
+        </EmptyDescription>
+      </EmptyHeader>
+      <div className="flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={onEditGenerated}
+          className="h-8 rounded-md border px-2.5 text-[12px] hover:bg-[var(--color-bg-subtle)]"
+        >
+          Edit generated filter
+        </button>
+        <button
+          type="button"
+          onClick={onRetryOriginal}
+          className="h-8 rounded-md border px-2.5 text-[12px] hover:bg-[var(--color-bg-subtle)]"
+        >
+          Retry original wording
+        </button>
+        <button
+          type="button"
+          onClick={onUseRaw}
+          className="h-8 rounded-md border px-2.5 text-[12px] hover:bg-[var(--color-bg-subtle)]"
+        >
+          Use original as Gmail query
+        </button>
+        <button
+          type="button"
+          onClick={onClear}
+          className="h-8 rounded-md bg-[var(--color-accent)] px-2.5 text-[12px] text-[var(--color-accent-foreground)]"
+        >
+          Clear
+        </button>
       </div>
+    </Empty>
+  );
+}
+
+function SmartBoard({
+  items,
+  account,
+  onOpen,
+  onApplyLabels,
+  onNotThis,
+}: {
+  items: ThreadRow[];
+  account: string;
+  onOpen: (item: ThreadRow) => void;
+  onApplyLabels: (item: ThreadRow) => void;
+  onNotThis: (item: ThreadRow) => void;
+}) {
+  const columns = ['main', 'needs_reply', 'codes', 'orders', 'review'] as const;
+  const grouped = new Map<string, ThreadRow[]>();
+  for (const column of columns) grouped.set(column, []);
+  for (const item of items) {
+    const smart = (item as any).smartCategory;
+    const primary =
+      smart?.primary && grouped.has(smart.primary)
+        ? smart.primary
+        : smart?.secondary?.find((id: string) => grouped.has(id)) || 'review';
+    grouped.get(primary)?.push(item);
+  }
+
+  return (
+    <div className="grid min-h-full gap-3 p-3 lg:grid-cols-5">
+      {columns.map((column) => (
+        <section key={column} className="min-w-0">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-[12px] font-semibold text-[var(--color-text)]">
+              {SMART_CATEGORY_LABELS[column]}
+            </h3>
+            <Badge variant="outline">{grouped.get(column)?.length || 0}</Badge>
+          </div>
+          <AnimatedList delay={80} className="items-stretch gap-2">
+            {(grouped.get(column) || []).slice(0, 12).map((item) => {
+              const smart = (item as any).smartCategory;
+              return (
+                <MagicCard
+                  key={`${item.account || account}:${item._id}`}
+                  className="rounded-lg"
+                  gradientColor="color-mix(in oklab, var(--color-accent) 18%, transparent)"
+                  gradientFrom="#4cb7c8"
+                  gradientTo="#7c3aed"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpen(item)}
+                    className="block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2 text-left shadow-[var(--shadow-soft)]"
+                  >
+                    {smart?.needsAttention ? (
+                      <ShineBorder shineColor={['#4cb7c8', '#7c3aed', '#0b7285']} duration={12} />
+                    ) : null}
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="line-clamp-1 text-[12px] font-semibold text-[var(--color-text)]">
+                        {shortFrom(item.from || item.fromAddress || item.account || '')}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-[var(--color-text-faint)]">
+                        {formatDate((item.date as any) || item.lastDate || 0)}
+                      </span>
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-[12px] text-[var(--color-text)]">
+                      {item.subject || '(no subject)'}
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">
+                      {smart?.reason || item.snippet || ''}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {smart?.suggestedAction ? (
+                        <Badge variant="outline">{smart.suggestedAction}</Badge>
+                      ) : null}
+                      {smart?.confidence ? (
+                        <Badge variant="outline">{Math.round(smart.confidence * 100)}%</Badge>
+                      ) : null}
+                    </div>
+                  </button>
+                  <div className="mt-1 flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onOpen(item)}
+                      className="h-7 flex-1 rounded-md border text-[11px] hover:bg-[var(--color-bg-subtle)]"
+                    >
+                      Open
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onApplyLabels(item)}
+                      className="h-7 flex-1 rounded-md border text-[11px] hover:bg-[var(--color-bg-subtle)]"
+                    >
+                      Apply Label
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNotThis(item)}
+                      className="h-7 flex-1 rounded-md border text-[11px] hover:bg-[var(--color-bg-subtle)]"
+                    >
+                      Not This
+                    </button>
+                  </div>
+                </MagicCard>
+              );
+            })}
+          </AnimatedList>
+        </section>
+      ))}
     </div>
   );
 }
 
-function formatThreadParticipants(
-  messages: ThreadMessage[],
-  account: string,
-  fallbackFrom?: string,
-): string {
+function LabelConfirmDialog({
+  item,
+  applying,
+  onClose,
+  onApply,
+}: {
+  item: ThreadRow | null;
+  applying: boolean;
+  onClose: () => void;
+  onApply: (item: ThreadRow) => void;
+}) {
+  if (!item) return null;
+  const labels = labelsForSmartCategory((item as any)?.smartCategory);
+  return (
+    <Dialog open={!!item} onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="overflow-hidden border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-pop)]">
+        <DialogTitle className="sr-only">Apply smart Gmail labels</DialogTitle>
+        <ShineBorder shineColor={['#4cb7c8', '#7c3aed', '#0b7285']} />
+        <Confirmation approval={{ id: item._id }} state={'approval-requested' as any}>
+          <ConfirmationTitle>Apply smart Gmail labels?</ConfirmationTitle>
+          <ConfirmationRequest>
+            <div className="mt-3 space-y-3">
+              <div>
+                <div className="line-clamp-1 text-[13px] font-semibold">{item.subject || '(no subject)'}</div>
+                <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+                  {(item as any).smartCategory?.reason || 'Smart category label preview.'}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {labels.map((label) => (
+                  <Badge key={label} variant="outline">
+                    {label}
+                  </Badge>
+                ))}
+              </div>
+              <ConfirmationActions>
+                <ConfirmationAction variant="outline" onClick={onClose}>
+                  Cancel
+                </ConfirmationAction>
+                <ConfirmationAction onClick={() => onApply(item)} disabled={applying || labels.length === 0}>
+                  {applying ? <Ring className="mr-1 size-3" /> : <CheckCircle2 className="mr-1 size-3" />}
+                  Apply
+                </ConfirmationAction>
+              </ConfirmationActions>
+            </div>
+          </ConfirmationRequest>
+        </Confirmation>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function formatThreadParticipants(messages: ThreadMessage[], account: string, fallbackFrom?: string): string {
   const ordered = [...messages].sort((a, b) => Number(b.date || 0) - Number(a.date || 0));
   const newestSender = ordered[0]?.from || fallbackFrom || '';
   const participants = new Map<string, string>();

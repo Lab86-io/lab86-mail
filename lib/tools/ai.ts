@@ -1,17 +1,27 @@
-import { z } from 'zod';
 import { generateText } from 'ai';
-import { defineTool } from './registry';
+import { z } from 'zod';
 import { fastModel, hasAi, primaryModel } from '../ai/client';
+import { normalizeGogMessage } from '../gog/normalize';
+import { runGogJson } from '../gog/pool';
+import { classifyThreadDeterministic, SMART_CATEGORY_IDS } from '../mail/smart-categories';
+import type { SmartCategoryId } from '../shared/types';
+import { recallSender } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
 import { setThreadSummary, setThreadTriage, upsertThread } from '../store/threads';
-import { recallSender } from '../store/memories';
-import { runGogJson } from '../gog/pool';
-import { normalizeGogMessage } from '../gog/normalize';
+import { defineTool } from './registry';
 
 async function loadThread(account: string, threadId: string) {
   try {
     const raw = await runGogJson<any>([
-      '--account', account, '--json', 'gmail', 'thread', 'get', threadId, '--full', '--no-input',
+      '--account',
+      account,
+      '--json',
+      'gmail',
+      'thread',
+      'get',
+      threadId,
+      '--full',
+      '--no-input',
     ]);
     const threadObj = raw?.thread || raw?.result || raw?.data || raw;
     const arr: any[] = threadObj?.messages || [];
@@ -77,7 +87,7 @@ export const summarizeThread = defineTool({
       const { text } = await generateText({
         model: fastModel(),
         system:
-          'You are lab86-mail, Jakob\'s local email assistant. Be concrete. Never claim an action was performed; you can only reason.',
+          "You are lab86-mail, Jakob's local email assistant. Be concrete. Never claim an action was performed; you can only reason.",
         prompt,
       });
       const summary = text.trim();
@@ -97,7 +107,8 @@ export const summarizeThread = defineTool({
 
 export const triageThread = defineTool({
   name: 'triage_thread',
-  description: 'Classify a thread by priority (1=urgent, 2=normal, 3=low), suggest an action, and store the verdict.',
+  description:
+    'Classify a thread by priority (1=urgent, 2=normal, 3=low), suggest an action, and store the verdict.',
   category: 'ai',
   mutating: false,
   input: z.object({ account: z.string(), threadId: z.string() }),
@@ -109,7 +120,8 @@ export const triageThread = defineTool({
   }),
   async handler({ account, threadId }) {
     const messages = await loadThread(account, threadId);
-    if (!messages.length) return { priority: 3 as const, action: 'archive', reason: 'empty thread', model: 'none' };
+    if (!messages.length)
+      return { priority: 3 as const, action: 'archive', reason: 'empty thread', model: 'none' };
     if (!hasAi()) {
       const triage = {
         priority: (messages[messages.length - 1].labels.includes('UNREAD') ? 2 : 3) as 1 | 2 | 3,
@@ -139,10 +151,14 @@ export const triageThread = defineTool({
       const match = text.match(/\{[\s\S]*\}/);
       parsed = match ? JSON.parse(match[0]) : {};
     } catch {}
-    const priority = ((parsed.priority === 1 || parsed.priority === 2 || parsed.priority === 3) ? parsed.priority : 2) as 1 | 2 | 3;
+    const priority = (
+      parsed.priority === 1 || parsed.priority === 2 || parsed.priority === 3 ? parsed.priority : 2
+    ) as 1 | 2 | 3;
     const action = String(parsed.action || 'read');
     const reason = String(parsed.reason || '').slice(0, 240);
-    await setThreadTriage(account, threadId, { priority, action, reason, at: Date.now() }).catch(() => undefined);
+    await setThreadTriage(account, threadId, { priority, action, reason, at: Date.now() }).catch(
+      () => undefined,
+    );
     return { priority, action, reason, model: 'fast' };
   },
 });
@@ -176,14 +192,16 @@ export const draftReply = defineTool({
       tone ? `Tone: ${tone}.` : '',
       instructions ? `Jakob's instruction: ${instructions}` : '',
       memory ? `Memory about ${memory.email}: ${memory.notes}` : '',
-      'Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match Jakob\'s style: concise, warm, lower-case openers ok.',
+      "Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match Jakob's style: concise, warm, lower-case openers ok.",
       '',
       'Thread:',
       concatThread(messages),
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
     const { text } = await generateText({
       model: primaryModel(),
-      system: 'You are lab86-mail drafting on Jakob\'s behalf. Never claim the message was sent.',
+      system: "You are lab86-mail drafting on Jakob's behalf. Never claim the message was sent.",
       prompt,
     });
     return { draft: text.trim(), model: 'primary' };
@@ -196,34 +214,46 @@ export const bulkTriage = defineTool({
   category: 'ai',
   mutating: false,
   input: z.object({
-    items: z.array(
-      z.object({
-        id: z.string(),
-        from: z.string().optional(),
-        subject: z.string().optional(),
-        snippet: z.string().optional(),
-      }),
-    ).max(40),
+    items: z
+      .array(
+        z.object({
+          id: z.string(),
+          from: z.string().optional(),
+          subject: z.string().optional(),
+          snippet: z.string().optional(),
+        }),
+      )
+      .max(40),
   }),
   output: z.object({
-    verdicts: z.array(z.object({
-      id: z.string(),
-      priority: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-      action: z.string(),
-      reason: z.string(),
-    })),
+    verdicts: z.array(
+      z.object({
+        id: z.string(),
+        priority: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+        action: z.string(),
+        reason: z.string(),
+      }),
+    ),
     model: z.string(),
   }),
   async handler({ items }) {
     if (!items.length) return { verdicts: [], model: 'none' };
     if (!hasAi()) {
       return {
-        verdicts: items.map((it) => ({ id: it.id, priority: 2 as const, action: 'read', reason: 'no AI configured' })),
+        verdicts: items.map((it) => ({
+          id: it.id,
+          priority: 2 as const,
+          action: 'read',
+          reason: 'no AI configured',
+        })),
         model: 'local',
       };
     }
     const lines = items
-      .map((it, i) => `${i + 1}. id=${it.id} from=${it.from || ''} subject=${(it.subject || '').slice(0, 100)} snippet=${(it.snippet || '').slice(0, 160)}`)
+      .map(
+        (it, i) =>
+          `${i + 1}. id=${it.id} from=${it.from || ''} subject=${(it.subject || '').slice(0, 100)} snippet=${(it.snippet || '').slice(0, 160)}`,
+      )
       .join('\n');
     const prompt = [
       'Triage these threads. For each line, return exactly one JSON object on its own line in the form:',
@@ -243,12 +273,13 @@ export const bulkTriage = defineTool({
       if (!match) continue;
       try {
         const obj = JSON.parse(match[0]);
-        if (obj.id) verdicts.push({
-          id: String(obj.id),
-          priority: (obj.priority === 1 || obj.priority === 3 ? obj.priority : 2) as 1 | 2 | 3,
-          action: String(obj.action || 'read'),
-          reason: String(obj.reason || ''),
-        });
+        if (obj.id)
+          verdicts.push({
+            id: String(obj.id),
+            priority: (obj.priority === 1 || obj.priority === 3 ? obj.priority : 2) as 1 | 2 | 3,
+            action: String(obj.action || 'read'),
+            reason: String(obj.reason || ''),
+          });
       } catch {}
     }
     // Fill in missing ids with defaults so the UI never has gaps.
@@ -258,6 +289,124 @@ export const bulkTriage = defineTool({
       }
     }
     return { verdicts, model: 'fast' };
+  },
+});
+
+const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
+const SuggestedActionSchema = z.enum(['reply', 'read', 'archive', 'label', 'snooze', 'wait', 'none']);
+
+export const classifyThreads = defineTool({
+  name: 'classify_threads',
+  description:
+    'Classify visible threads into smart MailOS categories: main, needs_reply, waiting, codes, orders, finance_admin, newsletters, noise, or review.',
+  category: 'ai',
+  mutating: false,
+  input: z.object({
+    account: z.string().optional(),
+    force: z.boolean().optional(),
+    threads: z
+      .array(
+        z.object({
+          id: z.string(),
+          account: z.string().optional(),
+          from: z.string().optional(),
+          fromAddress: z.string().optional(),
+          subject: z.string().optional(),
+          snippet: z.string().optional(),
+          labels: z.array(z.string()).optional(),
+          unread: z.boolean().optional(),
+          date: z.union([z.string(), z.number()]).optional(),
+        }),
+      )
+      .max(40),
+  }),
+  output: z.object({
+    verdicts: z.array(
+      z.object({
+        id: z.string(),
+        primary: SmartCategorySchema,
+        secondary: z.array(SmartCategorySchema),
+        confidence: z.number(),
+        reason: z.string(),
+        needsAttention: z.boolean(),
+        suggestedAction: SuggestedActionSchema,
+        isHumanLike: z.boolean(),
+        isAutomated: z.boolean(),
+        allowNoReplyInMain: z.boolean(),
+        signals: z.array(z.string()),
+        model: z.string(),
+      }),
+    ),
+    model: z.string(),
+  }),
+  async handler({ threads, force }) {
+    if (!threads.length) return { verdicts: [], model: 'none' };
+
+    const local = threads.map((thread) => ({
+      thread,
+      verdict: classifyThreadDeterministic({
+        _id: thread.id,
+        account: thread.account || '',
+        fromAddress: thread.fromAddress || thread.from || '',
+        subject: thread.subject || '',
+        snippet: thread.snippet || '',
+        labels: thread.labels || [],
+        unread: thread.unread ?? false,
+        lastDate: Number(thread.date || 0),
+      }),
+    }));
+
+    const uncertain = local.filter(
+      ({ verdict }) => force || verdict.primary === 'review' || verdict.confidence < 0.68,
+    );
+    if (!hasAi() || !uncertain.length) {
+      return {
+        verdicts: local.map(({ thread, verdict }) => ({
+          id: thread.id,
+          ...verdict,
+          model: verdict.model || 'local',
+        })),
+        model: hasAi() ? 'deterministic' : 'local',
+      };
+    }
+
+    const lines = uncertain
+      .map(
+        ({ thread }, i) =>
+          `${i + 1}. id=${thread.id} from=${thread.fromAddress || thread.from || ''} unread=${thread.unread ? 'yes' : 'no'} labels=${(thread.labels || []).join(',')} subject=${(thread.subject || '').slice(0, 120)} snippet=${(thread.snippet || '').slice(0, 240)}`,
+      )
+      .join('\n');
+    const { text } = await generateText({
+      model: fastModel(),
+      system:
+        'You classify email threads for Jakob. Output only JSON lines. Categories: main, needs_reply, waiting, codes, orders, finance_admin, newsletters, noise, review. Main is an attention queue: human threads, useful codes/security, useful order updates, or still-actionable read mail. No-reply is allowed in main only for useful codes/security/orders/billing/admin.',
+      prompt: [
+        'For each input line, return exactly one JSON object:',
+        '{"id":"...","primary":"main|needs_reply|waiting|codes|orders|finance_admin|newsletters|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
+        'No prose. One JSON object per line.',
+        '',
+        lines,
+      ].join('\n'),
+    });
+
+    const aiById = new Map<string, any>();
+    for (const line of text.split('\n')) {
+      const match = line.match(/\{[\s\S]*\}/);
+      if (!match) continue;
+      try {
+        const parsed = JSON.parse(match[0]);
+        if (parsed?.id) aiById.set(String(parsed.id), normalizeAiVerdict(parsed));
+      } catch {}
+    }
+
+    return {
+      verdicts: local.map(({ thread, verdict }) => ({
+        id: thread.id,
+        ...(aiById.get(thread.id) || verdict),
+        model: aiById.has(thread.id) ? 'fast' : verdict.model || 'deterministic',
+      })),
+      model: 'fast',
+    };
   },
 });
 
@@ -276,9 +425,16 @@ export const extractActionItems = defineTool({
     const { text } = await generateText({
       model: fastModel(),
       system: 'You are lab86-mail. Extract concrete action items as a plain bullet list. No prose.',
-      prompt: ['Extract action items as a bullet list. One per line, prefixed with "- ".', '', concatThread(messages)].join('\n'),
+      prompt: [
+        'Extract action items as a bullet list. One per line, prefixed with "- ".',
+        '',
+        concatThread(messages),
+      ].join('\n'),
     });
-    const items = text.split('\n').map((l) => l.replace(/^[-•*]\s*/, '').trim()).filter(Boolean);
+    const items = text
+      .split('\n')
+      .map((l) => l.replace(/^[-•*]\s*/, '').trim())
+      .filter(Boolean);
     return { items, model: 'fast' };
   },
 });
@@ -357,3 +513,29 @@ export const nlSearch = defineTool({
     return { query: text.trim().replace(/^"|"$/g, ''), model: 'fast' };
   },
 });
+
+function normalizeAiVerdict(parsed: any) {
+  const primary = SMART_CATEGORY_IDS.includes(parsed.primary as SmartCategoryId) ? parsed.primary : 'review';
+  const secondary = Array.isArray(parsed.secondary)
+    ? parsed.secondary.filter((id: string) => SMART_CATEGORY_IDS.includes(id as SmartCategoryId)).slice(0, 3)
+    : [];
+  const action = ['reply', 'read', 'archive', 'label', 'snooze', 'wait', 'none'].includes(
+    parsed.suggestedAction,
+  )
+    ? parsed.suggestedAction
+    : 'read';
+  return {
+    primary,
+    secondary,
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0.5)),
+    reason: String(parsed.reason || 'AI classification').slice(0, 220),
+    needsAttention: Boolean(parsed.needsAttention),
+    suggestedAction: action,
+    isHumanLike: Boolean(parsed.isHumanLike),
+    isAutomated: Boolean(parsed.isAutomated),
+    allowNoReplyInMain: Boolean(parsed.allowNoReplyInMain),
+    signals: Array.isArray(parsed.signals) ? parsed.signals.map(String).slice(0, 5) : [],
+    classifiedAt: Date.now(),
+    model: 'fast',
+  };
+}

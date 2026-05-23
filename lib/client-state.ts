@@ -34,6 +34,12 @@ export interface ClientState {
   // for new compose when the inbox is in the unified view.
   primaryAccount: string;
   query: string;
+  smartCategory: string | null;
+  searchDraft: string;
+  nlSearchIntent: string | null;
+  translatedQuery: string | null;
+  querySource: 'default' | 'gmail' | 'natural_language' | 'category';
+  queryError: string | null;
   selectedThreadId: string | null;
   selectedIds: string[];
   paletteOpen: boolean;
@@ -49,6 +55,14 @@ export interface ClientState {
   setThreadAccount: (account: string | null) => void;
   setPrimaryAccount: (account: string) => void;
   setQuery: (query: string) => void;
+  setSmartCategory: (category: string | null) => void;
+  setSearchDraft: (draft: string) => void;
+  setTranslatedSearch: (
+    intent: string | null,
+    translated: string | null,
+    source: ClientState['querySource'],
+  ) => void;
+  setQueryError: (error: string | null) => void;
   setSelectedThread: (id: string | null) => void;
   toggleSelected: (id: string) => void;
   clearSelected: () => void;
@@ -99,6 +113,12 @@ export const useClientStore = create<ClientState>()(
       threadAccount: null,
       primaryAccount: '',
       query: 'in:inbox newer_than:30d',
+      smartCategory: 'main',
+      searchDraft: '',
+      nlSearchIntent: null,
+      translatedQuery: null,
+      querySource: 'category',
+      queryError: null,
       selectedThreadId: null,
       selectedIds: [],
       paletteOpen: false,
@@ -113,7 +133,18 @@ export const useClientStore = create<ClientState>()(
       setAccount: (account) => set({ account }),
       setThreadAccount: (threadAccount) => set({ threadAccount }),
       setPrimaryAccount: (primaryAccount) => set({ primaryAccount }),
-      setQuery: (query) => set({ query }),
+      setQuery: (query) =>
+        set({
+          query,
+          smartCategory: null,
+          querySource: query === 'in:inbox newer_than:30d' ? 'default' : 'gmail',
+        }),
+      setSmartCategory: (smartCategory) =>
+        set({ smartCategory, querySource: smartCategory ? 'category' : 'gmail' }),
+      setSearchDraft: (searchDraft) => set({ searchDraft }),
+      setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
+        set({ nlSearchIntent, translatedQuery, querySource, queryError: null }),
+      setQueryError: (queryError) => set({ queryError }),
       setSelectedThread: (selectedThreadId) => set({ selectedThreadId }),
       toggleSelected: (id) =>
         set((s) => ({
@@ -169,6 +200,7 @@ export const useClientStore = create<ClientState>()(
       partialize: (s) => ({
         account: s.account,
         query: s.query,
+        smartCategory: s.smartCategory,
         rightRailOpen: s.rightRailOpen,
         railOpen: s.railOpen,
         railWidth: s.railWidth,

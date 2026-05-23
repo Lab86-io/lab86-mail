@@ -5,19 +5,27 @@ import {
   AlarmClock,
   Archive,
   Calendar,
-  Cloud,
+  ClipboardList,
+  CreditCard,
   Flag,
   Inbox,
   Keyboard,
   Layers,
   MailOpen,
+  MessageCircle,
   Pencil,
   Plus,
+  Receipt,
   Send,
   Star,
   Trash2,
+  UserRound,
+  WandSparkles,
 } from 'lucide-react';
 import { useEffect } from 'react';
+import { Ring } from '@/components/loading-ui/ring';
+import { Badge } from '@/components/ui/badge';
+import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
   SidebarContent,
@@ -27,10 +35,13 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { ThemeSwitcher } from './ThemeSwitcher';
@@ -42,11 +53,9 @@ interface MailboxItem {
 }
 
 const MAILBOXES: MailboxItem[] = [
-  { query: 'in:inbox newer_than:30d', label: 'Inbox', Icon: Inbox },
   { query: 'is:unread newer_than:30d', label: 'Unread', Icon: MailOpen },
   { query: 'is:starred newer_than:365d', label: 'Starred', Icon: Star },
   { query: 'is:important newer_than:60d', label: 'Important', Icon: Flag },
-  { query: 'from:(icloud.com OR me.com) newer_than:365d', label: 'iCloud', Icon: Cloud },
   { query: 'has:attachment newer_than:90d', label: 'Attachments', Icon: Layers },
   { query: 'newer_than:7d', label: 'This week', Icon: Calendar },
   { query: 'in:sent newer_than:365d', label: 'Sent', Icon: Send },
@@ -58,12 +67,50 @@ const MAILBOXES: MailboxItem[] = [
 
 export const ALL_ACCOUNTS = '__all__';
 
+const SMART_CATEGORIES = [
+  {
+    id: 'main',
+    label: 'Main',
+    Icon: Inbox,
+    help: 'Human threads, useful codes, active order updates, and read mail that still needs attention.',
+  },
+  {
+    id: 'needs_reply',
+    label: 'Needs Reply',
+    Icon: MessageCircle,
+    help: 'Human conversations likely worth a response.',
+  },
+  { id: 'waiting', label: 'Waiting', Icon: ClipboardList, help: 'Threads where the next move is waiting.' },
+  {
+    id: 'codes',
+    label: 'Codes',
+    Icon: WandSparkles,
+    help: 'Verification codes, login links, and account security.',
+  },
+  {
+    id: 'orders',
+    label: 'Orders',
+    Icon: Receipt,
+    help: 'Orders, delivery, returns, receipts, and bookings.',
+  },
+  {
+    id: 'finance_admin',
+    label: 'Finance/Admin',
+    Icon: CreditCard,
+    help: 'Billing, legal, contracts, tax, and admin.',
+  },
+  { id: 'review', label: 'Review', Icon: UserRound, help: 'Uncertain mail that needs a decision.' },
+  { id: 'noise', label: 'Noise', Icon: Trash2, help: 'Automated or low-value mail.' },
+];
+
 export function Rail() {
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
   const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
   const query = useClientStore((s) => s.query);
   const setQuery = useClientStore((s) => s.setQuery);
+  const smartCategory = useClientStore((s) => s.smartCategory);
+  const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
 
@@ -74,6 +121,26 @@ export function Rail() {
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
+  const countAccount = account && account !== ALL_ACCOUNTS ? account : authedAccounts[0]?.email || '';
+
+  const { data: smartCounts, isLoading: countsLoading } = useQuery({
+    queryKey: ['smart-counts', countAccount],
+    queryFn: async () => {
+      const entries = await Promise.all(
+        SMART_CATEGORIES.map(async (category) => {
+          const result = await callTool<{ items: any[] }>('list_smart_category', {
+            account: countAccount,
+            category: category.id,
+            max: 24,
+          }).catch(() => ({ items: [] }));
+          return [category.id, result.items.length] as const;
+        }),
+      );
+      return Object.fromEntries(entries) as Record<string, number>;
+    },
+    enabled: !!countAccount,
+    staleTime: 60_000,
+  });
 
   // The inbox is always the unified "all mailboxes" view — there's no account
   // selector. We still resolve the primary account (compose "from") and force
@@ -124,7 +191,63 @@ export function Rail() {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Mailboxes</SidebarGroupLabel>
+          <SidebarGroupLabel className="flex items-center gap-1">
+            Smart
+            {countsLoading ? <Ring className="ml-1 size-3 text-[var(--color-accent)]" /> : null}
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {SMART_CATEGORIES.map(({ id, label, Icon, help }) => (
+                <SidebarMenuItem key={id}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <SidebarMenuButton
+                        isActive={smartCategory === id}
+                        tooltip={label}
+                        onClick={() => setSmartCategory(id)}
+                        className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                      >
+                        {smartCategory === id ? (
+                          <ShineBorder
+                            borderWidth={1}
+                            duration={10}
+                            shineColor={['#4cb7c8', '#7c3aed', '#0b7285']}
+                          />
+                        ) : null}
+                        <Icon />
+                        <span>{label}</span>
+                        {countsLoading ? (
+                          <SidebarMenuSkeleton
+                            showIcon={false}
+                            className="ml-auto h-4 w-7 group-data-[collapsible=icon]:hidden"
+                          />
+                        ) : (
+                          <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">
+                            {smartCounts?.[id] ?? 0}
+                          </SidebarMenuBadge>
+                        )}
+                      </SidebarMenuButton>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-[240px] text-[11.5px]">
+                      {help}
+                    </TooltipContent>
+                  </Tooltip>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>
+            Mail
+            <Badge
+              variant="outline"
+              className="ml-2 px-1.5 py-0 text-[9px] group-data-[collapsible=icon]:hidden"
+            >
+              Gmail
+            </Badge>
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {MAILBOXES.map(({ query: q, label, Icon }) => (

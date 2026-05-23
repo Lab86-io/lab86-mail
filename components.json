@@ -21,6 +21,7 @@
   "registries": {
     "@ai-elements": "https://registry.ai-sdk.dev/{name}.json",
     "@magicui": "https://magicui.design/r/{name}.json",
-    "@kibo-ui": "https://www.kibo-ui.com/r/{name}.json"
+    "@kibo-ui": "https://www.kibo-ui.com/r/{name}.json",
+    "@loading-ui": "https://loading-ui.com/r/{name}.json"
   }
 }

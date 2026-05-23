@@ -14,18 +14,12 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -52,6 +46,7 @@ export function ThreadView() {
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const queryClient = useQueryClient();
+  const markedReadRef = useRef<Set<string>>(new Set());
 
   const { data, isLoading } = useQuery({
     queryKey: ['thread', account, threadId],
@@ -89,6 +84,47 @@ export function ThreadView() {
     () => [...(data?.messages || [])].sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0)),
     [data?.messages],
   );
+  const markThreadRead = useMutation({
+    mutationFn: async ({ ids }: { ids: string[] }) =>
+      callTool('mark_thread_read', { account, threadId, messageIds: ids }),
+    onMutate: async ({ ids }) => {
+      if (!account || !threadId || !ids.length) return;
+      queryClient.setQueriesData({ queryKey: ['search'] }, (old: any) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page: any) => ({
+            ...page,
+            items: (page.items || []).map((item: any) =>
+              item._id === threadId && item.account === account
+                ? {
+                    ...item,
+                    unread: false,
+                    labels: (item.labels || []).filter((label: string) => label !== 'UNREAD'),
+                  }
+                : item,
+            ),
+          })),
+        };
+      });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['search'] });
+      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+    },
+  });
+  useEffect(() => {
+    if (!account || !threadId || !messages.length) return;
+    const key = `${account}:${threadId}`;
+    if (markedReadRef.current.has(key)) return;
+    const unreadIds = messages
+      .filter((m) => m.labels?.includes('UNREAD'))
+      .map((m) => m._id)
+      .filter(Boolean);
+    if (!unreadIds.length) return;
+    markedReadRef.current.add(key);
+    markThreadRead.mutate({ ids: unreadIds });
+  }, [account, threadId, messages, markThreadRead]);
   const lastMessage = messages[messages.length - 1];
   const latestMessageStamp = `${lastMessage?._id || ''}:${lastMessage?.date || 0}:${messages.length}`;
   const summary = useQuery({
@@ -546,7 +582,9 @@ function Attachments({
                           {att.filename}
                         </span>
                         {item.meta ? (
-                          <span className="block text-[10.5px] text-[var(--color-text-faint)]">{item.meta}</span>
+                          <span className="block text-[10.5px] text-[var(--color-text-faint)]">
+                            {item.meta}
+                          </span>
                         ) : null}
                       </span>
                     </button>
@@ -638,7 +676,11 @@ function attachmentHref({
   return preview ? `${href}&preview=1` : href;
 }
 
-function attachmentPreviewItem(att: Attachment, downloadHref: string, previewHref: string): AttachmentPreviewItem {
+function attachmentPreviewItem(
+  att: Attachment,
+  downloadHref: string,
+  previewHref: string,
+): AttachmentPreviewItem {
   const mime = (att.mimeType || '').toLowerCase();
   const ext = (att.filename.split('.').pop() || '').slice(0, 5).toUpperCase();
   const meta = [ext, formatBytes(att.size)].filter(Boolean).join(' · ');

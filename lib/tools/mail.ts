@@ -1,12 +1,30 @@
 import { z } from 'zod';
-import { defineTool } from './registry';
-import { runGogJson } from '../gog/pool';
 import { normalizeGogMessage, normalizeGogSearchItem } from '../gog/normalize';
-import { upsertThread, listRecentThreads, listThreadsForAccount } from '../store/threads';
-import { upsertMessage as upsertMessageRecord, getMessage as getMessageRecord, getThreadMessages } from '../store/messages';
-import type { Account, Thread, LabelRecord } from '../shared/types';
+import { runGogJson } from '../gog/pool';
+import {
+  classifyThreadDeterministic,
+  includeInSmartCategory,
+  SMART_CATEGORY_IDS,
+} from '../mail/smart-categories';
+import type { Account, LabelRecord, Thread } from '../shared/types';
+import {
+  getMessage as getMessageRecord,
+  getThreadMessages,
+  upsertMessage as upsertMessageRecord,
+} from '../store/messages';
+import {
+  listRecentThreads,
+  listThreadsForAccount,
+  setThreadSmartCategory,
+  upsertThread,
+} from '../store/threads';
+import { defineTool } from './registry';
 
-const ACCOUNT_LIST = (process.env.LAB86_MAIL_ACCOUNTS || process.env.MAIL_OS_ACCOUNTS || 'jjalangtry@gmail.com,jakob@lab86.io')
+const ACCOUNT_LIST = (
+  process.env.LAB86_MAIL_ACCOUNTS ||
+  process.env.MAIL_OS_ACCOUNTS ||
+  'jjalangtry@gmail.com,jakob@lab86.io'
+)
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -93,6 +111,66 @@ export const searchThreads = defineTool({
       await upsertThread(account, norm).catch(() => undefined);
     }
     return { account, query, items, nextPageToken: coerceNextPageToken(raw) };
+  },
+});
+
+const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
+
+export const listSmartCategory = defineTool({
+  name: 'list_smart_category',
+  description:
+    'List a smart MailOS category. Fetches recent Gmail candidates, classifies missing/stale rows locally, and filters into categories like main, needs_reply, codes, orders, newsletters, and review.',
+  category: 'mail',
+  mutating: false,
+  input: z.object({
+    account: z.string(),
+    category: SmartCategorySchema,
+    query: z.string().optional(),
+    max: z.number().int().min(1).max(80).default(50),
+    pageToken: z.string().optional(),
+  }),
+  output: z.object({
+    account: z.string(),
+    category: SmartCategorySchema,
+    query: z.string(),
+    items: z.array(z.any()),
+    nextPageToken: z.string().optional(),
+  }),
+  async handler({ account, category, query, max, pageToken }) {
+    const candidateQuery = query || smartCandidateQuery(category);
+    const args = [
+      '--account',
+      account,
+      '--json',
+      'gmail',
+      'search',
+      '--max',
+      String(Math.min(80, Math.max(max * 2, max))),
+      ...(pageToken ? ['--page', pageToken] : []),
+      '--no-input',
+      '--',
+      candidateQuery,
+    ];
+    const raw = await runGogJson<any>(args);
+    const list = coerceList(raw);
+    const items: any[] = [];
+    for (const it of list) {
+      const norm = normalizeGogSearchItem(it, account);
+      if (!norm._id) continue;
+      const smartCategory = classifyThreadDeterministic(norm);
+      const enriched = { ...norm, smartCategory };
+      await upsertThread(account, enriched).catch(() => undefined);
+      await setThreadSmartCategory(account, norm._id, smartCategory).catch(() => undefined);
+      if (includeInSmartCategory(enriched, category)) items.push(enriched);
+      if (items.length >= max) break;
+    }
+    return {
+      account,
+      category,
+      query: candidateQuery,
+      items,
+      nextPageToken: coerceNextPageToken(raw),
+    };
   },
 });
 
@@ -258,6 +336,23 @@ function coerceList(raw: any): any[] {
   if (Array.isArray(raw?.data)) return raw.data;
   if (Array.isArray(raw?.result)) return raw.result;
   return [];
+}
+
+function smartCandidateQuery(category: string) {
+  switch (category) {
+    case 'codes':
+      return 'newer_than:30d (code OR verification OR login OR security OR "magic link") -in:trash -in:spam';
+    case 'orders':
+      return 'newer_than:90d (order OR shipped OR delivery OR tracking OR refund OR receipt OR invoice OR booking) -in:trash -in:spam';
+    case 'finance_admin':
+      return 'newer_than:180d (invoice OR billing OR payment OR tax OR legal OR contract OR subscription) -in:trash -in:spam';
+    case 'newsletters':
+      return 'newer_than:30d (newsletter OR digest OR unsubscribe OR promo OR webinar) -in:trash -in:spam';
+    case 'noise':
+      return 'newer_than:30d -in:trash -in:spam';
+    default:
+      return 'in:inbox newer_than:45d -in:trash -in:spam';
+  }
 }
 
 function coerceNextPageToken(raw: any): string | undefined {

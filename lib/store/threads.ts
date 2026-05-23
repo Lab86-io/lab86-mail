@@ -1,5 +1,5 @@
-import { db, findMany, findOne, upsert } from './db';
 import type { Thread } from '../shared/types';
+import { db, findMany, findOne, upsert } from './db';
 
 export async function upsertThread(account: string, partial: Partial<Thread> & { _id: string }) {
   const existing = await getThread(account, partial._id);
@@ -16,6 +16,9 @@ export async function upsertThread(account: string, partial: Partial<Thread> & {
     summary: partial.summary ?? existing?.summary ?? null,
     summaryAt: partial.summaryAt ?? existing?.summaryAt ?? null,
     triage: partial.triage ?? existing?.triage ?? null,
+    smartCategory: partial.smartCategory ?? existing?.smartCategory ?? null,
+    readState: partial.readState ?? existing?.readState ?? null,
+    gmailLabelSync: partial.gmailLabelSync ?? existing?.gmailLabelSync ?? null,
     cachedAt: Date.now(),
   };
   await upsert(db().threads, { _id: merged._id, account }, merged);
@@ -35,16 +38,40 @@ export async function listThreadsForAccount(account: string, limit = 80): Promis
 }
 
 export async function setThreadSummary(account: string, id: string, summary: string) {
-  await db().threads.updateAsync(
-    { _id: id, account },
-    { $set: { summary, summaryAt: Date.now() } },
-  );
+  await db().threads.updateAsync({ _id: id, account }, { $set: { summary, summaryAt: Date.now() } });
 }
 
-export async function setThreadTriage(
+export async function setThreadTriage(account: string, id: string, triage: Thread['triage']) {
+  await db().threads.updateAsync({ _id: id, account }, { $set: { triage } });
+}
+
+export async function setThreadSmartCategory(
   account: string,
   id: string,
-  triage: Thread['triage'],
+  smartCategory: Thread['smartCategory'],
 ) {
-  await db().threads.updateAsync({ _id: id, account }, { $set: { triage } });
+  await db().threads.updateAsync({ _id: id, account }, { $set: { smartCategory } });
+}
+
+export async function setThreadReadState(account: string, id: string, readState: Thread['readState']) {
+  await db().threads.updateAsync({ _id: id, account }, { $set: { readState, unread: false } });
+}
+
+export async function setThreadGmailLabelSync(
+  account: string,
+  id: string,
+  gmailLabelSync: Thread['gmailLabelSync'],
+) {
+  await db().threads.updateAsync({ _id: id, account }, { $set: { gmailLabelSync } });
+}
+
+export async function listThreadsBySmartCategory(
+  account: string | null,
+  category: string,
+  limit = 80,
+): Promise<Thread[]> {
+  const query = account
+    ? { account, 'smartCategory.primary': category }
+    : { 'smartCategory.primary': category };
+  return await findMany<Thread>(db().threads, query, { sort: { lastDate: -1 }, limit });
 }

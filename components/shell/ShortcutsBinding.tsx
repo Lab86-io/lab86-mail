@@ -20,6 +20,7 @@ export function ShortcutsBinding() {
   const inboxAccount = useClientStore((s) => s.account);
   const account = threadAccount || inboxAccount;
   const setQuery = useClientStore((s) => s.setQuery);
+  const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -55,13 +56,18 @@ export function ShortcutsBinding() {
       }
       if (pendingG && Date.now() - pendingG < 900) {
         const map: Record<string, string> = {
-          i: 'in:inbox newer_than:30d',
           u: 'is:unread newer_than:30d',
           s: 'in:sent newer_than:365d',
           d: 'in:drafts',
           t: 'in:trash newer_than:365d',
           a: '-in:trash newer_than:365d',
         };
+        if (e.key === 'i') {
+          e.preventDefault();
+          setSmartCategory('main');
+          pendingG = 0;
+          return;
+        }
         if (map[e.key]) {
           e.preventDefault();
           setQuery(map[e.key]);
@@ -77,7 +83,7 @@ export function ShortcutsBinding() {
           break;
         case '/':
           e.preventDefault();
-          (document.querySelector('input[placeholder^="Gmail"]') as HTMLInputElement | null)?.focus();
+          (document.querySelector('input[placeholder^="Ask for mail"]') as HTMLInputElement | null)?.focus();
           break;
         case '?':
           e.preventDefault();
@@ -137,6 +143,7 @@ export function ShortcutsBinding() {
     paletteOpen,
     composeMode,
     setQuery,
+    setSmartCategory,
     openComposeNew,
     setShortcutsOpen,
     setSelectedThread,

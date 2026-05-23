@@ -26,6 +26,16 @@ export interface Thread {
     reason: string;
     at: number;
   } | null;
+  smartCategory?: SmartCategory | null;
+  readState?: {
+    openedAt?: number;
+    lastMarkedReadAt?: number;
+  } | null;
+  gmailLabelSync?: {
+    labelsApplied: string[];
+    pendingLabels: string[];
+    lastAppliedAt?: number;
+  } | null;
   cachedAt: number;
 }
 
@@ -121,3 +131,28 @@ export interface LabelRecord {
 
 export type Priority = 1 | 2 | 3;
 export type TriageAction = 'reply' | 'read' | 'archive' | 'delegate' | 'wait';
+export type SmartCategoryId =
+  | 'main'
+  | 'needs_reply'
+  | 'waiting'
+  | 'codes'
+  | 'orders'
+  | 'finance_admin'
+  | 'newsletters'
+  | 'noise'
+  | 'review';
+
+export interface SmartCategory {
+  primary: SmartCategoryId;
+  secondary: SmartCategoryId[];
+  confidence: number;
+  reason: string;
+  needsAttention: boolean;
+  suggestedAction: 'reply' | 'read' | 'archive' | 'label' | 'snooze' | 'wait' | 'none';
+  isHumanLike: boolean;
+  isAutomated: boolean;
+  allowNoReplyInMain: boolean;
+  signals: string[];
+  classifiedAt: number;
+  model?: string;
+}

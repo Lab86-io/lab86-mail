@@ -1,6 +1,6 @@
-@import 'tailwindcss';
-@import 'tw-animate-css';
-@import 'streamdown/styles.css';
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "streamdown/styles.css";
 
 /* Tell Tailwind to scan streamdown's compiled JS so its utility classes are
    included in the generated CSS. Required for Streamdown to render properly. */
@@ -43,6 +43,18 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+  --animate-shine: shine var(--duration) infinite linear;
+  @keyframes shine {
+  0% {
+    background-position: 0% 0%;
+    }
+  50% {
+    background-position: 100% 100%;
+    }
+  to {
+    background-position: 0% 0%;
+    }
+  }
 }
 
 @theme {
@@ -169,7 +181,7 @@
     background: var(--color-bg);
     color: var(--color-text);
     font-family: var(--font-sans);
-    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    font-feature-settings: "cv11", "ss01", "ss03";
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
@@ -239,12 +251,20 @@
     line-height: 1.2;
   }
 
-  .email-body h1 { font-size: 1.55rem; }
-  .email-body h2 { font-size: 1.3rem; }
-  .email-body h3 { font-size: 1.1rem; }
+  .email-body h1 {
+    font-size: 1.55rem;
+  }
+  .email-body h2 {
+    font-size: 1.3rem;
+  }
+  .email-body h3 {
+    font-size: 1.1rem;
+  }
   .email-body h4,
   .email-body h5,
-  .email-body h6 { font-size: 1rem; }
+  .email-body h6 {
+    font-size: 1rem;
+  }
 
   .email-body ul,
   .email-body ol {
@@ -252,8 +272,12 @@
     padding-left: 1.5rem;
   }
 
-  .email-body ul { list-style: disc; }
-  .email-body ol { list-style: decimal; }
+  .email-body ul {
+    list-style: disc;
+  }
+  .email-body ol {
+    list-style: decimal;
+  }
 
   .email-body li {
     margin: 0.25rem 0;
@@ -357,20 +381,39 @@
 /* signature animations */
 @layer utilities {
   @keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
   }
   .shimmer {
-    background: linear-gradient(90deg, var(--color-bg-subtle) 0%, var(--color-bg-muted) 40%, var(--color-bg-subtle) 80%);
+    background: linear-gradient(
+      90deg,
+      var(--color-bg-subtle) 0%,
+      var(--color-bg-muted) 40%,
+      var(--color-bg-subtle) 80%
+    );
     background-size: 200% 100%;
     animation: shimmer 1.6s linear infinite;
   }
 
   @keyframes blur-in {
-    from { opacity: 0; filter: blur(8px); transform: translateY(4px); }
-    to { opacity: 1; filter: blur(0); transform: translateY(0); }
+    from {
+      opacity: 0;
+      filter: blur(8px);
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateY(0);
+    }
   }
-  .blur-in { animation: blur-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .blur-in {
+    animation: blur-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
 
   .glass {
     background: color-mix(in srgb, var(--color-bg-elevated) 85%, transparent);
