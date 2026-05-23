@@ -26,7 +26,6 @@ import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
-import { AnimatedList } from '@/components/ui/animated-list';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
@@ -34,10 +33,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
-import { MagicCard } from '@/components/ui/magic-card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ShineBorder } from '@/components/ui/shine-border';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
@@ -109,7 +106,6 @@ export function Inbox() {
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState(searchDraft || (query === DEFAULT_QUERY ? '' : query));
   const [translating, setTranslating] = useState(false);
-  const [tab, setTab] = useState('list');
   const [labelPreview, setLabelPreview] = useState<ThreadRow | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -420,21 +416,6 @@ export function Inbox() {
     },
     onError: (err: any) => toast.error(`Could not apply labels: ${err?.message || 'unknown error'}`),
   });
-  const markReview = useMutation({
-    mutationFn: async (item: ThreadRow) =>
-      callTool('set_smart_category', {
-        account: item.account || account,
-        threadId: item._id,
-        category: 'review',
-        reason: 'Marked for review from the board.',
-      }),
-    onSuccess: () => {
-      toast.success('Moved to Review');
-      queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
-    },
-  });
-
   return (
     <section className="flex h-full flex-col bg-[var(--color-bg)]">
       <div
@@ -568,92 +549,66 @@ export function Inbox() {
         ) : null}
       </AnimatePresence>
 
-      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-        <div className="border-b border-[var(--color-border)] px-3 py-2">
-          <TabsList className="h-7">
-            <TabsTrigger value="list" className="h-6 px-2 text-[11.5px]">
-              List
-            </TabsTrigger>
-            <TabsTrigger value="board" className="h-6 px-2 text-[11.5px]">
-              Board
-            </TabsTrigger>
-          </TabsList>
-        </div>
-        <TabsContent value="list" className="m-0 min-h-0 flex-1">
-          <div ref={scrollRef} className="flex h-full flex-1 flex-col overflow-y-auto">
-            {isLoading ? (
-              <SkeletonRows />
-            ) : items.length === 0 ? (
-              translatedQuery || nlSearchIntent ? (
-                <SearchEmptyState
-                  onClear={clearSearch}
-                  onEditGenerated={() => {
-                    const editable = translatedQuery || query;
-                    setSmartCategory(null);
-                    setSearchInput(editable);
-                    setSearchDraft(editable);
-                    setTranslatedSearch(null, editable, 'gmail');
-                  }}
-                  onRetryOriginal={() => {
-                    if (!nlSearchIntent) return;
-                    setSearchInput(nlSearchIntent);
-                    runSearch(nlSearchIntent);
-                  }}
-                  onUseRaw={() => {
-                    if (nlSearchIntent) {
-                      setQuery(nlSearchIntent);
-                      setSearchInput(nlSearchIntent);
-                    }
-                  }}
-                />
-              ) : (
-                <EmptyState account={account} />
-              )
-            ) : (
-              <>
-                <AnimatePresence initial={false} mode="popLayout">
-                  {items.map((it) => {
-                    const senderEmail = emailFromHeader(it.from || it.fromAddress);
-                    return (
-                      <ThreadRowCard
-                        key={`${it.account}:${it._id}`}
-                        item={it}
-                        participantLabel={participantLabels.get(`${it.account || account}:${it._id}`)}
-                        photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
-                        showAccount={account === ALL_ACCOUNTS}
-                        selected={selectedIds.includes(it._id)}
-                        active={selectedThreadId === it._id}
-                        onToggle={() => toggleSelected(it._id)}
-                        onApplyLabels={() => setLabelPreview(it)}
-                        onClick={() => {
-                          // Unified inbox stays put; just remember which mailbox this
-                          // thread belongs to so the reader can load/reply correctly.
-                          setThreadAccount(it.account || account);
-                          setSelectedThread(it._id);
-                        }}
-                      />
-                    );
-                  })}
-                </AnimatePresence>
-                <div ref={loadMoreRef} className="min-h-1" aria-hidden />
-                {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
-              </>
-            )}
-          </div>
-        </TabsContent>
-        <TabsContent value="board" className="m-0 min-h-0 flex-1 overflow-y-auto">
-          <SmartBoard
-            items={items}
-            account={account}
-            onOpen={(it) => {
-              setThreadAccount(it.account || account);
-              setSelectedThread(it._id);
-            }}
-            onApplyLabels={setLabelPreview}
-            onNotThis={(item) => markReview.mutate(item)}
-          />
-        </TabsContent>
-      </Tabs>
+      <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        {isLoading ? (
+          <SkeletonRows />
+        ) : items.length === 0 ? (
+          translatedQuery || nlSearchIntent ? (
+            <SearchEmptyState
+              onClear={clearSearch}
+              onEditGenerated={() => {
+                const editable = translatedQuery || query;
+                setQuery(editable);
+                setSearchInput(editable);
+                setSearchDraft(editable);
+                setTranslatedSearch(null, editable, 'gmail');
+              }}
+              onRetryOriginal={() => {
+                if (!nlSearchIntent) return;
+                setSearchInput(nlSearchIntent);
+                runSearch(nlSearchIntent);
+              }}
+              onUseRaw={() => {
+                if (nlSearchIntent) {
+                  setQuery(nlSearchIntent);
+                  setSearchInput(nlSearchIntent);
+                }
+              }}
+            />
+          ) : (
+            <EmptyState account={account} />
+          )
+        ) : (
+          <>
+            <AnimatePresence initial={false} mode="popLayout">
+              {items.map((it) => {
+                const senderEmail = emailFromHeader(it.from || it.fromAddress);
+                return (
+                  <ThreadRowCard
+                    key={`${it.account}:${it._id}`}
+                    item={it}
+                    participantLabel={participantLabels.get(`${it.account || account}:${it._id}`)}
+                    photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                    showAccount={account === ALL_ACCOUNTS}
+                    selected={selectedIds.includes(it._id)}
+                    active={selectedThreadId === it._id}
+                    onToggle={() => toggleSelected(it._id)}
+                    onApplyLabels={() => setLabelPreview(it)}
+                    onClick={() => {
+                      // Unified inbox stays put; just remember which mailbox this
+                      // thread belongs to so the reader can load/reply correctly.
+                      setThreadAccount(it.account || account);
+                      setSelectedThread(it._id);
+                    }}
+                  />
+                );
+              })}
+            </AnimatePresence>
+            <div ref={loadMoreRef} className="min-h-1" aria-hidden />
+            {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
+          </>
+        )}
+      </div>
       <LabelConfirmDialog
         item={labelPreview}
         applying={applyLabels.isPending}
@@ -909,116 +864,6 @@ function SearchEmptyState({
         </button>
       </div>
     </Empty>
-  );
-}
-
-function SmartBoard({
-  items,
-  account,
-  onOpen,
-  onApplyLabels,
-  onNotThis,
-}: {
-  items: ThreadRow[];
-  account: string;
-  onOpen: (item: ThreadRow) => void;
-  onApplyLabels: (item: ThreadRow) => void;
-  onNotThis: (item: ThreadRow) => void;
-}) {
-  const columns = ['main', 'needs_reply', 'codes', 'orders', 'review'] as const;
-  const grouped = new Map<string, ThreadRow[]>();
-  for (const column of columns) grouped.set(column, []);
-  for (const item of items) {
-    const smart = (item as any).smartCategory;
-    const primary =
-      smart?.primary && grouped.has(smart.primary)
-        ? smart.primary
-        : smart?.secondary?.find((id: string) => grouped.has(id)) || 'review';
-    grouped.get(primary)?.push(item);
-  }
-
-  return (
-    <div className="grid min-h-full gap-3 p-3 lg:grid-cols-5">
-      {columns.map((column) => (
-        <section key={column} className="min-w-0">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-[12px] font-semibold text-[var(--color-text)]">
-              {SMART_CATEGORY_LABELS[column]}
-            </h3>
-            <Badge variant="outline">{grouped.get(column)?.length || 0}</Badge>
-          </div>
-          <AnimatedList delay={80} className="items-stretch gap-2">
-            {(grouped.get(column) || []).slice(0, 12).map((item) => {
-              const smart = (item as any).smartCategory;
-              return (
-                <MagicCard
-                  key={`${item.account || account}:${item._id}`}
-                  className="rounded-lg"
-                  gradientColor="color-mix(in oklab, var(--color-accent) 18%, transparent)"
-                  gradientFrom="#4cb7c8"
-                  gradientTo="#7c3aed"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onOpen(item)}
-                    className="block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2 text-left shadow-[var(--shadow-soft)]"
-                  >
-                    {smart?.needsAttention ? (
-                      <ShineBorder shineColor={['#4cb7c8', '#7c3aed', '#0b7285']} duration={12} />
-                    ) : null}
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="line-clamp-1 text-[12px] font-semibold text-[var(--color-text)]">
-                        {shortFrom(item.from || item.fromAddress || item.account || '')}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-[var(--color-text-faint)]">
-                        {formatDate((item.date as any) || item.lastDate || 0)}
-                      </span>
-                    </div>
-                    <div className="mt-1 line-clamp-2 text-[12px] text-[var(--color-text)]">
-                      {item.subject || '(no subject)'}
-                    </div>
-                    <div className="mt-1 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">
-                      {smart?.reason || item.snippet || ''}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {smart?.suggestedAction ? (
-                        <Badge variant="outline">{smart.suggestedAction}</Badge>
-                      ) : null}
-                      {smart?.confidence ? (
-                        <Badge variant="outline">{Math.round(smart.confidence * 100)}%</Badge>
-                      ) : null}
-                    </div>
-                  </button>
-                  <div className="mt-1 flex gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(item)}
-                      className="h-7 flex-1 rounded-md border text-[11px] hover:bg-[var(--color-bg-subtle)]"
-                    >
-                      Open
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onApplyLabels(item)}
-                      className="h-7 flex-1 rounded-md border text-[11px] hover:bg-[var(--color-bg-subtle)]"
-                    >
-                      Apply Label
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onNotThis(item)}
-                      className="h-7 flex-1 rounded-md border text-[11px] hover:bg-[var(--color-bg-subtle)]"
-                    >
-                      Not This
-                    </button>
-                  </div>
-                </MagicCard>
-              );
-            })}
-          </AnimatedList>
-        </section>
-      ))}
-    </div>
   );
 }
 

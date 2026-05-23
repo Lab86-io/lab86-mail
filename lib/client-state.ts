@@ -96,6 +96,7 @@ const initialCompose: ComposeState = {
 
 const PERSIST_KEY = 'lab86-mail-ui';
 const LEGACY_PERSIST_KEY = 'mail-os-ui';
+const DEFAULT_QUERY = 'in:inbox newer_than:30d';
 
 if (typeof window !== 'undefined') {
   try {
@@ -112,7 +113,7 @@ export const useClientStore = create<ClientState>()(
       account: '',
       threadAccount: null,
       primaryAccount: '',
-      query: 'in:inbox newer_than:30d',
+      query: DEFAULT_QUERY,
       smartCategory: 'main',
       searchDraft: '',
       nlSearchIntent: null,
@@ -137,10 +138,22 @@ export const useClientStore = create<ClientState>()(
         set({
           query,
           smartCategory: null,
-          querySource: query === 'in:inbox newer_than:30d' ? 'default' : 'gmail',
+          searchDraft: '',
+          nlSearchIntent: null,
+          translatedQuery: null,
+          queryError: null,
+          querySource: query === DEFAULT_QUERY ? 'default' : 'gmail',
         }),
       setSmartCategory: (smartCategory) =>
-        set({ smartCategory, querySource: smartCategory ? 'category' : 'gmail' }),
+        set({
+          smartCategory,
+          query: DEFAULT_QUERY,
+          searchDraft: '',
+          nlSearchIntent: null,
+          translatedQuery: null,
+          queryError: null,
+          querySource: smartCategory ? 'category' : 'gmail',
+        }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
         set({ nlSearchIntent, translatedQuery, querySource, queryError: null }),
@@ -193,7 +206,7 @@ export const useClientStore = create<ClientState>()(
       // default view is the unified inbox again.
       migrate: (persisted: any) => {
         if (persisted && persisted.query === '-in:trash newer_than:365d') {
-          persisted.query = 'in:inbox newer_than:30d';
+          persisted.query = DEFAULT_QUERY;
         }
         return persisted;
       },
