@@ -208,6 +208,7 @@
 @layer components {
   .email-body {
     line-height: 1.55;
+    overflow-x: auto;
     overflow-wrap: anywhere;
   }
 
@@ -299,25 +300,7 @@
   }
 
   .email-body table {
-    display: block;
-    margin: 0.75rem 0;
-    width: max-content;
     max-width: 100%;
-    overflow-x: auto;
-    border-collapse: collapse;
-    font-size: 0.95em;
-  }
-
-  .email-body th,
-  .email-body td {
-    border: 1px solid var(--color-border);
-    padding: 0.35rem 0.5rem;
-    text-align: left;
-  }
-
-  .email-body th {
-    background: var(--color-bg-subtle);
-    font-weight: 650;
   }
 
   .email-body hr {
@@ -342,41 +325,6 @@
     display: none;
   }
 
-  .email-body [style*="background:#fff" i],
-  .email-body [style*="background: #fff" i],
-  .email-body [style*="background-color:#fff" i],
-  .email-body [style*="background-color: #fff" i],
-  .email-body [style*="background:#ffffff" i],
-  .email-body [style*="background: #ffffff" i],
-  .email-body [style*="background-color:#ffffff" i],
-  .email-body [style*="background-color: #ffffff" i],
-  .email-body [style*="background:#fafafa" i],
-  .email-body [style*="background: #fafafa" i],
-  .email-body [style*="background-color:#fafafa" i],
-  .email-body [style*="background-color: #fafafa" i],
-  .email-body [style*="background:#f7f7f7" i],
-  .email-body [style*="background: #f7f7f7" i],
-  .email-body [style*="background-color:#f7f7f7" i],
-  .email-body [style*="background-color: #f7f7f7" i],
-  .email-body [style*="background:#f5f5f5" i],
-  .email-body [style*="background: #f5f5f5" i],
-  .email-body [style*="background-color:#f5f5f5" i],
-  .email-body [style*="background-color: #f5f5f5" i],
-  .email-body [style*="background:white" i],
-  .email-body [style*="background: white" i],
-  .email-body [style*="background-color:white" i],
-  .email-body [style*="background-color: white" i],
-  .email-body [style*="background:rgb(255,255,255)" i],
-  .email-body [style*="background: rgb(255,255,255)" i],
-  .email-body [style*="background-color:rgb(255,255,255)" i],
-  .email-body [style*="background-color: rgb(255,255,255)" i],
-  .email-body [style*="background:rgb(255, 255, 255)" i],
-  .email-body [style*="background: rgb(255, 255, 255)" i],
-  .email-body [style*="background-color:rgb(255, 255, 255)" i],
-  .email-body [style*="background-color: rgb(255, 255, 255)" i] {
-    box-shadow: inset 0 0 0 1px var(--color-border);
-  }
-
   .email-body [style*="background:#fff" i][style*="color:#fff" i],
   .email-body [style*="background: #fff" i][style*="color: #fff" i],
   .email-body [style*="background-color:#fff" i][style*="color:#fff" i],
@@ -390,43 +338,6 @@
   .email-body [style*="background-color:white" i][style*="color:white" i],
   .email-body [style*="background-color: white" i][style*="color: white" i] {
     color: var(--color-text) !important;
-  }
-
-  .dark .email-body [style*="background:#fff" i],
-  .dark .email-body [style*="background: #fff" i],
-  .dark .email-body [style*="background-color:#fff" i],
-  .dark .email-body [style*="background-color: #fff" i],
-  .dark .email-body [style*="background:#ffffff" i],
-  .dark .email-body [style*="background: #ffffff" i],
-  .dark .email-body [style*="background-color:#ffffff" i],
-  .dark .email-body [style*="background-color: #ffffff" i],
-  .dark .email-body [style*="background:#fafafa" i],
-  .dark .email-body [style*="background: #fafafa" i],
-  .dark .email-body [style*="background-color:#fafafa" i],
-  .dark .email-body [style*="background-color: #fafafa" i],
-  .dark .email-body [style*="background:#f7f7f7" i],
-  .dark .email-body [style*="background: #f7f7f7" i],
-  .dark .email-body [style*="background-color:#f7f7f7" i],
-  .dark .email-body [style*="background-color: #f7f7f7" i],
-  .dark .email-body [style*="background:#f5f5f5" i],
-  .dark .email-body [style*="background: #f5f5f5" i],
-  .dark .email-body [style*="background-color:#f5f5f5" i],
-  .dark .email-body [style*="background-color: #f5f5f5" i],
-  .dark .email-body [style*="background:white" i],
-  .dark .email-body [style*="background: white" i],
-  .dark .email-body [style*="background-color:white" i],
-  .dark .email-body [style*="background-color: white" i],
-  .dark .email-body [style*="background:rgb(255,255,255)" i],
-  .dark .email-body [style*="background: rgb(255,255,255)" i],
-  .dark .email-body [style*="background-color:rgb(255,255,255)" i],
-  .dark .email-body [style*="background-color: rgb(255,255,255)" i],
-  .dark .email-body [style*="background:rgb(255, 255, 255)" i],
-  .dark .email-body [style*="background: rgb(255, 255, 255)" i],
-  .dark .email-body [style*="background-color:rgb(255, 255, 255)" i],
-  .dark .email-body [style*="background-color: rgb(255, 255, 255)" i] {
-    background: var(--color-bg-subtle) !important;
-    border-color: var(--color-border-strong) !important;
-    box-shadow: inset 0 0 0 1px var(--color-border-strong);
   }
 
   .dark .email-body [style*="color:#fff" i],
