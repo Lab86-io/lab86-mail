@@ -58,6 +58,12 @@ const SECTION_LABELS: Array<[keyof DailyReportPayload['sections'], string]> = [
   ['notable', 'Notable'],
 ];
 
+const summaryKeys: Array<[keyof DailyReportPayload['sections'], string]> = [
+  ['urgent', 'Do First'],
+  ['needsReply', 'Reply'],
+  ['waiting', 'Watch'],
+];
+
 export function DailyReport() {
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -163,9 +169,34 @@ export function DailyReport() {
                 <Badge variant="outline">{report.stats.dueSoon} due soon</Badge>
                 {report.model ? <Badge variant="outline">{report.model}</Badge> : null}
               </div>
-              <div className="whitespace-pre-line text-[14px] leading-6 text-[var(--color-text)]">
-                {stripEmoji(report.narrative)}
+              <div className="grid gap-3 md:grid-cols-3">
+                {summaryKeys.map(([key, label]) => {
+                  const items = Array.isArray(report.sections[key]) ? report.sections[key] : [];
+                  const first = items[0];
+                  return (
+                    <button
+                      key={String(key)}
+                      type="button"
+                      disabled={!first}
+                      onClick={() => first && openThread(first)}
+                      className="min-h-[104px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3 text-left transition-colors enabled:hover:bg-[var(--color-bg-muted)] disabled:opacity-55"
+                    >
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                        {label}
+                      </div>
+                      <div className="mt-2 line-clamp-2 text-[13px] font-semibold text-[var(--color-text)]">
+                        {first ? stripEmoji(first.subject || first.people[0] || 'Nothing active') : 'Clear'}
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-[var(--color-text-muted)]">
+                        {first ? stripEmoji(first.whyItMatters) : 'No item needs this lane right now.'}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
+              <p className="mt-4 line-clamp-4 text-[13px] leading-6 text-[var(--color-text-muted)]">
+                {stripEmoji(report.narrative)}
+              </p>
             </section>
 
             {SECTION_LABELS.map(([key, label]) => {

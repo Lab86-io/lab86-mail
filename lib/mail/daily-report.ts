@@ -220,7 +220,7 @@ async function buildThreadInsight(
     ...(waitingOnSomeone ? ['Waiting on someone else'] : []),
   ].slice(0, 4);
 
-  if (lowValue && !tracked) {
+  if (lowValue) {
     return {
       _id: insightId(thread.account, thread._id),
       account: thread.account,
@@ -368,6 +368,13 @@ async function composeReport(input: {
     .map(toItem);
   const trackedItems = input.tracked
     .filter((item) => item.status !== 'resolved' && item.status !== 'dismissed')
+    .filter((item) => {
+      const insight = input.insights.find(
+        (entry) => entry.account === item.account && entry.threadId === item.threadId,
+      );
+      if (!insight) return item.source !== 'report';
+      return insight.suggestedTrack || item.source !== 'report';
+    })
     .slice(0, 10)
     .map((item) => ({
       account: item.account,
@@ -393,7 +400,7 @@ async function composeReport(input: {
       const { text } = await generateText({
         model: primaryModel(),
         system:
-          'Write Jakob a deep Codex-style Daily Report from his email, calendar, memories, and tracked threads. Be concrete, investigative, and narrative. Surface subtle unresolved commitments, offer/interview/call timing, and relationship context. Do not use emoji. Do not mention low-value promotions except as excluded noise. Return only prose, 3-5 short paragraphs.',
+          'Write Jakob a compact Codex-style Daily Report from his email, calendar, memories, and tracked threads. Be concrete and investigative. Surface subtle unresolved commitments, offer/interview/call timing, and relationship context. Do not use emoji. Do not mention low-value promotions except as excluded noise. Return only prose, maximum 110 words, no greeting.',
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
@@ -540,13 +547,18 @@ function extractCommitments(text: string, now: number) {
 }
 
 function isLowValueNoise(thread: Thread, smart: Thread['smartCategory'], text: string) {
-  if (smart?.isHumanLike || smart?.primary === 'main' || smart?.primary === 'needs_reply') return false;
   const h = `${thread.fromAddress} ${thread.subject} ${thread.snippet} ${text}`.toLowerCase();
-  return (
-    smart?.primary === 'noise' ||
-    /\b(unsubscribe|promotion|promotional|rewards?|member monday|shop now|sale|deal|deals|newsletter|digest|photo story|tailored to your taste|etsy|panera|dunkin|grad images|rocket money)\b/i.test(
+  const hardPromo =
+    /\b(unsubscribe|promotion|promotional|rewards?|member monday|shop now|sale|deal|deals|newsletter|digest|photo story|tailored to your taste|fundraiser worth celebrating|host a july fundraiser|give more|restaurant fundraiser|retail|coupon|offer expires|panera|mypanera|dunkin|etsy|grad images|rocket money)\b/i.test(
       h,
-    )
+    );
+  if (hardPromo) return true;
+  if (smart?.isHumanLike || smart?.primary === 'main' || smart?.primary === 'needs_reply') return false;
+  return Boolean(
+    smart?.primary === 'noise' ||
+      /\b(unsubscribe|promotion|promotional|rewards?|shop now|sale|newsletter|digest|etsy|panera|dunkin|grad images|rocket money)\b/i.test(
+        h,
+      ),
   );
 }
 
