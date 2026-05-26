@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
   to?: string;
@@ -26,6 +27,7 @@ export interface ComposeState {
 
 export interface ClientState {
   account: string;
+  primaryView: PrimaryView;
   // The concrete account that owns the currently-open thread. The inbox runs
   // unified ("all mailboxes"), but a thread's get/reply/archive need a real
   // account — this tracks it without collapsing the inbox view.
@@ -52,6 +54,7 @@ export interface ClientState {
   pendingReplyBody: string | null;
 
   setAccount: (account: string) => void;
+  setPrimaryView: (view: PrimaryView) => void;
   setThreadAccount: (account: string | null) => void;
   setPrimaryAccount: (account: string) => void;
   setQuery: (query: string) => void;
@@ -111,6 +114,7 @@ export const useClientStore = create<ClientState>()(
   persist(
     (set) => ({
       account: '',
+      primaryView: 'daily_report',
       threadAccount: null,
       primaryAccount: '',
       query: DEFAULT_QUERY,
@@ -132,10 +136,12 @@ export const useClientStore = create<ClientState>()(
       pendingReplyBody: null,
 
       setAccount: (account) => set({ account }),
+      setPrimaryView: (primaryView) => set({ primaryView }),
       setThreadAccount: (threadAccount) => set({ threadAccount }),
       setPrimaryAccount: (primaryAccount) => set({ primaryAccount }),
       setQuery: (query) =>
         set({
+          primaryView: 'mail',
           query,
           smartCategory: null,
           searchDraft: '',
@@ -146,6 +152,7 @@ export const useClientStore = create<ClientState>()(
         }),
       setSmartCategory: (smartCategory) =>
         set({
+          primaryView: 'mail',
           smartCategory,
           query: DEFAULT_QUERY,
           searchDraft: '',
@@ -212,6 +219,7 @@ export const useClientStore = create<ClientState>()(
       },
       partialize: (s) => ({
         account: s.account,
+        primaryView: s.primaryView,
         query: s.query,
         smartCategory: s.smartCategory,
         rightRailOpen: s.rightRailOpen,

@@ -18,6 +18,7 @@ import {
   Receipt,
   Send,
   Settings2,
+  Sparkles,
   Star,
   Terminal,
   Trash2,
@@ -115,6 +116,8 @@ export function Rail() {
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
   const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
+  const primaryView = useClientStore((s) => s.primaryView);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const query = useClientStore((s) => s.query);
   const setQuery = useClientStore((s) => s.setQuery);
   const smartCategory = useClientStore((s) => s.smartCategory);
@@ -131,28 +134,27 @@ export function Rail() {
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
-  const countAccount = account && account !== ALL_ACCOUNTS ? account : authedAccounts[0]?.email || '';
+  const countAccount = account && account !== ALL_ACCOUNTS ? account : '';
 
   const { data: smartCounts, isLoading: countsLoading } = useQuery({
     queryKey: ['smart-counts', countAccount],
     queryFn: async () => {
-      const labels = await callTool<{ custom: any[] }>('list_smart_labels', {});
-      const visibleCustom = (labels.custom || []).filter((label) => label.sidebarVisible);
-      const entries = await Promise.all(
-        [...SMART_CATEGORIES, ...visibleCustom.map((label) => ({ id: `custom:${label._id}` }))].map(
-          async (category) => {
-            const result = await callTool<{ items: any[] }>('list_smart_category', {
-              account: countAccount,
-              category: category.id,
-              max: 24,
-            }).catch(() => ({ items: [] }));
-            return [category.id, result.items.length] as const;
-          },
-        ),
-      );
-      return Object.fromEntries(entries) as Record<string, number>;
+      const result = await callTool<{
+        categories: Record<
+          string,
+          {
+            total: number;
+            unread: number;
+            needsAttention: number;
+            tracked: number;
+            computedAt: number;
+            approximate: boolean;
+          }
+        >;
+      }>('get_smart_category_stats', { account: countAccount || undefined });
+      return result.categories;
     },
-    enabled: !!countAccount,
+    enabled: account === ALL_ACCOUNTS || !!countAccount,
     staleTime: 60_000,
   });
   const { data: smartLabels } = useQuery({
@@ -211,6 +213,31 @@ export function Rail() {
 
       <SidebarContent>
         <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={primaryView === 'daily_report'}
+                  tooltip="Daily Report"
+                  onClick={() => setPrimaryView('daily_report')}
+                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                >
+                  {primaryView === 'daily_report' ? (
+                    <ShineBorder
+                      borderWidth={1}
+                      duration={10}
+                      shineColor={['#4cb7c8', '#7c3aed', '#0b7285']}
+                    />
+                  ) : null}
+                  <Sparkles />
+                  <span>Daily Report</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-1">
             Smart
             {countsLoading ? <Ring className="ml-1 size-3 text-[var(--color-accent)]" /> : null}
@@ -230,12 +257,12 @@ export function Rail() {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <SidebarMenuButton
-                        isActive={smartCategory === id}
+                        isActive={primaryView === 'mail' && smartCategory === id}
                         tooltip={label}
                         onClick={() => setSmartCategory(id)}
                         className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
                       >
-                        {smartCategory === id ? (
+                        {primaryView === 'mail' && smartCategory === id ? (
                           <ShineBorder
                             borderWidth={1}
                             duration={10}
@@ -250,14 +277,20 @@ export function Rail() {
                             className="ml-auto h-4 w-7 group-data-[collapsible=icon]:hidden"
                           />
                         ) : (
-                          <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">
-                            {smartCounts?.[id] ?? 0}
-                          </SidebarMenuBadge>
+                          <SmartCountBadge stat={smartCounts?.[id]} />
                         )}
                       </SidebarMenuButton>
                     </TooltipTrigger>
                     <TooltipContent side="right" className="max-w-[240px] text-[11.5px]">
-                      {help}
+                      <div className="space-y-1">
+                        <div>{help}</div>
+                        {smartCounts?.[id] ? (
+                          <div className="text-[10.5px] text-[var(--color-text-faint)]">
+                            {smartCounts[id].total} total · {smartCounts[id].unread} unread ·{' '}
+                            {smartCounts[id].needsAttention} attention
+                          </div>
+                        ) : null}
+                      </div>
                     </TooltipContent>
                   </Tooltip>
                 </SidebarMenuItem>
@@ -274,12 +307,12 @@ export function Rail() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <SidebarMenuButton
-                              isActive={smartCategory === id}
+                              isActive={primaryView === 'mail' && smartCategory === id}
                               tooltip={label.name}
                               onClick={() => setSmartCategory(id)}
                               className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
                             >
-                              {smartCategory === id ? (
+                              {primaryView === 'mail' && smartCategory === id ? (
                                 <ShineBorder
                                   borderWidth={1}
                                   duration={10}
@@ -295,7 +328,7 @@ export function Rail() {
                                 />
                               ) : (
                                 <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">
-                                  {smartCounts?.[id] ?? 0}
+                                  {smartCounts?.[id]?.total ?? 0}
                                 </SidebarMenuBadge>
                               )}
                             </SidebarMenuButton>
@@ -328,7 +361,7 @@ export function Rail() {
               {MAILBOXES.map(({ query: q, label, Icon }) => (
                 <SidebarMenuItem key={q}>
                   <SidebarMenuButton
-                    isActive={q === query}
+                    isActive={primaryView === 'mail' && q === query}
                     tooltip={label}
                     onClick={() => setQuery(q)}
                     className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
@@ -369,6 +402,26 @@ export function Rail() {
   );
 }
 
+function SmartCountBadge({
+  stat,
+}: {
+  stat?: { total: number; unread: number; needsAttention: number; tracked: number };
+}) {
+  return (
+    <SidebarMenuBadge className="gap-1 group-data-[collapsible=icon]:hidden">
+      <span>{stat?.total ?? 0}</span>
+      {stat?.unread ? (
+        <span className="rounded bg-[var(--color-accent-soft)] px-1">{stat.unread}</span>
+      ) : null}
+      {stat?.needsAttention ? (
+        <span className="rounded bg-[var(--color-danger)]/10 px-1 text-[var(--color-danger)]">
+          {stat.needsAttention}
+        </span>
+      ) : null}
+    </SidebarMenuBadge>
+  );
+}
+
 function SmartLabelsSettings({
   open,
   onOpenChange,
@@ -384,6 +437,7 @@ function SmartLabelsSettings({
   const [description, setDescription] = useState('');
   const [positive, setPositive] = useState('');
   const [negative, setNegative] = useState('');
+  const [previewItems, setPreviewItems] = useState<any[]>([]);
   const { data: rulesData } = useQuery({
     queryKey: ['smart-rules', open],
     queryFn: async () =>
@@ -403,8 +457,20 @@ function SmartLabelsSettings({
       setDescription('');
       setPositive('');
       setNegative('');
+      setPreviewItems([]);
       onChanged();
     },
+  });
+  const previewLabel = useMutation({
+    mutationFn: async () =>
+      callTool<{ items: any[] }>('preview_smart_label', {
+        name,
+        description,
+        positiveExamples: [positive],
+        negativeExamples: [negative],
+        max: 8,
+      }),
+    onSuccess: (res) => setPreviewItems(res.items || []),
   });
   const toggleLabel = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) =>
@@ -448,14 +514,39 @@ function SmartLabelsSettings({
                 placeholder="Negative example"
                 className="h-9 rounded-md border bg-background px-2 text-[13px]"
               />
-              <button
-                type="button"
-                disabled={createLabel.isPending || !name || !description || !positive || !negative}
-                onClick={() => createLabel.mutate()}
-                className="h-9 rounded-md bg-[var(--color-accent)] px-3 text-[13px] text-[var(--color-accent-foreground)] disabled:opacity-50"
-              >
-                {createLabel.isPending ? 'Saving...' : 'Create label'}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={previewLabel.isPending || !name || !description || !positive || !negative}
+                  onClick={() => previewLabel.mutate()}
+                  className="h-9 flex-1 rounded-md border border-[var(--color-border)] px-3 text-[13px] disabled:opacity-50"
+                >
+                  {previewLabel.isPending ? 'Previewing...' : 'Preview matches'}
+                </button>
+                <button
+                  type="button"
+                  disabled={createLabel.isPending || !name || !description || !positive || !negative}
+                  onClick={() => createLabel.mutate()}
+                  className="h-9 flex-1 rounded-md bg-[var(--color-accent)] px-3 text-[13px] text-[var(--color-accent-foreground)] disabled:opacity-50"
+                >
+                  {createLabel.isPending ? 'Saving...' : 'Create label'}
+                </button>
+              </div>
+              {previewItems.length ? (
+                <div className="space-y-1 rounded-md border border-[var(--color-border)] p-2">
+                  <div className="text-[11px] font-medium text-[var(--color-text-muted)]">
+                    Preview matches
+                  </div>
+                  {previewItems.map((item) => (
+                    <div key={`${item.account}:${item._id}`} className="text-[12px]">
+                      <div className="line-clamp-1 font-medium">{item.subject || '(no subject)'}</div>
+                      <div className="line-clamp-1 text-[var(--color-text-muted)]">
+                        {item.fromAddress || item.from || item.snippet}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </section>
 

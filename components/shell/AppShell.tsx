@@ -4,6 +4,7 @@ import { type CSSProperties, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { DailyReport } from '@/components/report/DailyReport';
 import { ThreadView } from '@/components/thread/ThreadView';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -24,6 +25,7 @@ export function AppShell() {
   const railWidth = useClientStore((s) => s.railWidth);
   const setRailOpen = useClientStore((s) => s.setRailOpen);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
+  const primaryView = useClientStore((s) => s.primaryView);
   const composeMode = useClientStore((s) => s.compose.mode);
 
   const readerVisible = !!(selectedThreadId || composeMode);
@@ -58,7 +60,7 @@ export function AppShell() {
               className="h-full w-full"
             >
               <Panel id="inbox" defaultSize="40%" minSize="280px">
-                <Inbox />
+                {primaryView === 'daily_report' ? <DailyReport /> : <Inbox />}
               </Panel>
 
               {readerVisible ? <ResizeSeparator /> : null}

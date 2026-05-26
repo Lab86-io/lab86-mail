@@ -111,6 +111,8 @@ export function ThreadView() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['search'] });
       queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['daily-report'] });
+      queryClient.invalidateQueries({ queryKey: ['tracked-threads'] });
     },
   });
   useEffect(() => {

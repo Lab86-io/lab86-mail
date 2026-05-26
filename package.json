@@ -8,6 +8,7 @@
     "dev": "PORT=18836 HOSTNAME=127.0.0.1 next dev --turbopack",
     "build": "next build",
     "start": "PORT=18836 HOSTNAME=127.0.0.1 next start",
+    "daily-report": "bun --bun scripts/generate-daily-report.ts",
     "lint": "biome check .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit"

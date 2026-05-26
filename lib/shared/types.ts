@@ -131,6 +131,7 @@ export interface LabelRecord {
 
 export type Priority = 1 | 2 | 3;
 export type TriageAction = 'reply' | 'read' | 'archive' | 'delegate' | 'wait';
+export type PrimaryView = 'daily_report' | 'mail';
 export type SmartCategoryId =
   | 'main'
   | 'needs_reply'
@@ -206,4 +207,99 @@ export interface SmartCorrection {
   ruleId?: string;
   action: 'never_main' | 'always_noise' | 'move_to' | 'create_label_from_this' | 'undo';
   createdAt: number;
+}
+
+export type TrackedThreadStatus = 'open' | 'waiting' | 'due_soon' | 'resolved' | 'snoozed' | 'dismissed';
+
+export interface TrackedThread {
+  _id: string;
+  account: AccountEmail;
+  threadId: string;
+  subject: string;
+  participants: string[];
+  status: TrackedThreadStatus;
+  reason: string;
+  openLoops: string[];
+  nextAction?: string;
+  dueAt?: number | null;
+  snoozedUntil?: number | null;
+  importance: 1 | 2 | 3;
+  source: 'manual' | 'ai' | 'report' | 'correction';
+  aiSuggestedResolved?: boolean;
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt?: number | null;
+}
+
+export interface ThreadInsight {
+  _id: string;
+  account: AccountEmail;
+  threadId: string;
+  subject: string;
+  summary: string;
+  people: string[];
+  commitments: Array<{
+    text: string;
+    dueAt?: number | null;
+    confidence: number;
+  }>;
+  openLoops: string[];
+  needsReply: boolean;
+  waitingOnSomeone: boolean;
+  suggestedTrack: boolean;
+  suggestedCategory: SmartCategoryId;
+  reason: string;
+  generatedAt: number;
+  model?: string;
+}
+
+export interface DailyReportItem {
+  account: AccountEmail;
+  threadId: string;
+  subject: string;
+  people: string[];
+  whyItMatters: string;
+  nextAction?: string;
+  dueAt?: number | null;
+  unread: boolean;
+  trackedThreadId?: string;
+}
+
+export interface DailyReport {
+  _id: string;
+  kind: 'morning' | 'evening' | 'manual';
+  generatedAt: number;
+  accounts: AccountEmail[];
+  title: string;
+  narrative: string;
+  sections: {
+    urgent: DailyReportItem[];
+    needsReply: DailyReportItem[];
+    waiting: DailyReportItem[];
+    dueSoon: DailyReportItem[];
+    tracked: DailyReportItem[];
+    notable: DailyReportItem[];
+    noiseSummary?: string;
+  };
+  stats: {
+    scannedThreads: number;
+    trackedThreads: number;
+    needsReply: number;
+    dueSoon: number;
+    unread: number;
+  };
+  model?: string;
+  errors?: string[];
+}
+
+export interface SmartCategoryStat {
+  _id: string;
+  account: AccountEmail | '__all__';
+  category: string;
+  total: number;
+  unread: number;
+  needsAttention: number;
+  tracked: number;
+  computedAt: number;
+  approximate: boolean;
 }

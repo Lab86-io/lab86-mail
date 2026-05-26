@@ -17,7 +17,7 @@ import {
   listSmartRules as listSmartRuleRecords,
   setSmartRuleEnabled,
 } from '../store/smart-rules';
-import { getThread, setThreadSmartCategory } from '../store/threads';
+import { getThread, listRecentThreads, setThreadSmartCategory } from '../store/threads';
 import { defineTool } from './registry';
 
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
@@ -86,6 +86,51 @@ export const createSmartLabel = defineTool({
       createdBy: args.createdBy || (ctx.agent === 'ai' ? 'agent' : 'user'),
     });
     return { label };
+  },
+});
+
+export const previewSmartLabel = defineTool({
+  name: 'preview_smart_label',
+  description: 'Preview matching cached threads for a proposed natural-language smart label before saving.',
+  category: 'mail',
+  mutating: false,
+  input: z.object({
+    name: z.string(),
+    description: z.string(),
+    positiveExamples: z.array(z.string()).min(1),
+    negativeExamples: z.array(z.string()).min(1),
+    max: z.number().int().min(1).max(80).default(20),
+  }),
+  output: z.object({ items: z.array(z.any()) }),
+  async handler(args) {
+    const tempLabel = {
+      _id: 'preview-smart-label',
+      name: args.name,
+      slug: 'preview',
+      description: args.description,
+      enabled: true,
+      sidebarVisible: false,
+      gmailLabelName: `MailOS/${args.name}`,
+      aiMode: 'metadata_snippet' as const,
+      positiveExamples: args.positiveExamples,
+      negativeExamples: args.negativeExamples,
+      createdBy: 'user' as const,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const [threads, rules, labels] = await Promise.all([
+      listRecentThreads(500),
+      listSmartRuleRecords(),
+      listSmartLabelRecords(),
+    ]);
+    const items = threads
+      .map((thread) => ({
+        ...thread,
+        smartCategory: classifyThreadWithContext(thread, { rules, customLabels: [...labels, tempLabel] }),
+      }))
+      .filter((thread) => thread.smartCategory.customLabels?.includes(tempLabel._id))
+      .slice(0, args.max);
+    return { items };
   },
 });
 

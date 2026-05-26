@@ -501,12 +501,12 @@ export function classifyThreadWithContext(
   if (human) {
     if (unread && !blockingRule) {
       return applyCustomLabels(
-        verdict(thread, 'main', 'Unread thread from a personal human sender.', {
+        verdict(thread, 'main', 'Unread direct conversation from a person.', {
           secondary: ['needs_reply'],
           confidence: 0.84,
           needsAttention: true,
           suggestedAction: 'reply',
-          signals: ['human_unread'],
+          signals: ['direct_person', 'human_unread'],
         }),
         thread,
         customLabels,
@@ -514,11 +514,12 @@ export function classifyThreadWithContext(
       );
     }
     return applyCustomLabels(
-      verdict(thread, 'needs_reply', 'Personal human conversation already read.', {
-        confidence: 0.62,
+      verdict(thread, 'main', 'Read direct conversation from a person.', {
+        secondary: ['needs_reply'],
+        confidence: 0.72,
         needsAttention: false,
-        suggestedAction: 'none',
-        signals: ['human_read'],
+        suggestedAction: 'reply',
+        signals: ['direct_person', 'human_read'],
       }),
       thread,
       customLabels,

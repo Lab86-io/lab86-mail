@@ -12,6 +12,7 @@ import {
   getThreadMessages,
   upsertMessage as upsertMessageRecord,
 } from '../store/messages';
+import { computeSmartCategoryStats } from '../store/smart-category-stats';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
 import {
@@ -328,6 +329,49 @@ export const listAccountThreads = defineTool({
   output: z.object({ threads: z.array(z.any()) }),
   async handler({ account, limit }) {
     return { threads: await listThreadsForAccount(account, limit) };
+  },
+});
+
+export const getSmartCategoryStats = defineTool({
+  name: 'get_smart_category_stats',
+  description:
+    'Return locally computed smart category stats: total, unread, needs-attention, tracked, and freshness.',
+  category: 'mail',
+  mutating: false,
+  input: z.object({
+    account: z.string().optional(),
+    refresh: z.boolean().default(false).optional(),
+  }),
+  output: z.object({
+    categories: z.record(
+      z.string(),
+      z.object({
+        total: z.number(),
+        unread: z.number(),
+        needsAttention: z.number(),
+        tracked: z.number(),
+        computedAt: z.number(),
+        approximate: z.boolean(),
+      }),
+    ),
+  }),
+  async handler({ account }) {
+    const categories = await computeSmartCategoryStats(account);
+    return {
+      categories: Object.fromEntries(
+        Object.entries(categories).map(([id, stat]) => [
+          id,
+          {
+            total: stat.total,
+            unread: stat.unread,
+            needsAttention: stat.needsAttention,
+            tracked: stat.tracked,
+            computedAt: stat.computedAt,
+            approximate: stat.approximate,
+          },
+        ]),
+      ),
+    };
   },
 });
 

@@ -18,6 +18,10 @@ let instances: {
   smartLabels: Datastore;
   smartRules: Datastore;
   smartCorrections: Datastore;
+  trackedThreads: Datastore;
+  threadInsights: Datastore;
+  dailyReports: Datastore;
+  smartCategoryStats: Datastore;
 } | null = null;
 
 function ensureDir(dir: string) {
@@ -66,6 +70,24 @@ export function db() {
       { fieldName: 'createdAt' },
       { fieldName: 'threadId' },
       { fieldName: 'account' },
+    ]),
+    trackedThreads: open('tracked-threads', [
+      { fieldName: 'account' },
+      { fieldName: 'threadId' },
+      { fieldName: 'status' },
+      { fieldName: 'dueAt' },
+      { fieldName: 'updatedAt' },
+    ]),
+    threadInsights: open('thread-insights', [
+      { fieldName: 'account' },
+      { fieldName: 'threadId' },
+      { fieldName: 'generatedAt' },
+    ]),
+    dailyReports: open('daily-reports', [{ fieldName: 'generatedAt' }, { fieldName: 'kind' }]),
+    smartCategoryStats: open('smart-category-stats', [
+      { fieldName: 'account' },
+      { fieldName: 'category' },
+      { fieldName: 'computedAt' },
     ]),
   };
   return instances;

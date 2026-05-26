@@ -221,7 +221,7 @@ export function Inbox() {
               callTool<SearchThreadsResult>(smartCategory ? 'list_smart_category' : 'search_threads', {
                 account: email,
                 category: smartCategory,
-                query,
+                query: smartCategory ? undefined : query,
                 max: perAccount,
                 pageToken: pageTokens[email],
               })
@@ -247,7 +247,7 @@ export function Inbox() {
           {
             account,
             category: smartCategory,
-            query,
+            query: smartCategory ? undefined : query,
             max: INBOX_PAGE_SIZE,
             pageToken: pageTokens[account],
           },
@@ -533,14 +533,15 @@ export function Inbox() {
           {translatedQuery && !smartCategory ? (
             <Badge variant="outline" className="gap-1">
               Filter: <span className="font-mono">{translatedQuery}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setTranslatedSearch(nlSearchIntent, null, 'category');
-                  setQuery(DEFAULT_QUERY);
-                  setSmartCategory('main');
-                }}
-              >
+              <button type="button" onClick={clearSearch} title="Clear generated filter">
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ) : null}
+          {!translatedQuery && !smartCategory && query !== DEFAULT_QUERY ? (
+            <Badge variant="outline" className="gap-1">
+              Filter: <span className="font-mono">{query}</span>
+              <button type="button" onClick={clearSearch} title="Clear filter">
                 <X className="size-3" />
               </button>
             </Badge>

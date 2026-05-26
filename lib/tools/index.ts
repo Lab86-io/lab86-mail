@@ -26,7 +26,14 @@ import {
 } from './compose';
 import { contactLookup, expandAlias } from './contacts';
 import {
+  generateDailyReportTool,
+  getDailyReportTool,
+  getLatestDailyReportTool,
+  listDailyReportsTool,
+} from './daily-report';
+import {
   getMessage,
+  getSmartCategoryStats,
   getThread,
   listAccounts,
   listAccountThreads,
@@ -64,9 +71,17 @@ import {
   deleteSmartLabel,
   listSmartLabels,
   listSmartRules,
+  previewSmartLabel,
   setSmartRuleEnabledTool,
   updateSmartLabel,
 } from './smart-labels';
+import {
+  getTrackedThreadTool,
+  listTrackedThreadsTool,
+  resolveTrackedThread,
+  trackThread,
+  updateTrackedThreadTool,
+} from './tracked-threads';
 import {
   uiCloseBar,
   uiFocusThread,
@@ -82,6 +97,7 @@ const allTools: AnyTool[] = [
   listAccounts,
   searchThreads,
   listSmartCategory,
+  getSmartCategoryStats,
   getThread,
   getMessage,
   listLabels,
@@ -121,13 +137,23 @@ const allTools: AnyTool[] = [
   draftReply,
   bulkTriage,
   classifyThreads,
+  generateDailyReportTool,
+  getLatestDailyReportTool,
+  listDailyReportsTool,
+  getDailyReportTool,
   listSmartLabels,
   createSmartLabel,
+  previewSmartLabel,
   updateSmartLabel,
   deleteSmartLabel,
   listSmartRules,
   createSmartRule,
   setSmartRuleEnabledTool,
+  trackThread,
+  updateTrackedThreadTool,
+  resolveTrackedThread,
+  listTrackedThreadsTool,
+  getTrackedThreadTool,
   extractActionItems,
   translateThread,
   preSendCritique,
