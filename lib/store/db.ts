@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Datastore from '@seald-io/nedb';
 
-const DATA_DIR = process.env.LAB86_MAIL_DATA_DIR || process.env.MAIL_OS_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_DIR =
+  process.env.LAB86_MAIL_DATA_DIR || process.env.MAIL_OS_DATA_DIR || path.join(process.cwd(), 'data');
 
 let instances: {
   threads: Datastore;
@@ -14,6 +15,9 @@ let instances: {
   snooze: Datastore;
   drafts: Datastore;
   photos: Datastore;
+  smartLabels: Datastore;
+  smartRules: Datastore;
+  smartCorrections: Datastore;
 } | null = null;
 
 function ensureDir(dir: string) {
@@ -52,6 +56,17 @@ export function db() {
     snooze: open('snooze', [{ fieldName: 'untilTs' }]),
     drafts: open('drafts', [{ fieldName: 'account' }, { fieldName: 'updatedAt' }]),
     photos: open('photos', [{ fieldName: 'email', unique: true }]),
+    smartLabels: open('smart-labels', [{ fieldName: 'slug', unique: true }, { fieldName: 'enabled' }]),
+    smartRules: open('smart-rules', [
+      { fieldName: 'enabled' },
+      { fieldName: 'scope' },
+      { fieldName: 'match' },
+    ]),
+    smartCorrections: open('smart-corrections', [
+      { fieldName: 'createdAt' },
+      { fieldName: 'threadId' },
+      { fieldName: 'account' },
+    ]),
   };
   return instances;
 }

@@ -138,13 +138,13 @@ export type SmartCategoryId =
   | 'codes'
   | 'orders'
   | 'finance_admin'
-  | 'newsletters'
   | 'noise'
   | 'review';
 
 export interface SmartCategory {
   primary: SmartCategoryId;
   secondary: SmartCategoryId[];
+  customLabels?: string[];
   confidence: number;
   reason: string;
   needsAttention: boolean;
@@ -152,7 +152,58 @@ export interface SmartCategory {
   isHumanLike: boolean;
   isAutomated: boolean;
   allowNoReplyInMain: boolean;
+  bulkSignals?: string[];
+  ruleHits?: string[];
   signals: string[];
   classifiedAt: number;
   model?: string;
+}
+
+export interface SmartLabelDefinition {
+  _id: string;
+  name: string;
+  slug: string;
+  description: string;
+  enabled: boolean;
+  sidebarVisible: boolean;
+  icon?: string;
+  color?: string;
+  gmailLabelName: string;
+  aiMode: 'metadata_snippet';
+  positiveExamples: string[];
+  negativeExamples: string[];
+  candidateQuery?: string;
+  createdBy: 'user' | 'agent' | 'system';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SmartRule {
+  _id: string;
+  name: string;
+  enabled: boolean;
+  scope: 'thread' | 'sender' | 'domain' | 'subject_pattern' | 'header';
+  match: string;
+  effect: 'never_main' | 'always_noise' | 'always_category' | 'always_custom_label' | 'never_custom_label';
+  category?: SmartCategoryId;
+  customLabelId?: string;
+  reason?: string;
+  source: 'quick_fix' | 'agent' | 'settings';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SmartCorrection {
+  _id: string;
+  account: string;
+  threadId: string;
+  fromEmail?: string;
+  fromDomain?: string;
+  subject?: string;
+  previousCategory?: SmartCategoryId;
+  newCategory?: SmartCategoryId;
+  customLabelId?: string;
+  ruleId?: string;
+  action: 'never_main' | 'always_noise' | 'move_to' | 'create_label_from_this' | 'undo';
+  createdAt: number;
 }

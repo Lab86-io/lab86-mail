@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlarmClock,
   Archive,
@@ -17,14 +17,17 @@ import {
   Plus,
   Receipt,
   Send,
+  Settings2,
   Star,
+  Terminal,
   Trash2,
   UserRound,
   WandSparkles,
 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
@@ -72,7 +75,7 @@ const SMART_CATEGORIES = [
     id: 'main',
     label: 'Main',
     Icon: Inbox,
-    help: 'Human threads, useful codes, active order updates, and read mail that still needs attention.',
+    help: 'Personal human conversations, plus only urgent unread automated exceptions.',
   },
   {
     id: 'needs_reply',
@@ -91,7 +94,7 @@ const SMART_CATEGORIES = [
     id: 'orders',
     label: 'Orders',
     Icon: Receipt,
-    help: 'Orders, delivery, returns, receipts, and bookings.',
+    help: 'Receipts, shipping, refunds, returns, bookings, and order problems.',
   },
   {
     id: 'finance_admin',
@@ -100,7 +103,12 @@ const SMART_CATEGORIES = [
     help: 'Billing, legal, contracts, tax, and admin.',
   },
   { id: 'review', label: 'Review', Icon: UserRound, help: 'Uncertain mail that needs a decision.' },
-  { id: 'noise', label: 'Noise', Icon: Trash2, help: 'Automated or low-value mail.' },
+  {
+    id: 'noise',
+    label: 'Noise',
+    Icon: Trash2,
+    help: 'Bulk, subscribed, platform, publisher, rewards, and promo mail.',
+  },
 ];
 
 export function Rail() {
@@ -113,6 +121,8 @@ export function Rail() {
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
+  const queryClient = useQueryClient();
+  const [smartSettingsOpen, setSmartSettingsOpen] = useState(false);
 
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
@@ -126,21 +136,31 @@ export function Rail() {
   const { data: smartCounts, isLoading: countsLoading } = useQuery({
     queryKey: ['smart-counts', countAccount],
     queryFn: async () => {
+      const labels = await callTool<{ custom: any[] }>('list_smart_labels', {});
+      const visibleCustom = (labels.custom || []).filter((label) => label.sidebarVisible);
       const entries = await Promise.all(
-        SMART_CATEGORIES.map(async (category) => {
-          const result = await callTool<{ items: any[] }>('list_smart_category', {
-            account: countAccount,
-            category: category.id,
-            max: 24,
-          }).catch(() => ({ items: [] }));
-          return [category.id, result.items.length] as const;
-        }),
+        [...SMART_CATEGORIES, ...visibleCustom.map((label) => ({ id: `custom:${label._id}` }))].map(
+          async (category) => {
+            const result = await callTool<{ items: any[] }>('list_smart_category', {
+              account: countAccount,
+              category: category.id,
+              max: 24,
+            }).catch(() => ({ items: [] }));
+            return [category.id, result.items.length] as const;
+          },
+        ),
       );
       return Object.fromEntries(entries) as Record<string, number>;
     },
     enabled: !!countAccount,
     staleTime: 60_000,
   });
+  const { data: smartLabels } = useQuery({
+    queryKey: ['smart-labels'],
+    queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
+    staleTime: 60_000,
+  });
+  const customLabels = (smartLabels?.custom || []).filter((label) => label.sidebarVisible);
 
   // The inbox is always the unified "all mailboxes" view — there's no account
   // selector. We still resolve the primary account (compose "from") and force
@@ -194,6 +214,14 @@ export function Rail() {
           <SidebarGroupLabel className="flex items-center gap-1">
             Smart
             {countsLoading ? <Ring className="ml-1 size-3 text-[var(--color-accent)]" /> : null}
+            <button
+              type="button"
+              onClick={() => setSmartSettingsOpen(true)}
+              className="ml-auto grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:hidden"
+              title="Smart label settings"
+            >
+              <Settings2 className="size-3" />
+            </button>
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -235,6 +263,53 @@ export function Rail() {
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
+            {customLabels.length ? (
+              <>
+                <SidebarGroupLabel className="mt-3">Custom</SidebarGroupLabel>
+                <SidebarMenu>
+                  {customLabels.map((label) => {
+                    const id = `custom:${label._id}`;
+                    return (
+                      <SidebarMenuItem key={id}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <SidebarMenuButton
+                              isActive={smartCategory === id}
+                              tooltip={label.name}
+                              onClick={() => setSmartCategory(id)}
+                              className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                            >
+                              {smartCategory === id ? (
+                                <ShineBorder
+                                  borderWidth={1}
+                                  duration={10}
+                                  shineColor={['#4cb7c8', '#7c3aed', '#0b7285']}
+                                />
+                              ) : null}
+                              <Terminal />
+                              <span>{label.name}</span>
+                              {countsLoading ? (
+                                <SidebarMenuSkeleton
+                                  showIcon={false}
+                                  className="ml-auto h-4 w-7 group-data-[collapsible=icon]:hidden"
+                                />
+                              ) : (
+                                <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">
+                                  {smartCounts?.[id] ?? 0}
+                                </SidebarMenuBadge>
+                              )}
+                            </SidebarMenuButton>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-[260px] text-[11.5px]">
+                            {label.description}
+                          </TooltipContent>
+                        </Tooltip>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </>
+            ) : null}
           </SidebarGroupContent>
         </SidebarGroup>
 
@@ -281,6 +356,155 @@ export function Rail() {
           </button>
         </div>
       </SidebarFooter>
+      <SmartLabelsSettings
+        open={smartSettingsOpen}
+        onOpenChange={setSmartSettingsOpen}
+        labels={customLabels}
+        onChanged={() => {
+          queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
+          queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+        }}
+      />
     </Sidebar>
+  );
+}
+
+function SmartLabelsSettings({
+  open,
+  onOpenChange,
+  labels,
+  onChanged,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  labels: any[];
+  onChanged: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [positive, setPositive] = useState('');
+  const [negative, setNegative] = useState('');
+  const { data: rulesData } = useQuery({
+    queryKey: ['smart-rules', open],
+    queryFn: async () =>
+      callTool<{ rules: any[]; corrections: any[] }>('list_smart_rules', { correctionLimit: 20 }),
+    enabled: open,
+  });
+  const createLabel = useMutation({
+    mutationFn: async () =>
+      callTool('create_smart_label', {
+        name,
+        description,
+        positiveExamples: [positive],
+        negativeExamples: [negative],
+      }),
+    onSuccess: () => {
+      setName('');
+      setDescription('');
+      setPositive('');
+      setNegative('');
+      onChanged();
+    },
+  });
+  const toggleLabel = useMutation({
+    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) =>
+      callTool('update_smart_label', { id, enabled }),
+    onSuccess: onChanged,
+  });
+  const disableRule = useMutation({
+    mutationFn: async (id: string) => callTool('set_smart_rule_enabled', { id, enabled: false }),
+    onSuccess: onChanged,
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[84vh] max-w-2xl overflow-y-auto">
+        <DialogTitle>Smart Labels</DialogTitle>
+        <div className="space-y-5">
+          <section className="space-y-2">
+            <h3 className="text-[13px] font-semibold">Create custom label</h3>
+            <div className="grid gap-2">
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Name"
+                className="h-9 rounded-md border bg-background px-2 text-[13px]"
+              />
+              <textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="What should this label match?"
+                className="min-h-20 rounded-md border bg-background px-2 py-2 text-[13px]"
+              />
+              <input
+                value={positive}
+                onChange={(event) => setPositive(event.target.value)}
+                placeholder="Positive example"
+                className="h-9 rounded-md border bg-background px-2 text-[13px]"
+              />
+              <input
+                value={negative}
+                onChange={(event) => setNegative(event.target.value)}
+                placeholder="Negative example"
+                className="h-9 rounded-md border bg-background px-2 text-[13px]"
+              />
+              <button
+                type="button"
+                disabled={createLabel.isPending || !name || !description || !positive || !negative}
+                onClick={() => createLabel.mutate()}
+                className="h-9 rounded-md bg-[var(--color-accent)] px-3 text-[13px] text-[var(--color-accent-foreground)] disabled:opacity-50"
+              >
+                {createLabel.isPending ? 'Saving...' : 'Create label'}
+              </button>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="text-[13px] font-semibold">Custom labels</h3>
+            <div className="space-y-2">
+              {labels.map((label) => (
+                <div key={label._id} className="rounded-md border p-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-[13px]">{label.name}</span>
+                    <Badge variant="outline">{label.enabled ? 'enabled' : 'disabled'}</Badge>
+                    <button
+                      type="button"
+                      onClick={() => toggleLabel.mutate({ id: label._id, enabled: !label.enabled })}
+                      className="ml-auto rounded border px-2 py-1 text-[11px]"
+                    >
+                      {label.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-[12px] text-[var(--color-text-muted)]">
+                    {label.description}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="text-[13px] font-semibold">Recent rules</h3>
+            <div className="space-y-2">
+              {(rulesData?.rules || []).slice(0, 12).map((rule) => (
+                <div key={rule._id} className="flex items-center gap-2 rounded-md border p-2 text-[12px]">
+                  <span className="font-medium">{rule.name}</span>
+                  <span className="text-[var(--color-text-muted)]">
+                    {rule.scope}: {rule.match}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => disableRule.mutate(rule._id)}
+                    className="ml-auto rounded border px-2 py-1 text-[11px]"
+                  >
+                    Disable
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -58,6 +58,16 @@ import { forget, listMemories, recall, remember } from './memories';
 import { resolvePhotos } from './photos';
 import type { AnyTool } from './registry';
 import {
+  applySmartCorrection,
+  createSmartLabel,
+  createSmartRule,
+  deleteSmartLabel,
+  listSmartLabels,
+  listSmartRules,
+  setSmartRuleEnabledTool,
+  updateSmartLabel,
+} from './smart-labels';
+import {
   uiCloseBar,
   uiFocusThread,
   uiOpenCompose,
@@ -90,6 +100,7 @@ const allTools: AnyTool[] = [
   removeLabel,
   createLabel,
   applySmartLabels,
+  applySmartCorrection,
   setSmartCategoryTool,
   muteThread,
   snoozeThreadTool,
@@ -110,6 +121,13 @@ const allTools: AnyTool[] = [
   draftReply,
   bulkTriage,
   classifyThreads,
+  listSmartLabels,
+  createSmartLabel,
+  updateSmartLabel,
+  deleteSmartLabel,
+  listSmartRules,
+  createSmartRule,
+  setSmartRuleEnabledTool,
   extractActionItems,
   translateThread,
   preSendCritique,

@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { fastModel, hasAi, primaryModel } from '../ai/client';
 import { normalizeGogMessage } from '../gog/normalize';
 import { runGogJson } from '../gog/pool';
-import { classifyThreadDeterministic, SMART_CATEGORY_IDS } from '../mail/smart-categories';
+import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import type { SmartCategoryId } from '../shared/types';
 import { recallSender } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
+import { listSmartLabels } from '../store/smart-labels';
+import { listSmartRules } from '../store/smart-rules';
 import { setThreadSummary, setThreadTriage, upsertThread } from '../store/threads';
 import { defineTool } from './registry';
 
@@ -298,7 +300,7 @@ const SuggestedActionSchema = z.enum(['reply', 'read', 'archive', 'label', 'snoo
 export const classifyThreads = defineTool({
   name: 'classify_threads',
   description:
-    'Classify visible threads into smart MailOS categories: main, needs_reply, waiting, codes, orders, finance_admin, newsletters, noise, or review.',
+    'Classify visible threads into smart MailOS categories: main, needs_reply, waiting, codes, orders, finance_admin, noise, or review.',
   category: 'ai',
   mutating: false,
   input: z.object({
@@ -333,6 +335,9 @@ export const classifyThreads = defineTool({
         isHumanLike: z.boolean(),
         isAutomated: z.boolean(),
         allowNoReplyInMain: z.boolean(),
+        customLabels: z.array(z.string()).optional(),
+        bulkSignals: z.array(z.string()).optional(),
+        ruleHits: z.array(z.string()).optional(),
         signals: z.array(z.string()),
         model: z.string(),
       }),
@@ -341,19 +346,23 @@ export const classifyThreads = defineTool({
   }),
   async handler({ threads, force }) {
     if (!threads.length) return { verdicts: [], model: 'none' };
+    const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
 
     const local = threads.map((thread) => ({
       thread,
-      verdict: classifyThreadDeterministic({
-        _id: thread.id,
-        account: thread.account || '',
-        fromAddress: thread.fromAddress || thread.from || '',
-        subject: thread.subject || '',
-        snippet: thread.snippet || '',
-        labels: thread.labels || [],
-        unread: thread.unread ?? false,
-        lastDate: Number(thread.date || 0),
-      }),
+      verdict: classifyThreadWithContext(
+        {
+          _id: thread.id,
+          account: thread.account || '',
+          fromAddress: thread.fromAddress || thread.from || '',
+          subject: thread.subject || '',
+          snippet: thread.snippet || '',
+          labels: thread.labels || [],
+          unread: thread.unread ?? false,
+          lastDate: Number(thread.date || 0),
+        },
+        { rules, customLabels },
+      ),
     }));
 
     const uncertain = local.filter(
@@ -379,10 +388,10 @@ export const classifyThreads = defineTool({
     const { text } = await generateText({
       model: fastModel(),
       system:
-        'You classify email threads for Jakob. Output only JSON lines. Categories: main, needs_reply, waiting, codes, orders, finance_admin, newsletters, noise, review. Main is an attention queue: human threads, useful codes/security, useful order updates, or still-actionable read mail. No-reply is allowed in main only for useful codes/security/orders/billing/admin.',
+        'You classify email threads for Jakob. Output only JSON lines. Categories: main, needs_reply, waiting, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise.',
       prompt: [
         'For each input line, return exactly one JSON object:',
-        '{"id":"...","primary":"main|needs_reply|waiting|codes|orders|finance_admin|newsletters|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
+        '{"id":"...","primary":"main|needs_reply|waiting|codes|orders|finance_admin|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
         'No prose. One JSON object per line.',
         '',
         lines,

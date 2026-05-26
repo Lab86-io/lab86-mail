@@ -3,9 +3,11 @@
 import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
+  Ban,
   CheckCircle2,
   Gauge,
   Inbox as InboxIcon,
+  MoreHorizontal,
   RefreshCw,
   Search,
   Tag,
@@ -31,6 +33,17 @@ import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -179,6 +192,17 @@ export function Inbox() {
     staleTime: 60_000,
   });
   const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
+  const { data: smartLabelsData } = useQuery({
+    queryKey: ['smart-labels'],
+    queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
+    staleTime: 60_000,
+  });
+  const customLabels = smartLabelsData?.custom || [];
+  const activeSmartLabel = smartCategory?.startsWith('custom:')
+    ? customLabels.find((label) => label._id === smartCategory.slice('custom:'.length))?.name || smartCategory
+    : smartCategory
+      ? SMART_CATEGORY_LABELS[smartCategory as keyof typeof SMART_CATEGORY_LABELS] || smartCategory
+      : '';
 
   const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
     useInfiniteQuery({
@@ -401,7 +425,7 @@ export function Inbox() {
 
   const applyLabels = useMutation({
     mutationFn: async (item: ThreadRow) => {
-      const labels = labelsForSmartCategory((item as any).smartCategory);
+      const labels = labelsForSmartCategory((item as any).smartCategory, customLabels);
       if (!labels.length) throw new Error('No smart labels available');
       return callTool('apply_smart_labels', {
         account: item.account || account,
@@ -415,6 +439,30 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     },
     onError: (err: any) => toast.error(`Could not apply labels: ${err?.message || 'unknown error'}`),
+  });
+  const applyCorrection = useMutation({
+    mutationFn: async (input: any) => callTool('apply_smart_correction', input),
+    onSuccess: () => {
+      toast.success('Smart rule saved');
+      queryClient.invalidateQueries({ queryKey: ['search'] });
+      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
+    },
+    onError: (err: any) => toast.error(`Could not save correction: ${err?.message || 'unknown error'}`),
+  });
+  const undoLastRule = useMutation({
+    mutationFn: async () => {
+      const res = await callTool<{ rules: any[] }>('list_smart_rules', { includeDisabled: false });
+      const latest = res.rules?.[0];
+      if (!latest) throw new Error('No rule to undo');
+      return callTool('set_smart_rule_enabled', { id: latest._id, enabled: false });
+    },
+    onSuccess: () => {
+      toast.success('Last smart rule disabled');
+      queryClient.invalidateQueries({ queryKey: ['search'] });
+      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+    },
+    onError: (err: any) => toast.error(`Could not undo: ${err?.message || 'unknown error'}`),
   });
   return (
     <section className="flex h-full flex-col bg-[var(--color-bg)]">
@@ -478,7 +526,7 @@ export function Inbox() {
         <div className="flex min-h-6 flex-wrap items-center gap-1.5">
           {smartCategory ? (
             <Badge variant="secondary" className="gap-1">
-              {SMART_CATEGORY_LABELS[smartCategory as keyof typeof SMART_CATEGORY_LABELS] || smartCategory}
+              {activeSmartLabel}
             </Badge>
           ) : null}
           {nlSearchIntent ? <Badge variant="outline">Asked: {nlSearchIntent}</Badge> : null}
@@ -594,6 +642,17 @@ export function Inbox() {
                     active={selectedThreadId === it._id}
                     onToggle={() => toggleSelected(it._id)}
                     onApplyLabels={() => setLabelPreview(it)}
+                    onCorrect={(action, payload = {}) =>
+                      applyCorrection.mutate({
+                        account: it.account || account,
+                        threadId: it._id,
+                        action,
+                        scope: 'sender',
+                        ...payload,
+                      })
+                    }
+                    onUndoLast={() => undoLastRule.mutate()}
+                    customLabels={customLabels}
                     onClick={() => {
                       // Unified inbox stays put; just remember which mailbox this
                       // thread belongs to so the reader can load/reply correctly.
@@ -612,6 +671,7 @@ export function Inbox() {
       <LabelConfirmDialog
         item={labelPreview}
         applying={applyLabels.isPending}
+        customLabels={customLabels}
         onClose={() => setLabelPreview(null)}
         onApply={(item) => applyLabels.mutate(item)}
       />
@@ -628,6 +688,9 @@ function ThreadRowCard({
   onToggle,
   onClick,
   onApplyLabels,
+  onCorrect,
+  onUndoLast,
+  customLabels,
   showAccount,
 }: {
   item: ThreadRow;
@@ -638,6 +701,9 @@ function ThreadRowCard({
   onToggle: () => void;
   onClick: () => void;
   onApplyLabels: () => void;
+  onCorrect: (action: string, payload?: Record<string, unknown>) => void;
+  onUndoLast: () => void;
+  customLabels: any[];
   showAccount?: boolean;
 }) {
   const triage = (item as any).triage;
@@ -755,22 +821,138 @@ function ThreadRowCard({
             </Badge>
           ),
         )}
+        {(smart?.customLabels || []).slice(0, 2).map((id: string) => {
+          const label = customLabels.find((entry) => entry._id === id);
+          return label ? (
+            <Badge key={id} variant="outline" className="text-[9px]">
+              {label.name}
+            </Badge>
+          ) : null;
+        })}
         {smart ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onApplyLabels();
-            }}
-            className="mt-0.5 inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
-          >
-            <Tag className="size-3" />
-            Label
-          </button>
+          <div className="mt-0.5 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onApplyLabels();
+              }}
+              className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+            >
+              <Tag className="size-3" />
+              Label
+            </button>
+            <QuickFixMenu
+              customLabels={customLabels}
+              onCorrect={onCorrect}
+              onCreateLabel={() => createLabelFromThread(item, onCorrect)}
+              onUndoLast={onUndoLast}
+            />
+          </div>
         ) : null}
       </div>
     </motion.div>
   );
+}
+
+function QuickFixMenu({
+  customLabels,
+  onCorrect,
+  onCreateLabel,
+  onUndoLast,
+}: {
+  customLabels: any[];
+  onCorrect: (action: string, payload?: Record<string, unknown>) => void;
+  onCreateLabel: () => void;
+  onUndoLast: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={(event) => event.stopPropagation()}
+          className="grid size-6 place-items-center rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+          title="Fix classification"
+        >
+          <MoreHorizontal className="size-3.5" />
+          <span className="sr-only">Fix classification</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+        <DropdownMenuLabel>Fix classification</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => onCorrect('never_main')}>
+          <Ban className="size-3.5" />
+          Never Main
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onCorrect('always_noise')}>
+          <Trash2 className="size-3.5" />
+          Always Noise
+        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Tag className="size-3.5" />
+            Move to...
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            {(
+              [
+                'main',
+                'needs_reply',
+                'waiting',
+                'codes',
+                'orders',
+                'finance_admin',
+                'review',
+                'noise',
+              ] as const
+            ).map((category) => (
+              <DropdownMenuItem key={category} onSelect={() => onCorrect('move_to', { category })}>
+                {SMART_CATEGORY_LABELS[category]}
+              </DropdownMenuItem>
+            ))}
+            {customLabels.length ? <DropdownMenuSeparator /> : null}
+            {customLabels.map((label) => (
+              <DropdownMenuItem
+                key={label._id}
+                onSelect={() => onCorrect('move_to', { customLabelId: label._id })}
+              >
+                {label.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuItem onSelect={onCreateLabel}>Create label from this</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onUndoLast}>Undo last smart rule</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function createLabelFromThread(
+  item: ThreadRow,
+  onCorrect: (action: string, payload?: Record<string, unknown>) => void,
+) {
+  const name = window.prompt('Smart label name');
+  if (!name?.trim()) return;
+  const description = window.prompt('What should this label match?');
+  if (!description?.trim()) return;
+  const positive = window.prompt(
+    'Positive example',
+    `${item.from || item.fromAddress}: ${item.subject || ''}`,
+  );
+  if (!positive?.trim()) return;
+  const negative = window.prompt('Negative example');
+  if (!negative?.trim()) return;
+  onCorrect('create_label_from_this', {
+    newLabel: {
+      name,
+      description,
+      positiveExamples: [positive],
+      negativeExamples: [negative],
+    },
+  });
 }
 
 function SkeletonRows({ count = 8 }: { count?: number }) {
@@ -870,16 +1052,18 @@ function SearchEmptyState({
 function LabelConfirmDialog({
   item,
   applying,
+  customLabels,
   onClose,
   onApply,
 }: {
   item: ThreadRow | null;
   applying: boolean;
+  customLabels: any[];
   onClose: () => void;
   onApply: (item: ThreadRow) => void;
 }) {
   if (!item) return null;
-  const labels = labelsForSmartCategory((item as any)?.smartCategory);
+  const labels = labelsForSmartCategory((item as any)?.smartCategory, customLabels);
   return (
     <Dialog open={!!item} onOpenChange={(open) => (!open ? onClose() : undefined)}>
       <DialogContent className="overflow-hidden border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-pop)]">

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { normalizeGogMessage, normalizeGogSearchItem } from '../gog/normalize';
 import { runGogJson } from '../gog/pool';
 import {
-  classifyThreadDeterministic,
+  classifyThreadWithContext,
   includeInSmartCategory,
   SMART_CATEGORY_IDS,
 } from '../mail/smart-categories';
@@ -12,6 +12,8 @@ import {
   getThreadMessages,
   upsertMessage as upsertMessageRecord,
 } from '../store/messages';
+import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
+import { listSmartRules } from '../store/smart-rules';
 import {
   listRecentThreads,
   listThreadsForAccount,
@@ -114,12 +116,12 @@ export const searchThreads = defineTool({
   },
 });
 
-const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
+const SmartCategorySchema = z.union([z.enum(SMART_CATEGORY_IDS), z.string().regex(/^custom:.+/)]);
 
 export const listSmartCategory = defineTool({
   name: 'list_smart_category',
   description:
-    'List a smart MailOS category. Fetches recent Gmail candidates, classifies missing/stale rows locally, and filters into categories like main, needs_reply, codes, orders, newsletters, and review.',
+    'List a smart MailOS category. Fetches recent Gmail candidates, classifies missing/stale rows locally, and filters into built-in or custom smart labels.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -137,7 +139,10 @@ export const listSmartCategory = defineTool({
     nextPageToken: z.string().optional(),
   }),
   async handler({ account, category, query, max, pageToken }) {
-    const candidateQuery = query || smartCandidateQuery(category);
+    const customLabelId = category.startsWith('custom:') ? category.slice('custom:'.length) : '';
+    const customLabel = customLabelId ? await getSmartLabel(customLabelId) : null;
+    const candidateQuery = query || customLabel?.candidateQuery || smartCandidateQuery(category);
+    const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
     const args = [
       '--account',
       account,
@@ -157,7 +162,7 @@ export const listSmartCategory = defineTool({
     for (const it of list) {
       const norm = normalizeGogSearchItem(it, account);
       if (!norm._id) continue;
-      const smartCategory = classifyThreadDeterministic(norm);
+      const smartCategory = classifyThreadWithContext(norm, { rules, customLabels });
       const enriched = { ...norm, smartCategory };
       await upsertThread(account, enriched).catch(() => undefined);
       await setThreadSmartCategory(account, norm._id, smartCategory).catch(() => undefined);
@@ -346,8 +351,6 @@ function smartCandidateQuery(category: string) {
       return 'newer_than:90d (order OR shipped OR delivery OR tracking OR refund OR receipt OR invoice OR booking) -in:trash -in:spam';
     case 'finance_admin':
       return 'newer_than:180d (invoice OR billing OR payment OR tax OR legal OR contract OR subscription) -in:trash -in:spam';
-    case 'newsletters':
-      return 'newer_than:30d (newsletter OR digest OR unsubscribe OR promo OR webinar) -in:trash -in:spam';
     case 'noise':
       return 'newer_than:30d -in:trash -in:spam';
     default:
