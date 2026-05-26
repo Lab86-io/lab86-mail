@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { generateText } from 'ai';
-import { describeProvider, fastModel, hasAi } from '../ai/client';
+import { describeProvider, hasAi, primaryModel } from '../ai/client';
 import { normalizeGogMessage, normalizeGogSearchItem } from '../gog/normalize';
 import { runGogJson } from '../gog/pool';
 import { classifyThreadWithContext } from '../mail/smart-categories';
-import { emailFromHeader, shortFrom } from '../shared/format';
+import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
 import type { DailyReport, DailyReportItem, Message, Thread, ThreadInsight } from '../shared/types';
 import { saveDailyReport } from '../store/daily-reports';
+import { listMemories } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
 import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
-import { listTrackedThreads, upsertTrackedThread } from '../store/tracked-threads';
+import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
 
 const ACCOUNT_LIST = (
   process.env.LAB86_MAIL_ACCOUNTS ||
@@ -24,10 +25,12 @@ const ACCOUNT_LIST = (
   .filter(Boolean);
 
 const RECENT_QUERIES = [
-  'in:inbox newer_than:14d -in:trash -in:spam',
-  'is:unread newer_than:30d -in:trash -in:spam',
-  'is:starred newer_than:180d -in:trash -in:spam',
-  'in:sent newer_than:14d -in:trash -in:spam',
+  'in:inbox newer_than:45d -in:trash -in:spam',
+  'is:unread newer_than:90d -in:trash -in:spam',
+  'is:starred newer_than:365d -in:trash -in:spam',
+  'in:sent newer_than:90d -in:trash -in:spam',
+  'newer_than:180d (interview OR offer OR contract OR call OR meeting OR "phone screen" OR "follow up" OR "following up" OR "circle back" OR deadline OR due OR sign OR signed) -in:trash -in:spam',
+  'newer_than:365d (Pat OR Melissa OR Corning OR recruiter OR hiring OR opportunity) -in:trash -in:spam',
 ];
 
 export async function generateDailyReport(input: {
@@ -43,7 +46,7 @@ export async function generateDailyReport(input: {
   const [rules, customLabels, tracked] = await Promise.all([
     listSmartRules(),
     listSmartLabels(),
-    listTrackedThreads({ limit: 500 }),
+    listTrackedThreads({ limit: 1000 }),
   ]);
   const trackedByKey = new Map(tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
   const candidates = new Map<string, Thread>();
@@ -51,7 +54,7 @@ export async function generateDailyReport(input: {
   for (const account of accounts) {
     for (const query of RECENT_QUERIES) {
       try {
-        for (const thread of await searchAccountThreads(account, query, input.maxRecentPerAccount || 18)) {
+        for (const thread of await searchAccountThreads(account, query, input.maxRecentPerAccount || 60)) {
           candidates.set(`${thread.account}:${thread._id}`, thread);
         }
       } catch (err: any) {
@@ -67,19 +70,38 @@ export async function generateDailyReport(input: {
     if (existing) candidates.set(`${existing.account}:${existing._id}`, existing);
   }
 
-  const calendarContext = input.includeCalendar !== false ? await loadCalendarContext(accounts, now) : [];
+  const [calendarContext, memoryContext] = await Promise.all([
+    input.includeCalendar !== false ? loadCalendarContext(accounts, now) : Promise.resolve([]),
+    loadMemoryContext(),
+  ]);
   const sorted = [...candidates.values()].sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
-  const bounded = sorted.slice(0, 120);
+  const bounded = sorted.slice(0, 240);
   const insights: ThreadInsight[] = [];
 
   for (const thread of bounded) {
     const trackedItem = trackedByKey.get(`${thread.account}:${thread._id}`);
     const messages = await loadThreadMessages(thread.account, thread._id);
     const smart = classifyThreadWithContext(thread, { rules, customLabels });
-    const insight = await buildThreadInsight(thread, messages, smart, Boolean(trackedItem), now);
+    const insight = await buildThreadInsight(thread, messages, smart, Boolean(trackedItem), now, {
+      calendarContext,
+      memoryContext,
+    });
     insights.push(insight);
     await upsertThread(thread.account, { ...thread, smartCategory: smart }).catch(() => undefined);
     await upsertThreadInsight(insight).catch(() => undefined);
+    if (
+      trackedItem &&
+      trackedItem.source === 'report' &&
+      !insight.suggestedTrack &&
+      !insight.needsReply &&
+      !insight.waitingOnSomeone &&
+      !insight.commitments.some((c) => c.dueAt && c.dueAt >= now)
+    ) {
+      await updateTrackedThread(trackedItem._id, {
+        status: 'dismissed',
+        reason: `Auto-dismissed by report: ${insight.reason}`,
+      }).catch(() => undefined);
+    }
     if (insight.suggestedTrack && !trackedItem) {
       await upsertTrackedThread({
         account: thread.account,
@@ -109,6 +131,7 @@ export async function generateDailyReport(input: {
     insights,
     tracked: refreshedTracked.filter((item) => accounts.includes(item.account)),
     calendarContext,
+    memoryContext,
     errors,
   });
   await saveDailyReport(report);
@@ -178,14 +201,18 @@ async function buildThreadInsight(
   smart: Thread['smartCategory'],
   tracked: boolean,
   now: number,
+  context: { calendarContext: string[]; memoryContext: string[] },
 ): Promise<ThreadInsight> {
-  const text = threadText(thread, messages, 8000);
+  const text = threadText(thread, messages, 18_000);
   const people = extractPeople(thread, messages);
   const commitments = extractCommitments(text, now);
+  const lowValue = isLowValueNoise(thread, smart, text);
   const needsReply =
-    Boolean(smart?.isHumanLike && smart.secondary.includes('needs_reply')) ||
-    /\b(reply|respond|let me know|can you|could you|please send|waiting for your|need your)\b/i.test(text);
+    !lowValue &&
+    (Boolean(smart?.isHumanLike && smart.secondary.includes('needs_reply')) ||
+      /\b(reply|respond|let me know|can you|could you|please send|waiting for your|need your)\b/i.test(text));
   const waitingOnSomeone =
+    !lowValue &&
     /\b(i'?ll call|i will call|we will call|i'?ll send|will follow up|waiting on|circle back)\b/i.test(text);
   const openLoops = [
     ...commitments.map((item) => item.text),
@@ -193,41 +220,72 @@ async function buildThreadInsight(
     ...(waitingOnSomeone ? ['Waiting on someone else'] : []),
   ].slice(0, 4);
 
+  if (lowValue && !tracked) {
+    return {
+      _id: insightId(thread.account, thread._id),
+      account: thread.account,
+      threadId: thread._id,
+      subject: stripEmoji(thread.subject),
+      summary: 'Low-value bulk, subscription, reward, platform, or promotional mail.',
+      people,
+      commitments: [],
+      openLoops: [],
+      needsReply: false,
+      waitingOnSomeone: false,
+      suggestedTrack: false,
+      suggestedCategory: 'noise',
+      reason: 'Excluded low-value bulk/subscription mail from the report.',
+      generatedAt: now,
+      model: 'local',
+    };
+  }
+
   if (hasAi() && (tracked || needsReply || waitingOnSomeone || commitments.length || smart?.needsAttention)) {
     try {
       const { text: aiText } = await generateText({
-        model: fastModel(),
+        model: primaryModel(),
         system:
-          'Analyze this email thread for Jakob. Return only JSON: {"summary":"...","openLoops":["..."],"needsReply":true|false,"waitingOnSomeone":true|false,"reason":"...","nextAction":"..."}',
-        prompt: text,
+          'You are a deep Codex-style personal email analyst for Jakob. Use the full thread, calendar context, memories, and prior state. Do not use emoji. Do not elevate promotions, rewards, newsletters, or one-way notifications. Return only JSON: {"summary":"...","openLoops":["..."],"needsReply":true|false,"waitingOnSomeone":true|false,"reason":"...","nextAction":"...","important":true|false}.',
+        prompt: [
+          `Now: ${new Date(now).toString()}`,
+          `Calendar context:\n${context.calendarContext.join('\n') || '(none)'}`,
+          `Memory context:\n${context.memoryContext.join('\n') || '(none)'}`,
+          `Smart category: ${smart?.primary || 'unknown'}; reason: ${smart?.reason || ''}`,
+          '',
+          text,
+        ].join('\n\n'),
       });
       const parsed = parseJson(aiText);
       if (parsed) {
+        const important = Boolean(parsed.important);
         return {
           _id: insightId(thread.account, thread._id),
           account: thread.account,
           threadId: thread._id,
-          subject: thread.subject,
-          summary: String(parsed.summary || thread.snippet || thread.subject).slice(0, 500),
+          subject: stripEmoji(thread.subject),
+          summary: stripEmoji(String(parsed.summary || thread.snippet || thread.subject)).slice(0, 500),
           people,
           commitments,
           openLoops: Array.isArray(parsed.openLoops)
-            ? parsed.openLoops.map(String).filter(Boolean).slice(0, 5)
+            ? parsed.openLoops
+                .map((v: unknown) => stripEmoji(String(v)))
+                .filter(Boolean)
+                .slice(0, 5)
             : openLoops,
-          needsReply: Boolean(parsed.needsReply),
-          waitingOnSomeone: Boolean(parsed.waitingOnSomeone),
+          needsReply: !lowValue && Boolean(parsed.needsReply),
+          waitingOnSomeone: !lowValue && Boolean(parsed.waitingOnSomeone),
           suggestedTrack:
             tracked ||
-            Boolean(parsed.needsReply) ||
-            Boolean(parsed.waitingOnSomeone) ||
+            important ||
+            (!lowValue && Boolean(parsed.needsReply)) ||
+            (!lowValue && Boolean(parsed.waitingOnSomeone)) ||
             commitments.some((item) => item.dueAt && item.dueAt >= now),
           suggestedCategory: smart?.primary || 'review',
-          reason: String(parsed.reason || parsed.nextAction || smart?.reason || 'Important thread').slice(
-            0,
-            280,
-          ),
+          reason: stripEmoji(
+            String(parsed.reason || parsed.nextAction || smart?.reason || 'Important thread'),
+          ).slice(0, 280),
           generatedAt: now,
-          model: describeProvider().fast || 'fast',
+          model: describeProvider().primary || 'primary',
         };
       }
     } catch {}
@@ -237,20 +295,21 @@ async function buildThreadInsight(
     _id: insightId(thread.account, thread._id),
     account: thread.account,
     threadId: thread._id,
-    subject: thread.subject,
-    summary: thread.snippet || thread.subject,
+    subject: stripEmoji(thread.subject),
+    summary: stripEmoji(thread.snippet || thread.subject),
     people,
     commitments,
     openLoops,
     needsReply,
     waitingOnSomeone,
     suggestedTrack:
-      tracked ||
-      needsReply ||
-      waitingOnSomeone ||
-      commitments.some((item) => item.dueAt && item.dueAt >= now),
+      !lowValue &&
+      (tracked ||
+        needsReply ||
+        waitingOnSomeone ||
+        commitments.some((item) => item.dueAt && item.dueAt >= now)),
     suggestedCategory: smart?.primary || 'review',
-    reason: smart?.reason || 'Recent or tracked thread',
+    reason: stripEmoji(smart?.reason || 'Recent or tracked thread'),
     generatedAt: now,
     model: 'local',
   };
@@ -263,17 +322,25 @@ async function composeReport(input: {
   insights: ThreadInsight[];
   tracked: Awaited<ReturnType<typeof listTrackedThreads>>;
   calendarContext: string[];
+  memoryContext: string[];
   errors: string[];
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
+  const reportable = input.insights.filter(
+    (item) =>
+      item.suggestedTrack ||
+      item.needsReply ||
+      item.waitingOnSomeone ||
+      item.commitments.some((c) => c.dueAt && c.dueAt >= input.now && c.dueAt < input.now + 14 * 86400_000),
+  );
   const toItem = (insight: ThreadInsight): DailyReportItem => {
     const tracked = trackedKeys.get(`${insight.account}:${insight.threadId}`);
     return {
       account: insight.account,
       threadId: insight.threadId,
-      subject: insight.subject,
+      subject: stripEmoji(insight.subject),
       people: insight.people,
-      whyItMatters: insight.reason || insight.summary,
+      whyItMatters: stripEmoji(insight.reason || insight.summary),
       nextAction: insight.needsReply
         ? 'Reply'
         : insight.waitingOnSomeone
@@ -285,17 +352,17 @@ async function composeReport(input: {
     };
   };
 
-  const dueSoon = input.insights
+  const dueSoon = reportable
     .filter((item) =>
       item.commitments.some((c) => c.dueAt && c.dueAt >= input.now && c.dueAt < input.now + 7 * 86400_000),
     )
     .slice(0, 8)
     .map(toItem);
-  const needsReply = input.insights
+  const needsReply = reportable
     .filter((item) => item.needsReply)
     .slice(0, 10)
     .map(toItem);
-  const waiting = input.insights
+  const waiting = reportable
     .filter((item) => item.waitingOnSomeone)
     .slice(0, 8)
     .map(toItem);
@@ -305,16 +372,16 @@ async function composeReport(input: {
     .map((item) => ({
       account: item.account,
       threadId: item.threadId,
-      subject: item.subject,
-      people: item.participants,
-      whyItMatters: item.reason,
-      nextAction: item.nextAction,
+      subject: stripEmoji(item.subject),
+      people: item.participants.map(stripEmoji),
+      whyItMatters: stripEmoji(item.reason),
+      nextAction: item.nextAction ? stripEmoji(item.nextAction) : undefined,
       dueAt: item.dueAt,
       unread: false,
       trackedThreadId: item._id,
     }));
   const urgent = [...dueSoon, ...needsReply].slice(0, 6);
-  const notable = input.insights
+  const notable = reportable
     .filter((item) => !item.needsReply && !item.waitingOnSomeone && !item.commitments.length)
     .slice(0, 6)
     .map(toItem);
@@ -324,21 +391,23 @@ async function composeReport(input: {
   if (hasAi()) {
     try {
       const { text } = await generateText({
-        model: fastModel(),
+        model: primaryModel(),
         system:
-          'Write Jakob a concise Daily Report from his email. Be concrete and narrative, not generic. Mention important open loops, timing, interviews, offers, calls, and replies. Return only the prose narrative, 2-4 short paragraphs.',
+          'Write Jakob a deep Codex-style Daily Report from his email, calendar, memories, and tracked threads. Be concrete, investigative, and narrative. Surface subtle unresolved commitments, offer/interview/call timing, and relationship context. Do not use emoji. Do not mention low-value promotions except as excluded noise. Return only prose, 3-5 short paragraphs.',
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
           `Calendar context: ${input.calendarContext.join(' | ') || 'none'}`,
+          `Memory context: ${input.memoryContext.join(' | ') || 'none'}`,
+          `Scanned insights: ${reportable.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.reason}; loops=${i.openLoops.join('; ')})`).join('\n')}`,
           `Needs reply: ${needsReply.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
           `Waiting: ${waiting.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
           `Due soon: ${dueSoon.map((i) => `${i.people.join(', ')}: ${i.subject} due ${i.dueAt ? new Date(i.dueAt).toString() : ''}`).join('\n')}`,
           `Tracked: ${trackedItems.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
         ].join('\n\n'),
       });
-      narrative = text.trim() || narrative;
-      model = describeProvider().fast || 'fast';
+      narrative = stripEmoji(text.trim()) || narrative;
+      model = describeProvider().primary || 'primary';
     } catch {}
   }
 
@@ -348,7 +417,7 @@ async function composeReport(input: {
     generatedAt: input.now,
     accounts: input.accounts,
     title: `${input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'} Daily Report`,
-    narrative,
+    narrative: stripEmoji(narrative),
     sections: {
       urgent,
       needsReply,
@@ -416,6 +485,11 @@ async function loadCalendarContext(accounts: string[], now: number) {
   return out;
 }
 
+async function loadMemoryContext() {
+  const memories = await listMemories().catch(() => []);
+  return memories.slice(0, 80).map((memory) => `${memory.email}: ${stripEmoji(memory.notes).slice(0, 600)}`);
+}
+
 function threadText(thread: Thread, messages: Message[], maxChars: number) {
   const msgText = messages
     .slice(-8)
@@ -463,6 +537,17 @@ function extractCommitments(text: string, now: number) {
     });
   }
   return commitments;
+}
+
+function isLowValueNoise(thread: Thread, smart: Thread['smartCategory'], text: string) {
+  if (smart?.isHumanLike || smart?.primary === 'main' || smart?.primary === 'needs_reply') return false;
+  const h = `${thread.fromAddress} ${thread.subject} ${thread.snippet} ${text}`.toLowerCase();
+  return (
+    smart?.primary === 'noise' ||
+    /\b(unsubscribe|promotion|promotional|rewards?|member monday|shop now|sale|deal|deals|newsletter|digest|photo story|tailored to your taste|etsy|panera|dunkin|grad images|rocket money)\b/i.test(
+      h,
+    )
+  );
 }
 
 function inferDueAt(text: string, now: number) {

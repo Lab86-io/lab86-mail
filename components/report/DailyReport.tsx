@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlarmClock, CheckCircle2, Inbox, RefreshCw, Sparkles, Target } from 'lucide-react';
+import { AlarmClock, CheckCircle2, Inbox, Newspaper, RefreshCw, Target } from 'lucide-react';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/item';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { formatDate } from '@/lib/shared/format';
+import { formatDate, stripEmoji } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 interface DailyReportItem {
@@ -101,7 +101,7 @@ export function DailyReport() {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-[var(--color-accent)]" />
+              <Newspaper className="size-4 text-[var(--color-accent)]" />
               <h1 className="truncate text-[18px] font-semibold tracking-tight text-[var(--color-text)]">
                 Daily Report
               </h1>
@@ -145,7 +145,7 @@ export function DailyReport() {
           <Empty className="grid h-full place-items-center px-6 py-12 text-center">
             <EmptyHeader>
               <EmptyMedia>
-                <Sparkles className="h-4 w-4 text-[var(--color-text-faint)]" />
+                <Newspaper className="h-4 w-4 text-[var(--color-text-faint)]" />
               </EmptyMedia>
               <EmptyTitle>No Daily Report yet</EmptyTitle>
               <EmptyDescription>
@@ -164,7 +164,7 @@ export function DailyReport() {
                 {report.model ? <Badge variant="outline">{report.model}</Badge> : null}
               </div>
               <div className="whitespace-pre-line text-[14px] leading-6 text-[var(--color-text)]">
-                {report.narrative}
+                {stripEmoji(report.narrative)}
               </div>
             </section>
 
@@ -184,7 +184,7 @@ export function DailyReport() {
 
             {typeof report.sections.noiseSummary === 'string' ? (
               <p className="pb-6 text-[12px] text-[var(--color-text-muted)]">
-                {report.sections.noiseSummary}
+                {stripEmoji(report.sections.noiseSummary)}
               </p>
             ) : null}
             {report.errors?.length ? (
@@ -238,10 +238,10 @@ function ReportSection({
             </ItemMedia>
             <ItemContent>
               <ItemTitle className="line-clamp-1">
-                {item.people[0] ? `${item.people[0]} · ` : ''}
-                {item.subject || '(no subject)'}
+                {item.people[0] ? `${stripEmoji(item.people[0])} · ` : ''}
+                {stripEmoji(item.subject || '(no subject)')}
               </ItemTitle>
-              <ItemDescription className="line-clamp-2">{item.whyItMatters}</ItemDescription>
+              <ItemDescription className="line-clamp-2">{stripEmoji(item.whyItMatters)}</ItemDescription>
               <div className="mt-1 flex flex-wrap gap-1">
                 {item.nextAction ? <Badge variant="secondary">{item.nextAction}</Badge> : null}
                 {item.dueAt ? <Badge variant="outline">Due {formatDate(item.dueAt)}</Badge> : null}

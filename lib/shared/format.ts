@@ -65,3 +65,10 @@ export function gmailUrlFor(account: string, threadIdOrMessageId: string): strin
   const id = encodeURIComponent(threadIdOrMessageId);
   return `https://mail.google.com/mail/u/${u}/#all/${id}`;
 }
+
+export function stripEmoji(value: string) {
+  return String(value || '')
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}

@@ -10,20 +10,20 @@ import {
   Flag,
   Inbox,
   Keyboard,
+  KeyRound,
   Layers,
   MailOpen,
   MessageCircle,
+  Newspaper,
   Pencil,
   Plus,
   Receipt,
   Send,
   Settings2,
-  Sparkles,
   Star,
   Terminal,
   Trash2,
   UserRound,
-  WandSparkles,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
@@ -88,7 +88,7 @@ const SMART_CATEGORIES = [
   {
     id: 'codes',
     label: 'Codes',
-    Icon: WandSparkles,
+    Icon: KeyRound,
     help: 'Verification codes, login links, and account security.',
   },
   {
@@ -229,7 +229,7 @@ export function Rail() {
                       shineColor={['#4cb7c8', '#7c3aed', '#0b7285']}
                     />
                   ) : null}
-                  <Sparkles />
+                  <Newspaper />
                   <span>Daily Report</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
