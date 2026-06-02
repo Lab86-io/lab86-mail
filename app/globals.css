@@ -60,6 +60,7 @@
 @theme {
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: var(--font-fraunces), ui-serif, Georgia, 'Times New Roman', serif;
 
   /* warm-gray neutral palette (Linear-inspired) */
   --color-bg: #fafaf9;
@@ -418,6 +419,28 @@
   .glass {
     background: color-mix(in srgb, var(--color-bg-elevated) 85%, transparent);
     backdrop-filter: blur(10px) saturate(140%);
+  }
+
+  /* Warm paper surface for the Daily Report — a faint amber tint over the base
+     background plus a sparse dot-grid texture. Both derive from theme tokens via
+     color-mix, so the look flips automatically in dark mode (with its own override
+     for a touch more contrast). */
+  .report-paper {
+    background-color: color-mix(in srgb, var(--color-bg) 92%, var(--color-warning) 8%);
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      color-mix(in srgb, var(--color-text) 4%, transparent) 1px,
+      transparent 0
+    );
+    background-size: 22px 22px;
+  }
+  .dark .report-paper {
+    background-color: color-mix(in srgb, var(--color-bg) 94%, var(--color-warning) 6%);
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      color-mix(in srgb, var(--color-text) 6%, transparent) 1px,
+      transparent 0
+    );
   }
 }
 

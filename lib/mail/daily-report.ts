@@ -3,9 +3,20 @@ import { generateText } from 'ai';
 import { describeProvider, hasAi, primaryModel } from '../ai/client';
 import { normalizeGogMessage, normalizeGogSearchItem } from '../gog/normalize';
 import { runGogJson } from '../gog/pool';
-import { classifyThreadWithContext } from '../mail/smart-categories';
+import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
-import type { DailyReport, DailyReportItem, Message, Thread, ThreadInsight } from '../shared/types';
+import type {
+  DailyReport,
+  DailyReportItem,
+  Message,
+  ReportLane,
+  SmartCategory,
+  SmartCategoryId,
+  Thread,
+  ThreadInsight,
+  TrackedThread,
+} from '../shared/types';
+import { classifyThreadsBatched } from '../tools/ai';
 import { saveDailyReport } from '../store/daily-reports';
 import { listMemories } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
@@ -24,14 +35,55 @@ const ACCOUNT_LIST = (
   .map((s) => s.trim())
   .filter(Boolean);
 
-const RECENT_QUERIES = [
-  'in:inbox newer_than:45d -in:trash -in:spam',
-  'is:unread newer_than:90d -in:trash -in:spam',
-  'is:starred newer_than:365d -in:trash -in:spam',
-  'in:sent newer_than:90d -in:trash -in:spam',
-  'newer_than:180d (interview OR offer OR contract OR call OR meeting OR "phone screen" OR "follow up" OR "following up" OR "circle back" OR deadline OR due OR sign OR signed) -in:trash -in:spam',
-  'newer_than:365d (Pat OR Melissa OR Corning OR recruiter OR hiring OR opportunity) -in:trash -in:spam',
+// Jakob's own addresses. Used to decide message direction (inbound vs outbound)
+// for reply/follow-up detection and to keep him out of the "people" list. The
+// runtime also unions in the live authed accounts; the RIT address is included
+// here because it is not in the default ACCOUNT_LIST yet shows up as a sender.
+const SELF = new Set(['jjalangtry@gmail.com', 'jakob@lab86.io', 'jjl4287@g.rit.edu']);
+
+// Candidate gathering, category-aware and keyword-free. We trust Gmail's own
+// Primary/Important categorization to find human mail rather than guessing at
+// job-specific keywords. Both verified misses (a Corning opening and a
+// StatPearls offer) are CATEGORY_PERSONAL, so `category:primary` and
+// `is:important` surface them regardless of promo volume.
+const RECENT_QUERIES: Array<{ q: string; max: number }> = [
+  { q: 'in:inbox category:primary newer_than:60d', max: 80 },
+  { q: 'is:important newer_than:90d -in:trash -in:spam', max: 80 },
+  { q: 'in:inbox newer_than:30d -category:promotions -category:social -category:forums', max: 80 },
+  { q: 'is:unread newer_than:120d -category:promotions -in:trash -in:spam', max: 80 },
+  { q: 'is:starred newer_than:365d -in:trash -in:spam', max: 80 },
+  { q: 'in:inbox newer_than:14d', max: 40 },
 ];
+
+// Outbound pass — surfaces threads where Jakob sent last (for follow-up-owed)
+// and seeds the "prior correspondent" allowlist.
+const SENT_QUERY = { q: 'in:sent newer_than:180d -in:trash -in:spam', max: 200 };
+
+const CANDIDATE_LIMIT = 240;
+const TIME_SENSITIVE_WINDOW = 14 * 86400_000;
+
+// Lane priority for the clamp: the floor decides a minimum lane and the LLM may
+// only raise it, never demote below the floor.
+const LANE_PRIORITY: Record<ReportLane, number> = {
+  reply_owed: 6,
+  follow_up_owed: 5,
+  new_people: 4,
+  time_sensitive: 3,
+  tracked: 2,
+  fyi: 1,
+  bulk: 0,
+};
+
+function laneMax(a: ReportLane, b: ReportLane): ReportLane {
+  return LANE_PRIORITY[a] >= LANE_PRIORITY[b] ? a : b;
+}
+
+function parseLane(value: unknown): ReportLane | null {
+  const v = String(value || '')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  return (LANE_PRIORITY as Record<string, number>)[v] !== undefined ? (v as ReportLane) : null;
+}
 
 export async function generateDailyReport(input: {
   kind: DailyReport['kind'];
@@ -49,20 +101,33 @@ export async function generateDailyReport(input: {
     listTrackedThreads({ limit: 1000 }),
   ]);
   const trackedByKey = new Map(tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
-  const candidates = new Map<string, Thread>();
+  const self = new Set<string>([...SELF, ...accounts.map((a) => a.toLowerCase())]);
 
+  // ---- Candidate gathering -------------------------------------------------
+  const candidates = new Map<string, Thread>();
+  const sentAllowlist = new Set<string>();
   for (const account of accounts) {
-    for (const query of RECENT_QUERIES) {
+    for (const { q, max } of RECENT_QUERIES) {
       try {
-        for (const thread of await searchAccountThreads(account, query, input.maxRecentPerAccount || 60)) {
+        const cap = Math.min(max, input.maxRecentPerAccount ?? max);
+        for (const thread of await searchAccountThreads(account, q, cap)) {
           candidates.set(`${thread.account}:${thread._id}`, thread);
         }
       } catch (err: any) {
         errors.push(`${account}: ${err?.message || 'search failed'}`);
       }
     }
+    try {
+      for (const thread of await searchAccountThreads(account, SENT_QUERY.q, SENT_QUERY.max)) {
+        candidates.set(`${thread.account}:${thread._id}`, thread);
+        collectSentRecipientsFromRaw(thread, self, sentAllowlist);
+      }
+    } catch (err: any) {
+      errors.push(`${account}: ${err?.message || 'sent scan failed'}`);
+    }
   }
 
+  // Always include unresolved tracked threads.
   for (const item of tracked) {
     if (item.status === 'resolved' || item.status === 'dismissed') continue;
     if (accounts.length && !accounts.includes(item.account)) continue;
@@ -74,17 +139,104 @@ export async function generateDailyReport(input: {
     input.includeCalendar !== false ? loadCalendarContext(accounts, now) : Promise.resolve([]),
     loadMemoryContext(),
   ]);
-  const sorted = [...candidates.values()].sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
-  const bounded = sorted.slice(0, 240);
-  const insights: ThreadInsight[] = [];
 
+  const sorted = [...candidates.values()].sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
+  const bounded = dedupeCandidates(sorted, trackedByKey).slice(0, CANDIDATE_LIMIT);
+
+  // ---- Load messages + harvest prior correspondents ------------------------
+  const messagesByKey = new Map<string, Message[]>();
   for (const thread of bounded) {
-    const trackedItem = trackedByKey.get(`${thread.account}:${thread._id}`);
+    const key = `${thread.account}:${thread._id}`;
     const messages = await loadThreadMessages(thread.account, thread._id);
-    const smart = classifyThreadWithContext(thread, { rules, customLabels });
-    const insight = await buildThreadInsight(thread, messages, smart, Boolean(trackedItem), now, {
+    messagesByKey.set(key, messages);
+    // Reliable allowlist: anyone Jakob has actually emailed in these threads.
+    for (const message of messages) {
+      const fromEmail = emailFromHeader(message.from) || '';
+      if (!fromEmail || !self.has(fromEmail)) continue;
+      for (const field of [message.to, message.cc]) {
+        for (const part of String(field || '').split(',')) {
+          const email = emailFromHeader(part);
+          if (!email || self.has(email)) continue;
+          sentAllowlist.add(email);
+          const domain = email.split('@')[1];
+          if (domain) sentAllowlist.add(domain);
+        }
+      }
+    }
+  }
+
+  // ---- Tier 1: batched smart classification (local-first) ------------------
+  const smartList = await classifyThreadsBatched(
+    bounded.map((thread) => ({
+      id: thread._id,
+      account: thread.account,
+      fromAddress: thread.fromAddress,
+      subject: thread.subject,
+      snippet: thread.snippet,
+      labels: thread.labels,
+      unread: thread.unread,
+      date: thread.lastDate,
+    })),
+    { rules, customLabels },
+  ).catch(() => [] as Array<{ id: string; model: string } & SmartCategory>);
+  const smartByKey = new Map<string, SmartCategory>();
+  for (const verdict of smartList) {
+    const { id, ...rest } = verdict;
+    smartByKey.set(id, rest as SmartCategory);
+  }
+
+  // ---- Stage 1: deterministic safety floor for every candidate -------------
+  const floors = new Map<string, FloorSignals>();
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    floors.set(
+      key,
+      computeFloor(thread, messagesByKey.get(key) || [], now, {
+        self,
+        sentAllowlist,
+        tracked: trackedByKey.has(key),
+        smart: smartByKey.get(thread._id) || null,
+      }),
+    );
+  }
+
+  // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
+  const enrichCap = Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || 30);
+  const enrichKeys = new Set<string>(
+    bounded
+      .filter((thread) => {
+        const key = `${thread.account}:${thread._id}`;
+        const floor = floors.get(key)!;
+        const smart = smartByKey.get(thread._id);
+        return (
+          hasAi() &&
+          (floor.protected ||
+            trackedByKey.has(key) ||
+            Boolean(smart?.isHumanLike) ||
+            smart?.primary === 'review')
+        );
+      })
+      .sort((a, b) => {
+        const fa = floors.get(`${a.account}:${a._id}`)!;
+        const fb = floors.get(`${b.account}:${b._id}`)!;
+        return LANE_PRIORITY[fb.lane] - LANE_PRIORITY[fa.lane];
+      })
+      .slice(0, enrichCap)
+      .map((thread) => `${thread.account}:${thread._id}`),
+  );
+
+  // ---- Build insights ------------------------------------------------------
+  const insights: ThreadInsight[] = [];
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const messages = messagesByKey.get(key) || [];
+    const smart = smartByKey.get(thread._id) || null;
+    const floor = floors.get(key)!;
+    const trackedItem = trackedByKey.get(key);
+    const insight = await buildThreadInsight(thread, messages, smart, floor, Boolean(trackedItem), now, {
       calendarContext,
       memoryContext,
+      enrich: enrichKeys.has(key),
     });
     insights.push(insight);
     await upsertThread(thread.account, { ...thread, smartCategory: smart }).catch(() => undefined);
@@ -115,12 +267,20 @@ export async function generateDailyReport(input: {
             : 'open',
         reason: insight.reason,
         openLoops: insight.openLoops,
-        nextAction: insight.needsReply ? 'Reply' : insight.waitingOnSomeone ? 'Wait for response' : 'Review',
+        nextAction: insight.needsReply ? 'Reply' : insight.waitingOnSomeone ? 'Follow up' : 'Review',
         dueAt: insight.commitments.find((c) => c.dueAt)?.dueAt || null,
         importance: insight.needsReply || insight.commitments.length ? 1 : 2,
         source: 'report',
       }).catch(() => undefined);
     }
+  }
+
+  const lastDateByKey = new Map<string, number>();
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const messages = messagesByKey.get(key) || [];
+    const newest = messages[messages.length - 1];
+    lastDateByKey.set(key, Number(newest?.date || thread.lastDate || 0));
   }
 
   const refreshedTracked = await listTrackedThreads({ limit: 500 });
@@ -130,6 +290,7 @@ export async function generateDailyReport(input: {
     accounts,
     insights,
     tracked: refreshedTracked.filter((item) => accounts.includes(item.account)),
+    lastDateByKey,
     calendarContext,
     memoryContext,
     errors,
@@ -168,6 +329,24 @@ async function searchAccountThreads(account: string, query: string, max: number)
   return threads as Thread[];
 }
 
+// Best-effort recipient extraction from a sent search item. Compact gog search
+// results may not carry recipients, in which case the in-thread harvest in
+// generateDailyReport fills the allowlist reliably.
+function collectSentRecipientsFromRaw(thread: Thread, self: Set<string>, out: Set<string>) {
+  const raw = thread as unknown as Record<string, unknown>;
+  const fields = [raw.to, raw.To, raw.cc, raw.Cc, raw.recipients, (raw as any).headers?.to];
+  for (const field of fields) {
+    if (!field) continue;
+    for (const part of String(field).split(/[,;]/)) {
+      const email = emailFromHeader(part);
+      if (!email || self.has(email)) continue;
+      out.add(email);
+      const domain = email.split('@')[1];
+      if (domain) out.add(domain);
+    }
+  }
+}
+
 async function loadThreadMessages(account: string, threadId: string) {
   const cached = await getThreadMessages(account, threadId);
   if (cached.length) return cached.sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
@@ -195,125 +374,356 @@ async function loadThreadMessages(account: string, threadId: string) {
   }
 }
 
+// Collapse duplicate automated notifications (same sender domain + subject,
+// newest wins). Human / personal / important / tracked threads are NEVER
+// collapsed — the never-hide guarantee applies before anything else.
+function dedupeCandidates(sorted: Thread[], trackedByKey: Map<string, TrackedThread>): Thread[] {
+  const seen = new Set<string>();
+  const out: Thread[] = [];
+  for (const thread of sorted) {
+    const labels = thread.labels || [];
+    const humanish =
+      isHumanLike(thread) || labels.includes('CATEGORY_PERSONAL') || labels.includes('IMPORTANT');
+    const isTracked = trackedByKey.has(`${thread.account}:${thread._id}`);
+    if (humanish || isTracked) {
+      out.push(thread);
+      continue;
+    }
+    const domain = (emailFromHeader(thread.fromAddress) || thread.fromAddress || '').split('@')[1] || '';
+    const dedupeKey = `${thread.account}:${domain}::${subjectClause(thread.subject).toLowerCase()}`;
+    if (seen.has(dedupeKey)) continue; // sorted newest-first, so the newest is kept
+    seen.add(dedupeKey);
+    out.push(thread);
+  }
+  return out;
+}
+
+// ---- Stage 1: the deterministic safety floor -------------------------------
+
+interface FloorSignals {
+  replyOwed: boolean;
+  followUpOwed: boolean;
+  isPersonal: boolean;
+  isImportant: boolean;
+  isHuman: boolean;
+  isNewSender: boolean;
+  isPriorCorrespondent: boolean;
+  automated: boolean;
+  bulkReasons: string[];
+  commitments: ThreadInsight['commitments'];
+  timeSensitive: boolean;
+  protected: boolean;
+  lane: ReportLane;
+  demotionReason: string | null;
+}
+
+function unionLabels(thread: Thread, messages: Message[]): string[] {
+  const set = new Set<string>(thread.labels || []);
+  const newest = messages[messages.length - 1];
+  for (const label of newest?.labels || []) set.add(label);
+  return [...set];
+}
+
+// replyOwed   = newest message is inbound from a non-no-reply human (not Jakob).
+// followUpOwed = newest message is from Jakob, an earlier inbound human exists,
+//                and it has been at least 3 days.
+function computeOwed(messages: Message[], now: number, self: Set<string>) {
+  const sorted = [...messages].sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
+  const newest = sorted[sorted.length - 1];
+  let replyOwed = false;
+  let followUpOwed = false;
+  if (newest) {
+    const fromEmail = emailFromHeader(newest.from) || '';
+    const fromSelf = Boolean(fromEmail) && self.has(fromEmail);
+    const noReply = isNoReplyLike(newest.from);
+    if (!fromSelf && !noReply && fromEmail) {
+      replyOwed = true;
+    } else if (fromSelf) {
+      const earlierInboundHuman = sorted.slice(0, -1).some((m) => {
+        const email = emailFromHeader(m.from) || '';
+        return Boolean(email) && !self.has(email) && !isNoReplyLike(m.from);
+      });
+      const ageDays = (now - Number(newest.date || 0)) / 86400_000;
+      if (earlierInboundHuman && ageDays >= 3) followUpOwed = true;
+    }
+  }
+  return { replyOwed, followUpOwed };
+}
+
+function computeFloor(
+  thread: Thread,
+  messages: Message[],
+  now: number,
+  ctx: { self: Set<string>; sentAllowlist: Set<string>; tracked: boolean; smart: SmartCategory | null },
+): FloorSignals {
+  const labels = unionLabels(thread, messages);
+  const isPersonal = labels.includes('CATEGORY_PERSONAL');
+  const isImportant = labels.includes('IMPORTANT');
+  const isPromoCat = labels.includes('CATEGORY_PROMOTIONS');
+  const isUpdatesCat = labels.includes('CATEGORY_UPDATES');
+  const isSocialCat = labels.includes('CATEGORY_SOCIAL');
+
+  // Explicit user corrections (from the report's controls) win over everything.
+  // They flow in as a user_rule smart verdict so the report self-corrects.
+  const userForcedNoise = ctx.smart?.model === 'user_rule' && ctx.smart?.primary === 'noise';
+  const userForcedMain = ctx.smart?.model === 'user_rule' && ctx.smart?.primary === 'main';
+
+  const from = thread.fromAddress || messages[messages.length - 1]?.from || '';
+  const senderAddr = (emailFromHeader(from) || '').toLowerCase();
+  const senderIsSelf = Boolean(senderAddr) && ctx.self.has(senderAddr);
+  const noReply = isNoReplyLike(from);
+
+  const { replyOwed, followUpOwed } = computeOwed(messages, now, ctx.self);
+
+  // Reliable bulk signals only (list-id / unsubscribe). Subject-keyword signals
+  // like "offer"/"sale" are intentionally excluded so a real person isn't
+  // treated as automated.
+  const bulkReasons = bulkSignals({
+    fromAddress: thread.fromAddress,
+    subject: thread.subject,
+    snippet: thread.snippet,
+    labels,
+  });
+  const listSignals = bulkReasons.includes('unsubscribe') || bulkReasons.includes('bulk_or_list');
+
+  // An automated "series": many inbound messages, all the same subject, that
+  // Jakob has never once answered. This catches dunning bots / drip
+  // notifications that wear a CATEGORY_PERSONAL costume (e.g. EliseAI leasing
+  // reminders from a human-looking "Camden") — distinct from a real
+  // conversation (which gets a reply) or a fresh cold intro (a single message).
+  const outboundCount = messages.filter((m) => {
+    const email = emailFromHeader(m.from) || '';
+    return Boolean(email) && ctx.self.has(email);
+  }).length;
+  const inboundSubjects = messages
+    .filter((m) => {
+      const email = emailFromHeader(m.from) || '';
+      return Boolean(email) && !ctx.self.has(email);
+    })
+    .map((m) => subjectClause(m.subject).toLowerCase());
+  const oneWayBlast =
+    outboundCount === 0 && inboundSubjects.length >= 4 && new Set(inboundSubjects).size <= 2;
+
+  // Gmail's own personal/important categorization beats keyword heuristics.
+  const gmailHuman = isPersonal || isImportant;
+  const automated = userForcedNoise
+    ? true
+    : userForcedMain
+      ? false
+      : oneWayBlast || (!gmailHuman && (noReply || isPromoCat || isUpdatesCat || isSocialCat || listSignals));
+
+  // Counterparty = the most recent inbound, non-no-reply sender. We judge
+  // "humanness" with isHumanLike — which already folds in Gmail's personal
+  // signal plus the role-address / bulk / publisher blocklists — rather than
+  // merely "not a no-reply address". Otherwise marketing from hello@/team@ that
+  // isn't strictly no-reply would masquerade as a person and earn a reply lane.
+  const inboundMsgs = messages.filter((m) => {
+    const email = emailFromHeader(m.from) || '';
+    return Boolean(email) && !ctx.self.has(email) && !isNoReplyLike(m.from);
+  });
+  const counterpartyMsg = inboundMsgs[inboundMsgs.length - 1];
+  const counterparty = (
+    emailFromHeader(counterpartyMsg?.from) || (senderIsSelf ? '' : senderAddr) || ''
+  ).toLowerCase();
+  const counterpartyDomain = counterparty.split('@')[1] || '';
+
+  // isHumanLike sees the *unioned* labels, so a CATEGORY_PERSONAL that only the
+  // newest message carries still counts (e.g. a job offer whose subject word
+  // "offer" would otherwise trip the bulk heuristic).
+  const threadSenderHuman = !senderIsSelf && isHumanLike({ ...thread, labels });
+  const counterpartyHuman = counterpartyMsg
+    ? isHumanLike({
+        fromAddress: counterpartyMsg.from,
+        subject: counterpartyMsg.subject,
+        snippet: counterpartyMsg.snippet,
+        labels: counterpartyMsg.labels,
+      })
+    : false;
+  const isHuman = !userForcedNoise && (userForcedMain || threadSenderHuman || counterpartyHuman);
+
+  const isPriorCorrespondent =
+    Boolean(counterparty) &&
+    (ctx.sentAllowlist.has(counterparty) || (Boolean(counterpartyDomain) && ctx.sentAllowlist.has(counterpartyDomain)));
+  const isNewSender =
+    isHuman && ctx.sentAllowlist.size > 0 && Boolean(counterparty) && !isPriorCorrespondent;
+
+  // Commitments / due dates only count for non-automated human-or-personal
+  // mail. This kills the rent-notice false positive where a weekday word
+  // tripped date extraction — automated notices never get a due date.
+  const allowCommitments = !automated && (isHuman || isPersonal);
+  const commitments = allowCommitments ? extractCommitments(threadText(thread, messages, 18_000), now) : [];
+  const timeSensitive = commitments.some(
+    (c) => c.dueAt && c.dueAt >= now && c.dueAt < now + TIME_SENSITIVE_WINDOW,
+  );
+
+  const isProtected =
+    !userForcedNoise &&
+    isHuman &&
+    !automated &&
+    (replyOwed ||
+      followUpOwed ||
+      isPersonal ||
+      isImportant ||
+      isNewSender ||
+      isPriorCorrespondent ||
+      ctx.tracked ||
+      userForcedMain);
+
+  let lane: ReportLane;
+  if (!isProtected) lane = 'bulk';
+  else if (replyOwed) lane = 'reply_owed';
+  else if (followUpOwed) lane = 'follow_up_owed';
+  else if (isNewSender) lane = 'new_people';
+  else if (timeSensitive) lane = 'time_sensitive';
+  else if (ctx.tracked) lane = 'tracked';
+  else lane = 'fyi';
+
+  let demotionReason: string | null = null;
+  if (!isProtected) {
+    if (userForcedNoise) demotionReason = 'You marked this sender as not relevant';
+    else if (oneWayBlast) demotionReason = 'Repeated one-way notifications (never answered)';
+    else if (noReply) demotionReason = 'No-reply / automated sender';
+    else if (isPromoCat) demotionReason = 'Gmail Promotions';
+    else if (isUpdatesCat) demotionReason = 'Gmail Updates / notification';
+    else if (isSocialCat) demotionReason = 'Gmail Social';
+    else if (listSignals) demotionReason = 'Bulk / mailing list';
+    else if (!isHuman) demotionReason = 'Not a direct human conversation';
+    else demotionReason = 'No pending action detected';
+  }
+
+  return {
+    replyOwed,
+    followUpOwed,
+    isPersonal,
+    isImportant,
+    isHuman,
+    isNewSender,
+    isPriorCorrespondent,
+    automated,
+    bulkReasons,
+    commitments,
+    timeSensitive,
+    protected: isProtected,
+    lane,
+    demotionReason,
+  };
+}
+
+function surfacedBecauseFor(floor: FloorSignals, now: number): string[] {
+  const out: string[] = [];
+  if (floor.replyOwed) out.push('reply_owed');
+  if (floor.followUpOwed) out.push('follow_up_owed');
+  if (floor.isPersonal) out.push('category_personal');
+  if (floor.isImportant) out.push('important');
+  if (floor.isNewSender) out.push('new_sender');
+  if (floor.isPriorCorrespondent && !floor.isNewSender) out.push('known_contact');
+  if (floor.commitments.some((c) => c.dueAt && c.dueAt >= now)) out.push('due_soon');
+  return [...new Set(out)];
+}
+
+// ---- Stage 2: ungated, promote-only LLM enrichment -------------------------
+
 async function buildThreadInsight(
   thread: Thread,
   messages: Message[],
-  smart: Thread['smartCategory'],
+  smart: SmartCategory | null,
+  floor: FloorSignals,
   tracked: boolean,
   now: number,
-  context: { calendarContext: string[]; memoryContext: string[] },
+  context: { calendarContext: string[]; memoryContext: string[]; enrich: boolean },
 ): Promise<ThreadInsight> {
-  const text = threadText(thread, messages, 18_000);
   const people = extractPeople(thread, messages);
-  const commitments = extractCommitments(text, now);
-  const lowValue = isLowValueNoise(thread, smart, text);
-  const needsReply =
-    !lowValue &&
-    (Boolean(smart?.isHumanLike && smart.secondary.includes('needs_reply')) ||
-      /\b(reply|respond|let me know|can you|could you|please send|waiting for your|need your)\b/i.test(text));
-  const waitingOnSomeone =
-    !lowValue &&
-    /\b(i'?ll call|i will call|we will call|i'?ll send|will follow up|waiting on|circle back)\b/i.test(text);
-  const openLoops = [
-    ...commitments.map((item) => item.text),
-    ...(needsReply ? ['Potential reply needed'] : []),
-    ...(waitingOnSomeone ? ['Waiting on someone else'] : []),
+  const commitments = floor.commitments;
+  const surfacedBecause = surfacedBecauseFor(floor, now);
+  const baseOpenLoops = [
+    ...commitments.map((c) => c.text),
+    ...(floor.replyOwed ? ['Reply owed'] : []),
+    ...(floor.followUpOwed ? ['Follow-up owed'] : []),
   ].slice(0, 4);
 
-  if (lowValue) {
-    return {
-      _id: insightId(thread.account, thread._id),
-      account: thread.account,
-      threadId: thread._id,
-      subject: stripEmoji(thread.subject),
-      summary: 'Low-value bulk, subscription, reward, platform, or promotional mail.',
-      people,
-      commitments: [],
-      openLoops: [],
-      needsReply: false,
-      waitingOnSomeone: false,
-      suggestedTrack: false,
-      suggestedCategory: 'noise',
-      reason: 'Excluded low-value bulk/subscription mail from the report.',
-      generatedAt: now,
-      model: 'local',
-    };
-  }
+  let summary = stripEmoji(thread.snippet || thread.subject);
+  let reason = localReason({
+    people,
+    subject: thread.subject,
+    commitments,
+    needsReply: floor.replyOwed,
+    waitingOnSomeone: floor.followUpOwed,
+    smart,
+    now,
+  });
+  let openLoops = baseOpenLoops;
+  let lane = floor.lane;
+  let model = 'local';
 
-  if (hasAi() && (tracked || needsReply || waitingOnSomeone || commitments.length || smart?.needsAttention)) {
+  if (context.enrich && hasAi()) {
     try {
       const { text: aiText } = await generateText({
         model: primaryModel(),
         system:
-          'You are a deep Codex-style personal email analyst for Jakob. Use the full thread, calendar context, memories, and prior state. Do not use emoji. Do not elevate promotions, rewards, newsletters, or one-way notifications. Return only JSON: {"summary":"...","openLoops":["..."],"needsReply":true|false,"waitingOnSomeone":true|false,"reason":"...","nextAction":"...","important":true|false}.',
+          'You are a deep personal email analyst for Jakob. Use the full thread, calendar, and memory context. Never demote a thread that is from a real person, is in Gmail\'s personal or important category, or owes a reply — you may only raise its priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"...","importance":1|2|3,"suggestedLane":"reply_owed|follow_up_owed|new_people|time_sensitive|tracked|fyi|bulk"}.',
         prompt: [
           `Now: ${new Date(now).toString()}`,
+          `Floor lane (minimum — you may only raise it): ${floor.lane}`,
+          `Floor signals: replyOwed=${floor.replyOwed} followUpOwed=${floor.followUpOwed} personal=${floor.isPersonal} important=${floor.isImportant} newSender=${floor.isNewSender} priorContact=${floor.isPriorCorrespondent}`,
+          `Smart category: ${smart?.primary || 'unknown'}; reason: ${smart?.reason || ''}`,
           `Calendar context:\n${context.calendarContext.join('\n') || '(none)'}`,
           `Memory context:\n${context.memoryContext.join('\n') || '(none)'}`,
-          `Smart category: ${smart?.primary || 'unknown'}; reason: ${smart?.reason || ''}`,
           '',
-          text,
+          threadText(thread, messages, 18_000),
         ].join('\n\n'),
       });
       const parsed = parseJson(aiText);
       if (parsed) {
-        const important = Boolean(parsed.important);
-        return {
-          _id: insightId(thread.account, thread._id),
-          account: thread.account,
-          threadId: thread._id,
-          subject: stripEmoji(thread.subject),
-          summary: stripEmoji(String(parsed.summary || thread.snippet || thread.subject)).slice(0, 500),
-          people,
-          commitments,
-          openLoops: Array.isArray(parsed.openLoops)
-            ? parsed.openLoops
-                .map((v: unknown) => stripEmoji(String(v)))
-                .filter(Boolean)
-                .slice(0, 5)
-            : openLoops,
-          needsReply: !lowValue && Boolean(parsed.needsReply),
-          waitingOnSomeone: !lowValue && Boolean(parsed.waitingOnSomeone),
-          suggestedTrack:
-            tracked ||
-            important ||
-            (!lowValue && Boolean(parsed.needsReply)) ||
-            (!lowValue && Boolean(parsed.waitingOnSomeone)) ||
-            commitments.some((item) => item.dueAt && item.dueAt >= now),
-          suggestedCategory: smart?.primary || 'review',
-          reason: stripEmoji(
-            String(parsed.reason || parsed.nextAction || smart?.reason || 'Important thread'),
-          ).slice(0, 280),
-          generatedAt: now,
-          model: describeProvider().primary || 'primary',
-        };
+        summary = stripEmoji(String(parsed.summary || summary)).slice(0, 500);
+        reason = stripEmoji(String(parsed.reason || parsed.nextAction || reason)).slice(0, 280);
+        if (Array.isArray(parsed.openLoops) && parsed.openLoops.length) {
+          openLoops = parsed.openLoops
+            .map((v: unknown) => stripEmoji(String(v)))
+            .filter(Boolean)
+            .slice(0, 5);
+        }
+        // Clamp: the LLM can only promote above the deterministic floor lane.
+        lane = laneMax(floor.lane, parseLane(parsed.suggestedLane) || floor.lane);
+        model = describeProvider().primary || 'primary';
       }
     } catch {}
   }
+
+  const demotionReason = lane === 'bulk' ? floor.demotionReason : null;
 
   return {
     _id: insightId(thread.account, thread._id),
     account: thread.account,
     threadId: thread._id,
     subject: stripEmoji(thread.subject),
-    summary: stripEmoji(thread.snippet || thread.subject),
+    summary,
     people,
     commitments,
     openLoops,
-    needsReply,
-    waitingOnSomeone,
-    suggestedTrack:
-      !lowValue &&
-      (tracked ||
-        needsReply ||
-        waitingOnSomeone ||
-        commitments.some((item) => item.dueAt && item.dueAt >= now)),
-    suggestedCategory: smart?.primary || 'review',
-    reason: stripEmoji(smart?.reason || 'Recent or tracked thread'),
+    // Actionable flags reflect the protected floor, not the raw signal: an
+    // automated one-way blast can be "reply owed" mechanically but must not be
+    // tracked or block auto-dismissal of stale tracked records.
+    needsReply: floor.replyOwed && floor.protected,
+    waitingOnSomeone: floor.followUpOwed && floor.protected,
+    suggestedTrack: floor.protected,
+    suggestedCategory: (smart?.primary as SmartCategoryId) || 'review',
+    reason,
+    replyOwed: floor.replyOwed,
+    followUpOwed: floor.followUpOwed,
+    isNewSender: floor.isNewSender,
+    isPersonal: floor.isPersonal,
+    isImportant: floor.isImportant,
+    isPriorCorrespondent: floor.isPriorCorrespondent,
+    floorProtected: floor.protected,
+    lane,
+    surfacedBecause,
+    demotionReason,
     generatedAt: now,
-    model: 'local',
+    model,
   };
 }
+
+// ---- Stage 3: demote-don't-drop assembly -----------------------------------
 
 async function composeReport(input: {
   kind: DailyReport['kind'];
@@ -321,18 +731,12 @@ async function composeReport(input: {
   accounts: string[];
   insights: ThreadInsight[];
   tracked: Awaited<ReturnType<typeof listTrackedThreads>>;
+  lastDateByKey: Map<string, number>;
   calendarContext: string[];
   memoryContext: string[];
   errors: string[];
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
-  const reportable = input.insights.filter(
-    (item) =>
-      item.suggestedTrack ||
-      item.needsReply ||
-      item.waitingOnSomeone ||
-      item.commitments.some((c) => c.dueAt && c.dueAt >= input.now && c.dueAt < input.now + 14 * 86400_000),
-  );
   const toItem = (insight: ThreadInsight): DailyReportItem => {
     const tracked = trackedKeys.get(`${insight.account}:${insight.threadId}`);
     return {
@@ -341,58 +745,69 @@ async function composeReport(input: {
       subject: stripEmoji(insight.subject),
       people: insight.people,
       whyItMatters: stripEmoji(insight.reason || insight.summary),
-      nextAction: insight.needsReply
+      nextAction: insight.replyOwed
         ? 'Reply'
-        : insight.waitingOnSomeone
-          ? 'Wait / follow up'
+        : insight.followUpOwed
+          ? 'Follow up'
           : tracked?.nextAction,
-      dueAt: insight.commitments.find((item) => item.dueAt)?.dueAt || tracked?.dueAt || null,
+      // Bulk-tail items never carry a due date — automated notices are not
+      // time-boxed actions, and stale tracked records must not leak one in.
+      dueAt:
+        insight.lane === 'bulk'
+          ? null
+          : insight.commitments.find((c) => c.dueAt)?.dueAt || tracked?.dueAt || null,
       unread: false,
       trackedThreadId: tracked?._id,
+      surfacedBecause: insight.surfacedBecause,
+      demotionReason: insight.demotionReason ?? null,
+      isNewSender: insight.isNewSender,
+      lane: insight.lane,
+      receivedAt: input.lastDateByKey.get(`${insight.account}:${insight.threadId}`) || null,
     };
   };
 
-  const dueSoon = reportable
-    .filter((item) =>
-      item.commitments.some((c) => c.dueAt && c.dueAt >= input.now && c.dueAt < input.now + 7 * 86400_000),
+  const activeTrackedKeys = new Set(
+    input.tracked
+      .filter((item) => item.status !== 'resolved' && item.status !== 'dismissed')
+      .map((item) => `${item.account}:${item.threadId}`),
+  );
+
+  const byLane = (lane: ReportLane) =>
+    input.insights.filter((insight) => insight.lane === lane).map(toItem);
+
+  const replyOwed = byLane('reply_owed');
+  const followUpOwed = byLane('follow_up_owed');
+  const newPeople = byLane('new_people');
+  const timeSensitive = byLane('time_sensitive');
+  const fyi = byLane('fyi');
+  // Tracked threads are shown in their own section; never double-list them here.
+  const bulkTail = input.insights
+    .filter(
+      (insight) =>
+        insight.lane === 'bulk' && !activeTrackedKeys.has(`${insight.account}:${insight.threadId}`),
     )
-    .slice(0, 8)
     .map(toItem);
-  const needsReply = reportable
-    .filter((item) => item.needsReply)
-    .slice(0, 10)
-    .map(toItem);
-  const waiting = reportable
-    .filter((item) => item.waitingOnSomeone)
-    .slice(0, 8)
-    .map(toItem);
+
+  // Tracked section comes from the tracked-thread store (active only). Every
+  // lane:'tracked' insight is represented here because that lane is only set
+  // when an active tracked record exists.
   const trackedItems = input.tracked
     .filter((item) => item.status !== 'resolved' && item.status !== 'dismissed')
-    .filter((item) => {
-      const insight = input.insights.find(
-        (entry) => entry.account === item.account && entry.threadId === item.threadId,
-      );
-      if (!insight) return item.source !== 'report';
-      return insight.suggestedTrack || item.source !== 'report';
-    })
-    .slice(0, 10)
+    .slice(0, 12)
     .map((item) => ({
       account: item.account,
       threadId: item.threadId,
       subject: stripEmoji(item.subject),
       people: item.participants.map(stripEmoji),
-      whyItMatters: stripEmoji(item.reason),
+      whyItMatters: trackedReason(item, input.now),
       nextAction: item.nextAction ? stripEmoji(item.nextAction) : undefined,
       dueAt: item.dueAt,
       unread: false,
       trackedThreadId: item._id,
+      lane: 'tracked' as ReportLane,
     }));
-  const urgent = [...dueSoon, ...needsReply].slice(0, 6);
-  const notable = reportable
-    .filter((item) => !item.needsReply && !item.waitingOnSomeone && !item.commitments.length)
-    .slice(0, 6)
-    .map(toItem);
-  let narrative = localNarrative(input.kind, urgent, needsReply, waiting, trackedItems);
+
+  let narrative = localNarrative(input.kind, replyOwed, followUpOwed, newPeople, trackedItems);
   let model = 'local';
 
   if (hasAi()) {
@@ -400,16 +815,16 @@ async function composeReport(input: {
       const { text } = await generateText({
         model: primaryModel(),
         system:
-          'Write Jakob a compact Codex-style Daily Report from his email, calendar, memories, and tracked threads. Be concrete and investigative. Surface subtle unresolved commitments, offer/interview/call timing, and relationship context. Do not use emoji. Do not mention low-value promotions except as excluded noise. Return only prose, maximum 110 words, no greeting.',
+          'Write Jakob a compact Daily Report from his email, calendar, memories, and tracked threads. Be concrete and investigative. Lead with replies he owes and conversations awaiting his follow-up, then new people and time-sensitive items. Do not use emoji. Do not mention low-value promotions except as excluded noise. Return only prose, maximum 110 words, no greeting.',
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
           `Calendar context: ${input.calendarContext.join(' | ') || 'none'}`,
           `Memory context: ${input.memoryContext.join(' | ') || 'none'}`,
-          `Scanned insights: ${reportable.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.reason}; loops=${i.openLoops.join('; ')})`).join('\n')}`,
-          `Needs reply: ${needsReply.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
-          `Waiting: ${waiting.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
-          `Due soon: ${dueSoon.map((i) => `${i.people.join(', ')}: ${i.subject} due ${i.dueAt ? new Date(i.dueAt).toString() : ''}`).join('\n')}`,
+          `Reply owed: ${replyOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
+          `Follow-up owed: ${followUpOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
+          `New people: ${newPeople.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
+          `Time-sensitive: ${timeSensitive.map((i) => `${i.people.join(', ')}: ${i.subject} due ${i.dueAt ? new Date(i.dueAt).toString() : ''}`).join('\n')}`,
           `Tracked: ${trackedItems.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
         ].join('\n\n'),
       });
@@ -426,20 +841,23 @@ async function composeReport(input: {
     title: `${input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'} Daily Report`,
     narrative: stripEmoji(narrative),
     sections: {
-      urgent,
-      needsReply,
-      waiting,
-      dueSoon,
+      replyOwed,
+      followUpOwed,
+      newPeople,
+      timeSensitive,
       tracked: trackedItems,
-      notable,
+      fyi,
+      bulkTail,
       noiseSummary:
-        'Subscribed, publication, platform, and promo mail stayed out of the report unless it looked actionable.',
+        'Bulk, subscribed, platform, and promo mail is collapsed into the tail below. Real people are never hidden there.',
     },
     stats: {
       scannedThreads: input.insights.length,
       trackedThreads: trackedItems.length,
-      needsReply: needsReply.length,
-      dueSoon: dueSoon.length,
+      needsReply: replyOwed.length,
+      replyOwed: replyOwed.length,
+      dueSoon: timeSensitive.length,
+      bulkTailCount: bulkTail.length,
       unread: 0,
     },
     model,
@@ -449,23 +867,48 @@ async function composeReport(input: {
 
 function localNarrative(
   kind: DailyReport['kind'],
-  urgent: DailyReportItem[],
-  needsReply: DailyReportItem[],
-  waiting: DailyReportItem[],
+  replyOwed: DailyReportItem[],
+  followUpOwed: DailyReportItem[],
+  newPeople: DailyReportItem[],
   tracked: DailyReportItem[],
 ) {
-  const parts = [
-    `${kind === 'evening' ? 'This evening' : 'Today'}, your mail has ${urgent.length} urgent thread${urgent.length === 1 ? '' : 's'}, ${needsReply.length} conversation${needsReply.length === 1 ? '' : 's'} that may need a reply, and ${waiting.length} waiting loop${waiting.length === 1 ? '' : 's'}.`,
-  ];
-  if (tracked.length) {
-    parts.push(
-      `The tracked conversations remain the backbone: ${tracked
-        .slice(0, 3)
-        .map((item) => item.people[0] || item.subject)
-        .join(', ')}.`,
-    );
+  const opener =
+    kind === 'evening'
+      ? "Tonight's wrap-up:"
+      : kind === 'morning'
+        ? "This morning's brief:"
+        : "Here's where things stand:";
+
+  if (!replyOwed.length && !followUpOwed.length && !newPeople.length) {
+    return `${opener} a quiet inbox — nothing is waiting on you.`;
   }
-  if (urgent[0]) parts.push(`Start with ${urgent[0].subject}: ${urgent[0].whyItMatters}`);
+
+  const pieces: string[] = [];
+  if (replyOwed.length)
+    pieces.push(`${replyOwed.length} ${replyOwed.length === 1 ? 'reply is' : 'replies are'} owed`);
+  if (followUpOwed.length)
+    pieces.push(
+      `${followUpOwed.length} ${followUpOwed.length === 1 ? 'thread needs' : 'threads need'} a follow-up`,
+    );
+  if (newPeople.length)
+    pieces.push(`${newPeople.length} new ${newPeople.length === 1 ? 'person' : 'people'} reached out`);
+
+  const sentence =
+    pieces.length === 1 ? pieces[0] : `${pieces.slice(0, -1).join(', ')}, and ${pieces[pieces.length - 1]}`;
+  const parts = [`${opener} ${sentence}.`];
+
+  const lead = replyOwed[0] || followUpOwed[0] || newPeople[0];
+  if (lead) {
+    const who = personName(lead.people[0] || '') || subjectClause(lead.subject);
+    parts.push(`Start with ${who} — ${lead.whyItMatters}`);
+  }
+  if (tracked.length) {
+    const names = tracked
+      .slice(0, 3)
+      .map((item) => personName(item.people[0] || '') || subjectClause(item.subject))
+      .filter(Boolean);
+    if (names.length) parts.push(`Still tracking: ${names.join(', ')}.`);
+  }
   return parts.join('\n\n');
 }
 
@@ -519,12 +962,131 @@ function extractPeople(thread: Thread, messages: Message[]) {
   for (const value of values) {
     for (const part of String(value || '').split(',')) {
       const email = emailFromHeader(part);
-      if (email && /jjalangtry|jakob@lab86/i.test(email)) continue;
+      if (email && SELF.has(email)) continue;
       const label = shortFrom(part);
       if (label) names.add(label);
     }
   }
   return [...names].slice(0, 5);
+}
+
+// ---- Local (no-AI) briefing copy -------------------------------------------
+// When the AI analyst isn't available (or a thread is below the enrichment
+// cap), these pure helpers compose a real briefing line from concrete signals
+// so the report still reads like a human wrote it. All deterministic.
+
+function personName(raw: string): string {
+  const clean = stripEmoji(shortFrom(raw || '')).trim();
+  if (!clean) return '';
+  if (clean.includes('@') && !/\s/.test(clean)) {
+    const local = clean
+      .split('@')[0]
+      .replace(/[._-]+/g, ' ')
+      .trim();
+    return local ? local.replace(/\b\w/g, (c) => c.toUpperCase()) : clean;
+  }
+  return clean;
+}
+
+function subjectClause(subject: string): string {
+  return stripEmoji(String(subject || ''))
+    .replace(/^(re|fwd|fw):\s*/i, '')
+    .trim()
+    .slice(0, 80)
+    .replace(/[\s,;:.-]+$/, '');
+}
+
+function relativeDue(dueAt: number, now: number): string {
+  const date = new Date(dueAt);
+  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(date) - startOfDay(new Date(now))) / 86400_000);
+  if (diffDays <= 0) return `today at ${time}`;
+  if (diffDays === 1) return `tomorrow at ${time}`;
+  if (diffDays < 7)
+    return `${new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(date)} at ${time}`;
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+}
+
+function localReason(input: {
+  people: string[];
+  subject: string;
+  commitments: ThreadInsight['commitments'];
+  needsReply: boolean;
+  waitingOnSomeone: boolean;
+  smart: SmartCategory | null;
+  now: number;
+}): string {
+  const who = personName(input.people[0] || '');
+  const about = subjectClause(input.subject);
+  const due = input.commitments.find((c) => c.dueAt && (c.dueAt as number) >= input.now);
+
+  let line: string;
+  if (input.needsReply) {
+    if (who && about) line = `${who} is waiting on a reply about ${about}.`;
+    else if (who) line = `${who} is waiting on a reply.`;
+    else if (about) line = `A reply is needed about ${about}.`;
+    else line = 'This thread is waiting on a reply.';
+  } else if (input.waitingOnSomeone) {
+    if (who && about) line = `You replied to ${who} about ${about} — no response yet.`;
+    else if (who) line = `You replied to ${who} — no response yet.`;
+    else if (about) line = `Awaiting a response about ${about}.`;
+    else line = 'Awaiting a response — consider a nudge.';
+  } else if (due?.dueAt) {
+    const when = relativeDue(due.dueAt, input.now);
+    if (who) line = `${who}: due ${when}${about ? ` — ${about}` : ''}.`;
+    else line = `Due ${when}${about ? ` — ${about}` : ''}.`;
+  } else {
+    switch (input.smart?.primary) {
+      case 'finance_admin':
+        line = about
+          ? `Admin or finance item worth a check: ${about}.`
+          : 'Admin or finance item worth a quick check.';
+        break;
+      case 'orders':
+        line = about ? `Order or shipping update: ${about}.` : 'Order or shipping update to confirm.';
+        break;
+      case 'codes':
+        line = 'Verification or access code.';
+        break;
+      case 'review':
+        line = about ? `Flagged for a closer look: ${about}.` : 'Flagged for a closer look.';
+        break;
+      default:
+        if (who) line = `Active conversation with ${who}${about ? ` about ${about}` : ''}.`;
+        else if (about) line = `Active thread: ${about}.`;
+        else line = 'Active conversation worth tracking.';
+    }
+  }
+  return stripEmoji(line).slice(0, 280);
+}
+
+// Generic reasons we'd rather replace with a composed line for tracked items.
+const GENERIC_REASON =
+  /^(unread|read)\b|direct conversation from a person|recent or tracked thread|^important thread/i;
+
+function trackedReason(item: TrackedThread, now: number): string {
+  const reason = stripEmoji(item.reason || '');
+  if (reason && !GENERIC_REASON.test(reason)) return reason.slice(0, 280);
+  const who = personName(item.participants[0] || '');
+  const about = subjectClause(item.subject);
+  if (item.dueAt && item.dueAt >= now) {
+    const when = relativeDue(item.dueAt, now);
+    return stripEmoji(`${who ? `${who}: ` : ''}due ${when}${about ? ` — ${about}` : ''}.`).slice(0, 280);
+  }
+  if (item.nextAction) {
+    return stripEmoji(`Next: ${item.nextAction}${who ? ` (with ${who})` : ''}.`).slice(0, 280);
+  }
+  if (item.status === 'waiting') {
+    return stripEmoji(
+      who
+        ? `Waiting on ${who}${about ? ` about ${about}` : ''}.`
+        : `Waiting on a reply${about ? ` about ${about}` : ''}.`,
+    ).slice(0, 280);
+  }
+  return stripEmoji(
+    who ? `Tracking ${who}${about ? ` — ${about}` : ''}.` : `Tracking: ${about || 'open thread'}.`,
+  ).slice(0, 280);
 }
 
 function extractCommitments(text: string, now: number) {
@@ -544,22 +1106,6 @@ function extractCommitments(text: string, now: number) {
     });
   }
   return commitments;
-}
-
-function isLowValueNoise(thread: Thread, smart: Thread['smartCategory'], text: string) {
-  const h = `${thread.fromAddress} ${thread.subject} ${thread.snippet} ${text}`.toLowerCase();
-  const hardPromo =
-    /\b(unsubscribe|promotion|promotional|rewards?|member monday|shop now|sale|deal|deals|newsletter|digest|photo story|tailored to your taste|fundraiser worth celebrating|host a july fundraiser|give more|restaurant fundraiser|retail|coupon|offer expires|panera|mypanera|dunkin|etsy|grad images|rocket money)\b/i.test(
-      h,
-    );
-  if (hardPromo) return true;
-  if (smart?.isHumanLike || smart?.primary === 'main' || smart?.primary === 'needs_reply') return false;
-  return Boolean(
-    smart?.primary === 'noise' ||
-      /\b(unsubscribe|promotion|promotional|rewards?|shop now|sale|newsletter|digest|etsy|panera|dunkin|grad images|rocket money)\b/i.test(
-        h,
-      ),
-  );
 }
 
 function inferDueAt(text: string, now: number) {

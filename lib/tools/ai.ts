@@ -4,7 +4,7 @@ import { fastModel, hasAi, primaryModel } from '../ai/client';
 import { normalizeGogMessage } from '../gog/normalize';
 import { runGogJson } from '../gog/pool';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
-import type { SmartCategoryId } from '../shared/types';
+import type { SmartCategory, SmartCategoryId, SmartLabelDefinition, SmartRule } from '../shared/types';
 import { recallSender } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
@@ -297,6 +297,94 @@ export const bulkTriage = defineTool({
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
 const SuggestedActionSchema = z.enum(['reply', 'read', 'archive', 'label', 'snooze', 'wait', 'none']);
 
+export interface ClassifyInputThread {
+  id: string;
+  account?: string;
+  from?: string;
+  fromAddress?: string;
+  subject?: string;
+  snippet?: string;
+  labels?: string[];
+  unread?: boolean;
+  date?: string | number;
+}
+
+const CLASSIFY_SYSTEM =
+  'You classify email threads for Jakob. Output only JSON lines. Categories: main, needs_reply, waiting, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. A Gmail CATEGORY_PERSONAL or IMPORTANT label means a real person — never classify those as noise. CATEGORY_PROMOTIONS, CATEGORY_UPDATES, and CATEGORY_SOCIAL are automated. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise.';
+
+const CLASSIFY_INSTRUCTIONS = [
+  'For each input line, return exactly one JSON object:',
+  '{"id":"...","primary":"main|needs_reply|waiting|codes|orders|finance_admin|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
+  'No prose. One JSON object per line.',
+].join('\n');
+
+function classifyLine(thread: ClassifyInputThread, idx: number) {
+  return `${idx + 1}. id=${thread.id} from=${thread.fromAddress || thread.from || ''} unread=${thread.unread ? 'yes' : 'no'} labels=${(thread.labels || []).join(',')} subject=${(thread.subject || '').slice(0, 120)} snippet=${(thread.snippet || '').slice(0, 240)}`;
+}
+
+/**
+ * Local-first batched smart classification. Every thread is classified
+ * deterministically; only the ones the deterministic pass is unsure about
+ * (review or confidence < 0.68, or `force`) are sent to the fast model, in
+ * chunks of 40. Gmail CATEGORY_x and IMPORTANT labels flow through both the
+ * deterministic classifier and the model prompt. Shared by the
+ * `classify_threads` tool and the daily report's Tier-1 breadth pass.
+ */
+export async function classifyThreadsBatched(
+  threads: ClassifyInputThread[],
+  context: { rules: SmartRule[]; customLabels: SmartLabelDefinition[]; force?: boolean },
+): Promise<Array<{ id: string; model: string } & SmartCategory>> {
+  if (!threads.length) return [];
+  const { rules, customLabels, force } = context;
+  const local = threads.map((thread) => ({
+    thread,
+    verdict: classifyThreadWithContext(
+      {
+        _id: thread.id,
+        account: thread.account || '',
+        fromAddress: thread.fromAddress || thread.from || '',
+        subject: thread.subject || '',
+        snippet: thread.snippet || '',
+        labels: thread.labels || [],
+        unread: thread.unread ?? false,
+        lastDate: Number(thread.date || 0),
+      },
+      { rules, customLabels },
+    ),
+  }));
+
+  const uncertain = local.filter(
+    ({ verdict }) => force || verdict.primary === 'review' || verdict.confidence < 0.68,
+  );
+  const aiById = new Map<string, SmartCategory>();
+  if (hasAi() && uncertain.length) {
+    for (let i = 0; i < uncertain.length; i += 40) {
+      const chunk = uncertain.slice(i, i + 40);
+      try {
+        const { text } = await generateText({
+          model: fastModel(),
+          system: CLASSIFY_SYSTEM,
+          prompt: [CLASSIFY_INSTRUCTIONS, '', chunk.map(({ thread }, idx) => classifyLine(thread, idx)).join('\n')].join('\n'),
+        });
+        for (const line of text.split('\n')) {
+          const match = line.match(/\{[\s\S]*\}/);
+          if (!match) continue;
+          try {
+            const parsed = JSON.parse(match[0]);
+            if (parsed?.id) aiById.set(String(parsed.id), normalizeAiVerdict(parsed) as SmartCategory);
+          } catch {}
+        }
+      } catch {}
+    }
+  }
+
+  return local.map(({ thread, verdict }) => {
+    const ai = aiById.get(thread.id);
+    const merged = (ai || verdict) as SmartCategory;
+    return { id: thread.id, ...merged, model: ai ? 'fast' : verdict.model || 'deterministic' };
+  });
+}
+
 export const classifyThreads = defineTool({
   name: 'classify_threads',
   description:
@@ -347,75 +435,9 @@ export const classifyThreads = defineTool({
   async handler({ threads, force }) {
     if (!threads.length) return { verdicts: [], model: 'none' };
     const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
-
-    const local = threads.map((thread) => ({
-      thread,
-      verdict: classifyThreadWithContext(
-        {
-          _id: thread.id,
-          account: thread.account || '',
-          fromAddress: thread.fromAddress || thread.from || '',
-          subject: thread.subject || '',
-          snippet: thread.snippet || '',
-          labels: thread.labels || [],
-          unread: thread.unread ?? false,
-          lastDate: Number(thread.date || 0),
-        },
-        { rules, customLabels },
-      ),
-    }));
-
-    const uncertain = local.filter(
-      ({ verdict }) => force || verdict.primary === 'review' || verdict.confidence < 0.68,
-    );
-    if (!hasAi() || !uncertain.length) {
-      return {
-        verdicts: local.map(({ thread, verdict }) => ({
-          id: thread.id,
-          ...verdict,
-          model: verdict.model || 'local',
-        })),
-        model: hasAi() ? 'deterministic' : 'local',
-      };
-    }
-
-    const lines = uncertain
-      .map(
-        ({ thread }, i) =>
-          `${i + 1}. id=${thread.id} from=${thread.fromAddress || thread.from || ''} unread=${thread.unread ? 'yes' : 'no'} labels=${(thread.labels || []).join(',')} subject=${(thread.subject || '').slice(0, 120)} snippet=${(thread.snippet || '').slice(0, 240)}`,
-      )
-      .join('\n');
-    const { text } = await generateText({
-      model: fastModel(),
-      system:
-        'You classify email threads for Jakob. Output only JSON lines. Categories: main, needs_reply, waiting, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise.',
-      prompt: [
-        'For each input line, return exactly one JSON object:',
-        '{"id":"...","primary":"main|needs_reply|waiting|codes|orders|finance_admin|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
-        'No prose. One JSON object per line.',
-        '',
-        lines,
-      ].join('\n'),
-    });
-
-    const aiById = new Map<string, any>();
-    for (const line of text.split('\n')) {
-      const match = line.match(/\{[\s\S]*\}/);
-      if (!match) continue;
-      try {
-        const parsed = JSON.parse(match[0]);
-        if (parsed?.id) aiById.set(String(parsed.id), normalizeAiVerdict(parsed));
-      } catch {}
-    }
-
-    return {
-      verdicts: local.map(({ thread, verdict }) => ({
-        id: thread.id,
-        ...(aiById.get(thread.id) || verdict),
-        model: aiById.has(thread.id) ? 'fast' : verdict.model || 'deterministic',
-      })),
-      model: 'fast',
-    };
+    const verdicts = await classifyThreadsBatched(threads, { rules, customLabels, force });
+    const usedAi = verdicts.some((v) => v.model === 'fast');
+    return { verdicts, model: usedAi ? 'fast' : hasAi() ? 'deterministic' : 'local' };
   },
 });
 

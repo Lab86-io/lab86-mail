@@ -52,7 +52,7 @@ export const browserbaseFetch = defineTool({
   input: z.object({ url: z.string().url() }),
   output: z.object({ content: z.string() }),
   async handler({ url }) {
-    const out = await runCli(BROWSERBASE_FETCH, [url]).catch(() => '');
+    const out = await runCli(BROWSERBASE_FETCH, ['--redirects', url]).catch(() => '');
     try {
       const parsed = JSON.parse(out);
       return { content: parsed.content || parsed.markdown || parsed.text || '' };

@@ -1,10 +1,21 @@
-import type { Metadata, Viewport } from 'next';
-import { GeistSans } from 'geist/font/sans';
 import { GeistMono } from 'geist/font/mono';
+import { GeistSans } from 'geist/font/sans';
+import type { Metadata, Viewport } from 'next';
+import { Fraunces } from 'next/font/google';
 import { Toaster } from 'sonner';
-import { ThemeProvider } from '@/components/shell/ThemeProvider';
 import { QueryProvider } from '@/components/shell/QueryProvider';
+import { ThemeProvider } from '@/components/shell/ThemeProvider';
 import './globals.css';
+
+// Warm editorial display serif — used for the Daily Report masthead, datelines,
+// and section heads. Body text stays Geist; this is scoped to display/headings.
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  style: ['normal', 'italic'],
+  variable: '--font-fraunces',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'lab86-mail',
@@ -27,7 +38,11 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable}`}
+    >
       <body>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <QueryProvider>

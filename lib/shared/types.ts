@@ -142,6 +142,17 @@ export type SmartCategoryId =
   | 'noise'
   | 'review';
 
+// Daily-report lanes, ordered by descending priority for the lane clamp:
+// reply_owed > follow_up_owed > new_people > time_sensitive > tracked > fyi > bulk.
+export type ReportLane =
+  | 'reply_owed'
+  | 'follow_up_owed'
+  | 'new_people'
+  | 'time_sensitive'
+  | 'tracked'
+  | 'fyi'
+  | 'bulk';
+
 export interface SmartCategory {
   primary: SmartCategoryId;
   secondary: SmartCategoryId[];
@@ -249,6 +260,21 @@ export interface ThreadInsight {
   suggestedTrack: boolean;
   suggestedCategory: SmartCategoryId;
   reason: string;
+  // Deterministic safety-floor signals (Stage 1 of the report pipeline).
+  replyOwed: boolean;
+  followUpOwed: boolean;
+  isNewSender: boolean;
+  isPersonal: boolean;
+  isImportant: boolean;
+  isPriorCorrespondent: boolean;
+  // True when the floor guarantees this thread is never hidden in the bulk tail.
+  floorProtected: boolean;
+  // Final lane after the floor + (promote-only) LLM clamp.
+  lane: ReportLane;
+  // Human-readable provenance pills, e.g. ['reply_owed', 'category_personal'].
+  surfacedBecause: string[];
+  // Why a non-protected thread was demoted into the bulk tail (null when shown).
+  demotionReason?: string | null;
   generatedAt: number;
   model?: string;
 }
@@ -263,6 +289,12 @@ export interface DailyReportItem {
   dueAt?: number | null;
   unread: boolean;
   trackedThreadId?: string;
+  surfacedBecause?: string[];
+  demotionReason?: string | null;
+  isNewSender?: boolean;
+  lane?: ReportLane;
+  // Timestamp of the newest message — drives the "received N days ago" framing.
+  receivedAt?: number | null;
 }
 
 export interface DailyReport {
@@ -273,19 +305,22 @@ export interface DailyReport {
   title: string;
   narrative: string;
   sections: {
-    urgent: DailyReportItem[];
-    needsReply: DailyReportItem[];
-    waiting: DailyReportItem[];
-    dueSoon: DailyReportItem[];
+    replyOwed: DailyReportItem[];
+    followUpOwed: DailyReportItem[];
+    newPeople: DailyReportItem[];
+    timeSensitive: DailyReportItem[];
     tracked: DailyReportItem[];
-    notable: DailyReportItem[];
+    fyi: DailyReportItem[];
+    bulkTail: DailyReportItem[];
     noiseSummary?: string;
   };
   stats: {
     scannedThreads: number;
     trackedThreads: number;
     needsReply: number;
+    replyOwed: number;
     dueSoon: number;
+    bulkTailCount: number;
     unread: number;
   };
   model?: string;

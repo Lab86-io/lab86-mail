@@ -299,3 +299,44 @@ export const applySmartCorrection = defineTool({
     return { ok: true, rule, label: label || undefined };
   },
 });
+
+export const markSenderHuman = defineTool({
+  name: 'mark_sender_human',
+  description:
+    'Teach the classifier that a sender is a real person: always route their mail to Main. Reuses the smart-rule store; does not mutate Gmail. Used by the daily report "This is a person" control so a missed human self-corrects next run.',
+  category: 'mail',
+  mutating: true,
+  input: z.object({ account: z.string(), threadId: z.string() }),
+  output: z.object({ ok: z.boolean(), rule: z.any() }),
+  async handler({ account, threadId }) {
+    const thread = await getThread(account, threadId);
+    if (!thread) throw new Error('Thread not found in local cache');
+    const email = threadEmail(thread);
+    if (!email) throw new Error('No sender email to mark as human');
+    const previousCategory = thread.smartCategory?.primary;
+    const rule = await createSmartRuleRecord({
+      name: 'mark sender human',
+      scope: 'sender',
+      match: email,
+      effect: 'always_category',
+      category: 'main',
+      reason: 'Marked as a real person from the daily report',
+      source: 'quick_fix',
+    });
+    const [rules, labels] = await Promise.all([listSmartRuleRecords(), listSmartLabelRecords()]);
+    const smartCategory = classifyThreadWithContext(thread, { rules, customLabels: labels });
+    await setThreadSmartCategory(account, threadId, smartCategory).catch(() => undefined);
+    await writeSmartCorrection({
+      account,
+      threadId,
+      fromEmail: email,
+      fromDomain: threadDomain(thread),
+      subject: thread.subject,
+      previousCategory,
+      newCategory: smartCategory.primary,
+      ruleId: rule._id,
+      action: 'move_to',
+    });
+    return { ok: true, rule };
+  },
+});

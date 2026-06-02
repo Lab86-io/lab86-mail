@@ -157,6 +157,16 @@ export function isHumanLike(thread: Partial<Thread> & { from?: string; fromAddre
   const h = haystack(thread);
   if (!email) return false;
   if (isNoReplyLike(from)) return false;
+  // Gmail's own Primary-tab "personal" signal beats the keyword heuristics: a
+  // real person whose subject happens to contain "offer"/"sale"/"contract"
+  // (e.g. a recruiter or a signed job offer) is still a person. Only hard list
+  // mail and blocklisted/platform senders are excluded.
+  const personalCat = (thread.labels || []).includes('CATEGORY_PERSONAL');
+  const hardList =
+    /\b(list-id|mailing list|bulk)\b/i.test(h) ||
+    HUMAN_BLOCKLIST.some((token) => lower.includes(token)) ||
+    /\b(linkedin|etsy|wsj|dowjones|nytimes|substack)\b/i.test(domain);
+  if (personalCat && !hardList) return true;
   if (isBulkLike(thread)) return false;
   if (HUMAN_BLOCKLIST.some((token) => lower.includes(token))) return false;
   if (/\b(linkedin|etsy|wsj|dowjones|nytimes|substack)\b/i.test(domain)) return false;
@@ -172,10 +182,16 @@ function verdict(
 ): SmartCategory {
   const h = haystack(thread);
   const from = String(thread.fromAddress || (thread as any).from || '');
+  const labels = thread.labels || [];
   const noReply = isNoReplyLike(from);
   const urgentAutomation = isCodeLike(h) || isUrgentAdminLike(h) || isUrgentOrderLike(h);
   const human = options.isHumanLike ?? isHumanLike(thread);
-  const automated = options.isAutomated ?? (noReply || !human || isBulkLike(thread));
+  // Gmail's Updates/Promotions tabs are reliable automation signals, so a
+  // demotion reason like "automated" stays accurate even when the sender
+  // address looks human (e.g. billing@ rent notices).
+  const isUpdatesOrPromoCat = labels.includes('CATEGORY_UPDATES') || labels.includes('CATEGORY_PROMOTIONS');
+  const automated =
+    options.isAutomated ?? (noReply || !human || isBulkLike(thread) || isUpdatesOrPromoCat);
   const needsAttention =
     options.needsAttention ??
     Boolean(thread.unread && (human || primary === 'codes' || primary === 'review'));
@@ -304,6 +320,8 @@ export function classifyThreadWithContext(
   const customLabels = context.customLabels || [];
   const h = haystack(thread);
   const labels = thread.labels || [];
+  const isPersonalCat = labels.includes('CATEGORY_PERSONAL');
+  const isImportantCat = labels.includes('IMPORTANT');
   const triage = thread.triage;
   const noReply = isNoReplyLike(thread.fromAddress || (thread as any).from);
   const human = isHumanLike(thread);
@@ -354,6 +372,33 @@ export function classifyThreadWithContext(
     );
   }
 
+  // Gmail's own classification is more reliable than keyword heuristics for
+  // real people. If Gmail filed this in the personal category (or flagged it
+  // important) and it comes from a human, surface it in Main *before* any
+  // downstream keyword-noise branch can bury it — a person who writes "offer"
+  // or "opportunity" must never be dumped into Noise.
+  if ((isPersonalCat || isImportantCat) && human && !blockingRule) {
+    return applyCustomLabels(
+      verdict(
+        thread,
+        'main',
+        isPersonalCat
+          ? 'Personal-category mail from a person.'
+          : 'Gmail flagged this as important and it is from a person.',
+        {
+          secondary: ['needs_reply'],
+          confidence: 0.82,
+          needsAttention: true,
+          suggestedAction: 'reply',
+          signals: [isPersonalCat ? 'category_personal' : 'gmail_important', 'human'],
+        },
+      ),
+      thread,
+      customLabels,
+      rules,
+    );
+  }
+
   if (isLinkedInNoise(h)) {
     return applyCustomLabels(
       verdict(thread, 'noise', 'LinkedIn is treated as platform noise by default.', {
@@ -368,7 +413,7 @@ export function classifyThreadWithContext(
     );
   }
 
-  if (isPublisherOrRewardsNoise(h)) {
+  if (isPublisherOrRewardsNoise(h) && !human) {
     return applyCustomLabels(
       verdict(thread, 'noise', 'Publisher, newsletter, or rewards program mail defaults to Noise.', {
         confidence: 0.93,
@@ -382,7 +427,7 @@ export function classifyThreadWithContext(
     );
   }
 
-  if (isMarketplacePromoNoise(h)) {
+  if (isMarketplacePromoNoise(h) && !human) {
     return applyCustomLabels(
       verdict(thread, 'noise', 'Marketplace promotional mail defaults to Noise.', {
         confidence: 0.91,
@@ -463,7 +508,7 @@ export function classifyThreadWithContext(
     );
   }
 
-  if (isBulkLike(thread)) {
+  if (isBulkLike(thread) && !human) {
     return applyCustomLabels(
       verdict(thread, 'noise', 'Bulk, subscribed, list, or marketing mail defaults to Noise.', {
         confidence: 0.86,
@@ -516,8 +561,8 @@ export function classifyThreadWithContext(
     return applyCustomLabels(
       verdict(thread, 'main', 'Read direct conversation from a person.', {
         secondary: ['needs_reply'],
-        confidence: 0.72,
-        needsAttention: false,
+        confidence: 0.8,
+        needsAttention: true,
         suggestedAction: 'reply',
         signals: ['direct_person', 'human_read'],
       }),
