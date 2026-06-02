@@ -389,6 +389,16 @@ function coerceList(raw: any): any[] {
 
 function smartCandidateQuery(category: string) {
   switch (category) {
+    case 'main':
+    case 'needs_reply':
+    case 'waiting':
+      // Human conversations live in Gmail's Primary tab (plus anything Gmail
+      // flagged Important). Querying the whole inbox lets the high-volume
+      // Promotions / Updates / Social tabs saturate the result cap and crowd
+      // out real people — a job offer sitting 2nd in Primary would never make
+      // the first 80 inbox rows. Scope to primary-or-important so read and
+      // unread human mail both surface regardless of promo volume.
+      return 'in:inbox newer_than:60d (category:primary OR is:important) -in:trash -in:spam';
     case 'codes':
       return 'newer_than:30d (code OR verification OR login OR security OR "magic link") -in:trash -in:spam';
     case 'orders':
