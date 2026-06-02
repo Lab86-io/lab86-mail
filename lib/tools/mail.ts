@@ -396,9 +396,10 @@ function smartCandidateQuery(category: string) {
       // flagged Important). Querying the whole inbox lets the high-volume
       // Promotions / Updates / Social tabs saturate the result cap and crowd
       // out real people — a job offer sitting 2nd in Primary would never make
-      // the first 80 inbox rows. Scope to primary-or-important so read and
-      // unread human mail both surface regardless of promo volume.
-      return 'in:inbox newer_than:60d (category:primary OR is:important) -in:trash -in:spam';
+      // the first 80 inbox rows. Scope to primary-or-important, and do NOT
+      // time-box it: a year-old human thread still owed a reply matters more
+      // than today's promotions. Newest-first + pagination keeps it bounded.
+      return 'in:inbox (category:primary OR is:important) -in:trash -in:spam';
     case 'codes':
       return 'newer_than:30d (code OR verification OR login OR security OR "magic link") -in:trash -in:spam';
     case 'orders':

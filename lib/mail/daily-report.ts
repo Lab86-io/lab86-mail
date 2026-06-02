@@ -43,23 +43,25 @@ const SELF = new Set(['jjalangtry@gmail.com', 'jakob@lab86.io', 'jjl4287@g.rit.e
 
 // Candidate gathering, category-aware and keyword-free. We trust Gmail's own
 // Primary/Important categorization to find human mail rather than guessing at
-// job-specific keywords. Both verified misses (a Corning opening and a
-// StatPearls offer) are CATEGORY_PERSONAL, so `category:primary` and
-// `is:important` surface them regardless of promo volume.
-const RECENT_QUERIES: Array<{ q: string; max: number }> = [
-  { q: 'in:inbox category:primary newer_than:60d', max: 80 },
-  { q: 'is:important newer_than:90d -in:trash -in:spam', max: 80 },
+// job-specific keywords. The human-leaning passes are intentionally NOT
+// time-boxed: a year-old human thread still owed a reply matters more than
+// today's promotions, and these `human` passes are protected from truncation
+// when the candidate list is bounded. Breadth passes stay recent — we only
+// need fresh automated mail to populate the bulk tail.
+const RECENT_QUERIES: Array<{ q: string; max: number; human?: boolean }> = [
+  { q: 'in:inbox (category:primary OR is:important) -in:trash -in:spam', max: 200, human: true },
+  { q: 'is:starred -in:trash -in:spam', max: 100, human: true },
+  { q: 'in:inbox is:unread (category:primary OR is:important) -in:trash -in:spam', max: 100, human: true },
   { q: 'in:inbox newer_than:30d -category:promotions -category:social -category:forums', max: 80 },
-  { q: 'is:unread newer_than:120d -category:promotions -in:trash -in:spam', max: 80 },
-  { q: 'is:starred newer_than:365d -in:trash -in:spam', max: 80 },
   { q: 'in:inbox newer_than:14d', max: 40 },
 ];
 
 // Outbound pass — surfaces threads where Jakob sent last (for follow-up-owed)
-// and seeds the "prior correspondent" allowlist.
-const SENT_QUERY = { q: 'in:sent newer_than:180d -in:trash -in:spam', max: 200 };
+// and seeds the "prior correspondent" allowlist. Not time-boxed either, so an
+// old thread Jakob is still waiting on is not silently dropped.
+const SENT_QUERY = { q: 'in:sent -in:trash -in:spam', max: 200 };
 
-const CANDIDATE_LIMIT = 240;
+const CANDIDATE_LIMIT = 320;
 const TIME_SENSITIVE_WINDOW = 14 * 86400_000;
 
 // Lane priority for the clamp: the floor decides a minimum lane and the LLM may
@@ -106,12 +108,17 @@ export async function generateDailyReport(input: {
   // ---- Candidate gathering -------------------------------------------------
   const candidates = new Map<string, Thread>();
   const sentAllowlist = new Set<string>();
+  // Human-leaning candidates (and tracked ones) are never dropped when the
+  // list is bounded, so old unanswered humans outrank fresh automated mail.
+  const humanKeys = new Set<string>();
   for (const account of accounts) {
-    for (const { q, max } of RECENT_QUERIES) {
+    for (const { q, max, human } of RECENT_QUERIES) {
       try {
         const cap = Math.min(max, input.maxRecentPerAccount ?? max);
         for (const thread of await searchAccountThreads(account, q, cap)) {
-          candidates.set(`${thread.account}:${thread._id}`, thread);
+          const key = `${thread.account}:${thread._id}`;
+          candidates.set(key, thread);
+          if (human) humanKeys.add(key);
         }
       } catch (err: any) {
         errors.push(`${account}: ${err?.message || 'search failed'}`);
@@ -132,7 +139,11 @@ export async function generateDailyReport(input: {
     if (item.status === 'resolved' || item.status === 'dismissed') continue;
     if (accounts.length && !accounts.includes(item.account)) continue;
     const existing = await getThread(item.account, item.threadId);
-    if (existing) candidates.set(`${existing.account}:${existing._id}`, existing);
+    if (existing) {
+      const key = `${existing.account}:${existing._id}`;
+      candidates.set(key, existing);
+      humanKeys.add(key);
+    }
   }
 
   const [calendarContext, memoryContext] = await Promise.all([
@@ -140,8 +151,16 @@ export async function generateDailyReport(input: {
     loadMemoryContext(),
   ]);
 
-  const sorted = [...candidates.values()].sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
-  const bounded = dedupeCandidates(sorted, trackedByKey).slice(0, CANDIDATE_LIMIT);
+  const byDateDesc = (a: Thread, b: Thread) => Number(b.lastDate || 0) - Number(a.lastDate || 0);
+  const all = [...candidates.values()];
+  // Human/tracked candidates first (newest-first within the group), then the
+  // rest. Slicing to CANDIDATE_LIMIT therefore truncates automated mail, never
+  // a real person — regardless of how old the human thread is.
+  const prioritized = [
+    ...all.filter((t) => humanKeys.has(`${t.account}:${t._id}`)).sort(byDateDesc),
+    ...all.filter((t) => !humanKeys.has(`${t.account}:${t._id}`)).sort(byDateDesc),
+  ];
+  const bounded = dedupeCandidates(prioritized, trackedByKey).slice(0, CANDIDATE_LIMIT);
 
   // ---- Load messages + harvest prior correspondents ------------------------
   const messagesByKey = new Map<string, Message[]>();
