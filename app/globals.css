@@ -231,7 +231,26 @@
   html,
   body {
     height: 100%;
-    overscroll-behavior-y: auto;
+    overscroll-behavior-y: none;
+    scroll-behavior: smooth;
+  }
+
+  /* GPU acceleration for scrollable areas */
+  .scrollable {
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    will-change: scroll-position;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
+    contain: layout style paint;
+  }
+
+  /* Fast scrolling with content visibility */
+  .scrollable-content {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 500px;
   }
 
   body {

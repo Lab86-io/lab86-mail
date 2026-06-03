@@ -8,6 +8,7 @@ import { DailyReport } from '@/components/report/DailyReport';
 import { ThreadView } from '@/components/thread/ThreadView';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 import { AIBarSidebar, AIBarTrigger } from './AIBar';
@@ -27,6 +28,7 @@ export function AppShell() {
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const primaryView = useClientStore((s) => s.primaryView);
   const composeMode = useClientStore((s) => s.compose.mode);
+  const isMobile = useIsMobile();
 
   const readerVisible = !!(selectedThreadId || composeMode);
   const permutation = `i${readerVisible ? 't' : ''}${aiBarOpen ? 'a' : ''}`;
@@ -34,9 +36,61 @@ export function AppShell() {
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: `lab86-mail-shell-v2:${permutation}`,
     panelIds,
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    storage: typeof window !== 'undefined' && !isMobile ? window.localStorage : undefined,
   });
 
+  // Mobile: full-screen single-panel view with slide transitions
+  if (isMobile) {
+    return (
+      <TooltipProvider delayDuration={0}>
+        <SidebarProvider
+          open={railOpen}
+          onOpenChange={setRailOpen}
+          style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
+          className="h-dvh overflow-hidden bg-[var(--color-bg)]"
+        >
+          <Rail />
+          <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
+            {/* Mobile view: only show one panel at a time */}
+            <div className="relative h-full w-full overflow-hidden">
+              {/* Inbox/Daily Report - always rendered but may be hidden */}
+              <div
+                className={cn(
+                  'absolute inset-0 h-full w-full transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                  readerVisible ? '-translate-x-full' : 'translate-x-0'
+                )}
+              >
+                {primaryView === 'daily_report' ? <DailyReport /> : <Inbox />}
+              </div>
+
+              {/* Thread View - slides in when selected */}
+              {readerVisible && (
+                <div className="absolute inset-0 h-full w-full translate-x-full animate-in slide-in-from-right-full duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
+                  <ThreadView />
+                </div>
+              )}
+
+              {/* AI Sidebar - slides in when open */}
+              {aiBarOpen && (
+                <div className="absolute inset-0 z-20 h-full w-full translate-x-full animate-in slide-in-from-right-full duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
+                  <div className="h-full w-full overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-bg)]">
+                    <AIBarSidebar />
+                  </div>
+                </div>
+              )}
+            </div>
+            <AIBarTrigger />
+          </main>
+        </SidebarProvider>
+
+        <CommandPalette />
+        <ShortcutsSheet />
+        <ShortcutsBinding />
+      </TooltipProvider>
+    );
+  }
+
+  // Desktop: resizable panels
   return (
     <TooltipProvider delayDuration={350}>
       <SidebarProvider

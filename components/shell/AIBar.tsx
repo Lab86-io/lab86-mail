@@ -282,6 +282,8 @@ export function AIBarSidebar() {
               body: args.body,
             });
           } else if (name === 'ui_open_reply') {
+            if (args.account) setThreadAccount(args.account);
+            if (args.threadId) setSelectedThread(args.threadId);
             setPendingReplyBody(args.body || '');
           } else if (name === 'ui_toast') {
             const kind = args.kind || 'info';
@@ -415,7 +417,7 @@ export function AIBarSidebar() {
       </header>
 
       {messages.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-5 overflow-y-auto px-5 py-8 text-center">
+        <div className="scrollable flex flex-1 flex-col items-center justify-center gap-5 px-5 py-8 text-center">
           <div className="space-y-1.5">
             <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
             <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">

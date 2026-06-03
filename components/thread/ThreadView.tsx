@@ -241,7 +241,7 @@ export function ThreadView() {
             <X className="h-3.5 w-3.5" />
           </button>
         </header>
-        <div className="flex-1 overflow-y-auto px-5 py-6">
+        <div className="scrollable flex-1 px-5 py-6">
           <InlineComposer
             mode="new"
             account={fromAccount}
@@ -371,7 +371,7 @@ export function ThreadView() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="scrollable flex-1 px-5 py-4">
         <SummaryCard
           data={summary.data?.summary || cachedSummary}
           model={summary.data?.model || (cachedSummary ? 'cached' : '')}

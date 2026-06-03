@@ -181,15 +181,15 @@ export function Rail() {
   return (
     <Sidebar collapsible="icon" className="bg-[var(--rail-bg)]">
       <SidebarHeader className="gap-3">
-        {/* Title bar: the title only shows when expanded; the trigger stays put
-            and centers itself when collapsed so it doubles as the expand button. */}
+        {/* Title bar: the title only shows when expanded; the trigger centers
+            itself when collapsed so it doubles as the expand button. */}
         <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <span className="max-w-40 whitespace-nowrap text-[15px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
           <SidebarTrigger
             title="Toggle navigation rail"
-            className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+            className="shrink-0 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
           />
         </div>
 

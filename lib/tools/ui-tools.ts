@@ -68,10 +68,12 @@ export const uiOpenCompose = defineTool({
 export const uiOpenReply = defineTool({
   name: 'ui_open_reply',
   description:
-    "Open an inline reply composer on the user's currently-focused thread, optionally pre-populated. The user reviews and clicks Send themselves.",
+    "Open an inline reply composer on the user's currently-focused thread, optionally pre-populated. If you just found a thread, include threadId and account so the UI can focus it and open the reply in one action. The user reviews and clicks Send themselves.",
   category: 'meta',
   mutating: false,
   input: z.object({
+    threadId: z.string().optional(),
+    account: z.string().optional(),
     body: z.string().optional(),
   }),
   output: ack,

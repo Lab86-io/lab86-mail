@@ -1,6 +1,6 @@
 import { generateText } from 'ai';
 import { z } from 'zod';
-import { fastModel, hasAi, primaryModel } from '../ai/client';
+import { fastModel, hasAi } from '../ai/client';
 import { normalizeGogMessage } from '../gog/normalize';
 import { runGogJson } from '../gog/pool';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
@@ -209,11 +209,11 @@ export const draftReply = defineTool({
       .filter(Boolean)
       .join('\n');
     const { text } = await generateText({
-      model: primaryModel(),
+      model: fastModel(),
       system: "You are lab86-mail drafting on Jakob's behalf. Never claim the message was sent.",
       prompt,
     });
-    return { draft: text.trim(), model: 'primary' };
+    return { draft: text.trim(), model: 'fast' };
   },
 });
 
