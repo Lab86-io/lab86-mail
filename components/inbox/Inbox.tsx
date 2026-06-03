@@ -30,6 +30,7 @@ import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -507,11 +508,13 @@ export function Inbox() {
               </InputGroupAddon>
             ) : null}
           </InputGroup>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="icon"
             onClick={refreshInbox}
             className={cn(
-              'grid h-9 w-9 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]',
+              'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
               isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
             )}
             title="Refresh"
@@ -521,7 +524,7 @@ export function Inbox() {
             ) : (
               <RefreshCw className="h-3.5 w-3.5" />
             )}
-          </button>
+          </Button>
         </div>
         <div className="flex min-h-6 flex-wrap items-center gap-1.5">
           {smartCategory ? (

@@ -197,15 +197,17 @@ export function AIBarTrigger() {
   if (aiBarOpen) return null;
 
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
+      size="icon-sm"
       onClick={() => setAiBarOpen(true)}
-      className="absolute right-3 top-3 z-30 grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+      className="absolute right-3 top-3 z-30 text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
       title="Open agent sidebar (⌘K)"
     >
       <PanelRightOpen className="h-3.5 w-3.5" />
       <span className="sr-only">Open agent sidebar</span>
-    </button>
+    </Button>
   );
 }
 

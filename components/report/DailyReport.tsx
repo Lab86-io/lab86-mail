@@ -5,6 +5,7 @@ import { Ban, CheckCircle2, ChevronDown, ChevronRight, Inbox, Newspaper, Refresh
 import { useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
+import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -193,27 +194,29 @@ export function DailyReport() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => setPrimaryView('mail')}
               aria-label="Open inbox"
               title="Inbox"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
             >
               <Inbox className="size-3.5" />
               <span className="hidden @[360px]:inline">Inbox</span>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              size="sm"
               disabled={generate.isPending}
               onClick={() => generate.mutate()}
               aria-label="Generate a fresh report"
               title="Generate"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[var(--color-accent)] px-2.5 text-[12px] text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
             >
               {generate.isPending ? <Ring className="size-3" /> : <RefreshCw className="size-3" />}
               <span className="hidden @[360px]:inline">Generate</span>
-            </button>
+            </Button>
           </div>
         </div>
         {generate.isPending ? (

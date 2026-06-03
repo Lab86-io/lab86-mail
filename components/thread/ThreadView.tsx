@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
@@ -289,36 +290,42 @@ export function ThreadView() {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => startReply('reply')}
             disabled={!replyAnchor}
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11.5px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] disabled:opacity-50"
+            className="gap-1 hover:bg-[var(--color-bg-subtle)]"
             title="Reply (r)"
           >
             <Reply className="h-3.5 w-3.5" />
             Reply
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => startReply('reply_all')}
             disabled={!replyAnchor}
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11.5px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] disabled:opacity-50"
+            className="gap-1 hover:bg-[var(--color-bg-subtle)]"
             title="Reply all"
           >
             <Reply className="h-3.5 w-3.5" />
             Reply all
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => startReply('forward')}
             disabled={!replyAnchor}
-            className="flex h-7 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)] disabled:opacity-50"
+            className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
             title="Forward"
           >
             <Forward className="h-3.5 w-3.5" />
             Forward
-          </button>
+          </Button>
           <span className="mx-1 h-5 w-px bg-[var(--color-border)]" aria-hidden />
           <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
             <Archive className="h-3.5 w-3.5" />
@@ -326,15 +333,17 @@ export function ThreadView() {
           <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
             <Trash2 className="h-3.5 w-3.5" />
           </IconBtn>
-          <a
-            href={gmailUrlFor(account, threadId)}
-            target="_blank"
-            rel="noreferrer"
-            className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)]"
+          <Button
+            asChild
+            variant="outline"
+            size="icon-sm"
             title="Open in Gmail"
+            className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
+            <a href={gmailUrlFor(account, threadId)} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </Button>
           <IconBtn title="Close" onClick={() => setSelectedThread(null)}>
             <X className="h-3.5 w-3.5" />
           </IconBtn>
@@ -762,13 +771,15 @@ function IconBtn({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
+      size="icon-sm"
       onClick={onClick}
       title={title}
-      className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+      className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
     >
       {children}
-    </button>
+    </Button>
   );
 }
