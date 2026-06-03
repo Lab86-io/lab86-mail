@@ -6,8 +6,9 @@ import { NextResponse } from 'next/server';
 import { buildReplyArgs, buildSendArgs } from '@/lib/compose/gog-args';
 import { runGogJson } from '@/lib/gog/pool';
 import { sanitizeFilename } from '@/lib/shared/files';
+import { emailFromHeader } from '@/lib/shared/format';
 import { writeAudit } from '@/lib/store/audit';
-import { getMessage as getMessageRecord } from '@/lib/store/messages';
+import { getMessage as getMessageRecord, getThreadMessages } from '@/lib/store/messages';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -64,16 +65,19 @@ export async function POST(req: NextRequest) {
 
     let args: string[];
     if (mode === 'reply' || mode === 'reply_all') {
-      if (!messageId) {
+      if (!messageId && !threadId) {
         return NextResponse.json(
-          { ok: false, error: 'messageId is required for reply/reply_all' },
+          { ok: false, error: 'messageId or threadId is required for reply/reply_all' },
           { status: 400 },
         );
       }
+      const replyTarget = mode === 'reply' ? await resolveReplyTarget(account, messageId, threadId) : null;
       args = buildReplyArgs({
         account,
         messageId,
         threadId,
+        to: replyTarget?.to,
+        subject: replyTarget?.subject,
         body,
         html,
         from,
@@ -255,7 +259,9 @@ async function resolveSentMessage({
             id: String(item.threadId || item.thread_id || item.id || item.messageId || item.message_id || ''),
             messageId: String(item.messageId || item.message_id || item.id || ''),
             subject: String(item.subject || item.Subject || ''),
-            date: Number(item.internalDate || item.internal_date || Date.parse(item.date || item.Date || '') || 0),
+            date: Number(
+              item.internalDate || item.internal_date || Date.parse(item.date || item.Date || '') || 0,
+            ),
           }))
           .filter((item) => item.id)
           .sort((a, b) => b.date - a.date);
@@ -268,6 +274,27 @@ async function resolveSentMessage({
   }
 
   return { account, threadId: threadId || messageId || null, messageId: messageId || null };
+}
+
+async function resolveReplyTarget(account: string, messageId?: string, threadId?: string) {
+  const anchor =
+    (messageId ? await getMessageRecord(account, messageId).catch(() => null) : null) ||
+    (threadId
+      ? (await getThreadMessages(account, threadId).catch(() => [])).sort(
+          (a, b) => Number(b.date || 0) - Number(a.date || 0),
+        )[0]
+      : null);
+  if (!anchor) {
+    throw new Error(
+      'Cannot reply — original message is not in the local cache. Reopen the thread and try again.',
+    );
+  }
+  const to = emailFromHeader(anchor.from) || anchor.from;
+  if (!to) throw new Error('Cannot reply — original sender is missing.');
+  return {
+    to,
+    subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
+  };
 }
 
 function extractIds(raw: any): { threadId?: string; messageId?: string } {
@@ -298,7 +325,13 @@ function gmailTerm(s: string): string {
 
 function firstEmail(value: string): string {
   const match = String(value || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return match?.[0] || String(value || '').split(',')[0]?.trim() || '';
+  return (
+    match?.[0] ||
+    String(value || '')
+      .split(',')[0]
+      ?.trim() ||
+    ''
+  );
 }
 
 function normalizeSubject(value: string): string {

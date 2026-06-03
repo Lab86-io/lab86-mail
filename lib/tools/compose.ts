@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { buildReplyArgs, buildSendArgs } from '../compose/gog-args';
 import { runGogJson } from '../gog/pool';
+import { emailFromHeader } from '../shared/format';
 import type { Draft } from '../shared/types';
 import {
   deleteDraft as deleteDraftRecord,
@@ -8,7 +9,7 @@ import {
   listDrafts,
   saveDraft as saveDraftRecord,
 } from '../store/drafts';
-import { getMessage as getMessageRecord } from '../store/messages';
+import { getMessage as getMessageRecord, getThreadMessages } from '../store/messages';
 import { defineTool } from './registry';
 
 const SendBase = z.object({
@@ -24,6 +25,25 @@ const SendBase = z.object({
 
 async function gmailSend(args: string[]): Promise<any> {
   return await runGogJson<any>(args, { timeoutMs: 90_000 });
+}
+
+async function resolveReplyTarget(account: string, messageId?: string, threadId?: string) {
+  const anchor =
+    (messageId ? await getMessageRecord(account, messageId).catch(() => null) : null) ||
+    (threadId
+      ? (await getThreadMessages(account, threadId).catch(() => [])).sort(
+          (a, b) => Number(b.date || 0) - Number(a.date || 0),
+        )[0]
+      : null);
+  if (!anchor) {
+    throw new Error('Cannot reply — original message is not in the local cache. Open the thread first.');
+  }
+  const to = emailFromHeader(anchor.from) || anchor.from;
+  if (!to) throw new Error('Cannot reply — original sender is missing.');
+  return {
+    to,
+    subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
+  };
 }
 
 export const sendMessage = defineTool({
@@ -54,7 +74,19 @@ export const replyMessage = defineTool({
   }),
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId, threadId, body, html, from }) {
-    await gmailSend(buildReplyArgs({ account, messageId, threadId, body, html, from }));
+    const target = await resolveReplyTarget(account, messageId, threadId);
+    await gmailSend(
+      buildReplyArgs({
+        account,
+        messageId,
+        threadId,
+        to: target.to,
+        subject: target.subject,
+        body,
+        html,
+        from,
+      }),
+    );
     return { ok: true };
   },
 });

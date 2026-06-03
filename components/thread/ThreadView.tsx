@@ -10,7 +10,9 @@ import {
   Forward,
   Mail,
   Reply,
+  Search,
   Trash2,
+  UserRound,
   X,
 } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
@@ -21,6 +23,7 @@ import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -40,6 +43,7 @@ export function ThreadView() {
   const account = threadAccount || inboxAccount;
   const threadId = useClientStore((s) => s.selectedThreadId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const setQuery = useClientStore((s) => s.setQuery);
   const compose = useClientStore((s) => s.compose);
   const openComposeReply = useClientStore((s) => s.openComposeReply);
   const closeCompose = useClientStore((s) => s.closeCompose);
@@ -411,6 +415,10 @@ export function ThreadView() {
                   defaultOpen={i === 0}
                   account={account}
                   photoUrl={email ? (photos[email] ?? null) : null}
+                  onShowContactEmails={(contactEmail) => {
+                    setQuery(`(from:${contactEmail} OR to:${contactEmail}) -in:trash -in:spam`);
+                    setSelectedThread(null);
+                  }}
                 />
               );
             })}
@@ -465,9 +473,17 @@ function SummaryCard({
       ) : error ? (
         <div className="text-[12px] text-[var(--color-danger)]">Couldn't summarize: {error}</div>
       ) : data ? (
-        <MessageResponse className="text-[12.5px] leading-relaxed text-[var(--color-text)] [&_p]:my-0 [&_ul]:mt-1 [&_ul]:mb-0 [&_ul]:pl-4 [&_li]:my-0.5 [&_li]:marker:text-[var(--color-text-faint)]">
-          {data}
-        </MessageResponse>
+        <motion.div
+          layout="size"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+          className="reflow-text"
+        >
+          <MessageResponse className="text-[12.5px] leading-relaxed text-[var(--color-text)] [&_p]:my-0 [&_ul]:mt-1 [&_ul]:mb-0 [&_ul]:pl-4 [&_li]:my-0.5 [&_li]:marker:text-[var(--color-text-faint)]">
+            {data}
+          </MessageResponse>
+        </motion.div>
       ) : (
         <div className="text-[12px] text-[var(--color-text-muted)]">No summary yet.</div>
       )}
@@ -480,49 +496,58 @@ function MessageCard({
   defaultOpen,
   account,
   photoUrl,
+  onShowContactEmails,
 }: {
   message: any;
   defaultOpen: boolean;
   account: string;
   photoUrl?: string | null;
+  onShowContactEmails: (email: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const sender = contactFromHeader(message.from);
+  const recipient = contactFromHeader(message.to || message.account);
   return (
-    <motion.article
-      layout
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 px-3 py-2 text-left"
-      >
-        <Avatar name={shortFrom(message.from)} src={photoUrl} size={26} />
+    <article className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+      <div className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 px-3 py-2 text-left">
+        <ContactButton contact={sender} avatarSrc={photoUrl} onShowEmails={onShowContactEmails}>
+          <Avatar name={sender.name} src={photoUrl} size={26} />
+        </ContactButton>
         <div className="flex min-w-0 flex-col gap-0">
-          <div className="flex items-center gap-2 truncate">
-            <span className="truncate text-[13px] font-semibold text-[var(--color-text)]">
-              {shortFrom(message.from)}
-            </span>
-            <span className="truncate text-[11.5px] text-[var(--color-text-muted)]">
-              → {shortFrom(message.to || message.account)}
-            </span>
+          <div className="flex min-w-0 items-center gap-2">
+            <ContactButton contact={sender} avatarSrc={photoUrl} onShowEmails={onShowContactEmails}>
+              <span className="block truncate text-[13px] font-semibold text-[var(--color-text)]">
+                {sender.name}
+              </span>
+            </ContactButton>
+            <span className="shrink-0 text-[11.5px] text-[var(--color-text-faint)]">→</span>
+            <ContactButton contact={recipient} onShowEmails={onShowContactEmails}>
+              <span className="block truncate text-[11.5px] text-[var(--color-text-muted)]">
+                {recipient.name}
+              </span>
+            </ContactButton>
           </div>
           {!open ? (
-            <span className="line-clamp-1 text-[11.5px] text-[var(--color-text-muted)]">
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              className="line-clamp-1 text-left text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >
               {message.snippet}
-            </span>
+            </button>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-[var(--color-text-faint)]">{formatDate(message.date)}</span>
-          {open ? (
-            <ChevronDown className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />
-          )}
-        </div>
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          aria-expanded={open}
+          title={open ? 'Hide details' : 'Show details'}
+        >
+          <span className="text-[11px]">{formatDate(message.date)}</span>
+          {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </button>
+      </div>
 
       <AnimatePresence initial={false}>
         {open ? (
@@ -530,17 +555,94 @@ function MessageCard({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ height: { duration: 0.22, ease: [0.16, 1, 0.3, 1] }, opacity: { duration: 0.14 } }}
             className="overflow-hidden border-t border-[var(--color-border)]"
           >
-            <div className="px-4 py-3">
+            <motion.div
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              className="px-4 py-3"
+            >
               <MessageBody html={message.htmlBody} text={message.textBody} />
               <Attachments attachments={message.attachments} messageId={message._id} account={account} />
-            </div>
+            </motion.div>
           </motion.div>
         ) : null}
       </AnimatePresence>
-    </motion.article>
+    </article>
+  );
+}
+
+type ContactInfo = {
+  name: string;
+  email: string | null;
+  raw: string;
+};
+
+function contactFromHeader(value: string | null | undefined): ContactInfo {
+  const raw = String(value || '').trim();
+  const email = emailFromHeader(raw);
+  const name = shortFrom(raw || email || 'Unknown');
+  return { name, email, raw };
+}
+
+function ContactButton({
+  contact,
+  avatarSrc,
+  children,
+  onShowEmails,
+}: {
+  contact: ContactInfo;
+  avatarSrc?: string | null;
+  children: React.ReactNode;
+  onShowEmails: (email: string) => void;
+}) {
+  if (!contact.email) return <span className="min-w-0 truncate">{children}</span>;
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="min-w-0 rounded-sm text-left outline-none hover:text-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+          title={contact.email}
+        >
+          {children}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={8}
+        className="w-72 border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0 text-[var(--color-text)] shadow-[var(--shadow-pop)]"
+      >
+        <div className="flex gap-3 border-b border-[var(--color-border)] p-3">
+          <Avatar name={contact.name} src={avatarSrc} size={36} />
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold">{contact.name}</div>
+            <div className="truncate text-[11.5px] text-[var(--color-text-muted)]">{contact.email}</div>
+          </div>
+        </div>
+        <div className="grid gap-1 p-2">
+          <button
+            type="button"
+            onClick={() => onShowEmails(contact.email!)}
+            className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)]"
+          >
+            <Search className="size-3.5 text-[var(--color-text-muted)]" />
+            Show emails with them
+          </button>
+          <a
+            href={`mailto:${contact.email}`}
+            className="flex h-8 items-center gap-2 rounded-md px-2 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          >
+            <UserRound className="size-3.5" />
+            New email
+          </a>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -552,7 +654,7 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
   if (safe) {
     return (
       <div
-        className="email-body break-words text-[13.5px] text-[var(--color-text)]"
+        className="email-body reflow-text break-words text-[13.5px] text-[var(--color-text)]"
         dangerouslySetInnerHTML={{ __html: safe }}
       />
     );
@@ -566,13 +668,17 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
 function PlainTextBody({ text }: { text: string }) {
   const paragraphs = String(text || '').split(/\r?\n\s*\r?\n/);
   return (
-    <div className="email-body break-words text-[13.5px] text-[var(--color-text)]">
+    <motion.div
+      layout="size"
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className="email-body reflow-text break-words text-[13.5px] text-[var(--color-text)]"
+    >
       {paragraphs.map((paragraph, index) => (
         <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap">
           {paragraph}
         </p>
       ))}
-    </div>
+    </motion.div>
   );
 }
 

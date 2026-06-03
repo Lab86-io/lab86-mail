@@ -1,12 +1,13 @@
 'use client';
 
-import { type CSSProperties, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { DailyReport } from '@/components/report/DailyReport';
 import { ThreadView } from '@/components/thread/ThreadView';
-import { SidebarProvider } from '@/components/ui/sidebar';
+import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
@@ -26,9 +27,12 @@ export function AppShell() {
   const railWidth = useClientStore((s) => s.railWidth);
   const setRailOpen = useClientStore((s) => s.setRailOpen);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const primaryView = useClientStore((s) => s.primaryView);
   const composeMode = useClientStore((s) => s.compose.mode);
   const isMobile = useIsMobile();
+  const [panelResizing, setPanelResizing] = useState(false);
+  const mobileHistoryThreadRef = useRef<string | null>(null);
 
   const readerVisible = !!(selectedThreadId || composeMode);
   const permutation = `i${readerVisible ? 't' : ''}${aiBarOpen ? 'a' : ''}`;
@@ -38,6 +42,30 @@ export function AppShell() {
     panelIds,
     storage: typeof window !== 'undefined' && !isMobile ? window.localStorage : undefined,
   });
+
+  useEffect(() => {
+    if (!isMobile || !selectedThreadId || mobileHistoryThreadRef.current === selectedThreadId) return;
+    window.history.pushState(
+      {
+        ...(window.history.state || {}),
+        lab86MailMobileThread: selectedThreadId,
+      },
+      '',
+    );
+    mobileHistoryThreadRef.current = selectedThreadId;
+  }, [isMobile, selectedThreadId]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const onPopState = () => {
+      if (mobileHistoryThreadRef.current) {
+        mobileHistoryThreadRef.current = null;
+        setSelectedThread(null);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [isMobile, setSelectedThread]);
 
   // Mobile: full-screen single-panel view with slide transitions
   if (isMobile) {
@@ -51,33 +79,53 @@ export function AppShell() {
         >
           <Rail />
           <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Mobile view: only show one panel at a time */}
+            <SidebarTrigger
+              title="Show sidebar"
+              className="absolute left-3 top-3 z-30 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            />
+
+            {/* Mobile view: inbox stays mounted underneath so back returns instantly. */}
             <div className="relative h-full w-full overflow-hidden">
-              {/* Inbox/Daily Report - always rendered but may be hidden */}
-              <div
-                className={cn(
-                  'absolute inset-0 h-full w-full transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
-                  readerVisible ? '-translate-x-full' : 'translate-x-0'
-                )}
+              <motion.div
+                animate={{ x: readerVisible ? '-22%' : '0%', opacity: readerVisible ? 0.72 : 1 }}
+                transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+                className="absolute inset-0 h-full w-full"
+                aria-hidden={readerVisible}
               >
                 {primaryView === 'daily_report' ? <DailyReport /> : <Inbox />}
-              </div>
+              </motion.div>
 
-              {/* Thread View - slides in when selected */}
-              {readerVisible && (
-                <div className="absolute inset-0 h-full w-full translate-x-full animate-in slide-in-from-right-full duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
-                  <ThreadView />
-                </div>
-              )}
+              <AnimatePresence initial={false}>
+                {readerVisible ? (
+                  <motion.div
+                    key="reader"
+                    initial={{ x: '100%' }}
+                    animate={{ x: 0 }}
+                    exit={{ x: '100%' }}
+                    transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                    className="absolute inset-0 z-20 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
+                  >
+                    <ThreadView />
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
 
-              {/* AI Sidebar - slides in when open */}
-              {aiBarOpen && (
-                <div className="absolute inset-0 z-20 h-full w-full translate-x-full animate-in slide-in-from-right-full duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
-                  <div className="h-full w-full overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-bg)]">
-                    <AIBarSidebar />
-                  </div>
-                </div>
-              )}
+              <AnimatePresence initial={false}>
+                {aiBarOpen ? (
+                  <motion.div
+                    key="ai"
+                    initial={{ x: '100%' }}
+                    animate={{ x: 0 }}
+                    exit={{ x: '100%' }}
+                    transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                    className="absolute inset-0 z-40 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
+                  >
+                    <div className="h-full w-full overflow-hidden border-l border-[var(--color-border)]">
+                      <AIBarSidebar />
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
             <AIBarTrigger />
           </main>
@@ -111,25 +159,28 @@ export function AppShell() {
               orientation="horizontal"
               defaultLayout={defaultLayout}
               onLayoutChanged={onLayoutChanged}
+              data-panel-resizing={panelResizing || undefined}
               className="h-full w-full"
             >
               <Panel id="inbox" defaultSize="40%" minSize="280px">
-                {primaryView === 'daily_report' ? <DailyReport /> : <Inbox />}
+                <ReflowPanel>{primaryView === 'daily_report' ? <DailyReport /> : <Inbox />}</ReflowPanel>
               </Panel>
 
-              {readerVisible ? <ResizeSeparator /> : null}
+              {readerVisible ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
               {readerVisible ? (
                 <Panel id="reader" defaultSize="40%" minSize="360px">
-                  <ThreadView />
+                  <ReflowPanel>
+                    <ThreadView />
+                  </ReflowPanel>
                 </Panel>
               ) : null}
 
-              {aiBarOpen ? <ResizeSeparator /> : null}
+              {aiBarOpen ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
               {aiBarOpen ? (
                 <Panel id="ai" defaultSize="360px" minSize="280px" maxSize="640px">
-                  <div className="h-full overflow-hidden border-l border-[var(--color-border)]">
+                  <ReflowPanel className="border-l border-[var(--color-border)]">
                     <AIBarSidebar />
-                  </div>
+                  </ReflowPanel>
                 </Panel>
               ) : null}
             </Group>
@@ -142,6 +193,18 @@ export function AppShell() {
       <ShortcutsSheet />
       <ShortcutsBinding />
     </TooltipProvider>
+  );
+}
+
+function ReflowPanel({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <motion.div
+      layout="size"
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className={cn('panel-reflow-surface h-full min-w-0 overflow-hidden', className)}
+    >
+      {children}
+    </motion.div>
   );
 }
 
@@ -207,11 +270,23 @@ function RailResizeHandle() {
   );
 }
 
-function ResizeSeparator() {
+function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizing: boolean) => void }) {
   // 6px wide hit target with a 1px visible rule down the middle; brightens on
   // hover/drag so it's clearly grabbable.
   return (
-    <Separator className="group relative w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] outline-none">
+    <Separator
+      onPointerDown={() => {
+        const endResize = () => {
+          window.removeEventListener('pointerup', endResize);
+          window.removeEventListener('blur', endResize);
+          onResizeStateChange(false);
+        };
+        onResizeStateChange(true);
+        window.addEventListener('pointerup', endResize);
+        window.addEventListener('blur', endResize);
+      }}
+      className="group relative w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] outline-none"
+    >
       <span
         className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--color-border)] transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
         aria-hidden

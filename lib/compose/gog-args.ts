@@ -19,8 +19,9 @@ export interface SendFields extends BaseFields {
 }
 
 export interface ReplyFields extends BaseFields {
-  messageId: string;
+  messageId?: string;
   threadId?: string;
+  to?: string;
   replyAll?: boolean;
 }
 
@@ -41,18 +42,15 @@ export function buildSendArgs(fields: SendFields): string[] {
 }
 
 export function buildReplyArgs(fields: ReplyFields): string[] {
-  const args = [
-    '--account',
-    fields.account,
-    '--json',
-    'gmail',
-    'send',
-    '--reply-to-message-id',
-    fields.messageId,
-    '--no-input',
-  ];
+  if (!fields.messageId && !fields.threadId) {
+    throw new Error('messageId or threadId is required for reply');
+  }
+  const args = ['--account', fields.account, '--json', 'gmail', 'send', '--no-input'];
+  if (fields.messageId) args.push('--reply-to-message-id', fields.messageId);
+  else if (fields.threadId) args.push('--thread-id', fields.threadId);
   if (fields.replyAll) args.push('--reply-all');
-  if (fields.threadId) args.push('--thread-id', fields.threadId);
+  else if (fields.to) args.push('--to', fields.to);
+  else throw new Error('to is required for reply unless replyAll is true');
   pushCommon(args, fields);
   return args;
 }

@@ -62,70 +62,68 @@
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-serif: var(--font-fraunces), ui-serif, Georgia, 'Times New Roman', serif;
 
-  /* warm "paper" neutral palette — the Daily Report's beloved off-white, now the
-     whole-app surface. Base is a faint amber-tinted cream; elevated is a warm
-     near-white that sits a step lighter for cards/inputs; subtle/muted step
-     warmer-and-darker for fills and hovers. */
-  --color-bg: #f5eee2;
-  --color-bg-elevated: #fdfbf6;
-  --color-bg-subtle: #efe7d9;
-  --color-bg-muted: #e7dcc9;
-  --color-border: #e4dac9;
-  --color-border-strong: #d6c9b3;
-  --color-text: #1c1917;
-  --color-text-muted: #57534e;
-  --color-text-faint: #a8a29e;
+  /* fresh light-mode palette: cool canvas, white working surfaces, and a deep
+     forest green primary accent shared with dark mode. */
+  --color-bg: #f6f8fb;
+  --color-bg-elevated: #ffffff;
+  --color-bg-subtle: #f0f4f8;
+  --color-bg-muted: #e5ebf3;
+  --color-border: #dce4ee;
+  --color-border-strong: #c6d2df;
+  --color-text: #17202a;
+  --color-text-muted: #5d6b7a;
+  --color-text-faint: #98a6b5;
 
-  /* accent - natural green */
-  --color-accent: #2f7d55;
-  --color-accent-hover: #286b49;
-  --color-accent-soft: #e1efe6;
-  --color-accent-foreground: #fffdf8;
-  --color-accent-shine-1: #7ca982;
-  --color-accent-shine-2: #b9cf9f;
-  --color-accent-shine-3: #2f7d55;
-  --color-hover-soft: #f1eee8;
-  --color-selected: #44403c;
-  --color-selected-soft: #ebe7df;
+  /* accent - deep forest green */
+  --color-accent: #0f5132;
+  --color-accent-hover: #0b3f27;
+  --color-accent-soft: #e5f2eb;
+  --color-accent-foreground: #ffffff;
+  --color-accent-shine-1: #0f5132;
+  --color-accent-shine-2: #2f8a61;
+  --color-accent-shine-3: #0b3f27;
+  --color-hover-soft: #edf4f0;
+  --color-selected: #0f5132;
+  --color-selected-soft: #e5f2eb;
 
   /* status */
-  --color-success: #2f7d55;
+  --color-success: #159a74;
   --color-success-foreground: #ffffff;
-  --color-success-soft: #dcfce7;
-  --color-warning: #b45309;
+  --color-success-soft: #dff8ee;
+  --color-warning: #c27803;
   --color-warning-foreground: #ffffff;
-  --color-warning-soft: #ffedd5;
-  --color-danger: #b1483f;
+  --color-warning-soft: #fff2cc;
+  --color-danger: #d54848;
   --color-danger-foreground: #ffffff;
-  --color-danger-soft: #fee2e2;
-  --color-neutral-soft: #f5f5f4;
+  --color-danger-soft: #ffe4e6;
+  --color-neutral-soft: #f1f5f9;
 
   /* priority */
-  --color-prio-1: #b1483f;
-  --color-prio-2: #b45309;
-  --color-prio-3: #6b7280;
+  --color-prio-1: #d54848;
+  --color-prio-2: #c27803;
+  --color-prio-3: #64748b;
 
   /* effects and generated UI */
   --color-overlay: rgb(0 0 0 / 0.5);
   --color-transparent: transparent;
   --color-mask: #ffffff;
   --color-shimmer-transparent: #0000;
-  --color-border-beam-from: #7ca982;
-  --color-border-beam-to: #b9cf9f;
+  --color-border-beam-from: #0f5132;
+  --color-border-beam-to: #2f8a61;
   --color-magic-gradient-surface: #262626;
   --color-magic-gradient-from: #9e7aff;
   --color-magic-gradient-to: #fe8bbb;
   --color-magic-glow-from: #ee4f27;
   --color-magic-glow-to: #6b21ef;
-  --color-avatar-1: #2f7d55;
-  --color-avatar-2: #2f7d55;
-  --color-avatar-3: #b45309;
-  --color-avatar-4: #b1483f;
-  --color-avatar-5: #7c5dbf;
+  --color-avatar-1: #0f5132;
+  --color-avatar-2: #159a74;
+  --color-avatar-3: #c27803;
+  --color-avatar-4: #d54848;
+  --color-avatar-5: #7c3aed;
 
   /* shadow */
-  --shadow-soft: 0 1px 2px rgb(28 25 23 / 0.04), 0 4px 12px rgb(28 25 23 / 0.04);
-  --shadow-pop: 0 12px 32px rgb(28 25 23 / 0.10), 0 2px 6px rgb(28 25 23 / 0.04);
+  --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 24px rgb(15 23 42 / 0.06);
+  --shadow-pop: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);
 
   /* radii */
   --radius-xs: 4px;
@@ -191,8 +189,8 @@
     --color-text: #ededed;
     --color-text-muted: #9a9a9a;
     --color-text-faint: #5e5e5e;
-    /* Selected/active pop: soft green in dark (light keeps teal). */
-    --color-selected: #5fb98a;
+    /* Selected/active pop: lighter green for contrast on dark surfaces. */
+    --color-selected: #73a984;
     --color-selected-soft: #15291f;
     --rail-bg: #000000;
     --color-accent: #73a984;
@@ -291,9 +289,36 @@
     background: var(--color-bg-subtle);
     color: var(--color-text-muted);
   }
+
+  @media (max-width: 767px) {
+    input[class],
+    textarea[class],
+    select[class],
+    [contenteditable="true"][class] {
+      font-size: 16px;
+    }
+  }
 }
 
 @layer components {
+  .panel-reflow-surface {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+
+  .reflow-text,
+  .panel-reflow-surface :where(p, li, blockquote, h1, h2, h3, h4, h5, h6, .email-body) {
+    transition:
+      opacity 160ms ease,
+      transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  [data-panel-resizing="true"] .reflow-text,
+  [data-panel-resizing="true"] .panel-reflow-surface :where(p, li, blockquote, h1, h2, h3, h4, h5, h6, .email-body) {
+    opacity: 0.78;
+    transform: translateY(2px);
+  }
+
   .email-body {
     line-height: 1.55;
     overflow-x: auto;
@@ -510,17 +535,17 @@
   /* Warm paper surface — a sparse dot-grid texture over the (already warm) base
      background token. `.app-paper` is applied at the shell root so the whole app
      reads like the Daily Report's paper; `.report-paper` is an alias kept for the
-     report section. The amber tint now lives in `--color-bg` itself, so these
-     only add the texture (and flip automatically in dark mode). */
+     report section. In light mode this is now a very quiet cool-paper texture;
+     dark mode keeps the slightly stronger dotted grain. */
   .app-paper,
   .report-paper {
     background-color: var(--color-bg);
     background-image: radial-gradient(
       circle at 1px 1px,
-      color-mix(in srgb, var(--color-text) 4%, transparent) 1px,
+      color-mix(in srgb, var(--color-accent) 3%, transparent) 1px,
       transparent 0
     );
-    background-size: 22px 22px;
+    background-size: 24px 24px;
   }
   .dark .app-paper,
   .dark .report-paper {
@@ -533,16 +558,13 @@
 }
 
 :root {
-  /* shadcn sidebar tokens mapped onto the lab86 palette. These reference the
-     --color-* tokens, which already flip under .dark, so a single block keeps
-     the sidebar in step with the rest of the theme. */
-  /* Row hover/selected states are quiet greys close to the app surface. */
-  --color-hover-soft: #f1eee8;
-  --color-selected: #44403c;
-  --color-selected-soft: #ebe7df;
-  --rail-bg: var(--color-bg-subtle);
+  /* shadcn sidebar tokens mapped onto the lab86 palette. */
+  --color-hover-soft: #edf4f0;
+  --color-selected: #0f5132;
+  --color-selected-soft: #e5f2eb;
+  --rail-bg: #f9fbfe;
 
-  --sidebar: var(--color-bg-subtle);
+  --sidebar: #f9fbfe;
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
   --sidebar-primary-foreground: var(--color-accent-foreground);
@@ -554,6 +576,15 @@
 
 :root.dark {
   --color-hover-soft: #1a1a1a;
-  --color-selected: #ededed;
-  --color-selected-soft: #242424;
+  --color-selected: #73a984;
+  --color-selected-soft: #15291f;
+  --rail-bg: #000000;
+  --sidebar: #000000;
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: var(--color-accent-foreground);
+  --sidebar-accent: var(--color-bg-muted);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-accent);
 }

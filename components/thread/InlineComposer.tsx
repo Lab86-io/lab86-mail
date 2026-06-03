@@ -20,13 +20,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { Avatar } from '@/components/ui/avatar';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { callTool } from '@/lib/api-client';
 import { type ComposeMode, useClientStore } from '@/lib/client-state';
@@ -88,8 +82,6 @@ export function InlineComposer({
   framed = true,
 }: InlineComposerProps) {
   const isReply = mode === 'reply' || mode === 'reply_all';
-  const showRecipients = mode === 'new' || mode === 'forward';
-  const showSubject = mode === 'new' || mode === 'forward';
 
   const [to, setTo] = useState(initialPrefill?.to || '');
   const [cc, setCc] = useState(initialPrefill?.cc || '');
@@ -103,6 +95,9 @@ export function InlineComposer({
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [composerMode, setComposerMode] = useState<ComposeMode>(mode);
   const [fromAccount, setFromAccount] = useState<string>(account);
+  const composerNeedsRecipients = composerMode === 'new' || composerMode === 'forward';
+  const composerNeedsSubject = composerMode === 'new' || composerMode === 'forward';
+  const composerNeedsReplyAnchor = composerMode === 'reply' || composerMode === 'reply_all';
 
   useEffect(() => setComposerMode(mode), [mode]);
 
@@ -159,12 +154,23 @@ export function InlineComposer({
       const fd = new FormData();
       fd.set('mode', composerMode);
       fd.set('account', fromAccount || account);
-      if (showRecipients) {
+      if (composerNeedsReplyAnchor && !anchorMessageId && !threadId) {
+        throw new Error(
+          'Cannot send reply: original message/thread is missing. Reopen the thread and try again.',
+        );
+      }
+      if (composerNeedsRecipients && !to.trim()) {
+        throw new Error('Recipient is required.');
+      }
+      if (composerNeedsSubject && !subject.trim()) {
+        throw new Error('Subject is required.');
+      }
+      if (composerNeedsRecipients) {
         fd.set('to', to);
         if (cc) fd.set('cc', cc);
         if (bcc) fd.set('bcc', bcc);
       }
-      if (showSubject) fd.set('subject', subject);
+      if (composerNeedsSubject) fd.set('subject', subject);
       fd.set('body', body);
       // Convert markdown → HTML and sanitize before sending. The plaintext
       // body still goes alongside as the fallback.
@@ -274,10 +280,21 @@ export function InlineComposer({
   const canSend = useMemo(() => {
     if (phase !== 'draft') return false;
     if (!body.trim()) return false;
-    if (showRecipients && !to.trim()) return false;
-    if (showSubject && !subject.trim()) return false;
+    if (composerNeedsRecipients && !to.trim()) return false;
+    if (composerNeedsSubject && !subject.trim()) return false;
+    if (composerNeedsReplyAnchor && !anchorMessageId && !threadId) return false;
     return true;
-  }, [phase, body, showRecipients, showSubject, to, subject]);
+  }, [
+    phase,
+    body,
+    composerNeedsRecipients,
+    composerNeedsSubject,
+    composerNeedsReplyAnchor,
+    anchorMessageId,
+    threadId,
+    to,
+    subject,
+  ]);
 
   // ---------- visuals ----------
   const borderClass = useMemo(() => {
@@ -386,9 +403,9 @@ export function InlineComposer({
         </div>
       </header>
 
-      {(showRecipients || isReply) && (showRecipients || replyToLabel) ? (
+      {(composerNeedsRecipients || isReply) && (composerNeedsRecipients || replyToLabel) ? (
         <div className="border-b border-[var(--color-border)]">
-          {showRecipients ? (
+          {composerNeedsRecipients ? (
             <>
               <RecipientField
                 label="To"
@@ -422,7 +439,7 @@ export function InlineComposer({
               </div>
             </div>
           )}
-          {showSubject ? (
+          {composerNeedsSubject ? (
             <RecipientField label="Subject" value={subject} onChange={setSubject} placeholder="Subject" />
           ) : null}
         </div>
@@ -433,10 +450,10 @@ export function InlineComposer({
           <TextareaAutosize
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            minRows={mode === 'new' ? 10 : 4}
+            minRows={composerMode === 'new' ? 10 : 4}
             maxRows={28}
             placeholder={
-              mode === 'new'
+              composerMode === 'new'
                 ? 'Compose your message in markdown… **bold**, _italics_, [links](https://…), lists, code fences.'
                 : 'Reply in markdown… **bold**, _italics_, lists, code fences.'
             }

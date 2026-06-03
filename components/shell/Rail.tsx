@@ -44,6 +44,7 @@ import {
   SidebarMenuItem,
   SidebarMenuSkeleton,
   SidebarTrigger,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
@@ -124,8 +125,12 @@ export function Rail() {
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
+  const { isMobile, setOpenMobile } = useSidebar();
   const queryClient = useQueryClient();
   const [smartSettingsOpen, setSmartSettingsOpen] = useState(false);
+  const closeMobileSidebar = () => {
+    if (isMobile) setOpenMobile(false);
+  };
 
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
@@ -179,7 +184,18 @@ export function Rail() {
   }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 
   return (
-    <Sidebar collapsible="icon" className="bg-[var(--rail-bg)]">
+    <Sidebar
+      collapsible="icon"
+      className="bg-[var(--rail-bg)]"
+      onClickCapture={(event) => {
+        if (!isMobile) return;
+        const target = event.target as HTMLElement | null;
+        if (!target || target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        if (target.closest('button, a, [role="button"], [role="menuitem"]')) {
+          window.setTimeout(() => setOpenMobile(false), 0);
+        }
+      }}
+    >
       <SidebarHeader className="gap-3">
         {/* Title bar: the title only shows when expanded; the trigger centers
             itself when collapsed so it doubles as the expand button. */}
@@ -197,7 +213,10 @@ export function Rail() {
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip="Compose"
-              onClick={() => openComposeNew()}
+              onClick={() => {
+                openComposeNew();
+                closeMobileSidebar();
+              }}
               className="relative bg-[var(--color-accent)] font-medium text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-hover)] hover:text-[var(--color-accent-foreground)] focus-visible:ring-[var(--color-accent)]"
             >
               <ShineBorder
@@ -211,9 +230,7 @@ export function Rail() {
               />
               <Plus />
               <span>Compose</span>
-              <span className="ml-auto text-[10px] text-[var(--color-accent-foreground)]/75">
-                c
-              </span>
+              <span className="ml-auto text-[10px] text-[var(--color-accent-foreground)]/75">c</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -227,7 +244,10 @@ export function Rail() {
                 <SidebarMenuButton
                   isActive={primaryView === 'daily_report'}
                   tooltip="Daily Report"
-                  onClick={() => setPrimaryView('daily_report')}
+                  onClick={() => {
+                    setPrimaryView('daily_report');
+                    closeMobileSidebar();
+                  }}
                   className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                 >
                   {primaryView === 'daily_report' ? (
@@ -271,7 +291,10 @@ export function Rail() {
                       <SidebarMenuButton
                         isActive={primaryView === 'mail' && smartCategory === id}
                         tooltip={label}
-                        onClick={() => setSmartCategory(id)}
+                        onClick={() => {
+                          setSmartCategory(id);
+                          closeMobileSidebar();
+                        }}
                         className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                       >
                         {primaryView === 'mail' && smartCategory === id ? (
@@ -325,7 +348,10 @@ export function Rail() {
                             <SidebarMenuButton
                               isActive={primaryView === 'mail' && smartCategory === id}
                               tooltip={label.name}
-                              onClick={() => setSmartCategory(id)}
+                              onClick={() => {
+                                setSmartCategory(id);
+                                closeMobileSidebar();
+                              }}
                               className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                             >
                               {primaryView === 'mail' && smartCategory === id ? (
@@ -383,7 +409,10 @@ export function Rail() {
                   <SidebarMenuButton
                     isActive={primaryView === 'mail' && q === query}
                     tooltip={label}
-                    onClick={() => setQuery(q)}
+                    onClick={() => {
+                      setQuery(q);
+                      closeMobileSidebar();
+                    }}
                     className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                   >
                     <Icon />
@@ -401,7 +430,10 @@ export function Rail() {
           <ThemeSwitcher />
           <button
             type="button"
-            onClick={() => setShortcutsOpen(true)}
+            onClick={() => {
+              setShortcutsOpen(true);
+              closeMobileSidebar();
+            }}
             className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
             title="Keyboard shortcuts (?)"
           >

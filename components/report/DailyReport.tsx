@@ -1,12 +1,22 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, CheckCircle2, ChevronDown, ChevronRight, Inbox, Newspaper, RefreshCw, User } from 'lucide-react';
+import {
+  Ban,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Inbox,
+  Newspaper,
+  RefreshCw,
+  User,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
@@ -376,7 +386,8 @@ function ReportSection({
 } & RowHandlers) {
   if (!items.length) return null;
   const visibleItems = items.slice(0, limit);
-  const countLabel = visibleItems.length < items.length ? `${visibleItems.length}/${items.length}` : items.length;
+  const countLabel =
+    visibleItems.length < items.length ? `${visibleItems.length}/${items.length}` : items.length;
   return (
     <section className="blur-in" style={{ animationDelay: `${delay}ms` }}>
       <div className="mb-1.5 flex items-center gap-3">
@@ -505,47 +516,59 @@ function ReportRow({
             {formatDate(item.dueAt)}
           </time>
         ) : null}
-        <button
-          type="button"
-          aria-label="This is a real person — always Main"
-          title="This is a person"
-          onClick={(event) => {
-            event.stopPropagation();
-            onMarkPerson(item);
-          }}
-          className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-accent)] focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          {markingId === item.threadId ? <Ring className="size-3.5" /> : <User className="size-3.5" />}
-        </button>
-        <button
-          type="button"
-          aria-label="Not for me — stop surfacing this sender"
-          title="Not for me"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDismiss(item);
-          }}
-          className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-danger)] focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          {dismissingId === item.threadId ? <Ring className="size-3.5" /> : <Ban className="size-3.5" />}
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="This is a real person — always Main"
+              onClick={(event) => {
+                event.stopPropagation();
+                onMarkPerson(item);
+              }}
+              className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-accent)] focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              {markingId === item.threadId ? <Ring className="size-3.5" /> : <User className="size-3.5" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">This is a person</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Not for me — stop surfacing this sender"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDismiss(item);
+              }}
+              className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-danger)] focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              {dismissingId === item.threadId ? <Ring className="size-3.5" /> : <Ban className="size-3.5" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">Not for me</TooltipContent>
+        </Tooltip>
         {item.trackedThreadId ? (
-          <button
-            type="button"
-            aria-label="Resolve tracked thread"
-            title="Resolve"
-            onClick={(event) => {
-              event.stopPropagation();
-              onResolve(item.trackedThreadId as string);
-            }}
-            className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-success)] focus-visible:opacity-100 group-hover:opacity-100"
-          >
-            {resolvingId === item.trackedThreadId ? (
-              <Ring className="size-3.5" />
-            ) : (
-              <CheckCircle2 className="size-3.5" />
-            )}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Resolve tracked thread"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onResolve(item.trackedThreadId as string);
+                }}
+                className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-success)] focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                {resolvingId === item.trackedThreadId ? (
+                  <Ring className="size-3.5" />
+                ) : (
+                  <CheckCircle2 className="size-3.5" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Resolve</TooltipContent>
+          </Tooltip>
         ) : (
           <span className="grid size-7 place-items-center" aria-hidden>
             <ChevronRight className="size-3.5 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
