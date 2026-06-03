@@ -746,9 +746,9 @@ function ThreadRowCard({
       exit={{ opacity: 0, filter: 'blur(4px)' }}
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
       className={cn(
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
-        active && 'bg-[var(--color-accent-soft)]',
-        selected && 'bg-[var(--color-accent-soft)] dark:bg-[var(--color-selected-soft)]',
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left hover:bg-[var(--color-hover-soft)]',
+        active && 'bg-[var(--color-selected-soft)]',
+        selected && 'bg-[var(--color-selected-soft)]',
       )}
       style={active ? { borderLeft: '3px solid var(--color-accent)' } : undefined}
     >
@@ -836,7 +836,7 @@ function ThreadRowCard({
 
       {/* Hover-only row actions — overlaid so they add no height at rest. */}
       {smart ? (
-        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
+        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
           <Button
             type="button"
             variant="ghost"

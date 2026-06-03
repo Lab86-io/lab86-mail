@@ -63,6 +63,15 @@ const SENT_QUERY = { q: 'in:sent -in:trash -in:spam', max: 200 };
 
 const CANDIDATE_LIMIT = 320;
 const TIME_SENSITIVE_WINDOW = 14 * 86400_000;
+const REPORT_LANE_LIMITS: Record<Exclude<ReportLane, 'bulk'>, number> = {
+  reply_owed: 5,
+  follow_up_owed: 5,
+  new_people: 3,
+  time_sensitive: 3,
+  tracked: 5,
+  fyi: 3,
+};
+const BULK_TAIL_LIMIT = 8;
 
 // Lane priority for the clamp: the floor decides a minimum lane and the LLM may
 // only raise it, never demote below the floor.
@@ -769,6 +778,7 @@ async function composeReport(input: {
         : insight.followUpOwed
           ? 'Follow up'
           : tracked?.nextAction,
+      openLoops: insight.openLoops.slice(0, 3),
       // Bulk-tail items never carry a due date — automated notices are not
       // time-boxed actions, and stale tracked records must not leak one in.
       dueAt:
@@ -791,8 +801,11 @@ async function composeReport(input: {
       .map((item) => `${item.account}:${item.threadId}`),
   );
 
-  const byLane = (lane: ReportLane) =>
-    input.insights.filter((insight) => insight.lane === lane).map(toItem);
+  const byLane = (lane: Exclude<ReportLane, 'bulk'>) =>
+    input.insights
+      .filter((insight) => insight.lane === lane)
+      .map(toItem)
+      .slice(0, REPORT_LANE_LIMITS[lane]);
 
   const replyOwed = byLane('reply_owed');
   const followUpOwed = byLane('follow_up_owed');
@@ -805,14 +818,15 @@ async function composeReport(input: {
       (insight) =>
         insight.lane === 'bulk' && !activeTrackedKeys.has(`${insight.account}:${insight.threadId}`),
     )
-    .map(toItem);
+    .map(toItem)
+    .slice(0, BULK_TAIL_LIMIT);
 
   // Tracked section comes from the tracked-thread store (active only). Every
   // lane:'tracked' insight is represented here because that lane is only set
   // when an active tracked record exists.
   const trackedItems = input.tracked
     .filter((item) => item.status !== 'resolved' && item.status !== 'dismissed')
-    .slice(0, 12)
+    .slice(0, REPORT_LANE_LIMITS.tracked)
     .map((item) => ({
       account: item.account,
       threadId: item.threadId,

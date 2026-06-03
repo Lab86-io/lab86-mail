@@ -19,6 +19,7 @@ interface DailyReportItem {
   people: string[];
   whyItMatters: string;
   nextAction?: string;
+  openLoops?: string[];
   dueAt?: number | null;
   unread: boolean;
   trackedThreadId?: string;
@@ -50,14 +51,16 @@ interface DailyReportPayload {
 
 // Sections, in reading order. The report leads with what Jakob owes other
 // people, then who's new, then anything time-boxed, then quieter context.
-const SECTION_LABELS: Array<[string, string]> = [
-  ['replyOwed', 'Needs You — Reply Owed'],
-  ['followUpOwed', 'Follow-Up Owed'],
-  ['newPeople', 'New People'],
-  ['timeSensitive', 'Time-Sensitive'],
-  ['tracked', 'Tracked Conversations'],
-  ['fyi', 'FYI'],
+const SECTION_LABELS: Array<[string, string, number, boolean]> = [
+  ['replyOwed', 'Needs You — Reply Owed', 5, true],
+  ['followUpOwed', 'Follow-Up Owed', 5, true],
+  ['newPeople', 'New People', 3, false],
+  ['timeSensitive', 'Time-Sensitive', 3, true],
+  ['tracked', 'Tracked Conversations', 5, false],
+  ['fyi', 'FYI', 3, false],
 ];
+
+const BULK_TAIL_DISPLAY_LIMIT = 8;
 
 const summaryKeys: Array<[string, string]> = [
   ['replyOwed', 'Reply'],
@@ -285,7 +288,7 @@ export function DailyReport() {
                     type="button"
                     disabled={!first}
                     onClick={() => first && openThread(first)}
-                    className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 text-left shadow-[var(--shadow-soft)] transition-colors enabled:hover:border-[var(--color-border-strong)] disabled:opacity-55"
+                    className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 text-left shadow-[var(--shadow-soft)] enabled:hover:border-[var(--color-border-strong)] enabled:hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
                   >
                     <div className="flex items-baseline justify-between">
                       <div className="font-serif text-[11px] uppercase tracking-[0.16em] text-[var(--color-accent)]">
@@ -307,11 +310,13 @@ export function DailyReport() {
             </div>
 
             {/* Sections. */}
-            {SECTION_LABELS.map(([key, label], i) => (
+            {SECTION_LABELS.map(([key, label, limit, roomy], i) => (
               <ReportSection
                 key={String(key)}
                 label={label}
                 items={asItems(report.sections[key])}
+                limit={limit}
+                roomy={roomy}
                 delay={180 + i * 60}
                 {...rowHandlers}
               />
@@ -358,25 +363,36 @@ interface RowHandlers {
 function ReportSection({
   label,
   items,
+  limit,
+  roomy,
   delay,
   ...handlers
-}: { label: string; items: DailyReportItem[]; delay: number } & RowHandlers) {
+}: {
+  label: string;
+  items: DailyReportItem[];
+  limit: number;
+  roomy: boolean;
+  delay: number;
+} & RowHandlers) {
   if (!items.length) return null;
+  const visibleItems = items.slice(0, limit);
+  const countLabel = visibleItems.length < items.length ? `${visibleItems.length}/${items.length}` : items.length;
   return (
     <section className="blur-in" style={{ animationDelay: `${delay}ms` }}>
       <div className="mb-1.5 flex items-center gap-3">
         <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
           {label}
         </h2>
-        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{items.length}</span>
+        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{countLabel}</span>
         <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
       </div>
-      <div className="space-y-2">
-        {items.map((item, index) => (
+      <div className={cn(roomy ? 'space-y-2.5' : 'space-y-2')}>
+        {visibleItems.map((item, index) => (
           <ReportRow
             key={`${label}:${item.account}:${item.threadId}:${item.trackedThreadId || ''}`}
             item={item}
             index={index}
+            roomy={roomy && index < 5}
             {...handlers}
           />
         ))}
@@ -395,7 +411,8 @@ function ReportRow({
   onMarkPerson,
   dismissingId,
   markingId,
-}: { item: DailyReportItem; index: number } & RowHandlers) {
+  roomy,
+}: { item: DailyReportItem; index: number; roomy: boolean } & RowHandlers) {
   const person = item.people[0] ? stripEmoji(item.people[0]) : '';
   const subject = stripEmoji(item.subject || '(no subject)');
   const framing = elapsedFraming(item);
@@ -414,8 +431,9 @@ function ReportRow({
         }
       }}
       className={cn(
-        'group grid cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-3 text-left shadow-[var(--shadow-soft)]',
-        'transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]',
+        'group grid cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-left shadow-[var(--shadow-soft)]',
+        roomy ? 'py-4' : 'py-3',
+        'hover:border-[var(--color-border-strong)] hover:bg-[var(--color-hover-soft)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]',
         correcting && 'opacity-50',
       )}
     >
@@ -438,9 +456,29 @@ function ReportRow({
             {subject}
           </span>
         </div>
-        <span className="mt-0.5 block truncate text-[12px] leading-tight text-[var(--color-text-muted)]">
+        <span
+          className={cn(
+            'mt-0.5 block text-[12px] text-[var(--color-text-muted)]',
+            roomy ? 'line-clamp-3 leading-5' : 'truncate leading-tight',
+          )}
+        >
           {stripEmoji(item.whyItMatters)}
         </span>
+        {roomy && (item.nextAction || item.openLoops?.length) ? (
+          <div className="mt-2 space-y-1 text-[11.5px] leading-5 text-[var(--color-text-muted)]">
+            {item.nextAction ? (
+              <div>
+                <span className="font-medium text-[var(--color-text)]">{item.nextAction}</span>
+                {item.people[0] ? <span> with {stripEmoji(item.people[0])}</span> : null}
+              </div>
+            ) : null}
+            {item.openLoops?.slice(0, 2).map((loop) => (
+              <div key={loop} className="line-clamp-2">
+                {stripEmoji(loop)}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {framing ? (
           <span className="mt-0.5 block text-[11px] font-medium leading-tight text-[var(--color-accent)]">
             {framing}
@@ -475,7 +513,7 @@ function ReportRow({
             event.stopPropagation();
             onMarkPerson(item);
           }}
-          className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-accent)] focus-visible:opacity-100 group-hover:opacity-100"
+          className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-accent)] focus-visible:opacity-100 group-hover:opacity-100"
         >
           {markingId === item.threadId ? <Ring className="size-3.5" /> : <User className="size-3.5" />}
         </button>
@@ -487,7 +525,7 @@ function ReportRow({
             event.stopPropagation();
             onDismiss(item);
           }}
-          className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-danger)] focus-visible:opacity-100 group-hover:opacity-100"
+          className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-danger)] focus-visible:opacity-100 group-hover:opacity-100"
         >
           {dismissingId === item.threadId ? <Ring className="size-3.5" /> : <Ban className="size-3.5" />}
         </button>
@@ -500,7 +538,7 @@ function ReportRow({
               event.stopPropagation();
               onResolve(item.trackedThreadId as string);
             }}
-            className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-success)] focus-visible:opacity-100 group-hover:opacity-100"
+            className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-success)] focus-visible:opacity-100 group-hover:opacity-100"
           >
             {resolvingId === item.trackedThreadId ? (
               <Ring className="size-3.5" />
@@ -510,7 +548,7 @@ function ReportRow({
           </button>
         ) : (
           <span className="grid size-7 place-items-center" aria-hidden>
-            <ChevronRight className="size-3.5 text-[var(--color-text-faint)] opacity-0 transition-opacity group-hover:opacity-100" />
+            <ChevronRight className="size-3.5 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
           </span>
         )}
       </div>
@@ -529,6 +567,7 @@ function BulkTail({
 }) {
   const [open, setOpen] = useState(false);
   if (!items.length) return null;
+  const visibleItems = items.slice(0, BULK_TAIL_DISPLAY_LIMIT);
   return (
     <section className="blur-in" style={{ animationDelay: `${delay}ms` }}>
       <button
@@ -551,7 +590,7 @@ function BulkTail({
       </button>
       {open ? (
         <div>
-          {items.map((item, index) => (
+          {visibleItems.map((item, index) => (
             <div
               key={`bulk:${item.account}:${item.threadId}`}
               role="button"
@@ -563,7 +602,7 @@ function BulkTail({
                   onOpen(item);
                 }
               }}
-              className="grid cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border-b border-[var(--color-border)] px-1.5 py-1.5 text-left last:border-b-0 transition-colors hover:bg-[var(--color-bg-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+              className="grid cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border-b border-[var(--color-border)] px-1.5 py-1.5 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
             >
               <span className="text-right font-serif text-[11px] tabular-nums text-[var(--color-text-faint)]">
                 {String(index + 1).padStart(2, '0')}

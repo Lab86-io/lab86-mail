@@ -286,6 +286,7 @@ export interface DailyReportItem {
   people: string[];
   whyItMatters: string;
   nextAction?: string;
+  openLoops?: string[];
   dueAt?: number | null;
   unread: boolean;
   trackedThreadId?: string;

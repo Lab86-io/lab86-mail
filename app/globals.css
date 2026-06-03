@@ -76,14 +76,17 @@
   --color-text-muted: #57534e;
   --color-text-faint: #a8a29e;
 
-  /* accent — fresh green */
-  --color-accent: #16a34a;
-  --color-accent-hover: #22c55e;
-  --color-accent-soft: #dcfce7;
-  --color-accent-foreground: #f0fdf4;
-  --color-accent-shine-1: #22c55e;
-  --color-accent-shine-2: #4ade80;
-  --color-accent-shine-3: #16a34a;
+  /* accent - natural green */
+  --color-accent: #2f7d55;
+  --color-accent-hover: #286b49;
+  --color-accent-soft: #e1efe6;
+  --color-accent-foreground: #fffdf8;
+  --color-accent-shine-1: #7ca982;
+  --color-accent-shine-2: #b9cf9f;
+  --color-accent-shine-3: #2f7d55;
+  --color-hover-soft: #f1eee8;
+  --color-selected: #44403c;
+  --color-selected-soft: #ebe7df;
 
   /* status */
   --color-success: #2f7d55;
@@ -107,14 +110,14 @@
   --color-transparent: transparent;
   --color-mask: #ffffff;
   --color-shimmer-transparent: #0000;
-  --color-border-beam-from: #22c55e;
-  --color-border-beam-to: #4ade80;
+  --color-border-beam-from: #7ca982;
+  --color-border-beam-to: #b9cf9f;
   --color-magic-gradient-surface: #262626;
   --color-magic-gradient-from: #9e7aff;
   --color-magic-gradient-to: #fe8bbb;
   --color-magic-glow-from: #ee4f27;
   --color-magic-glow-to: #6b21ef;
-  --color-avatar-1: #16a34a;
+  --color-avatar-1: #2f7d55;
   --color-avatar-2: #2f7d55;
   --color-avatar-3: #b45309;
   --color-avatar-4: #b1483f;
@@ -192,13 +195,13 @@
     --color-selected: #5fb98a;
     --color-selected-soft: #15291f;
     --rail-bg: #000000;
-    --color-accent: #22c55e;
-    --color-accent-hover: #4ade80;
-    --color-accent-soft: #14532d;
-    --color-accent-foreground: #f0fdf4;
-    --color-accent-shine-1: #22c55e;
-    --color-accent-shine-2: #4ade80;
-    --color-accent-shine-3: #16a34a;
+    --color-accent: #73a984;
+    --color-accent-hover: #86bb96;
+    --color-accent-soft: #172d20;
+    --color-accent-foreground: #06130d;
+    --color-accent-shine-1: #73a984;
+    --color-accent-shine-2: #b9cf9f;
+    --color-accent-shine-3: #4f8a62;
     --color-success: #5fb289;
     --color-success-foreground: #f0fdf4;
     --color-success-soft: #14532d;
@@ -212,7 +215,7 @@
     --color-prio-1: #e1655c;
     --color-prio-2: #d49a4d;
     --color-prio-3: #889aa8;
-    --color-avatar-1: #22c55e;
+    --color-avatar-1: #73a984;
     --color-avatar-2: #5fb289;
     --color-avatar-3: #d49a4d;
     --color-avatar-4: #e1655c;
@@ -514,10 +517,10 @@
   /* shadcn sidebar tokens mapped onto the lab86 palette. These reference the
      --color-* tokens, which already flip under .dark, so a single block keeps
      the sidebar in step with the rest of the theme. */
-  /* Selected/active accent + rail surface. Light keeps the teal accent (it
-     looks great); dark overrides these to soft green + pure black above. */
-  --color-selected: var(--color-accent);
-  --color-selected-soft: var(--color-accent-soft);
+  /* Row hover/selected states are quiet greys close to the app surface. */
+  --color-hover-soft: #f1eee8;
+  --color-selected: #44403c;
+  --color-selected-soft: #ebe7df;
   --rail-bg: var(--color-bg-subtle);
 
   --sidebar: var(--color-bg-subtle);
@@ -528,4 +531,10 @@
   --sidebar-accent-foreground: var(--color-text);
   --sidebar-border: var(--color-border);
   --sidebar-ring: var(--color-accent);
+}
+
+:root.dark {
+  --color-hover-soft: #1a1a1a;
+  --color-selected: #ededed;
+  --color-selected-soft: #242424;
 }

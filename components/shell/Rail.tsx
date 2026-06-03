@@ -196,14 +196,22 @@ export function Rail() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              variant="outline"
               tooltip="Compose"
               onClick={() => openComposeNew()}
-              className="font-medium shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]"
+              className="relative bg-[var(--color-accent)] font-medium text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-hover)] hover:text-[var(--color-accent-foreground)] focus-visible:ring-[var(--color-accent)]"
             >
+              <ShineBorder
+                borderWidth={1}
+                duration={10}
+                shineColor={[
+                  'var(--color-accent-shine-1)',
+                  'var(--color-accent-shine-2)',
+                  'var(--color-accent-shine-3)',
+                ]}
+              />
               <Plus />
               <span>Compose</span>
-              <span className="ml-auto text-[10px] text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden">
+              <span className="ml-auto text-[10px] text-[var(--color-accent-foreground)]/75 group-data-[collapsible=icon]:hidden">
                 c
               </span>
             </SidebarMenuButton>
