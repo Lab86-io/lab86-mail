@@ -185,7 +185,7 @@ export function Rail() {
             and centers itself when collapsed so it doubles as the expand button. */}
         <div className="flex items-center justify-between gap-2 px-1 pt-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <span className="text-[15px] font-semibold tracking-tight text-[var(--color-text)] group-data-[collapsible=icon]:hidden">
-            Lab86 Mail
+            <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
           <SidebarTrigger
             title="Toggle navigation rail"
@@ -220,13 +220,17 @@ export function Rail() {
                   isActive={primaryView === 'daily_report'}
                   tooltip="Daily Report"
                   onClick={() => setPrimaryView('daily_report')}
-                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                 >
                   {primaryView === 'daily_report' ? (
                     <ShineBorder
                       borderWidth={1}
                       duration={10}
-                      shineColor={['#4cb7c8', '#7c3aed', '#0b7285']}
+                      shineColor={[
+                        'var(--color-accent-shine-1)',
+                        'var(--color-accent-shine-2)',
+                        'var(--color-accent-shine-3)',
+                      ]}
                     />
                   ) : null}
                   <Newspaper />
@@ -260,13 +264,17 @@ export function Rail() {
                         isActive={primaryView === 'mail' && smartCategory === id}
                         tooltip={label}
                         onClick={() => setSmartCategory(id)}
-                        className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                        className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                       >
                         {primaryView === 'mail' && smartCategory === id ? (
                           <ShineBorder
                             borderWidth={1}
                             duration={10}
-                            shineColor={['#4cb7c8', '#7c3aed', '#0b7285']}
+                            shineColor={[
+                              'var(--color-accent-shine-1)',
+                              'var(--color-accent-shine-2)',
+                              'var(--color-accent-shine-3)',
+                            ]}
                           />
                         ) : null}
                         <Icon />
@@ -310,13 +318,17 @@ export function Rail() {
                               isActive={primaryView === 'mail' && smartCategory === id}
                               tooltip={label.name}
                               onClick={() => setSmartCategory(id)}
-                              className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                              className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                             >
                               {primaryView === 'mail' && smartCategory === id ? (
                                 <ShineBorder
                                   borderWidth={1}
                                   duration={10}
-                                  shineColor={['#4cb7c8', '#7c3aed', '#0b7285']}
+                                  shineColor={[
+                                    'var(--color-accent-shine-1)',
+                                    'var(--color-accent-shine-2)',
+                                    'var(--color-accent-shine-3)',
+                                  ]}
                                 />
                               ) : null}
                               <Terminal />
@@ -377,7 +389,7 @@ export function Rail() {
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
+        <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
           <ThemeSwitcher />
           <button
             type="button"

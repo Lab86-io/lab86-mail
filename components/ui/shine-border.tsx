@@ -17,7 +17,7 @@ interface ShineBorderProps extends React.HTMLAttributes<HTMLDivElement> {
   duration?: number;
   /**
    * Color of the border, can be a single color or an array of colors
-   * @default "#000000"
+   * @default var(--color-accent)
    */
   shineColor?: string | string[];
 }
@@ -30,7 +30,7 @@ interface ShineBorderProps extends React.HTMLAttributes<HTMLDivElement> {
 export function ShineBorder({
   borderWidth = 1,
   duration = 14,
-  shineColor = '#000000',
+  shineColor = 'var(--color-accent)',
   className,
   style,
   ...props
@@ -41,12 +41,12 @@ export function ShineBorder({
         {
           '--border-width': `${borderWidth}px`,
           '--duration': `${duration}s`,
-          backgroundImage: `radial-gradient(transparent,transparent, ${
+          backgroundImage: `radial-gradient(var(--color-transparent),var(--color-transparent), ${
             Array.isArray(shineColor) ? shineColor.join(',') : shineColor
-          },transparent,transparent)`,
+          },var(--color-transparent),var(--color-transparent))`,
           backgroundSize: '300% 300%',
-          mask: `linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)`,
-          WebkitMask: `linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)`,
+          mask: `linear-gradient(var(--color-mask) 0 0) content-box, linear-gradient(var(--color-mask) 0 0)`,
+          WebkitMask: `linear-gradient(var(--color-mask) 0 0) content-box, linear-gradient(var(--color-mask) 0 0)`,
           WebkitMaskComposite: 'xor',
           maskComposite: 'exclude',
           padding: 'var(--border-width)',

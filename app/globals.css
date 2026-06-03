@@ -27,7 +27,7 @@
   --color-accent: var(--color-accent);
   --color-accent-foreground: var(--color-accent-foreground);
   --color-destructive: var(--color-danger);
-  --color-destructive-foreground: #ffffff;
+  --color-destructive-foreground: var(--color-danger-foreground);
   --color-input: var(--color-bg-elevated);
   --color-ring: var(--color-accent);
   --radius: 0.5rem;
@@ -76,21 +76,49 @@
   --color-text-muted: #57534e;
   --color-text-faint: #a8a29e;
 
-  /* accent — kept the lab86 teal */
-  --color-accent: #0b7285;
-  --color-accent-hover: #1693a8;
-  --color-accent-soft: #d7f3f8;
-  --color-accent-foreground: #fafaf9;
+  /* accent — fresh green */
+  --color-accent: #16a34a;
+  --color-accent-hover: #22c55e;
+  --color-accent-soft: #dcfce7;
+  --color-accent-foreground: #f0fdf4;
+  --color-accent-shine-1: #22c55e;
+  --color-accent-shine-2: #4ade80;
+  --color-accent-shine-3: #16a34a;
 
   /* status */
   --color-success: #2f7d55;
+  --color-success-foreground: #ffffff;
+  --color-success-soft: #dcfce7;
   --color-warning: #b45309;
+  --color-warning-foreground: #ffffff;
+  --color-warning-soft: #ffedd5;
   --color-danger: #b1483f;
+  --color-danger-foreground: #ffffff;
+  --color-danger-soft: #fee2e2;
+  --color-neutral-soft: #f5f5f4;
 
   /* priority */
   --color-prio-1: #b1483f;
   --color-prio-2: #b45309;
   --color-prio-3: #6b7280;
+
+  /* effects and generated UI */
+  --color-overlay: rgb(0 0 0 / 0.5);
+  --color-transparent: transparent;
+  --color-mask: #ffffff;
+  --color-shimmer-transparent: #0000;
+  --color-border-beam-from: #22c55e;
+  --color-border-beam-to: #4ade80;
+  --color-magic-gradient-surface: #262626;
+  --color-magic-gradient-from: #9e7aff;
+  --color-magic-gradient-to: #fe8bbb;
+  --color-magic-glow-from: #ee4f27;
+  --color-magic-glow-to: #6b21ef;
+  --color-avatar-1: #16a34a;
+  --color-avatar-2: #2f7d55;
+  --color-avatar-3: #b45309;
+  --color-avatar-4: #b1483f;
+  --color-avatar-5: #7c5dbf;
 
   /* shadow */
   --shadow-soft: 0 1px 2px rgb(28 25 23 / 0.04), 0 4px 12px rgb(28 25 23 / 0.04);
@@ -121,7 +149,7 @@
     --accent: var(--color-accent);
     --accent-foreground: var(--color-accent-foreground);
     --destructive: var(--color-danger);
-    --destructive-foreground: #ffffff;
+    --destructive-foreground: var(--color-danger-foreground);
     --border: var(--color-border);
     --input: var(--color-bg-elevated);
     --ring: var(--color-accent);
@@ -143,7 +171,7 @@
     --accent: var(--color-accent);
     --accent-foreground: var(--color-accent-foreground);
     --destructive: var(--color-danger);
-    --destructive-foreground: #ffffff;
+    --destructive-foreground: var(--color-danger-foreground);
     --border: var(--color-border);
     --input: var(--color-bg-elevated);
     --ring: var(--color-accent);
@@ -164,16 +192,31 @@
     --color-selected: #5fb98a;
     --color-selected-soft: #15291f;
     --rail-bg: #000000;
-    --color-accent: #4cb7c8;
-    --color-accent-hover: #7fd0e3;
-    --color-accent-soft: #0e323a;
-    --color-accent-foreground: #f0f9fb;
+    --color-accent: #22c55e;
+    --color-accent-hover: #4ade80;
+    --color-accent-soft: #14532d;
+    --color-accent-foreground: #f0fdf4;
+    --color-accent-shine-1: #22c55e;
+    --color-accent-shine-2: #4ade80;
+    --color-accent-shine-3: #16a34a;
     --color-success: #5fb289;
+    --color-success-foreground: #f0fdf4;
+    --color-success-soft: #14532d;
     --color-warning: #d49a4d;
+    --color-warning-foreground: #fff7ed;
+    --color-warning-soft: #431407;
     --color-danger: #e1655c;
+    --color-danger-foreground: #fff1f2;
+    --color-danger-soft: #450a0a;
+    --color-neutral-soft: #282828;
     --color-prio-1: #e1655c;
     --color-prio-2: #d49a4d;
     --color-prio-3: #889aa8;
+    --color-avatar-1: #22c55e;
+    --color-avatar-2: #5fb289;
+    --color-avatar-3: #d49a4d;
+    --color-avatar-4: #e1655c;
+    --color-avatar-5: #a796d8;
     --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
     --shadow-pop: 0 14px 36px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.3);
   }

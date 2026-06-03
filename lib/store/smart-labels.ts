@@ -14,7 +14,7 @@ export const DEVOPS_LABEL: SmartLabelDefinition = {
   enabled: true,
   sidebarVisible: true,
   icon: 'terminal',
-  color: '#0b7285',
+  color: 'var(--color-accent)',
   gmailLabelName: 'MailOS/Dev/Ops',
   aiMode: 'metadata_snippet',
   positiveExamples: [

@@ -476,7 +476,14 @@ export function Inbox() {
       >
         <div className="flex items-center gap-2">
           <InputGroup className="relative flex-1 overflow-hidden bg-[var(--color-bg-elevated)]">
-            {translating ? <BorderBeam size={80} duration={3} colorFrom="#4cb7c8" colorTo="#7c3aed" /> : null}
+            {translating ? (
+              <BorderBeam
+                size={80}
+                duration={3}
+                colorFrom="var(--color-border-beam-from)"
+                colorTo="var(--color-border-beam-to)"
+              />
+            ) : null}
             <InputGroupAddon>
               {translating ? (
                 <OrbitRing className="size-4 text-[var(--color-accent)]" />
@@ -740,9 +747,10 @@ function ThreadRowCard({
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
       className={cn(
         'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
-        active && 'bg-[var(--color-bg-subtle)]',
+        active && 'bg-[var(--color-accent-soft)]',
         selected && 'bg-[var(--color-accent-soft)] dark:bg-[var(--color-selected-soft)]',
       )}
+      style={active ? { borderLeft: '3px solid var(--color-accent)' } : undefined}
     >
       <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
 
@@ -1068,7 +1076,13 @@ function LabelConfirmDialog({
     <Dialog open={!!item} onOpenChange={(open) => (!open ? onClose() : undefined)}>
       <DialogContent className="overflow-hidden border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-pop)]">
         <DialogTitle className="sr-only">Apply smart Gmail labels</DialogTitle>
-        <ShineBorder shineColor={['#4cb7c8', '#7c3aed', '#0b7285']} />
+        <ShineBorder
+          shineColor={[
+            'var(--color-accent-shine-1)',
+            'var(--color-accent-shine-2)',
+            'var(--color-accent-shine-3)',
+          ]}
+        />
         <Confirmation approval={{ id: item._id }} state={'approval-requested' as any}>
           <ConfirmationTitle>Apply smart Gmail labels?</ConfirmationTitle>
           <ConfirmationRequest>

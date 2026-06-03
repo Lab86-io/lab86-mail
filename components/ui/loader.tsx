@@ -38,7 +38,7 @@ export function CircularLoader({
   return (
     <div
       className={cn(
-        "border-primary animate-spin rounded-full border-2 border-t-transparent",
+        "border-primary animate-spin rounded-full border-2 border-t-[var(--color-transparent)]",
         sizeClasses[size],
         className
       )}
@@ -412,7 +412,7 @@ export function TextShimmerLoader({
     <div
       className={cn(
         "bg-[linear-gradient(to_right,var(--muted-foreground)_40%,var(--foreground)_60%,var(--muted-foreground)_80%)]",
-        "bg-size-[200%_auto] bg-clip-text font-medium text-transparent",
+        "bg-size-[200%_auto] bg-clip-text font-medium text-[var(--color-transparent)]",
         "animate-[shimmer_4s_infinite_linear]",
         textSizes[size],
         className
@@ -497,4 +497,3 @@ function Loader({
 }
 
 export { Loader }
-

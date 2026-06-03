@@ -520,7 +520,7 @@ function TopProgressBar({ active }: { active: boolean }) {
         active ? 'opacity-100' : 'opacity-0',
       )}
     >
-      <span className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-[var(--color-accent)] to-transparent [animation:topbar-slide_1.6s_ease-in-out_infinite]" />
+      <span className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-[var(--color-transparent)] via-[var(--color-accent)] to-[var(--color-transparent)] [animation:topbar-slide_1.6s_ease-in-out_infinite]" />
       <style>{`
         @keyframes topbar-slide {
           0% { transform: translateX(-100%); }

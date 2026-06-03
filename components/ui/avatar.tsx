@@ -5,9 +5,13 @@ import { useEffect, useState } from 'react';
 import { shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
-// Warm-gray + accent palette plucked to harmonize with our Linear-y theme.
-const PALETTE_LIGHT = ['#0b7285', '#2f7d55', '#b45309', '#b1483f', '#7c5dbf'];
-const PALETTE_DARK = ['#4cb7c8', '#5fb289', '#d49a4d', '#e1655c', '#a796d8'];
+const PALETTE = [
+  'var(--color-avatar-1)',
+  'var(--color-avatar-2)',
+  'var(--color-avatar-3)',
+  'var(--color-avatar-4)',
+  'var(--color-avatar-5)',
+];
 
 export function Avatar({
   name,
@@ -56,11 +60,7 @@ export function Avatar({
           size={size}
           name={seed}
           variant={variant}
-          colors={
-            typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-              ? PALETTE_DARK
-              : PALETTE_LIGHT
-          }
+          colors={PALETTE}
           square={false}
         />
       )}

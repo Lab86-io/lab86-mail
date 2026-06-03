@@ -31,7 +31,6 @@ licensed MIT with commercial use allowed and no attribution required:
 
 - `jjalangtry@gmail.com` — direct.
 - `jakob@lab86.io` — primary, holds forwarded / imported mail. (auth pending.)
-- Add more with `scripts/auth-google.sh <email>` after re-introducing the helper scripts from `_legacy/scripts/`.
 
 ## Service
 
@@ -84,7 +83,6 @@ components/
   thread/                  stacked conversation cards + AI summary card + inline reply
   compose/                 ComposeDialog
   palette/                 CommandPalette (cmdk)
-_legacy/                   the v1 codebase (frozen for reference / migration)
 ```
 
 ## AI bar

@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
         ? [
             html,
             '<br/><br/>',
-            `<div style="border-left:2px solid #ccc;padding-left:.6em;color:#666">`,
+            `<div style="border-left:2px solid currentColor;padding-left:.6em;opacity:.72">`,
             `<div>---------- Forwarded message ----------</div>`,
             `<div>From: ${escapeHtml(original.from)}</div>`,
             `<div>Date: ${new Date(original.date).toISOString()}</div>`,

@@ -138,14 +138,14 @@ function RailResizeHandle() {
       onPointerDown={onPointerDown}
       onDoubleClick={() => setRailWidth(RAIL_DEFAULT)}
       title="Drag to resize · double-click to reset"
-      className="group relative z-20 hidden w-[6px] shrink-0 cursor-col-resize bg-transparent p-0 outline-none md:block"
+      className="group relative z-20 hidden w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] p-0 outline-none md:block"
     >
       <span
         className={cn(
           'pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 transition-colors',
           dragging
             ? 'w-[2px] bg-[var(--color-accent)]'
-            : 'w-px bg-transparent group-hover:bg-[var(--color-accent)]',
+            : 'w-px bg-[var(--color-transparent)] group-hover:bg-[var(--color-accent)]',
         )}
         aria-hidden
       />
@@ -157,7 +157,7 @@ function ResizeSeparator() {
   // 6px wide hit target with a 1px visible rule down the middle; brightens on
   // hover/drag so it's clearly grabbable.
   return (
-    <Separator className="group relative w-[6px] shrink-0 cursor-col-resize bg-transparent outline-none">
+    <Separator className="group relative w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] outline-none">
       <span
         className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--color-border)] transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
         aria-hidden

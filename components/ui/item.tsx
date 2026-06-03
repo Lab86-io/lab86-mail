@@ -22,11 +22,11 @@ function ItemSeparator({ className, ...props }: React.ComponentProps<typeof Sepa
 }
 
 const itemVariants = cva(
-  'group/item flex flex-wrap items-center rounded-md border border-transparent text-sm transition-colors duration-100 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [a]:transition-colors [a]:hover:bg-accent/50',
+  'group/item flex flex-wrap items-center rounded-md border border-[var(--color-transparent)] text-sm transition-colors duration-100 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [a]:transition-colors [a]:hover:bg-accent/50',
   {
     variants: {
       variant: {
-        default: 'bg-transparent',
+        default: 'bg-[var(--color-transparent)]',
         outline: 'border-border',
         muted: 'bg-muted/50',
       },
@@ -66,7 +66,7 @@ const itemMediaVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-transparent',
+        default: 'bg-[var(--color-transparent)]',
         icon: "size-8 rounded-sm border bg-muted [&_svg:not([class*='size-'])]:size-4",
         image: 'size-10 overflow-hidden rounded-sm [&_img]:size-full [&_img]:object-cover',
       },

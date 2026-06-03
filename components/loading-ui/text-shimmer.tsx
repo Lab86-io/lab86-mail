@@ -35,8 +35,8 @@ function TextShimmerComponent({
     <MotionComponent
       className={cn(
         'relative inline-block bg-size-[250%_100%,auto] bg-clip-text',
-        '[-webkit-text-fill-color:transparent]',
-        '[background-repeat:no-repeat,padding-box] [--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--base-gradient-color),#0000_calc(50%+var(--spread)))]',
+        '[-webkit-text-fill-color:var(--color-transparent)]',
+        '[background-repeat:no-repeat,padding-box] [--bg:linear-gradient(90deg,var(--color-shimmer-transparent)_calc(50%-var(--spread)),var(--base-gradient-color),var(--color-shimmer-transparent)_calc(50%+var(--spread)))]',
         className,
       )}
       initial={{ backgroundPosition: '100% center' }}
@@ -50,7 +50,7 @@ function TextShimmerComponent({
         {
           ...style,
           '--spread': `${dynamicSpread}px`,
-          '--base-color': baseColor ?? 'color-mix(in oklab, currentColor 55%, transparent)',
+          '--base-color': baseColor ?? 'color-mix(in oklab, currentColor 55%, var(--color-transparent))',
           '--base-gradient-color': shimmerColor ?? 'currentColor',
           backgroundImage: `var(--bg), linear-gradient(var(--base-color), var(--base-color))`,
         } as React.CSSProperties

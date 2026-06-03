@@ -43,13 +43,13 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
   const getStateIcon = () => {
     switch (state) {
       case "input-streaming":
-        return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+        return <Loader2 className="h-4 w-4 animate-spin text-[var(--color-success)]" />
       case "input-available":
-        return <Settings className="h-4 w-4 text-orange-500" />
+        return <Settings className="h-4 w-4 text-[var(--color-warning)]" />
       case "output-available":
-        return <CheckCircle className="h-4 w-4 text-green-500" />
+        return <CheckCircle className="h-4 w-4 text-[var(--color-success)]" />
       case "output-error":
-        return <XCircle className="h-4 w-4 text-red-500" />
+        return <XCircle className="h-4 w-4 text-[var(--color-danger)]" />
       default:
         return <Settings className="text-muted-foreground h-4 w-4" />
     }
@@ -63,7 +63,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+              "bg-[var(--color-success-soft)] text-[var(--color-success)]"
             )}
           >
             Processing
@@ -74,7 +74,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+              "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
             )}
           >
             Ready
@@ -85,7 +85,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              "bg-[var(--color-success-soft)] text-[var(--color-success)]"
             )}
           >
             Completed
@@ -96,7 +96,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              "bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
             )}
           >
             Error
@@ -107,7 +107,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400"
+              "bg-[var(--color-neutral-soft)] text-[var(--color-text-muted)]"
             )}
           >
             Pending
@@ -187,8 +187,8 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 
             {state === "output-error" && toolPart.errorText && (
               <div>
-                <h4 className="mb-2 text-sm font-medium text-red-500">Error</h4>
-                <div className="bg-background rounded border border-red-200 p-2 text-sm dark:border-red-950 dark:bg-red-900/20">
+                <h4 className="mb-2 text-sm font-medium text-[var(--color-danger)]">Error</h4>
+                <div className="bg-background rounded border border-[var(--color-danger)] p-2 text-sm">
                   {toolPart.errorText}
                 </div>
               </div>
@@ -201,7 +201,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
             )}
 
             {toolCallId && (
-              <div className="text-muted-foreground border-t border-blue-200 pt-2 text-xs">
+              <div className="text-muted-foreground border-t border-[var(--color-success)] pt-2 text-xs">
                 <span className="font-mono">Call ID: {toolCallId}</span>
               </div>
             )}
@@ -213,4 +213,3 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 }
 
 export { Tool }
-

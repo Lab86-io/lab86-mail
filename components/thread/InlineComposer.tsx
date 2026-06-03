@@ -283,7 +283,7 @@ export function InlineComposer({
   const borderClass = useMemo(() => {
     if (phase === 'sent') return 'border-solid border-[var(--color-accent)]';
     if (phase === 'sending') return 'border-dashed border-[var(--color-accent)]/60';
-    return framed ? 'border-dashed border-[var(--color-border-strong)]' : 'border-transparent';
+    return framed ? 'border-dashed border-[var(--color-border-strong)]' : 'border-[var(--color-transparent)]';
   }, [phase, framed]);
 
   const modeLabel: Record<ComposeMode, string> = {
@@ -440,7 +440,7 @@ export function InlineComposer({
                 ? 'Compose your message in markdown… **bold**, _italics_, [links](https://…), lists, code fences.'
                 : 'Reply in markdown… **bold**, _italics_, lists, code fences.'
             }
-            className="w-full resize-none bg-transparent text-[13.5px] outline-none placeholder:text-[var(--color-text-faint)]"
+            className="w-full resize-none bg-[var(--color-transparent)] text-[13.5px] outline-none placeholder:text-[var(--color-text-faint)]"
           />
         ) : (
           <div className="min-h-[120px] rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2 text-[13.5px]">
@@ -499,7 +499,7 @@ export function InlineComposer({
           className={cn(
             'flex items-center gap-1 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors',
             phase === 'sent'
-              ? 'bg-[var(--color-success)] text-white'
+              ? 'bg-[var(--color-success)] text-[var(--color-success-foreground)]'
               : 'bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]',
             'disabled:opacity-50',
           )}
@@ -536,7 +536,7 @@ function RecipientField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-7 bg-transparent text-[13px] outline-none placeholder:text-[var(--color-text-faint)]"
+        className="h-7 bg-[var(--color-transparent)] text-[13px] outline-none placeholder:text-[var(--color-text-faint)]"
       />
     </div>
   );

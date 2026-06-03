@@ -32,8 +32,8 @@ export function fromColor(value: string | null | undefined): string {
   const str = String(value || '').toLowerCase();
   let hash = 0;
   for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) | 0;
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 50%, 50%)`;
+  const index = (Math.abs(hash) % 5) + 1;
+  return `var(--color-avatar-${index})`;
 }
 
 export function dateToEpoch(value: number | string | null | undefined): number {

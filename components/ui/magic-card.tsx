@@ -54,15 +54,19 @@ export function MagicCard(props: MagicCardProps) {
     children,
     className,
     gradientSize = 200,
-    gradientColor = '#262626',
+    gradientColor = 'var(--color-magic-gradient-surface)',
     gradientOpacity = 0.8,
-    gradientFrom = '#9E7AFF',
-    gradientTo = '#FE8BBB',
+    gradientFrom = 'var(--color-magic-gradient-from)',
+    gradientTo = 'var(--color-magic-gradient-to)',
     mode = 'gradient',
   } = props;
 
-  const glowFrom = isOrbMode(props) ? (props.glowFrom ?? '#ee4f27') : '#ee4f27';
-  const glowTo = isOrbMode(props) ? (props.glowTo ?? '#6b21ef') : '#6b21ef';
+  const glowFrom = isOrbMode(props)
+    ? (props.glowFrom ?? 'var(--color-magic-glow-from)')
+    : 'var(--color-magic-glow-from)';
+  const glowTo = isOrbMode(props)
+    ? (props.glowTo ?? 'var(--color-magic-glow-to)')
+    : 'var(--color-magic-glow-to)';
   const glowAngle = isOrbMode(props) ? (props.glowAngle ?? 90) : 90;
   const glowSize = isOrbMode(props) ? (props.glowSize ?? 420) : 420;
   const glowBlur = isOrbMode(props) ? (props.glowBlur ?? 60) : 60;
@@ -154,7 +158,7 @@ export function MagicCard(props: MagicCardProps) {
   return (
     <motion.div
       className={cn(
-        'group relative isolate overflow-hidden rounded-[inherit] border border-transparent',
+        'group relative isolate overflow-hidden rounded-[inherit] border border-[var(--color-transparent)]',
         className,
       )}
       onPointerMove={handlePointerMove}
@@ -181,7 +185,7 @@ export function MagicCard(props: MagicCardProps) {
             background: useMotionTemplate`
               radial-gradient(${gradientSize}px circle at ${mouseX}px ${mouseY}px,
                 ${gradientColor},
-                transparent 100%
+                var(--color-transparent) 100%
               )
             `,
             opacity: gradientOpacity,
