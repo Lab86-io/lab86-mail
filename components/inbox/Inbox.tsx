@@ -1,6 +1,6 @@
 'use client';
 
-import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
   Ban,
@@ -15,7 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Confirmation,
@@ -73,15 +73,6 @@ interface ThreadRow {
   labels?: string[];
   unread?: boolean;
   smartCategory?: any;
-}
-
-interface ThreadMessage {
-  _id: string;
-  from?: string;
-  to?: string;
-  cc?: string;
-  bcc?: string;
-  date?: number | string;
 }
 
 interface SearchThreadsResult {
@@ -261,34 +252,20 @@ export function Inbox() {
       getNextPageParam: (lastPage) =>
         Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
       enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
-      // Inbox freshness: any cached search result is treated as stale right
-      // away, so re-mounts, window focus, and reconnects always re-hit Gmail.
-      staleTime: 0,
-      // Background poll while the tab is in the foreground. `refetchInterval`
-      // pauses automatically when the document is hidden (browser default).
-      refetchInterval: 30_000,
+      // Keep the visible list warm instead of treating every mount/focus as a
+      // cold Gmail read. The foreground poll still catches new mail.
+      staleTime: 45_000,
+      gcTime: 30 * 60_000,
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
+      refetchInterval: 60_000,
       // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
       refetchIntervalInBackground: false,
     });
 
   const refreshInbox = () => {
-    queryClient.invalidateQueries({ queryKey: ['thread'] });
     refetch();
   };
-
-  // Tabbing back to the window is the most natural "any new mail?" signal.
-  // React Query already refetches active queries on focus (we enabled the
-  // default), but we additionally invalidate the per-thread cache so the
-  // currently-open thread also picks up any new replies.
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
-      queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['thread'] });
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [queryClient]);
 
   const items = useMemo(() => {
     const byKey = new Map<string, ThreadRow>();
@@ -329,7 +306,7 @@ export function Inbox() {
         : '';
   const photoEmails = useMemo(() => {
     const set = new Set<string>();
-    for (const it of items) {
+    for (const it of items.slice(0, 48)) {
       const email = emailFromHeader(it.from || it.fromAddress);
       if (email) set.add(email);
     }
@@ -347,33 +324,24 @@ export function Inbox() {
   });
   const photos = photosQuery.data?.photos || {};
 
-  const participantRows = useMemo(() => items.slice(0, 24), [items]);
-  const participantQueries = useQueries({
-    queries: participantRows.map((item) => ({
-      queryKey: ['thread-participants', item.account || account, item._id],
-      queryFn: async () =>
-        callTool<{ messages: ThreadMessage[] }>('get_thread', {
-          account: item.account || account,
-          threadId: item._id,
-          refresh: false,
-        }),
-      enabled: !!(item.account || account) && !!item._id,
-      staleTime: 2 * 60_000,
-    })),
-  });
-  const participantLabels = useMemo(() => {
-    const labels = new Map<string, string>();
-    participantRows.forEach((item, index) => {
-      const messages = participantQueries[index]?.data?.messages || [];
-      const label = formatThreadParticipants(
-        messages,
-        item.account || account,
-        item.from || item.fromAddress,
-      );
-      if (label) labels.set(`${item.account || account}:${item._id}`, label);
-    });
-    return labels;
-  }, [account, participantQueries, participantRows]);
+  const prefetchThread = useCallback(
+    (item: ThreadRow) => {
+      const rowAccount = item.account || account;
+      if (!rowAccount || !item._id) return;
+      queryClient.prefetchQuery({
+        queryKey: ['thread', rowAccount, item._id],
+        queryFn: async () =>
+          callTool<{ threadId: string; subject: string; messages: any[] }>('get_thread', {
+            account: rowAccount,
+            threadId: item._id,
+            refresh: false,
+          }),
+        staleTime: 5 * 60_000,
+        gcTime: 30 * 60_000,
+      });
+    },
+    [account, queryClient],
+  );
 
   // Each item knows its own account (set by the fan-out above), so bulk
   // operations dispatch per-item using that account rather than the
@@ -639,41 +607,41 @@ export function Inbox() {
           )
         ) : (
           <>
-            <AnimatePresence initial={false} mode="popLayout">
-              {items.map((it) => {
-                const senderEmail = emailFromHeader(it.from || it.fromAddress);
-                return (
-                  <ThreadRowCard
-                    key={`${it.account}:${it._id}`}
-                    item={it}
-                    participantLabel={participantLabels.get(`${it.account || account}:${it._id}`)}
-                    photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
-                    showAccount={account === ALL_ACCOUNTS}
-                    selected={selectedIds.includes(it._id)}
-                    active={selectedThreadId === it._id}
-                    onToggle={() => toggleSelected(it._id)}
-                    onApplyLabels={() => setLabelPreview(it)}
-                    onCorrect={(action, payload = {}) =>
-                      applyCorrection.mutate({
-                        account: it.account || account,
-                        threadId: it._id,
-                        action,
-                        scope: 'sender',
-                        ...payload,
-                      })
-                    }
-                    onUndoLast={() => undoLastRule.mutate()}
-                    customLabels={customLabels}
-                    onClick={() => {
-                      // Unified inbox stays put; just remember which mailbox this
-                      // thread belongs to so the reader can load/reply correctly.
+            {items.map((it) => {
+              const senderEmail = emailFromHeader(it.from || it.fromAddress);
+              return (
+                <ThreadRowCard
+                  key={`${it.account}:${it._id}`}
+                  item={it}
+                  photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                  showAccount={account === ALL_ACCOUNTS}
+                  selected={selectedIds.includes(it._id)}
+                  active={selectedThreadId === it._id}
+                  onToggle={() => toggleSelected(it._id)}
+                  onPrefetch={() => prefetchThread(it)}
+                  onApplyLabels={() => setLabelPreview(it)}
+                  onCorrect={(action, payload = {}) =>
+                    applyCorrection.mutate({
+                      account: it.account || account,
+                      threadId: it._id,
+                      action,
+                      scope: 'sender',
+                      ...payload,
+                    })
+                  }
+                  onUndoLast={() => undoLastRule.mutate()}
+                  customLabels={customLabels}
+                  onClick={() => {
+                    // Unified inbox stays put; just remember which mailbox this
+                    // thread belongs to so the reader can load/reply correctly.
+                    startTransition(() => {
                       setThreadAccount(it.account || account);
                       setSelectedThread(it._id);
-                    }}
-                  />
-                );
-              })}
-            </AnimatePresence>
+                    });
+                  }}
+                />
+              );
+            })}
             <div ref={loadMoreRef} className="min-h-1" aria-hidden />
             {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
           </>
@@ -692,12 +660,12 @@ export function Inbox() {
 
 function ThreadRowCard({
   item,
-  participantLabel,
   photoUrl,
   selected,
   active,
   onToggle,
   onClick,
+  onPrefetch,
   onApplyLabels,
   onCorrect,
   onUndoLast,
@@ -705,12 +673,12 @@ function ThreadRowCard({
   showAccount,
 }: {
   item: ThreadRow;
-  participantLabel?: string;
   photoUrl?: string | null;
   selected: boolean;
   active: boolean;
   onToggle: () => void;
   onClick: () => void;
+  onPrefetch: () => void;
   onApplyLabels: () => void;
   onCorrect: (action: string, payload?: Record<string, unknown>) => void;
   onUndoLast: () => void;
@@ -726,13 +694,32 @@ function ThreadRowCard({
         ? 'bg-[var(--color-prio-2)]'
         : '';
   const senderLabel = shortFrom(item.from || item.fromAddress || '');
-  const displaySenderLabel = participantLabel || senderLabel || item.account || '';
+  const displaySenderLabel = senderLabel || item.account || '';
   const date = (item.date as any) || item.lastDate || 0;
+  const prefetchTimer = useRef<number | null>(null);
+
+  const schedulePrefetch = () => {
+    if (prefetchTimer.current != null) return;
+    prefetchTimer.current = window.setTimeout(() => {
+      prefetchTimer.current = null;
+      onPrefetch();
+    }, 120);
+  };
+
+  const cancelPrefetch = () => {
+    if (prefetchTimer.current == null) return;
+    window.clearTimeout(prefetchTimer.current);
+    prefetchTimer.current = null;
+  };
+
+  useEffect(() => cancelPrefetch, []);
 
   return (
-    <motion.div
-      layout
+    <div
       onClick={onClick}
+      onPointerEnter={schedulePrefetch}
+      onPointerLeave={cancelPrefetch}
+      onFocus={onPrefetch}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
@@ -741,10 +728,6 @@ function ThreadRowCard({
       }}
       role="button"
       tabIndex={0}
-      initial={{ opacity: 0, filter: 'blur(6px)' }}
-      animate={{ opacity: 1, filter: 'blur(0)' }}
-      exit={{ opacity: 0, filter: 'blur(4px)' }}
-      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
       className={cn(
         'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
@@ -859,7 +842,7 @@ function ThreadRowCard({
           />
         </div>
       ) : null}
-    </motion.div>
+    </div>
   );
 }
 
@@ -1115,61 +1098,4 @@ function LabelConfirmDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function formatThreadParticipants(messages: ThreadMessage[], account: string, fallbackFrom?: string): string {
-  const ordered = [...messages].sort((a, b) => Number(b.date || 0) - Number(a.date || 0));
-  const newestSender = ordered[0]?.from || fallbackFrom || '';
-  const participants = new Map<string, string>();
-
-  const addHeaderList = (header: string | undefined) => {
-    for (const part of splitAddressHeader(header)) {
-      const email = emailFromHeader(part);
-      const key = email || shortFrom(part).toLowerCase();
-      if (!key || participants.has(key)) continue;
-      participants.set(key, formatParticipantName(part, account));
-    }
-  };
-
-  addHeaderList(newestSender);
-  for (const message of ordered) {
-    addHeaderList(message.from);
-    addHeaderList(message.to);
-    addHeaderList(message.cc);
-    addHeaderList(message.bcc);
-  }
-
-  const names = [...participants.values()].filter(Boolean);
-  if (!names.length) return shortFrom(fallbackFrom || '');
-  const visible = names.slice(0, 4);
-  const remaining = names.length - visible.length;
-  return remaining > 0 ? `${visible.join(', ')} +${remaining}` : visible.join(', ');
-}
-
-function splitAddressHeader(header: string | undefined): string[] {
-  const raw = String(header || '').trim();
-  if (!raw) return [];
-  const parts: string[] = [];
-  let current = '';
-  let quoted = false;
-  let depth = 0;
-  for (const char of raw) {
-    if (char === '"') quoted = !quoted;
-    if (!quoted && char === '<') depth += 1;
-    if (!quoted && char === '>' && depth > 0) depth -= 1;
-    if (!quoted && depth === 0 && char === ',') {
-      if (current.trim()) parts.push(current.trim());
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-  if (current.trim()) parts.push(current.trim());
-  return parts;
-}
-
-function formatParticipantName(value: string, account: string): string {
-  const email = emailFromHeader(value);
-  if (email && email === account.toLowerCase()) return 'me';
-  return shortFrom(value);
 }

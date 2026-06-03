@@ -9,10 +9,13 @@ import { recallSender } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
-import { setThreadSummary, setThreadTriage, upsertThread } from '../store/threads';
+import { getThread as getThreadRecord, setThreadSummary, setThreadTriage, upsertThread } from '../store/threads';
 import { defineTool } from './registry';
 
 async function loadThread(account: string, threadId: string) {
+  const cached = await getThreadMessages(account, threadId);
+  if (cached.length) return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
+
   try {
     const raw = await runGogJson<any>([
       '--account',
@@ -69,6 +72,10 @@ export const summarizeThread = defineTool({
   input: z.object({ account: z.string(), threadId: z.string() }),
   output: z.object({ summary: z.string(), model: z.string() }),
   async handler({ account, threadId }) {
+    const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
+    if (cachedThread?.summary && cachedThread.summaryAt && Date.now() - cachedThread.summaryAt < 6 * 60 * 60_000) {
+      return { summary: cachedThread.summary, model: 'cached' };
+    }
     const messages = await loadThread(account, threadId);
     if (!messages.length) return { summary: '(empty thread)', model: 'none' };
     if (!hasAi()) {

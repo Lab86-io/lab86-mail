@@ -52,12 +52,22 @@ export function ThreadView() {
   const { data, isLoading } = useQuery({
     queryKey: ['thread', account, threadId],
     queryFn: async () =>
-      callTool<{ threadId: string; subject: string; messages: any[] }>('get_thread', {
+      callTool<{
+        threadId: string;
+        subject: string;
+        messages: any[];
+        summary?: string | null;
+        summaryAt?: number | null;
+      }>('get_thread', {
         account,
         threadId,
-        refresh: true,
+        refresh: false,
       }),
     enabled: !!account && !!threadId,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 
   const archive = useMutation({
@@ -110,10 +120,10 @@ export function ThreadView() {
       });
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
-      queryClient.invalidateQueries({ queryKey: ['daily-report'] });
-      queryClient.invalidateQueries({ queryKey: ['tracked-threads'] });
+      queryClient.invalidateQueries({ queryKey: ['search'], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['smart-counts'], refetchType: 'inactive' });
+      queryClient.invalidateQueries({ queryKey: ['daily-report'], refetchType: 'inactive' });
+      queryClient.invalidateQueries({ queryKey: ['tracked-threads'], refetchType: 'inactive' });
     },
   });
   useEffect(() => {
@@ -130,12 +140,23 @@ export function ThreadView() {
   }, [account, threadId, messages, markThreadRead]);
   const lastMessage = messages[messages.length - 1];
   const latestMessageStamp = `${lastMessage?._id || ''}:${lastMessage?.date || 0}:${messages.length}`;
+  const cachedSummary = data?.summary || '';
+  const cachedSummaryFresh = Boolean(data?.summaryAt && Date.now() - data.summaryAt < 6 * 60 * 60_000);
+  const [summaryEnabled, setSummaryEnabled] = useState(false);
+  useEffect(() => {
+    setSummaryEnabled(false);
+    if (!account || !threadId || !messages.length || cachedSummaryFresh) return;
+    const timeout = window.setTimeout(() => setSummaryEnabled(true), 700);
+    return () => window.clearTimeout(timeout);
+  }, [account, threadId, messages.length, latestMessageStamp, cachedSummaryFresh]);
   const summary = useQuery({
     queryKey: ['summary', account, threadId, latestMessageStamp],
     queryFn: async () =>
       callTool<{ summary: string; model: string }>('summarize_thread', { account, threadId }),
-    enabled: !!account && !!threadId && messages.length > 0,
-    staleTime: 5 * 60_000,
+    enabled: summaryEnabled && !!account && !!threadId && messages.length > 0 && !cachedSummaryFresh,
+    staleTime: 6 * 60 * 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
     retry: 0,
   });
   const ordered = useMemo(() => [...messages].reverse(), [messages]);
@@ -352,11 +373,14 @@ export function ThreadView() {
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <SummaryCard
-          data={summary.data?.summary || ''}
-          model={summary.data?.model || ''}
-          loading={summary.isLoading}
+          data={summary.data?.summary || cachedSummary}
+          model={summary.data?.model || (cachedSummary ? 'cached' : '')}
+          loading={!cachedSummary && summaryEnabled && summary.isLoading}
           error={summary.error ? (summary.error as Error).message : null}
-          onRetry={() => summary.refetch()}
+          onRetry={() => {
+            setSummaryEnabled(true);
+            summary.refetch();
+          }}
         />
 
         {composeForThisThread && activeMode && activeAnchorMessageId ? (

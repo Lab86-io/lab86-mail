@@ -16,6 +16,7 @@ import { computeSmartCategoryStats } from '../store/smart-category-stats';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
 import {
+  getThread as getThreadRecord,
   listRecentThreads,
   listThreadsForAccount,
   setThreadSmartCategory,
@@ -202,8 +203,11 @@ export const getThread = defineTool({
     threadId: z.string(),
     subject: z.string(),
     messages: z.array(z.any()),
+    summary: z.string().nullable().optional(),
+    summaryAt: z.number().nullable().optional(),
   }),
   async handler({ account, threadId, refresh }) {
+    const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
     let messages = refresh ? [] : await getThreadMessages(account, threadId);
     if (!messages.length) {
       const raw = await runGogJson<any>([
@@ -242,6 +246,8 @@ export const getThread = defineTool({
       threadId,
       subject: messages[0]?.subject || '(no subject)',
       messages,
+      summary: cachedThread?.summary ?? null,
+      summaryAt: cachedThread?.summaryAt ?? null,
     };
   },
 });

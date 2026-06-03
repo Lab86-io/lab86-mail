@@ -9,13 +9,12 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // Default short stale window so per-query staleTime overrides on
-            // long-lived data (photos, labels) still feel snappy, while
-            // freshness-sensitive views like the inbox set their own.
-            staleTime: 15_000,
-            // Tabbing back to the app is the most common "did I get new mail?"
-            // signal — let React Query refetch every active query on focus.
-            refetchOnWindowFocus: true,
+            // Keep recently viewed mail warm. Freshness-sensitive views still
+            // set their own polling/refresh behavior, but focus changes should
+            // not make the whole UI feel like it is reloading.
+            staleTime: 60_000,
+            gcTime: 30 * 60_000,
+            refetchOnWindowFocus: false,
             // Same for regaining network — we may have missed mail offline.
             refetchOnReconnect: true,
             retry: 1,
