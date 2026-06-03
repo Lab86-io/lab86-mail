@@ -429,7 +429,7 @@ export function AIBarSidebar() {
                 key={s}
                 variant="outline"
                 onClick={() => send(s)}
-                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
+                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
               >
                 {s}
               </PromptSuggestion>
@@ -466,11 +466,11 @@ export function AIBarSidebar() {
           isLoading={busy}
           onSubmit={submit}
           maxHeight={176}
-          className="border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
+          className="border-[var(--color-accent)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
         >
           <PromptInputTextarea
             placeholder="Find, draft, schedule, label, anything…"
-            className="text-[13px] leading-relaxed"
+            className="text-[13px] leading-relaxed text-[var(--color-text)]"
           />
           <PromptInputActions className="justify-end pt-1">
             <PromptInputAction tooltip={busy ? 'Stop' : 'Send'}>
@@ -631,7 +631,7 @@ function ToolCard({ part }: { part: any }) {
       ? `${verb}…`
       : humanizeTool(name, part.input, part.output);
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
+    <div className="flex items-start gap-2 rounded-lg border border-[var(--color-accent)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
       <span
         className={cn(
           'mt-px grid size-4 shrink-0 place-items-center',

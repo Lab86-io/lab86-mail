@@ -183,8 +183,8 @@ export function Rail() {
       <SidebarHeader className="gap-3">
         {/* Title bar: the title only shows when expanded; the trigger stays put
             and centers itself when collapsed so it doubles as the expand button. */}
-        <div className="flex items-center justify-between gap-2 px-1 pt-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <span className="text-[15px] font-semibold tracking-tight text-[var(--color-text)] group-data-[collapsible=icon]:hidden">
+        <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+          <span className="max-w-40 whitespace-nowrap text-[15px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
           <SidebarTrigger
@@ -211,7 +211,7 @@ export function Rail() {
               />
               <Plus />
               <span>Compose</span>
-              <span className="ml-auto text-[10px] text-[var(--color-accent-foreground)]/75 group-data-[collapsible=icon]:hidden">
+              <span className="ml-auto text-[10px] text-[var(--color-accent-foreground)]/75">
                 c
               </span>
             </SidebarMenuButton>

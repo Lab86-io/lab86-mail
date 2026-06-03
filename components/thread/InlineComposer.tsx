@@ -283,7 +283,7 @@ export function InlineComposer({
   const borderClass = useMemo(() => {
     if (phase === 'sent') return 'border-solid border-[var(--color-accent)]';
     if (phase === 'sending') return 'border-dashed border-[var(--color-accent)]/60';
-    return framed ? 'border-dashed border-[var(--color-border-strong)]' : 'border-[var(--color-transparent)]';
+    return framed ? 'border-dashed border-[var(--color-accent)]' : 'border-[var(--color-transparent)]';
   }, [phase, framed]);
 
   const modeLabel: Record<ComposeMode, string> = {
