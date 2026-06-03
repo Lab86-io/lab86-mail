@@ -828,7 +828,7 @@ function ThreadRowCard({
 
       {/* Hover-only row actions — overlaid so they add no height at rest. */}
       {smart ? (
-        <div className="absolute right-2 top-1/2 z-10 hidden -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 shadow-[var(--shadow-soft)] group-hover:flex">
+        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
           <Button
             type="button"
             variant="ghost"

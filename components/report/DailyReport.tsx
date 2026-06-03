@@ -371,7 +371,7 @@ function ReportSection({
         <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{items.length}</span>
         <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
       </div>
-      <div>
+      <div className="space-y-2">
         {items.map((item, index) => (
           <ReportRow
             key={`${label}:${item.account}:${item.threadId}:${item.trackedThreadId || ''}`}
@@ -414,8 +414,8 @@ function ReportRow({
         }
       }}
       className={cn(
-        'group grid cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 rounded-md border-b border-[var(--color-border)] px-1.5 py-2 text-left last:border-b-0',
-        'transition-colors hover:bg-[var(--color-bg-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]',
+        'group grid cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-3 text-left shadow-[var(--shadow-soft)]',
+        'transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]',
         correcting && 'opacity-50',
       )}
     >

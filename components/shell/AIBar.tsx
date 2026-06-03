@@ -42,7 +42,6 @@ import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { Message, MessageContent } from '@/components/ui/message';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
-import { Tool } from '@/components/ui/tool';
 import {
   PromptInput,
   PromptInputAction,
@@ -613,6 +612,7 @@ function Part({ part }: { part: any }) {
   return null;
 }
 
+// A single human-readable line for each agent step — no JSON, no call ids.
 function ToolCard({ part }: { part: any }) {
   const name =
     part.type === 'dynamic-tool'
@@ -620,22 +620,114 @@ function ToolCard({ part }: { part: any }) {
       : typeof part.type === 'string'
         ? part.type.replace(/^tool-/, '')
         : 'tool';
-  const { verb } = toolMeta(name);
-  const summary = summaryFor(name, part.input, part.output);
-  // prompt-kit Tool is self-contained; feed it a friendly "verb · summary" label.
+  const { Icon, verb } = toolMeta(name);
+  const state = part.state || 'input-available';
+  const errored = state === 'output-error';
+  const done = state === 'output-available';
+  const working = !errored && !done;
+  const text = errored
+    ? part.errorText || 'That step ran into a problem.'
+    : working
+      ? `${verb}…`
+      : humanizeTool(name, part.input, part.output);
   return (
-    <Tool
-      className="mt-0 border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[12px]"
-      toolPart={{
-        type: summary ? `${verb} · ${summary}` : verb,
-        state: part.state || 'input-available',
-        input: part.input,
-        output: part.output,
-        toolCallId: part.toolCallId,
-        errorText: part.errorText,
-      }}
-    />
+    <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
+      <span
+        className={cn(
+          'mt-px grid size-4 shrink-0 place-items-center',
+          errored
+            ? 'text-[var(--color-danger)]'
+            : done
+              ? 'text-[var(--color-success)]'
+              : 'text-[var(--color-text-faint)]',
+        )}
+      >
+        <Icon className="size-3.5" />
+      </span>
+      <span className="min-w-0 flex-1">{text}</span>
+    </div>
   );
+}
+
+// Turn a tool call + its result into a friendly sentence for the chat log.
+function humanizeTool(name: string, args: any, out: any): string {
+  const a = args || {};
+  const count = (o: any) =>
+    o?.items?.length ?? o?.threads?.length ?? o?.verdicts?.length ?? o?.results?.length ?? null;
+  try {
+    switch (name) {
+      case 'search_threads':
+      case 'nl_search': {
+        const q = a.query || a.description || '';
+        const n = count(out);
+        return n != null
+          ? `Found ${n} thread${n === 1 ? '' : 's'}${q ? ` for “${q}”` : ''}.`
+          : q
+            ? `Searched for “${q}”.`
+            : 'Searched your mail.';
+      }
+      case 'get_thread':
+        return 'Read the thread.';
+      case 'summarize_thread':
+        return out?.summary ? `Summary: ${out.summary}` : 'Summarized the thread.';
+      case 'triage_thread':
+        return out?.reason ? `Triaged — ${out.reason}` : 'Triaged the thread.';
+      case 'draft_reply':
+        return 'Drafted a reply for you to review.';
+      case 'extract_action_items':
+        return 'Pulled out the action items.';
+      case 'classify_threads':
+        return 'Re-checked smart categories.';
+      case 'archive_thread':
+        return 'Archived the thread.';
+      case 'trash_thread':
+        return 'Moved the thread to trash.';
+      case 'mark_read':
+        return 'Marked as read.';
+      case 'mark_unread':
+        return 'Marked as unread.';
+      case 'add_label':
+        return a.label ? `Added the “${a.label}” label.` : 'Added a label.';
+      case 'snooze_thread':
+        return a.untilTs ? `Snoozed until ${new Date(a.untilTs).toLocaleString()}.` : 'Snoozed it.';
+      case 'send_message':
+      case 'reply':
+      case 'reply_all':
+        return `Prepared a message${a.to ? ` to ${a.to}` : ''} for your review.`;
+      case 'ui_open_compose':
+        return `Opened the composer${a.to ? ` to ${a.to}` : ''}${a.subject ? ` — “${a.subject}”` : ''}.`;
+      case 'ui_open_reply':
+        return 'Opened a reply for you to review.';
+      case 'ui_focus_thread':
+        return 'Opened that thread in your reader.';
+      case 'ui_set_query':
+        return a.query ? `Filtered your inbox to “${a.query}”.` : 'Filtered your inbox.';
+      case 'remember':
+        return a.email ? `Saved a note about ${a.email}.` : 'Saved a note.';
+      case 'recall':
+        return a.email ? `Recalled what I know about ${a.email}.` : 'Recalled my notes.';
+      case 'calendar_free_busy':
+        return 'Checked your calendar availability.';
+      case 'calendar_suggest_times':
+        return 'Suggested some meeting times.';
+      case 'calendar_create_event':
+        return 'Created a calendar event.';
+      case 'contact_lookup':
+        return 'Looked up the contact.';
+      case 'browserbase_search':
+        return a.query ? `Searched the web for “${a.query}”.` : 'Searched the web.';
+      case 'browserbase_fetch':
+        return a.url ? `Read ${a.url}.` : 'Fetched a web page.';
+      case 'list_accounts':
+        return 'Checked your connected accounts.';
+      default: {
+        const n = count(out);
+        return n != null ? `Done — ${n} result${n === 1 ? '' : 's'}.` : 'Done.';
+      }
+    }
+  } catch {
+    return 'Done.';
+  }
 }
 
 function summaryFor(name: string, args: any, out: any): string {

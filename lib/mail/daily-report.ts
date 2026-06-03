@@ -834,7 +834,7 @@ async function composeReport(input: {
       const { text } = await generateText({
         model: primaryModel(),
         system:
-          'Write Jakob a compact Daily Report from his email, calendar, memories, and tracked threads. Be concrete and investigative. Lead with replies he owes and conversations awaiting his follow-up, then new people and time-sensitive items. Do not use emoji. Do not mention low-value promotions except as excluded noise. Return only prose, maximum 110 words, no greeting.',
+          "Write Jakob a warm, narrative Daily Report from his email, calendar, memories, and tracked threads — like a sharp chief-of-staff briefing him over coffee. Tell the story of where things stand: open it with the through-line of the day, then walk through the replies he owes and conversations awaiting his follow-up (name the people and what's at stake), then new people and anything time-sensitive, and close with a clear nudge on what to do first. Use flowing prose in 2-3 short paragraphs, concrete and investigative, naming names. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 140-180 words.",
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
@@ -916,19 +916,44 @@ function localNarrative(
     pieces.length === 1 ? pieces[0] : `${pieces.slice(0, -1).join(', ')}, and ${pieces[pieces.length - 1]}`;
   const parts = [`${opener} ${sentence}.`];
 
+  // Name a few of the people awaiting a reply — a more human briefing.
+  const nameList = (items: DailyReportItem[]) =>
+    items
+      .slice(0, 3)
+      .map((i) => personName(i.people[0] || '') || subjectClause(i.subject))
+      .filter(Boolean);
+  const joinNames = (names: string[]) =>
+    names.length <= 1 ? names[0] || '' : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+  const replyNames = nameList(replyOwed);
+  if (replyNames.length) {
+    const more = replyOwed.length - replyNames.length;
+    parts.push(
+      `${joinNames(replyNames)}${more > 0 ? ` and ${more} other${more === 1 ? '' : 's'}` : ''} ${
+        replyOwed.length === 1 ? 'is' : 'are'
+      } still waiting to hear back from you.`,
+    );
+  }
+
   const lead = replyOwed[0] || followUpOwed[0] || newPeople[0];
   if (lead) {
     const who = personName(lead.people[0] || '') || subjectClause(lead.subject);
     parts.push(`Start with ${who} — ${lead.whyItMatters}`);
   }
-  if (tracked.length) {
-    const names = tracked
-      .slice(0, 3)
-      .map((item) => personName(item.people[0] || '') || subjectClause(item.subject))
-      .filter(Boolean);
-    if (names.length) parts.push(`Still tracking: ${names.join(', ')}.`);
+
+  if (followUpOwed.length) {
+    const who = personName(followUpOwed[0].people[0] || '') || subjectClause(followUpOwed[0].subject);
+    const more = followUpOwed.length - 1;
+    parts.push(
+      `You're still waiting on ${who}${more > 0 ? ` and ${more} other${more === 1 ? '' : 's'}` : ''} to circle back.`,
+    );
   }
-  return parts.join('\n\n');
+
+  if (tracked.length) {
+    const names = nameList(tracked);
+    if (names.length) parts.push(`And you're keeping an eye on ${joinNames(names)}.`);
+  }
+  return parts.join(' ');
 }
 
 async function loadCalendarContext(accounts: string[], now: number) {
