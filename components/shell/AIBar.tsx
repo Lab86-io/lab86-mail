@@ -6,6 +6,7 @@ import { DefaultChatTransport } from 'ai';
 import {
   AlarmClock,
   Archive,
+  ArrowUp,
   Bell,
   Brain,
   Calendar,
@@ -25,6 +26,7 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Square,
   Star,
   Tag,
   Trash,
@@ -37,28 +39,22 @@ import {
 import { motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  Conversation,
-  ConversationContent,
-  ConversationScrollButton,
-} from '@/components/ai-elements/conversation';
-import { Loader } from '@/components/ai-elements/loader';
 import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message';
-import {
-  PromptInput,
-  PromptInputBody,
-  PromptInputFooter,
-  type PromptInputMessage,
-  PromptInputSubmit,
-  PromptInputTextarea,
-  PromptInputTools,
-} from '@/components/ai-elements/prompt-input';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning';
-import { Suggestion } from '@/components/ai-elements/suggestion';
 import { Tool, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Button } from '@/components/ui/button';
+import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
 import { CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Loader } from '@/components/ui/loader';
+import {
+  PromptInput,
+  PromptInputAction,
+  PromptInputActions,
+  PromptInputTextarea,
+} from '@/components/ui/prompt-input';
+import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
+import { ScrollButton } from '@/components/ui/scroll-button';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -360,12 +356,12 @@ export function AIBarSidebar() {
     sendMessage({ text: trimmed }, { body: { extraSystem: contextLines || undefined } } as any);
   };
 
-  const handleSubmit = (message: PromptInputMessage) => {
+  const submit = () => {
     if (busy) {
       stop();
       return;
     }
-    send(message.text || '');
+    send(input);
   };
 
   // The sidebar is always mounted but width is controlled by the grid; we
@@ -427,25 +423,26 @@ export function AIBarSidebar() {
           </div>
           <div className="flex w-full max-w-[320px] flex-col gap-2">
             {(selectedThreadId ? THREAD_SUGGESTIONS : BASE_SUGGESTIONS).map((s) => (
-              <Suggestion
+              <PromptSuggestion
                 key={s}
-                suggestion={s}
-                onClick={send}
-                className="h-auto w-full justify-start whitespace-normal rounded-lg border-[var(--color-border)] px-3 py-2 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              />
+                variant="outline"
+                onClick={() => send(s)}
+                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-border)] px-3 py-2 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              >
+                {s}
+              </PromptSuggestion>
             ))}
           </div>
         </div>
       ) : (
-        <Conversation className="flex-1">
-          <ConversationContent className="gap-4">
+        <ChatContainerRoot className="relative flex-1">
+          <ChatContainerContent className="gap-4 px-3 py-4">
             {messages.map((m) => (
               <MessageView key={m.id} message={m} />
             ))}
             {showLoader ? (
-              <div className="flex items-center gap-2 px-1 text-[12px] text-[var(--color-text-muted)]">
-                <Loader size={14} />
-                <span>Working…</span>
+              <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
+                <Loader variant="typing" />
               </div>
             ) : null}
             {error ? (
@@ -453,28 +450,47 @@ export function AIBarSidebar() {
                 {error.message}
               </div>
             ) : null}
-          </ConversationContent>
-          <ConversationScrollButton />
-        </Conversation>
+          </ChatContainerContent>
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+            <ScrollButton className="pointer-events-auto shadow-[var(--shadow-pop)]" />
+          </div>
+        </ChatContainerRoot>
       )}
 
       <div
         ref={inputWrapRef}
         className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2.5"
       >
-        <PromptInput onSubmit={handleSubmit}>
-          <PromptInputBody>
-            <PromptInputTextarea
-              value={input}
-              onChange={(e) => setInput(e.currentTarget.value)}
-              placeholder="Find, draft, schedule, label, anything…"
-              className="max-h-40 min-h-11 text-[13px]"
-            />
-          </PromptInputBody>
-          <PromptInputFooter>
-            <PromptInputTools />
-            <PromptInputSubmit status={status} disabled={!busy && !input.trim()} />
-          </PromptInputFooter>
+        <PromptInput
+          value={input}
+          onValueChange={setInput}
+          isLoading={busy}
+          onSubmit={submit}
+          maxHeight={176}
+          className="border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
+        >
+          <PromptInputTextarea
+            placeholder="Find, draft, schedule, label, anything…"
+            className="text-[13px] leading-relaxed"
+          />
+          <PromptInputActions className="justify-end pt-1">
+            <PromptInputAction tooltip={busy ? 'Stop' : 'Send'}>
+              <Button
+                type="button"
+                size="icon-sm"
+                onClick={submit}
+                disabled={!busy && !input.trim()}
+                className="rounded-full"
+                aria-label={busy ? 'Stop' : 'Send'}
+              >
+                {busy ? (
+                  <Square className="size-3.5 fill-current" />
+                ) : (
+                  <ArrowUp className="size-4" />
+                )}
+              </Button>
+            </PromptInputAction>
+          </PromptInputActions>
         </PromptInput>
       </div>
     </motion.section>
