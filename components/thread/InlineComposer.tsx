@@ -67,6 +67,7 @@ interface SentMessageRef {
   account?: string;
   threadId?: string | null;
   messageId?: string | null;
+  refreshed?: boolean;
 }
 
 export function InlineComposer({
@@ -198,23 +199,42 @@ export function InlineComposer({
     onSuccess: (data) => {
       setPhase('sent');
       const sent = data?.sent as SentMessageRef | undefined;
+      const sentAccount = sent?.account || fromAccount || account;
+      const sentThreadId = sent?.threadId || threadId || null;
       // Brief solid-border flash then hand control back to the parent.
       window.setTimeout(() => {
         setPhase('draft');
         setBody('');
         setFiles([]);
         setPreviewFile(null);
-        if (mode === 'new' || mode === 'forward') {
+        if (composerMode === 'new' || composerMode === 'forward') {
           setTo('');
           setCc('');
           setBcc('');
           setSubject('');
         }
         toast.success('Sent');
-        queryClient.invalidateQueries({ queryKey: ['thread'] });
+        if (sentThreadId) {
+          setThreadAccount(sentAccount);
+          setSelectedThread(sentThreadId);
+          void queryClient.invalidateQueries({ queryKey: ['thread', sentAccount, sentThreadId] });
+          if (sent?.refreshed === false) {
+            window.setTimeout(() => {
+              void callTool('get_thread', {
+                account: sentAccount,
+                threadId: sentThreadId,
+                refresh: true,
+              })
+                .then((freshThread) => {
+                  queryClient.setQueryData(['thread', sentAccount, sentThreadId], freshThread);
+                })
+                .catch(() => undefined);
+            }, 1_500);
+          }
+        } else {
+          void queryClient.invalidateQueries({ queryKey: ['thread'] });
+        }
         queryClient.invalidateQueries({ queryKey: ['search'] });
-        if (sent?.account) setThreadAccount(sent.account);
-        if (sent?.threadId) setSelectedThread(sent.threadId);
         onSent?.(sent);
       }, 700);
     },

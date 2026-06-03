@@ -4,11 +4,18 @@ import path from 'node:path';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { buildReplyArgs, buildSendArgs } from '@/lib/compose/gog-args';
+import { normalizeGogMessage } from '@/lib/gog/normalize';
 import { runGogJson } from '@/lib/gog/pool';
 import { sanitizeFilename } from '@/lib/shared/files';
 import { emailFromHeader } from '@/lib/shared/format';
+import type { Message } from '@/lib/shared/types';
 import { writeAudit } from '@/lib/store/audit';
-import { getMessage as getMessageRecord, getThreadMessages } from '@/lib/store/messages';
+import {
+  getMessage as getMessageRecord,
+  getThreadMessages,
+  upsertMessage as upsertMessageRecord,
+} from '@/lib/store/messages';
+import { upsertThread } from '@/lib/store/threads';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -55,6 +62,12 @@ export async function POST(req: NextRequest) {
   const dir = await fs.mkdtemp(path.join(tmpdir(), 'mailos-compose-'));
   const attachmentPaths: string[] = [];
   try {
+    const cachedThreadMessageCount = threadId
+      ? await getThreadMessages(account, threadId)
+          .then((messages) => messages.length)
+          .catch(() => 0)
+      : 0;
+
     for (const f of files) {
       const safe = sanitizeFilename(f.name || 'attachment');
       const target = path.join(dir, safe);
@@ -160,6 +173,13 @@ export async function POST(req: NextRequest) {
       messageId,
       rawSend,
     });
+    const refresh = await refreshSentThreadCache({
+      account: sent.account || account,
+      threadId: sent.threadId,
+      expectedMessageId:
+        sent.messageId && sent.messageId !== messageId && sent.messageId !== threadId ? sent.messageId : null,
+      baselineMessageCount: sent.threadId === threadId ? cachedThreadMessageCount : 0,
+    });
     await writeAudit({
       tool: `compose_route:${mode || 'new'}`,
       account,
@@ -174,9 +194,10 @@ export async function POST(req: NextRequest) {
         attachments: files.map((f) => f.name),
       },
       result: 'ok',
+      detail: refresh.ok ? undefined : 'sent thread cache refresh did not observe the new message',
       agent: 'user',
     }).catch(() => undefined);
-    return NextResponse.json({ ok: true, sent });
+    return NextResponse.json({ ok: true, sent: { ...sent, refreshed: refresh.ok } });
   } catch (err: any) {
     await writeAudit({
       tool: `compose_route:${mode || 'new'}`,
@@ -190,6 +211,79 @@ export async function POST(req: NextRequest) {
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+async function refreshSentThreadCache({
+  account,
+  threadId,
+  expectedMessageId,
+  baselineMessageCount,
+}: {
+  account: string;
+  threadId?: string | null;
+  expectedMessageId?: string | null;
+  baselineMessageCount: number;
+}) {
+  if (!account || !threadId) return { ok: false, messageCount: 0 };
+
+  let lastCount = 0;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (attempt > 0) await sleep(attempt < 3 ? 500 : 900);
+    try {
+      const messages = await fetchAndCacheThread(account, threadId);
+      lastCount = messages.length;
+      const sawExpected = expectedMessageId
+        ? messages.some((message) => message._id === expectedMessageId)
+        : false;
+      if (sawExpected || messages.length > baselineMessageCount) {
+        return { ok: true, messageCount: messages.length };
+      }
+      // For brand-new messages gog may return the final thread id but not the
+      // message id, and Gmail can report the same single-message count. Once we
+      // have any cached messages for a thread that did not exist locally, the UI
+      // has enough to open the thread.
+      if (baselineMessageCount === 0 && messages.length > 0) {
+        return { ok: true, messageCount: messages.length };
+      }
+    } catch {}
+  }
+  return { ok: false, messageCount: lastCount };
+}
+
+async function fetchAndCacheThread(account: string, threadId: string): Promise<Message[]> {
+  const raw = await runGogJson<any>([
+    '--account',
+    account,
+    '--json',
+    'gmail',
+    'thread',
+    'get',
+    threadId,
+    '--full',
+    '--no-input',
+  ]);
+  const threadObj = raw?.thread || raw?.result || raw?.data || raw;
+  const messages: Message[] = (Array.isArray(threadObj?.messages) ? threadObj.messages : [])
+    .map((message: any) => normalizeGogMessage(message, account))
+    .filter((message: Message) => message._id)
+    .sort((a: Message, b: Message) => (Number(a.date) || 0) - (Number(b.date) || 0));
+
+  for (const message of messages) {
+    await upsertMessageRecord(message).catch(() => undefined);
+  }
+  const newest = messages[messages.length - 1];
+  if (newest) {
+    await upsertThread(account, {
+      _id: threadId,
+      subject: newest.subject || messages[0]?.subject || '(no subject)',
+      fromAddress: newest.from,
+      lastDate: newest.date,
+      snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+      labels: newest.labels || [],
+      unread: messages.some((message) => message.labels?.includes('UNREAD')),
+    }).catch(() => undefined);
+  }
+  return messages;
 }
 
 async function resolveSentMessage({

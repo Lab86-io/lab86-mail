@@ -99,6 +99,7 @@ export function Inbox() {
   const queryError = useClientStore((s) => s.queryError);
   const setQueryError = useClientStore((s) => s.setQueryError);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
+  const threadAccount = useClientStore((s) => s.threadAccount);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const selectedIds = useClientStore((s) => s.selectedIds);
@@ -112,6 +113,7 @@ export function Inbox() {
   const [searchInput, setSearchInput] = useState(searchDraft || (query === DEFAULT_QUERY ? '' : query));
   const [translating, setTranslating] = useState(false);
   const [labelPreview, setLabelPreview] = useState<ThreadRow | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -198,7 +200,7 @@ export function Inbox() {
 
   const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
     useInfiniteQuery({
-      queryKey: ['search', account, query, smartCategory, authedEmails.join(',')],
+      queryKey: ['search', account, query, smartCategory, authedEmails.join(','), refreshNonce],
       initialPageParam: {} as Record<string, string>,
       queryFn: async ({ pageParam }): Promise<InboxPage> => {
         const pageTokens = pageParam as Record<string, string>;
@@ -264,7 +266,26 @@ export function Inbox() {
     });
 
   const refreshInbox = () => {
-    refetch();
+    setRefreshNonce((nonce) => nonce + 1);
+    clearSelected();
+    queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
+    queryClient.invalidateQueries({ queryKey: ['daily-report'], refetchType: 'inactive' });
+    if (selectedThreadId) {
+      const openAccount = threadAccount || (account !== ALL_ACCOUNTS ? account : '');
+      if (openAccount) {
+        void callTool<{ threadId: string; subject: string; messages: any[] }>('get_thread', {
+          account: openAccount,
+          threadId: selectedThreadId,
+          refresh: true,
+        })
+          .then((freshThread) => {
+            queryClient.setQueryData(['thread', openAccount, selectedThreadId], freshThread);
+          })
+          .catch(() => {
+            queryClient.invalidateQueries({ queryKey: ['thread', openAccount, selectedThreadId] });
+          });
+      }
+    }
   };
 
   const items = useMemo(() => {
