@@ -148,12 +148,15 @@
     --input: var(--color-bg-elevated);
     --ring: var(--color-accent);
 
-    --color-bg: #0f0e0c;
-    --color-bg-elevated: #1a1712;
-    --color-bg-subtle: #1d1a14;
-    --color-bg-muted: #241f18;
-    --color-border: #302a22;
-    --color-border-strong: #3f3930;
+    /* Pure-black base; warm brown-grey only on raised elements (cards, bubbles,
+       inputs). elevated < subtle < muted step progressively lighter so surfaces
+       read as distinct layers on the black canvas. */
+    --color-bg: #000000;
+    --color-bg-elevated: #17130d;
+    --color-bg-subtle: #201b13;
+    --color-bg-muted: #2a2418;
+    --color-border: #30291f;
+    --color-border-strong: #41382b;
     --color-text: #e7e5e3;
     --color-text-muted: #a8a29e;
     --color-text-faint: #6b6963;

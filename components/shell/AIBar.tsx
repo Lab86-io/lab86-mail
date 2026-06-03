@@ -378,7 +378,7 @@ export function AIBarSidebar() {
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 20, opacity: 0 }}
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-      className="relative flex h-full w-full flex-col overflow-hidden bg-[var(--color-bg-elevated)]"
+      className="relative flex h-full w-full flex-col overflow-hidden bg-[var(--color-bg)]"
     >
       <TopProgressBar active={busy} />
 
@@ -427,7 +427,7 @@ export function AIBarSidebar() {
                 key={s}
                 variant="outline"
                 onClick={() => send(s)}
-                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-border)] px-3 py-2 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               >
                 {s}
               </PromptSuggestion>
