@@ -273,23 +273,23 @@ export function ThreadView() {
     <div className="flex h-full flex-col bg-[var(--color-bg)]">
       <header
         className={cn(
-          'flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+          '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
           !aiBarOpen && 'pr-12',
         )}
       >
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold leading-tight">{data.subject}</h1>
-          <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]">
-            <span>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
+            <span className="shrink-0">
               {messages.length} message{messages.length === 1 ? '' : 's'}
             </span>
-            <span>·</span>
-            <span>{shortFrom(lastMessage?.from)}</span>
-            <span>·</span>
-            <span>{formatDate(lastMessage?.date)}</span>
+            <span className="shrink-0">·</span>
+            <span className="truncate">{shortFrom(lastMessage?.from)}</span>
+            <span className="shrink-0">·</span>
+            <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
             variant="outline"
@@ -300,7 +300,7 @@ export function ThreadView() {
             title="Reply (r)"
           >
             <Reply className="h-3.5 w-3.5" />
-            Reply
+            <span className="hidden @[520px]:inline">Reply</span>
           </Button>
           <Button
             type="button"
@@ -312,7 +312,7 @@ export function ThreadView() {
             title="Reply all"
           >
             <Reply className="h-3.5 w-3.5" />
-            Reply all
+            <span className="hidden @[520px]:inline">Reply all</span>
           </Button>
           <Button
             type="button"
@@ -324,7 +324,7 @@ export function ThreadView() {
             title="Forward"
           >
             <Forward className="h-3.5 w-3.5" />
-            Forward
+            <span className="hidden @[520px]:inline">Forward</span>
           </Button>
           <span className="mx-1 h-5 w-px bg-[var(--color-border)]" aria-hidden />
           <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>

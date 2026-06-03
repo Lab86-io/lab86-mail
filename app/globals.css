@@ -149,11 +149,11 @@
     --ring: var(--color-accent);
 
     --color-bg: #0f0e0c;
-    --color-bg-elevated: #16140f;
-    --color-bg-subtle: #1a1813;
-    --color-bg-muted: #211d17;
-    --color-border: #2a2620;
-    --color-border-strong: #38332a;
+    --color-bg-elevated: #1a1712;
+    --color-bg-subtle: #1d1a14;
+    --color-bg-muted: #241f18;
+    --color-border: #302a22;
+    --color-border-strong: #3f3930;
     --color-text: #e7e5e3;
     --color-text-muted: #a8a29e;
     --color-text-faint: #6b6963;
@@ -378,6 +378,17 @@
   .dark .email-body [style*="color: rgb(255,255,255)" i],
   .dark .email-body [style*="color:rgb(255, 255, 255)" i],
   .dark .email-body [style*="color: rgb(255, 255, 255)" i] {
+    color: var(--color-text) !important;
+  }
+
+  /* Dark mode: arbitrary email HTML ships dark-on-light inline colors that go
+     near-invisible on our dark surface. Force readable text on the common text
+     elements (links are excluded so they keep the accent color, which is light
+     in dark mode). Legibility wins over an email's own faint greys. */
+  .dark .email-body,
+  .dark
+    .email-body
+    :where(p, div, span, td, th, li, h1, h2, h3, h4, h5, h6, strong, em, b, blockquote, label) {
     color: var(--color-text) !important;
   }
 }

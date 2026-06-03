@@ -739,25 +739,24 @@ function ThreadRowCard({
       exit={{ opacity: 0, filter: 'blur(4px)' }}
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
       className={cn(
-        'relative grid grid-cols-[20px_28px_1fr_auto] gap-2.5 border-b border-[var(--color-border)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
         active && 'bg-[var(--color-bg-subtle)]',
         selected && 'bg-[var(--color-accent-soft)]',
       )}
     >
-      <span className={cn('absolute left-0 top-2.5 bottom-2.5 w-0.5 rounded-r-full', priorityClass)} />
+      <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
 
-      <div className="flex h-full items-start pt-0.5">
-        <Checkbox
-          checked={selected}
-          onCheckedChange={() => onToggle()}
-          onClick={(e) => e.stopPropagation()}
-        />
-      </div>
+      <Checkbox
+        checked={selected}
+        onCheckedChange={() => onToggle()}
+        onClick={(e) => e.stopPropagation()}
+      />
 
       <Avatar name={senderLabel || item.account} src={photoUrl} size={26} />
 
+      {/* Two-line row: sender, then subject + preview inline. */}
       <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <span
             className={cn(
               'truncate text-[13px]',
@@ -767,94 +766,91 @@ function ThreadRowCard({
             {displaySenderLabel}
           </span>
           {item.unread ? (
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" />
+            <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
           ) : null}
         </div>
-        <span className="truncate text-[13px] text-[var(--color-text)]">
-          {item.subject || '(no subject)'}
-        </span>
-        <span className="line-clamp-1 text-[11.5px] text-[var(--color-text-muted)]">
-          {item.snippet || ''}
-        </span>
-        {triage?.reason ? (
-          <span className="mt-0.5 line-clamp-1 text-[11px] text-[var(--color-accent)]">
-            AI · {triage.action} · {triage.reason}
+        <span className="truncate text-[12.5px] leading-tight">
+          <span className={item.unread ? 'font-medium text-[var(--color-text)]' : 'text-[var(--color-text)]'}>
+            {item.subject || '(no subject)'}
           </span>
-        ) : null}
-        {smart?.reason ? (
-          <span className="mt-0.5 line-clamp-1 text-[11px] text-[var(--color-text-muted)]">
-            Smart · {smart.reason}
-          </span>
-        ) : null}
+          {item.snippet ? (
+            <span className="text-[var(--color-text-muted)]"> — {item.snippet}</span>
+          ) : null}
+        </span>
       </div>
 
-      <div className="flex flex-col items-end gap-1">
-        <span className="text-[11px] text-[var(--color-text-faint)]">{formatDate(date)}</span>
-        {smart?.primary ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button type="button" className="inline-flex cursor-help" onClick={(e) => e.stopPropagation()}>
-                <Badge variant="secondary" className="max-w-24 truncate text-[9px]">
-                  {SMART_CATEGORY_LABELS[smart.primary as keyof typeof SMART_CATEGORY_LABELS] ||
-                    smart.primary}
-                </Badge>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72 text-[12px]">
-              <div className="space-y-2">
-                <div className="font-medium text-[var(--color-text)]">Why this is here</div>
-                <p className="text-[var(--color-text-muted)]">{smart.reason}</p>
-                <div className="flex flex-wrap gap-1">
-                  <Badge variant="outline">{Math.round((smart.confidence || 0) * 100)}%</Badge>
-                  {smart.needsAttention ? <Badge variant="outline">needs attention</Badge> : null}
-                  {smart.isHumanLike ? <Badge variant="outline">human-like</Badge> : null}
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
-        ) : null}
-        {showAccount && item.account ? (
-          <Badge variant="outline" className="font-mono text-[9px] normal-case">
-            {item.account.split('@')[0]}
-          </Badge>
-        ) : null}
-        {(item.labels || []).slice(0, 1).map((l) =>
-          l.startsWith('CATEGORY_') || l === 'INBOX' || l === 'UNREAD' ? null : (
-            <Badge key={l} variant="outline">
-              {l.replace(/^MailOS\//, '')}
-            </Badge>
-          ),
-        )}
-        {(smart?.customLabels || []).slice(0, 2).map((id: string) => {
-          const label = customLabels.find((entry) => entry._id === id);
-          return label ? (
-            <Badge key={id} variant="outline" className="text-[9px]">
-              {label.name}
-            </Badge>
-          ) : null;
-        })}
-        {smart ? (
-          <div className="mt-0.5 flex items-center gap-1">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onApplyLabels();
-              }}
-              className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
-            >
-              <Tag className="size-3" />
-              Label
-            </button>
-            <QuickFixMenu
-              customLabels={customLabels}
-              onCorrect={onCorrect}
-              onCreateLabel={() => createLabelFromThread(item, onCorrect)}
-              onUndoLast={onUndoLast}
+      {/* Compact meta: date, then a single category chip (its reason lives in the
+          popover) + an Important dot + the account chip in all-accounts mode. */}
+      <div className="flex flex-col items-end gap-1 self-start pt-0.5">
+        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{formatDate(date)}</span>
+        <div className="flex items-center gap-1">
+          {(item.labels || []).includes('IMPORTANT') ? (
+            <span
+              title="Important"
+              className="size-1.5 shrink-0 rounded-full bg-[var(--color-warning)]"
+              aria-hidden
             />
-          </div>
-        ) : null}
+          ) : null}
+          {smart?.primary ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex cursor-help"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Badge variant="secondary" className="max-w-24 truncate text-[9px]">
+                    {SMART_CATEGORY_LABELS[smart.primary as keyof typeof SMART_CATEGORY_LABELS] ||
+                      smart.primary}
+                  </Badge>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-[12px]">
+                <div className="space-y-2">
+                  <div className="font-medium text-[var(--color-text)]">Why this is here</div>
+                  <p className="text-[var(--color-text-muted)]">{smart.reason}</p>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant="outline">{Math.round((smart.confidence || 0) * 100)}%</Badge>
+                    {smart.needsAttention ? <Badge variant="outline">needs attention</Badge> : null}
+                    {smart.isHumanLike ? <Badge variant="outline">human-like</Badge> : null}
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          ) : null}
+          {showAccount && item.account ? (
+            <Badge variant="outline" className="font-mono text-[9px] normal-case">
+              {item.account.split('@')[0]}
+            </Badge>
+          ) : null}
+        </div>
       </div>
+
+      {/* Hover-only row actions — overlaid so they add no height at rest. */}
+      {smart ? (
+        <div className="absolute right-2 top-1/2 z-10 hidden -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 shadow-[var(--shadow-soft)] group-hover:flex">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onApplyLabels();
+            }}
+            title="Apply smart labels"
+            className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          >
+            <Tag className="size-3.5" />
+            <span className="sr-only">Apply labels</span>
+          </Button>
+          <QuickFixMenu
+            customLabels={customLabels}
+            onCorrect={onCorrect}
+            onCreateLabel={() => createLabelFromThread(item, onCorrect)}
+            onUndoLast={onUndoLast}
+          />
+        </div>
+      ) : null}
     </motion.div>
   );
 }
