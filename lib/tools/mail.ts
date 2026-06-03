@@ -144,6 +144,12 @@ export const listSmartCategory = defineTool({
     const customLabel = customLabelId ? await getSmartLabel(customLabelId) : null;
     const candidateQuery = query || customLabel?.candidateQuery || smartCandidateQuery(category);
     const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
+    // Gmail/gog search does NOT return strictly newest-first (the most recent
+    // thread can sit dozens of rows down), so we must classify a healthy pool
+    // and sort by date ourselves before truncating. Taking "the first `max`
+    // matches in gog order" silently drops the newest, most important mail —
+    // e.g. a job offer dated today landing at gog-index 20 while a small
+    // per-account page budget stops at ~10.
     const args = [
       '--account',
       account,
@@ -151,7 +157,7 @@ export const listSmartCategory = defineTool({
       'gmail',
       'search',
       '--max',
-      String(Math.min(80, Math.max(max * 2, max))),
+      String(Math.min(80, Math.max(max * 2, 60))),
       ...(pageToken ? ['--page', pageToken] : []),
       '--no-input',
       '--',
@@ -159,7 +165,7 @@ export const listSmartCategory = defineTool({
     ];
     const raw = await runGogJson<any>(args);
     const list = coerceList(raw);
-    const items: any[] = [];
+    const matched: any[] = [];
     for (const it of list) {
       const norm = normalizeGogSearchItem(it, account);
       if (!norm._id) continue;
@@ -167,9 +173,10 @@ export const listSmartCategory = defineTool({
       const enriched = { ...norm, smartCategory };
       await upsertThread(account, enriched).catch(() => undefined);
       await setThreadSmartCategory(account, norm._id, smartCategory).catch(() => undefined);
-      if (includeInSmartCategory(enriched, category)) items.push(enriched);
-      if (items.length >= max) break;
+      if (includeInSmartCategory(enriched, category)) matched.push(enriched);
     }
+    matched.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
+    const items = matched.slice(0, max);
     return {
       account,
       category,
