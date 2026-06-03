@@ -48,7 +48,7 @@ export function AppShell() {
         <Rail />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
         {railOpen ? <RailResizeHandle /> : null}
-        <main className="relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg)]">
+        <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
           {/* SidebarProvider nests a 0ms TooltipProvider; restore the app's
               default delay for the reader/inbox content it wraps. */}
           <TooltipProvider delayDuration={350}>
