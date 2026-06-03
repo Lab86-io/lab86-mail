@@ -179,7 +179,7 @@ export function Rail() {
   }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 
   return (
-    <Sidebar collapsible="icon" className="bg-[var(--color-bg-subtle)]">
+    <Sidebar collapsible="icon" className="bg-[var(--rail-bg)]">
       <SidebarHeader className="gap-3">
         {/* Title bar: the title only shows when expanded; the trigger stays put
             and centers itself when collapsed so it doubles as the expand button. */}
@@ -220,7 +220,7 @@ export function Rail() {
                   isActive={primaryView === 'daily_report'}
                   tooltip="Daily Report"
                   onClick={() => setPrimaryView('daily_report')}
-                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                 >
                   {primaryView === 'daily_report' ? (
                     <ShineBorder
@@ -260,7 +260,7 @@ export function Rail() {
                         isActive={primaryView === 'mail' && smartCategory === id}
                         tooltip={label}
                         onClick={() => setSmartCategory(id)}
-                        className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                        className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                       >
                         {primaryView === 'mail' && smartCategory === id ? (
                           <ShineBorder
@@ -310,7 +310,7 @@ export function Rail() {
                               isActive={primaryView === 'mail' && smartCategory === id}
                               tooltip={label.name}
                               onClick={() => setSmartCategory(id)}
-                              className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                              className="relative overflow-hidden data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                             >
                               {primaryView === 'mail' && smartCategory === id ? (
                                 <ShineBorder
@@ -364,7 +364,7 @@ export function Rail() {
                     isActive={primaryView === 'mail' && q === query}
                     tooltip={label}
                     onClick={() => setQuery(q)}
-                    className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)]"
+                    className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                   >
                     <Icon />
                     <span>{label}</span>

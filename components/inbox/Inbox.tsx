@@ -741,7 +741,7 @@ function ThreadRowCard({
       className={cn(
         'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
         active && 'bg-[var(--color-bg-subtle)]',
-        selected && 'bg-[var(--color-accent-soft)]',
+        selected && 'bg-[var(--color-accent-soft)] dark:bg-[var(--color-selected-soft)]',
       )}
     >
       <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />

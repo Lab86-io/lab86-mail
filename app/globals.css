@@ -148,18 +148,22 @@
     --input: var(--color-bg-elevated);
     --ring: var(--color-accent);
 
-    /* Pure-black base; warm brown-grey only on raised elements (cards, bubbles,
-       inputs). elevated < subtle < muted step progressively lighter so surfaces
-       read as distinct layers on the black canvas. */
+    /* Pure-black base; neutral grey on raised elements (cards, bubbles, inputs)
+       — no brown backgrounds. elevated/muted step lighter for depth. Brown and
+       green live only as accents. */
     --color-bg: #000000;
-    --color-bg-elevated: #17130d;
-    --color-bg-subtle: #201b13;
-    --color-bg-muted: #2a2418;
-    --color-border: #30291f;
-    --color-border-strong: #41382b;
-    --color-text: #e7e5e3;
-    --color-text-muted: #a8a29e;
-    --color-text-faint: #6b6963;
+    --color-bg-elevated: #1c1c1c;
+    --color-bg-subtle: #141414;
+    --color-bg-muted: #282828;
+    --color-border: #242424;
+    --color-border-strong: #383838;
+    --color-text: #ededed;
+    --color-text-muted: #9a9a9a;
+    --color-text-faint: #5e5e5e;
+    /* Selected/active pop: soft green in dark (light keeps teal). */
+    --color-selected: #5fb98a;
+    --color-selected-soft: #15291f;
+    --rail-bg: #000000;
     --color-accent: #4cb7c8;
     --color-accent-hover: #7fd0e3;
     --color-accent-soft: #0e323a;
@@ -467,6 +471,12 @@
   /* shadcn sidebar tokens mapped onto the lab86 palette. These reference the
      --color-* tokens, which already flip under .dark, so a single block keeps
      the sidebar in step with the rest of the theme. */
+  /* Selected/active accent + rail surface. Light keeps the teal accent (it
+     looks great); dark overrides these to soft green + pure black above. */
+  --color-selected: var(--color-accent);
+  --color-selected-soft: var(--color-accent-soft);
+  --rail-bg: var(--color-bg-subtle);
+
   --sidebar: var(--color-bg-subtle);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);

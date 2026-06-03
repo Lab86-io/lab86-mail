@@ -10,14 +10,11 @@ import {
   Bell,
   Brain,
   Calendar,
-  CheckCircle2,
-  ChevronDown,
   Eye,
   Gauge,
   Globe,
   Languages,
   ListChecks,
-  Loader2,
   Mail,
   MailOpen,
   PanelRightOpen,
@@ -34,19 +31,18 @@ import {
   User,
   Wrench,
   X,
-  XCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message';
-import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning';
-import { Tool, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
-import { CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Loader } from '@/components/ui/loader';
+import { Markdown } from '@/components/ui/markdown';
+import { Message, MessageContent } from '@/components/ui/message';
+import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
+import { Tool } from '@/components/ui/tool';
 import {
   PromptInput,
   PromptInputAction,
@@ -254,14 +250,23 @@ export function AIBarSidebar() {
       for (const part of m.parts || []) {
         const type = (part as any).type;
         if (typeof type !== 'string') continue;
-        if (!type.startsWith('tool-ui_')) continue;
+        // Tool calls arrive either as static `tool-<name>` parts or, via some
+        // providers (OpenRouter), as `dynamic-tool` parts carrying `toolName`.
+        // Resolve the name from both so UI actions (compose, focus, …) fire
+        // regardless of which shape the model emits.
+        const name =
+          type === 'dynamic-tool'
+            ? (part as any).toolName
+            : type.startsWith('tool-')
+              ? type.replace(/^tool-/, '')
+              : '';
+        if (!name || !name.startsWith('ui_')) continue;
         const state = (part as any).state;
         if (state !== 'input-available' && state !== 'output-available') continue;
         const callId = (part as any).toolCallId;
         if (!callId || handled.current.has(callId)) continue;
         handled.current.add(callId);
 
-        const name = type.replace(/^tool-/, '');
         const args = (part as any).input || {};
         try {
           if (name === 'ui_focus_thread' && args.threadId) {
@@ -314,16 +319,14 @@ export function AIBarSidebar() {
         if (typeof type !== 'string' || state !== 'output-available') continue;
         const callId = (part as any).toolCallId;
         if (!callId || handled.current.has(`refresh:${callId}`)) continue;
+        const name =
+          type === 'dynamic-tool'
+            ? (part as any).toolName || ''
+            : type.startsWith('tool-')
+              ? type.slice(5)
+              : '';
         if (
-          type.startsWith('tool-archive') ||
-          type.startsWith('tool-trash') ||
-          type.startsWith('tool-mark_') ||
-          type.startsWith('tool-send_') ||
-          type.startsWith('tool-reply') ||
-          type.startsWith('tool-add_label') ||
-          type.startsWith('tool-remove_label') ||
-          type.startsWith('tool-snooze') ||
-          type.startsWith('tool-unsnooze')
+          /^(archive|trash|mark_|send_|reply|add_label|remove_label|snooze|unsnooze)/.test(name)
         ) {
           handled.current.add(`refresh:${callId}`);
           qc.invalidateQueries({ queryKey: ['search'] });
@@ -382,7 +385,7 @@ export function AIBarSidebar() {
     >
       <TopProgressBar active={busy} />
 
-      <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2.5">
+      <header className="flex items-center justify-between gap-2 px-3 py-2.5">
         <div className="flex items-baseline gap-1.5 text-[13px]">
           <span className="font-medium text-[var(--color-text)]">Agent</span>
           <span className="text-[var(--color-text-faint)]">·</span>
@@ -427,7 +430,7 @@ export function AIBarSidebar() {
                 key={s}
                 variant="outline"
                 onClick={() => send(s)}
-                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
               >
                 {s}
               </PromptSuggestion>
@@ -457,10 +460,7 @@ export function AIBarSidebar() {
         </ChatContainerRoot>
       )}
 
-      <div
-        ref={inputWrapRef}
-        className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2.5"
-      >
+      <div ref={inputWrapRef} className="p-2.5">
         <PromptInput
           value={input}
           onValueChange={setInput}
@@ -550,21 +550,21 @@ function MessageView({ message }: { message: any }) {
   if (isUser) {
     const text = userTextFromMessage(message);
     return (
-      <Message from="user">
-        <MessageContent className="whitespace-pre-wrap text-[13px] leading-relaxed">
-          {text || <span className="italic text-[var(--color-text-faint)]">(empty)</span>}
+      <Message className="justify-end">
+        <MessageContent className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-[var(--color-bg-elevated)] px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
+          {text || '(empty)'}
         </MessageContent>
       </Message>
     );
   }
   return (
-    <Message from="assistant">
-      <MessageContent>
+    <Message className="justify-start">
+      <div className="flex w-full min-w-0 flex-col gap-2">
         {(message.parts || []).map((part: any, i: number) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: message parts are append-only during streaming and have no stable id
+          // biome-ignore lint/suspicious/noArrayIndexKey: streamed parts are append-only with no stable id
           <Part key={`${message.id}-${i}`} part={part} />
         ))}
-      </MessageContent>
+      </div>
     </Message>
   );
 }
@@ -585,89 +585,56 @@ function Part({ part }: { part: any }) {
   const type = part.type;
   if (type === 'text') {
     const text = part.text || '';
-    // Skip empty text parts entirely. The model emits these between tool calls;
-    // rendering a placeholder for each is what produced the old "loading bar
-    // flashing between every tool call".
+    // Skip empty text parts (the model emits these between tool calls).
     if (!text.trim()) return null;
     return (
-      <MessageResponse className="text-[13px] leading-relaxed [&_a]:text-[var(--color-accent)]">
+      <Markdown className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]">
         {text}
-      </MessageResponse>
+      </Markdown>
     );
   }
   if (type === 'reasoning' || type === 'thinking') {
     const text = part.text || part.reasoning || '';
     if (!text.trim()) return null;
     return (
-      <Reasoning className="w-full">
-        <ReasoningTrigger />
-        <ReasoningContent>{text}</ReasoningContent>
+      <Reasoning className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2">
+        <ReasoningTrigger className="text-[12px] font-medium text-[var(--color-text-muted)]">
+          Thinking
+        </ReasoningTrigger>
+        <ReasoningContent markdown className="mt-1.5 text-[12px] text-[var(--color-text-muted)]">
+          {text}
+        </ReasoningContent>
       </Reasoning>
     );
   }
-  if (typeof type === 'string' && (type.startsWith('tool-') || type === 'dynamic-tool')) {
+  if (type === 'dynamic-tool' || (typeof type === 'string' && type.startsWith('tool-'))) {
     return <ToolCard part={part} />;
   }
   return null;
 }
 
-function ToolStatus({ state }: { state: string }) {
-  if (state === 'input-streaming' || state === 'input-available')
-    return <Loader2 className="size-3 shrink-0 animate-spin text-[var(--color-text-faint)]" />;
-  if (state === 'output-available')
-    return <CheckCircle2 className="size-3 shrink-0 text-[var(--color-success)]" />;
-  if (state === 'output-error') return <XCircle className="size-3 shrink-0 text-[var(--color-danger)]" />;
-  return null;
-}
-
 function ToolCard({ part }: { part: any }) {
-  const name = part.toolName || (typeof part.type === 'string' ? part.type.replace(/^tool-/, '') : 'tool');
-  const state = part.state || 'input-available';
-  const { Icon, verb, isUi } = toolMeta(name);
+  const name =
+    part.type === 'dynamic-tool'
+      ? part.toolName
+      : typeof part.type === 'string'
+        ? part.type.replace(/^tool-/, '')
+        : 'tool';
+  const { verb } = toolMeta(name);
   const summary = summaryFor(name, part.input, part.output);
-  const hasDetail = part.input !== undefined || part.output !== undefined || part.errorText;
-
+  // prompt-kit Tool is self-contained; feed it a friendly "verb · summary" label.
   return (
     <Tool
-      className={cn(
-        'mb-0 overflow-hidden rounded-md border-[var(--color-border)] bg-[var(--color-bg-subtle)]/60 text-[12px]',
-        isUi && 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)]/40',
-        state === 'output-error' && 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5',
-      )}
-    >
-      <CollapsibleTrigger
-        disabled={!hasDetail}
-        className="group flex w-full items-center gap-2 px-2.5 py-1.5 text-left disabled:cursor-default"
-      >
-        <span
-          className={cn(
-            'grid size-5 shrink-0 place-items-center rounded',
-            isUi
-              ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
-              : 'bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]',
-            state === 'output-error' && 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]',
-          )}
-        >
-          <Icon className="size-3" />
-        </span>
-        <span className="font-medium text-[var(--color-text)]">{verb}</span>
-        {summary ? (
-          <span className="min-w-0 flex-1 truncate text-[var(--color-text-muted)]">{summary}</span>
-        ) : (
-          <span className="flex-1" />
-        )}
-        <ToolStatus state={state} />
-        {hasDetail ? (
-          <ChevronDown className="size-3 shrink-0 text-[var(--color-text-faint)] transition-transform group-data-[state=open]:rotate-180" />
-        ) : null}
-      </CollapsibleTrigger>
-      <ToolContent>
-        {part.input !== undefined ? <ToolInput input={part.input} /> : null}
-        {part.output !== undefined || part.errorText ? (
-          <ToolOutput output={part.output} errorText={part.errorText} />
-        ) : null}
-      </ToolContent>
-    </Tool>
+      className="mt-0 border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[12px]"
+      toolPart={{
+        type: summary ? `${verb} · ${summary}` : verb,
+        state: part.state || 'input-available',
+        input: part.input,
+        output: part.output,
+        toolCallId: part.toolCallId,
+        errorText: part.errorText,
+      }}
+    />
   );
 }
 
