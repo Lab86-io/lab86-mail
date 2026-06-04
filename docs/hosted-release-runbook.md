@@ -59,6 +59,28 @@ Clerk Billing plan shape:
 Development uses Clerk's development billing gateway. Production connects the independent Lab86 Stripe
 account through Clerk Billing.
 
+## Dashboard Setup Still Required
+
+These items are intentionally not DNS cutover work, but they require provider dashboards or refreshed
+dashboard sessions:
+
+- Blacksmith: verify `Lab86-io/lab86-mail` has access to Blacksmith runners. The workflow runner label is
+  `blacksmith-2vcpu-ubuntu-2404`.
+- Railway: create a deploy token and store it as `RAILWAY_TOKEN` in the GitHub `development` and `production`
+  environments. The Railway CLI user session can deploy locally but does not expose a CI token.
+- Clerk production: run `clerk deploy` with a real Lab86-owned production domain. Clerk's wizard requires DNS
+  verification and does not allow using a Railway-provided subdomain as the production domain.
+- Clerk OAuth: configure production Apple, Google, and Microsoft OAuth credentials during `clerk deploy`.
+- Clerk Billing: enable Clerk Billing, create the Free/default and Pro plans, connect the production Lab86 Stripe
+  account, and set the resulting billing URLs in Railway.
+- Clerk webhooks: create the Svix/Clerk webhook endpoint for `/api/clerk/webhook`, subscribe to user and billing
+  lifecycle events, then set `CLERK_WEBHOOK_SIGNING_SECRET` in Railway.
+- Nylas: refresh `nylas dashboard login`, create separate development and production apps/API keys, and set the
+  production Nylas values in Railway. The existing sandbox app has callbacks for
+  `https://mail-staging.lab86.io/api/nylas/callback` and
+  `https://web-development-292e.up.railway.app/api/nylas/callback`.
+- CodeRabbit: install the GitHub App on `Lab86-io/lab86-mail` so PR #1 receives a review.
+
 ## Railway Variables
 
 Set these in both Railway environments with environment-specific values:
