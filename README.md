@@ -23,8 +23,8 @@ Open `http://127.0.0.1:18836/` (or the tailnet URL `https://mail.lab86.io/`).
 
 ## Hosted release
 
-- `staging` deploys to Railway `development` at `https://mail-staging.lab86.io`.
-- `main` deploys to Railway `production` at `https://mail.lab86.io`.
+- `staging` deploys to Railway `development` at `https://web-development-292e.up.railway.app`.
+- `main` deploys to Railway `production` at `https://web-production-3ec2.up.railway.app` until final DNS cutover.
 - Production releases start at `0.8.0`; CI bumps patch by default, `[MINOR]` for minor, and `[MAJOR]` for major.
 - Runtime variables live in Railway. GitHub stores only deploy and release credentials.
 - See `docs/hosted-release-runbook.md` for DNS, rollback, and backup details.

@@ -19,6 +19,7 @@ jobs:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME || 'web' }}
+      DEVELOPMENT_APP_URL: ${{ vars.DEVELOPMENT_APP_URL }}
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
     steps:
       - name: Checkout
@@ -60,4 +61,4 @@ jobs:
           -m "development ${GITHUB_SHA}"
 
       - name: Smoke test
-        run: curl --fail --show-error --silent https://mail-staging.lab86.io/api/healthz
+        run: curl --fail --show-error --silent "${DEVELOPMENT_APP_URL}/api/healthz"

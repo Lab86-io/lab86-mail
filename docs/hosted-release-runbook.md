@@ -4,8 +4,8 @@
 
 | Purpose | Git branch | Railway environment | URL |
 | --- | --- | --- | --- |
-| Development / staging | `staging` | `development` | `https://mail-staging.lab86.io` |
-| Production | `main` | `production` | `https://mail.lab86.io` |
+| Development / staging | `staging` | `development` | `https://web-development-292e.up.railway.app` |
+| Production | `main` | `production` | `https://web-production-3ec2.up.railway.app` |
 
 Runtime app variables are authoritative in Railway. GitHub stores deploy credentials only:
 
@@ -19,7 +19,8 @@ Railway resources created on June 4, 2026:
 - Service `web`: `1ee5eac3-493e-4a4b-a6b4-cb89c6e0d179`
 - Environment `development`: `be41491e-6d1b-45f7-b85a-299540ac125e`
 - Environment `production`: `c14045cd-da4a-4080-bc07-ff784f1e333d`
-- Temporary Railway development URL: `https://web-development-292e.up.railway.app`
+- Railway development URL: `https://web-development-292e.up.railway.app`
+- Railway production URL: `https://web-production-3ec2.up.railway.app`
 
 GitHub resources created on June 4, 2026:
 
@@ -104,6 +105,11 @@ Emergency switches:
 - `LAB86_DISABLE_PUBLIC_SIGNUP=1`
 
 ## DNS Cutover
+
+Use Railway-provided domains until the final cutover:
+
+- Development: `https://web-development-292e.up.railway.app`
+- Production: `https://web-production-3ec2.up.railway.app`
 
 Before changing records, lower TTL and record current values:
 
