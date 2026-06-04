@@ -1,57 +1,43 @@
-import { generateText } from 'ai';
 import { z } from 'zod';
-import { fastModel, hasAi } from '../ai/client';
-import { normalizeGogMessage } from '../gog/normalize';
-import { runGogJson } from '../gog/pool';
+import { hasAi } from '../ai/client';
+import { generateTextForCurrentUser } from '../ai/gateway';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
+import { getNylasThread } from '../nylas/provider';
 import type { SmartCategory, SmartCategoryId, SmartLabelDefinition, SmartRule } from '../shared/types';
 import { recallSender } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
-import { getThread as getThreadRecord, setThreadSummary, setThreadTriage, upsertThread } from '../store/threads';
+import {
+  getThread as getThreadRecord,
+  setThreadSummary,
+  setThreadTriage,
+  upsertThread,
+} from '../store/threads';
 import { defineTool } from './registry';
 
-async function loadThread(account: string, threadId: string) {
+async function loadThread(account: string, threadId: string, userId?: string | null) {
   const cached = await getThreadMessages(account, threadId);
   if (cached.length) return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
 
-  try {
-    const raw = await runGogJson<any>([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'thread',
-      'get',
-      threadId,
-      '--full',
-      '--no-input',
-    ]);
-    const threadObj = raw?.thread || raw?.result || raw?.data || raw;
-    const arr: any[] = threadObj?.messages || [];
-    const messages = arr
-      .map((m) => normalizeGogMessage(m, account))
-      .filter((m) => m._id)
-      .sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
-    for (const m of messages) await upsertMessageRecord(m).catch(() => undefined);
-    const newest = messages[messages.length - 1];
-    if (newest) {
-      await upsertThread(account, {
-        _id: threadId,
-        subject: newest.subject || messages[0]?.subject || '(no subject)',
-        fromAddress: newest.from,
-        lastDate: newest.date,
-        snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
-        labels: newest.labels || [],
-        unread: messages.some((m) => m.labels?.includes('UNREAD')),
-      }).catch(() => undefined);
-    }
-    return messages;
-  } catch {
-    const cached = await getThreadMessages(account, threadId);
-    return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
+  const thread = await getNylasThread({ userId, account, threadId }).catch(() => null);
+  const messages = (thread?.messages || [])
+    .filter((message) => message._id)
+    .sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
+  for (const message of messages) await upsertMessageRecord(message).catch(() => undefined);
+  const newest = messages[messages.length - 1];
+  if (newest) {
+    await upsertThread(account, {
+      _id: threadId,
+      subject: newest.subject || messages[0]?.subject || '(no subject)',
+      fromAddress: newest.from,
+      lastDate: newest.date,
+      snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+      labels: newest.labels || [],
+      unread: messages.some((message) => message.labels?.includes('UNREAD')),
+    }).catch(() => undefined);
   }
+  return messages;
 }
 
 function concatThread(messages: any[], maxChars = 24_000): string {
@@ -71,12 +57,16 @@ export const summarizeThread = defineTool({
   mutating: false,
   input: z.object({ account: z.string(), threadId: z.string() }),
   output: z.object({ summary: z.string(), model: z.string() }),
-  async handler({ account, threadId }) {
+  async handler({ account, threadId }, ctx) {
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
-    if (cachedThread?.summary && cachedThread.summaryAt && Date.now() - cachedThread.summaryAt < 6 * 60 * 60_000) {
+    if (
+      cachedThread?.summary &&
+      cachedThread.summaryAt &&
+      Date.now() - cachedThread.summaryAt < 6 * 60 * 60_000
+    ) {
       return { summary: cachedThread.summary, model: 'cached' };
     }
-    const messages = await loadThread(account, threadId);
+    const messages = await loadThread(account, threadId, ctx.userId);
     if (!messages.length) return { summary: '(empty thread)', model: 'none' };
     if (!hasAi()) {
       const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
@@ -93,8 +83,9 @@ export const summarizeThread = defineTool({
       concatThread(messages),
     ].join('\n');
     try {
-      const { text } = await generateText({
-        model: fastModel(),
+      const { text } = await generateTextForCurrentUser({
+        feature: 'summarize_thread',
+        speed: 'fast',
         system:
           "You are lab86-mail, Jakob's local email assistant. Be concrete. Never claim an action was performed; you can only reason.",
         prompt,
@@ -127,8 +118,8 @@ export const triageThread = defineTool({
     reason: z.string(),
     model: z.string(),
   }),
-  async handler({ account, threadId }) {
-    const messages = await loadThread(account, threadId);
+  async handler({ account, threadId }, ctx) {
+    const messages = await loadThread(account, threadId, ctx.userId);
     if (!messages.length)
       return { priority: 3 as const, action: 'archive', reason: 'empty thread', model: 'none' };
     if (!hasAi()) {
@@ -150,8 +141,9 @@ export const triageThread = defineTool({
       'Thread:',
       concatThread(messages),
     ].join('\n');
-    const { text } = await generateText({
-      model: fastModel(),
+    const { text } = await generateTextForCurrentUser({
+      feature: 'triage_thread',
+      speed: 'fast',
       system: 'You are lab86-mail triaging email. Output only valid JSON.',
       prompt,
     });
@@ -184,8 +176,8 @@ export const draftReply = defineTool({
     tone: z.enum(['neutral', 'warm', 'direct', 'apologetic', 'enthusiastic']).optional(),
   }),
   output: z.object({ draft: z.string(), model: z.string() }),
-  async handler({ account, threadId, instructions, tone }) {
-    const messages = await loadThread(account, threadId);
+  async handler({ account, threadId, instructions, tone }, ctx) {
+    const messages = await loadThread(account, threadId, ctx.userId);
     if (!messages.length) return { draft: '', model: 'none' };
     const last = messages[messages.length - 1];
     const memory = await recallSender(last.from);
@@ -208,8 +200,9 @@ export const draftReply = defineTool({
     ]
       .filter(Boolean)
       .join('\n');
-    const { text } = await generateText({
-      model: fastModel(),
+    const { text } = await generateTextForCurrentUser({
+      feature: 'draft_reply',
+      speed: 'fast',
       system: "You are lab86-mail drafting on Jakob's behalf. Never claim the message was sent.",
       prompt,
     });
@@ -271,8 +264,9 @@ export const bulkTriage = defineTool({
       '',
       lines,
     ].join('\n');
-    const { text } = await generateText({
-      model: fastModel(),
+    const { text } = await generateTextForCurrentUser({
+      feature: 'bulk_triage',
+      speed: 'fast',
       system: 'You are lab86-mail triaging email in bulk. Output only JSON objects, one per line.',
       prompt,
     });
@@ -368,10 +362,15 @@ export async function classifyThreadsBatched(
     for (let i = 0; i < uncertain.length; i += 40) {
       const chunk = uncertain.slice(i, i + 40);
       try {
-        const { text } = await generateText({
-          model: fastModel(),
+        const { text } = await generateTextForCurrentUser({
+          feature: 'classify_threads',
+          speed: 'fast',
           system: CLASSIFY_SYSTEM,
-          prompt: [CLASSIFY_INSTRUCTIONS, '', chunk.map(({ thread }, idx) => classifyLine(thread, idx)).join('\n')].join('\n'),
+          prompt: [
+            CLASSIFY_INSTRUCTIONS,
+            '',
+            chunk.map(({ thread }, idx) => classifyLine(thread, idx)).join('\n'),
+          ].join('\n'),
         });
         for (const line of text.split('\n')) {
           const match = line.match(/\{[\s\S]*\}/);
@@ -455,13 +454,14 @@ export const extractActionItems = defineTool({
   mutating: false,
   input: z.object({ account: z.string(), threadId: z.string() }),
   output: z.object({ items: z.array(z.string()), model: z.string() }),
-  async handler({ account, threadId }) {
-    const messages = await loadThread(account, threadId);
+  async handler({ account, threadId }, ctx) {
+    const messages = await loadThread(account, threadId, ctx.userId);
     if (!hasAi() || !messages.length) {
       return { items: [], model: hasAi() ? 'fast' : 'local' };
     }
-    const { text } = await generateText({
-      model: fastModel(),
+    const { text } = await generateTextForCurrentUser({
+      feature: 'extract_action_items',
+      speed: 'fast',
       system: 'You are lab86-mail. Extract concrete action items as a plain bullet list. No prose.',
       prompt: [
         'Extract action items as a bullet list. One per line, prefixed with "- ".',
@@ -488,12 +488,13 @@ export const translateThread = defineTool({
     language: z.string().describe('e.g. "english", "japanese", "spanish"'),
   }),
   output: z.object({ translation: z.string(), model: z.string() }),
-  async handler({ account, threadId, language }) {
-    const messages = await loadThread(account, threadId);
+  async handler({ account, threadId, language }, ctx) {
+    const messages = await loadThread(account, threadId, ctx.userId);
     if (!hasAi() || !messages.length) return { translation: '', model: 'none' };
     const last = messages[messages.length - 1];
-    const { text } = await generateText({
-      model: fastModel(),
+    const { text } = await generateTextForCurrentUser({
+      feature: 'translate_thread',
+      speed: 'fast',
       system: 'Translate naturally. Return only the translation.',
       prompt: `Translate to ${language}:\n\n${last.textBody || last.snippet}`,
     });
@@ -515,8 +516,9 @@ export const preSendCritique = defineTool({
   }),
   async handler({ draftBody, threadContext }) {
     if (!hasAi()) return { verdict: 'ok' as const, notes: [] as string[], model: 'local' };
-    const { text } = await generateText({
-      model: fastModel(),
+    const { text } = await generateTextForCurrentUser({
+      feature: 'pre_send_critique',
+      speed: 'fast',
       system:
         'You are a strict email editor. Return only a JSON object: {"verdict":"ok"|"review","notes":["...","..."]}. Notes are warnings, max 3.',
       prompt: `Critique this draft for tone, completeness, promises, and respect.\nThread context (may be empty):\n${threadContext || '(none)'}\n\nDraft:\n${draftBody}`,
@@ -542,8 +544,9 @@ export const nlSearch = defineTool({
   output: z.object({ query: z.string(), model: z.string() }),
   async handler({ description }) {
     if (!hasAi()) return { query: description, model: 'local' };
-    const { text } = await generateText({
-      model: fastModel(),
+    const { text } = await generateTextForCurrentUser({
+      feature: 'nl_search',
+      speed: 'fast',
       system:
         'You translate natural language into Gmail search syntax. Output only the query, no prose, no quotes. Use operators like from:, to:, subject:, newer_than:Nd, older_than:Nd, is:unread, has:attachment, in:inbox.',
       prompt: description,

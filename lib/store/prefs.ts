@@ -1,5 +1,5 @@
-import { db, findOne, upsert } from './db';
 import type { Pref } from '../shared/types';
+import { db, findOne, upsert } from './db';
 
 export async function getPref(key: string): Promise<string | null> {
   const row = await findOne<Pref>(db().prefs, { _id: key });

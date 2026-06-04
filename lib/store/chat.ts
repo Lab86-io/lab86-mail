@@ -1,5 +1,5 @@
-import { db, findMany, insertOne, removeMany } from './db';
 import type { ChatMessage } from '../shared/types';
+import { db, findMany, insertOne, removeMany } from './db';
 
 export async function appendChat(entry: Omit<ChatMessage, 'ts'> & { ts?: number }) {
   const doc: ChatMessage = { ...entry, ts: entry.ts ?? Date.now() };
@@ -7,11 +7,7 @@ export async function appendChat(entry: Omit<ChatMessage, 'ts'> & { ts?: number 
 }
 
 export async function recentChat(account: string, threadId: string, limit = 30): Promise<ChatMessage[]> {
-  const docs = await findMany<ChatMessage>(
-    db().chat,
-    { account, threadId },
-    { sort: { ts: -1 }, limit },
-  );
+  const docs = await findMany<ChatMessage>(db().chat, { account, threadId }, { sort: { ts: -1 }, limit });
   return docs.reverse();
 }
 

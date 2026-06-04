@@ -1,0 +1,54 @@
+import { randomBytes } from 'node:crypto';
+import { NextRequest, NextResponse } from 'next/server';
+import { requireCurrentUser } from '@/lib/auth/current-user';
+import { api, convexMutation } from '@/lib/hosted/convex';
+import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
+import { requireNylas } from '@/lib/nylas/client';
+
+const PROVIDERS = new Set(['google', 'microsoft', 'icloud', 'imap']);
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+export async function GET(req: NextRequest) {
+  const user = await requireCurrentUser({ allowLegacy: false });
+  if (!isNylasConfigured()) {
+    return NextResponse.json(
+      { ok: false, error: 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.' },
+      { status: 503 },
+    );
+  }
+  const url = new URL(req.url);
+  const provider = url.searchParams.get('provider') || 'google';
+  if (!PROVIDERS.has(provider)) {
+    return NextResponse.json({ ok: false, error: `Unsupported provider: ${provider}` }, { status: 400 });
+  }
+  await convexMutation(api.users.upsertFromClerk, {
+    userId: user.userId,
+    email: user.email,
+    name: user.name,
+  });
+  const state = randomBytes(24).toString('base64url');
+  await convexMutation(api.accounts.createOAuthState, {
+    userId: user.userId,
+    state,
+    provider,
+    redirectTo: url.searchParams.get('redirectTo') || '/',
+    ttlMs: 10 * 60_000,
+  });
+  const scopes = (process.env.NYLAS_SCOPES || '')
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  const authUrl = requireNylas().auth.urlForOAuth2({
+    clientId: process.env.NYLAS_CLIENT_ID || '',
+    redirectUri: nylasRedirectUri(),
+    provider: provider as any,
+    accessType: 'offline',
+    prompt: 'select_provider',
+    includeGrantScopes: true,
+    state,
+    scope: scopes.length ? scopes : undefined,
+  } as any);
+  return NextResponse.redirect(authUrl);
+}

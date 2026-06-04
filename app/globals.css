@@ -45,14 +45,14 @@
   --color-sidebar: var(--sidebar);
   --animate-shine: shine var(--duration) infinite linear;
   @keyframes shine {
-  0% {
-    background-position: 0% 0%;
+    0% {
+      background-position: 0% 0%;
     }
-  50% {
-    background-position: 100% 100%;
+    50% {
+      background-position: 100% 100%;
     }
-  to {
-    background-position: 0% 0%;
+    to {
+      background-position: 0% 0%;
     }
   }
 }
@@ -60,7 +60,7 @@
 @theme {
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-serif: var(--font-fraunces), ui-serif, Georgia, 'Times New Roman', serif;
+  --font-serif: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
 
   /* fresh light-mode palette: cool canvas, white working surfaces, and a deep
      forest green primary accent shared with dark mode. */
@@ -314,7 +314,9 @@
   }
 
   [data-panel-resizing="true"] .reflow-text,
-  [data-panel-resizing="true"] .panel-reflow-surface :where(p, li, blockquote, h1, h2, h3, h4, h5, h6, .email-body) {
+  [data-panel-resizing="true"]
+    .panel-reflow-surface
+    :where(p, li, blockquote, h1, h2, h3, h4, h5, h6, .email-body) {
     opacity: 0.78;
     transform: translateY(2px);
   }

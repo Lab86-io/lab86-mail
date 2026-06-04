@@ -1,12 +1,18 @@
 import { z } from 'zod';
+import { runWithAiRequestContext } from '../ai/context';
 import { writeAudit } from '../store/audit';
 
 export interface ToolContext {
   agent: 'user' | 'ai' | 'codex';
   account?: string;
+  userId?: string | null;
+  userEmail?: string | null;
 }
 
-export interface ToolDefinition<TArgs extends z.ZodTypeAny = z.ZodTypeAny, TOut extends z.ZodTypeAny = z.ZodTypeAny> {
+export interface ToolDefinition<
+  TArgs extends z.ZodTypeAny = z.ZodTypeAny,
+  TOut extends z.ZodTypeAny = z.ZodTypeAny,
+> {
   name: string;
   description: string;
   category: 'mail' | 'compose' | 'ai' | 'memory' | 'calendar' | 'contacts' | 'web' | 'audit' | 'meta';
@@ -25,38 +31,45 @@ export function defineTool<TArgs extends z.ZodTypeAny, TOut extends z.ZodTypeAny
 export type AnyTool = ToolDefinition<any, any>;
 
 export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext) {
-  let parsed: unknown;
-  try {
-    parsed = tool.input.parse(args);
-  } catch (err: any) {
-    const issue = err?.issues?.[0];
-    throw new ToolValidationError(
-      issue ? `Invalid args for ${tool.name}: ${issue.path.join('.')} — ${issue.message}` : `Invalid args for ${tool.name}`,
-    );
-  }
-  let result: unknown;
-  try {
-    result = await tool.handler(parsed as any, ctx);
-  } catch (err: any) {
-    await writeAudit({
-      tool: tool.name,
-      account: ctx.account ?? null,
-      args: parsed as Record<string, unknown>,
-      result: 'error',
-      detail: err?.message,
-      agent: ctx.agent,
-    }).catch(() => undefined);
-    throw err;
-  }
-  await writeAudit({
-    tool: tool.name,
-    account: ctx.account ?? null,
-    args: parsed as Record<string, unknown>,
-    result: 'ok',
-    detail: tool.mutating ? safeSummary(result) : undefined,
-    agent: ctx.agent,
-  }).catch(() => undefined);
-  return result;
+  return runWithAiRequestContext(
+    { userId: ctx.userId, userEmail: ctx.userEmail, agent: ctx.agent },
+    async () => {
+      let parsed: unknown;
+      try {
+        parsed = tool.input.parse(args);
+      } catch (err: any) {
+        const issue = err?.issues?.[0];
+        throw new ToolValidationError(
+          issue
+            ? `Invalid args for ${tool.name}: ${issue.path.join('.')} — ${issue.message}`
+            : `Invalid args for ${tool.name}`,
+        );
+      }
+      let result: unknown;
+      try {
+        result = await tool.handler(parsed as any, ctx);
+      } catch (err: any) {
+        await writeAudit({
+          tool: tool.name,
+          account: ctx.account ?? null,
+          args: parsed as Record<string, unknown>,
+          result: 'error',
+          detail: err?.message,
+          agent: ctx.agent,
+        }).catch(() => undefined);
+        throw err;
+      }
+      await writeAudit({
+        tool: tool.name,
+        account: ctx.account ?? null,
+        args: parsed as Record<string, unknown>,
+        result: 'ok',
+        detail: tool.mutating ? safeSummary(result) : undefined,
+        agent: ctx.agent,
+      }).catch(() => undefined);
+      return result;
+    },
+  );
 }
 
 export class ToolValidationError extends Error {

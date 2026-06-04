@@ -1,3 +1,4 @@
+import { ClerkProvider, Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { Metadata, Viewport } from 'next';
@@ -18,8 +19,8 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: 'lab86-mail',
-  description: 'AI-native Lab86 mail client for Jakob',
+  title: 'Lab86 Mail',
+  description: 'AI-native mail across connected accounts',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
@@ -34,6 +35,18 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const content = (
+    <>
+      {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? <ClerkNav /> : null}
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <QueryProvider>
+          {children}
+          <Toaster position="bottom-center" theme="system" closeButton richColors />
+        </QueryProvider>
+      </ThemeProvider>
+    </>
+  );
+
   return (
     <html
       lang="en"
@@ -41,13 +54,40 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable}`}
     >
       <body>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <QueryProvider>
-            {children}
-            <Toaster position="bottom-center" theme="system" closeButton richColors />
-          </QueryProvider>
-        </ThemeProvider>
+        {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
+          <ClerkProvider proxyUrl="/__clerk">{content}</ClerkProvider>
+        ) : (
+          content
+        )}
       </body>
     </html>
+  );
+}
+
+function ClerkNav() {
+  return (
+    <div className="fixed top-3 right-3 z-50 flex items-center gap-2">
+      <Show when="signed-out">
+        <SignInButton mode="modal">
+          <button
+            type="button"
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[12px] text-[var(--color-text)] shadow-sm"
+          >
+            Sign in
+          </button>
+        </SignInButton>
+        <SignUpButton mode="modal">
+          <button
+            type="button"
+            className="rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[12px] text-[var(--color-accent-foreground)] shadow-sm"
+          >
+            Sign up
+          </button>
+        </SignUpButton>
+      </Show>
+      <Show when="signed-in">
+        <UserButton />
+      </Show>
+    </div>
   );
 }

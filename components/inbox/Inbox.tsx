@@ -1,3 +1,5 @@
+// biome-ignore-all lint/a11y/useSemanticElements: thread rows contain nested controls and still provide keyboard activation.
+
 'use client';
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,8 +32,8 @@ import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { BorderBeam } from '@/components/ui/border-beam';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -73,6 +75,7 @@ interface ThreadRow {
   labels?: string[];
   unread?: boolean;
   smartCategory?: any;
+  accountAlias?: string;
 }
 
 interface SearchThreadsResult {
@@ -182,9 +185,20 @@ export function Inbox() {
   // authed Gmail account and merge by date. Otherwise just hit one.
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
-    queryFn: async () => callTool<{ accounts: { email: string; authed: boolean }[] }>('list_accounts'),
+    queryFn: async () =>
+      callTool<{ accounts: { email: string; authed: boolean; displayName?: string }[] }>('list_accounts'),
     staleTime: 60_000,
   });
+  const accountAliasByEmail = useMemo(
+    () =>
+      Object.fromEntries(
+        (accountsData?.accounts || []).map((account) => [
+          account.email,
+          account.displayName || account.email.split('@')[0],
+        ]),
+      ) as Record<string, string>,
+    [accountsData?.accounts],
+  );
   const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
   const { data: smartLabelsData } = useQuery({
     queryKey: ['smart-labels'],
@@ -200,7 +214,15 @@ export function Inbox() {
 
   const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
     useInfiniteQuery({
-      queryKey: ['search', account, query, smartCategory, authedEmails.join(','), refreshNonce],
+      queryKey: [
+        'search',
+        account,
+        query,
+        smartCategory,
+        authedEmails.join(','),
+        Object.values(accountAliasByEmail).join(','),
+        refreshNonce,
+      ],
       initialPageParam: {} as Record<string, string>,
       queryFn: async ({ pageParam }): Promise<InboxPage> => {
         const pageTokens = pageParam as Record<string, string>;
@@ -221,7 +243,11 @@ export function Inbox() {
               })
                 .then((r) => ({
                   email,
-                  items: r.items.map((it) => ({ ...it, account: email })),
+                  items: r.items.map((it) => ({
+                    ...it,
+                    account: email,
+                    accountAlias: accountAliasByEmail[email],
+                  })),
                   nextPageToken: r.nextPageToken,
                 }))
                 .catch(() => ({ email, items: [] as ThreadRow[], nextPageToken: undefined })),
@@ -247,7 +273,7 @@ export function Inbox() {
           },
         );
         return {
-          items: result.items.map((it) => ({ ...it, account })),
+          items: result.items.map((it) => ({ ...it, account, accountAlias: accountAliasByEmail[account] })),
           nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
         };
       },
@@ -719,21 +745,21 @@ function ThreadRowCard({
   const date = (item.date as any) || item.lastDate || 0;
   const prefetchTimer = useRef<number | null>(null);
 
-  const schedulePrefetch = () => {
+  const schedulePrefetch = useCallback(() => {
     if (prefetchTimer.current != null) return;
     prefetchTimer.current = window.setTimeout(() => {
       prefetchTimer.current = null;
       onPrefetch();
     }, 120);
-  };
+  }, [onPrefetch]);
 
-  const cancelPrefetch = () => {
+  const cancelPrefetch = useCallback(() => {
     if (prefetchTimer.current == null) return;
     window.clearTimeout(prefetchTimer.current);
     prefetchTimer.current = null;
-  };
+  }, []);
 
-  useEffect(() => cancelPrefetch, []);
+  useEffect(() => cancelPrefetch, [cancelPrefetch]);
 
   return (
     <div
@@ -758,11 +784,7 @@ function ThreadRowCard({
     >
       <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
 
-      <Checkbox
-        checked={selected}
-        onCheckedChange={() => onToggle()}
-        onClick={(e) => e.stopPropagation()}
-      />
+      <Checkbox checked={selected} onCheckedChange={() => onToggle()} onClick={(e) => e.stopPropagation()} />
 
       <Avatar name={senderLabel || item.account} src={photoUrl} size={26} />
 
@@ -777,17 +799,13 @@ function ThreadRowCard({
           >
             {displaySenderLabel}
           </span>
-          {item.unread ? (
-            <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
-          ) : null}
+          {item.unread ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
         </div>
         <span className="truncate text-[12.5px] leading-tight">
           <span className={item.unread ? 'font-medium text-[var(--color-text)]' : 'text-[var(--color-text)]'}>
             {item.subject || '(no subject)'}
           </span>
-          {item.snippet ? (
-            <span className="text-[var(--color-text-muted)]"> — {item.snippet}</span>
-          ) : null}
+          {item.snippet ? <span className="text-[var(--color-text-muted)]"> — {item.snippet}</span> : null}
         </span>
       </div>
 
@@ -832,7 +850,7 @@ function ThreadRowCard({
           ) : null}
           {showAccount && item.account ? (
             <Badge variant="outline" className="font-mono text-[9px] normal-case">
-              {item.account.split('@')[0]}
+              {item.accountAlias || item.account.split('@')[0]}
             </Badge>
           ) : null}
         </div>

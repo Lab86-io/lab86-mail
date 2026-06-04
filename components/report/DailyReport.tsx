@@ -614,17 +614,10 @@ function BulkTail({
       {open ? (
         <div>
           {visibleItems.map((item, index) => (
-            <div
+            <button
               key={`bulk:${item.account}:${item.threadId}`}
-              role="button"
-              tabIndex={0}
+              type="button"
               onClick={() => onOpen(item)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  onOpen(item);
-                }
-              }}
               className="grid cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border-b border-[var(--color-border)] px-1.5 py-1.5 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
             >
               <span className="text-right font-serif text-[11px] tabular-nums text-[var(--color-text-faint)]">
@@ -637,7 +630,7 @@ function BulkTail({
               <span className="shrink-0 justify-self-end text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
                 {item.demotionReason || 'Bulk'}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       ) : null}

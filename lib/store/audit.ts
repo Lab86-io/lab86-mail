@@ -1,5 +1,5 @@
-import { db, findMany, insertOne } from './db';
 import type { AuditEntry } from '../shared/types';
+import { db, findMany, insertOne } from './db';
 
 export async function writeAudit(entry: Omit<AuditEntry, 'ts'> & { ts?: number }) {
   const doc: AuditEntry = { ...entry, ts: entry.ts ?? Date.now() };

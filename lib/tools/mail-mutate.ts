@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { runGogJson } from '../gog/pool';
 import { SMART_CATEGORY_IDS } from '../mail/smart-categories';
+import { updateNylasMessage, updateNylasThread } from '../nylas/provider';
 import { getThreadMessages } from '../store/messages';
 import { snoozeMessage, unsnoozeByMessage } from '../store/snooze';
 import {
@@ -24,7 +24,8 @@ const ThreadMutate = z.object({
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
 
 async function gmailMutate(args: string[]): Promise<any> {
-  return await runGogJson<any>(args, { timeoutMs: 60_000 });
+  void args;
+  throw new Error('This action is not wired to Nylas yet.');
 }
 
 export const archiveThread = defineTool({
@@ -34,7 +35,18 @@ export const archiveThread = defineTool({
   mutating: true,
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }) {
+  async handler({ account, threadId }, ctx) {
+    const nylas = await updateNylasThread({
+      userId: ctx.userId,
+      account,
+      threadId,
+      folders: [],
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,
@@ -58,7 +70,18 @@ export const trashThread = defineTool({
   mutating: true,
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }) {
+  async handler({ account, threadId }, ctx) {
+    const nylas = await updateNylasThread({
+      userId: ctx.userId,
+      account,
+      threadId,
+      folders: ['TRASH'],
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,
@@ -84,7 +107,18 @@ export const restoreFromTrash = defineTool({
   mutating: true,
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }) {
+  async handler({ account, threadId }, ctx) {
+    const nylas = await updateNylasThread({
+      userId: ctx.userId,
+      account,
+      threadId,
+      folders: ['INBOX'],
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,
@@ -110,7 +144,18 @@ export const markRead = defineTool({
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId }) {
+  async handler({ account, messageId }, ctx) {
+    const nylas = await updateNylasMessage({
+      userId: ctx.userId,
+      account,
+      messageId,
+      unread: false,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate(['--account', account, '--json', 'gmail', 'mark-read', messageId, '--no-input']);
     return { ok: true };
   },
@@ -123,7 +168,18 @@ export const markUnread = defineTool({
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId }) {
+  async handler({ account, messageId }, ctx) {
+    const nylas = await updateNylasMessage({
+      userId: ctx.userId,
+      account,
+      messageId,
+      unread: true,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate(['--account', account, '--json', 'gmail', 'unread', messageId, '--no-input']);
     return { ok: true };
   },
@@ -140,7 +196,18 @@ export const markThreadRead = defineTool({
     messageIds: z.array(z.string()).optional(),
   }),
   output: z.object({ ok: z.boolean(), marked: z.number() }),
-  async handler({ account, threadId, messageIds }) {
+  async handler({ account, threadId, messageIds }, ctx) {
+    const nylas = await updateNylasThread({
+      userId: ctx.userId,
+      account,
+      threadId,
+      unread: false,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return { ok: true, marked: messageIds?.length || 0 };
+
     const cachedMessages = await getThreadMessages(account, threadId).catch(() => []);
     const ids = [
       ...new Set(
@@ -193,7 +260,18 @@ export const starMessage = defineTool({
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId }) {
+  async handler({ account, messageId }, ctx) {
+    const nylas = await updateNylasMessage({
+      userId: ctx.userId,
+      account,
+      messageId,
+      starred: true,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,
@@ -217,7 +295,18 @@ export const unstarMessage = defineTool({
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId }) {
+  async handler({ account, messageId }, ctx) {
+    const nylas = await updateNylasMessage({
+      userId: ctx.userId,
+      account,
+      messageId,
+      starred: false,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
+      return null;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,
@@ -434,23 +523,6 @@ export const snoozeThreadTool = defineTool({
   output: z.object({ ok: z.boolean(), untilIso: z.string() }),
   async handler({ account, messageId, threadId, untilTs }) {
     await snoozeMessage(account, messageId, threadId, untilTs);
-    // Optional: also label in Gmail so the user can see it in the web UI.
-    try {
-      await gmailMutate([
-        '--account',
-        account,
-        '--json',
-        'gmail',
-        'messages',
-        'modify',
-        messageId,
-        '--add',
-        'MailOS/Snoozed',
-        '--remove',
-        'INBOX',
-        '--no-input',
-      ]);
-    } catch {}
     return { ok: true, untilIso: new Date(untilTs).toISOString() };
   },
 });
@@ -464,22 +536,6 @@ export const unsnoozeThreadTool = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }) {
     await unsnoozeByMessage(account, messageId);
-    try {
-      await gmailMutate([
-        '--account',
-        account,
-        '--json',
-        'gmail',
-        'messages',
-        'modify',
-        messageId,
-        '--remove',
-        'MailOS/Snoozed',
-        '--add',
-        'INBOX',
-        '--no-input',
-      ]);
-    } catch {}
     return { ok: true };
   },
 });

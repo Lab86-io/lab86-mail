@@ -190,8 +190,7 @@ function verdict(
   // demotion reason like "automated" stays accurate even when the sender
   // address looks human (e.g. billing@ rent notices).
   const isUpdatesOrPromoCat = labels.includes('CATEGORY_UPDATES') || labels.includes('CATEGORY_PROMOTIONS');
-  const automated =
-    options.isAutomated ?? (noReply || !human || isBulkLike(thread) || isUpdatesOrPromoCat);
+  const automated = options.isAutomated ?? (noReply || !human || isBulkLike(thread) || isUpdatesOrPromoCat);
   const needsAttention =
     options.needsAttention ??
     Boolean(thread.unread && (human || primary === 'codes' || primary === 'review'));

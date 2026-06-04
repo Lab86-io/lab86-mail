@@ -2,6 +2,7 @@ import type { NextConfig } from 'next';
 
 const config: NextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: ['lab86.tail478321.ts.net'],
   experimental: {
     serverActions: {
       bodySizeLimit: '4mb',

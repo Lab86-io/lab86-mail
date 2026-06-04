@@ -1,6 +1,7 @@
-import type { NextRequest } from 'next/server';
 import { convertToModelMessages, type UIMessage } from 'ai';
+import type { NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
+import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,15 +29,19 @@ export async function POST(req: NextRequest) {
     });
   }
   try {
+    const user = await requireCurrentUser();
     const modelMessages = await convertToModelMessages(body.messages);
-    const stream = runAgent({
+    const stream = await runAgent({
       messages: modelMessages,
       extraSystem: body.extraSystem,
+      userId: user.userId,
+      userEmail: user.email,
     });
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {
+    const status = err instanceof AuthRequiredError ? 401 : 500;
     return new Response(JSON.stringify({ ok: false, error: err?.message || 'agent failed' }), {
-      status: 500,
+      status,
       headers: { 'content-type': 'application/json' },
     });
   }

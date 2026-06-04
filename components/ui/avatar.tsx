@@ -56,13 +56,7 @@ export function Avatar({
           className="h-full w-full object-cover"
         />
       ) : (
-        <BoringAvatar
-          size={size}
-          name={seed}
-          variant={variant}
-          colors={PALETTE}
-          square={false}
-        />
+        <BoringAvatar size={size} name={seed} variant={variant} colors={PALETTE} square={false} />
       )}
     </div>
   );

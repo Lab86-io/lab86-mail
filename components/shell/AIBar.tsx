@@ -41,7 +41,6 @@ import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-co
 import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { Message, MessageContent } from '@/components/ui/message';
-import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import {
   PromptInput,
   PromptInputAction,
@@ -49,6 +48,7 @@ import {
   PromptInputTextarea,
 } from '@/components/ui/prompt-input';
 import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
+import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { ScrollButton } from '@/components/ui/scroll-button';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
@@ -326,9 +326,7 @@ export function AIBarSidebar() {
             : type.startsWith('tool-')
               ? type.slice(5)
               : '';
-        if (
-          /^(archive|trash|mark_|send_|reply|add_label|remove_label|snooze|unsnooze)/.test(name)
-        ) {
+        if (/^(archive|trash|mark_|send_|reply|add_label|remove_label|snooze|unsnooze)/.test(name)) {
           handled.current.add(`refresh:${callId}`);
           qc.invalidateQueries({ queryKey: ['search'] });
           qc.invalidateQueries({ queryKey: ['thread'] });
@@ -484,11 +482,7 @@ export function AIBarSidebar() {
                 className="rounded-full"
                 aria-label={busy ? 'Stop' : 'Send'}
               >
-                {busy ? (
-                  <Square className="size-3.5 fill-current" />
-                ) : (
-                  <ArrowUp className="size-4" />
-                )}
+                {busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
               </Button>
             </PromptInputAction>
           </PromptInputActions>

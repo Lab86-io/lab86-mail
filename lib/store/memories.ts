@@ -1,5 +1,5 @@
-import { db, findMany, findOne, upsert, removeMany } from './db';
 import type { Memory } from '../shared/types';
+import { db, findMany, findOne, removeMany, upsert } from './db';
 
 export async function rememberSender(email: string, notes: string) {
   const doc: Memory = { email: email.toLowerCase(), notes, updatedAt: Date.now() };

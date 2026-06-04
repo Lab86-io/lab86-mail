@@ -1,5 +1,5 @@
-import type { Message, Attachment, Thread } from '../shared/types';
 import { dateToEpoch } from '../shared/format';
+import type { Attachment, Message, Thread } from '../shared/types';
 
 function decodeBodyData(data: string | undefined): string {
   if (!data) return '';

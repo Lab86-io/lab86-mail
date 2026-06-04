@@ -1,10 +1,12 @@
 export type AccountEmail = string;
 
 export interface Account {
+  accountId?: string;
   email: AccountEmail;
   provider: 'gmail';
   authed: boolean;
   primary?: boolean;
+  displayName?: string;
   services?: string[];
 }
 

@@ -152,7 +152,7 @@ export function ThreadView() {
     if (!account || !threadId || !messages.length || cachedSummaryFresh) return;
     const timeout = window.setTimeout(() => setSummaryEnabled(true), 700);
     return () => window.clearTimeout(timeout);
-  }, [account, threadId, messages.length, latestMessageStamp, cachedSummaryFresh]);
+  }, [account, threadId, messages.length, cachedSummaryFresh]);
   const summary = useQuery({
     queryKey: ['summary', account, threadId, latestMessageStamp],
     queryFn: async () =>
@@ -277,8 +277,8 @@ export function ThreadView() {
   if (isLoading || !data) {
     return (
       <div className={cn('space-y-3 p-4', !aiBarOpen && 'pr-12')}>
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-24 rounded-lg shimmer" />
+        {['summary', 'body', 'footer'].map((key) => (
+          <div key={key} className="h-24 rounded-lg shimmer" />
         ))}
       </div>
     );
@@ -655,6 +655,7 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
     return (
       <div
         className="email-body reflow-text break-words text-[13.5px] text-[var(--color-text)]"
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: provider HTML is sanitized before rendering.
         dangerouslySetInnerHTML={{ __html: safe }}
       />
     );
@@ -673,8 +674,8 @@ function PlainTextBody({ text }: { text: string }) {
       transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
       className="email-body reflow-text break-words text-[13.5px] text-[var(--color-text)]"
     >
-      {paragraphs.map((paragraph, index) => (
-        <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap">
+      {paragraphs.map((paragraph) => (
+        <p key={`${paragraph.slice(0, 24)}:${paragraph.length}`} className="whitespace-pre-wrap">
           {paragraph}
         </p>
       ))}
@@ -862,12 +863,14 @@ function AttachmentPreview({ item, compact = false }: { item: AttachmentPreviewI
   }
 
   if (item.previewKind === 'video') {
+    // biome-ignore lint/a11y/useMediaCaption: user attachments do not provide caption tracks.
     return <video src={item.previewHref} controls className={frameClass} />;
   }
 
   if (item.previewKind === 'audio') {
     return (
       <div className="grid min-h-40 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+        {/* biome-ignore lint/a11y/useMediaCaption: user attachments do not provide caption tracks. */}
         <audio src={item.previewHref} controls className="w-full" />
       </div>
     );

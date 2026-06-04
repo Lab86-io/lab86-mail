@@ -26,6 +26,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { HostedSettingsButton } from '@/components/hosted/HostedSettings';
 import { Ring } from '@/components/loading-ui/ring';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -135,7 +136,9 @@ export function Rail() {
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean }[] }>('list_accounts'),
+      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean; displayName?: string }[] }>(
+        'list_accounts',
+      ),
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
@@ -428,6 +431,7 @@ export function Rail() {
       <SidebarFooter>
         <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
           <ThemeSwitcher />
+          <HostedSettingsButton />
           <button
             type="button"
             onClick={() => {

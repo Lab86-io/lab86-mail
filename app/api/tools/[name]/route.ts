@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { getTool } from '@/lib/tools';
 import { invokeTool, ToolValidationError } from '@/lib/tools/registry';
 
@@ -21,10 +22,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ name: stri
     | 'user';
 
   try {
-    const result = await invokeTool(tool, body, { agent, account: body?.account });
+    const user = await requireCurrentUser();
+    const result = await invokeTool(tool, body, {
+      agent,
+      account: body?.account,
+      userId: user.userId,
+      userEmail: user.email,
+    });
     return NextResponse.json({ ok: true, result });
   } catch (err: any) {
-    const status = err instanceof ToolValidationError ? 400 : 500;
+    const status = err instanceof AuthRequiredError ? 401 : err instanceof ToolValidationError ? 400 : 500;
     return NextResponse.json({ ok: false, error: err?.message || 'tool failure' }, { status });
   }
 }

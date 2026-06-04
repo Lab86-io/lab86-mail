@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { generateText } from 'ai';
-import { describeProvider, hasAi, primaryModel } from '../ai/client';
-import { normalizeGogMessage, normalizeGogSearchItem } from '../gog/normalize';
-import { runGogJson } from '../gog/pool';
+import { describeProvider, hasAi } from '../ai/client';
+import { generateTextForCurrentUser } from '../ai/gateway';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
+import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
 import type {
   DailyReport,
@@ -16,7 +15,6 @@ import type {
   ThreadInsight,
   TrackedThread,
 } from '../shared/types';
-import { classifyThreadsBatched } from '../tools/ai';
 import { saveDailyReport } from '../store/daily-reports';
 import { listMemories } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
@@ -25,20 +23,12 @@ import { listSmartRules } from '../store/smart-rules';
 import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
-
-const ACCOUNT_LIST = (
-  process.env.LAB86_MAIL_ACCOUNTS ||
-  process.env.MAIL_OS_ACCOUNTS ||
-  'jjalangtry@gmail.com,jakob@lab86.io'
-)
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+import { classifyThreadsBatched } from '../tools/ai';
 
 // Jakob's own addresses. Used to decide message direction (inbound vs outbound)
 // for reply/follow-up detection and to keep him out of the "people" list. The
-// runtime also unions in the live authed accounts; the RIT address is included
-// here because it is not in the default ACCOUNT_LIST yet shows up as a sender.
+// runtime also unions in the live connected accounts; the RIT address is included
+// here because it can show up as a sender.
 const SELF = new Set(['jjalangtry@gmail.com', 'jakob@lab86.io', 'jjl4287@g.rit.edu']);
 
 // Candidate gathering, category-aware and keyword-free. We trust Gmail's own
@@ -99,13 +89,15 @@ function parseLane(value: unknown): ReportLane | null {
 export async function generateDailyReport(input: {
   kind: DailyReport['kind'];
   accounts?: string[];
+  userId?: string | null;
   now?: number;
   maxRecentPerAccount?: number;
   includeCalendar?: boolean;
 }) {
   const now = input.now || Date.now();
-  const accounts = input.accounts?.length ? input.accounts : await authedAccounts();
+  const accounts = input.accounts?.length ? input.accounts : await authedAccounts(input.userId);
   const errors: string[] = [];
+  if (!accounts.length) errors.push('No connected Nylas mail accounts found for this user.');
   const [rules, customLabels, tracked] = await Promise.all([
     listSmartRules(),
     listSmartLabels(),
@@ -124,7 +116,7 @@ export async function generateDailyReport(input: {
     for (const { q, max, human } of RECENT_QUERIES) {
       try {
         const cap = Math.min(max, input.maxRecentPerAccount ?? max);
-        for (const thread of await searchAccountThreads(account, q, cap)) {
+        for (const thread of await searchAccountThreads(account, q, cap, input.userId)) {
           const key = `${thread.account}:${thread._id}`;
           candidates.set(key, thread);
           if (human) humanKeys.add(key);
@@ -134,7 +126,7 @@ export async function generateDailyReport(input: {
       }
     }
     try {
-      for (const thread of await searchAccountThreads(account, SENT_QUERY.q, SENT_QUERY.max)) {
+      for (const thread of await searchAccountThreads(account, SENT_QUERY.q, SENT_QUERY.max, input.userId)) {
         candidates.set(`${thread.account}:${thread._id}`, thread);
         collectSentRecipientsFromRaw(thread, self, sentAllowlist);
       }
@@ -175,7 +167,7 @@ export async function generateDailyReport(input: {
   const messagesByKey = new Map<string, Message[]>();
   for (const thread of bounded) {
     const key = `${thread.account}:${thread._id}`;
-    const messages = await loadThreadMessages(thread.account, thread._id);
+    const messages = await loadThreadMessages(thread.account, thread._id, input.userId);
     messagesByKey.set(key, messages);
     // Reliable allowlist: anyone Jakob has actually emailed in these threads.
     for (const message of messages) {
@@ -327,39 +319,21 @@ export async function generateDailyReport(input: {
   return report;
 }
 
-async function authedAccounts() {
-  try {
-    const raw = await runGogJson<any>(['auth', 'list', '--json', '--no-input'], { timeoutMs: 15_000 });
-    const discovered = (raw?.accounts || []).map((a: any) => a.email).filter(Boolean);
-    return [...new Set([...ACCOUNT_LIST, ...discovered])];
-  } catch {
-    return ACCOUNT_LIST;
-  }
+async function authedAccounts(userId?: string | null) {
+  const accounts = await listNylasAccounts(userId).catch(() => []);
+  return [...new Set(accounts.filter((account) => account.authed).map((account) => account.email))];
 }
 
-async function searchAccountThreads(account: string, query: string, max: number) {
-  const raw = await runGogJson<any>([
-    '--account',
-    account,
-    '--json',
-    'gmail',
-    'search',
-    '--max',
-    String(max),
-    '--no-input',
-    '--',
-    query,
-  ]);
-  const threads = coerceList(raw)
-    .map((item) => normalizeGogSearchItem(item, account))
-    .filter((item) => item._id);
+async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
+  const result = await searchNylasThreads({ userId, account, query, max });
+  const threads = (result?.items || []).filter((item) => item._id);
   for (const thread of threads) await upsertThread(account, thread).catch(() => undefined);
   return threads as Thread[];
 }
 
-// Best-effort recipient extraction from a sent search item. Compact gog search
-// results may not carry recipients, in which case the in-thread harvest in
-// generateDailyReport fills the allowlist reliably.
+// Best-effort recipient extraction from a sent search item. Compact search
+// results may not carry recipients, in which case the in-thread harvest fills
+// the allowlist reliably.
 function collectSentRecipientsFromRaw(thread: Thread, self: Set<string>, out: Set<string>) {
   const raw = thread as unknown as Record<string, unknown>;
   const fields = [raw.to, raw.To, raw.cc, raw.Cc, raw.recipients, (raw as any).headers?.to];
@@ -375,31 +349,15 @@ function collectSentRecipientsFromRaw(thread: Thread, self: Set<string>, out: Se
   }
 }
 
-async function loadThreadMessages(account: string, threadId: string) {
+async function loadThreadMessages(account: string, threadId: string, userId?: string | null) {
   const cached = await getThreadMessages(account, threadId);
   if (cached.length) return cached.sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
-  try {
-    const raw = await runGogJson<any>([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'thread',
-      'get',
-      threadId,
-      '--full',
-      '--no-input',
-    ]);
-    const arr: any[] = (raw?.thread || raw?.result || raw?.data || raw)?.messages || [];
-    const messages = arr
-      .map((m) => normalizeGogMessage(m, account))
-      .filter((m) => m._id)
-      .sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
-    for (const message of messages) await upsertMessageRecord(message).catch(() => undefined);
-    return messages;
-  } catch {
-    return cached;
-  }
+  const thread = await getNylasThread({ userId, account, threadId }).catch(() => null);
+  const messages = (thread?.messages || [])
+    .filter((message) => message._id)
+    .sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
+  for (const message of messages) await upsertMessageRecord(message).catch(() => undefined);
+  return messages;
 }
 
 // Collapse duplicate automated notifications (same sender domain + subject,
@@ -551,7 +509,9 @@ function computeFloor(
   });
   const counterpartyMsg = inboundMsgs[inboundMsgs.length - 1];
   const counterparty = (
-    emailFromHeader(counterpartyMsg?.from) || (senderIsSelf ? '' : senderAddr) || ''
+    emailFromHeader(counterpartyMsg?.from) ||
+    (senderIsSelf ? '' : senderAddr) ||
+    ''
   ).toLowerCase();
   const counterpartyDomain = counterparty.split('@')[1] || '';
 
@@ -571,9 +531,9 @@ function computeFloor(
 
   const isPriorCorrespondent =
     Boolean(counterparty) &&
-    (ctx.sentAllowlist.has(counterparty) || (Boolean(counterpartyDomain) && ctx.sentAllowlist.has(counterpartyDomain)));
-  const isNewSender =
-    isHuman && ctx.sentAllowlist.size > 0 && Boolean(counterparty) && !isPriorCorrespondent;
+    (ctx.sentAllowlist.has(counterparty) ||
+      (Boolean(counterpartyDomain) && ctx.sentAllowlist.has(counterpartyDomain)));
+  const isNewSender = isHuman && ctx.sentAllowlist.size > 0 && Boolean(counterparty) && !isPriorCorrespondent;
 
   // Commitments / due dates only count for non-automated human-or-personal
   // mail. This kills the rent-notice false positive where a weekday word
@@ -656,7 +616,7 @@ async function buildThreadInsight(
   messages: Message[],
   smart: SmartCategory | null,
   floor: FloorSignals,
-  tracked: boolean,
+  _tracked: boolean,
   now: number,
   context: { calendarContext: string[]; memoryContext: string[]; enrich: boolean },
 ): Promise<ThreadInsight> {
@@ -685,8 +645,9 @@ async function buildThreadInsight(
 
   if (context.enrich && hasAi()) {
     try {
-      const { text: aiText } = await generateText({
-        model: primaryModel(),
+      const { text: aiText } = await generateTextForCurrentUser({
+        feature: 'daily_report_insight',
+        speed: 'primary',
         system:
           'You are a deep personal email analyst for Jakob. Use the full thread, calendar, and memory context. Never demote a thread that is from a real person, is in Gmail\'s personal or important category, or owes a reply — you may only raise its priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"...","importance":1|2|3,"suggestedLane":"reply_owed|follow_up_owed|new_people|time_sensitive|tracked|fyi|bulk"}.',
         prompt: [
@@ -773,11 +734,7 @@ async function composeReport(input: {
       subject: stripEmoji(insight.subject),
       people: insight.people,
       whyItMatters: stripEmoji(insight.reason || insight.summary),
-      nextAction: insight.replyOwed
-        ? 'Reply'
-        : insight.followUpOwed
-          ? 'Follow up'
-          : tracked?.nextAction,
+      nextAction: insight.replyOwed ? 'Reply' : insight.followUpOwed ? 'Follow up' : tracked?.nextAction,
       openLoops: insight.openLoops.slice(0, 3),
       // Bulk-tail items never carry a due date — automated notices are not
       // time-boxed actions, and stale tracked records must not leak one in.
@@ -845,8 +802,9 @@ async function composeReport(input: {
 
   if (hasAi()) {
     try {
-      const { text } = await generateText({
-        model: primaryModel(),
+      const { text } = await generateTextForCurrentUser({
+        feature: 'daily_report_narrative',
+        speed: 'primary',
         system:
           "Write Jakob a warm, narrative Daily Report from his email, calendar, memories, and tracked threads — like a sharp chief-of-staff briefing him over coffee. Tell the story of where things stand: open it with the through-line of the day, then walk through the replies he owes and conversations awaiting his follow-up (name the people and what's at stake), then new people and anything time-sensitive, and close with a clear nudge on what to do first. Use flowing prose in 2-3 short paragraphs, concrete and investigative, naming names. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 140-180 words.",
         prompt: [
@@ -970,27 +928,8 @@ function localNarrative(
   return parts.join(' ');
 }
 
-async function loadCalendarContext(accounts: string[], now: number) {
-  const fromIso = new Date(now).toISOString();
-  const toIso = new Date(now + 7 * 86400_000).toISOString();
-  const out: string[] = [];
-  for (const account of accounts.slice(0, 3)) {
-    const raw = await runGogJson<any>([
-      '--account',
-      account,
-      '--json',
-      'calendar',
-      'freebusy',
-      '--from',
-      fromIso,
-      '--to',
-      toIso,
-      '--no-input',
-    ]).catch(() => null);
-    if (raw?.busy || raw?.calendars)
-      out.push(`${account}: ${JSON.stringify(raw.busy || raw.calendars).slice(0, 600)}`);
-  }
-  return out;
+async function loadCalendarContext(_accounts: string[], _now: number) {
+  return [];
 }
 
 async function loadMemoryContext() {
@@ -1191,17 +1130,6 @@ function inferDueAt(text: string, now: number) {
     return base.getTime();
   }
   return null;
-}
-
-function coerceList(raw: any): any[] {
-  if (Array.isArray(raw)) return raw;
-  if (Array.isArray(raw?.messages)) return raw.messages;
-  if (Array.isArray(raw?.threads)) return raw.threads;
-  if (Array.isArray(raw?.results)) return raw.results;
-  if (Array.isArray(raw?.items)) return raw.items;
-  if (Array.isArray(raw?.data)) return raw.data;
-  if (Array.isArray(raw?.result)) return raw.result;
-  return [];
 }
 
 function parseJson(text: string) {
