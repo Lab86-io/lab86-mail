@@ -17,7 +17,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import {
   Command,
   CommandEmpty,

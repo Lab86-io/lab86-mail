@@ -1,6 +1,8 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText, type ModelMessage, streamText } from 'ai';
+import { getAiBillingEntitlement } from '@/lib/hosted/billing';
+import { isLab86AiDisabled } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { aiCreditDefaults, isConvexConfigured } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
@@ -95,7 +97,8 @@ export async function resolveAiRuntime(input: {
       };
     }
 
-    assertLab86Quota(state);
+    const entitlement = await getAiBillingEntitlement();
+    assertLab86Quota(state, entitlement);
     platformPreference = {
       provider: state.settings?.provider,
       modelName: speed === 'fast' ? state.settings?.fastModel : state.settings?.model,
@@ -174,6 +177,7 @@ export async function streamTextForUser(
 }
 
 function platformRuntime(speed: AiSpeed, preference?: PlatformPreference) {
+  if (isLab86AiDisabled()) return null;
   const requestedModel = preference?.modelName?.trim();
   if (
     requestedModel &&
@@ -232,9 +236,15 @@ function modelFor(provider: AiProvider, speed: AiSpeed) {
   return speed === 'primary' ? DEFAULT_MODELS[provider].primary : DEFAULT_MODELS[provider].fast;
 }
 
-function assertLab86Quota(state: RuntimeState) {
+function assertLab86Quota(
+  state: RuntimeState,
+  clerkEntitlement?: { monthlyCredits: number; status: string } | null,
+) {
+  if (isLab86AiDisabled()) {
+    throw new Error('Lab86 AI is temporarily disabled. Switch to your own API key to continue.');
+  }
   const defaults = aiCreditDefaults();
-  const entitlement = state.entitlement;
+  const entitlement = clerkEntitlement || state.entitlement;
   const monthlyCredits =
     entitlement && (entitlement.status === 'active' || entitlement.status === 'trialing')
       ? entitlement.monthlyCredits

@@ -6,6 +6,7 @@ import { Fraunces } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
+import { isPublicSignupDisabled } from '@/lib/hosted/controls';
 import './globals.css';
 
 // Warm editorial display serif — used for the Daily Report masthead, datelines,
@@ -65,6 +66,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 
 function ClerkNav() {
+  const signupDisabled = isPublicSignupDisabled();
   return (
     <div className="fixed top-3 right-3 z-50 flex items-center gap-2">
       <Show when="signed-out">
@@ -76,14 +78,16 @@ function ClerkNav() {
             Sign in
           </button>
         </SignInButton>
-        <SignUpButton mode="modal">
-          <button
-            type="button"
-            className="rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[12px] text-[var(--color-accent-foreground)] shadow-sm"
-          >
-            Sign up
-          </button>
-        </SignUpButton>
+        {signupDisabled ? null : (
+          <SignUpButton mode="modal">
+            <button
+              type="button"
+              className="rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[12px] text-[var(--color-accent-foreground)] shadow-sm"
+            >
+              Sign up
+            </button>
+          </SignUpButton>
+        )}
       </Show>
       <Show when="signed-in">
         <UserButton />

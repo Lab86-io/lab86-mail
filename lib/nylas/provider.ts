@@ -1,4 +1,5 @@
 import type { CreateAttachmentRequest } from 'nylas';
+import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { isConvexConfigured } from '@/lib/hosted/env';
 import { requireNylas } from './client';
@@ -49,6 +50,7 @@ export async function searchNylasThreads({
   max: number;
   pageToken?: string;
 }) {
+  assertOutboundSendEnabled();
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
   const queryParams: Record<string, unknown> = {

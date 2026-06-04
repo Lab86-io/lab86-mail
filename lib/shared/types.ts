@@ -87,6 +87,7 @@ export interface AuditEntry {
   _id?: string;
   ts: number;
   tool: string;
+  userId?: string | null;
   account: AccountEmail | null;
   args: Record<string, unknown>;
   result: 'ok' | 'error';

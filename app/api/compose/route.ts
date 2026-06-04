@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
     await cacheSentMessage(account, sent);
     await writeAudit({
       tool: `compose_route:${mode || 'new'}:nylas`,
+      userId: user.userId,
       account,
       args: {
         mode: mode || 'new',
@@ -107,6 +108,7 @@ export async function POST(req: NextRequest) {
     const status = err instanceof AuthRequiredError ? 401 : 500;
     await writeAudit({
       tool: `compose_route:${mode || 'new'}:nylas`,
+      userId: null,
       account,
       args: { mode: mode || 'new', to, subject, threadId, messageId },
       result: 'error',

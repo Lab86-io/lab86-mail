@@ -16,6 +16,15 @@ export function isStripeConfigured() {
   return Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID);
 }
 
+export function isClerkBillingConfigured() {
+  return Boolean(
+    process.env.CLERK_BILLING_CHECKOUT_URL ||
+      process.env.CLERK_BILLING_PORTAL_URL ||
+      process.env.NEXT_PUBLIC_CLERK_BILLING_CHECKOUT_URL ||
+      process.env.NEXT_PUBLIC_CLERK_BILLING_PORTAL_URL,
+  );
+}
+
 export function isGogEnabled() {
   return process.env.LAB86_MAIL_ENABLE_GOG === '1';
 }

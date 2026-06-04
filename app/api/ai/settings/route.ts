@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
+import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { aiCreditDefaults, isConvexConfigured } from '@/lib/hosted/env';
+import { isConvexConfigured } from '@/lib/hosted/env';
 import { encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
 
 const PROVIDERS = new Set(['openrouter', 'openai', 'anthropic']);
@@ -20,7 +21,8 @@ export async function GET() {
     });
   }
   const state = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId });
-  const monthlyCredits = effectiveMonthlyCredits(state);
+  const entitlement = await getAiBillingEntitlement();
+  const monthlyCredits = entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
   return NextResponse.json({
     ok: true,
@@ -33,11 +35,7 @@ export async function GET() {
           validatedAt: state.key.validatedAt,
         }
       : null,
-    entitlement: state.entitlement || {
-      plan: 'free',
-      status: 'active',
-      monthlyCredits: aiCreditDefaults().freeMonthlyCredits,
-    },
+    entitlement,
     usage: {
       period: state.period,
       creditsUsed,
@@ -100,12 +98,4 @@ export async function DELETE(req: NextRequest) {
   }
   await convexMutation(api.ai.deleteProviderKey, { userId: user.userId, provider });
   return NextResponse.json({ ok: true });
-}
-
-function effectiveMonthlyCredits(state: any) {
-  const defaults = aiCreditDefaults();
-  if (state.entitlement?.status === 'active' || state.entitlement?.status === 'trialing') {
-    return state.entitlement.monthlyCredits || defaults.proMonthlyCredits;
-  }
-  return defaults.freeMonthlyCredits;
 }

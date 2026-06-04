@@ -1,6 +1,6 @@
 {
   "name": "lab86-mail",
-  "version": "2.0.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "packageManager": "bun@1.3.11",
@@ -8,6 +8,7 @@
     "dev": "PORT=18838 HOSTNAME=127.0.0.1 next dev --turbopack",
     "build": "next build",
     "start": "PORT=18838 HOSTNAME=127.0.0.1 next start",
+    "start:railway": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
     "daily-report": "bun --bun scripts/generate-daily-report.ts",

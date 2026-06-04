@@ -1,8 +1,8 @@
-# lab86-mail · v2
+# lab86-mail · v0.8
 
 Local desktop web client for Jakob's hybrid Gmail setup, rebuilt from the ground up.
 
-- **Backend:** single Next.js 16 + React 19 app, run on **Bun**. No SQL — storage is `@seald-io/nedb` (Mongo-style document store, JSON Lines on disk).
+- **Backend:** single Next.js 16 + React 19 app, run on **Bun**. Hosted mode uses Clerk, Convex, Nylas, and Clerk Billing; legacy local mode can still use `@seald-io/nedb`.
 - **AI:** OpenAI **GPT‑5.5** (primary) via Vercel **AI SDK 6**, with `@ai-sdk/anthropic` available as a fallback. API key is shared with `voice-agent` via `/home/jjalangtry/.config/lab86-private/voice-agent.env`.
 - **Tools:** ~53 typed, Zod-validated tools in `lib/tools/*`. Every UI action and every AI agent action go through the same registry. Introspectable via `GET /api/tools` and callable via `POST /api/tools/<name>`.
 - **Frontend:** shadcn/ui primitives, Motion 12 transitions, Lucide + Phosphor icons, TipTap (planned for compose), cmdk palette, Sonner toasts, next-themes, TanStack Query, Zustand.
@@ -20,6 +20,14 @@ bun run start
 ```
 
 Open `http://127.0.0.1:18836/` (or the tailnet URL `https://mail.lab86.io/`).
+
+## Hosted release
+
+- `staging` deploys to Railway `development` at `https://mail-staging.lab86.io`.
+- `main` deploys to Railway `production` at `https://mail.lab86.io`.
+- Production releases start at `0.8.0`; CI bumps patch by default, `[MINOR]` for minor, and `[MAJOR]` for major.
+- Runtime variables live in Railway. GitHub stores only deploy and release credentials.
+- See `docs/hosted-release-runbook.md` for DNS, rollback, and backup details.
 
 ## Favicon
 

@@ -51,6 +51,7 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
       } catch (err: any) {
         await writeAudit({
           tool: tool.name,
+          userId: ctx.userId ?? null,
           account: ctx.account ?? null,
           args: parsed as Record<string, unknown>,
           result: 'error',
@@ -61,6 +62,7 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
       }
       await writeAudit({
         tool: tool.name,
+        userId: ctx.userId ?? null,
         account: ctx.account ?? null,
         args: parsed as Record<string, unknown>,
         result: 'ok',

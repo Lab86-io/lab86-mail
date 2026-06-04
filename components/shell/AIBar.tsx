@@ -259,7 +259,7 @@ export function AIBarSidebar() {
             : type.startsWith('tool-')
               ? type.replace(/^tool-/, '')
               : '';
-        if (!name || !name.startsWith('ui_')) continue;
+        if (!name?.startsWith('ui_')) continue;
         const state = (part as any).state;
         if (state !== 'input-available' && state !== 'output-available') continue;
         const callId = (part as any).toolCallId;
@@ -724,32 +724,4 @@ function humanizeTool(name: string, args: any, out: any): string {
   } catch {
     return 'Done.';
   }
-}
-
-function summaryFor(name: string, args: any, out: any): string {
-  if (!args) return '';
-  try {
-    if (name === 'search_threads' || name === 'nl_search') {
-      const q = args.query || args.description;
-      const n = out?.items?.length ?? out?.threads?.length;
-      return q ? (n != null ? `"${q}" · ${n}` : `"${q}"`) : '';
-    }
-    if (name === 'get_thread') return `${args.threadId?.slice(-8) ?? ''}`;
-    if (name === 'ui_focus_thread') return `${args.threadId?.slice(-8) ?? ''}`;
-    if (name === 'ui_set_query') return `"${args.query ?? ''}"`;
-    if (name === 'ui_open_compose')
-      return [args.to ? `to ${args.to}` : '', args.subject].filter(Boolean).join(' · ');
-    if (name === 'archive_thread' || name === 'trash_thread') return args.threadId?.slice(-8) ?? '';
-    if (name === 'send_message' || name === 'reply' || name === 'reply_all')
-      return `to ${args.to || args.messageId?.slice(-8) || ''}`;
-    if (name === 'snooze_thread' && args.untilTs) return new Date(args.untilTs).toLocaleString();
-    if (name === 'summarize_thread' || name === 'triage_thread' || name === 'draft_reply')
-      return `${args.threadId?.slice(-8) ?? ''}`;
-    if (name === 'remember' || name === 'recall' || name === 'forget') return args.email;
-    if (name === 'browserbase_search') return `"${args.query}"`;
-    if (name === 'browserbase_fetch') return args.url;
-    if (name === 'ui_toast') return args.message;
-    if (name === 'ui_switch_account') return args.account;
-  } catch {}
-  return '';
 }

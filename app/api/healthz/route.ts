@@ -2,13 +2,14 @@ import { NextResponse } from 'next/server';
 import { describeProvider, hasAi } from '@/lib/ai/client';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import {
+  isClerkBillingConfigured,
   isClerkConfigured,
   isConvexConfigured,
   isNylasConfigured,
-  isStripeConfigured,
 } from '@/lib/hosted/env';
 import { TOOLS } from '@/lib/tools';
 import { listAccounts } from '@/lib/tools/mail';
+import { APP_VERSION } from '@/lib/version';
 
 export const runtime = 'nodejs';
 
@@ -24,16 +25,22 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     service: 'lab86-mail',
-    version: '2.0.0',
+    version: APP_VERSION,
+    railway: {
+      environment: process.env.RAILWAY_ENVIRONMENT_NAME || null,
+      service: process.env.RAILWAY_SERVICE_NAME || null,
+      deployment: process.env.RAILWAY_DEPLOYMENT_ID || null,
+      commit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
+    },
     accounts: accounts.accounts.length,
     authed: accounts.accounts.filter((a: any) => a.authed).map((a: any) => a.email),
     tools: Object.keys(TOOLS).length,
     ai: { configured: hasAi(), ...describeProvider() },
     hosted: {
       clerk: isClerkConfigured(),
+      clerkBilling: isClerkBillingConfigured(),
       convex: isConvexConfigured(),
       nylas: isNylasConfigured(),
-      stripe: isStripeConfigured(),
     },
   });
 }

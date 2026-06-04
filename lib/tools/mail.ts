@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { normalizeGogSearchItem } from '../gog/normalize';
+import { runGogJson } from '../gog/pool';
+import { isGogEnabled } from '../hosted/env';
 import {
   classifyThreadWithContext,
   includeInSmartCategory,
@@ -87,6 +90,18 @@ export const searchThreads = defineTool({
         if (item._id) await upsertThread(account, item).catch(() => undefined);
       }
       return nylas;
+    }
+    if (isGogEnabled()) {
+      const legacy = await runGogJson<any>(
+        ['--account', account, 'search', '--max', String(max), '--', query],
+        { timeoutMs: 60_000 },
+      ).catch(() => null);
+      const rawItems = Array.isArray(legacy?.threads) ? legacy.threads : Array.isArray(legacy) ? legacy : [];
+      const items = rawItems.map((item: any) => normalizeGogSearchItem(item, account));
+      for (const item of items) {
+        if (item._id) await upsertThread(account, item).catch(() => undefined);
+      }
+      return { account, query, items, nextPageToken: undefined };
     }
     return { account, query, items: [], nextPageToken: undefined };
   },
