@@ -21,6 +21,23 @@ Railway resources created on June 4, 2026:
 - Environment `production`: `c14045cd-da4a-4080-bc07-ff784f1e333d`
 - Temporary Railway development URL: `https://web-development-292e.up.railway.app`
 
+GitHub resources created on June 4, 2026:
+
+- Repository: `Lab86-io/lab86-mail`
+- Team: `Lab86-io/maintainers`
+- Hosted release PR: `https://github.com/Lab86-io/lab86-mail/pull/1`
+
+Convex resources created on June 4, 2026:
+
+- Development deployment: `jjalangtry:lab86-mail:development`
+  - Deployment name: `precise-skunk-847`
+  - URL: `https://precise-skunk-847.convex.cloud`
+  - Site URL: `https://precise-skunk-847.convex.site`
+- Production deployment: `jjalangtry:lab86-mail:production`
+  - Deployment name: `proficient-viper-594`
+  - URL: `https://proficient-viper-594.convex.cloud`
+  - Site URL: `https://proficient-viper-594.convex.site`
+
 ## Required Provider Setup
 
 Create separate development and production resources for:
@@ -95,10 +112,11 @@ dig +short mail.lab86.io
 dig +short mail-staging.lab86.io
 ```
 
-Current pre-cutover values observed on June 3, 2026:
+Current pre-cutover values observed in Cloudflare on June 4, 2026:
 
-- `mail.lab86.io` -> `files.jjalangtry.com`
-- `mail-staging.lab86.io` -> `100.104.121.93`
+- `mail.lab86.io` A -> `100.104.121.93`, DNS-only, TTL automatic
+- `mail.lab86.io` AAAA -> `fd7a:115c:a1e0::9c35:795d`, DNS-only, TTL automatic
+- `mail-staging.lab86.io` -> no DNS record
 
 Add custom domains in Railway first:
 
@@ -108,6 +126,10 @@ railway domain mail.lab86.io --service web --environment production --json
 ```
 
 Then update Cloudflare records to the Railway-provided targets.
+
+As of June 4, 2026, the Railway CLI can deploy and update variables, but custom domain creation returns
+`Unauthorized. Please run railway login again.` Do not cut Cloudflare DNS until the domains appear under the
+Railway `web` service.
 
 Verify:
 
