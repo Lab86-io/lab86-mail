@@ -140,11 +140,15 @@ dig +short mail.lab86.io
 dig +short mail-staging.lab86.io
 ```
 
-Current pre-cutover values observed in Cloudflare on June 4, 2026:
+Current Cloudflare state after cleanup on June 4, 2026:
+
+- `mail.lab86.io` -> no DNS record
+- `mail-staging.lab86.io` -> no DNS record
+
+Rollback values removed on June 4, 2026:
 
 - `mail.lab86.io` A -> `100.104.121.93`, DNS-only, TTL automatic
 - `mail.lab86.io` AAAA -> `fd7a:115c:a1e0::9c35:795d`, DNS-only, TTL automatic
-- `mail-staging.lab86.io` -> no DNS record
 
 Add custom domains in Railway first:
 
