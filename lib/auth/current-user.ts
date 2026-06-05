@@ -16,7 +16,9 @@ const LEGACY_USER: CurrentUser = {
 };
 
 export async function getCurrentUser(options: { allowLegacy?: boolean } = {}): Promise<CurrentUser | null> {
-  const allowLegacy = options.allowLegacy !== false;
+  const allowLegacy =
+    options.allowLegacy === true &&
+    (process.env.NODE_ENV !== 'production' || process.env.LAB86_MAIL_ALLOW_LEGACY_AUTH === '1');
   if (!isClerkConfigured()) return allowLegacy ? LEGACY_USER : null;
 
   const session = await auth();

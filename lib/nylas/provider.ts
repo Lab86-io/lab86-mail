@@ -50,7 +50,6 @@ export async function searchNylasThreads({
   max: number;
   pageToken?: string;
 }) {
-  assertOutboundSendEnabled();
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
   const queryParams: Record<string, unknown> = {
@@ -118,6 +117,26 @@ export async function listNylasLabels(userId: string | null | undefined, account
   return { labels: (await result).data.map(normalizeNylasFolder) };
 }
 
+export async function createNylasFolder({
+  userId,
+  account,
+  name,
+}: {
+  userId?: string | null;
+  account: string;
+  name: string;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const existing = await findNylasFolder(row.grantId, name);
+  if (existing) return normalizeNylasFolder(existing);
+  const result = await requireNylas().folders.create({
+    identifier: row.grantId,
+    requestBody: { name },
+  });
+  return normalizeNylasFolder(result.data);
+}
+
 export async function updateNylasThread({
   userId,
   account,
@@ -168,6 +187,68 @@ export async function updateNylasMessage({
   return { ok: true };
 }
 
+export async function updateNylasMessageFolders({
+  userId,
+  account,
+  messageId,
+  add = [],
+  remove = [],
+  createMissing = false,
+}: {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+  add?: string[];
+  remove?: string[];
+  createMissing?: boolean;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await requireNylas().messages.find({ identifier: row.grantId, messageId });
+  const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
+    add,
+    remove,
+    createMissing,
+  });
+  await requireNylas().messages.update({
+    identifier: row.grantId,
+    messageId,
+    requestBody: { folders },
+  });
+  return { ok: true };
+}
+
+export async function updateNylasThreadFolders({
+  userId,
+  account,
+  threadId,
+  add = [],
+  remove = [],
+  createMissing = false,
+}: {
+  userId?: string | null;
+  account: string;
+  threadId: string;
+  add?: string[];
+  remove?: string[];
+  createMissing?: boolean;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await requireNylas().threads.find({ identifier: row.grantId, threadId });
+  const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
+    add,
+    remove,
+    createMissing,
+  });
+  await requireNylas().threads.update({
+    identifier: row.grantId,
+    threadId,
+    requestBody: { folders },
+  });
+  return { ok: true };
+}
+
 export async function sendNylasMessage({
   userId,
   account,
@@ -193,6 +274,7 @@ export async function sendNylasMessage({
   sendAt?: number;
   attachments?: CreateAttachmentRequest[];
 }) {
+  assertOutboundSendEnabled();
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
   const result = await requireNylas().messages.send({
@@ -241,3 +323,70 @@ export async function deleteNylasAccount(userId: string, accountId: string, gran
   await convexMutation(api.accounts.deleteConnectedAccount, { userId, accountId });
   return { ok: true };
 }
+
+async function applyFolderDelta(
+  grantId: string,
+  currentFolders: string[],
+  {
+    add,
+    remove,
+    createMissing,
+  }: {
+    add: string[];
+    remove: string[];
+    createMissing: boolean;
+  },
+) {
+  const folders = [...new Set(currentFolders.filter(Boolean))];
+  const removeIds = new Set<string>();
+  for (const label of remove.map((value) => value.trim()).filter(Boolean)) {
+    removeIds.add(label);
+    const existing = await findNylasFolder(grantId, label);
+    if (existing?.id) removeIds.add(existing.id);
+  }
+
+  const next = folders.filter((folder) => !removeIds.has(folder));
+  for (const label of add.map((value) => value.trim()).filter(Boolean)) {
+    const folderId = await resolveNylasFolderId(grantId, label, createMissing);
+    if (folderId && !next.includes(folderId)) next.push(folderId);
+  }
+  return next;
+}
+
+async function resolveNylasFolderId(grantId: string, label: string, createMissing: boolean) {
+  const existing = await findNylasFolder(grantId, label);
+  if (existing?.id) return existing.id;
+  if (!createMissing || isSystemFolderId(label)) return label;
+  const created = await requireNylas().folders.create({
+    identifier: grantId,
+    requestBody: { name: label },
+  });
+  return created.data.id;
+}
+
+async function findNylasFolder(grantId: string, label: string) {
+  const normalized = label.toLowerCase();
+  const result = await requireNylas().folders.list({ identifier: grantId, queryParams: { limit: 200 } });
+  return (await result).data.find(
+    (folder) => folder.id === label || folder.name === label || folder.name?.toLowerCase() === normalized,
+  );
+}
+
+function isSystemFolderId(label: string) {
+  return SYSTEM_FOLDER_IDS.has(label.toUpperCase());
+}
+
+const SYSTEM_FOLDER_IDS = new Set([
+  'ARCHIVE',
+  'DRAFT',
+  'DRAFTS',
+  'IMPORTANT',
+  'INBOX',
+  'JUNK',
+  'MUTE',
+  'SENT',
+  'SPAM',
+  'STARRED',
+  'TRASH',
+  'UNREAD',
+]);

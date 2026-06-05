@@ -1,6 +1,14 @@
 import { z } from 'zod';
+import { runGogJson } from '../gog/pool';
+import { isGogEnabled } from '../hosted/env';
 import { SMART_CATEGORY_IDS } from '../mail/smart-categories';
-import { updateNylasMessage, updateNylasThread } from '../nylas/provider';
+import {
+  createNylasFolder,
+  updateNylasMessage,
+  updateNylasMessageFolders,
+  updateNylasThread,
+  updateNylasThreadFolders,
+} from '../nylas/provider';
 import { getThreadMessages } from '../store/messages';
 import { snoozeMessage, unsnoozeByMessage } from '../store/snooze';
 import {
@@ -24,8 +32,10 @@ const ThreadMutate = z.object({
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
 
 async function gmailMutate(args: string[]): Promise<any> {
-  void args;
-  throw new Error('This action is not wired to Nylas yet.');
+  if (!isGogEnabled()) {
+    throw new Error('This action requires a connected Nylas account.');
+  }
+  return runGogJson(args, { timeoutMs: 60_000 });
 }
 
 export const archiveThread = defineTool({
@@ -42,8 +52,8 @@ export const archiveThread = defineTool({
       threadId,
       folders: [],
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -77,8 +87,8 @@ export const trashThread = defineTool({
       threadId,
       folders: ['TRASH'],
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -114,8 +124,8 @@ export const restoreFromTrash = defineTool({
       threadId,
       folders: ['INBOX'],
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -151,8 +161,8 @@ export const markRead = defineTool({
       messageId,
       unread: false,
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -175,8 +185,8 @@ export const markUnread = defineTool({
       messageId,
       unread: true,
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -203,8 +213,8 @@ export const markThreadRead = defineTool({
       threadId,
       unread: false,
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return { ok: true, marked: messageIds?.length || 0 };
 
@@ -267,8 +277,8 @@ export const starMessage = defineTool({
       messageId,
       starred: true,
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -302,8 +312,8 @@ export const unstarMessage = defineTool({
       messageId,
       starred: false,
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -330,7 +340,19 @@ export const addLabel = defineTool({
   mutating: true,
   input: BasicMutate.extend({ label: z.string() }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, label }) {
+  async handler({ account, messageId, label }, ctx) {
+    const nylas = await updateNylasMessageFolders({
+      userId: ctx.userId,
+      account,
+      messageId,
+      add: [label],
+      createMissing: true,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,
@@ -354,7 +376,18 @@ export const removeLabel = defineTool({
   mutating: true,
   input: BasicMutate.extend({ label: z.string() }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, label }) {
+  async handler({ account, messageId, label }, ctx) {
+    const nylas = await updateNylasMessageFolders({
+      userId: ctx.userId,
+      account,
+      messageId,
+      remove: [label],
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,
@@ -378,7 +411,17 @@ export const createLabel = defineTool({
   mutating: true,
   input: z.object({ account: z.string(), name: z.string() }),
   output: z.object({ ok: z.boolean(), id: z.string().optional() }),
-  async handler({ account, name }) {
+  async handler({ account, name }, ctx) {
+    const nylas = await createNylasFolder({
+      userId: ctx.userId,
+      account,
+      name,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) return { ok: true, id: nylas.id };
+
     const raw = await gmailMutate([
       '--account',
       account,
@@ -412,33 +455,70 @@ export const applySmartLabels = defineTool({
       .max(80),
   }),
   output: z.object({ ok: z.boolean(), applied: z.number() }),
-  async handler({ account, items }) {
+  async handler({ account, items }, ctx) {
     const uniqueLabels = [
       ...new Set(items.flatMap((item) => item.labels).filter((label) => label.startsWith('MailOS/'))),
     ];
-    await Promise.allSettled(
-      uniqueLabels.map((label) =>
-        gmailMutate(['--account', account, '--json', 'gmail', 'labels', 'create', label, '--no-input']),
-      ),
-    );
+    let hasNylasLabelPath = false;
+    try {
+      const createdNylasLabels = await Promise.all(
+        uniqueLabels.map((label) => createNylasFolder({ userId: ctx.userId, account, name: label })),
+      );
+      hasNylasLabelPath = createdNylasLabels.some(Boolean);
+    } catch (err: any) {
+      if (!String(err?.message || '').includes('Nylas is not configured')) throw err;
+    }
+    if (!hasNylasLabelPath) {
+      await Promise.allSettled(
+        uniqueLabels.map((label) =>
+          gmailMutate(['--account', account, '--json', 'gmail', 'labels', 'create', label, '--no-input']),
+        ),
+      );
+    }
 
     let applied = 0;
     for (const item of items) {
       const labels = [...new Set(item.labels)];
-      const targetId = item.messageId || item.threadId;
-      const command = item.messageId ? ['messages', 'modify', targetId] : ['thread', 'modify', targetId];
-      for (const label of labels) {
-        await gmailMutate([
-          '--account',
-          account,
-          '--json',
-          'gmail',
-          ...command,
-          '--add',
-          label,
-          '--no-input',
-        ]);
-        applied += 1;
+      const nylas = item.messageId
+        ? await updateNylasMessageFolders({
+            userId: ctx.userId,
+            account,
+            messageId: item.messageId,
+            add: labels,
+            createMissing: true,
+          }).catch((err) => {
+            if (String(err?.message || '').includes('Nylas is not configured')) return null;
+            throw err;
+          })
+        : await updateNylasThreadFolders({
+            userId: ctx.userId,
+            account,
+            threadId: item.threadId,
+            add: labels,
+            createMissing: true,
+          }).catch((err) => {
+            if (String(err?.message || '').includes('Nylas is not configured')) return null;
+            throw err;
+          });
+
+      if (nylas) {
+        applied += labels.length;
+      } else {
+        const targetId = item.messageId || item.threadId;
+        const command = item.messageId ? ['messages', 'modify', targetId] : ['thread', 'modify', targetId];
+        for (const label of labels) {
+          await gmailMutate([
+            '--account',
+            account,
+            '--json',
+            'gmail',
+            ...command,
+            '--add',
+            label,
+            '--no-input',
+          ]);
+          applied += 1;
+        }
       }
       const existing = await getThread(account, item.threadId).catch(() => null);
       const labelsApplied = [...new Set([...(existing?.gmailLabelSync?.labelsApplied || []), ...labels])];
@@ -491,7 +571,18 @@ export const muteThread = defineTool({
   mutating: true,
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }) {
+  async handler({ account, threadId }, ctx) {
+    const nylas = await updateNylasThreadFolders({
+      userId: ctx.userId,
+      account,
+      threadId,
+      add: ['MUTE'],
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) return nylas;
+
     await gmailMutate([
       '--account',
       account,

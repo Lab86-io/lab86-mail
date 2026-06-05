@@ -1,6 +1,9 @@
 export function requireInternalSecret(secret?: string) {
   const expected = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-  if (expected && secret !== expected) {
+  if (!expected) {
+    throw new Error('Missing Convex internal secret.');
+  }
+  if (secret !== expected) {
     throw new Error('Invalid Convex internal secret.');
   }
 }

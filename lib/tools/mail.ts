@@ -82,8 +82,8 @@ export const searchThreads = defineTool({
       max,
       pageToken,
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) {
       for (const item of nylas.items) {
@@ -141,8 +141,8 @@ export const listSmartCategory = defineTool({
       max: Math.min(80, Math.max(max * 2, 60)),
       pageToken,
     }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) {
       const matched: any[] = [];
@@ -187,8 +187,8 @@ export const getThread = defineTool({
   }),
   async handler({ account, threadId, refresh }, ctx) {
     const nylas = await getNylasThread({ userId: ctx.userId, account, threadId }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) {
       for (const message of nylas.messages) await upsertMessageRecord(message).catch(() => undefined);
@@ -237,8 +237,8 @@ export const getMessage = defineTool({
   output: z.any(),
   async handler({ account, id }, ctx) {
     const nylas = await getNylasMessage({ userId: ctx.userId, account, id }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
 
@@ -257,8 +257,8 @@ export const listLabels = defineTool({
   output: z.object({ labels: z.array(z.any()) }),
   async handler({ account }, ctx) {
     const nylas = await listNylasLabels(ctx.userId, account).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) throw err;
-      return null;
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
     });
     if (nylas) return nylas;
     return { labels: [] };

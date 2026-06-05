@@ -60,18 +60,37 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const user = await requireCurrentUser({ allowLegacy: false });
-  const body = await req.json().catch(() => ({}));
+  if (!isConvexConfigured()) {
+    return NextResponse.json(
+      { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },
+      { status: 503 },
+    );
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    const parsed = await req.json();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid body');
+    body = parsed as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ ok: false, error: 'invalid JSON body' }, { status: 400 });
+  }
+
+  if (body.mode !== undefined && body.mode !== 'byok' && body.mode !== 'lab86') {
+    return NextResponse.json({ ok: false, error: 'mode must be byok or lab86' }, { status: 400 });
+  }
   const mode = body.mode === 'byok' ? 'byok' : 'lab86';
-  const provider = PROVIDERS.has(body.provider) ? body.provider : undefined;
+  const provider =
+    typeof body.provider === 'string' && PROVIDERS.has(body.provider) ? body.provider : undefined;
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
   const fastModel =
     typeof body.fastModel === 'string' && body.fastModel.trim() ? body.fastModel.trim() : undefined;
   const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
 
   if (isUserOpenRouterKeyRequired()) {
-    const existing = isConvexConfigured()
-      ? await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId }).catch(() => null)
-      : null;
+    const existing = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId }).catch(
+      () => null,
+    );
     if (mode !== 'byok' || provider !== 'openrouter') {
       return NextResponse.json(
         { ok: false, error: 'OpenRouter BYOK is required while Lab86 AI subscriptions are disabled.' },
@@ -122,6 +141,12 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const user = await requireCurrentUser({ allowLegacy: false });
+  if (!isConvexConfigured()) {
+    return NextResponse.json(
+      { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },
+      { status: 503 },
+    );
+  }
   const url = new URL(req.url);
   const provider = url.searchParams.get('provider') || '';
   if (!PROVIDERS.has(provider)) {

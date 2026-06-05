@@ -15,13 +15,22 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
+const isDevRuntime = process.env.NODE_ENV === 'development';
 
-const passthroughProxy = (req: Request) => basicAuthOrNext(req);
+const passthroughProxy = (req: Request) => {
+  const basicAuth = basicAuthOrNext(req);
+  if (basicAuth.status !== 200) return basicAuth;
+  const pathname = new URL(req.url).pathname;
+  if (!hasClerkKeys && !isDevRuntime && pathname !== '/api/healthz') {
+    return new NextResponse('Authentication is not configured.', { status: 503 });
+  }
+  return NextResponse.next();
+};
 
 const protectedProxy = clerkMiddleware(
   async (auth, req) => {
     const basicAuth = basicAuthOrNext(req);
-    if (basicAuth.status === 401) return basicAuth;
+    if (basicAuth.status !== 200) return basicAuth;
     if (!isPublicRoute(req)) {
       await auth.protect({
         unauthenticatedUrl: new URL('/sign-in', req.url).toString(),
@@ -52,7 +61,9 @@ function basicAuthOrNext(req: Request) {
 
   const user = process.env.STAGING_BASIC_AUTH_USER || '';
   const password = process.env.STAGING_BASIC_AUTH_PASSWORD || '';
-  if (!user || !password) return NextResponse.next();
+  if (!user || !password) {
+    return new NextResponse('Staging basic auth is not configured.', { status: 503 });
+  }
 
   const authHeader = req.headers.get('authorization') || '';
   const [scheme, encoded] = authHeader.split(/\s+/, 2);
@@ -73,6 +84,7 @@ function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
   if (pathname === '/api/clerk/webhook') return false;
+  if (pathname === '/api/billing/webhook') return false;
   return true;
 }
 
