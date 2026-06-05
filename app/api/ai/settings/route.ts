@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
+import {
+  isLab86AiDisabled,
+  isSubscriptionServiceDisabled,
+  isUserOpenRouterKeyRequired,
+} from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { isConvexConfigured } from '@/lib/hosted/env';
 import { encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
@@ -22,12 +27,17 @@ export async function GET() {
   }
   const state = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId });
   const entitlement = await getAiBillingEntitlement();
-  const monthlyCredits = entitlement.monthlyCredits;
+  const requireOpenRouter = isUserOpenRouterKeyRequired();
+  const monthlyCredits = requireOpenRouter ? 0 : entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
   return NextResponse.json({
     ok: true,
     configured: true,
-    settings: state.settings || { mode: 'lab86', enabled: true },
+    settings: state.settings || {
+      mode: requireOpenRouter ? 'byok' : 'lab86',
+      provider: 'openrouter',
+      enabled: true,
+    },
     key: state.key
       ? {
           provider: state.key.provider,
@@ -36,6 +46,9 @@ export async function GET() {
         }
       : null,
     entitlement,
+    lab86AiDisabled: isLab86AiDisabled(),
+    requiresUserOpenRouterKey: requireOpenRouter,
+    subscriptionsDisabled: isSubscriptionServiceDisabled(),
     usage: {
       period: state.period,
       creditsUsed,
@@ -53,6 +66,25 @@ export async function POST(req: NextRequest) {
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
   const fastModel =
     typeof body.fastModel === 'string' && body.fastModel.trim() ? body.fastModel.trim() : undefined;
+  const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+
+  if (isUserOpenRouterKeyRequired()) {
+    const existing = isConvexConfigured()
+      ? await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId }).catch(() => null)
+      : null;
+    if (mode !== 'byok' || provider !== 'openrouter') {
+      return NextResponse.json(
+        { ok: false, error: 'OpenRouter BYOK is required while Lab86 AI subscriptions are disabled.' },
+        { status: 400 },
+      );
+    }
+    if (!apiKey && existing?.key?.provider !== 'openrouter') {
+      return NextResponse.json(
+        { ok: false, error: 'Add an OpenRouter API key before saving AI settings.' },
+        { status: 400 },
+      );
+    }
+  }
 
   await convexMutation(api.users.upsertFromClerk, {
     userId: user.userId,
@@ -68,7 +100,6 @@ export async function POST(req: NextRequest) {
     enabled: body.enabled !== false,
   });
 
-  const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
   if (apiKey) {
     if (!provider) {
       return NextResponse.json(

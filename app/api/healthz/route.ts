@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { describeProvider, hasAi } from '@/lib/ai/client';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import {
+  isLab86AiDisabled,
+  isSubscriptionServiceDisabled,
+  isUserOpenRouterKeyRequired,
+} from '@/lib/hosted/controls';
+import {
   isClerkBillingConfigured,
   isClerkConfigured,
   isConvexConfigured,
@@ -35,12 +40,18 @@ export async function GET() {
     accounts: accounts.accounts.length,
     authed: accounts.accounts.filter((a: any) => a.authed).map((a: any) => a.email),
     tools: Object.keys(TOOLS).length,
-    ai: { configured: hasAi(), ...describeProvider() },
+    ai: {
+      configured: hasAi(),
+      ...describeProvider(),
+      lab86Disabled: isLab86AiDisabled(),
+      userOpenRouterKeyRequired: isUserOpenRouterKeyRequired(),
+    },
     hosted: {
       clerk: isClerkConfigured(),
       clerkBilling: isClerkBillingConfigured(),
       convex: isConvexConfigured(),
       nylas: isNylasConfigured(),
+      subscriptionsDisabled: isSubscriptionServiceDisabled(),
     },
   });
 }

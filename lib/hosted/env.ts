@@ -1,3 +1,5 @@
+import { isSubscriptionServiceDisabled } from './controls';
+
 export type HostedMode = 'legacy' | 'hosted';
 
 export function isClerkConfigured() {
@@ -17,6 +19,7 @@ export function isStripeConfigured() {
 }
 
 export function isClerkBillingConfigured() {
+  if (isSubscriptionServiceDisabled()) return false;
   return Boolean(
     process.env.CLERK_BILLING_CHECKOUT_URL ||
       process.env.CLERK_BILLING_PORTAL_URL ||

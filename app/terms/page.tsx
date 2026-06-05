@@ -13,8 +13,9 @@ export default function TermsPage() {
           mail before sending and verify important information independently.
         </p>
         <p>
-          Paid plans are managed through Clerk Billing with Stripe payment processing. Subscription access and
-          included AI credits may change as the product evolves.
+          Paid plans, when enabled, are managed through Clerk Billing with Stripe payment processing.
+          Subscription access and included AI credits may change as the product evolves. During launch, AI
+          features may require your own provider API key.
         </p>
         <p>
           The service may be suspended or limited to protect users, providers, infrastructure, or billing

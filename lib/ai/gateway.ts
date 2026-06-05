@@ -2,7 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText, type ModelMessage, streamText } from 'ai';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
-import { isLab86AiDisabled } from '@/lib/hosted/controls';
+import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { aiCreditDefaults, isConvexConfigured } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
@@ -83,6 +83,22 @@ export async function resolveAiRuntime(input: {
   if (userId && isConvexConfigured()) {
     const state = await convexQuery<RuntimeState>(api.ai.getRuntimeState, { userId });
     const mode = state.settings?.enabled === false ? 'lab86' : state.settings?.mode || 'lab86';
+    if (isUserOpenRouterKeyRequired()) {
+      if (state.key?.provider === 'openrouter') {
+        const apiKey = decryptSecret(state.key.encryptedKey);
+        const modelName =
+          (speed === 'fast' ? state.settings?.fastModel : state.settings?.model) ||
+          modelFor('openrouter', speed);
+        return {
+          userId,
+          source: 'byok',
+          provider: 'openrouter',
+          modelName,
+          model: modelFromKey('openrouter', apiKey, modelName),
+        };
+      }
+      throw new Error('Add your OpenRouter API key in Accounts and AI before using AI features.');
+    }
     if (mode === 'byok' && state.key) {
       const apiKey = decryptSecret(state.key.encryptedKey);
       const provider = state.key.provider;
@@ -103,6 +119,10 @@ export async function resolveAiRuntime(input: {
       provider: state.settings?.provider,
       modelName: speed === 'fast' ? state.settings?.fastModel : state.settings?.model,
     };
+  }
+
+  if (isUserOpenRouterKeyRequired()) {
+    throw new Error('Sign in and add your OpenRouter API key before using AI features.');
   }
 
   const platform = platformRuntime(speed, platformPreference);

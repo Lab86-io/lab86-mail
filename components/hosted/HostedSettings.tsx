@@ -31,7 +31,7 @@ export function HostedSettingsButton() {
 
 function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const qc = useQueryClient();
-  const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('lab86');
+  const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('byok');
   const [lab86Family, setLab86Family] = useState<Lab86ModelFamily>('openai');
   const [provider, setProvider] = useState<Provider>('openrouter');
   const [apiKey, setApiKey] = useState('');
@@ -47,8 +47,11 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
     queryKey: ['ai-settings', open],
     queryFn: async () => {
       const data = await fetchJson('/api/ai/settings');
-      setAiMode(data.settings?.mode || 'lab86');
-      setProvider(data.settings?.provider || data.key?.provider || 'openrouter');
+      const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
+      setAiMode(requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86');
+      setProvider(
+        requireOpenRouter ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter',
+      );
       setModel(data.settings?.model || '');
       setFastModel(data.settings?.fastModel || '');
       setLab86Family(resolveLab86Family(data.settings?.model, data.settings?.fastModel));
@@ -123,6 +126,8 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
   const accounts = nylas?.accounts || [];
   const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+  const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
+  const subscriptionsDisabled = Boolean(ai?.subscriptionsDisabled);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -208,20 +213,26 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
           <section className="space-y-3">
             <div>
-              <h3 className="text-[13px] font-semibold">AI billing</h3>
+              <h3 className="text-[13px] font-semibold">AI provider</h3>
               <p className="text-[11.5px] text-[var(--color-text-muted)]">
-                Lab86 AI uses included credits. BYOK uses your provider key.
+                {requireOpenRouter
+                  ? 'Subscriptions are paused. Add your OpenRouter key to use AI features.'
+                  : 'Lab86 AI uses included credits. BYOK uses your provider key.'}
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Mode</Label>
-                <Select value={aiMode} onValueChange={(value) => setAiMode(value as 'lab86' | 'byok')}>
+                <Select
+                  value={aiMode}
+                  onValueChange={(value) => setAiMode(value as 'lab86' | 'byok')}
+                  disabled={requireOpenRouter}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="lab86">Use Lab86 AI</SelectItem>
+                    {!requireOpenRouter ? <SelectItem value="lab86">Use Lab86 AI</SelectItem> : null}
                     <SelectItem value="byok">Use my API key</SelectItem>
                   </SelectContent>
                 </Select>
@@ -235,6 +246,7 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
                       ? setLab86Family(value as Lab86ModelFamily)
                       : setProvider(value as Provider)
                   }
+                  disabled={requireOpenRouter}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
@@ -248,8 +260,8 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
                     ) : (
                       <>
                         <SelectItem value="openrouter">OpenRouter</SelectItem>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="anthropic">Anthropic</SelectItem>
+                        {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
+                        {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
                       </>
                     )}
                   </SelectContent>
@@ -320,30 +332,36 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
             </div>
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] px-3 py-2 text-[12px]">
               <span>
-                {ai?.usage
-                  ? `${ai.usage.remaining.toLocaleString()} / ${ai.usage.monthlyCredits.toLocaleString()} credits left`
-                  : 'Quota unavailable until Convex is configured'}
+                {subscriptionsDisabled
+                  ? 'Subscriptions are paused. AI usage requires your OpenRouter key.'
+                  : ai?.usage
+                    ? `${ai.usage.remaining.toLocaleString()} / ${ai.usage.monthlyCredits.toLocaleString()} credits left`
+                    : 'Quota unavailable until Convex is configured'}
               </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => checkout.mutate()}
-                disabled={checkout.isPending}
-                className="ml-auto"
-              >
-                <CreditCard className="size-3.5" />
-                Upgrade
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => portal.mutate()}
-                disabled={portal.isPending}
-              >
-                Manage
-              </Button>
+              {!subscriptionsDisabled ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => checkout.mutate()}
+                    disabled={checkout.isPending}
+                    className="ml-auto"
+                  >
+                    <CreditCard className="size-3.5" />
+                    Upgrade
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => portal.mutate()}
+                    disabled={portal.isPending}
+                  >
+                    Manage
+                  </Button>
+                </>
+              ) : null}
             </div>
           </section>
 

@@ -7,6 +7,14 @@ export function isLab86AiDisabled() {
   return envFlag('LAB86_DISABLE_LAB86_AI');
 }
 
+export function isUserOpenRouterKeyRequired() {
+  return envFlag('LAB86_REQUIRE_USER_OPENROUTER_KEY');
+}
+
+export function isSubscriptionServiceDisabled() {
+  return envFlag('LAB86_DISABLE_SUBSCRIPTIONS');
+}
+
 export function isOutboundSendDisabled() {
   return envFlag('LAB86_DISABLE_OUTBOUND_SEND');
 }
