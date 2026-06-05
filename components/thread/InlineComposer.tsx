@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { marked } from 'marked';
 import { motion } from 'motion/react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
@@ -113,9 +113,21 @@ export function InlineComposer({
   const accountsQuery = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean }[] }>('list_accounts'),
+      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean; displayName?: string }[] }>(
+        'list_accounts',
+      ),
     staleTime: 60_000,
   });
+  const accountAliasByEmail = useMemo(
+    () =>
+      Object.fromEntries(
+        (accountsQuery.data?.accounts || []).map((account) => [
+          account.email,
+          account.displayName || account.email,
+        ]),
+      ) as Record<string, string>,
+    [accountsQuery.data?.accounts],
+  );
   const authedAccounts = useMemo(
     () => (accountsQuery.data?.accounts || []).filter((a) => a.authed).map((a) => a.email),
     [accountsQuery.data],
@@ -371,13 +383,15 @@ export function InlineComposer({
               <SelectContent align="start">
                 {fromOptions.map((email) => (
                   <SelectItem key={email} value={email} className="text-[12px]">
-                    {email}
+                    {accountAliasByEmail[email] || email}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           ) : (
-            <span className="text-[var(--color-text-muted)]">{fromAccount || account}</span>
+            <span className="text-[var(--color-text-muted)]">
+              {accountAliasByEmail[fromAccount || account] || fromAccount || account}
+            </span>
           )}
         </span>
 
@@ -450,9 +464,7 @@ export function InlineComposer({
             </>
           ) : (
             <div className="grid grid-cols-[60px_1fr] items-center gap-2 px-4 py-1.5 text-[11.5px] text-[var(--color-text-muted)]">
-              <label className="text-[11px] uppercase tracking-wider text-[var(--color-text-faint)]">
-                To
-              </label>
+              <span className="text-[11px] uppercase tracking-wider text-[var(--color-text-faint)]">To</span>
               <div className="flex items-center gap-2">
                 <Avatar name={replyToLabel} size={18} />
                 <span className="truncate">{replyToLabel}</span>
@@ -566,10 +578,14 @@ function RecipientField({
   onChange: (v: string) => void;
   placeholder?: string;
 }) {
+  const id = useId();
   return (
     <div className="grid grid-cols-[60px_1fr] items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5 last:border-b-0">
-      <label className="text-[11px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</label>
+      <label htmlFor={id} className="text-[11px] uppercase tracking-wider text-[var(--color-text-faint)]">
+        {label}
+      </label>
       <input
+        id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

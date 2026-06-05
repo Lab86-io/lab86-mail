@@ -1,8 +1,9 @@
-import { tool as aiTool, streamText, stepCountIs, type ModelMessage } from 'ai';
+import { tool as aiTool, type ModelMessage, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
-import { fastModel, hasAi } from './client';
+import { getAiRequestContext } from './context';
+import { hasPlatformAi, streamTextForUser } from './gateway';
 import { SYSTEM_PROMPT } from './system-prompt';
 
 const AGENT_TOOL_NAMES = new Set([
@@ -77,7 +78,12 @@ function liftToolsForAgent(): Record<string, any> {
       description: t.description + (t.mutating ? ' (mutating — surfaces a confirmation in the UI)' : ''),
       inputSchema: ((t.input as unknown) ?? z.object({})) as any,
       execute: async (args: unknown) => {
-        const result = await invokeTool(t, args ?? {}, { agent: 'ai' });
+        const context = getAiRequestContext();
+        const result = await invokeTool(t, args ?? {}, {
+          agent: 'ai',
+          userId: context.userId,
+          userEmail: context.userEmail,
+        });
         return result;
       },
     });
@@ -89,20 +95,27 @@ export interface AgentRunOpts {
   messages: ModelMessage[];
   /** Bias the system prompt with extra context (selected thread, focused account). */
   extraSystem?: string;
+  userId?: string | null;
+  userEmail?: string | null;
 }
 
-export function runAgent({ messages, extraSystem }: AgentRunOpts) {
-  if (!hasAi()) {
-    throw new Error('AI not configured: set OPENAI_API_KEY (or ANTHROPIC_API_KEY).');
+export async function runAgent({ messages, extraSystem, userId, userEmail }: AgentRunOpts) {
+  if (!hasPlatformAi() && !userId) {
+    throw new Error(
+      'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
+    );
   }
   const system = extraSystem ? `${SYSTEM_PROMPT}\n\n${extraSystem}` : SYSTEM_PROMPT;
-  const stream = streamText({
-    model: fastModel(),
+  const stream = await streamTextForUser({
+    userId,
+    userEmail,
+    feature: 'agent',
+    speed: 'fast',
     system,
     messages,
     tools: liftToolsForAgent(),
     stopWhen: stepCountIs(6),
-    onError: (event) => {
+    onError: (event: any) => {
       // Best-effort logging; don't crash the stream.
       console.error('[agent]', event.error);
     },

@@ -1,5 +1,5 @@
-import { db, findMany, findOne, insertOne, removeMany } from './db';
 import type { Draft } from '../shared/types';
+import { db, findMany, findOne, insertOne, removeMany } from './db';
 
 export async function saveDraft(draft: Draft): Promise<Draft> {
   draft.updatedAt = Date.now();

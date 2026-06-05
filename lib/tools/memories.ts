@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { defineTool } from './registry';
 import {
   forgetSender,
   listMemories as listMemoriesRecord,
   recallSender,
   rememberSender,
 } from '../store/memories';
+import { defineTool } from './registry';
 
 export const remember = defineTool({
   name: 'remember',

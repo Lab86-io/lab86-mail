@@ -20,8 +20,8 @@ export const generateDailyReportTool = defineTool({
     force: z.boolean().default(false),
   }),
   output: z.object({ report: z.any() }),
-  async handler({ kind }) {
-    return { report: await generateDailyReport({ kind, includeCalendar: true }) };
+  async handler({ kind }, ctx) {
+    return { report: await generateDailyReport({ kind, includeCalendar: true, userId: ctx.userId }) };
   },
 });
 

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { buildReplyArgs, buildSendArgs } from '../compose/gog-args';
-import { runGogJson } from '../gog/pool';
+import { sendNylasMessage } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
 import type { Draft } from '../shared/types';
 import {
@@ -23,11 +22,13 @@ const SendBase = z.object({
   from: z.string().optional(),
 });
 
-async function gmailSend(args: string[]): Promise<any> {
-  return await runGogJson<any>(args, { timeoutMs: 90_000 });
+async function sendWithNylas(args: Parameters<typeof sendNylasMessage>[0]) {
+  const sent = await sendNylasMessage(args);
+  if (!sent) throw new Error('Connect this mailbox with Nylas before sending.');
+  return sent;
 }
 
-async function resolveReplyTarget(account: string, messageId?: string, threadId?: string) {
+async function resolveReplyAnchor(account: string, messageId?: string, threadId?: string) {
   const anchor =
     (messageId ? await getMessageRecord(account, messageId).catch(() => null) : null) ||
     (threadId
@@ -38,10 +39,32 @@ async function resolveReplyTarget(account: string, messageId?: string, threadId?
   if (!anchor) {
     throw new Error('Cannot reply — original message is not in the local cache. Open the thread first.');
   }
+  return anchor;
+}
+
+async function resolveReplyTarget(account: string, messageId?: string, threadId?: string) {
+  const anchor = await resolveReplyAnchor(account, messageId, threadId);
   const to = emailFromHeader(anchor.from) || anchor.from;
   if (!to) throw new Error('Cannot reply — original sender is missing.');
   return {
     to,
+    subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
+  };
+}
+
+async function resolveReplyAllTarget(account: string, messageId?: string, threadId?: string) {
+  const anchor = await resolveReplyAnchor(account, messageId, threadId);
+  const self = account.toLowerCase();
+  const recipients = new Set<string>();
+  for (const field of [anchor.from, anchor.to, anchor.cc]) {
+    for (const item of String(field || '').split(/[,;]/)) {
+      const email = emailFromHeader(item) || item.trim();
+      if (!email || email.toLowerCase() === self) continue;
+      recipients.add(email);
+    }
+  }
+  return {
+    to: [...recipients].join(', '),
     subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
   };
 }
@@ -53,8 +76,8 @@ export const sendMessage = defineTool({
   mutating: true,
   input: SendBase,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, to, cc, bcc, subject, body, html, from }) {
-    await gmailSend(buildSendArgs({ account, to, cc, bcc, subject, body, html, from }));
+  async handler({ account, to, cc, bcc, subject, body, html }, ctx) {
+    await sendWithNylas({ userId: ctx.userId, account, to, cc, bcc, subject, body, html });
     return { ok: true };
   },
 });
@@ -73,20 +96,17 @@ export const replyMessage = defineTool({
     from: z.string().optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, html, from }) {
+  async handler({ account, messageId, threadId, body, html }, ctx) {
     const target = await resolveReplyTarget(account, messageId, threadId);
-    await gmailSend(
-      buildReplyArgs({
-        account,
-        messageId,
-        threadId,
-        to: target.to,
-        subject: target.subject,
-        body,
-        html,
-        from,
-      }),
-    );
+    await sendWithNylas({
+      userId: ctx.userId,
+      account,
+      to: target.to,
+      subject: target.subject,
+      body,
+      html,
+      replyToMessageId: messageId,
+    });
     return { ok: true };
   },
 });
@@ -105,17 +125,22 @@ export const replyAllMessage = defineTool({
     from: z.string().optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, html, from }) {
-    await gmailSend(buildReplyArgs({ account, messageId, threadId, body, html, from, replyAll: true }));
+  async handler({ account, messageId, threadId, body, html }, ctx) {
+    const target = await resolveReplyAllTarget(account, messageId, threadId);
+    if (!target.to) throw new Error('Cannot reply-all — no recipients are available.');
+    await sendWithNylas({
+      userId: ctx.userId,
+      account,
+      to: target.to,
+      subject: target.subject,
+      body,
+      html,
+      replyToMessageId: messageId,
+    });
     return { ok: true };
   },
 });
 
-// gog does not have a native --forward-message-id flag, so we synthesize the
-// quoted-body forward ourselves: fetch the original message (from local cache),
-// prepend a "Forwarded message" header block, and send as a fresh email.
-// v1 limitation: original attachments are *not* re-carried; treat that as a
-// follow-up (the gog `gmail attachment` command can re-download them).
 export const forwardMessage = defineTool({
   name: 'forward',
   description:
@@ -133,7 +158,7 @@ export const forwardMessage = defineTool({
     from: z.string().optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, to, cc, bcc, body, html, from }) {
+  async handler({ account, messageId, to, cc, bcc, body, html }, ctx) {
     const original = await getMessageRecord(account, messageId);
     if (!original)
       throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
@@ -166,18 +191,16 @@ export const forwardMessage = defineTool({
           original.htmlBody || `<pre>${escapeHtml(original.textBody || '')}</pre>`,
         ].join('')
       : undefined;
-    await gmailSend(
-      buildSendArgs({
-        account,
-        to,
-        cc,
-        bcc,
-        subject: fwdSubject,
-        body: quotedText,
-        html: quotedHtml,
-        from,
-      }),
-    );
+    await sendWithNylas({
+      userId: ctx.userId,
+      account,
+      to,
+      cc,
+      bcc,
+      subject: fwdSubject,
+      body: quotedText,
+      html: quotedHtml,
+    });
     return { ok: true };
   },
 });

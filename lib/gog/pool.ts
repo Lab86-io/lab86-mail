@@ -1,6 +1,8 @@
 import { execa } from 'execa';
+import { isGogEnabled } from '@/lib/hosted/env';
 
-const GOG_BIN = process.env.LAB86_MAIL_GOG_BIN || process.env.MAIL_OS_GOG_BIN || '/home/jjalangtry/.local/bin/lab86-gog';
+const GOG_BIN =
+  process.env.LAB86_MAIL_GOG_BIN || process.env.MAIL_OS_GOG_BIN || '/home/jjalangtry/.local/bin/lab86-gog';
 
 export interface RunOptions {
   stdin?: string;
@@ -8,6 +10,9 @@ export interface RunOptions {
 }
 
 export async function runGog(args: string[], options: RunOptions = {}): Promise<string> {
+  if (!isGogEnabled()) {
+    throw new Error('GOG auth is disabled for this environment.');
+  }
   try {
     const result = await execa(GOG_BIN, args, {
       timeout: options.timeoutMs ?? 60_000,

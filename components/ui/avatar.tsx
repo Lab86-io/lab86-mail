@@ -29,11 +29,8 @@ export function Avatar({
   const seed = shortFrom(name || 'unknown').toLowerCase() || 'unknown';
   // If the upstream URL fails (CSP, network, default-photo HEAD denial),
   // gracefully fall back to the boring-avatar without flashing a broken image.
-  // Reset the broken-image flag whenever the URL changes so we'll retry
-  // loading. biome's exhaustive-deps rule misclassifies the prop as an outer
-  // scope value here; the dep is correct.
+  // Reset the broken-image flag whenever the URL changes so we'll retry loading.
   const [broken, setBroken] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: src is a prop, intentional reset trigger.
   useEffect(() => {
     setBroken(false);
   }, [src]);
@@ -44,7 +41,6 @@ export function Avatar({
       style={{ width: size, height: size }}
     >
       {showImage ? (
-        // biome-ignore lint/performance/noImgElement: Google profile photos come from arbitrary lh3 paths; next/image needs an allowlist and adds no value at avatar sizes.
         <img
           src={src as string}
           alt={seed}
@@ -56,13 +52,7 @@ export function Avatar({
           className="h-full w-full object-cover"
         />
       ) : (
-        <BoringAvatar
-          size={size}
-          name={seed}
-          variant={variant}
-          colors={PALETTE}
-          square={false}
-        />
+        <BoringAvatar size={size} name={seed} variant={variant} colors={PALETTE} square={false} />
       )}
     </div>
   );

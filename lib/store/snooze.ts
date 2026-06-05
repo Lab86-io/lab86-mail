@@ -1,5 +1,5 @@
-import { db, findMany, insertOne, removeMany } from './db';
 import type { Snooze } from '../shared/types';
+import { db, findMany, insertOne, removeMany } from './db';
 
 export async function snoozeMessage(account: string, messageId: string, threadId: string, untilTs: number) {
   return await insertOne<Snooze>(db().snooze, {

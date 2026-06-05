@@ -1,8 +1,8 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.1/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**/*", "!**/.next/**", "!**/node_modules/**", "!**/data/**"]
+    "includes": ["**/*", "!**/.next", "!**/node_modules", "!**/data", "!next-env.d.ts", "!convex/_generated"]
   },
   "formatter": {
     "enabled": true,
@@ -17,6 +17,11 @@
       "trailingCommas": "all"
     }
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -29,5 +34,58 @@
         "noExplicitAny": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["components/ui/**", "components/ai-elements/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noStaticElementInteractions": "off",
+            "useKeyWithClickEvents": "off",
+            "useSemanticElements": "off"
+          },
+          "correctness": {
+            "useExhaustiveDependencies": "off"
+          },
+          "security": {
+            "noDangerouslySetInnerHtml": "off"
+          },
+          "suspicious": {
+            "noArrayIndexKey": "off"
+          },
+          "performance": {
+            "noImgElement": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["app/globals.css"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noImportantStyles": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "components/ui/avatar.tsx",
+        "components/thread/ThreadView.tsx",
+        "components/ui/sidebar.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "performance": {
+            "noImgElement": "off"
+          },
+          "suspicious": {
+            "noDocumentCookie": "off"
+          }
+        }
+      }
+    }
+  ]
 }

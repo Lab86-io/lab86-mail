@@ -1,5 +1,6 @@
-import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAI } from '@ai-sdk/openai';
+import { isClerkConfigured, isConvexConfigured } from '../hosted/env';
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
@@ -20,7 +21,8 @@ export const openrouter = OPENROUTER_KEY
       baseURL: OPENROUTER_BASE_URL,
       // Recommended (and used to attribute usage in OpenRouter dashboards):
       headers: {
-        'HTTP-Referer': process.env.LAB86_MAIL_PUBLIC_URL || process.env.MAIL_OS_PUBLIC_URL || 'https://mail.lab86.io',
+        'HTTP-Referer':
+          process.env.LAB86_MAIL_PUBLIC_URL || process.env.MAIL_OS_PUBLIC_URL || 'https://mail.lab86.io',
         'X-Title': 'lab86-mail',
       },
     })
@@ -29,14 +31,26 @@ export const openai = OPENAI_KEY ? createOpenAI({ apiKey: OPENAI_KEY }) : null;
 export const anthropic = ANTHROPIC_KEY ? createAnthropic({ apiKey: ANTHROPIC_KEY }) : null;
 
 function pickPrimaryModel() {
-  if (openrouter) return process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || OPENROUTER_DEFAULT_PRIMARY;
-  if (openai) return process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || OPENAI_DEFAULT_PRIMARY;
+  if (openrouter)
+    return (
+      process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || OPENROUTER_DEFAULT_PRIMARY
+    );
+  if (openai)
+    return process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || OPENAI_DEFAULT_PRIMARY;
   return '';
 }
 
 function pickFastModel() {
-  if (openrouter) return process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || OPENROUTER_DEFAULT_FAST;
-  if (openai) return process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || OPENAI_DEFAULT_FAST;
+  if (openrouter)
+    return (
+      process.env.LAB86_MAIL_OPENAI_FAST_MODEL ||
+      process.env.MAIL_OS_OPENAI_FAST_MODEL ||
+      OPENROUTER_DEFAULT_FAST
+    );
+  if (openai)
+    return (
+      process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || OPENAI_DEFAULT_FAST
+    );
   return '';
 }
 
@@ -61,12 +75,13 @@ export function fastModel() {
 }
 
 export function hasAi() {
-  return Boolean(openrouter || openai || anthropic);
+  return Boolean(openrouter || openai || anthropic || (isClerkConfigured() && isConvexConfigured()));
 }
 
 export function describeProvider() {
   if (openrouter) return { provider: 'openrouter', primary: OPENAI_PRIMARY_MODEL, fast: OPENAI_FAST_MODEL };
   if (openai) return { provider: 'openai', primary: OPENAI_PRIMARY_MODEL, fast: OPENAI_FAST_MODEL };
-  if (anthropic) return { provider: 'anthropic', primary: 'claude-sonnet-4-6', fast: 'claude-haiku-4-5-20251001' };
+  if (anthropic)
+    return { provider: 'anthropic', primary: 'claude-sonnet-4-6', fast: 'claude-haiku-4-5-20251001' };
   return { provider: 'none', primary: '', fast: '' };
 }

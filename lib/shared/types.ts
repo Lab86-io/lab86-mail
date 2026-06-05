@@ -1,10 +1,12 @@
 export type AccountEmail = string;
 
 export interface Account {
+  accountId?: string;
   email: AccountEmail;
   provider: 'gmail';
   authed: boolean;
   primary?: boolean;
+  displayName?: string;
   services?: string[];
 }
 
@@ -85,6 +87,7 @@ export interface AuditEntry {
   _id?: string;
   ts: number;
   tool: string;
+  userId?: string | null;
   account: AccountEmail | null;
   args: Record<string, unknown>;
   result: 'ok' | 'error';

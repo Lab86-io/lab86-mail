@@ -1,12 +1,20 @@
 import { z } from 'zod';
-import { normalizeGogMessage, normalizeGogSearchItem } from '../gog/normalize';
+import { normalizeGogSearchItem } from '../gog/normalize';
 import { runGogJson } from '../gog/pool';
+import { isGogEnabled } from '../hosted/env';
 import {
   classifyThreadWithContext,
   includeInSmartCategory,
   SMART_CATEGORY_IDS,
 } from '../mail/smart-categories';
-import type { Account, LabelRecord, Thread } from '../shared/types';
+import {
+  getNylasMessage,
+  getNylasThread,
+  listNylasAccounts,
+  listNylasLabels,
+  searchNylasThreads,
+} from '../nylas/provider';
+import type { Thread } from '../shared/types';
 import {
   getMessage as getMessageRecord,
   getThreadMessages,
@@ -24,18 +32,9 @@ import {
 } from '../store/threads';
 import { defineTool } from './registry';
 
-const ACCOUNT_LIST = (
-  process.env.LAB86_MAIL_ACCOUNTS ||
-  process.env.MAIL_OS_ACCOUNTS ||
-  'jjalangtry@gmail.com,jakob@lab86.io'
-)
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-
 export const listAccounts = defineTool({
   name: 'list_accounts',
-  description: 'List configured Gmail accounts and which are authenticated via GOG.',
+  description: 'List connected hosted mail accounts.',
   category: 'mail',
   mutating: false,
   input: z.object({}).optional(),
@@ -45,29 +44,15 @@ export const listAccounts = defineTool({
         email: z.string(),
         provider: z.literal('gmail'),
         authed: z.boolean(),
+        accountId: z.string().optional(),
         primary: z.boolean().optional(),
+        displayName: z.string().optional(),
         services: z.array(z.string()).optional(),
       }),
     ),
   }),
-  async handler() {
-    let raw: any = null;
-    try {
-      raw = await runGogJson(['auth', 'list', '--json', '--no-input'], { timeoutMs: 15_000 });
-    } catch {}
-    const discovered: string[] = (raw?.accounts || []).map((a: any) => a.email).filter(Boolean);
-    const all = [...new Set([...ACCOUNT_LIST, ...discovered])];
-    const accounts: Account[] = all.map((email) => {
-      const stored = raw?.accounts?.find((a: any) => a.email === email);
-      return {
-        email,
-        provider: 'gmail',
-        authed: Boolean(stored),
-        primary: email === 'jakob@lab86.io',
-        services: stored?.services || [],
-      };
-    });
-    return { accounts };
+  async handler(_args, ctx) {
+    return { accounts: await listNylasAccounts(ctx.userId).catch(() => []) };
   },
 });
 
@@ -89,32 +74,36 @@ export const searchThreads = defineTool({
     items: z.array(z.any()),
     nextPageToken: z.string().optional(),
   }),
-  async handler({ account, query, max, pageToken }) {
-    const args = [
-      '--account',
+  async handler({ account, query, max, pageToken }, ctx) {
+    const nylas = await searchNylasThreads({
+      userId: ctx.userId,
       account,
-      '--json',
-      'gmail',
-      'search',
-      '--max',
-      String(max),
-      ...(pageToken ? ['--page', pageToken] : []),
-      '--no-input',
-      // End-of-flags separator so queries starting with "-" (e.g. -in:trash,
-      // -label:foo) aren't misparsed by the CLI as flags.
-      '--',
       query,
-    ];
-    const raw = await runGogJson<any>(args);
-    const list = coerceList(raw);
-    const items: (Partial<Thread> & { _id: string })[] = [];
-    for (const it of list) {
-      const norm = normalizeGogSearchItem(it, account);
-      if (!norm._id) continue;
-      items.push(norm);
-      await upsertThread(account, norm).catch(() => undefined);
+      max,
+      pageToken,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) {
+      for (const item of nylas.items) {
+        if (item._id) await upsertThread(account, item).catch(() => undefined);
+      }
+      return nylas;
     }
-    return { account, query, items, nextPageToken: coerceNextPageToken(raw) };
+    if (isGogEnabled()) {
+      const legacy = await runGogJson<any>(
+        ['--account', account, 'search', '--max', String(max), '--', query],
+        { timeoutMs: 60_000 },
+      ).catch(() => null);
+      const rawItems = Array.isArray(legacy?.threads) ? legacy.threads : Array.isArray(legacy) ? legacy : [];
+      const items = rawItems.map((item: any) => normalizeGogSearchItem(item, account));
+      for (const item of items) {
+        if (item._id) await upsertThread(account, item).catch(() => undefined);
+      }
+      return { account, query, items, nextPageToken: undefined };
+    }
+    return { account, query, items: [], nextPageToken: undefined };
   },
 });
 
@@ -140,51 +129,41 @@ export const listSmartCategory = defineTool({
     items: z.array(z.any()),
     nextPageToken: z.string().optional(),
   }),
-  async handler({ account, category, query, max, pageToken }) {
+  async handler({ account, category, query, max, pageToken }, ctx) {
     const customLabelId = category.startsWith('custom:') ? category.slice('custom:'.length) : '';
     const customLabel = customLabelId ? await getSmartLabel(customLabelId) : null;
     const candidateQuery = query || customLabel?.candidateQuery || smartCandidateQuery(category);
     const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
-    // Gmail/gog search does NOT return strictly newest-first (the most recent
-    // thread can sit dozens of rows down), so we must classify a healthy pool
-    // and sort by date ourselves before truncating. Taking "the first `max`
-    // matches in gog order" silently drops the newest, most important mail —
-    // e.g. a job offer dated today landing at gog-index 20 while a small
-    // per-account page budget stops at ~10.
-    const args = [
-      '--account',
+    const nylas = await searchNylasThreads({
+      userId: ctx.userId,
       account,
-      '--json',
-      'gmail',
-      'search',
-      '--max',
-      String(Math.min(80, Math.max(max * 2, 60))),
-      ...(pageToken ? ['--page', pageToken] : []),
-      '--no-input',
-      '--',
-      candidateQuery,
-    ];
-    const raw = await runGogJson<any>(args);
-    const list = coerceList(raw);
-    const matched: any[] = [];
-    for (const it of list) {
-      const norm = normalizeGogSearchItem(it, account);
-      if (!norm._id) continue;
-      const smartCategory = classifyThreadWithContext(norm, { rules, customLabels });
-      const enriched = { ...norm, smartCategory };
-      await upsertThread(account, enriched).catch(() => undefined);
-      await setThreadSmartCategory(account, norm._id, smartCategory).catch(() => undefined);
-      if (includeInSmartCategory(enriched, category)) matched.push(enriched);
-    }
-    matched.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
-    const items = matched.slice(0, max);
-    return {
-      account,
-      category,
       query: candidateQuery,
-      items,
-      nextPageToken: coerceNextPageToken(raw),
-    };
+      max: Math.min(80, Math.max(max * 2, 60)),
+      pageToken,
+    }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) {
+      const matched: any[] = [];
+      for (const item of nylas.items) {
+        if (!item._id) continue;
+        const smartCategory = classifyThreadWithContext(item as Thread, { rules, customLabels });
+        const enriched = { ...item, smartCategory };
+        await upsertThread(account, enriched).catch(() => undefined);
+        await setThreadSmartCategory(account, item._id, smartCategory).catch(() => undefined);
+        if (includeInSmartCategory(enriched, category)) matched.push(enriched);
+      }
+      matched.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
+      return {
+        account,
+        category,
+        query: candidateQuery,
+        items: matched.slice(0, max),
+        nextPageToken: nylas.nextPageToken,
+      };
+    }
+    return { account, category, query: candidateQuery, items: [], nextPageToken: undefined };
   },
 });
 
@@ -206,40 +185,37 @@ export const getThread = defineTool({
     summary: z.string().nullable().optional(),
     summaryAt: z.number().nullable().optional(),
   }),
-  async handler({ account, threadId, refresh }) {
-    const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
-    let messages = refresh ? [] : await getThreadMessages(account, threadId);
-    if (!messages.length) {
-      const raw = await runGogJson<any>([
-        '--account',
-        account,
-        '--json',
-        'gmail',
-        'thread',
-        'get',
-        threadId,
-        '--full',
-        '--no-input',
-      ]);
-      const threadObj = raw?.thread || raw?.result || raw?.data || raw;
-      const arr: any[] = threadObj?.messages || [];
-      messages = arr
-        .map((m) => normalizeGogMessage(m, account))
-        .filter((m) => m._id)
-        .sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
-      for (const m of messages) await upsertMessageRecord(m).catch(() => undefined);
-      const newest = messages[messages.length - 1];
+  async handler({ account, threadId, refresh }, ctx) {
+    const nylas = await getNylasThread({ userId: ctx.userId, account, threadId }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) {
+      for (const message of nylas.messages) await upsertMessageRecord(message).catch(() => undefined);
+      const newest = nylas.messages[nylas.messages.length - 1];
       if (newest) {
         await upsertThread(account, {
           _id: threadId,
-          subject: newest.subject || messages[0]?.subject || '(no subject)',
+          subject: newest.subject || nylas.messages[0]?.subject || '(no subject)',
           fromAddress: newest.from,
           lastDate: newest.date,
           snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
           labels: newest.labels || [],
-          unread: messages.some((m) => m.labels?.includes('UNREAD')),
+          unread: nylas.messages.some((message) => message.labels?.includes('UNREAD')),
         }).catch(() => undefined);
       }
+      const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
+      return {
+        ...nylas,
+        summary: cachedThread?.summary ?? null,
+        summaryAt: cachedThread?.summaryAt ?? null,
+      };
+    }
+
+    const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
+    const messages = refresh ? [] : await getThreadMessages(account, threadId);
+    if (!messages.length) {
+      throw new Error('Thread is not available from Nylas yet. Refresh the mailbox and try again.');
     }
     return {
       account,
@@ -259,23 +235,16 @@ export const getMessage = defineTool({
   mutating: false,
   input: z.object({ account: z.string(), id: z.string() }),
   output: z.any(),
-  async handler({ account, id }) {
+  async handler({ account, id }, ctx) {
+    const nylas = await getNylasMessage({ userId: ctx.userId, account, id }).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) return nylas;
+
     const cached = await getMessageRecord(account, id);
     if (cached && Date.now() - cached.cachedAt < 30 * 60_000) return cached;
-    const raw = await runGogJson<any>([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'get',
-      id,
-      '--format',
-      'full',
-      '--no-input',
-    ]);
-    const m = normalizeGogMessage(raw, account);
-    await upsertMessageRecord(m).catch(() => undefined);
-    return m;
+    throw new Error('Message is not available from Nylas yet. Reopen the thread and try again.');
   },
 });
 
@@ -286,25 +255,13 @@ export const listLabels = defineTool({
   mutating: false,
   input: z.object({ account: z.string() }),
   output: z.object({ labels: z.array(z.any()) }),
-  async handler({ account }) {
-    const raw = await runGogJson<any>([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'labels',
-      'list',
-      '--no-input',
-    ]);
-    const list = coerceList(raw);
-    const labels: LabelRecord[] = list.map((l: any) => ({
-      id: l.id || l.labelId,
-      name: l.name,
-      type: l.type,
-      messagesTotal: l.messagesTotal,
-      threadsTotal: l.threadsTotal,
-    }));
-    return { labels };
+  async handler({ account }, ctx) {
+    const nylas = await listNylasLabels(ctx.userId, account).catch((err) => {
+      if (String(err?.message || '').includes('Nylas is not configured')) return null;
+      throw err;
+    });
+    if (nylas) return nylas;
+    return { labels: [] };
   },
 });
 
@@ -315,8 +272,10 @@ export const listAttachments = defineTool({
   mutating: false,
   input: z.object({ account: z.string(), messageId: z.string() }),
   output: z.object({ attachments: z.array(z.any()) }),
-  async handler({ account, messageId }) {
-    const msg = await getMessageRecord(account, messageId);
+  async handler({ account, messageId }, ctx) {
+    const msg =
+      (await getNylasMessage({ userId: ctx.userId, account, id: messageId }).catch(() => null)) ||
+      (await getMessageRecord(account, messageId));
     return { attachments: msg?.attachments || [] };
   },
 });
@@ -388,18 +347,6 @@ export const getSmartCategoryStats = defineTool({
   },
 });
 
-function coerceList(raw: any): any[] {
-  if (Array.isArray(raw)) return raw;
-  if (Array.isArray(raw?.messages)) return raw.messages;
-  if (Array.isArray(raw?.threads)) return raw.threads;
-  if (Array.isArray(raw?.results)) return raw.results;
-  if (Array.isArray(raw?.items)) return raw.items;
-  if (Array.isArray(raw?.labels)) return raw.labels;
-  if (Array.isArray(raw?.data)) return raw.data;
-  if (Array.isArray(raw?.result)) return raw.result;
-  return [];
-}
-
 function smartCandidateQuery(category: string) {
   switch (category) {
     case 'main':
@@ -424,17 +371,4 @@ function smartCandidateQuery(category: string) {
     default:
       return 'in:inbox newer_than:45d -in:trash -in:spam';
   }
-}
-
-function coerceNextPageToken(raw: any): string | undefined {
-  const token =
-    raw?.nextPageToken ||
-    raw?.next_page_token ||
-    raw?.pageToken ||
-    raw?.page_token ||
-    raw?.result?.nextPageToken ||
-    raw?.result?.next_page_token ||
-    raw?.data?.nextPageToken ||
-    raw?.data?.next_page_token;
-  return typeof token === 'string' && token ? token : undefined;
 }

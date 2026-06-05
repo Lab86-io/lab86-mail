@@ -1,5 +1,5 @@
-import { db, findMany, findOne, upsert } from './db';
 import type { Message } from '../shared/types';
+import { db, findMany, findOne, upsert } from './db';
 
 export async function upsertMessage(message: Message) {
   message.cachedAt = Date.now();

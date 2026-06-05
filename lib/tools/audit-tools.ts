@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { defineTool } from './registry';
 import { listAudit, writeAudit } from '../store/audit';
+import { defineTool } from './registry';
 
 export const logAction = defineTool({
   name: 'log_action',

@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import { spawn } from 'node:child_process';
+import { z } from 'zod';
 import { defineTool } from './registry';
 
 const BROWSERBASE_SEARCH =

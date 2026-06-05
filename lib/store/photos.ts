@@ -7,7 +7,7 @@ export interface PhotoCacheEntry {
 }
 
 // 7-day TTL. Negative results (no photo found) are cached too so we don't
-// re-hit gog/People for the long tail of non-contacts on every load.
+// Cache nulls too, so the UI does not keep retrying missing profile photos.
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function getPhotoFromCache(email: string): Promise<PhotoCacheEntry | null> {
