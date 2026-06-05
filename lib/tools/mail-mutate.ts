@@ -6,8 +6,10 @@ import {
   createNylasFolder,
   updateNylasMessage,
   updateNylasMessageFolders,
+  updateNylasMessageFoldersWithRetry,
   updateNylasThread,
   updateNylasThreadFolders,
+  updateNylasThreadFoldersWithRetry,
 } from '../nylas/provider';
 import { getThreadMessages } from '../store/messages';
 import { snoozeMessage, unsnoozeByMessage } from '../store/snooze';
@@ -461,10 +463,11 @@ export const applySmartLabels = defineTool({
     ];
     let hasNylasLabelPath = false;
     try {
-      const createdNylasLabels = await Promise.all(
-        uniqueLabels.map((label) => createNylasFolder({ userId: ctx.userId, account, name: label })),
-      );
-      hasNylasLabelPath = createdNylasLabels.some(Boolean);
+      for (const label of uniqueLabels) {
+        const created = await createNylasFolder({ userId: ctx.userId, account, name: label });
+        hasNylasLabelPath ||= Boolean(created);
+        await delay(250);
+      }
     } catch (err: any) {
       if (!String(err?.message || '').includes('Nylas is not configured')) throw err;
     }
@@ -480,22 +483,24 @@ export const applySmartLabels = defineTool({
     for (const item of items) {
       const labels = [...new Set(item.labels)];
       const nylas = item.messageId
-        ? await updateNylasMessageFolders({
+        ? await updateNylasMessageFoldersWithRetry({
             userId: ctx.userId,
             account,
             messageId: item.messageId,
             add: labels,
             createMissing: true,
+            retries: 5,
           }).catch((err) => {
             if (String(err?.message || '').includes('Nylas is not configured')) return null;
             throw err;
           })
-        : await updateNylasThreadFolders({
+        : await updateNylasThreadFoldersWithRetry({
             userId: ctx.userId,
             account,
             threadId: item.threadId,
             add: labels,
             createMissing: true,
+            retries: 5,
           }).catch((err) => {
             if (String(err?.message || '').includes('Nylas is not configured')) return null;
             throw err;
@@ -527,6 +532,7 @@ export const applySmartLabels = defineTool({
         pendingLabels: [],
         lastAppliedAt: Date.now(),
       }).catch(() => undefined);
+      await delay(500);
     }
     return { ok: true, applied };
   },
@@ -630,3 +636,7 @@ export const unsnoozeThreadTool = defineTool({
     return { ok: true };
   },
 });
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

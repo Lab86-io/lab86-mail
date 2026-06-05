@@ -10,7 +10,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { LAB86_MODEL_FAMILIES, type Lab86ModelFamily, type Provider, resolveLab86Family } from './ai-options';
+import {
+  LAB86_MODEL_FAMILIES,
+  type Lab86ModelFamily,
+  normalizeOpenRouterFastModel,
+  normalizeOpenRouterPrimaryModel,
+  OPENROUTER_FAST_MODEL_OPTIONS,
+  OPENROUTER_PRIMARY_MODEL_OPTIONS,
+  type Provider,
+  resolveLab86Family,
+} from './ai-options';
 
 const STORAGE_KEY = 'lab86-mail-onboarding-dismissed-v1';
 
@@ -18,7 +27,7 @@ export function HostedOnboarding() {
   const qc = useQueryClient();
   const [dismissed, setDismissed] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
-  const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('lab86');
+  const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('byok');
   const [lab86Family, setLab86Family] = useState<Lab86ModelFamily>('openai');
   const [provider, setProvider] = useState<Provider>('openrouter');
   const [apiKey, setApiKey] = useState('');
@@ -34,10 +43,22 @@ export function HostedOnboarding() {
     queryKey: ['ai-settings'],
     queryFn: async () => {
       const data = await fetchJson('/api/ai/settings');
-      setAiMode(data.settings?.mode || 'lab86');
-      setProvider(data.settings?.provider || data.key?.provider || 'openrouter');
-      setModel(data.settings?.model || '');
-      setFastModel(data.settings?.fastModel || '');
+      const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
+      const nextProvider = requireOpenRouter
+        ? 'openrouter'
+        : data.settings?.provider || data.key?.provider || 'openrouter';
+      setAiMode(requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86');
+      setProvider(nextProvider);
+      setModel(
+        nextProvider === 'openrouter'
+          ? normalizeOpenRouterPrimaryModel(data.settings?.model)
+          : data.settings?.model || '',
+      );
+      setFastModel(
+        nextProvider === 'openrouter'
+          ? normalizeOpenRouterFastModel(data.settings?.fastModel)
+          : data.settings?.fastModel || '',
+      );
       setLab86Family(resolveLab86Family(data.settings?.model, data.settings?.fastModel));
       return data;
     },
@@ -74,8 +95,18 @@ export function HostedOnboarding() {
       return postJson('/api/ai/settings', {
         mode: aiMode,
         provider: aiMode === 'lab86' ? 'openrouter' : provider,
-        model: aiMode === 'lab86' ? selected.primary : model || undefined,
-        fastModel: aiMode === 'lab86' ? selected.fast : fastModel || undefined,
+        model:
+          aiMode === 'lab86'
+            ? selected.primary
+            : provider === 'openrouter'
+              ? normalizeOpenRouterPrimaryModel(model)
+              : undefined,
+        fastModel:
+          aiMode === 'lab86'
+            ? selected.fast
+            : provider === 'openrouter'
+              ? normalizeOpenRouterFastModel(fastModel)
+              : undefined,
         apiKey: aiMode === 'byok' ? apiKey || undefined : undefined,
       });
     },
@@ -113,6 +144,9 @@ export function HostedOnboarding() {
   };
 
   const selected = LAB86_MODEL_FAMILIES[lab86Family];
+  const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
+  const primaryModelDetail = OPENROUTER_PRIMARY_MODEL_OPTIONS.find((option) => option.id === model)?.detail;
+  const fastModelDetail = OPENROUTER_FAST_MODEL_OPTIONS.find((option) => option.id === fastModel)?.detail;
 
   return (
     <Dialog open={open} onOpenChange={close}>
@@ -212,11 +246,13 @@ export function HostedOnboarding() {
               <button
                 type="button"
                 onClick={() => setAiMode('lab86')}
+                disabled={requireOpenRouter}
                 className={cn(
                   'rounded-md border p-3 text-left transition-colors',
                   aiMode === 'lab86'
                     ? 'border-[var(--color-accent)] bg-[var(--color-bg-subtle)]'
                     : 'border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)]',
+                  requireOpenRouter && 'cursor-not-allowed opacity-50',
                 )}
               >
                 <div className="flex items-center gap-2 text-[13px] font-semibold">Lab86 AI</div>
@@ -265,14 +301,20 @@ export function HostedOnboarding() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label>Provider</Label>
-                  <Select value={provider} onValueChange={(value) => setProvider(value as Provider)}>
+                  <Select
+                    value={provider}
+                    onValueChange={(value) =>
+                      setProviderForByok(value as Provider, setProvider, setModel, setFastModel)
+                    }
+                    disabled={requireOpenRouter}
+                  >
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="openrouter">OpenRouter</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="anthropic">Anthropic</SelectItem>
+                      {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
+                      {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
                     </SelectContent>
                   </Select>
                 </div>
@@ -283,23 +325,57 @@ export function HostedOnboarding() {
                     onChange={(event) => setApiKey(event.target.value)}
                     placeholder={ai?.key?.masked || 'Paste key'}
                     type="password"
+                    autoComplete="off"
+                    spellCheck={false}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Primary model</Label>
-                  <Input
-                    value={model}
-                    onChange={(event) => setModel(event.target.value)}
-                    placeholder="provider default"
-                  />
+                  {provider === 'openrouter' ? (
+                    <>
+                      <Select value={model} onValueChange={setModel}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => (
+                            <SelectItem key={option.id} value={option.id}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {primaryModelDetail ? (
+                        <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Input value="Provider default" readOnly />
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Fast model</Label>
-                  <Input
-                    value={fastModel}
-                    onChange={(event) => setFastModel(event.target.value)}
-                    placeholder="provider default"
-                  />
+                  {provider === 'openrouter' ? (
+                    <>
+                      <Select value={fastModel} onValueChange={setFastModel}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {OPENROUTER_FAST_MODEL_OPTIONS.map((option) => (
+                            <SelectItem key={option.id} value={option.id}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fastModelDetail ? (
+                        <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Input value="Provider default" readOnly />
+                  )}
                 </div>
               </div>
             )}
@@ -338,6 +414,22 @@ export function HostedOnboarding() {
       </DialogContent>
     </Dialog>
   );
+}
+
+function setProviderForByok(
+  value: Provider,
+  setProvider: (provider: Provider) => void,
+  setModel: (model: string) => void,
+  setFastModel: (model: string) => void,
+) {
+  setProvider(value);
+  if (value === 'openrouter') {
+    setModel(normalizeOpenRouterPrimaryModel());
+    setFastModel(normalizeOpenRouterFastModel());
+  } else {
+    setModel('');
+    setFastModel('');
+  }
 }
 
 async function fetchJson(url: string) {

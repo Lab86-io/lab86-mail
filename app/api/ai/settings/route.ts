@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  normalizeOpenRouterFastModel,
+  normalizeOpenRouterPrimaryModel,
+  OPENROUTER_FAST_MODEL_OPTIONS,
+  OPENROUTER_PRIMARY_MODEL_OPTIONS,
+} from '@/lib/ai/model-options';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import {
@@ -49,6 +55,12 @@ export async function GET() {
     lab86AiDisabled: isLab86AiDisabled(),
     requiresUserOpenRouterKey: requireOpenRouter,
     subscriptionsDisabled: isSubscriptionServiceDisabled(),
+    modelOptions: {
+      openrouter: {
+        primary: OPENROUTER_PRIMARY_MODEL_OPTIONS,
+        fast: OPENROUTER_FAST_MODEL_OPTIONS,
+      },
+    },
     usage: {
       period: state.period,
       creditsUsed,
@@ -82,10 +94,24 @@ export async function POST(req: NextRequest) {
   const mode = body.mode === 'byok' ? 'byok' : 'lab86';
   const provider =
     typeof body.provider === 'string' && PROVIDERS.has(body.provider) ? body.provider : undefined;
-  const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
+  let model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
   const fastModel =
     typeof body.fastModel === 'string' && body.fastModel.trim() ? body.fastModel.trim() : undefined;
+  let normalizedFastModel = fastModel;
   const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  if (apiKey.length > 4096) {
+    return NextResponse.json({ ok: false, error: 'API key is too long' }, { status: 400 });
+  }
+
+  if (provider === 'openrouter') {
+    model = normalizeOpenRouterPrimaryModel(model);
+    normalizedFastModel = normalizeOpenRouterFastModel(fastModel);
+  }
+
+  if (provider === 'openai' || provider === 'anthropic') {
+    model = undefined;
+    normalizedFastModel = undefined;
+  }
 
   if (isUserOpenRouterKeyRequired()) {
     const existing = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId }).catch(
@@ -115,7 +141,7 @@ export async function POST(req: NextRequest) {
     mode,
     provider,
     model,
-    fastModel,
+    fastModel: normalizedFastModel,
     enabled: body.enabled !== false,
   });
 
@@ -123,6 +149,12 @@ export async function POST(req: NextRequest) {
     if (!provider) {
       return NextResponse.json(
         { ok: false, error: 'provider is required when saving an API key' },
+        { status: 400 },
+      );
+    }
+    if (provider === 'openrouter' && !apiKey.startsWith('sk-or-')) {
+      return NextResponse.json(
+        { ok: false, error: 'OpenRouter API keys must start with sk-or-' },
         { status: 400 },
       );
     }
