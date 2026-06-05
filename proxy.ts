@@ -40,7 +40,7 @@ const protectedProxy = clerkMiddleware(
   },
   {
     frontendApiProxy: {
-      enabled: true,
+      enabled: Boolean(process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isStagingRuntime()),
     },
   },
 );

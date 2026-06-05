@@ -6,7 +6,7 @@ import { Fraunces } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
-import { isPublicSignupDisabled } from '@/lib/hosted/controls';
+import { isPublicSignupDisabled, isStagingRuntime } from '@/lib/hosted/controls';
 import './globals.css';
 
 // Warm editorial display serif — used for the Daily Report masthead, datelines,
@@ -36,6 +36,8 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const clerkProxyUrl =
+    process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isStagingRuntime() ? '/__clerk' : undefined;
   const content = (
     <>
       {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? <ClerkNav /> : null}
@@ -56,7 +58,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body>
         {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
-          <ClerkProvider proxyUrl="/__clerk">{content}</ClerkProvider>
+          <ClerkProvider {...(clerkProxyUrl ? { proxyUrl: clerkProxyUrl } : {})}>{content}</ClerkProvider>
         ) : (
           content
         )}
