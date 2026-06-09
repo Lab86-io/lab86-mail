@@ -42,12 +42,12 @@ export function decryptSecret(payload: string) {
 export function secretFingerprint(secret: string) {
   const trimmed = String(secret || '').trim();
   if (!trimmed) return '';
-  const digest = createHash('sha256').update(trimmed).digest('hex').slice(0, 12);
-  const suffix = trimmed.slice(-4);
-  return `${digest}:${suffix}`;
+  // Hash digest only — no plaintext suffix, so a logged fingerprint reveals
+  // nothing about the secret itself.
+  return createHash('sha256').update(trimmed).digest('hex').slice(0, 16);
 }
 
 export function maskFingerprint(fingerprint: string) {
-  const suffix = fingerprint.split(':')[1];
-  return suffix ? `...${suffix}` : '';
+  // slice(-4) also renders legacy "digest:sufx" fingerprints unchanged.
+  return fingerprint ? `...${fingerprint.slice(-4)}` : '';
 }

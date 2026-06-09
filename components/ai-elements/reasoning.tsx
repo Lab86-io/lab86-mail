@@ -64,6 +64,8 @@ export const Reasoning = memo(
     // Track duration when streaming starts and ends
     useEffect(() => {
       if (isStreaming) {
+        // A new streaming session re-arms the one-shot auto-close below.
+        setHasAutoClosed(false);
         if (startTime === null) {
           setStartTime(Date.now());
         }

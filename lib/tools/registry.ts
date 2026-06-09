@@ -57,7 +57,9 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
           result: 'error',
           detail: err?.message,
           agent: ctx.agent,
-        }).catch(() => undefined);
+        }).catch((auditErr) => {
+          console.error(`Failed to write audit log for ${tool.name} error:`, auditErr);
+        });
         throw err;
       }
       await writeAudit({
@@ -68,7 +70,9 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
         result: 'ok',
         detail: tool.mutating ? safeSummary(result) : undefined,
         agent: ctx.agent,
-      }).catch(() => undefined);
+      }).catch((auditErr) => {
+        console.error(`Failed to write audit log for ${tool.name}:`, auditErr);
+      });
       return result;
     },
   );

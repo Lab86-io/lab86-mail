@@ -1,7 +1,27 @@
 import type { Thread } from '../shared/types';
 import { db, findMany, findOne, upsert } from './db';
 
-export async function upsertThread(account: string, partial: Partial<Thread> & { _id: string }) {
+// Read-merge-write below is racy if two upserts for the same thread interleave
+// (the later read clobbers the earlier write), so same-key upserts are
+// serialized through a per-key promise chain.
+const pendingUpserts = new Map<string, Promise<unknown>>();
+
+export function upsertThread(account: string, partial: Partial<Thread> & { _id: string }) {
+  const key = `${account}:${partial._id}`;
+  const prev = pendingUpserts.get(key) ?? Promise.resolve();
+  const next = prev.then(
+    () => doUpsertThread(account, partial),
+    () => doUpsertThread(account, partial),
+  );
+  const tracked = next.catch(() => undefined);
+  pendingUpserts.set(key, tracked);
+  tracked.then(() => {
+    if (pendingUpserts.get(key) === tracked) pendingUpserts.delete(key);
+  });
+  return next;
+}
+
+async function doUpsertThread(account: string, partial: Partial<Thread> & { _id: string }) {
   const existing = await getThread(account, partial._id);
   const merged: Thread = {
     _id: partial._id,

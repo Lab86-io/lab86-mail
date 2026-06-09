@@ -41,7 +41,9 @@ export async function computeSmartCategoryStats(account?: string) {
       computedAt,
       approximate: threads.length >= 5000,
     };
-    await upsert(db().smartCategoryStats, { _id: stat._id }, stat).catch(() => undefined);
+    await upsert(db().smartCategoryStats, { _id: stat._id }, stat).catch((err) => {
+      console.error(`Failed to upsert category stat ${stat._id}:`, err);
+    });
     stats[category] = stat;
   }
 

@@ -17,6 +17,7 @@ import { listAccounts } from '@/lib/tools/mail';
 import { APP_VERSION } from '@/lib/version';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   let accounts: any = { accounts: [] };

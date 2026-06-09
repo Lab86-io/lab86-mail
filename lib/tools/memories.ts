@@ -7,13 +7,20 @@ import {
 } from '../store/memories';
 import { defineTool } from './registry';
 
+// Mirrors the Memory record shape in lib/store/memories.ts.
+const MemorySchema = z.object({
+  email: z.string(),
+  notes: z.string(),
+  updatedAt: z.number(),
+});
+
 export const remember = defineTool({
   name: 'remember',
   description: 'Store a note about a sender or recipient, used to personalize drafts/triage.',
   category: 'memory',
   mutating: true,
   input: z.object({ email: z.string(), notes: z.string() }),
-  output: z.object({ ok: z.boolean(), memory: z.any() }),
+  output: z.object({ ok: z.boolean(), memory: MemorySchema }),
   async handler({ email, notes }) {
     const m = await rememberSender(email, notes);
     return { ok: true, memory: m };
@@ -26,7 +33,7 @@ export const recall = defineTool({
   category: 'memory',
   mutating: false,
   input: z.object({ email: z.string() }),
-  output: z.object({ memory: z.any().nullable() }),
+  output: z.object({ memory: MemorySchema.nullable() }),
   async handler({ email }) {
     return { memory: await recallSender(email) };
   },
@@ -51,7 +58,7 @@ export const listMemories = defineTool({
   category: 'memory',
   mutating: false,
   input: z.object({}).optional(),
-  output: z.object({ memories: z.array(z.any()) }),
+  output: z.object({ memories: z.array(MemorySchema) }),
   async handler() {
     return { memories: await listMemoriesRecord() };
   },

@@ -41,16 +41,26 @@ function CodeBlockCode({
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function highlight() {
       if (!code) {
         setHighlightedHtml('<pre><code></code></pre>');
         return;
       }
 
-      const html = await codeToHtml(code, { lang: language, theme });
-      setHighlightedHtml(html);
+      try {
+        const html = await codeToHtml(code, { lang: language, theme });
+        if (!cancelled) setHighlightedHtml(html);
+      } catch (error) {
+        console.error('Failed to highlight code:', error);
+        // null keeps the plain-text fallback render below, which escapes safely
+        if (!cancelled) setHighlightedHtml(null);
+      }
     }
     highlight();
+    return () => {
+      cancelled = true;
+    };
   }, [code, language, theme]);
 
   const classNames = cn('w-full overflow-x-auto text-[13px] [&>pre]:px-4 [&>pre]:py-4', className);

@@ -1,15 +1,10 @@
 import { cn } from '@/lib/utils';
 
+// The loading-ui-ring-spin keyframes live in app/globals.css so the definition
+// isn't re-injected into the DOM for every rendered instance.
 function Ring({ className, style, ...props }: React.ComponentProps<'svg'>) {
   return (
     <>
-      <style>{`
-        @keyframes loading-ui-ring-spin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
       <svg
         viewBox="0 0 24 24"
         fill="none"

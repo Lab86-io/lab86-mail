@@ -99,19 +99,27 @@ export function ShortcutsBinding() {
         case 'e':
           if (selectedThreadId) {
             e.preventDefault();
-            await callTool('archive_thread', { account, threadId: selectedThreadId }).catch(() => undefined);
-            toast.success('Archived');
-            setSelectedThread(null);
-            qc.invalidateQueries({ queryKey: ['search'] });
+            try {
+              await callTool('archive_thread', { account, threadId: selectedThreadId });
+              toast.success('Archived');
+              setSelectedThread(null);
+              qc.invalidateQueries({ queryKey: ['search'] });
+            } catch {
+              toast.error('Failed to archive thread');
+            }
           }
           break;
         case '#':
           if (selectedThreadId) {
             e.preventDefault();
-            await callTool('trash_thread', { account, threadId: selectedThreadId }).catch(() => undefined);
-            toast.success('Trashed');
-            setSelectedThread(null);
-            qc.invalidateQueries({ queryKey: ['search'] });
+            try {
+              await callTool('trash_thread', { account, threadId: selectedThreadId });
+              toast.success('Trashed');
+              setSelectedThread(null);
+              qc.invalidateQueries({ queryKey: ['search'] });
+            } catch {
+              toast.error('Failed to trash thread');
+            }
           }
           break;
         case 's':
@@ -123,9 +131,13 @@ export function ShortcutsBinding() {
         case 't':
           if (selectedThreadId) {
             e.preventDefault();
-            await callTool('triage_thread', { account, threadId: selectedThreadId }).catch(() => undefined);
-            toast.success('Triaged');
-            qc.invalidateQueries({ queryKey: ['search'] });
+            try {
+              await callTool('triage_thread', { account, threadId: selectedThreadId });
+              toast.success('Triaged');
+              qc.invalidateQueries({ queryKey: ['search'] });
+            } catch {
+              toast.error('Failed to triage thread');
+            }
           }
           break;
         case 'Escape':

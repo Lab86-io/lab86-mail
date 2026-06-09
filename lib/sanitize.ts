@@ -21,7 +21,9 @@ export function sanitizeEmailHtml(html: string): string {
       instance.sanitize(input, {
         FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta'],
         FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover'],
-        ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/)/i,
+        // Raster image data: URIs only — keeps inline signature images working
+        // while excluding svg+xml and other embeddable documents.
+        ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|bmp);base64,)/i,
       }) as string;
   }
   return cachedRead(html);

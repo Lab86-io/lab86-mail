@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -40,10 +40,15 @@ export function HostedOnboarding() {
     queryFn: async () => fetchJson('/api/nylas/status'),
     retry: false,
   });
+  // Seed the form state from the server only once; refetches (e.g. the
+  // invalidation after a save) must not clobber edits the user is making.
+  const aiFormSeeded = useRef(false);
   const { data: ai } = useQuery({
     queryKey: ['ai-settings'],
     queryFn: async () => {
       const data = await fetchJson('/api/ai/settings');
+      if (aiFormSeeded.current) return data;
+      aiFormSeeded.current = true;
       const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
       const nextProvider = requireOpenRouter
         ? 'openrouter'
@@ -208,7 +213,7 @@ export function HostedOnboarding() {
                         const data = new FormData(event.currentTarget);
                         saveAlias.mutate({
                           accountId: account.accountId,
-                          displayName: String(data.get('displayName') || ''),
+                          displayName: String(data.get('displayName') || '').trim(),
                         });
                       }}
                     >

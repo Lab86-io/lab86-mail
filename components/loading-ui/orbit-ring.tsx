@@ -1,19 +1,10 @@
 import { cn } from '@/lib/utils';
 
+// The loading-ui-orbit-ring-rotation keyframes live in app/globals.css so the
+// definition isn't re-injected into the DOM for every rendered instance.
 function OrbitRing({ className, ...props }: React.ComponentProps<'span'>) {
   return (
     <>
-      <style>{`
-        @keyframes loading-ui-orbit-ring-rotation {
-          0% {
-            transform: rotate(0deg);
-          }
-
-          100% {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
       <span
         role="status"
         className={cn('relative inline-block', className)}

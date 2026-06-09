@@ -487,8 +487,25 @@
   .dark .email-body,
   .dark
     .email-body
-    :where(p, div, span, td, th, li, h1, h2, h3, h4, h5, h6, strong, em, b, blockquote, label) {
+    :where(p, div, span, td, th, li, h1, h2, h3, h4, h5, h6, strong, em, b, blockquote, label):not(a *) {
     color: var(--color-text) !important;
+  }
+}
+
+/* loading-ui spinners (components/loading-ui) */
+@keyframes loading-ui-orbit-ring-rotation {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-ui-ring-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
