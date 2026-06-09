@@ -1,41 +1,19 @@
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+import { clerkMiddleware } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { isStagingRuntime } from './lib/hosted/controls';
 
-const isPublicRoute = createRouteMatcher([
-  '/sign-in(.*)',
-  '/sign-up(.*)',
-  '/api/healthz',
-  '/api/clerk/webhook',
-  '/api/nylas/callback',
-  '/api/billing/webhook',
-  '/privacy',
-  '/terms',
-  '/support',
-]);
-
 const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
-const isDevRuntime = process.env.NODE_ENV === 'development';
 
 const passthroughProxy = (req: Request) => {
   const basicAuth = basicAuthOrNext(req);
   if (basicAuth.status !== 200) return basicAuth;
-  const pathname = new URL(req.url).pathname;
-  if (!hasClerkKeys && !isDevRuntime && pathname !== '/api/healthz') {
-    return new NextResponse('Authentication is not configured.', { status: 503 });
-  }
   return NextResponse.next();
 };
 
 const protectedProxy = clerkMiddleware(
-  async (auth, req) => {
+  async (_auth, req) => {
     const basicAuth = basicAuthOrNext(req);
     if (basicAuth.status !== 200) return basicAuth;
-    if (!isPublicRoute(req)) {
-      await auth.protect({
-        unauthenticatedUrl: new URL('/sign-in', req.url).toString(),
-      });
-    }
     return NextResponse.next();
   },
   {
