@@ -1,19 +1,33 @@
-import { clerkMiddleware } from '@clerk/nextjs/server';
-import { NextResponse } from 'next/server';
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+import type { NextFetchEvent } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { isStagingRuntime } from './lib/hosted/controls';
 
 const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
-const passthroughProxy = (req: Request) => {
-  const basicAuth = basicAuthOrNext(req);
-  if (basicAuth.status !== 200) return basicAuth;
-  return NextResponse.next();
-};
+const isPublicRoute = createRouteMatcher([
+  '/__clerk(.*)',
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/api/healthz',
+  '/api/clerk/webhook',
+  '/api/nylas/callback',
+  '/api/billing/webhook',
+  '/privacy',
+  '/terms',
+  '/support',
+  '/pricing',
+]);
+
+const passthroughProxy = (_req: NextRequest) => NextResponse.next();
 
 const protectedProxy = clerkMiddleware(
-  async (_auth, req) => {
-    const basicAuth = basicAuthOrNext(req);
-    if (basicAuth.status !== 200) return basicAuth;
+  async (auth, req) => {
+    if (!isPublicRoute(req)) {
+      await auth.protect({
+        unauthenticatedUrl: new URL('/sign-in', req.url).toString(),
+      });
+    }
     return NextResponse.next();
   },
   {
@@ -23,7 +37,26 @@ const protectedProxy = clerkMiddleware(
   },
 );
 
-export default hasClerkKeys ? protectedProxy : passthroughProxy;
+export default function proxy(req: NextRequest, event: NextFetchEvent) {
+  const basicAuth = basicAuthOrNext(req);
+  if (basicAuth.status !== 200) return basicAuth;
+
+  // Staging basic auth makes browsers attach `Authorization: Basic ...` to every
+  // same-origin request. Clerk rejects requests that carry both `Origin` and
+  // `Authorization`, and its server SDK prefers the header over the session
+  // cookie, so the credential must not reach Clerk after it has been verified.
+  let forwarded = req;
+  const [scheme] = (req.headers.get('authorization') || '').split(/\s+/, 2);
+  if (scheme?.toLowerCase() === 'basic') {
+    const headers = new Headers(req.headers);
+    headers.delete('authorization');
+    forwarded = new NextRequest(req, { headers, duplex: 'half' } as ConstructorParameters<
+      typeof NextRequest
+    >[1]);
+  }
+
+  return hasClerkKeys ? protectedProxy(forwarded, event) : passthroughProxy(forwarded);
+}
 
 export const config = {
   matcher: [

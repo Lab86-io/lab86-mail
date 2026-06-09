@@ -5,7 +5,7 @@ import {
   OPENROUTER_FAST_MODEL_OPTIONS,
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
 } from '@/lib/ai/model-options';
-import { requireCurrentUser } from '@/lib/auth/current-user';
+import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import {
   isLab86AiDisabled,
@@ -22,7 +22,13 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const user = await requireCurrentUser();
+  const user = await requireCurrentUser().catch((err) => {
+    if (err instanceof AuthRequiredError) return null;
+    throw err;
+  });
+  if (!user) {
+    return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
+  }
   if (!isConvexConfigured()) {
     return NextResponse.json({
       ok: true,
@@ -71,7 +77,13 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false });
+  const user = await requireCurrentUser({ allowLegacy: false }).catch((err) => {
+    if (err instanceof AuthRequiredError) return null;
+    throw err;
+  });
+  if (!user) {
+    return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
+  }
   if (!isConvexConfigured()) {
     return NextResponse.json(
       { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },
@@ -131,6 +143,19 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (apiKey && !provider) {
+    return NextResponse.json(
+      { ok: false, error: 'provider is required when saving an API key' },
+      { status: 400 },
+    );
+  }
+  if (apiKey && provider === 'openrouter' && !apiKey.startsWith('sk-or-')) {
+    return NextResponse.json(
+      { ok: false, error: 'OpenRouter API keys must start with sk-or-' },
+      { status: 400 },
+    );
+  }
+
   await convexMutation(api.users.upsertFromClerk, {
     userId: user.userId,
     email: user.email,
@@ -146,18 +171,6 @@ export async function POST(req: NextRequest) {
   });
 
   if (apiKey) {
-    if (!provider) {
-      return NextResponse.json(
-        { ok: false, error: 'provider is required when saving an API key' },
-        { status: 400 },
-      );
-    }
-    if (provider === 'openrouter' && !apiKey.startsWith('sk-or-')) {
-      return NextResponse.json(
-        { ok: false, error: 'OpenRouter API keys must start with sk-or-' },
-        { status: 400 },
-      );
-    }
     const fingerprint = secretFingerprint(apiKey);
     await convexMutation(api.ai.upsertProviderKey, {
       userId: user.userId,
