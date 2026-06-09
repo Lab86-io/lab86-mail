@@ -1,6 +1,8 @@
 import { SignIn } from '@clerk/nextjs';
+import { auth } from '@clerk/nextjs/server';
+import { redirect } from 'next/navigation';
 
-export default function SignInPage() {
+export default async function SignInPage() {
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
     return (
       <main className="grid min-h-dvh place-items-center bg-[var(--color-bg)] px-4">
@@ -12,9 +14,18 @@ export default function SignInPage() {
     );
   }
 
+  const session = await auth();
+  if (session.userId) redirect('/');
+
   return (
     <main className="grid min-h-dvh place-items-center bg-[var(--color-bg)] px-4">
-      <SignIn />
+      <SignIn
+        fallbackRedirectUrl="/"
+        forceRedirectUrl="/"
+        signUpFallbackRedirectUrl="/"
+        signUpForceRedirectUrl="/"
+        signUpUrl="/sign-up"
+      />
     </main>
   );
 }

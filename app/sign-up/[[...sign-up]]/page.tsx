@@ -1,7 +1,9 @@
 import { SignUp } from '@clerk/nextjs';
+import { auth } from '@clerk/nextjs/server';
+import { redirect } from 'next/navigation';
 import { isPublicSignupDisabled } from '@/lib/hosted/controls';
 
-export default function SignUpPage() {
+export default async function SignUpPage() {
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
     return (
       <main className="grid min-h-dvh place-items-center bg-[var(--color-bg)] px-4">
@@ -12,6 +14,9 @@ export default function SignUpPage() {
       </main>
     );
   }
+
+  const session = await auth();
+  if (session.userId) redirect('/');
 
   if (isPublicSignupDisabled()) {
     return (
@@ -27,7 +32,13 @@ export default function SignUpPage() {
   }
   return (
     <main className="grid min-h-dvh place-items-center bg-[var(--color-bg)] px-4">
-      <SignUp />
+      <SignUp
+        fallbackRedirectUrl="/"
+        forceRedirectUrl="/"
+        signInFallbackRedirectUrl="/"
+        signInForceRedirectUrl="/"
+        signInUrl="/sign-in"
+      />
     </main>
   );
 }
