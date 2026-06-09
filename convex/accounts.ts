@@ -102,6 +102,12 @@ export const upsertConnectedAccount = mutation({
       .query('connectedAccounts')
       .withIndex('by_user_email', (q) => q.eq('userId', args.userId).eq('email', email))
       .unique();
+    if (existing && existing.provider === 'google' && args.provider !== 'google') {
+      // The UI currently uses email as the mailbox key. If two providers report
+      // the same email, keep the Google mailbox active because Gmail query syntax
+      // and folder names drive the inbox view.
+      return { accountId: existing.accountId };
+    }
     const accountPatch = {
       accountId: id,
       email,

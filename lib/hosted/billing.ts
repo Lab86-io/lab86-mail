@@ -28,7 +28,7 @@ export async function getAiBillingEntitlement(): Promise<AiBillingEntitlement> {
     };
   }
 
-  const proPlan = process.env.CLERK_PRO_PLAN_SLUG || 'pro';
+  const proPlan = process.env.CLERK_PRO_PLAN_SLUG || 'everyday';
   const proFeature = process.env.CLERK_PRO_AI_FEATURE_SLUG || 'ai_credits_2m';
   const pro = await Promise.resolve(has({ plan: proPlan })).catch(() => false);
   const proFeatureAccess = await Promise.resolve(has({ feature: proFeature })).catch(() => false);
