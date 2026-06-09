@@ -1,8 +1,12 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
-import { NextResponse } from 'next/server';
+import type { NextFetchEvent } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { isStagingRuntime } from './lib/hosted/controls';
 
+const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
+
 const isPublicRoute = createRouteMatcher([
+  '/__clerk(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/healthz',
@@ -12,25 +16,13 @@ const isPublicRoute = createRouteMatcher([
   '/privacy',
   '/terms',
   '/support',
+  '/pricing',
 ]);
 
-const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
-const isDevRuntime = process.env.NODE_ENV === 'development';
-
-const passthroughProxy = (req: Request) => {
-  const basicAuth = basicAuthOrNext(req);
-  if (basicAuth.status !== 200) return basicAuth;
-  const pathname = new URL(req.url).pathname;
-  if (!hasClerkKeys && !isDevRuntime && pathname !== '/api/healthz') {
-    return new NextResponse('Authentication is not configured.', { status: 503 });
-  }
-  return NextResponse.next();
-};
+const passthroughProxy = (_req: NextRequest) => NextResponse.next();
 
 const protectedProxy = clerkMiddleware(
   async (auth, req) => {
-    const basicAuth = basicAuthOrNext(req);
-    if (basicAuth.status !== 200) return basicAuth;
     if (!isPublicRoute(req)) {
       await auth.protect({
         unauthenticatedUrl: new URL('/sign-in', req.url).toString(),
@@ -45,7 +37,26 @@ const protectedProxy = clerkMiddleware(
   },
 );
 
-export default hasClerkKeys ? protectedProxy : passthroughProxy;
+export default function proxy(req: NextRequest, event: NextFetchEvent) {
+  const basicAuth = basicAuthOrNext(req);
+  if (basicAuth.status !== 200) return basicAuth;
+
+  // Staging basic auth makes browsers attach `Authorization: Basic ...` to every
+  // same-origin request. Clerk rejects requests that carry both `Origin` and
+  // `Authorization`, and its server SDK prefers the header over the session
+  // cookie, so the credential must not reach Clerk after it has been verified.
+  let forwarded = req;
+  const [scheme] = (req.headers.get('authorization') || '').split(/\s+/, 2);
+  if (scheme?.toLowerCase() === 'basic') {
+    const headers = new Headers(req.headers);
+    headers.delete('authorization');
+    forwarded = new NextRequest(req, { headers, duplex: 'half' } as ConstructorParameters<
+      typeof NextRequest
+    >[1]);
+  }
+
+  return hasClerkKeys ? protectedProxy(forwarded, event) : passthroughProxy(forwarded);
+}
 
 export const config = {
   matcher: [

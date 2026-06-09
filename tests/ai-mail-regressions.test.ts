@@ -108,6 +108,24 @@ describe('compose reply args', () => {
 });
 
 describe('agent mail lookup and prompt contract', () => {
+  test('Nylas native search does not mix unsupported Gmail query parameters', async () => {
+    const { buildNylasNativeSearchQueryParams } = await import('../lib/nylas/provider');
+    const params = buildNylasNativeSearchQueryParams({
+      query: 'in:inbox is:unread has:attachment newer_than:30d',
+      max: 50,
+      pageToken: 'next-page',
+    });
+
+    expect(params).toEqual({
+      limit: 50,
+      search_query_native: 'in:inbox is:unread has:attachment newer_than:30d',
+      page_token: 'next-page',
+    });
+    expect(params).not.toHaveProperty('unread');
+    expect(params).not.toHaveProperty('has_attachment');
+    expect(params).not.toHaveProperty('starred');
+  });
+
   test('search_threads fetches and caches a fake noreply thread without opening it first', async () => {
     const { searchThreads } = await import('../lib/tools/mail');
     const { listThreadsForAccount } = await import('../lib/store/threads');
@@ -136,6 +154,31 @@ describe('agent mail lookup and prompt contract', () => {
     expect(SYSTEM_PROMPT).toContain('reply to this/open/current thread');
     expect(SYSTEM_PROMPT).toContain('search Gmail even if another thread is currently focused');
     expect(SYSTEM_PROMPT).toContain('Do not require the user to open the thread first');
+  });
+});
+
+describe('hosted OpenRouter model options', () => {
+  test('normalizes arbitrary OpenRouter model slugs to approved choices', async () => {
+    const {
+      OPENROUTER_DEFAULT_FAST_MODEL,
+      OPENROUTER_DEFAULT_PRIMARY_MODEL,
+      isOpenRouterFastModel,
+      isOpenRouterPrimaryModel,
+      normalizeOpenRouterFastModel,
+      normalizeOpenRouterPrimaryModel,
+      resolveLab86Family,
+    } = await import('../lib/ai/model-options');
+
+    expect(isOpenRouterPrimaryModel('openai/gpt-5.5')).toBe(true);
+    expect(isOpenRouterFastModel('openai/gpt-5.4-mini')).toBe(true);
+    expect(normalizeOpenRouterPrimaryModel('some-provider/unreviewed-model')).toBe(
+      OPENROUTER_DEFAULT_PRIMARY_MODEL,
+    );
+    expect(normalizeOpenRouterFastModel('some-provider/unreviewed-fast-model')).toBe(
+      OPENROUTER_DEFAULT_FAST_MODEL,
+    );
+    expect(resolveLab86Family('openai/gpt-5.5', 'anthropic/claude-haiku-4.5')).toBe('openai');
+    expect(resolveLab86Family(undefined, 'anthropic/claude-haiku-4.5')).toBe('claude');
   });
 });
 
