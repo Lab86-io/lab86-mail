@@ -20,6 +20,7 @@ export function isStripeConfigured() {
 
 export function isClerkBillingConfigured() {
   if (isSubscriptionServiceDisabled()) return false;
+  if (isClerkConfigured()) return true;
   return Boolean(
     process.env.CLERK_BILLING_CHECKOUT_URL ||
       process.env.CLERK_BILLING_PORTAL_URL ||
