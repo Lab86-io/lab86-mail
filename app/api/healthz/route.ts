@@ -38,7 +38,7 @@ export async function GET() {
       commit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     },
     accounts: accounts.accounts.length,
-    authed: accounts.accounts.filter((a: any) => a.authed).map((a: any) => a.email),
+    authed: accounts.accounts.filter((a: any) => a.authed).length,
     tools: Object.keys(TOOLS).length,
     ai: {
       configured: hasAi(),
