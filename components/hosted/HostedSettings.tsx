@@ -19,6 +19,7 @@ import {
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
   type Provider,
   resolveLab86Family,
+  setProviderForByok,
 } from './ai-options';
 
 export function HostedSettingsButton() {
@@ -57,20 +58,18 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
     queryFn: async () => {
       const data = await fetchJson('/api/ai/settings');
       const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
+      const computedProvider = (
+        requireOpenRouter ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter'
+      ) as Provider;
       setAiMode(requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86');
-      setProvider(
-        requireOpenRouter ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter',
-      );
-      const nextProvider = requireOpenRouter
-        ? 'openrouter'
-        : data.settings?.provider || data.key?.provider || 'openrouter';
+      setProvider(computedProvider);
       setModel(
-        nextProvider === 'openrouter'
+        computedProvider === 'openrouter'
           ? normalizeOpenRouterPrimaryModel(data.settings?.model)
           : data.settings?.model || '',
       );
       setFastModel(
-        nextProvider === 'openrouter'
+        computedProvider === 'openrouter'
           ? normalizeOpenRouterFastModel(data.settings?.fastModel)
           : data.settings?.fastModel || '',
       );
@@ -437,22 +436,6 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
       </DialogContent>
     </Dialog>
   );
-}
-
-function setProviderForByok(
-  value: Provider,
-  setProvider: (provider: Provider) => void,
-  setModel: (model: string) => void,
-  setFastModel: (model: string) => void,
-) {
-  setProvider(value);
-  if (value === 'openrouter') {
-    setModel(normalizeOpenRouterPrimaryModel());
-    setFastModel(normalizeOpenRouterFastModel());
-  } else {
-    setModel('');
-    setFastModel('');
-  }
 }
 
 async function fetchJson(url: string) {

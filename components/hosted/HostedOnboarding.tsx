@@ -19,6 +19,7 @@ import {
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
   type Provider,
   resolveLab86Family,
+  setProviderForByok,
 } from './ai-options';
 
 const STORAGE_KEY = 'lab86-mail-onboarding-dismissed-v1';
@@ -414,22 +415,6 @@ export function HostedOnboarding() {
       </DialogContent>
     </Dialog>
   );
-}
-
-function setProviderForByok(
-  value: Provider,
-  setProvider: (provider: Provider) => void,
-  setModel: (model: string) => void,
-  setFastModel: (model: string) => void,
-) {
-  setProvider(value);
-  if (value === 'openrouter') {
-    setModel(normalizeOpenRouterPrimaryModel());
-    setFastModel(normalizeOpenRouterFastModel());
-  } else {
-    setModel('');
-    setFastModel('');
-  }
 }
 
 async function fetchJson(url: string) {

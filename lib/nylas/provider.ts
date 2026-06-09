@@ -22,6 +22,24 @@ export interface NylasAccountRow {
   scopes: string[];
 }
 
+interface UpdateNylasMessageFoldersArgs {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+  add?: string[];
+  remove?: string[];
+  createMissing?: boolean;
+}
+
+interface UpdateNylasThreadFoldersArgs {
+  userId?: string | null;
+  account: string;
+  threadId: string;
+  add?: string[];
+  remove?: string[];
+  createMissing?: boolean;
+}
+
 export async function listNylasAccounts(userId?: string | null) {
   if (!userId || !isConvexConfigured()) return [];
   const rows = await convexQuery<NylasAccountRow[]>(api.accounts.listConnectedAccounts, { userId });
@@ -139,11 +157,13 @@ export async function createNylasFolder({
   if (!row) return null;
   const existing = await findNylasFolder(row.grantId, name);
   if (existing) return normalizeNylasFolder(existing);
-  const result = await withNylasRetry(() =>
-    requireNylas().folders.create({
-      identifier: row.grantId,
-      requestBody: { name },
-    }),
+  const result = await withNylasRetry(
+    () =>
+      requireNylas().folders.create({
+        identifier: row.grantId,
+        requestBody: { name },
+      }),
+    { shouldRetry: isNylasRateLimitError },
   ).catch(async (err) => {
     if (!isNylasConflictError(err)) throw err;
     const created = await findNylasFolder(row.grantId, name);
@@ -210,30 +230,46 @@ export async function updateNylasMessageFolders({
   add = [],
   remove = [],
   createMissing = false,
-}: {
-  userId?: string | null;
-  account: string;
-  messageId: string;
-  add?: string[];
-  remove?: string[];
-  createMissing?: boolean;
-}) {
+}: UpdateNylasMessageFoldersArgs) {
+  return await updateNylasMessageFoldersInternal({
+    userId,
+    account,
+    messageId,
+    add,
+    remove,
+    createMissing,
+    retryRequests: true,
+  });
+}
+
+async function updateNylasMessageFoldersInternal({
+  userId,
+  account,
+  messageId,
+  add = [],
+  remove = [],
+  createMissing = false,
+  retryRequests,
+}: UpdateNylasMessageFoldersArgs & { retryRequests: boolean }) {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
-  const current = await withNylasRetry(() =>
-    requireNylas().messages.find({ identifier: row.grantId, messageId }),
+  const current = await runMaybeRetried(
+    () => requireNylas().messages.find({ identifier: row.grantId, messageId }),
+    retryRequests,
   );
   const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
     add,
     remove,
     createMissing,
   });
-  await withNylasRetry(() =>
-    requireNylas().messages.update({
-      identifier: row.grantId,
-      messageId,
-      requestBody: { folders },
-    }),
+  await runMaybeRetried(
+    () =>
+      requireNylas().messages.update({
+        identifier: row.grantId,
+        messageId,
+        requestBody: { folders },
+      }),
+    retryRequests,
   );
   return { ok: true };
 }
@@ -246,24 +282,17 @@ export async function updateNylasMessageFoldersWithRetry({
   remove = [],
   createMissing = false,
   retries = 4,
-}: {
-  userId?: string | null;
-  account: string;
-  messageId: string;
-  add?: string[];
-  remove?: string[];
-  createMissing?: boolean;
-  retries?: number;
-}) {
+}: UpdateNylasMessageFoldersArgs & { retries?: number }) {
   return await withNylasRetry(
     () =>
-      updateNylasMessageFolders({
+      updateNylasMessageFoldersInternal({
         userId,
         account,
         messageId,
         add,
         remove,
         createMissing,
+        retryRequests: false,
       }),
     { retries },
   );
@@ -277,24 +306,17 @@ export async function updateNylasThreadFoldersWithRetry({
   remove = [],
   createMissing = false,
   retries = 4,
-}: {
-  userId?: string | null;
-  account: string;
-  threadId: string;
-  add?: string[];
-  remove?: string[];
-  createMissing?: boolean;
-  retries?: number;
-}) {
+}: UpdateNylasThreadFoldersArgs & { retries?: number }) {
   return await withNylasRetry(
     () =>
-      updateNylasThreadFolders({
+      updateNylasThreadFoldersInternal({
         userId,
         account,
         threadId,
         add,
         remove,
         createMissing,
+        retryRequests: false,
       }),
     { retries },
   );
@@ -307,30 +329,46 @@ export async function updateNylasThreadFolders({
   add = [],
   remove = [],
   createMissing = false,
-}: {
-  userId?: string | null;
-  account: string;
-  threadId: string;
-  add?: string[];
-  remove?: string[];
-  createMissing?: boolean;
-}) {
+}: UpdateNylasThreadFoldersArgs) {
+  return await updateNylasThreadFoldersInternal({
+    userId,
+    account,
+    threadId,
+    add,
+    remove,
+    createMissing,
+    retryRequests: true,
+  });
+}
+
+async function updateNylasThreadFoldersInternal({
+  userId,
+  account,
+  threadId,
+  add = [],
+  remove = [],
+  createMissing = false,
+  retryRequests,
+}: UpdateNylasThreadFoldersArgs & { retryRequests: boolean }) {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
-  const current = await withNylasRetry(() =>
-    requireNylas().threads.find({ identifier: row.grantId, threadId }),
+  const current = await runMaybeRetried(
+    () => requireNylas().threads.find({ identifier: row.grantId, threadId }),
+    retryRequests,
   );
   const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
     add,
     remove,
     createMissing,
   });
-  await withNylasRetry(() =>
-    requireNylas().threads.update({
-      identifier: row.grantId,
-      threadId,
-      requestBody: { folders },
-    }),
+  await runMaybeRetried(
+    () =>
+      requireNylas().threads.update({
+        identifier: row.grantId,
+        threadId,
+        requestBody: { folders },
+      }),
+    retryRequests,
   );
   return { ok: true };
 }
@@ -443,11 +481,13 @@ async function resolveNylasFolderId(grantId: string, label: string, createMissin
   const existing = await findNylasFolder(grantId, label);
   if (existing?.id) return existing.id;
   if (!createMissing || isSystemFolderId(label)) return label;
-  const created = await withNylasRetry(() =>
-    requireNylas().folders.create({
-      identifier: grantId,
-      requestBody: { name: label },
-    }),
+  const created = await withNylasRetry(
+    () =>
+      requireNylas().folders.create({
+        identifier: grantId,
+        requestBody: { name: label },
+      }),
+    { shouldRetry: isNylasRateLimitError },
   ).catch(async (err) => {
     if (!isNylasConflictError(err)) throw err;
     const existingAfterConflict = await findNylasFolder(grantId, label);
@@ -465,13 +505,21 @@ async function findNylasFolder(grantId: string, label: string) {
   );
 }
 
+async function runMaybeRetried<T>(operation: () => Promise<T>, retryRequests: boolean) {
+  return retryRequests ? await withNylasRetry(operation) : await operation();
+}
+
 function isSystemFolderId(label: string) {
   return SYSTEM_FOLDER_IDS.has(label.toUpperCase());
 }
 
 async function withNylasRetry<T>(
   operation: () => Promise<T>,
-  { retries = 3, baseDelayMs = 800 }: { retries?: number; baseDelayMs?: number } = {},
+  {
+    retries = 3,
+    baseDelayMs = 800,
+    shouldRetry = isNylasRetryableError,
+  }: { retries?: number; baseDelayMs?: number; shouldRetry?: (err: unknown) => boolean } = {},
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -479,7 +527,7 @@ async function withNylasRetry<T>(
       return await operation();
     } catch (err) {
       lastError = err;
-      if (!isNylasRetryableError(err) || attempt === retries) break;
+      if (!shouldRetry(err) || attempt === retries) break;
       await sleep(baseDelayMs * 2 ** attempt);
     }
   }

@@ -108,8 +108,9 @@ const primaryIds = new Set(OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => opti
 const fastIds = new Set(OPENROUTER_FAST_MODEL_OPTIONS.map((option) => option.id));
 
 export function resolveLab86Family(model?: string, fastModel?: string): Lab86ModelFamily {
-  const ids = `${model || ''} ${fastModel || ''}`;
-  return ids.includes('anthropic/') ? 'claude' : 'openai';
+  const primary = model || '';
+  if (primary) return primary.includes('anthropic/') ? 'claude' : 'openai';
+  return fastModel?.includes('anthropic/') ? 'claude' : 'openai';
 }
 
 export function isOpenRouterPrimaryModel(value?: string | null) {
@@ -126,4 +127,20 @@ export function normalizeOpenRouterPrimaryModel(value?: string | null) {
 
 export function normalizeOpenRouterFastModel(value?: string | null) {
   return isOpenRouterFastModel(value) ? value! : OPENROUTER_DEFAULT_FAST_MODEL;
+}
+
+export function setProviderForByok(
+  value: Provider,
+  setProvider: (provider: Provider) => void,
+  setModel: (model: string) => void,
+  setFastModel: (model: string) => void,
+) {
+  setProvider(value);
+  if (value === 'openrouter') {
+    setModel(normalizeOpenRouterPrimaryModel());
+    setFastModel(normalizeOpenRouterFastModel());
+  } else {
+    setModel('');
+    setFastModel('');
+  }
 }

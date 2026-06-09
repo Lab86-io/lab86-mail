@@ -10,4 +10,5 @@ export {
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
   type Provider,
   resolveLab86Family,
+  setProviderForByok,
 } from '@/lib/ai/model-options';

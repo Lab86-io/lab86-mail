@@ -166,6 +166,7 @@ describe('hosted OpenRouter model options', () => {
       isOpenRouterPrimaryModel,
       normalizeOpenRouterFastModel,
       normalizeOpenRouterPrimaryModel,
+      resolveLab86Family,
     } = await import('../lib/ai/model-options');
 
     expect(isOpenRouterPrimaryModel('openai/gpt-5.5')).toBe(true);
@@ -176,6 +177,8 @@ describe('hosted OpenRouter model options', () => {
     expect(normalizeOpenRouterFastModel('some-provider/unreviewed-fast-model')).toBe(
       OPENROUTER_DEFAULT_FAST_MODEL,
     );
+    expect(resolveLab86Family('openai/gpt-5.5', 'anthropic/claude-haiku-4.5')).toBe('openai');
+    expect(resolveLab86Family(undefined, 'anthropic/claude-haiku-4.5')).toBe('claude');
   });
 });
 
