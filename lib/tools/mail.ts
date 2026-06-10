@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { normalizeGogSearchItem } from '../gog/normalize';
-import { runGogJson } from '../gog/pool';
-import { isGogEnabled } from '../hosted/env';
+import { api, convexQuery } from '../hosted/convex';
+import { DEFAULT_MAIL_QUERY, SMART_CATEGORY_CANDIDATE_QUERIES } from '../mail/search/constants';
 import {
   classifyThreadWithContext,
   includeInSmartCategory,
@@ -15,11 +14,7 @@ import {
   searchNylasThreads,
 } from '../nylas/provider';
 import type { Thread } from '../shared/types';
-import {
-  getMessage as getMessageRecord,
-  getThreadMessages,
-  upsertMessage as upsertMessageRecord,
-} from '../store/messages';
+import { upsertMessage as upsertMessageRecord } from '../store/messages';
 import { computeSmartCategoryStats } from '../store/smart-category-stats';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
@@ -42,29 +37,62 @@ export const listAccounts = defineTool({
     accounts: z.array(
       z.object({
         email: z.string(),
-        provider: z.literal('gmail'),
+        provider: z.enum(['google', 'microsoft', 'icloud', 'imap']),
         authed: z.boolean(),
-        accountId: z.string().optional(),
+        accountId: z.string(),
         primary: z.boolean().optional(),
         displayName: z.string().optional(),
         services: z.array(z.string()).optional(),
+        sync: z
+          .object({
+            status: z.string(),
+            corpusReady: z.boolean(),
+            messagesSynced: z.number().optional(),
+            error: z.string().optional(),
+            lastSyncAt: z.number().optional(),
+          })
+          .optional(),
       }),
     ),
   }),
   async handler(_args, ctx) {
-    return { accounts: await listNylasAccounts(ctx.userId).catch(() => []) };
+    const accounts = await listNylasAccounts(ctx.userId);
+    const syncStates = ctx.userId
+      ? await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
+          userId: ctx.userId,
+          limit: 500,
+        }).catch(() => [])
+      : [];
+    const syncByAccount = new Map(syncStates.map((state) => [state.accountId, state]));
+    return {
+      accounts: accounts.map((account) => {
+        const state = syncByAccount.get(account.accountId);
+        return {
+          ...account,
+          sync: state
+            ? {
+                status: String(state.status || 'idle'),
+                corpusReady: Boolean(state.corpusReady),
+                messagesSynced: typeof state.messagesSynced === 'number' ? state.messagesSynced : undefined,
+                error: state.error || undefined,
+                lastSyncAt: state.lastIncrementalSyncAt || state.lastBackfillAt || undefined,
+              }
+            : undefined,
+        };
+      }),
+    };
   },
 });
 
 export const searchThreads = defineTool({
   name: 'search_threads',
   description:
-    'Search Gmail threads with Gmail query syntax (in:inbox, is:unread, from:, subject:, newer_than:7d, has:attachment, etc.). Cache write-through.',
+    'Search hosted mail threads using the provider transport and cache the returned thread summaries.',
   category: 'mail',
   mutating: false,
   input: z.object({
-    account: z.string().describe('Email of the account to search'),
-    query: z.string().default('in:inbox newer_than:30d').describe('Gmail search query'),
+    account: z.string().describe('Connected hosted account identifier'),
+    query: z.string().default(DEFAULT_MAIL_QUERY).describe('Mail search query'),
     max: z.number().int().min(1).max(80).default(30),
     pageToken: z.string().optional(),
   }),
@@ -75,35 +103,20 @@ export const searchThreads = defineTool({
     nextPageToken: z.string().optional(),
   }),
   async handler({ account, query, max, pageToken }, ctx) {
-    const nylas = await searchNylasThreads({
-      userId: ctx.userId,
-      account,
-      query,
-      max,
-      pageToken,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) {
-      for (const item of nylas.items) {
-        if (item._id) await upsertThread(account, item).catch(() => undefined);
-      }
-      return nylas;
+    const nylas = await requireNylasResult(
+      searchNylasThreads({
+        userId: ctx.userId,
+        account,
+        query,
+        max,
+        pageToken,
+      }),
+      'Connected Nylas account not found.',
+    );
+    for (const item of nylas.items) {
+      if (item._id) await upsertThread(account, item).catch(() => undefined);
     }
-    if (isGogEnabled()) {
-      const legacy = await runGogJson<any>(
-        ['--account', account, 'search', '--max', String(max), '--', query],
-        { timeoutMs: 60_000 },
-      ).catch(() => null);
-      const rawItems = Array.isArray(legacy?.threads) ? legacy.threads : Array.isArray(legacy) ? legacy : [];
-      const items = rawItems.map((item: any) => normalizeGogSearchItem(item, account));
-      for (const item of items) {
-        if (item._id) await upsertThread(account, item).catch(() => undefined);
-      }
-      return { account, query, items, nextPageToken: undefined };
-    }
-    return { account, query, items: [], nextPageToken: undefined };
+    return nylas;
   },
 });
 
@@ -112,7 +125,7 @@ const SmartCategorySchema = z.union([z.enum(SMART_CATEGORY_IDS), z.string().rege
 export const listSmartCategory = defineTool({
   name: 'list_smart_category',
   description:
-    'List a smart MailOS category. Fetches recent Gmail candidates, classifies missing/stale rows locally, and filters into built-in or custom smart labels.',
+    'List a smart MailOS category. Fetches recent hosted mail candidates, classifies missing/stale rows locally, and filters into built-in or custom smart labels.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -134,42 +147,39 @@ export const listSmartCategory = defineTool({
     const customLabel = customLabelId ? await getSmartLabel(customLabelId) : null;
     const candidateQuery = query || customLabel?.candidateQuery || smartCandidateQuery(category);
     const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
-    const nylas = await searchNylasThreads({
-      userId: ctx.userId,
-      account,
-      query: candidateQuery,
-      max: Math.min(80, Math.max(max * 2, 60)),
-      pageToken,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) {
-      const matched: any[] = [];
-      for (const item of nylas.items) {
-        if (!item._id) continue;
-        const smartCategory = classifyThreadWithContext(item as Thread, { rules, customLabels });
-        const enriched = { ...item, smartCategory };
-        await upsertThread(account, enriched).catch(() => undefined);
-        await setThreadSmartCategory(account, item._id, smartCategory).catch(() => undefined);
-        if (includeInSmartCategory(enriched, category)) matched.push(enriched);
-      }
-      matched.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
-      return {
+    const nylas = await requireNylasResult(
+      searchNylasThreads({
+        userId: ctx.userId,
         account,
-        category,
         query: candidateQuery,
-        items: matched.slice(0, max),
-        nextPageToken: nylas.nextPageToken,
-      };
+        max: Math.min(80, Math.max(max * 2, 60)),
+        pageToken,
+      }),
+      'Connected Nylas account not found.',
+    );
+    const matched: any[] = [];
+    for (const item of nylas.items) {
+      if (!item._id) continue;
+      const smartCategory = classifyThreadWithContext(item as Thread, { rules, customLabels });
+      const enriched = { ...item, smartCategory };
+      await upsertThread(account, enriched).catch(() => undefined);
+      await setThreadSmartCategory(account, item._id, smartCategory).catch(() => undefined);
+      if (includeInSmartCategory(enriched, category)) matched.push(enriched);
     }
-    return { account, category, query: candidateQuery, items: [], nextPageToken: undefined };
+    matched.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
+    return {
+      account,
+      category,
+      query: candidateQuery,
+      items: matched.slice(0, max),
+      nextPageToken: nylas.nextPageToken,
+    };
   },
 });
 
 export const getThread = defineTool({
   name: 'get_thread',
-  description: 'Fetch a full Gmail thread (all messages) by thread id. Caches messages.',
+  description: 'Fetch a full hosted mail thread by thread id and cache its messages.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -185,43 +195,29 @@ export const getThread = defineTool({
     summary: z.string().nullable().optional(),
     summaryAt: z.number().nullable().optional(),
   }),
-  async handler({ account, threadId, refresh }, ctx) {
-    const nylas = await getNylasThread({ userId: ctx.userId, account, threadId }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) {
-      for (const message of nylas.messages) await upsertMessageRecord(message).catch(() => undefined);
-      const newest = nylas.messages[nylas.messages.length - 1];
-      if (newest) {
-        await upsertThread(account, {
-          _id: threadId,
-          subject: newest.subject || nylas.messages[0]?.subject || '(no subject)',
-          fromAddress: newest.from,
-          lastDate: newest.date,
-          snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
-          labels: newest.labels || [],
-          unread: nylas.messages.some((message) => message.labels?.includes('UNREAD')),
-        }).catch(() => undefined);
-      }
-      const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
-      return {
-        ...nylas,
-        summary: cachedThread?.summary ?? null,
-        summaryAt: cachedThread?.summaryAt ?? null,
-      };
+  async handler({ account, threadId }, ctx) {
+    const nylas = await requireNylasResult(
+      getNylasThread({ userId: ctx.userId, account, threadId }),
+      'Connected Nylas account not found.',
+    );
+    for (const message of nylas.messages) await upsertMessageRecord(message).catch(() => undefined);
+    const newest = nylas.messages[nylas.messages.length - 1];
+    if (newest) {
+      await upsertThread(account, {
+        _id: threadId,
+        subject: newest.subject || nylas.messages[0]?.subject || '(no subject)',
+        fromAddress: newest.from,
+        lastDate: newest.date,
+        snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+        labels: newest.labels || [],
+        unread: nylas.messages.some(
+          (message) => Boolean(message.unread) || message.labels?.includes('UNREAD'),
+        ),
+      }).catch(() => undefined);
     }
-
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
-    const messages = refresh ? [] : await getThreadMessages(account, threadId);
-    if (!messages.length) {
-      throw new Error('Thread is not available from Nylas yet. Refresh the mailbox and try again.');
-    }
     return {
-      account,
-      threadId,
-      subject: messages[0]?.subject || '(no subject)',
-      messages,
+      ...nylas,
       summary: cachedThread?.summary ?? null,
       summaryAt: cachedThread?.summaryAt ?? null,
     };
@@ -230,38 +226,31 @@ export const getThread = defineTool({
 
 export const getMessage = defineTool({
   name: 'get_message',
-  description: 'Fetch a single Gmail message by id. Caches.',
+  description: 'Fetch a single hosted mail message by id.',
   category: 'mail',
   mutating: false,
   input: z.object({ account: z.string(), id: z.string() }),
   output: z.any(),
   async handler({ account, id }, ctx) {
-    const nylas = await getNylasMessage({ userId: ctx.userId, account, id }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    const cached = await getMessageRecord(account, id);
-    if (cached && Date.now() - cached.cachedAt < 30 * 60_000) return cached;
-    throw new Error('Message is not available from Nylas yet. Reopen the thread and try again.');
+    return await requireNylasResult(
+      getNylasMessage({ userId: ctx.userId, account, id }),
+      'Connected Nylas account not found.',
+    );
   },
 });
 
 export const listLabels = defineTool({
   name: 'list_labels',
-  description: 'List all Gmail labels (system + user) for an account.',
+  description: 'List all provider folders/labels for an account.',
   category: 'mail',
   mutating: false,
   input: z.object({ account: z.string() }),
   output: z.object({ labels: z.array(z.any()) }),
   async handler({ account }, ctx) {
-    const nylas = await listNylasLabels(ctx.userId, account).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-    return { labels: [] };
+    return await requireNylasResult(
+      listNylasLabels(ctx.userId, account),
+      'Connected Nylas account not found.',
+    );
   },
 });
 
@@ -273,16 +262,17 @@ export const listAttachments = defineTool({
   input: z.object({ account: z.string(), messageId: z.string() }),
   output: z.object({ attachments: z.array(z.any()) }),
   async handler({ account, messageId }, ctx) {
-    const msg =
-      (await getNylasMessage({ userId: ctx.userId, account, id: messageId }).catch(() => null)) ||
-      (await getMessageRecord(account, messageId));
-    return { attachments: msg?.attachments || [] };
+    const msg = await requireNylasResult(
+      getNylasMessage({ userId: ctx.userId, account, id: messageId }),
+      'Connected Nylas account not found.',
+    );
+    return { attachments: msg.attachments || [] };
   },
 });
 
 export const recentThreadsCached = defineTool({
   name: 'recent_threads',
-  description: 'Return up to N recent threads from the local cache (used to seed the command palette).',
+  description: 'Return up to N recent cached threads used to seed the command palette.',
   category: 'mail',
   mutating: false,
   input: z.object({ limit: z.number().int().min(1).max(200).default(80) }),
@@ -294,7 +284,7 @@ export const recentThreadsCached = defineTool({
 
 export const listAccountThreads = defineTool({
   name: 'list_account_threads',
-  description: 'List cached threads for a specific account (no Gmail fetch).',
+  description: 'List cached threads for a specific account.',
   category: 'mail',
   mutating: false,
   input: z.object({ account: z.string(), limit: z.number().int().min(1).max(200).default(80) }),
@@ -347,28 +337,12 @@ export const getSmartCategoryStats = defineTool({
   },
 });
 
+async function requireNylasResult<T>(value: Promise<T | null>, message: string): Promise<T> {
+  const result = await value;
+  if (!result) throw new Error(message);
+  return result;
+}
+
 function smartCandidateQuery(category: string) {
-  switch (category) {
-    case 'main':
-    case 'needs_reply':
-    case 'waiting':
-      // Human conversations live in Gmail's Primary tab (plus anything Gmail
-      // flagged Important). Querying the whole inbox lets the high-volume
-      // Promotions / Updates / Social tabs saturate the result cap and crowd
-      // out real people — a job offer sitting 2nd in Primary would never make
-      // the first 80 inbox rows. Scope to primary-or-important, and do NOT
-      // time-box it: a year-old human thread still owed a reply matters more
-      // than today's promotions. Newest-first + pagination keeps it bounded.
-      return 'in:inbox (category:primary OR is:important) -in:trash -in:spam';
-    case 'codes':
-      return 'newer_than:30d (code OR verification OR login OR security OR "magic link") -in:trash -in:spam';
-    case 'orders':
-      return 'newer_than:90d (order OR shipped OR delivery OR tracking OR refund OR receipt OR invoice OR booking) -in:trash -in:spam';
-    case 'finance_admin':
-      return 'newer_than:180d (invoice OR billing OR payment OR tax OR legal OR contract OR subscription) -in:trash -in:spam';
-    case 'noise':
-      return 'newer_than:30d -in:trash -in:spam';
-    default:
-      return 'in:inbox newer_than:45d -in:trash -in:spam';
-  }
+  return SMART_CATEGORY_CANDIDATE_QUERIES[category] || SMART_CATEGORY_CANDIDATE_QUERIES.default;
 }

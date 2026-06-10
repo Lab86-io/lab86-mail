@@ -2,6 +2,7 @@ import { convertToModelMessages, type UIMessage } from 'ai';
 import type { NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,12 @@ export async function POST(req: NextRequest) {
   }
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'agent',
+      limit: 60,
+      windowMs: 60_000,
+    });
     const modelMessages = await convertToModelMessages(body.messages);
     const stream = await runAgent({
       messages: modelMessages,
@@ -39,6 +46,7 @@ export async function POST(req: NextRequest) {
     });
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {
+    if (err instanceof RateLimitError) return rateLimitResponse(err);
     const status = err instanceof AuthRequiredError ? 401 : 500;
     return new Response(JSON.stringify({ ok: false, error: err?.message || 'agent failed' }), {
       status,

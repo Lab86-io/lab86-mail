@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { B2C_ANNUAL_PRICE_USD, B2C_MONTHLY_PRICE_USD, resolveAiBudgetPolicy } from '@/lib/ai/budget';
 import {
   normalizeOpenRouterFastModel,
   normalizeOpenRouterPrimaryModel,
@@ -13,7 +14,7 @@ import {
   isUserOpenRouterKeyRequired,
 } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { isConvexConfigured } from '@/lib/hosted/env';
+import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
 
 const PROVIDERS = new Set(['openrouter', 'openai', 'anthropic']);
@@ -29,19 +30,16 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
-  if (!isConvexConfigured()) {
-    return NextResponse.json({
-      ok: true,
-      configured: false,
-      mode: 'legacy',
-      message: 'Convex is not configured; AI uses server environment keys only.',
-    });
-  }
   const state = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId });
   const entitlement = await getAiBillingEntitlement();
   const requireOpenRouter = isUserOpenRouterKeyRequired();
   const monthlyCredits = requireOpenRouter ? 0 : entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
+  const budget = resolveAiBudgetPolicy({
+    monthlyCredits,
+    creditsUsed,
+    feature: 'agent',
+  });
   return NextResponse.json({
     ok: true,
     configured: true,
@@ -57,7 +55,11 @@ export async function GET() {
           validatedAt: state.key.validatedAt,
         }
       : null,
-    entitlement,
+    entitlement: {
+      plan: entitlement.plan,
+      status: entitlement.status,
+      source: entitlement.source,
+    },
     lab86AiDisabled: isLab86AiDisabled(),
     requiresUserOpenRouterKey: requireOpenRouter,
     subscriptionsDisabled: isSubscriptionServiceDisabled(),
@@ -69,28 +71,34 @@ export async function GET() {
     },
     usage: {
       period: state.period,
-      creditsUsed,
-      monthlyCredits,
-      remaining: Math.max(0, monthlyCredits - creditsUsed),
+      status: budget.hardStopped ? 'exhausted' : budget.softLimited ? 'reduced_cost' : 'available',
+      paidPlan: {
+        monthlyUsd: B2C_MONTHLY_PRICE_USD,
+        annualUsd: B2C_ANNUAL_PRICE_USD,
+      },
     },
   });
 }
 
 export async function POST(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false }).catch((err) => {
+  const user = await requireCurrentUser().catch((err) => {
     if (err instanceof AuthRequiredError) return null;
     throw err;
   });
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
-  if (!isConvexConfigured()) {
-    return NextResponse.json(
-      { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },
-      { status: 503 },
-    );
+  try {
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'ai_settings_write',
+      limit: 30,
+      windowMs: 60_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
+    throw err;
   }
-
   let body: Record<string, unknown>;
   try {
     const parsed = await req.json();
@@ -188,18 +196,23 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false }).catch((err) => {
+  const user = await requireCurrentUser().catch((err) => {
     if (err instanceof AuthRequiredError) return null;
     throw err;
   });
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
-  if (!isConvexConfigured()) {
-    return NextResponse.json(
-      { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },
-      { status: 503 },
-    );
+  try {
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'ai_settings_delete',
+      limit: 30,
+      windowMs: 60_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
+    throw err;
   }
   const url = new URL(req.url);
   const provider = url.searchParams.get('provider') || '';

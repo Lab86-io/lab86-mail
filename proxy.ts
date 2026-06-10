@@ -12,6 +12,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/healthz',
   '/api/clerk/webhook',
   '/api/nylas/callback',
+  '/api/nylas/webhook',
   '/api/billing/webhook',
   '/privacy',
   '/terms',
@@ -95,6 +96,10 @@ function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
   if (pathname === '/api/clerk/webhook') return false;
+  // Nylas deliveries authenticate via HMAC signature in the route handler;
+  // the challenge GET and signed POSTs come from Nylas servers, which can
+  // never satisfy staging basic auth.
+  if (pathname === '/api/nylas/webhook') return false;
   if (pathname === '/api/billing/webhook') return false;
   return true;
 }

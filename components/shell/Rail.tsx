@@ -5,6 +5,7 @@ import {
   AlarmClock,
   Archive,
   Calendar,
+  ChevronsUpDown,
   ClipboardList,
   CreditCard,
   Flag,
@@ -27,9 +28,19 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { HostedSettingsButton } from '@/components/hosted/HostedSettings';
+import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
@@ -50,6 +61,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 interface MailboxItem {
@@ -59,16 +71,16 @@ interface MailboxItem {
 }
 
 const MAILBOXES: MailboxItem[] = [
-  { query: 'is:unread newer_than:30d', label: 'Unread', Icon: MailOpen },
-  { query: 'is:starred newer_than:365d', label: 'Starred', Icon: Star },
-  { query: 'is:important newer_than:60d', label: 'Important', Icon: Flag },
-  { query: 'has:attachment newer_than:90d', label: 'Attachments', Icon: Layers },
-  { query: 'newer_than:7d', label: 'This week', Icon: Calendar },
-  { query: 'in:sent newer_than:365d', label: 'Sent', Icon: Send },
-  { query: 'in:drafts', label: 'Drafts', Icon: Pencil },
-  { query: '-in:trash newer_than:365d', label: 'All mail', Icon: Archive },
+  { query: QUICK_SEARCH_QUERIES.unread, label: 'Unread', Icon: MailOpen },
+  { query: QUICK_SEARCH_QUERIES.starred, label: 'Starred', Icon: Star },
+  { query: QUICK_SEARCH_QUERIES.important, label: 'Important', Icon: Flag },
+  { query: QUICK_SEARCH_QUERIES.attachments, label: 'Attachments', Icon: Layers },
+  { query: QUICK_SEARCH_QUERIES.thisWeek, label: 'This week', Icon: Calendar },
+  { query: QUICK_SEARCH_QUERIES.sent, label: 'Sent', Icon: Send },
+  { query: QUICK_SEARCH_QUERIES.drafts, label: 'Drafts', Icon: Pencil },
+  { query: QUICK_SEARCH_QUERIES.allMail, label: 'All mail', Icon: Archive },
   { query: 'label:MailOS/Snoozed', label: 'Snoozed', Icon: AlarmClock },
-  { query: 'in:trash newer_than:365d', label: 'Trash', Icon: Trash2 },
+  { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash', Icon: Trash2 },
 ];
 
 export const ALL_ACCOUNTS = '__all__';
@@ -117,6 +129,8 @@ const SMART_CATEGORIES = [
 export function Rail() {
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
+  const accountFilter = useClientStore((s) => s.accountFilter);
+  const setAccountFilter = useClientStore((s) => s.setAccountFilter);
   const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
   const primaryView = useClientStore((s) => s.primaryView);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
@@ -136,12 +150,36 @@ export function Rail() {
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean; displayName?: string }[] }>(
-        'list_accounts',
-      ),
+      callTool<{
+        accounts: {
+          accountId: string;
+          email: string;
+          provider: string;
+          authed: boolean;
+          primary?: boolean;
+          displayName?: string;
+          sync?: {
+            status: string;
+            corpusReady: boolean;
+            messagesSynced?: number;
+            error?: string;
+          };
+        }[];
+      }>('list_accounts'),
+    // Poll quickly while any mailbox is still indexing so the status dots and
+    // message counts move; settle down once everything is ready.
+    refetchInterval: (query) =>
+      (query.state.data?.accounts || []).some(
+        (a) => a.sync && !a.sync.corpusReady && a.sync.status !== 'error',
+      )
+        ? 5_000
+        : 60_000,
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
+  const indexingAccounts = authedAccounts.filter(
+    (a) => a.sync && !a.sync.corpusReady && (a.sync.status === 'backfilling' || a.sync.status === 'syncing'),
+  );
   const countAccount = account && account !== ALL_ACCOUNTS ? account : '';
 
   const { data: smartCounts, isLoading: countsLoading } = useQuery({
@@ -172,17 +210,16 @@ export function Rail() {
   });
   const customLabels = (smartLabels?.custom || []).filter((label) => label.sidebarVisible);
 
-  // The inbox is always the unified "all mailboxes" view — there's no account
-  // selector. We still resolve the primary account (compose "from") and force
-  // ALL_ACCOUNTS whenever more than one mailbox is authed.
+  // Default to the unified "all mailboxes" view, but let the user scope the
+  // inbox to a single account from the rail. Only repair the selection when
+  // it points at an account that no longer exists.
   useEffect(() => {
     if (!accounts.length) return;
     const primary = authedAccounts.find((a) => a.primary) || authedAccounts[0] || accounts[0];
-    if (primary) setPrimaryAccount(primary.email);
-    if (authedAccounts.length > 1) {
-      if (account !== ALL_ACCOUNTS) setAccount(ALL_ACCOUNTS);
-    } else if (!account && primary) {
-      setAccount(primary.email);
+    if (primary) setPrimaryAccount(primary.accountId);
+    const valid = account === ALL_ACCOUNTS || accounts.some((a) => a.accountId === account);
+    if (!account || !valid) {
+      setAccount(authedAccounts.length > 1 ? ALL_ACCOUNTS : primary ? primary.accountId : ALL_ACCOUNTS);
     }
   }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 
@@ -271,6 +308,23 @@ export function Rail() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {authedAccounts.length > 1 ? (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <AccountFilterDropdown
+                    accounts={authedAccounts}
+                    accountFilter={accountFilter}
+                    setAccountFilter={setAccountFilter}
+                    indexingCount={indexingAccounts.length}
+                  />
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
 
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-1">
@@ -402,7 +456,7 @@ export function Rail() {
               variant="outline"
               className="ml-2 px-1.5 py-0 text-[9px] group-data-[collapsible=icon]:hidden"
             >
-              Gmail
+              Providers
             </Badge>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -669,5 +723,118 @@ function SmartLabelsSettings({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type AccountSync =
+  | {
+      status: string;
+      corpusReady: boolean;
+      messagesSynced?: number;
+      error?: string;
+    }
+  | undefined;
+
+// Green = indexed and searchable locally; pulsing accent = actively indexing;
+// red = sync error or needs reconnect; gray = waiting for its first sync.
+function AccountSyncDot({ sync, authed }: { sync: AccountSync; authed: boolean }) {
+  const color = !authed
+    ? 'bg-[var(--color-danger)]'
+    : sync?.status === 'error'
+      ? 'bg-[var(--color-danger)]'
+      : sync?.corpusReady
+        ? 'bg-emerald-500'
+        : sync?.status === 'backfilling' || sync?.status === 'syncing'
+          ? 'animate-pulse bg-[var(--color-accent)]'
+          : 'bg-[var(--color-text-faint)]';
+  return <span className={`ml-auto size-1.5 shrink-0 rounded-full ${color}`} />;
+}
+
+function AccountFilterDropdown({
+  accounts,
+  accountFilter,
+  setAccountFilter,
+  indexingCount,
+}: {
+  accounts: Array<{
+    accountId: string;
+    email: string;
+    provider: string;
+    displayName?: string;
+    authed: boolean;
+    sync?: { status: string; corpusReady: boolean; messagesSynced?: number; error?: string };
+  }>;
+  accountFilter: string[];
+  setAccountFilter: (accountIds: string[]) => void;
+  indexingCount: number;
+}) {
+  const allIds = accounts.map((a) => a.accountId);
+  // Empty filter means "all accounts" — the default.
+  const effective = accountFilter.length ? accountFilter.filter((id) => allIds.includes(id)) : allIds;
+  const allSelected = effective.length === allIds.length;
+  const label = allSelected ? 'All accounts' : `${effective.length} of ${allIds.length} accounts`;
+
+  const toggle = (accountId: string, checked: boolean) => {
+    const next = checked
+      ? [...new Set([...effective, accountId])]
+      : effective.filter((id) => id !== accountId);
+    if (!next.length) return; // at least one mailbox stays selected
+    setAccountFilter(next.length === allIds.length ? [] : next);
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuButton tooltip="Choose accounts" className="justify-between">
+          <span className="flex min-w-0 items-center gap-2">
+            <Inbox className="size-4 shrink-0" />
+            <span className="truncate">{label}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            {indexingCount ? <Ring className="size-3 text-[var(--color-accent)]" /> : null}
+            <ChevronsUpDown className="size-3 text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden" />
+          </span>
+        </SidebarMenuButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
+          Inbox shows
+        </DropdownMenuLabel>
+        <DropdownMenuItem
+          onSelect={(event) => {
+            event.preventDefault();
+            setAccountFilter([]);
+          }}
+          className="gap-2 text-[12.5px]"
+        >
+          <Inbox className="size-3.5" />
+          All accounts
+          {allSelected ? <span className="ml-auto text-[var(--color-accent)]">✓</span> : null}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {accounts.map((mailbox) => (
+          <DropdownMenuCheckboxItem
+            key={mailbox.accountId}
+            checked={effective.includes(mailbox.accountId)}
+            onCheckedChange={(checked) => toggle(mailbox.accountId, Boolean(checked))}
+            onSelect={(event) => event.preventDefault()}
+            className="gap-2 text-[12.5px]"
+          >
+            <ProviderLogo provider={mailbox.provider} className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{mailbox.displayName || mailbox.email}</span>
+            <AccountSyncDot sync={mailbox.sync} authed={mailbox.authed} />
+          </DropdownMenuCheckboxItem>
+        ))}
+        {indexingCount ? (
+          <>
+            <DropdownMenuSeparator />
+            <div className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-[var(--color-accent)]">
+              <Ring className="size-3" />
+              {indexingCount === 1 ? '1 mailbox indexing…' : `${indexingCount} mailboxes indexing…`}
+            </div>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

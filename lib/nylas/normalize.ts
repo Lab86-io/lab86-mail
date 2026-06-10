@@ -3,7 +3,7 @@ import type { Message as NylasMessage, Thread as NylasThread } from 'nylas';
 import type { Account, Attachment, LabelRecord, Message, Thread } from '@/lib/shared/types';
 
 interface ConnectedAccount {
-  accountId?: string;
+  accountId: string;
   email: string;
   provider: 'google' | 'microsoft' | 'icloud' | 'imap';
   status: string;
@@ -16,7 +16,7 @@ export function normalizeNylasAccount(row: ConnectedAccount): Account {
   return {
     accountId: row.accountId,
     email: row.email,
-    provider: 'gmail',
+    provider: row.provider,
     authed: row.status === 'connected',
     primary: false,
     displayName: row.displayName,
@@ -71,6 +71,7 @@ export function normalizeNylasMessage(message: NylasMessage, account: string): M
     }),
     htmlBody: body,
     labels: message.folders || [],
+    unread: Boolean((message as any).unread),
     attachments: (message.attachments || []).map(normalizeNylasAttachment),
     headers,
     cachedAt: Date.now(),

@@ -1,9 +1,10 @@
 export type AccountEmail = string;
+export type AccountProvider = 'google' | 'microsoft' | 'icloud' | 'imap';
 
 export interface Account {
-  accountId?: string;
+  accountId: string;
   email: AccountEmail;
-  provider: 'gmail';
+  provider: AccountProvider;
   authed: boolean;
   primary?: boolean;
   displayName?: string;
@@ -62,6 +63,9 @@ export interface Message {
   textBody: string;
   htmlBody: string;
   labels: string[];
+  // Provider-agnostic read state from the API (labels like 'UNREAD' are a
+  // Gmail-only signal and must not be the sole source).
+  unread?: boolean;
   attachments: Attachment[];
   headers: Record<string, string>;
   cachedAt: number;
@@ -305,6 +309,10 @@ export interface DailyReport {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
   generatedAt: number;
+  // Progressive generation: 'partial' editions stream lanes in as threads are
+  // analyzed; 'ready' is the finished edition. Absent on pre-existing docs.
+  status?: 'partial' | 'ready';
+  progress?: { stage: string; done: number; total: number };
   accounts: AccountEmail[];
   title: string;
   narrative: string;

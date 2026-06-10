@@ -1,7 +1,5 @@
 import { isSubscriptionServiceDisabled } from './controls';
 
-export type HostedMode = 'legacy' | 'hosted';
-
 export function isClerkConfigured() {
   return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 }
@@ -20,17 +18,12 @@ export function isStripeConfigured() {
 
 export function isClerkBillingConfigured() {
   if (isSubscriptionServiceDisabled()) return false;
-  if (isClerkConfigured()) return true;
-  return Boolean(
-    process.env.CLERK_BILLING_CHECKOUT_URL ||
-      process.env.CLERK_BILLING_PORTAL_URL ||
-      process.env.NEXT_PUBLIC_CLERK_BILLING_CHECKOUT_URL ||
-      process.env.NEXT_PUBLIC_CLERK_BILLING_PORTAL_URL,
+  // Billing is only "configured" when the checkout URL it implies can actually
+  // be produced (see clerkBillingCheckoutUrl in lib/hosted/billing.ts).
+  return (
+    isClerkConfigured() &&
+    Boolean(process.env.CLERK_BILLING_CHECKOUT_URL || process.env.NEXT_PUBLIC_CLERK_BILLING_CHECKOUT_URL)
   );
-}
-
-export function isGogEnabled() {
-  return process.env.LAB86_MAIL_ENABLE_GOG === '1';
 }
 
 export function hostedPublicUrl() {
@@ -54,17 +47,13 @@ export function convexInternalSecret() {
   return process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
 }
 
-export function appMode(): HostedMode {
-  return isClerkConfigured() ? 'hosted' : 'legacy';
-}
-
 export function aiCreditDefaults() {
   const numberFromEnv = (value: string | undefined, fallback: number) => {
     const parsed = Number(value);
     return value && Number.isFinite(parsed) ? parsed : fallback;
   };
   return {
-    freeMonthlyCredits: numberFromEnv(process.env.LAB86_AI_FREE_MONTHLY_CREDITS, 25_000),
-    proMonthlyCredits: numberFromEnv(process.env.LAB86_AI_PRO_MONTHLY_CREDITS, 2_000_000),
+    freeMonthlyCredits: numberFromEnv(process.env.LAB86_AI_FREE_MONTHLY_CREDITS, 0),
+    proMonthlyCredits: numberFromEnv(process.env.LAB86_AI_PRO_MONTHLY_CREDITS, 500),
   };
 }

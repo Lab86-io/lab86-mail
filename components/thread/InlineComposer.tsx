@@ -113,23 +113,29 @@ export function InlineComposer({
   const accountsQuery = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean; displayName?: string }[] }>(
-        'list_accounts',
-      ),
+      callTool<{
+        accounts: {
+          accountId: string;
+          email: string;
+          authed: boolean;
+          primary?: boolean;
+          displayName?: string;
+        }[];
+      }>('list_accounts'),
     staleTime: 60_000,
   });
-  const accountAliasByEmail = useMemo(
+  const accountAliasById = useMemo(
     () =>
       Object.fromEntries(
         (accountsQuery.data?.accounts || []).map((account) => [
-          account.email,
+          account.accountId,
           account.displayName || account.email,
         ]),
       ) as Record<string, string>,
     [accountsQuery.data?.accounts],
   );
   const authedAccounts = useMemo(
-    () => (accountsQuery.data?.accounts || []).filter((a) => a.authed).map((a) => a.email),
+    () => (accountsQuery.data?.accounts || []).filter((a) => a.authed).map((a) => a.accountId),
     [accountsQuery.data],
   );
   // If the resolved account isn't in the authed list yet (e.g. still loading),
@@ -381,16 +387,16 @@ export function InlineComposer({
                 <SelectValue placeholder={account} />
               </SelectTrigger>
               <SelectContent align="start">
-                {fromOptions.map((email) => (
-                  <SelectItem key={email} value={email} className="text-[12px]">
-                    {accountAliasByEmail[email] || email}
+                {fromOptions.map((accountId) => (
+                  <SelectItem key={accountId} value={accountId} className="text-[12px]">
+                    {accountAliasById[accountId] || accountId}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           ) : (
             <span className="text-[var(--color-text-muted)]">
-              {accountAliasByEmail[fromAccount || account] || fromAccount || account}
+              {accountAliasById[fromAccount || account] || fromAccount || account}
             </span>
           )}
         </span>

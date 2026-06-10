@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { hasAi } from '../ai/client';
-import { generateTextForCurrentUser } from '../ai/gateway';
+import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
+import { parseMailSearchQuery } from '../mail/search/parser';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import { getNylasThread } from '../nylas/provider';
 import type { SmartCategory, SmartCategoryId, SmartLabelDefinition, SmartRule } from '../shared/types';
@@ -68,7 +69,7 @@ export const summarizeThread = defineTool({
     }
     const messages = await loadThread(account, threadId, ctx.userId);
     if (!messages.length) return { summary: '(empty thread)', model: 'none' };
-    if (!hasAi()) {
+    if (!(await hasAiForCurrentUser())) {
       const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
       const summary = `${messages[0].subject} — ${messages.length} message(s) with ${senders}.`;
       await setThreadSummary(account, threadId, summary).catch(() => undefined);
@@ -122,7 +123,7 @@ export const triageThread = defineTool({
     const messages = await loadThread(account, threadId, ctx.userId);
     if (!messages.length)
       return { priority: 3 as const, action: 'archive', reason: 'empty thread', model: 'none' };
-    if (!hasAi()) {
+    if (!(await hasAiForCurrentUser())) {
       const triage = {
         priority: (messages[messages.length - 1].labels.includes('UNREAD') ? 2 : 3) as 1 | 2 | 3,
         action: 'read',
@@ -181,7 +182,7 @@ export const draftReply = defineTool({
     if (!messages.length) return { draft: '', model: 'none' };
     const last = messages[messages.length - 1];
     const memory = await recallSender(last.from);
-    if (!hasAi()) {
+    if (!(await hasAiForCurrentUser())) {
       const sender = String(last.from).replace(/<.*?>/g, '').trim().split(/\s+/)[0] || 'there';
       return {
         draft: `Hi ${sender},\n\nThanks for reaching out. ${instructions || 'I will take a look.'}\n\nBest,\nJakob`,
@@ -240,7 +241,7 @@ export const bulkTriage = defineTool({
   }),
   async handler({ items }) {
     if (!items.length) return { verdicts: [], model: 'none' };
-    if (!hasAi()) {
+    if (!(await hasAiForCurrentUser())) {
       return {
         verdicts: items.map((it) => ({
           id: it.id,
@@ -358,7 +359,7 @@ export async function classifyThreadsBatched(
     ({ verdict }) => force || verdict.primary === 'review' || verdict.confidence < 0.68,
   );
   const aiById = new Map<string, SmartCategory>();
-  if (hasAi() && uncertain.length) {
+  if (uncertain.length && (await hasAiForCurrentUser())) {
     for (let i = 0; i < uncertain.length; i += 40) {
       const chunk = uncertain.slice(i, i + 40);
       try {
@@ -443,7 +444,8 @@ export const classifyThreads = defineTool({
     const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
     const verdicts = await classifyThreadsBatched(threads, { rules, customLabels, force });
     const usedAi = verdicts.some((v) => v.model === 'fast');
-    return { verdicts, model: usedAi ? 'fast' : hasAi() ? 'deterministic' : 'local' };
+    const aiAvailable = usedAi || (await hasAiForCurrentUser());
+    return { verdicts, model: usedAi ? 'fast' : aiAvailable ? 'deterministic' : 'local' };
   },
 });
 
@@ -456,8 +458,9 @@ export const extractActionItems = defineTool({
   output: z.object({ items: z.array(z.string()), model: z.string() }),
   async handler({ account, threadId }, ctx) {
     const messages = await loadThread(account, threadId, ctx.userId);
-    if (!hasAi() || !messages.length) {
-      return { items: [], model: hasAi() ? 'fast' : 'local' };
+    const aiAvailable = await hasAiForCurrentUser();
+    if (!aiAvailable || !messages.length) {
+      return { items: [], model: aiAvailable ? 'fast' : 'local' };
     }
     const { text } = await generateTextForCurrentUser({
       feature: 'extract_action_items',
@@ -490,7 +493,7 @@ export const translateThread = defineTool({
   output: z.object({ translation: z.string(), model: z.string() }),
   async handler({ account, threadId, language }, ctx) {
     const messages = await loadThread(account, threadId, ctx.userId);
-    if (!hasAi() || !messages.length) return { translation: '', model: 'none' };
+    if (!(await hasAiForCurrentUser()) || !messages.length) return { translation: '', model: 'none' };
     const last = messages[messages.length - 1];
     const { text } = await generateTextForCurrentUser({
       feature: 'translate_thread',
@@ -515,7 +518,8 @@ export const preSendCritique = defineTool({
     model: z.string(),
   }),
   async handler({ draftBody, threadContext }) {
-    if (!hasAi()) return { verdict: 'ok' as const, notes: [] as string[], model: 'local' };
+    if (!(await hasAiForCurrentUser()))
+      return { verdict: 'ok' as const, notes: [] as string[], model: 'local' };
     const { text } = await generateTextForCurrentUser({
       feature: 'pre_send_critique',
       speed: 'fast',
@@ -537,21 +541,23 @@ export const preSendCritique = defineTool({
 export const nlSearch = defineTool({
   name: 'nl_search',
   description:
-    'Translate a natural-language description into a Gmail query string (e.g. "from board members last quarter" → from:(...) newer_than:90d).',
+    'Translate a natural-language description into structured mail search intent and a temporary query string.',
   category: 'ai',
   mutating: false,
   input: z.object({ description: z.string() }),
-  output: z.object({ query: z.string(), model: z.string() }),
+  output: z.object({ query: z.string(), ast: z.any(), model: z.string() }),
   async handler({ description }) {
-    if (!hasAi()) return { query: description, model: 'local' };
+    if (!(await hasAiForCurrentUser()))
+      return { query: description, ast: parseMailSearchQuery(description), model: 'local' };
     const { text } = await generateTextForCurrentUser({
       feature: 'nl_search',
       speed: 'fast',
       system:
-        'You translate natural language into Gmail search syntax. Output only the query, no prose, no quotes. Use operators like from:, to:, subject:, newer_than:Nd, older_than:Nd, is:unread, has:attachment, in:inbox.',
+        'You translate natural language into a compact mail search query. Output only the query, no prose, no quotes. Prefer provider-neutral operators the app compiler understands: account:, from:, to:, subject:, newer_than:Nd, older_than:Nd, is:unread, is:starred, has:attachment, in:inbox. Use account: for phrases like "my Gmail account", "my Outlook account", "from my email account", or "mailbox"; use from: only for sender addresses.',
       prompt: description,
     });
-    return { query: text.trim().replace(/^"|"$/g, ''), model: 'fast' };
+    const query = applyNaturalLanguageAccountHint(description, text.trim().replace(/^"|"$/g, ''));
+    return { query, ast: parseMailSearchQuery(query), model: 'fast' };
   },
 });
 

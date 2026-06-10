@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
-import { isConvexConfigured, isNylasConfigured } from '@/lib/hosted/env';
+import { isNylasConfigured } from '@/lib/hosted/env';
+import { mailProviderCapabilities } from '@/lib/mail/provider-capabilities';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,15 +15,19 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
-  const accounts = isConvexConfigured()
-    ? await convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId: user.userId }).catch(() => [])
-    : [];
+  const accounts = await convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId: user.userId });
+  const syncStates = await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
+    userId: user.userId,
+    limit: 500,
+  });
   return NextResponse.json({
     ok: true,
     configured: {
-      convex: isConvexConfigured(),
+      convex: true,
       nylas: isNylasConfigured(),
     },
+    capabilities: mailProviderCapabilities(),
     accounts,
+    syncStates,
   });
 }

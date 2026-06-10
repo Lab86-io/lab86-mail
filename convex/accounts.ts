@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
-import { accountId, now, requireInternalSecret } from './lib';
+import { now, requireInternalSecret } from './lib';
 
 const providerValidator = v.union(
   v.literal('google'),
@@ -65,17 +65,31 @@ export const listConnectedAccounts = query({
   },
 });
 
-export const getConnectedAccountByEmail = query({
+export const getConnectedAccount = query({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
-    email: v.string(),
+    accountId: v.string(),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     return await ctx.db
       .query('connectedAccounts')
-      .withIndex('by_user_email', (q) => q.eq('userId', args.userId).eq('email', args.email.toLowerCase()))
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
+  },
+});
+
+export const getConnectedAccountByGrant = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    grantId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
       .unique();
   },
 });
@@ -96,18 +110,12 @@ export const upsertConnectedAccount = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const email = args.email.toLowerCase();
-    const id = accountId(args.userId, email);
+    const id = args.grantId;
     const ts = now();
     const existing = await ctx.db
       .query('connectedAccounts')
-      .withIndex('by_user_email', (q) => q.eq('userId', args.userId).eq('email', email))
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', id))
       .unique();
-    if (existing && existing.provider === 'google' && args.provider !== 'google') {
-      // The UI currently uses email as the mailbox key. If two providers report
-      // the same email, keep the Google mailbox active because Gmail query syntax
-      // and folder names drive the inbox view.
-      return { accountId: existing.accountId };
-    }
     const accountPatch = {
       accountId: id,
       email,
@@ -153,6 +161,39 @@ export const upsertConnectedAccount = mutation({
         createdAt: ts,
       });
     }
+
+    const syncState = await ctx.db
+      .query('mailSyncStates')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', id))
+      .unique();
+    if (!syncState) {
+      await ctx.db.insert('mailSyncStates', {
+        userId: args.userId,
+        accountId: id,
+        grantId: args.grantId,
+        provider: args.provider,
+        status: 'idle' as const,
+        corpusReady: false,
+        error: undefined,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    } else if (syncState.grantId !== args.grantId) {
+      // A new grant invalidates the old corpus cursors; restart from idle.
+      await ctx.db.patch(syncState._id, {
+        grantId: args.grantId,
+        provider: args.provider,
+        status: 'idle' as const,
+        corpusReady: false,
+        cursor: undefined,
+        error: undefined,
+        updatedAt: ts,
+      });
+    } else {
+      // Same-grant reconnects/token refreshes must not revoke an
+      // already-synced corpus or restart backfill.
+      await ctx.db.patch(syncState._id, { provider: args.provider, updatedAt: ts });
+    }
     return { accountId: id };
   },
 });
@@ -188,7 +229,17 @@ export const deleteConnectedAccount = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const tables = ['connectedAccounts', 'providerGrants', 'threads', 'messages', 'syncJobs'] as const;
+    const tables = [
+      'connectedAccounts',
+      'providerGrants',
+      'threads',
+      'messages',
+      'syncJobs',
+      'mailCorpusThreads',
+      'mailCorpusMessages',
+      'mailSyncStates',
+      'mailWebhookEvents',
+    ] as const;
     for (const table of tables) {
       const rows = await ctx.db
         .query(table)
@@ -231,3 +282,63 @@ export const deleteConnectedAccount = mutation({
     return { ok: true };
   },
 });
+
+export const deleteUserCascade = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const counts: Record<string, number> = {};
+    const userTables = [
+      'connectedAccounts',
+      'providerGrants',
+      'nylasOAuthStates',
+      'aiSettings',
+      'aiProviderKeys',
+      'aiEntitlements',
+      'aiUsagePeriods',
+      'aiUsageEvents',
+      'threads',
+      'messages',
+      'dailyReports',
+      'memories',
+      'auditEvents',
+      'syncJobs',
+      'mailCorpusThreads',
+      'mailCorpusMessages',
+      'mailSyncStates',
+      'mailWebhookEvents',
+      'rateLimits',
+    ] as const;
+
+    for (const table of userTables) {
+      const rows = await rowsByUser(ctx, table, args.userId);
+      counts[table] = rows.length;
+      for (const row of rows) await ctx.db.delete(row._id);
+    }
+
+    const userRows = await ctx.db
+      .query('users')
+      .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', args.userId))
+      .collect();
+    counts.users = userRows.length;
+    for (const row of userRows) await ctx.db.delete(row._id);
+
+    return { ok: true, counts };
+  },
+});
+
+async function rowsByUser(ctx: any, table: string, userId: string) {
+  return await ctx.db
+    .query(table)
+    .withIndex('by_user' as any, (q: any) => q.eq('userId', userId))
+    .collect()
+    .catch(async () =>
+      ctx.db
+        .query(table)
+        .withIndex('by_user_account' as any, (q: any) => q.eq('userId', userId))
+        .collect(),
+    );
+}

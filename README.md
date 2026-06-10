@@ -1,12 +1,12 @@
 # lab86-mail · v0.8
 
-Local desktop web client for Jakob's hybrid Gmail setup, rebuilt from the ground up.
+Hosted mail client for Lab86's B2C mail product.
 
-- **Backend:** single Next.js 16 + React 19 app, run on **Bun**. Hosted mode uses Clerk, Convex, Nylas, and Clerk Billing; legacy local mode can still use `@seald-io/nedb`.
+- **Backend:** single Next.js 16 + React 19 app, run on **Bun**. Runtime infrastructure is Railway + Clerk + Convex + Nylas + Clerk Billing.
 - **AI:** OpenAI **GPT‑5.5** (primary) via Vercel **AI SDK 6**, with `@ai-sdk/anthropic` available as a fallback. API key is shared with `voice-agent` via `/home/jjalangtry/.config/lab86-private/voice-agent.env`.
 - **Tools:** ~53 typed, Zod-validated tools in `lib/tools/*`. Every UI action and every AI agent action go through the same registry. Introspectable via `GET /api/tools` and callable via `POST /api/tools/<name>`.
 - **Frontend:** shadcn/ui primitives, Motion 12 transitions, Lucide + Phosphor icons, TipTap (planned for compose), cmdk palette, Sonner toasts, next-themes, TanStack Query, Zustand.
-- **Mail access:** still tokenless — every Gmail/Calendar/Contacts call shells out to `/home/jjalangtry/.local/bin/lab86-gog`.
+- **Mail access:** Nylas is the interim provider transport for connected Google, Microsoft, iCloud, and IMAP accounts.
 
 ## Run
 
@@ -19,7 +19,7 @@ bun run build
 bun run start
 ```
 
-Open `http://127.0.0.1:18836/` (or the tailnet URL `https://mail.lab86.io/`).
+Open `http://127.0.0.1:18836/` for local development.
 
 ## Hosted release
 
@@ -49,7 +49,7 @@ systemctl --user restart lab86-mail.service
 
 `lab86-mail.service` runs `bun run start` and pulls env from both:
 
-- `/home/jjalangtry/.config/lab86-mail/lab86-mail.env` — service-local overrides (port, GOG binary path, model names).
+- `/home/jjalangtry/.config/lab86-mail/lab86-mail.env` — service-local overrides (port, model names).
 - `/home/jjalangtry/.config/lab86-private/voice-agent.env` — `OPENAI_API_KEY` shared with the voice agent.
 
 ## Architecture
@@ -78,8 +78,8 @@ lib/
     client.ts              createOpenAI / createAnthropic, picks primary + fast models
     system-prompt.ts       agent persona
     loop.ts                streamText({ model, tools, stopWhen }) lifting registry → SDK
-  store/                   NeDB collections (threads, messages, chat, memories, audit, prefs, snooze, drafts)
-  gog/                     pool + Gmail JSON → typed Message/Thread normalize
+  store/                   local cache collections used by current UI workflows
+  nylas/                   interim provider transport + normalization
   send/                    in-memory queue used by undo_send
   shared/                  Thread/Message/Memory types + date/format helpers
   client-state.ts          Zustand store

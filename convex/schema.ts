@@ -27,7 +27,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
-    .index('by_user_email', ['userId', 'email'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId']),
 
@@ -120,7 +119,7 @@ export default defineSchema({
   aiUsageEvents: defineTable({
     userId: v.string(),
     feature: v.string(),
-    source: v.union(v.literal('lab86'), v.literal('byok'), v.literal('legacy')),
+    source: v.union(v.literal('lab86'), v.literal('byok')),
     provider: v.string(),
     model: v.string(),
     promptTokens: v.optional(v.number()),
@@ -175,6 +174,120 @@ export default defineSchema({
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_account_message', ['accountId', 'providerMessageId']),
 
+  mailCorpusThreads: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    providerThreadId: v.string(),
+    subject: v.string(),
+    fromAddress: v.string(),
+    lastDate: v.number(),
+    snippet: v.string(),
+    labels: v.array(v.string()),
+    unread: v.boolean(),
+    starred: v.optional(v.boolean()),
+    messageCount: v.optional(v.number()),
+    yearMonth: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_grant', ['grantId'])
+    .index('by_account', ['accountId'])
+    .index('by_account_thread', ['accountId', 'providerThreadId'])
+    .index('by_user_account_updated', ['userId', 'accountId', 'lastDate']),
+
+  mailCorpusMessages: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    providerMessageId: v.string(),
+    providerThreadId: v.string(),
+    subject: v.string(),
+    from: v.string(),
+    to: v.string(),
+    cc: v.optional(v.string()),
+    bcc: v.optional(v.string()),
+    receivedAt: v.number(),
+    snippet: v.string(),
+    textBody: v.optional(v.string()),
+    searchText: v.string(),
+    labels: v.array(v.string()),
+    unread: v.optional(v.boolean()),
+    starred: v.optional(v.boolean()),
+    attachments: v.optional(v.array(v.any())),
+    headers: v.optional(v.any()),
+    yearMonth: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_grant', ['grantId'])
+    .index('by_account', ['accountId'])
+    .index('by_account_thread', ['accountId', 'providerThreadId'])
+    .index('by_account_message', ['accountId', 'providerMessageId'])
+    .index('by_user_account_received', ['userId', 'accountId', 'receivedAt'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'accountId', 'grantId', 'provider', 'yearMonth'],
+    }),
+
+  mailSyncStates: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    status: v.union(
+      v.literal('idle'),
+      v.literal('backfilling'),
+      v.literal('syncing'),
+      v.literal('ready'),
+      v.literal('error'),
+    ),
+    cursor: v.optional(v.string()),
+    historyId: v.optional(v.string()),
+    deltaLink: v.optional(v.string()),
+    corpusReady: v.boolean(),
+    progress: v.optional(v.any()),
+    error: v.optional(v.string()),
+    messagesSynced: v.optional(v.number()),
+    lastBackfillAt: v.optional(v.number()),
+    lastIncrementalSyncAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_grant', ['grantId'])
+    .index('by_account', ['accountId'])
+    .index('by_status', ['status']),
+
+  mailWebhookEvents: defineTable({
+    eventId: v.string(),
+    type: v.string(),
+    userId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    grantId: v.optional(v.string()),
+    provider: v.optional(
+      v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    ),
+    payload: v.any(),
+    status: v.union(v.literal('received'), v.literal('processed'), v.literal('error')),
+    error: v.optional(v.string()),
+    receivedAt: v.number(),
+    processedAt: v.optional(v.number()),
+  })
+    .index('by_event', ['eventId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_account', ['accountId'])
+    .index('by_grant', ['grantId'])
+    .index('by_status', ['status'])
+    .index('by_received', ['receivedAt']),
+
   dailyReports: defineTable({
     userId: v.string(),
     accountIds: v.array(v.string()),
@@ -221,4 +334,16 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_account', ['accountId']),
+
+  rateLimits: defineTable({
+    userId: v.string(),
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+    expiresAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_key_window', ['userId', 'key', 'windowStart'])
+    .index('by_expires', ['expiresAt']),
 });

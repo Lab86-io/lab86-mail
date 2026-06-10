@@ -4,13 +4,14 @@ import { generateText, type ModelMessage, streamText } from 'ai';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { aiCreditDefaults, isConvexConfigured } from '@/lib/hosted/env';
+import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
+import { estimateAiUsageCost, resolveAiBudgetPolicy, shouldDepleteLab86Budget } from './budget';
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
-type AiSource = 'lab86' | 'byok' | 'legacy';
+type AiSource = 'lab86' | 'byok';
 type AiSpeed = 'fast' | 'primary';
 type PlatformPreference = {
   provider?: AiProvider;
@@ -77,10 +78,10 @@ export async function resolveAiRuntime(input: {
   feature: string;
 }): Promise<ResolvedAiRuntime> {
   const userId = input.userId || getAiRequestContext().userId || null;
-  const speed = input.speed || 'fast';
+  let speed = input.speed || 'fast';
   let platformPreference: PlatformPreference | undefined;
 
-  if (userId && isConvexConfigured()) {
+  if (userId) {
     const state = await convexQuery<RuntimeState>(api.ai.getRuntimeState, { userId });
     const mode = state.settings?.enabled === false ? 'lab86' : state.settings?.mode || 'lab86';
     if (isUserOpenRouterKeyRequired()) {
@@ -114,7 +115,8 @@ export async function resolveAiRuntime(input: {
     }
 
     const entitlement = await getAiBillingEntitlement();
-    assertLab86Quota(state, entitlement);
+    const budgetPolicy = assertLab86Budget(state, entitlement, input.feature);
+    if (budgetPolicy.forceFastModel) speed = 'fast';
     platformPreference = {
       provider: state.settings?.provider,
       modelName: speed === 'fast' ? state.settings?.fastModel : state.settings?.model,
@@ -129,13 +131,26 @@ export async function resolveAiRuntime(input: {
   if (platform) {
     return {
       userId,
-      source: userId ? 'lab86' : 'legacy',
+      source: 'lab86',
       ...platform,
     };
   }
   throw new Error(
     'No AI provider configured. Add a user API key or configure OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.',
   );
+}
+
+// User-aware availability check: true when the current user can reach a model
+// through ANY source (their own BYOK key, or platform keys within budget).
+// Unlike the env-only hasAi() in lib/ai/client.ts, this does not break
+// BYOK-only deployments with no platform key.
+export async function hasAiForCurrentUser(feature = 'availability_check'): Promise<boolean> {
+  try {
+    await resolveAiRuntime({ feature });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function generateTextForCurrentUser(
@@ -256,9 +271,10 @@ function modelFor(provider: AiProvider, speed: AiSpeed) {
   return speed === 'primary' ? DEFAULT_MODELS[provider].primary : DEFAULT_MODELS[provider].fast;
 }
 
-function assertLab86Quota(
+function assertLab86Budget(
   state: RuntimeState,
   clerkEntitlement?: { monthlyCredits: number; status: string } | null,
+  feature = 'agent',
 ) {
   if (isLab86AiDisabled()) {
     throw new Error('Lab86 AI is temporarily disabled. Switch to your own API key to continue.');
@@ -270,9 +286,16 @@ function assertLab86Quota(
       ? entitlement.monthlyCredits
       : defaults.freeMonthlyCredits;
   const used = state.lab86Usage?.creditsUsed || 0;
-  if (monthlyCredits <= 0 || used >= monthlyCredits) {
-    throw new Error('Lab86 AI quota is exhausted. Upgrade your plan or switch to your own API key.');
+  const policy = resolveAiBudgetPolicy({ monthlyCredits, creditsUsed: used, feature });
+  if (!policy.subscribed) {
+    throw new Error('Choose the Lab86 Mail paid plan or switch to your own API key before using Lab86 AI.');
   }
+  if (policy.hardStopped) {
+    throw new Error(
+      'Lab86 AI chat budget is exhausted for this month. Core mail automation will continue in reduced-cost mode, or you can switch to your own API key.',
+    );
+  }
+  return policy;
 }
 
 async function recordUsage(
@@ -282,10 +305,30 @@ async function recordUsage(
   ok: boolean,
   error?: string,
 ) {
-  if (!runtime.userId || !isConvexConfigured()) return;
+  if (!runtime.userId) return;
   const promptTokens = numericUsage(usage?.inputTokens ?? usage?.promptTokens);
   const completionTokens = numericUsage(usage?.outputTokens ?? usage?.completionTokens);
   const totalTokens = numericUsage(usage?.totalTokens) ?? (promptTokens || 0) + (completionTokens || 0);
+  const cachedInputTokens = numericUsage(
+    usage?.cachedInputTokens ??
+      usage?.promptTokensDetails?.cachedTokens ??
+      usage?.inputTokensDetails?.cachedTokens ??
+      usage?.inputTokensDetails?.cachedInputTokens,
+  );
+  const cacheWriteTokens = numericUsage(
+    usage?.cacheWriteTokens ??
+      usage?.promptTokensDetails?.cacheCreationTokens ??
+      usage?.inputTokensDetails?.cacheCreationTokens,
+  );
+  const cost = estimateAiUsageCost({
+    provider: runtime.provider,
+    model: runtime.modelName,
+    promptTokens,
+    completionTokens,
+    cachedInputTokens,
+    cacheWriteTokens,
+    batch: Boolean(usage?.batch || usage?.batchMode),
+  });
   await convexMutation(api.ai.recordUsage, {
     userId: runtime.userId,
     feature,
@@ -295,7 +338,7 @@ async function recordUsage(
     promptTokens,
     completionTokens,
     totalTokens,
-    estimatedCredits: Math.max(1, totalTokens || 1),
+    estimatedCredits: shouldDepleteLab86Budget(runtime.source) ? cost.estimatedCredits : 0,
     ok,
     error,
   }).catch(() => undefined);

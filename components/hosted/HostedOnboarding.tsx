@@ -72,6 +72,7 @@ export function HostedOnboarding() {
   });
 
   const accounts = nylas?.accounts || [];
+  const providerCapabilities = (nylas?.capabilities || []).filter((provider: any) => provider.visible);
   const hasAccounts = accounts.length > 0;
 
   useEffect(() => {
@@ -173,7 +174,7 @@ export function HostedOnboarding() {
                   <h3 className="text-[13px] font-semibold">Add email accounts</h3>
                 </div>
                 <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
-                  Gmail and Microsoft connect through Nylas OAuth.
+                  Mail accounts connect through Nylas hosted OAuth.
                 </p>
               </div>
               {hasAccounts ? (
@@ -182,13 +183,31 @@ export function HostedOnboarding() {
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1">
-              <Button asChild className="justify-start">
-                <a href="/api/nylas/connect?provider=google&redirectTo=/">Connect Gmail</a>
-              </Button>
-              <Button asChild variant="outline" className="justify-start">
-                <a href="/api/nylas/connect?provider=microsoft&redirectTo=/">Connect Microsoft</a>
-              </Button>
+              {providerCapabilities.map((provider: any, index: number) => (
+                <Button
+                  key={provider.provider}
+                  asChild={provider.connectable}
+                  className="justify-start"
+                  disabled={!provider.connectable}
+                  variant={index === 0 ? 'default' : 'outline'}
+                >
+                  {provider.connectable ? (
+                    <a href={`/api/nylas/connect?provider=${provider.provider}&redirectTo=/`}>
+                      Connect {provider.label}
+                    </a>
+                  ) : (
+                    <span>{provider.reason || `${provider.label} unavailable`}</span>
+                  )}
+                </Button>
+              ))}
             </div>
+            {providerCapabilities
+              .filter((provider: any) => provider.provider === 'icloud')
+              .map((provider: any) => (
+                <p key="icloud-hint" className="text-[11px] text-[var(--color-text-muted)]">
+                  {provider.reason || 'iCloud requires an Apple app-specific password before connecting.'}
+                </p>
+              ))}
 
             <div className="space-y-2">
               {accounts.length ? (
@@ -263,7 +282,7 @@ export function HostedOnboarding() {
               >
                 <div className="flex items-center gap-2 text-[13px] font-semibold">Lab86 AI</div>
                 <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
-                  Use our hosted OpenRouter key and included dev credits.
+                  Included with Lab86 Mail. Usage safeguards run automatically.
                 </p>
               </button>
 
@@ -388,9 +407,11 @@ export function HostedOnboarding() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
               <p className="text-[11.5px] text-[var(--color-text-muted)]">
-                {ai?.usage
-                  ? `${ai.usage.remaining.toLocaleString()} credits available`
-                  : 'Credits appear after AI settings load.'}
+                {ai?.usage?.status === 'exhausted'
+                  ? 'Your Lab86 AI budget is used up for this period. AI chat is paused — add your own API key or wait for the next period.'
+                  : ai?.usage?.status === 'reduced_cost'
+                    ? 'AI is using reduced-cost routing for the rest of this period.'
+                    : 'AI settings are saved with your account.'}
               </p>
               <div className="flex gap-2">
                 <Button

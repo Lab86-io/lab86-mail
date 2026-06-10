@@ -53,13 +53,15 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ShineBorder } from '@/components/ui/shine-border';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
+import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
 // inbox view across all mailboxes.
-const DEFAULT_QUERY = 'in:inbox newer_than:30d';
+const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
 const INBOX_PAGE_SIZE = 50;
 const SKELETON_ROW_KEYS = Array.from({ length: 12 }, (_, index) => `skeleton-row-${index + 1}`);
 
@@ -139,8 +141,8 @@ export function Inbox() {
     setSmartCategory('main');
   };
 
-  // Heuristic: a Gmail query has at least one operator. Natural language doesn't.
-  const looksLikeGmailQuery = (s: string) =>
+  // Heuristic: a typed mail query has at least one operator. Natural language doesn't.
+  const looksLikeTypedQuery = (s: string) =>
     /\b(from|to|cc|bcc|subject|is|in|has|label|larger|smaller|newer_than|older_than|after|before|filename|deliveredto|list)\s*:/i.test(
       s,
     );
@@ -156,9 +158,9 @@ export function Inbox() {
       return;
     }
     setSearchDraft(raw);
-    if (looksLikeGmailQuery(raw)) {
+    if (looksLikeTypedQuery(raw)) {
       setQuery(raw);
-      setTranslatedSearch(null, raw, 'gmail');
+      setTranslatedSearch(null, raw, 'typed');
       return;
     }
     // Natural language — translate via nl_search, then run.
@@ -182,24 +184,42 @@ export function Inbox() {
   const submitSearch = () => runSearch(searchInput);
 
   // When account is the synthetic ALL_ACCOUNTS marker, fan out across every
-  // authed Gmail account and merge by date. Otherwise just hit one.
+  // authed mail account and merge by date. Otherwise just hit one.
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean; displayName?: string }[] }>('list_accounts'),
+      callTool<{
+        accounts: {
+          accountId: string;
+          email: string;
+          authed: boolean;
+          displayName?: string;
+        }[];
+      }>('list_accounts'),
     staleTime: 60_000,
   });
-  const accountAliasByEmail = useMemo(
+  const accountAliasById = useMemo(
     () =>
       Object.fromEntries(
         (accountsData?.accounts || []).map((account) => [
-          account.email,
+          account.accountId,
           account.displayName || account.email.split('@')[0],
         ]),
       ) as Record<string, string>,
     [accountsData?.accounts],
   );
-  const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
+  const authedAccounts = (accountsData?.accounts || []).filter((a) => a.authed);
+  const allAuthedAccountIds = authedAccounts.map((a) => a.accountId);
+  // The rail's account dropdown narrows the unified inbox to the checked
+  // mailboxes; an empty filter means every authed account.
+  const accountFilter = useClientStore((s) => s.accountFilter);
+  const authedAccountIds = accountFilter.length
+    ? allAuthedAccountIds.filter((id) => accountFilter.includes(id))
+    : allAuthedAccountIds;
+  const scopedQuery = useMemo(
+    () => resolveAccountScopedQuery(query, authedAccounts),
+    [authedAccounts, query],
+  );
   const { data: smartLabelsData } = useQuery({
     queryKey: ['smart-labels'],
     queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
@@ -212,84 +232,102 @@ export function Inbox() {
       ? SMART_CATEGORY_LABELS[smartCategory as keyof typeof SMART_CATEGORY_LABELS] || smartCategory
       : '';
 
-  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
-    useInfiniteQuery({
-      queryKey: [
-        'search',
-        account,
-        query,
-        smartCategory,
-        authedEmails.join(','),
-        Object.values(accountAliasByEmail).join(','),
-        refreshNonce,
-      ],
-      initialPageParam: {} as Record<string, string>,
-      queryFn: async ({ pageParam }): Promise<InboxPage> => {
-        const pageTokens = pageParam as Record<string, string>;
-        if (account === ALL_ACCOUNTS) {
-          const initialPage = Object.keys(pageTokens).length === 0;
-          const emailsToFetch = initialPage
-            ? authedEmails
-            : authedEmails.filter((email) => pageTokens[email]);
-          const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(authedEmails.length, 1)));
-          const results = await Promise.all(
-            emailsToFetch.map((email) =>
-              callTool<SearchThreadsResult>(smartCategory ? 'list_smart_category' : 'search_threads', {
-                account: email,
-                category: smartCategory,
-                query: smartCategory ? undefined : query,
-                max: perAccount,
-                pageToken: pageTokens[email],
-              })
-                .then((r) => ({
-                  email,
-                  items: r.items.map((it) => ({
-                    ...it,
-                    account: email,
-                    accountAlias: accountAliasByEmail[email],
-                  })),
-                  nextPageToken: r.nextPageToken,
-                }))
-                .catch(() => ({ email, items: [] as ThreadRow[], nextPageToken: undefined })),
-            ),
-          );
-          const merged = results.flatMap((result) => result.items);
-          merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
-          const nextPageTokens = Object.fromEntries(
-            results
-              .filter((result) => result.nextPageToken)
-              .map((result) => [result.email, result.nextPageToken as string]),
-          );
-          return { items: merged, nextPageTokens };
-        }
-        const result = await callTool<SearchThreadsResult>(
-          smartCategory ? 'list_smart_category' : 'search_threads',
-          {
-            account,
-            category: smartCategory,
-            query: smartCategory ? undefined : query,
-            max: INBOX_PAGE_SIZE,
-            pageToken: pageTokens[account],
-          },
+  const {
+    data,
+    isLoading,
+    isError,
+    error: searchError,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: [
+      'search',
+      account,
+      query,
+      scopedQuery.query,
+      scopedQuery.accountIds?.join(',') || '',
+      smartCategory,
+      accountFilter.join(','),
+      authedAccountIds.join(','),
+      Object.values(accountAliasById).join(','),
+      refreshNonce,
+    ],
+    initialPageParam: {} as Record<string, string>,
+    queryFn: async ({ pageParam }): Promise<InboxPage> => {
+      const pageTokens = pageParam as Record<string, string>;
+      if (account === ALL_ACCOUNTS) {
+        const scopedAccountIds = scopedQuery.accountIds
+          ? scopedQuery.accountIds.filter((id) => authedAccountIds.includes(id))
+          : authedAccountIds;
+        const initialPage = Object.keys(pageTokens).length === 0;
+        const accountIdsToFetch = initialPage
+          ? scopedAccountIds
+          : scopedAccountIds.filter((accountId) => pageTokens[accountId]);
+        const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(scopedAccountIds.length, 1)));
+        const results = await Promise.all(
+          accountIdsToFetch.map((accountId) =>
+            callTool<SearchThreadsResult>(smartCategory ? 'list_smart_category' : 'search_threads', {
+              account: accountId,
+              category: smartCategory,
+              query: smartCategory ? undefined : scopedQuery.query,
+              max: perAccount,
+              pageToken: pageTokens[accountId],
+            })
+              .then((r) => ({
+                accountId,
+                items: r.items.map((it) => ({
+                  ...it,
+                  account: accountId,
+                  accountAlias: accountAliasById[accountId],
+                })),
+                nextPageToken: r.nextPageToken,
+              }))
+              .catch(() => ({ accountId, items: [] as ThreadRow[], nextPageToken: undefined })),
+          ),
         );
-        return {
-          items: result.items.map((it) => ({ ...it, account, accountAlias: accountAliasByEmail[account] })),
-          nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
-        };
-      },
-      getNextPageParam: (lastPage) =>
-        Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
-      enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
-      // Keep the visible list warm instead of treating every mount/focus as a
-      // cold Gmail read. The foreground poll still catches new mail.
-      staleTime: 45_000,
-      gcTime: 30 * 60_000,
-      refetchOnMount: false,
-      refetchOnWindowFocus: false,
-      refetchInterval: 60_000,
-      // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
-      refetchIntervalInBackground: false,
-    });
+        const merged = results.flatMap((result) => result.items);
+        merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+        const nextPageTokens = Object.fromEntries(
+          results
+            .filter((result) => result.nextPageToken)
+            .map((result) => [result.accountId, result.nextPageToken as string]),
+        );
+        return { items: merged, nextPageTokens };
+      }
+      if (scopedQuery.accountIds && !scopedQuery.accountIds.includes(account)) {
+        return { items: [], nextPageTokens: {} };
+      }
+      const result = await callTool<SearchThreadsResult>(
+        smartCategory ? 'list_smart_category' : 'search_threads',
+        {
+          account,
+          category: smartCategory,
+          query: smartCategory ? undefined : scopedQuery.query,
+          max: INBOX_PAGE_SIZE,
+          pageToken: pageTokens[account],
+        },
+      );
+      return {
+        items: result.items.map((it) => ({ ...it, account, accountAlias: accountAliasById[account] })),
+        nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
+      };
+    },
+    getNextPageParam: (lastPage) =>
+      Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
+    enabled: !!account && (account !== ALL_ACCOUNTS || authedAccountIds.length > 0),
+    // Keep the visible list warm instead of treating every mount/focus as a
+    // cold provider read. The foreground poll still catches new mail.
+    staleTime: 45_000,
+    gcTime: 30 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchInterval: 60_000,
+    // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
+    refetchIntervalInBackground: false,
+  });
 
   const refreshInbox = () => {
     setRefreshNonce((nonce) => nonce + 1);
@@ -518,7 +556,7 @@ export function Inbox() {
                   clearSearch();
                 }
               }}
-              placeholder='Ask for mail or type Gmail syntax, e.g. "order updates from this week"'
+              placeholder='Ask for mail or type search filters, e.g. "order updates from this week"'
               className="text-[13px]"
             />
             {searchInput ? (
@@ -626,6 +664,11 @@ export function Inbox() {
       <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
         {isLoading ? (
           <SkeletonRows />
+        ) : isError ? (
+          <SearchErrorState
+            message={(searchError as Error | null)?.message || 'Mail search failed.'}
+            onRetry={() => refetch()}
+          />
         ) : items.length === 0 ? (
           translatedQuery || nlSearchIntent ? (
             <SearchEmptyState
@@ -635,7 +678,7 @@ export function Inbox() {
                 setQuery(editable);
                 setSearchInput(editable);
                 setSearchDraft(editable);
-                setTranslatedSearch(null, editable, 'gmail');
+                setTranslatedSearch(null, editable, 'typed');
               }}
               onRetryOriginal={() => {
                 if (!nlSearchIntent) return;
@@ -1015,9 +1058,28 @@ function EmptyState({ account }: { account: string }) {
         <EmptyDescription>
           {account
             ? 'Try a different search, smart category, or mailbox.'
-            : 'Connect a Gmail account in /scripts/auth-google.sh.'}
+            : 'Connect a mail account in settings.'}
         </EmptyDescription>
       </EmptyHeader>
+    </Empty>
+  );
+}
+
+// A failed fetch must look like a failure, not an empty mailbox — empty-state
+// rendering silently masked a broken search transport once already.
+function SearchErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <Empty className="grid flex-1 place-items-center px-6 py-12 text-center">
+      <EmptyHeader>
+        <EmptyMedia>
+          <InboxIcon className="h-4 w-4 text-[var(--color-danger,#b91c1c)]" />
+        </EmptyMedia>
+        <EmptyTitle>Could not load mail</EmptyTitle>
+        <EmptyDescription>{message}</EmptyDescription>
+      </EmptyHeader>
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        Retry
+      </Button>
     </Empty>
   );
 }
@@ -1065,7 +1127,7 @@ function SearchEmptyState({
           onClick={onUseRaw}
           className="h-8 rounded-md border px-2.5 text-[12px] hover:bg-[var(--color-bg-subtle)]"
         >
-          Use original as Gmail query
+          Use original as typed query
         </button>
         <button
           type="button"

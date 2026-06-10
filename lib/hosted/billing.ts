@@ -5,12 +5,14 @@ export interface AiBillingEntitlement {
   plan: 'free' | 'pro' | 'admin';
   status: 'active';
   monthlyCredits: number;
-  source: 'clerk' | 'fallback';
+  source: 'clerk';
 }
 
 export async function getAiBillingEntitlement(): Promise<AiBillingEntitlement> {
   const defaults = aiCreditDefaults();
-  if (!isClerkConfigured()) return freeEntitlement(defaults.freeMonthlyCredits);
+  if (!isClerkConfigured()) {
+    throw new Error('Clerk is not configured. Hosted billing requires Clerk.');
+  }
 
   // auth() resolves to Clerk's Auth object, which exposes has() for plan and
   // feature checks (it is not a Session, despite older naming here).
@@ -35,8 +37,8 @@ export async function getAiBillingEntitlement(): Promise<AiBillingEntitlement> {
     };
   }
 
-  const proPlan = process.env.CLERK_PRO_PLAN_SLUG || 'everyday';
-  const proFeature = process.env.CLERK_PRO_AI_FEATURE_SLUG || 'ai_credits_2m';
+  const proPlan = process.env.CLERK_PRO_PLAN_SLUG || 'mail_pro';
+  const proFeature = process.env.CLERK_PRO_AI_FEATURE_SLUG || 'b2c_mail';
   const pro = await Promise.resolve(has({ plan: proPlan })).catch(() => false);
   const proFeatureAccess = await Promise.resolve(has({ feature: proFeature })).catch(() => false);
   if (pro || proFeatureAccess) {
@@ -60,5 +62,5 @@ export function clerkBillingPortalUrl() {
 }
 
 function freeEntitlement(monthlyCredits: number): AiBillingEntitlement {
-  return { plan: 'free', status: 'active', monthlyCredits, source: 'fallback' };
+  return { plan: 'free', status: 'active', monthlyCredits, source: 'clerk' };
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { describeProvider, hasAi } from '../ai/client';
-import { generateTextForCurrentUser } from '../ai/gateway';
+import { describeProvider } from '../ai/client';
+import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
@@ -94,7 +94,9 @@ export async function generateDailyReport(input: {
   includeCalendar?: boolean;
 }) {
   const now = input.now || Date.now();
-  const accounts = input.accounts?.length ? input.accounts : await authedAccounts(input.userId);
+  const connected = await listNylasAccounts(input.userId).catch(() => []);
+  const authed = connected.filter((account) => account.authed);
+  const accounts = input.accounts?.length ? input.accounts : authed.map((account) => account.accountId);
   const errors: string[] = [];
   if (!accounts.length) errors.push('No connected Nylas mail accounts found for this user.');
   const [rules, customLabels, tracked] = await Promise.all([
@@ -103,9 +105,21 @@ export async function generateDailyReport(input: {
     listTrackedThreads({ limit: 1000 }),
   ]);
   const trackedByKey = new Map(tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
-  // "Self" is whatever accounts are connected for this user — no hardcoded
-  // addresses, so the report works for any deployment/operator.
-  const self = new Set<string>(accounts.map((a) => a.toLowerCase()));
+  // "Self" is the set of EMAIL ADDRESSES on this user's connected accounts.
+  // `accounts` above are opaque accountIds used for transport, while sender
+  // checks downstream compare against addresses.
+  const accountIdSet = new Set(accounts);
+  const self = new Set<string>(
+    authed
+      .filter((account) => !input.accounts?.length || accountIdSet.has(account.accountId))
+      .map((account) => String(account.email || '').toLowerCase())
+      .filter(Boolean),
+  );
+  // Callers may still pass raw emails in input.accounts; honor them for
+  // self-detection even though transport lookups use accountIds.
+  for (const value of accounts) {
+    if (value.includes('@')) self.add(value.toLowerCase());
+  }
 
   // ---- Candidate gathering -------------------------------------------------
   const candidates = new Map<string, Thread>();
@@ -223,6 +237,7 @@ export async function generateDailyReport(input: {
 
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
   const enrichCap = Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || 30);
+  const aiAvailable = await hasAiForCurrentUser();
   const enrichKeys = new Set<string>(
     bounded
       .filter((thread) => {
@@ -230,7 +245,7 @@ export async function generateDailyReport(input: {
         const floor = floors.get(key)!;
         const smart = smartByKey.get(thread._id);
         return (
-          hasAi() &&
+          aiAvailable &&
           (floor.protected ||
             trackedByKey.has(key) ||
             Boolean(smart?.isHumanLike) ||
@@ -247,7 +262,47 @@ export async function generateDailyReport(input: {
   );
 
   // ---- Build insights ------------------------------------------------------
+  // The edition gets a fixed id up front so partial saves update one document
+  // the UI can poll, instead of a new report appearing only at the very end.
+  const reportId = randomUUID();
+  const lastDateByKey = new Map<string, number>();
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const messages = messagesByKey.get(key) || [];
+    const newest = messages[messages.length - 1];
+    lastDateByKey.set(key, Number(newest?.date || thread.lastDate || 0));
+  }
+  const savePartial = async (
+    stage: string,
+    done: number,
+    total: number,
+    partialInsights: ThreadInsight[],
+  ) => {
+    try {
+      const partial = await composeReport({
+        kind: input.kind,
+        now,
+        accounts,
+        insights: partialInsights,
+        tracked,
+        lastDateByKey,
+        calendarContext,
+        memoryContext,
+        errors,
+        reportId,
+        status: 'partial',
+        progress: { stage, done, total },
+        skipNarrative: true,
+      });
+      await saveDailyReport(partial);
+    } catch {
+      // Partial saves are progress UX only — never let them sink the report.
+    }
+  };
+  await savePartial('Scanning mailboxes', 0, bounded.length, []);
+
   const insights: ThreadInsight[] = [];
+  let lastPartialSaveAt = Date.now();
   for (const thread of bounded) {
     const key = `${thread.account}:${thread._id}`;
     const messages = messagesByKey.get(key) || [];
@@ -261,6 +316,12 @@ export async function generateDailyReport(input: {
       self,
     });
     insights.push(insight);
+    // Stream the edition as it forms: lanes fill in while the slow enriched
+    // threads are still being analyzed.
+    if (Date.now() - lastPartialSaveAt > 1_500 || insights.length === bounded.length) {
+      lastPartialSaveAt = Date.now();
+      await savePartial('Analyzing conversations', insights.length, bounded.length, insights);
+    }
     await upsertThread(thread.account, { ...thread, smartCategory: smart }).catch(() => undefined);
     await upsertThreadInsight(insight).catch(() => undefined);
     if (
@@ -297,15 +358,8 @@ export async function generateDailyReport(input: {
     }
   }
 
-  const lastDateByKey = new Map<string, number>();
-  for (const thread of bounded) {
-    const key = `${thread.account}:${thread._id}`;
-    const messages = messagesByKey.get(key) || [];
-    const newest = messages[messages.length - 1];
-    lastDateByKey.set(key, Number(newest?.date || thread.lastDate || 0));
-  }
-
   const refreshedTracked = await listTrackedThreads({ limit: 500 });
+  await savePartial('Writing the narrative', bounded.length, bounded.length, insights);
   const report = await composeReport({
     kind: input.kind,
     now,
@@ -316,14 +370,10 @@ export async function generateDailyReport(input: {
     calendarContext,
     memoryContext,
     errors,
+    reportId,
   });
   await saveDailyReport(report);
   return report;
-}
-
-async function authedAccounts(userId?: string | null) {
-  const accounts = await listNylasAccounts(userId).catch(() => []);
-  return [...new Set(accounts.filter((account) => account.authed).map((account) => account.email))];
 }
 
 async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
@@ -645,7 +695,7 @@ async function buildThreadInsight(
   let lane = floor.lane;
   let model = 'local';
 
-  if (context.enrich && hasAi()) {
+  if (context.enrich && (await hasAiForCurrentUser())) {
     try {
       const { text: aiText } = await generateTextForCurrentUser({
         feature: 'daily_report_insight',
@@ -730,6 +780,11 @@ async function composeReport(input: {
   calendarContext: string[];
   memoryContext: string[];
   errors: string[];
+  reportId?: string;
+  status?: DailyReport['status'];
+  progress?: DailyReport['progress'];
+  // Partial editions skip the LLM narrative — it is written once at the end.
+  skipNarrative?: boolean;
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
   const toItem = (insight: ThreadInsight): DailyReportItem => {
@@ -806,7 +861,7 @@ async function composeReport(input: {
   let narrative = localNarrative(input.kind, replyOwed, followUpOwed, newPeople, trackedItems);
   let model = 'local';
 
-  if (hasAi()) {
+  if (!input.skipNarrative && (await hasAiForCurrentUser())) {
     try {
       const { text } = await generateTextForCurrentUser({
         feature: 'daily_report_narrative',
@@ -831,9 +886,11 @@ async function composeReport(input: {
   }
 
   return {
-    _id: randomUUID(),
+    _id: input.reportId ?? randomUUID(),
     kind: input.kind,
     generatedAt: input.now,
+    status: input.status ?? 'ready',
+    progress: input.progress,
     accounts: input.accounts,
     title: `${input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'} Daily Report`,
     narrative: stripEmoji(narrative),

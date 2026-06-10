@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { requireCurrentUser } from '@/lib/auth/current-user';
+import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { clerkBillingCheckoutUrl } from '@/lib/hosted/billing';
 import { isSubscriptionServiceDisabled } from '@/lib/hosted/controls';
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,7 +18,22 @@ export async function POST() {
       { status: 503 },
     );
   }
-  const user = await requireCurrentUser({ allowLegacy: false });
+  let user: Awaited<ReturnType<typeof requireCurrentUser>>;
+  try {
+    user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'billing_checkout',
+      limit: 10,
+      windowMs: 10 * 60_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
+    if (err instanceof AuthRequiredError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
+    }
+    throw err;
+  }
   await convexMutation(api.users.upsertFromClerk, {
     userId: user.userId,
     email: user.email,

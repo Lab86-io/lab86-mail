@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
 import type { PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
@@ -27,6 +28,9 @@ export interface ComposeState {
 
 export interface ClientState {
   account: string;
+  // Inbox account scope: empty array = all authed accounts (the default);
+  // otherwise only the checked accountIds are fetched and merged.
+  accountFilter: string[];
   primaryView: PrimaryView;
   // The concrete account that owns the currently-open thread. The inbox runs
   // unified ("all mailboxes"), but a thread's get/reply/archive need a real
@@ -40,7 +44,7 @@ export interface ClientState {
   searchDraft: string;
   nlSearchIntent: string | null;
   translatedQuery: string | null;
-  querySource: 'default' | 'gmail' | 'natural_language' | 'category';
+  querySource: 'default' | 'typed' | 'natural_language' | 'category';
   queryError: string | null;
   selectedThreadId: string | null;
   selectedIds: string[];
@@ -54,6 +58,7 @@ export interface ClientState {
   pendingReplyBody: string | null;
 
   setAccount: (account: string) => void;
+  setAccountFilter: (accountIds: string[]) => void;
   setPrimaryView: (view: PrimaryView) => void;
   setThreadAccount: (account: string | null) => void;
   setPrimaryAccount: (account: string) => void;
@@ -98,22 +103,13 @@ const initialCompose: ComposeState = {
 };
 
 const PERSIST_KEY = 'lab86-mail-ui';
-const LEGACY_PERSIST_KEY = 'mail-os-ui';
-const DEFAULT_QUERY = 'in:inbox newer_than:30d';
-
-if (typeof window !== 'undefined') {
-  try {
-    if (!window.localStorage.getItem(PERSIST_KEY)) {
-      const legacy = window.localStorage.getItem(LEGACY_PERSIST_KEY);
-      if (legacy) window.localStorage.setItem(PERSIST_KEY, legacy);
-    }
-  } catch {}
-}
+const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
 
 export const useClientStore = create<ClientState>()(
   persist(
     (set) => ({
       account: '',
+      accountFilter: [],
       primaryView: 'daily_report',
       threadAccount: null,
       primaryAccount: '',
@@ -136,6 +132,7 @@ export const useClientStore = create<ClientState>()(
       pendingReplyBody: null,
 
       setAccount: (account) => set({ account }),
+      setAccountFilter: (accountIds) => set({ accountFilter: accountIds }),
       setPrimaryView: (primaryView) => set({ primaryView }),
       setThreadAccount: (threadAccount) => set({ threadAccount }),
       setPrimaryAccount: (primaryAccount) => set({ primaryAccount }),
@@ -148,7 +145,7 @@ export const useClientStore = create<ClientState>()(
           nlSearchIntent: null,
           translatedQuery: null,
           queryError: null,
-          querySource: query === DEFAULT_QUERY ? 'default' : 'gmail',
+          querySource: query === DEFAULT_QUERY ? 'default' : 'typed',
         }),
       setSmartCategory: (smartCategory) =>
         set({
@@ -159,7 +156,7 @@ export const useClientStore = create<ClientState>()(
           nlSearchIntent: null,
           translatedQuery: null,
           queryError: null,
-          querySource: smartCategory ? 'category' : 'gmail',
+          querySource: smartCategory ? 'category' : 'typed',
         }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
@@ -207,11 +204,13 @@ export const useClientStore = create<ClientState>()(
     }),
     {
       name: PERSIST_KEY,
-      version: 1,
+      version: 2,
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
       migrate: (persisted: any) => {
+        if (!persisted) return persisted;
+        persisted.account = '';
         if (persisted && persisted.query === '-in:trash newer_than:365d') {
           persisted.query = DEFAULT_QUERY;
         }

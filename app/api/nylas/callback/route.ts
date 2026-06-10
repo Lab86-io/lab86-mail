@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl, nylasRedirectUri } from '@/lib/hosted/env';
+import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
 import { requireNylas } from '@/lib/nylas/client';
 import { encryptSecret } from '@/lib/security/crypto';
+import { sanitizeInternalPath } from '@/lib/security/redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,7 +32,7 @@ export async function GET(req: NextRequest) {
       .split(/\s+/)
       .map((scope) => scope.trim())
       .filter(Boolean);
-    await convexMutation(api.accounts.upsertConnectedAccount, {
+    const upserted = await convexMutation<{ accountId: string }>(api.accounts.upsertConnectedAccount, {
       userId: stored.userId,
       email: token.email,
       provider,
@@ -40,6 +42,11 @@ export async function GET(req: NextRequest) {
       expiresAt: token.expiresIn ? Date.now() + token.expiresIn * 1000 : undefined,
       scopes,
     });
+    // Start building the local search corpus immediately; the search path
+    // re-issues the same kick if this one is interrupted.
+    if (upserted?.accountId) {
+      maybeKickCorpusBackfill({ userId: stored.userId, accountId: upserted.accountId });
+    }
     return redirectWithStatus(stored.redirectTo || '/', 'nylas_connected', token.email);
   } catch (err: any) {
     return redirectWithStatus(stored.redirectTo || '/', 'nylas_error', err?.message || 'connect failed');
@@ -52,7 +59,7 @@ function normalizeProvider(provider: string) {
 }
 
 function redirectWithStatus(path: string, key: string, value: string) {
-  const target = new URL(path.startsWith('/') ? path : '/', hostedPublicUrl());
+  const target = new URL(sanitizeInternalPath(path), hostedPublicUrl());
   target.searchParams.set(key, value);
   return NextResponse.redirect(target);
 }

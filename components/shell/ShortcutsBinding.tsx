@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 
 const editable = (el: EventTarget | null) => {
   if (!el || !(el instanceof HTMLElement)) return false;
@@ -56,11 +57,11 @@ export function ShortcutsBinding() {
       }
       if (pendingG && Date.now() - pendingG < 900) {
         const map: Record<string, string> = {
-          u: 'is:unread newer_than:30d',
-          s: 'in:sent newer_than:365d',
-          d: 'in:drafts',
-          t: 'in:trash newer_than:365d',
-          a: '-in:trash newer_than:365d',
+          u: QUICK_SEARCH_QUERIES.unread,
+          s: QUICK_SEARCH_QUERIES.sent,
+          d: QUICK_SEARCH_QUERIES.drafts,
+          t: QUICK_SEARCH_QUERIES.trash,
+          a: QUICK_SEARCH_QUERIES.allMail,
         };
         if (e.key === 'i') {
           e.preventDefault();
