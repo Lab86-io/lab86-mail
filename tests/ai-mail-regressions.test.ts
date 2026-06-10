@@ -73,6 +73,28 @@ describe('agent mail lookup and prompt contract', () => {
     expect(microsoft.queryParams[UNRESOLVED_FOLDER_PARAM]).toBe('INBOX');
   });
 
+  test('Microsoft structured queries drop date filters that silently empty results', async () => {
+    const { compileQueryToNylasStructuredParams } = await import('../lib/mail/search/compiler');
+    // Verified against a live grant: latest_message_after/_before return ZERO
+    // threads on Microsoft (fine on Google/iCloud). The clause must be dropped
+    // and surfaced, never sent.
+    const plan = compileQueryToNylasStructuredParams({
+      provider: 'microsoft',
+      query: 'in:inbox newer_than:30d older_than:1d',
+      max: 10,
+    });
+    expect(plan.queryParams).not.toHaveProperty('latest_message_after');
+    expect(plan.queryParams).not.toHaveProperty('latest_message_before');
+    expect(plan.dropped.filter((item: any) => item.reason.includes('date filters')).length).toBe(2);
+
+    const google = compileQueryToNylasStructuredParams({
+      provider: 'google',
+      query: 'newer_than:30d',
+      max: 10,
+    });
+    expect(google.queryParams.latest_message_after).toEqual(expect.any(Number));
+  });
+
   test('structured compiler reports unsupported clauses explicitly', async () => {
     const { compileQueryToNylasStructuredParams } = await import('../lib/mail/search/compiler');
     const plan = compileQueryToNylasStructuredParams({

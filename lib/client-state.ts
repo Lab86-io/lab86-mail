@@ -28,6 +28,9 @@ export interface ComposeState {
 
 export interface ClientState {
   account: string;
+  // Inbox account scope: empty array = all authed accounts (the default);
+  // otherwise only the checked accountIds are fetched and merged.
+  accountFilter: string[];
   primaryView: PrimaryView;
   // The concrete account that owns the currently-open thread. The inbox runs
   // unified ("all mailboxes"), but a thread's get/reply/archive need a real
@@ -55,6 +58,7 @@ export interface ClientState {
   pendingReplyBody: string | null;
 
   setAccount: (account: string) => void;
+  setAccountFilter: (accountIds: string[]) => void;
   setPrimaryView: (view: PrimaryView) => void;
   setThreadAccount: (account: string | null) => void;
   setPrimaryAccount: (account: string) => void;
@@ -105,6 +109,7 @@ export const useClientStore = create<ClientState>()(
   persist(
     (set) => ({
       account: '',
+      accountFilter: [],
       primaryView: 'daily_report',
       threadAccount: null,
       primaryAccount: '',
@@ -127,6 +132,7 @@ export const useClientStore = create<ClientState>()(
       pendingReplyBody: null,
 
       setAccount: (account) => set({ account }),
+      setAccountFilter: (accountIds) => set({ accountFilter: accountIds }),
       setPrimaryView: (primaryView) => set({ primaryView }),
       setThreadAccount: (threadAccount) => set({ threadAccount }),
       setPrimaryAccount: (primaryAccount) => set({ primaryAccount }),

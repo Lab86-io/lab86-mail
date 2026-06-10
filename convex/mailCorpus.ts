@@ -113,6 +113,7 @@ export const markSyncState = mutation({
     corpusReady: v.optional(v.boolean()),
     progress: v.optional(v.any()),
     error: v.optional(v.string()),
+    clearCursor: v.optional(v.boolean()),
     lastBackfillAt: v.optional(v.number()),
     lastIncrementalSyncAt: v.optional(v.number()),
   },
@@ -253,6 +254,7 @@ export const upsertCorpusBatch = mutation({
         provider: args.provider,
         status: args.corpusReady ? 'ready' : 'backfilling',
         cursor: args.cursor,
+        clearCursor: Boolean(args.corpusReady) && args.cursor === undefined,
         corpusReady: Boolean(args.corpusReady),
         progress: args.progress,
         lastBackfillAt: ts,
@@ -456,6 +458,9 @@ async function upsertSyncState(ctx: any, args: any) {
   };
   if (args.status !== undefined) patch.status = args.status;
   if (args.cursor !== undefined) patch.cursor = args.cursor;
+  // Provider page cursors expire; completed or restarted backfills must drop
+  // them so a later resume can never replay a dead token.
+  if (args.clearCursor) patch.cursor = undefined;
   if (args.historyId !== undefined) patch.historyId = args.historyId;
   if (args.deltaLink !== undefined) patch.deltaLink = args.deltaLink;
   if (args.corpusReady !== undefined) patch.corpusReady = Boolean(args.corpusReady);

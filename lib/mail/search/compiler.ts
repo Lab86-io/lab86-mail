@@ -149,6 +149,13 @@ function applyStructuredClause(
       setFirst(queryParams, 'subject', clause.value, dropped, clause);
       return;
     case 'after': {
+      // Verified empirically: Microsoft grants silently return ZERO threads
+      // when latest_message_after/_before are present (Google and iCloud
+      // honor them). Dropping the clause beats an empty mailbox.
+      if (provider === 'microsoft') {
+        dropped.push({ clause, reason: 'Microsoft thread listing does not support date filters' });
+        return;
+      }
       const epochSeconds = epochSecondsForDayStart(clause.value);
       if (epochSeconds === null) {
         dropped.push({ clause, reason: 'unparseable date' });
@@ -158,6 +165,10 @@ function applyStructuredClause(
       return;
     }
     case 'before': {
+      if (provider === 'microsoft') {
+        dropped.push({ clause, reason: 'Microsoft thread listing does not support date filters' });
+        return;
+      }
       const epochSeconds = epochSecondsForDayEnd(clause.value);
       if (epochSeconds === null) {
         dropped.push({ clause, reason: 'unparseable date' });

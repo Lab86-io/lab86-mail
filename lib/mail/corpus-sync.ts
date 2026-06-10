@@ -77,9 +77,12 @@ export async function backfillMailCorpusAccount({
     progress: { stage: 'fetching', pageToken: pageToken || null, limit: batchLimit },
   });
   try {
+    // page_token must be OMITTED when absent: the SDK serializes an explicit
+    // undefined as the literal string "undefined", which every provider
+    // rejects ("could not decode: undefined" / "Invalid page_token").
     const page = await requireNylas().messages.list({
       identifier: row.grantId,
-      queryParams: { limit: batchLimit, page_token: pageToken } as any,
+      queryParams: { limit: batchLimit, ...(pageToken ? { page_token: pageToken } : {}) } as any,
     });
     const messages = page.data.map((message) => corpusMessageFromNylas(row, message));
     const threads = corpusThreadsFromMessages(messages);
@@ -107,6 +110,18 @@ export async function backfillMailCorpusAccount({
       corpusReady,
     };
   } catch (err: any) {
+    // Provider page cursors expire (deploys interrupt multi-page runs, and a
+    // saved cursor can be hours old by the next kick). A dead cursor must be
+    // discarded and the run restarted from the top, not replayed forever.
+    if (pageToken && isInvalidCursorError(err)) {
+      await markSync(row, {
+        status: 'backfilling',
+        corpusReady: false,
+        clearCursor: true,
+        progress: { stage: 'cursor_reset', discardedPageToken: pageToken },
+      }).catch(() => undefined);
+      return await backfillMailCorpusAccount({ userId, accountId, limit });
+    }
     await markSync(row, {
       status: 'error',
       cursor: pageToken,
@@ -116,6 +131,16 @@ export async function backfillMailCorpusAccount({
     }).catch(() => undefined);
     throw err;
   }
+}
+
+function isInvalidCursorError(err: any) {
+  const message = String(err?.message || err || '').toLowerCase();
+  return (
+    message.includes('page_token') ||
+    message.includes('page token') ||
+    message.includes('bad request') ||
+    message.includes('could not decode')
+  );
 }
 
 // Runs the page loop for one account until the corpus is ready or the page
@@ -135,8 +160,12 @@ export async function runCorpusBackfill({
   const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, { userId, accountId }).catch(
     () => null,
   );
+  // Only resume a cursor from an actively-progressing backfill; provider
+  // cursors go stale across restarts, and replaying one 400s forever.
+  const cursorFresh =
+    syncState?.status === 'backfilling' && Date.now() - (Number(syncState?.updatedAt) || 0) < 30 * 60_000;
   let pageToken: string | undefined =
-    syncState && !syncState.corpusReady && typeof syncState.cursor === 'string' && syncState.cursor
+    cursorFresh && !syncState.corpusReady && typeof syncState.cursor === 'string' && syncState.cursor
       ? syncState.cursor
       : undefined;
   let result: CorpusSyncResult | null = null;
@@ -365,6 +394,7 @@ async function markSync(
     corpusReady?: boolean;
     progress?: unknown;
     error?: string;
+    clearCursor?: boolean;
     lastIncrementalSyncAt?: number;
   },
 ) {
@@ -378,6 +408,7 @@ async function markSync(
     corpusReady: patch.corpusReady,
     progress: patch.progress,
     error: patch.error,
+    clearCursor: patch.clearCursor,
     lastIncrementalSyncAt: patch.lastIncrementalSyncAt,
   });
 }

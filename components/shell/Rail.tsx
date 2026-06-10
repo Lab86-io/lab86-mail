@@ -5,6 +5,7 @@ import {
   AlarmClock,
   Archive,
   Calendar,
+  ChevronsUpDown,
   ClipboardList,
   CreditCard,
   Flag,
@@ -31,6 +32,15 @@ import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
@@ -119,6 +129,8 @@ const SMART_CATEGORIES = [
 export function Rail() {
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
+  const accountFilter = useClientStore((s) => s.accountFilter);
+  const setAccountFilter = useClientStore((s) => s.setAccountFilter);
   const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
   const primaryView = useClientStore((s) => s.primaryView);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
@@ -297,63 +309,18 @@ export function Rail() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {authedAccounts.length > 1 || indexingAccounts.length ? (
+        {authedAccounts.length > 1 ? (
           <SidebarGroup>
-            <SidebarGroupLabel className="flex items-center gap-1">
-              Accounts
-              {indexingAccounts.length ? (
-                <span className="ml-auto flex items-center gap-1 text-[10px] text-[var(--color-accent)] group-data-[collapsible=icon]:hidden">
-                  <Ring className="size-3" />
-                  indexing
-                </span>
-              ) : null}
-            </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={primaryView === 'mail' && account === ALL_ACCOUNTS}
-                    tooltip="All accounts"
-                    onClick={() => {
-                      setAccount(ALL_ACCOUNTS);
-                      setPrimaryView('mail');
-                      closeMobileSidebar();
-                    }}
-                    className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
-                  >
-                    <Inbox />
-                    <span>All accounts</span>
-                  </SidebarMenuButton>
+                  <AccountFilterDropdown
+                    accounts={authedAccounts}
+                    accountFilter={accountFilter}
+                    setAccountFilter={setAccountFilter}
+                    indexingCount={indexingAccounts.length}
+                  />
                 </SidebarMenuItem>
-                {authedAccounts.map((mailbox) => (
-                  <SidebarMenuItem key={mailbox.accountId}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <SidebarMenuButton
-                          isActive={primaryView === 'mail' && account === mailbox.accountId}
-                          tooltip={mailbox.displayName || mailbox.email}
-                          onClick={() => {
-                            setAccount(mailbox.accountId);
-                            setPrimaryView('mail');
-                            closeMobileSidebar();
-                          }}
-                          className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
-                        >
-                          <ProviderLogo provider={mailbox.provider} />
-                          <span className="truncate">{mailbox.displayName || mailbox.email}</span>
-                          <AccountSyncDot sync={mailbox.sync} authed={mailbox.authed} />
-                        </SidebarMenuButton>
-                      </TooltipTrigger>
-                      <TooltipContent side="right" className="max-w-[260px] text-[11.5px]">
-                        <AccountSyncSummary
-                          email={mailbox.email}
-                          sync={mailbox.sync}
-                          authed={mailbox.authed}
-                        />
-                      </TooltipContent>
-                    </Tooltip>
-                  </SidebarMenuItem>
-                ))}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
@@ -783,22 +750,91 @@ function AccountSyncDot({ sync, authed }: { sync: AccountSync; authed: boolean }
   return <span className={`ml-auto size-1.5 shrink-0 rounded-full ${color}`} />;
 }
 
-function AccountSyncSummary({ email, sync, authed }: { email: string; sync: AccountSync; authed: boolean }) {
-  const indexed = sync?.messagesSynced ? `${sync.messagesSynced.toLocaleString()} messages indexed` : null;
+function AccountFilterDropdown({
+  accounts,
+  accountFilter,
+  setAccountFilter,
+  indexingCount,
+}: {
+  accounts: Array<{
+    accountId: string;
+    email: string;
+    provider: string;
+    displayName?: string;
+    authed: boolean;
+    sync?: { status: string; corpusReady: boolean; messagesSynced?: number; error?: string };
+  }>;
+  accountFilter: string[];
+  setAccountFilter: (accountIds: string[]) => void;
+  indexingCount: number;
+}) {
+  const allIds = accounts.map((a) => a.accountId);
+  // Empty filter means "all accounts" — the default.
+  const effective = accountFilter.length ? accountFilter.filter((id) => allIds.includes(id)) : allIds;
+  const allSelected = effective.length === allIds.length;
+  const label = allSelected ? 'All accounts' : `${effective.length} of ${allIds.length} accounts`;
+
+  const toggle = (accountId: string, checked: boolean) => {
+    const next = checked
+      ? [...new Set([...effective, accountId])]
+      : effective.filter((id) => id !== accountId);
+    if (!next.length) return; // at least one mailbox stays selected
+    setAccountFilter(next.length === allIds.length ? [] : next);
+  };
+
   return (
-    <div className="space-y-1">
-      <div className="font-medium">{email}</div>
-      <div className="text-[var(--color-text-muted)]">
-        {!authed
-          ? 'Disconnected — reconnect from Settings.'
-          : sync?.status === 'error'
-            ? `Sync error: ${sync.error || 'unknown'}`
-            : sync?.corpusReady
-              ? `Fully indexed${indexed ? ` · ${indexed}` : ''} — instant search ready.`
-              : sync?.status === 'backfilling' || sync?.status === 'syncing'
-                ? `Downloading and indexing mail…${indexed ? ` ${indexed} so far.` : ''}`
-                : 'Waiting for first sync.'}
-      </div>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuButton tooltip="Choose accounts" className="justify-between">
+          <span className="flex min-w-0 items-center gap-2">
+            <Inbox className="size-4 shrink-0" />
+            <span className="truncate">{label}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            {indexingCount ? <Ring className="size-3 text-[var(--color-accent)]" /> : null}
+            <ChevronsUpDown className="size-3 text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden" />
+          </span>
+        </SidebarMenuButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
+          Inbox shows
+        </DropdownMenuLabel>
+        <DropdownMenuItem
+          onSelect={(event) => {
+            event.preventDefault();
+            setAccountFilter([]);
+          }}
+          className="gap-2 text-[12.5px]"
+        >
+          <Inbox className="size-3.5" />
+          All accounts
+          {allSelected ? <span className="ml-auto text-[var(--color-accent)]">✓</span> : null}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {accounts.map((mailbox) => (
+          <DropdownMenuCheckboxItem
+            key={mailbox.accountId}
+            checked={effective.includes(mailbox.accountId)}
+            onCheckedChange={(checked) => toggle(mailbox.accountId, Boolean(checked))}
+            onSelect={(event) => event.preventDefault()}
+            className="gap-2 text-[12.5px]"
+          >
+            <ProviderLogo provider={mailbox.provider} className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{mailbox.displayName || mailbox.email}</span>
+            <AccountSyncDot sync={mailbox.sync} authed={mailbox.authed} />
+          </DropdownMenuCheckboxItem>
+        ))}
+        {indexingCount ? (
+          <>
+            <DropdownMenuSeparator />
+            <div className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-[var(--color-accent)]">
+              <Ring className="size-3" />
+              {indexingCount === 1 ? '1 mailbox indexing…' : `${indexingCount} mailboxes indexing…`}
+            </div>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
