@@ -1,7 +1,15 @@
 import type { CreateAttachmentRequest } from 'nylas';
 import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { resolveSearchRoute } from '@/lib/mail/search/capabilities';
 import { planStructuredProviderSearch } from '@/lib/mail/search/execute';
+import {
+  type CorpusMessageDocument,
+  compileAstToLocalCorpusQuery,
+  corpusMessagesToThreads,
+  filterCorpusMessagesByAst,
+} from '@/lib/mail/search/local';
+import { parseMailSearchQuery } from '@/lib/mail/search/parser';
 import { requireNylas } from './client';
 import {
   emailList,
@@ -10,6 +18,8 @@ import {
   normalizeNylasMessage,
   normalizeNylasThread,
 } from './normalize';
+
+const mailCorpusApi = (api as any).mailCorpus;
 
 export interface NylasAccountRow {
   userId: string;
@@ -70,6 +80,92 @@ export async function searchNylasThreads({
 }) {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
+  const route = await resolveAccountSearchRoute(row, Boolean(pageToken)).catch(() =>
+    resolveSearchRoute({ provider: row.provider, corpusReady: false, hasPageToken: Boolean(pageToken) }),
+  );
+  if (route.tier === 'local') {
+    try {
+      const local = await searchLocalCorpusThreads({
+        row,
+        query,
+        max,
+      });
+      return {
+        account: row.accountId,
+        query,
+        items: local.items,
+        nextPageToken: undefined,
+        searchTier: 'local',
+        route,
+        ast: local.ast,
+        dropped: local.dropped,
+      };
+    } catch (err: any) {
+      const structured = await searchNylasStructuredThreads({ row, query, max, pageToken });
+      return {
+        ...structured,
+        searchTier: 'structured',
+        route: { ...route, tier: 'structured', reason: 'local search failed; structured fallback used' },
+        fallbackReason: err?.message || 'local search failed',
+      };
+    }
+  }
+  return {
+    ...(await searchNylasStructuredThreads({ row, query, max, pageToken })),
+    searchTier: 'structured',
+    route,
+  };
+}
+
+async function resolveAccountSearchRoute(row: NylasAccountRow, hasPageToken: boolean) {
+  const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, {
+    userId: row.userId,
+    accountId: row.accountId,
+  });
+  return resolveSearchRoute({
+    provider: row.provider,
+    corpusReady: Boolean(syncState?.corpusReady && syncState?.grantId === row.grantId),
+    hasPageToken,
+  });
+}
+
+async function searchLocalCorpusThreads({
+  row,
+  query,
+  max,
+}: {
+  row: NylasAccountRow;
+  query: string;
+  max: number;
+}) {
+  const ast = parseMailSearchQuery(query);
+  const plan = compileAstToLocalCorpusQuery(ast);
+  const rows = await convexQuery<CorpusMessageDocument[]>(mailCorpusApi.searchCorpusMessages, {
+    userId: row.userId,
+    accountId: row.accountId,
+    provider: row.provider,
+    query: plan.query,
+    limit: Math.min(100, Math.max(max * 4, max)),
+  });
+  const filtered = filterCorpusMessagesByAst(rows, ast);
+  return {
+    ast,
+    dropped: plan.dropped,
+    items: corpusMessagesToThreads(filtered, row.accountId).slice(0, max),
+  };
+}
+
+async function searchNylasStructuredThreads({
+  row,
+  query,
+  max,
+  pageToken,
+}: {
+  row: NylasAccountRow;
+  query: string;
+  max: number;
+  pageToken?: string;
+}) {
   const plan = planStructuredProviderSearch({
     provider: row.provider,
     query,

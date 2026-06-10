@@ -146,6 +146,96 @@ describe('Convex mail corpus helpers', () => {
   });
 });
 
+describe('local-first mail search routing', () => {
+  test('routes iCloud and Microsoft to local only when corpus-ready', async () => {
+    const previousProviders = process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
+    const previousDisabled = process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
+    delete process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
+    delete process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
+
+    const { resolveSearchRoute } = await import('../lib/mail/search/capabilities');
+
+    expect(resolveSearchRoute({ provider: 'icloud', corpusReady: true })).toMatchObject({
+      tier: 'local',
+      localEnabled: true,
+    });
+    expect(resolveSearchRoute({ provider: 'microsoft', corpusReady: false })).toMatchObject({
+      tier: 'structured',
+      localEnabled: true,
+      corpusReady: false,
+    });
+    expect(resolveSearchRoute({ provider: 'google', corpusReady: true })).toMatchObject({
+      tier: 'structured',
+      localEnabled: false,
+    });
+
+    process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS = 'all';
+    process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS = 'microsoft';
+    expect(resolveSearchRoute({ provider: 'google', corpusReady: true })).toMatchObject({
+      tier: 'local',
+      localEnabled: true,
+    });
+    expect(resolveSearchRoute({ provider: 'microsoft', corpusReady: true })).toMatchObject({
+      tier: 'structured',
+      localEnabled: false,
+    });
+
+    if (previousProviders === undefined) delete process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
+    else process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS = previousProviders;
+    if (previousDisabled === undefined) delete process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
+    else process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS = previousDisabled;
+  });
+
+  test('filters local corpus messages with the search AST and groups threads newest-first', async () => {
+    const { parseMailSearchQuery } = await import('../lib/mail/search/parser');
+    const { compileAstToLocalCorpusQuery, corpusMessagesToThreads, filterCorpusMessagesByAst } = await import(
+      '../lib/mail/search/local'
+    );
+    const ast = parseMailSearchQuery('in:inbox is:unread from:alerts@example.test newer_than:30d invoice');
+    const plan = compileAstToLocalCorpusQuery(ast);
+    const now = Date.parse('2026-06-10T12:00:00.000Z');
+    const messages = [
+      {
+        accountId: 'grant_microsoft',
+        provider: 'microsoft' as const,
+        providerMessageId: 'msg_match',
+        providerThreadId: 'thread_match',
+        subject: 'Invoice due',
+        from: 'Alerts <alerts@example.test>',
+        to: 'Jakob <jakob@example.test>',
+        receivedAt: now,
+        snippet: 'Invoice needs review',
+        searchText: 'Invoice due Alerts invoice review',
+        labels: ['INBOX', 'UNREAD'],
+        unread: true,
+      },
+      {
+        accountId: 'grant_microsoft',
+        provider: 'microsoft' as const,
+        providerMessageId: 'msg_read',
+        providerThreadId: 'thread_read',
+        subject: 'Invoice read',
+        from: 'Alerts <alerts@example.test>',
+        to: 'Jakob <jakob@example.test>',
+        receivedAt: now,
+        snippet: 'Invoice already read',
+        searchText: 'Invoice already read',
+        labels: ['INBOX'],
+        unread: false,
+      },
+    ];
+
+    expect(plan.query).toBe('alerts@example.test invoice');
+    const filtered = filterCorpusMessagesByAst(messages, ast);
+    expect(filtered.map((message) => message.providerMessageId)).toEqual(['msg_match']);
+    expect(corpusMessagesToThreads(filtered, 'grant_microsoft')[0]).toMatchObject({
+      _id: 'thread_match',
+      account: 'grant_microsoft',
+      unread: true,
+    });
+  });
+});
+
 describe('hosted OpenRouter model options', () => {
   test('normalizes arbitrary OpenRouter model slugs to approved choices', async () => {
     const {
