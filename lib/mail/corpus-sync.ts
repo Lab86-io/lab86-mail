@@ -181,13 +181,13 @@ export async function reconcileMailCorpusAccount({
   limit = 50,
 }: ReconcileArgs): Promise<CorpusSyncResult> {
   const row = await getConnectedAccount(userId, accountId);
-  const wasReady = await convexQuery<any | null>(mailCorpusApi.getSyncState, { userId, accountId })
-    .then((state) => Boolean(state?.corpusReady))
-    .catch(() => false);
+  const prevState = await convexQuery<any | null>(mailCorpusApi.getSyncState, { userId, accountId }).catch(
+    () => null,
+  );
+  const wasReady = Boolean(prevState?.corpusReady);
   const batchLimit = clampLimit(limit, 50, 100);
   await markSync(row, {
     status: 'syncing',
-    corpusReady: wasReady,
     progress: { stage: 'reconciling', limit: batchLimit },
   });
   try {
@@ -200,10 +200,14 @@ export async function reconcileMailCorpusAccount({
     await upsertCorpus(row, {
       threads,
       messages,
-      cursor: page.nextCursor || undefined,
-      corpusReady: true,
       progress: { stage: 'reconciled', lastBatchMessages: messages.length },
       incremental: true,
+    });
+    // Readiness is earned by a completed backfill only — a 1-page reconcile
+    // sample never flips it. Restore whatever status the account was in.
+    await markSync(row, {
+      status: wasReady ? 'ready' : prevState?.status === 'backfilling' ? 'backfilling' : 'idle',
+      progress: { stage: 'reconciled', lastBatchMessages: messages.length },
     });
     return {
       ok: true,
@@ -212,15 +216,14 @@ export async function reconcileMailCorpusAccount({
       provider: row.provider,
       messages: messages.length,
       threads: threads.length,
-      nextPageToken: page.nextCursor || undefined,
-      corpusReady: true,
+      nextPageToken: undefined,
+      corpusReady: wasReady,
     };
   } catch (err: any) {
     // A failed reconcile must not strand the account in "syncing" or revoke
     // readiness the corpus already earned.
     await markSync(row, {
       status: 'error',
-      corpusReady: wasReady,
       error: err?.message || 'corpus reconcile failed',
       progress: { stage: 'reconcile_error' },
     }).catch(() => undefined);
@@ -252,17 +255,15 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
     await applyWebhookDelta(row, metadata, payload);
     await markWebhookProcessed(metadata, 'processed');
     await markSync(row, {
-      status: 'ready',
-      corpusReady: true,
       progress: { stage: 'webhook', type: metadata.type, eventId: metadata.eventId },
       lastIncrementalSyncAt: Date.now(),
     });
     return { ok: true, duplicate: false, eventId: metadata.eventId };
   } catch (err: any) {
     await markWebhookProcessed(metadata, 'error', err?.message || 'webhook processing failed');
+    // A transient webhook failure must not revoke readiness the corpus earned
+    // from a completed backfill; the reconciler repairs any missed delta.
     await markSync(row, {
-      status: 'error',
-      corpusReady: false,
       error: err?.message || 'webhook processing failed',
       progress: { stage: 'webhook_error', type: metadata.type, eventId: metadata.eventId },
     });
@@ -297,7 +298,6 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
   await upsertCorpus(row, {
     messages,
     threads: corpusThreadsFromMessages(messages),
-    corpusReady: true,
     progress: {
       stage: metadata.truncated ? 'webhook_refetch_truncated' : 'webhook_refetch',
       eventId: metadata.eventId,
@@ -327,7 +327,7 @@ async function upsertCorpus(
     threads: CorpusThreadInput[];
     messages: CorpusMessageInput[];
     cursor?: string;
-    corpusReady: boolean;
+    corpusReady?: boolean;
     progress?: unknown;
     incremental?: boolean;
   },
@@ -344,10 +344,9 @@ async function upsertCorpus(
     progress: input.progress,
   });
   if (input.incremental) {
+    // Incremental writers record freshness only — they never own
+    // status/cursor/corpusReady, which belong to the backfill loop.
     await markSync(row, {
-      status: 'ready',
-      cursor: input.cursor,
-      corpusReady: true,
       progress: input.progress,
       lastIncrementalSyncAt: Date.now(),
     });
@@ -357,9 +356,9 @@ async function upsertCorpus(
 async function markSync(
   row: NylasAccountRow,
   patch: {
-    status: 'idle' | 'backfilling' | 'syncing' | 'ready' | 'error';
+    status?: 'idle' | 'backfilling' | 'syncing' | 'ready' | 'error';
     cursor?: string;
-    corpusReady: boolean;
+    corpusReady?: boolean;
     progress?: unknown;
     error?: string;
     lastIncrementalSyncAt?: number;

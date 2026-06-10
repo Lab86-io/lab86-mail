@@ -1,3 +1,7 @@
+// Unparseable dates degrade the same way in both tiers: the structured
+// compiler drops the clause via the null-returning epoch helpers below, and
+// the local matcher's ±Infinity sentinels make the comparison always-true —
+// i.e. the filter is ignored rather than matching nothing.
 export function startOfDayMs(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return Number.NEGATIVE_INFINITY;

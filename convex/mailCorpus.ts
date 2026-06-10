@@ -106,7 +106,7 @@ export const markSyncState = mutation({
     accountId: v.string(),
     grantId: v.string(),
     provider: providerValidator,
-    status: syncStatusValidator,
+    status: v.optional(syncStatusValidator),
     cursor: v.optional(v.string()),
     historyId: v.optional(v.string()),
     deltaLink: v.optional(v.string()),
@@ -201,17 +201,30 @@ export const upsertCorpusBatch = mutation({
       else await ctx.db.insert('mailCorpusMessages', { ...patch, createdAt: ts });
     }
 
-    await upsertSyncState(ctx, {
-      userId: args.userId,
-      accountId: args.accountId,
-      grantId: args.grantId,
-      provider: args.provider,
-      status: args.corpusReady ? 'ready' : 'backfilling',
-      cursor: args.cursor,
-      corpusReady: Boolean(args.corpusReady),
-      progress: args.progress,
-      lastBackfillAt: ts,
-    });
+    // Backfill batches pass an explicit corpusReady boolean and own the
+    // status/cursor/readiness fields. Incremental batches (webhooks,
+    // reconcile) leave corpusReady undefined and must not disturb them.
+    if (args.corpusReady === undefined) {
+      await upsertSyncState(ctx, {
+        userId: args.userId,
+        accountId: args.accountId,
+        grantId: args.grantId,
+        provider: args.provider,
+        progress: args.progress,
+      });
+    } else {
+      await upsertSyncState(ctx, {
+        userId: args.userId,
+        accountId: args.accountId,
+        grantId: args.grantId,
+        provider: args.provider,
+        status: args.corpusReady ? 'ready' : 'backfilling',
+        cursor: args.cursor,
+        corpusReady: Boolean(args.corpusReady),
+        progress: args.progress,
+        lastBackfillAt: ts,
+      });
+    }
 
     return { ok: true, threads: args.threads.length, messages: args.messages.length };
   },
@@ -381,10 +394,10 @@ async function upsertSyncState(ctx: any, args: any) {
     accountId: args.accountId,
     grantId: args.grantId,
     provider: args.provider,
-    status: args.status,
     error: args.error,
     updatedAt: ts,
   };
+  if (args.status !== undefined) patch.status = args.status;
   if (args.cursor !== undefined) patch.cursor = args.cursor;
   if (args.historyId !== undefined) patch.historyId = args.historyId;
   if (args.deltaLink !== undefined) patch.deltaLink = args.deltaLink;
@@ -398,6 +411,7 @@ async function upsertSyncState(ctx: any, args: any) {
   }
   const id = await ctx.db.insert('mailSyncStates', {
     ...patch,
+    status: args.status ?? 'idle',
     corpusReady: Boolean(args.corpusReady),
     createdAt: ts,
   });
