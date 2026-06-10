@@ -173,7 +173,7 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const fastModelDetail = OPENROUTER_FAST_MODEL_OPTIONS.find((option) => option.id === fastModel)?.detail;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(value) => !deleteAccount.isPending && onOpenChange(value)}>
       <DialogContent className="max-h-[86vh] max-w-2xl overflow-y-auto">
         <DialogTitle>Accounts and AI</DialogTitle>
         <div className="space-y-6">

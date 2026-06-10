@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import type { Provider, URLForAuthenticationConfig } from 'nylas';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
@@ -57,19 +58,31 @@ export async function GET(req: NextRequest) {
     redirectTo: url.searchParams.get('redirectTo') || '/',
     ttlMs: 10 * 60_000,
   });
-  const scopes = (process.env.NYLAS_SCOPES || '')
-    .split(',')
-    .map((scope) => scope.trim())
-    .filter(Boolean);
-  const authUrl = requireNylas().auth.urlForOAuth2({
+  const scopes = scopesForProvider(provider as MailProvider);
+  const config: URLForAuthenticationConfig = {
     clientId: process.env.NYLAS_CLIENT_ID || '',
     redirectUri: nylasRedirectUri(),
-    provider: provider as any,
+    provider: provider as Provider,
     accessType: 'offline',
     prompt: 'select_provider',
     includeGrantScopes: true,
     state,
-    scope: scopes.length ? scopes : undefined,
-  } as any);
+    ...(scopes.length ? { scope: scopes } : {}),
+  };
+  const authUrl = requireNylas().auth.urlForOAuth2(config);
   return NextResponse.redirect(authUrl);
+}
+
+// Scopes are provider-specific (Gmail scope URLs mean nothing to Microsoft,
+// and iCloud/IMAP take none). A per-provider env wins; the legacy NYLAS_SCOPES
+// applies to Google only; everyone else uses the Nylas connector defaults.
+function scopesForProvider(provider: MailProvider): string[] {
+  const raw =
+    process.env[`NYLAS_SCOPES_${provider.toUpperCase()}`] ??
+    (provider === 'google' ? process.env.NYLAS_SCOPES : undefined) ??
+    '';
+  return raw
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter(Boolean);
 }

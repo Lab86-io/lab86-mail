@@ -142,7 +142,18 @@ export async function searchNylasThreads({
       };
     }
   }
-  return { ...(await searchNylasProviderThreads({ row, query, max, pageToken })), route };
+  // Local cursors are meaningless to provider transports: if routing landed on
+  // a fallback tier (local disabled, corpus regressed), restart provider
+  // pagination instead of sending Nylas a "local:" token.
+  return {
+    ...(await searchNylasProviderThreads({
+      row,
+      query,
+      max,
+      pageToken: isLocalPageToken(pageToken) ? undefined : pageToken,
+    })),
+    route,
+  };
 }
 
 async function resolveAccountSearchRoute(row: NylasAccountRow, pageToken?: string) {
@@ -266,6 +277,9 @@ async function searchNylasProviderThreads({
 
 const providerFolderCache = new Map<string, { at: number; rows: ProviderFolderRow[] }>();
 const PROVIDER_FOLDER_CACHE_TTL_MS = 10 * 60_000;
+// Bound the cache so a long-lived process serving many grants cannot grow it
+// without limit; Map iteration order gives us oldest-inserted eviction.
+const PROVIDER_FOLDER_CACHE_MAX_ENTRIES = 500;
 
 interface ProviderFolderRow {
   id: string;
@@ -286,6 +300,13 @@ async function resolveProviderFolderId(row: NylasAccountRow, canonicalFolder: st
       name: String(folder.name || ''),
       attributes: Array.isArray(folder.attributes) ? folder.attributes.map(String) : undefined,
     }));
+    if (
+      !providerFolderCache.has(row.grantId) &&
+      providerFolderCache.size >= PROVIDER_FOLDER_CACHE_MAX_ENTRIES
+    ) {
+      const oldest = providerFolderCache.keys().next().value;
+      if (oldest !== undefined) providerFolderCache.delete(oldest);
+    }
     providerFolderCache.set(row.grantId, { at: Date.now(), rows });
   }
   return rows.find((folder) => folderRowMatches(canonicalFolder, folder))?.id ?? null;
