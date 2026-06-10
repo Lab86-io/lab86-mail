@@ -11,7 +11,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false });
+  const user = await requireCurrentUser();
   if (!isNylasConfigured()) {
     return NextResponse.json(
       { ok: false, error: 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.' },

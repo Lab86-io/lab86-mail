@@ -17,7 +17,7 @@ export async function POST() {
       { status: 503 },
     );
   }
-  const user = await requireCurrentUser({ allowLegacy: false });
+  const user = await requireCurrentUser();
   await convexMutation(api.users.upsertFromClerk, {
     userId: user.userId,
     email: user.email,

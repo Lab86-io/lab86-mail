@@ -186,7 +186,7 @@ export const recordUsage = mutation({
     internalSecret: v.optional(v.string()),
     userId: v.string(),
     feature: v.string(),
-    source: v.union(v.literal('lab86'), v.literal('byok'), v.literal('legacy')),
+    source: v.union(v.literal('lab86'), v.literal('byok')),
     provider: v.string(),
     model: v.string(),
     promptTokens: v.optional(v.number()),

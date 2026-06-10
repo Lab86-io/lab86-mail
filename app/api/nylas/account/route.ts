@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function PATCH(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false });
+  const user = await requireCurrentUser();
   const body = await req.json().catch(() => ({}));
   const accountId = String(body.accountId || '');
   if (!accountId) {

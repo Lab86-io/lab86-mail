@@ -2,7 +2,6 @@ import { verifyWebhook } from '@clerk/nextjs/webhooks';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { api, convexMutation } from '@/lib/hosted/convex';
-import { isConvexConfigured } from '@/lib/hosted/env';
 import { writeAudit } from '@/lib/store/audit';
 
 export const runtime = 'nodejs';
@@ -22,12 +21,12 @@ export async function POST(req: NextRequest) {
   const email = primaryEmail(data);
   const name = [data.first_name, data.last_name].filter(Boolean).join(' ') || data.full_name || email;
 
-  if (isConvexConfigured() && userId && email && (type === 'user.created' || type === 'user.updated')) {
+  if (userId && email && (type === 'user.created' || type === 'user.updated')) {
     await convexMutation(api.users.upsertFromClerk, {
       userId,
       email,
       name,
-    }).catch(() => undefined);
+    });
   }
 
   await writeAudit({

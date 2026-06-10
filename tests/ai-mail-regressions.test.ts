@@ -1,5 +1,5 @@
-import { afterAll, describe, expect, mock, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { describe, expect, test } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -9,103 +9,6 @@ process.env.MAIL_OS_DATA_DIR = dataDir;
 process.env.OPENROUTER_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.ANTHROPIC_API_KEY = '';
-process.env.LAB86_MAIL_ENABLE_GOG = '1';
-
-const gogCalls: string[][] = [];
-
-mock.module('../lib/gog/pool', () => ({
-  runGogJson: async (args: string[]) => {
-    gogCalls.push(args);
-    if (args.includes('search')) {
-      return {
-        threads: [
-          {
-            threadId: 'thread-noreply-search',
-            messageId: 'msg-noreply-search',
-            from: 'No Reply <noreply@example.test>',
-            subject: 'Account notice',
-            snippet: 'This is a fake noreply search result.',
-            date: new Date('2026-06-03T12:00:00.000Z').toISOString(),
-            labels: ['INBOX', 'UNREAD', 'CATEGORY_UPDATES'],
-          },
-        ],
-      };
-    }
-    if (args.includes('get')) {
-      return {
-        thread: {
-          messages: [
-            {
-              id: 'msg-noreply-search',
-              threadId: 'thread-noreply-search',
-              from: 'No Reply <noreply@example.test>',
-              to: 'Jakob <jakob@example.test>',
-              subject: 'Account notice',
-              snippet: 'Fake notice body.',
-              date: new Date('2026-06-03T12:00:00.000Z').toISOString(),
-              labels: ['INBOX', 'UNREAD'],
-            },
-          ],
-        },
-      };
-    }
-    return {};
-  },
-}));
-
-afterAll(() => {
-  rmSync(dataDir, { recursive: true, force: true });
-});
-
-describe('compose reply args', () => {
-  test('uses only reply-to-message-id when both reply ids are available', async () => {
-    const { buildReplyArgs } = await import('../lib/compose/gog-args');
-    const args = buildReplyArgs({
-      account: 'jakob@example.test',
-      messageId: 'msg-123',
-      threadId: 'thread-456',
-      to: 'sender@example.test',
-      body: 'fake reply',
-    });
-
-    expect(args).toContain('--reply-to-message-id');
-    expect(args).toContain('msg-123');
-    expect(args).toContain('--to');
-    expect(args).toContain('sender@example.test');
-    expect(args).not.toContain('--thread-id');
-  });
-
-  test('can fall back to thread-id when no message id exists', async () => {
-    const { buildReplyArgs } = await import('../lib/compose/gog-args');
-    const args = buildReplyArgs({
-      account: 'jakob@example.test',
-      threadId: 'thread-456',
-      to: 'sender@example.test',
-      body: 'fake reply',
-    });
-
-    expect(args).toContain('--thread-id');
-    expect(args).toContain('thread-456');
-    expect(args).toContain('--to');
-    expect(args).toContain('sender@example.test');
-    expect(args).not.toContain('--reply-to-message-id');
-  });
-
-  test('allows reply-all without explicit recipients', async () => {
-    const { buildReplyArgs } = await import('../lib/compose/gog-args');
-    const args = buildReplyArgs({
-      account: 'jakob@example.test',
-      messageId: 'msg-123',
-      body: 'fake reply all',
-      replyAll: true,
-    });
-
-    expect(args).toContain('--reply-to-message-id');
-    expect(args).toContain('msg-123');
-    expect(args).toContain('--reply-all');
-    expect(args).not.toContain('--to');
-  });
-});
 
 describe('agent mail lookup and prompt contract', () => {
   test('Nylas native search does not mix unsupported Gmail query parameters', async () => {
@@ -126,26 +29,18 @@ describe('agent mail lookup and prompt contract', () => {
     expect(params).not.toHaveProperty('starred');
   });
 
-  test('search_threads fetches and caches a fake noreply thread without opening it first', async () => {
+  test('search_threads fails clearly when no hosted account is available', async () => {
     const { searchThreads } = await import('../lib/tools/mail');
-    const { listThreadsForAccount } = await import('../lib/store/threads');
-
-    const result = await searchThreads.handler(
-      {
-        account: 'jakob@example.test',
-        query: 'from:noreply@example.test newer_than:30d',
-        max: 5,
-      },
-      { agent: 'codex' },
-    );
-
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]._id).toBe('thread-noreply-search');
-    expect(gogCalls.at(-1)).toContain('--');
-    expect(gogCalls.at(-1)).toContain('from:noreply@example.test newer_than:30d');
-
-    const cached = await listThreadsForAccount('jakob@example.test', 5);
-    expect(cached.map((thread) => thread._id)).toContain('thread-noreply-search');
+    await expect(
+      searchThreads.handler(
+        {
+          account: 'jakob@example.test',
+          query: 'from:noreply@example.test newer_than:30d',
+          max: 5,
+        },
+        { agent: 'codex' },
+      ),
+    ).rejects.toThrow('Sign in required for hosted mail access.');
   });
 
   test('system prompt directs named reply requests through search, not the focused thread', async () => {

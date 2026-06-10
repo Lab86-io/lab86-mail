@@ -1,7 +1,6 @@
 import type { CreateAttachmentRequest } from 'nylas';
 import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { isConvexConfigured } from '@/lib/hosted/env';
 import { requireNylas } from './client';
 import {
   emailList,
@@ -41,13 +40,13 @@ interface UpdateNylasThreadFoldersArgs {
 }
 
 export async function listNylasAccounts(userId?: string | null) {
-  if (!userId || !isConvexConfigured()) return [];
+  if (!userId) return [];
   const rows = await convexQuery<NylasAccountRow[]>(api.accounts.listConnectedAccounts, { userId });
   return rows.filter((row) => row.status === 'connected').map(normalizeNylasAccount);
 }
 
 export async function getNylasAccount(userId: string | null | undefined, email: string) {
-  if (!userId || !isConvexConfigured()) return null;
+  if (!userId) throw new Error('Sign in required for hosted mail access.');
   const row = await convexQuery<NylasAccountRow | null>(api.accounts.getConnectedAccountByEmail, {
     userId,
     email,

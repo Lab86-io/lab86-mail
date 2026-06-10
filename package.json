@@ -49,7 +49,6 @@
     "convex": "^1.40.0",
     "date-fns": "4.2.1",
     "dompurify": "3.4.5",
-    "execa": "9.6.1",
     "geist": "1.7.0",
     "html-to-text": "10.0.0",
     "iconify-icon": "3.0.2",

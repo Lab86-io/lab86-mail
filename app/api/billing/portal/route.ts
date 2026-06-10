@@ -16,7 +16,7 @@ export async function POST() {
       { status: 503 },
     );
   }
-  await requireCurrentUser({ allowLegacy: false });
+  await requireCurrentUser();
   const url = clerkBillingPortalUrl() || '/pricing';
   return NextResponse.json({ ok: true, url });
 }
