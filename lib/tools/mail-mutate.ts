@@ -236,7 +236,16 @@ export const markThreadRead = defineTool({
           gmailMutate(['--account', account, '--json', 'gmail', 'mark-read', id, '--no-input']),
         ),
       );
-      mutationSucceeded = results.some((r) => r.status === 'fulfilled');
+      const rejected = results.filter(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      if (rejected.length) {
+        console.warn(
+          'Failed to mark one or more Gmail messages read:',
+          rejected.map((result) => result.reason),
+        );
+      }
+      mutationSucceeded = results.length > 0 && rejected.length === 0;
     } else {
       mutationSucceeded = await gmailMutate([
         '--account',

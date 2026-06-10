@@ -69,19 +69,20 @@ export const CodeBlock = ({
 }: CodeBlockProps) => {
   const [html, setHtml] = useState<string>('');
   const [darkHtml, setDarkHtml] = useState<string>('');
-  const mounted = useRef(true);
+  const highlightRequestId = useRef(0);
 
   useEffect(() => {
-    mounted.current = true;
+    const requestId = ++highlightRequestId.current;
+    let cancelled = false;
     highlightCode(code, language, showLineNumbers).then(([light, dark]) => {
-      if (mounted.current) {
+      if (!cancelled && requestId === highlightRequestId.current) {
         setHtml(light);
         setDarkHtml(dark);
       }
     });
 
     return () => {
-      mounted.current = false;
+      cancelled = true;
     };
   }, [code, language, showLineNumbers]);
 

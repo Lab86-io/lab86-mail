@@ -48,18 +48,38 @@ function slugify(value: string) {
 // Seed once per process — listSmartLabels/getSmartLabel call this on every
 // read, and re-running the findOne+upsert each time is pure overhead.
 let seedEnsured = false;
+let seedPromise: Promise<void> | null = null;
 
 export async function ensureSeedSmartLabels() {
   if (seedEnsured) return;
-  const existing = await findOne<SmartLabelDefinition>(db().smartLabels, { _id: DEVOPS_LABEL_ID });
-  const ts = now();
-  const seeded = {
-    ...DEVOPS_LABEL,
-    createdAt: existing?.createdAt || ts,
-    updatedAt: existing?.updatedAt || ts,
-  };
-  await upsert(db().smartLabels, { _id: DEVOPS_LABEL_ID }, seeded);
-  seedEnsured = true;
+  if (seedPromise) return await seedPromise;
+  seedPromise = (async () => {
+    const existing = await findOne<SmartLabelDefinition>(db().smartLabels, { _id: DEVOPS_LABEL_ID });
+    const ts = now();
+    const seeded = {
+      ...DEVOPS_LABEL,
+      createdAt: existing?.createdAt || ts,
+      updatedAt: existing?.updatedAt || ts,
+    };
+    await upsert(db().smartLabels, { _id: DEVOPS_LABEL_ID }, seeded);
+    seedEnsured = true;
+  })();
+  try {
+    await seedPromise;
+  } catch (err) {
+    seedPromise = null;
+    throw err;
+  } finally {
+    if (seedEnsured) seedPromise = null;
+  }
+}
+
+async function rethrowFriendlyDuplicateLabelError(err: unknown, slug: string, currentId?: string) {
+  const existingBySlug = await findOne<SmartLabelDefinition>(db().smartLabels, { slug }).catch(() => null);
+  if (existingBySlug && existingBySlug._id !== currentId) {
+    throw new Error(`A smart label named "${existingBySlug.name}" already exists.`);
+  }
+  throw err;
 }
 
 export async function listSmartLabels(includeDisabled = false) {
@@ -110,7 +130,11 @@ export async function createSmartLabel(input: {
     createdAt: ts,
     updatedAt: ts,
   };
-  await upsert(db().smartLabels, { _id: label._id }, label);
+  try {
+    await upsert(db().smartLabels, { _id: label._id }, label);
+  } catch (err) {
+    await rethrowFriendlyDuplicateLabelError(err, slug);
+  }
   return label;
 }
 
@@ -139,7 +163,11 @@ export async function updateSmartLabel(
   };
   if (!next.positiveExamples.length) throw new Error('At least one positive example is required');
   if (!next.negativeExamples.length) throw new Error('At least one negative example is required');
-  await upsert(db().smartLabels, { _id: id }, next);
+  try {
+    await upsert(db().smartLabels, { _id: id }, next);
+  } catch (err) {
+    await rethrowFriendlyDuplicateLabelError(err, next.slug, id);
+  }
   return next;
 }
 

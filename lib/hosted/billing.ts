@@ -22,10 +22,15 @@ export async function getAiBillingEntitlement(): Promise<AiBillingEntitlement> {
     () => false,
   );
   if (admin) {
+    const rawAdminMonthlyCredits = process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS;
+    const adminMonthlyCredits = Number(rawAdminMonthlyCredits);
     return {
       plan: 'admin',
       status: 'active',
-      monthlyCredits: Number(process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS || defaults.proMonthlyCredits),
+      monthlyCredits:
+        rawAdminMonthlyCredits && Number.isFinite(adminMonthlyCredits)
+          ? adminMonthlyCredits
+          : defaults.proMonthlyCredits,
       source: 'clerk',
     };
   }

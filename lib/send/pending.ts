@@ -30,7 +30,7 @@ export function queueSend(id: string, delayMs: number, run: () => Promise<void>)
       try {
         await task.run();
       } finally {
-        tasks.delete(id);
+        if (tasks.get(id) === task) tasks.delete(id);
       }
     },
     Math.max(0, delayMs),

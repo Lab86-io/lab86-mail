@@ -106,6 +106,9 @@ export async function POST(req: NextRequest) {
   const mode = body.mode === 'byok' ? 'byok' : 'lab86';
   const provider =
     typeof body.provider === 'string' && PROVIDERS.has(body.provider) ? body.provider : undefined;
+  if (mode === 'byok' && !provider) {
+    return NextResponse.json({ ok: false, error: 'provider is required when mode is byok' }, { status: 400 });
+  }
   let model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
   const fastModel =
     typeof body.fastModel === 'string' && body.fastModel.trim() ? body.fastModel.trim() : undefined;

@@ -100,8 +100,15 @@ export function ThreadView() {
     [data?.messages],
   );
   const markThreadRead = useMutation({
-    mutationFn: async ({ ids }: { ids: string[] }) =>
-      callTool('mark_thread_read', { account, threadId, messageIds: ids }),
+    mutationFn: async ({ ids }: { ids: string[] }) => {
+      const result = await callTool<{ ok: boolean; marked: number }>('mark_thread_read', {
+        account,
+        threadId,
+        messageIds: ids,
+      });
+      if (!result.ok) throw new Error('mark_thread_read rejected by provider');
+      return result;
+    },
     onMutate: async ({ ids }) => {
       if (!account || !threadId || !ids.length) return;
       queryClient.setQueriesData({ queryKey: ['search'] }, (old: any) => {

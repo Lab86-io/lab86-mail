@@ -2,13 +2,14 @@ import { cn } from '@/lib/utils';
 
 // The loading-ui-orbit-ring-rotation keyframes live in app/globals.css so the
 // definition isn't re-injected into the DOM for every rendered instance.
-function OrbitRing({ className, ...props }: React.ComponentProps<'span'>) {
+function OrbitRing({ className, style, ...props }: React.ComponentProps<'span'>) {
   return (
     <span
       role="status"
       className={cn('relative inline-block', className)}
       style={{
         animation: 'loading-ui-orbit-ring-rotation var(--duration, 1s) linear infinite',
+        ...style,
       }}
       {...props}
     >
