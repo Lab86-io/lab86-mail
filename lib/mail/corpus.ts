@@ -43,7 +43,8 @@ export function buildCorpusSearchText(input: CorpusSearchTextInput) {
 
 export function yearMonthFromTimestamp(ts: unknown, fallback = Date.now()) {
   const value = Number(ts);
-  const date = new Date(Number.isFinite(value) && value > 0 ? value : fallback);
+  const fallbackValue = Number.isFinite(fallback) && fallback > 0 ? fallback : Date.now();
+  const date = new Date(Number.isFinite(value) && value > 0 ? value : fallbackValue);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
@@ -69,6 +70,9 @@ export function extractNylasWebhookMetadata(payload: unknown): NylasWebhookMetad
   );
   const providerThreadId = firstString(object.thread_id, object.threadId, data.thread_id, data.threadId);
   const sourceId = providerMessageId || providerThreadId || 'unknown-object';
+  // The synthesized fallback id always carries a payload hash so two distinct
+  // deliveries can never collide on the dedup index when explicit ids and
+  // timestamps are missing.
   const eventId =
     firstString(
       root.id,
@@ -76,7 +80,10 @@ export function extractNylasWebhookMetadata(payload: unknown): NylasWebhookMetad
       root.eventId,
       isRecord(root.webhook_delivery_attempt) ? root.webhook_delivery_attempt.id : undefined,
       data.id,
-    ) || `${type}:${grantId || 'unknown-grant'}:${sourceId}:${firstString(root.time, root.created_at) || ''}`;
+    ) ||
+    `${type}:${grantId || 'unknown-grant'}:${sourceId}:${
+      firstString(root.time, root.created_at) || 'no-time'
+    }:${hashPayload(payload)}`;
   return {
     eventId,
     type,
@@ -85,6 +92,20 @@ export function extractNylasWebhookMetadata(payload: unknown): NylasWebhookMetad
     providerThreadId,
     truncated: /\.truncated$/.test(type),
   };
+}
+
+function hashPayload(payload: unknown) {
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(payload) || '';
+  } catch {
+    serialized = String(payload);
+  }
+  let hash = 5381;
+  for (let i = 0; i < serialized.length; i += 1) {
+    hash = ((hash << 5) + hash + serialized.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function firstString(...values: unknown[]) {

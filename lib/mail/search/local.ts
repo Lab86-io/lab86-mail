@@ -1,4 +1,6 @@
 import type { SearchAst, SearchClause, SearchProvider, SearchUnsupportedClause } from './ast';
+import { endOfDayMs, startOfDayMs } from './dates';
+import { foldLabel, normalizeFolder, SYSTEM_LABEL_ALIASES } from './folders';
 
 export interface CorpusMessageDocument {
   accountId: string;
@@ -24,13 +26,16 @@ export interface CorpusMessageDocument {
 export interface LocalSearchPlan {
   query: string;
   dropped: SearchUnsupportedClause[];
+  after?: number;
+  before?: number;
 }
 
 export function compileAstToLocalCorpusQuery(ast: SearchAst): LocalSearchPlan {
   const terms: string[] = [];
   const dropped: SearchUnsupportedClause[] = [];
+  const dates = collectLocalDateBounds(ast);
   for (const clause of ast.clauses) collectLocalSearchTerm(clause, terms, dropped);
-  return { query: terms.join(' ').trim(), dropped };
+  return { query: terms.join(' ').trim(), dropped, ...dates };
 }
 
 export function filterCorpusMessagesByAst(messages: CorpusMessageDocument[], ast: SearchAst) {
@@ -114,9 +119,9 @@ function matchesPositiveClause(message: CorpusMessageDocument, clause: SearchCla
     case 'subject':
       return includesFolded(message.subject, clause.value);
     case 'after':
-      return message.receivedAt >= startOfDay(clause.value);
+      return message.receivedAt >= startOfDayMs(clause.value);
     case 'before':
-      return message.receivedAt <= endOfDay(clause.value);
+      return message.receivedAt <= endOfDayMs(clause.value);
     case 'text':
       return includesAllTerms(message.searchText, clause.value);
     case 'or':
@@ -125,8 +130,8 @@ function matchesPositiveClause(message: CorpusMessageDocument, clause: SearchCla
 }
 
 function hasLabel(message: CorpusMessageDocument, label: string) {
-  const expected = normalizeLabel(label);
-  return (message.labels || []).some((item) => normalizeLabel(item) === expected);
+  const expected = foldLabel(label);
+  return (message.labels || []).some((item) => foldLabel(item) === expected);
 }
 
 function hasAnyLabel(message: CorpusMessageDocument, labels: readonly string[]) {
@@ -159,44 +164,18 @@ function includesAllTerms(value: string | undefined, query: string) {
     .every((term) => folded.includes(term));
 }
 
-function normalizeFolder(value: string) {
-  const lower = value.toLowerCase();
-  if (lower === 'sent') return 'SENT';
-  if (lower === 'draft' || lower === 'drafts') return 'DRAFTS';
-  if (lower === 'trash') return 'TRASH';
-  if (lower === 'spam') return 'SPAM';
-  if (lower === 'inbox') return 'INBOX';
-  if (lower === 'archive' || lower === 'archived') return 'ARCHIVE';
-  if (lower === 'all' || lower === 'allmail' || lower === 'all_mail') return 'ALL';
-  return value;
-}
-
-const SYSTEM_LABEL_ALIASES = {
-  INBOX: ['INBOX', 'Inbox', '\\Inbox'],
-  SENT: ['SENT', 'Sent', 'Sent Items', 'Sent Mail', '\\Sent'],
-  DRAFTS: ['DRAFT', 'DRAFTS', 'Draft', 'Drafts', '\\Drafts'],
-  TRASH: ['TRASH', 'Trash', 'Deleted Items', 'DeletedItems', '\\Trash'],
-  SPAM: ['SPAM', 'Spam', 'Junk', 'Junk Email', 'JunkEmail', '\\Junk'],
-  ARCHIVE: ['ARCHIVE', 'Archive', 'Archived', 'All Mail', '\\Archive'],
-} as const;
-
-function normalizeLabel(value: string) {
-  return String(value || '')
-    .replace(/^\\/, '')
-    .replace(/[\s_-]+/g, '')
-    .toLowerCase();
-}
-
-function startOfDay(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return Number.NEGATIVE_INFINITY;
-  date.setUTCHours(0, 0, 0, 0);
-  return date.valueOf();
-}
-
-function endOfDay(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return Number.POSITIVE_INFINITY;
-  date.setUTCHours(23, 59, 59, 999);
-  return date.valueOf();
+function collectLocalDateBounds(ast: SearchAst) {
+  let after: number | undefined;
+  let before: number | undefined;
+  for (const clause of ast.clauses) {
+    if (clause.negated) continue;
+    if (clause.type === 'after')
+      after = Math.max(after ?? Number.NEGATIVE_INFINITY, startOfDayMs(clause.value));
+    if (clause.type === 'before')
+      before = Math.min(before ?? Number.POSITIVE_INFINITY, endOfDayMs(clause.value));
+  }
+  return {
+    after: Number.isFinite(after) ? after : undefined,
+    before: Number.isFinite(before) ? before : undefined,
+  };
 }

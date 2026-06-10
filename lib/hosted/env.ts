@@ -18,7 +18,12 @@ export function isStripeConfigured() {
 
 export function isClerkBillingConfigured() {
   if (isSubscriptionServiceDisabled()) return false;
-  return isClerkConfigured();
+  // Billing is only "configured" when the checkout URL it implies can actually
+  // be produced (see clerkBillingCheckoutUrl in lib/hosted/billing.ts).
+  return (
+    isClerkConfigured() &&
+    Boolean(process.env.CLERK_BILLING_CHECKOUT_URL || process.env.NEXT_PUBLIC_CLERK_BILLING_CHECKOUT_URL)
+  );
 }
 
 export function hostedPublicUrl() {

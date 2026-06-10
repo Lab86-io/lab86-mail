@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { describeProvider, hasAi } from '../ai/client';
-import { generateTextForCurrentUser } from '../ai/gateway';
+import { describeProvider } from '../ai/client';
+import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
@@ -94,7 +94,9 @@ export async function generateDailyReport(input: {
   includeCalendar?: boolean;
 }) {
   const now = input.now || Date.now();
-  const accounts = input.accounts?.length ? input.accounts : await authedAccounts(input.userId);
+  const connected = await listNylasAccounts(input.userId).catch(() => []);
+  const authed = connected.filter((account) => account.authed);
+  const accounts = input.accounts?.length ? input.accounts : authed.map((account) => account.accountId);
   const errors: string[] = [];
   if (!accounts.length) errors.push('No connected Nylas mail accounts found for this user.');
   const [rules, customLabels, tracked] = await Promise.all([
@@ -103,9 +105,21 @@ export async function generateDailyReport(input: {
     listTrackedThreads({ limit: 1000 }),
   ]);
   const trackedByKey = new Map(tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
-  // "Self" is whatever accounts are connected for this user — no hardcoded
-  // addresses, so the report works for any deployment/operator.
-  const self = new Set<string>(accounts.map((a) => a.toLowerCase()));
+  // "Self" is the set of EMAIL ADDRESSES on this user's connected accounts.
+  // `accounts` above are opaque accountIds used for transport, while sender
+  // checks downstream compare against addresses.
+  const accountIdSet = new Set(accounts);
+  const self = new Set<string>(
+    authed
+      .filter((account) => !input.accounts?.length || accountIdSet.has(account.accountId))
+      .map((account) => String(account.email || '').toLowerCase())
+      .filter(Boolean),
+  );
+  // Callers may still pass raw emails in input.accounts; honor them for
+  // self-detection even though transport lookups use accountIds.
+  for (const value of accounts) {
+    if (value.includes('@')) self.add(value.toLowerCase());
+  }
 
   // ---- Candidate gathering -------------------------------------------------
   const candidates = new Map<string, Thread>();
@@ -223,6 +237,7 @@ export async function generateDailyReport(input: {
 
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
   const enrichCap = Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || 30);
+  const aiAvailable = await hasAiForCurrentUser();
   const enrichKeys = new Set<string>(
     bounded
       .filter((thread) => {
@@ -230,7 +245,7 @@ export async function generateDailyReport(input: {
         const floor = floors.get(key)!;
         const smart = smartByKey.get(thread._id);
         return (
-          hasAi() &&
+          aiAvailable &&
           (floor.protected ||
             trackedByKey.has(key) ||
             Boolean(smart?.isHumanLike) ||
@@ -319,11 +334,6 @@ export async function generateDailyReport(input: {
   });
   await saveDailyReport(report);
   return report;
-}
-
-async function authedAccounts(userId?: string | null) {
-  const accounts = await listNylasAccounts(userId).catch(() => []);
-  return [...new Set(accounts.filter((account) => account.authed).map((account) => account.accountId))];
 }
 
 async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
@@ -645,7 +655,7 @@ async function buildThreadInsight(
   let lane = floor.lane;
   let model = 'local';
 
-  if (context.enrich && hasAi()) {
+  if (context.enrich && (await hasAiForCurrentUser())) {
     try {
       const { text: aiText } = await generateTextForCurrentUser({
         feature: 'daily_report_insight',
@@ -806,7 +816,7 @@ async function composeReport(input: {
   let narrative = localNarrative(input.kind, replyOwed, followUpOwed, newPeople, trackedItems);
   let model = 'local';
 
-  if (hasAi()) {
+  if (await hasAiForCurrentUser()) {
     try {
       const { text } = await generateTextForCurrentUser({
         feature: 'daily_report_narrative',

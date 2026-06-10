@@ -75,11 +75,19 @@ export const listSyncTargets = query({
     requireInternalSecret(args.internalSecret);
     const limit = clampLimit(args.limit, 50, 200);
     if (args.status) {
-      const rows = await ctx.db
+      // For user-scoped sweeps, walk the user's own (small) state set so the
+      // status filter is never starved by other users' rows.
+      if (args.userId) {
+        const rows = await ctx.db
+          .query('mailSyncStates')
+          .withIndex('by_user', (q) => q.eq('userId', args.userId))
+          .collect();
+        return rows.filter((row) => row.status === args.status).slice(0, limit);
+      }
+      return await ctx.db
         .query('mailSyncStates')
         .withIndex('by_status', (q) => q.eq('status', args.status))
         .take(limit);
-      return args.userId ? rows.filter((row) => row.userId === args.userId) : rows;
     }
     if (args.userId) {
       return await ctx.db
@@ -322,6 +330,8 @@ export const searchCorpusMessages = query({
     query: v.optional(v.string()),
     provider: v.optional(providerValidator),
     yearMonth: v.optional(v.string()),
+    after: v.optional(v.number()),
+    before: v.optional(v.number()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -329,13 +339,20 @@ export const searchCorpusMessages = query({
     const limit = clampLimit(args.limit, 25, 100);
     const text = (args.query || '').trim();
     if (!text) {
-      return await ctx.db
+      const rows = await ctx.db
         .query('mailCorpusMessages')
         .withIndex('by_user_account_received', (q) =>
-          q.eq('userId', args.userId).eq('accountId', args.accountId),
+          applyReceivedAtBounds(q.eq('userId', args.userId).eq('accountId', args.accountId), args),
         )
         .order('desc')
-        .take(limit);
+        .take(limit * 2);
+      return rows
+        .filter(
+          (row) =>
+            (!args.provider || row.provider === args.provider) &&
+            (!args.yearMonth || row.yearMonth === args.yearMonth),
+        )
+        .slice(0, limit);
     }
     const search = ctx.db.query('mailCorpusMessages').withSearchIndex('by_search_text', (q) => {
       let builder = q.search('searchText', text).eq('userId', args.userId).eq('accountId', args.accountId);
@@ -344,7 +361,10 @@ export const searchCorpusMessages = query({
       return builder;
     });
     const rows = await search.take(limit * 3);
-    return rows.sort((a, b) => b.receivedAt - a.receivedAt).slice(0, limit);
+    return rows
+      .filter((row) => withinReceivedAtBounds(row, args))
+      .sort((a, b) => b.receivedAt - a.receivedAt)
+      .slice(0, limit);
   },
 });
 
@@ -354,27 +374,33 @@ async function upsertSyncState(ctx: any, args: any) {
     .query('mailSyncStates')
     .withIndex('by_user_account', (q: any) => q.eq('userId', args.userId).eq('accountId', args.accountId))
     .unique();
-  const patch = {
+  // Patch semantics: only fields the caller provided are overwritten, so a
+  // status-only update can't silently clear cursors or revoke corpusReady.
+  const patch: Record<string, unknown> = {
     userId: args.userId,
     accountId: args.accountId,
     grantId: args.grantId,
     provider: args.provider,
     status: args.status,
-    cursor: args.cursor,
-    historyId: args.historyId,
-    deltaLink: args.deltaLink,
-    corpusReady: Boolean(args.corpusReady),
-    progress: args.progress,
     error: args.error,
-    lastBackfillAt: args.lastBackfillAt,
-    lastIncrementalSyncAt: args.lastIncrementalSyncAt,
     updatedAt: ts,
   };
+  if (args.cursor !== undefined) patch.cursor = args.cursor;
+  if (args.historyId !== undefined) patch.historyId = args.historyId;
+  if (args.deltaLink !== undefined) patch.deltaLink = args.deltaLink;
+  if (args.corpusReady !== undefined) patch.corpusReady = Boolean(args.corpusReady);
+  if (args.progress !== undefined) patch.progress = args.progress;
+  if (args.lastBackfillAt !== undefined) patch.lastBackfillAt = args.lastBackfillAt;
+  if (args.lastIncrementalSyncAt !== undefined) patch.lastIncrementalSyncAt = args.lastIncrementalSyncAt;
   if (existing) {
     await ctx.db.patch(existing._id, patch);
     return { ok: true, id: existing._id };
   }
-  const id = await ctx.db.insert('mailSyncStates', { ...patch, createdAt: ts });
+  const id = await ctx.db.insert('mailSyncStates', {
+    ...patch,
+    corpusReady: Boolean(args.corpusReady),
+    createdAt: ts,
+  });
   return { ok: true, id };
 }
 
@@ -395,4 +421,17 @@ function clampLimit(value: unknown, fallback: number, max: number) {
   const parsed = Math.floor(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
+}
+
+function applyReceivedAtBounds(builder: any, args: any) {
+  let next = builder;
+  if (Number.isFinite(args.after)) next = next.gte('receivedAt', args.after);
+  if (Number.isFinite(args.before)) next = next.lte('receivedAt', args.before);
+  return next;
+}
+
+function withinReceivedAtBounds(row: any, args: any) {
+  if (Number.isFinite(args.after) && row.receivedAt < args.after) return false;
+  if (Number.isFinite(args.before) && row.receivedAt > args.before) return false;
+  return true;
 }

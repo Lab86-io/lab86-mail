@@ -63,6 +63,9 @@ export interface Message {
   textBody: string;
   htmlBody: string;
   labels: string[];
+  // Provider-agnostic read state from the API (labels like 'UNREAD' are a
+  // Gmail-only signal and must not be the sole source).
+  unread?: boolean;
   attachments: Attachment[];
   headers: Record<string, string>;
   cachedAt: number;

@@ -76,35 +76,103 @@ export async function backfillMailCorpusAccount({
     corpusReady: false,
     progress: { stage: 'fetching', pageToken: pageToken || null, limit: batchLimit },
   });
-  const page = await requireNylas().messages.list({
-    identifier: row.grantId,
-    queryParams: { limit: batchLimit, page_token: pageToken } as any,
-  });
-  const messages = page.data.map((message) => corpusMessageFromNylas(row, message));
-  const threads = corpusThreadsFromMessages(messages);
-  const nextPageToken = page.nextCursor || undefined;
-  const corpusReady = !nextPageToken;
-  await upsertCorpus(row, {
-    threads,
-    messages,
-    cursor: nextPageToken,
-    corpusReady,
-    progress: {
-      stage: corpusReady ? 'ready' : 'backfilling',
-      pageToken: nextPageToken || null,
-      lastBatchMessages: messages.length,
-    },
-  });
-  return {
-    ok: true,
-    accountId: row.accountId,
-    grantId: row.grantId,
-    provider: row.provider,
-    messages: messages.length,
-    threads: threads.length,
-    nextPageToken,
-    corpusReady,
-  };
+  try {
+    const page = await requireNylas().messages.list({
+      identifier: row.grantId,
+      queryParams: { limit: batchLimit, page_token: pageToken } as any,
+    });
+    const messages = page.data.map((message) => corpusMessageFromNylas(row, message));
+    const threads = corpusThreadsFromMessages(messages);
+    const nextPageToken = page.nextCursor || undefined;
+    const corpusReady = !nextPageToken;
+    await upsertCorpus(row, {
+      threads,
+      messages,
+      cursor: nextPageToken,
+      corpusReady,
+      progress: {
+        stage: corpusReady ? 'ready' : 'backfilling',
+        pageToken: nextPageToken || null,
+        lastBatchMessages: messages.length,
+      },
+    });
+    return {
+      ok: true,
+      accountId: row.accountId,
+      grantId: row.grantId,
+      provider: row.provider,
+      messages: messages.length,
+      threads: threads.length,
+      nextPageToken,
+      corpusReady,
+    };
+  } catch (err: any) {
+    await markSync(row, {
+      status: 'error',
+      cursor: pageToken,
+      corpusReady: false,
+      error: err?.message || 'corpus backfill failed',
+      progress: { stage: 'backfill_error', pageToken: pageToken || null },
+    }).catch(() => undefined);
+    throw err;
+  }
+}
+
+// Runs the page loop for one account until the corpus is ready or the page
+// budget for this run is spent. Resumes from the stored cursor, so repeated
+// kicks make monotonic progress through the mailbox history.
+export async function runCorpusBackfill({
+  userId,
+  accountId,
+  maxPages = 40,
+  pageLimit = 100,
+}: {
+  userId: string;
+  accountId: string;
+  maxPages?: number;
+  pageLimit?: number;
+}): Promise<CorpusSyncResult> {
+  const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, { userId, accountId }).catch(
+    () => null,
+  );
+  let pageToken: string | undefined =
+    syncState && !syncState.corpusReady && typeof syncState.cursor === 'string' && syncState.cursor
+      ? syncState.cursor
+      : undefined;
+  let result: CorpusSyncResult | null = null;
+  for (let page = 0; page < Math.max(1, maxPages); page += 1) {
+    result = await backfillMailCorpusAccount({ userId, accountId, pageToken, limit: pageLimit });
+    if (result.corpusReady || !result.nextPageToken) return result;
+    pageToken = result.nextPageToken;
+  }
+  return result as CorpusSyncResult;
+}
+
+const backfillKickAt = new Map<string, number>();
+const BACKFILL_KICK_DEBOUNCE_MS = 10 * 60_000;
+const BACKFILL_ACTIVE_WINDOW_MS = 5 * 60_000;
+
+// Fire-and-forget backfill kick used by the search path and OAuth callback.
+// Debounced in-process and skipped while another run is making fresh progress.
+export function maybeKickCorpusBackfill(row: Pick<NylasAccountRow, 'userId' | 'accountId'>) {
+  const key = `${row.userId}:${row.accountId}`;
+  const last = backfillKickAt.get(key) || 0;
+  if (Date.now() - last < BACKFILL_KICK_DEBOUNCE_MS) return;
+  backfillKickAt.set(key, Date.now());
+  void (async () => {
+    try {
+      const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, {
+        userId: row.userId,
+        accountId: row.accountId,
+      });
+      if (syncState?.corpusReady) return;
+      const updatedAt = Number(syncState?.updatedAt) || 0;
+      if (syncState?.status === 'backfilling' && Date.now() - updatedAt < BACKFILL_ACTIVE_WINDOW_MS) return;
+      await runCorpusBackfill({ userId: row.userId, accountId: row.accountId });
+    } catch (err: any) {
+      console.error(`[corpus] background backfill failed for ${row.accountId}:`, err?.message || err);
+    }
+  })();
 }
 
 export async function reconcileMailCorpusAccount({
@@ -113,36 +181,51 @@ export async function reconcileMailCorpusAccount({
   limit = 50,
 }: ReconcileArgs): Promise<CorpusSyncResult> {
   const row = await getConnectedAccount(userId, accountId);
+  const wasReady = await convexQuery<any | null>(mailCorpusApi.getSyncState, { userId, accountId })
+    .then((state) => Boolean(state?.corpusReady))
+    .catch(() => false);
   const batchLimit = clampLimit(limit, 50, 100);
   await markSync(row, {
     status: 'syncing',
-    corpusReady: false,
+    corpusReady: wasReady,
     progress: { stage: 'reconciling', limit: batchLimit },
   });
-  const page = await requireNylas().messages.list({
-    identifier: row.grantId,
-    queryParams: { limit: batchLimit } as any,
-  });
-  const messages = page.data.map((message) => corpusMessageFromNylas(row, message));
-  const threads = corpusThreadsFromMessages(messages);
-  await upsertCorpus(row, {
-    threads,
-    messages,
-    cursor: page.nextCursor || undefined,
-    corpusReady: true,
-    progress: { stage: 'reconciled', lastBatchMessages: messages.length },
-    incremental: true,
-  });
-  return {
-    ok: true,
-    accountId: row.accountId,
-    grantId: row.grantId,
-    provider: row.provider,
-    messages: messages.length,
-    threads: threads.length,
-    nextPageToken: page.nextCursor || undefined,
-    corpusReady: true,
-  };
+  try {
+    const page = await requireNylas().messages.list({
+      identifier: row.grantId,
+      queryParams: { limit: batchLimit } as any,
+    });
+    const messages = page.data.map((message) => corpusMessageFromNylas(row, message));
+    const threads = corpusThreadsFromMessages(messages);
+    await upsertCorpus(row, {
+      threads,
+      messages,
+      cursor: page.nextCursor || undefined,
+      corpusReady: true,
+      progress: { stage: 'reconciled', lastBatchMessages: messages.length },
+      incremental: true,
+    });
+    return {
+      ok: true,
+      accountId: row.accountId,
+      grantId: row.grantId,
+      provider: row.provider,
+      messages: messages.length,
+      threads: threads.length,
+      nextPageToken: page.nextCursor || undefined,
+      corpusReady: true,
+    };
+  } catch (err: any) {
+    // A failed reconcile must not strand the account in "syncing" or revoke
+    // readiness the corpus already earned.
+    await markSync(row, {
+      status: 'error',
+      corpusReady: wasReady,
+      error: err?.message || 'corpus reconcile failed',
+      progress: { stage: 'reconcile_error' },
+    }).catch(() => undefined);
+    throw err;
+  }
 }
 
 export async function ingestNylasWebhookPayload(payload: unknown) {

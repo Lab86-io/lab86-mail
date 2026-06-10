@@ -1,8 +1,19 @@
 import type { CreateAttachmentRequest } from 'nylas';
 import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { resolveSearchRoute } from '@/lib/mail/search/capabilities';
-import { planStructuredProviderSearch } from '@/lib/mail/search/execute';
+import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
+import {
+  fallbackTierForProvider,
+  isLocalPageToken,
+  LOCAL_PAGE_TOKEN_PREFIX,
+  resolveSearchRoute,
+} from '@/lib/mail/search/capabilities';
+import {
+  buildNativeSearchPlan,
+  compileQueryToNylasStructuredParams,
+  UNRESOLVED_FOLDER_PARAM,
+} from '@/lib/mail/search/compiler';
+import { folderRowMatches } from '@/lib/mail/search/folders';
 import {
   type CorpusMessageDocument,
   compileAstToLocalCorpusQuery,
@@ -65,6 +76,18 @@ export async function getNylasAccount(userId: string | null | undefined, account
   return row?.status === 'connected' ? row : null;
 }
 
+export interface SearchNylasThreadsResult {
+  account: string;
+  query: string;
+  items: any[];
+  nextPageToken?: string;
+  searchTier: 'local' | 'structured' | 'native';
+  route: ReturnType<typeof resolveSearchRoute>;
+  ast?: unknown;
+  dropped?: unknown[];
+  fallbackReason?: string;
+}
+
 export async function searchNylasThreads({
   userId,
   account,
@@ -77,47 +100,52 @@ export async function searchNylasThreads({
   query: string;
   max: number;
   pageToken?: string;
-}) {
+}): Promise<SearchNylasThreadsResult | null> {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
-  const route = await resolveAccountSearchRoute(row, Boolean(pageToken)).catch(() =>
-    resolveSearchRoute({ provider: row.provider, corpusReady: false, hasPageToken: Boolean(pageToken) }),
+  const route = await resolveAccountSearchRoute(row, pageToken).catch(() =>
+    resolveSearchRoute({ provider: row.provider, corpusReady: false, pageToken }),
   );
+  if (route.localEnabled && !route.corpusReady) {
+    // Self-heal: accounts connected before corpus sync existed never get a
+    // backfill kick from the OAuth callback, so the search path requests one.
+    maybeKickCorpusBackfill(row);
+  }
   if (route.tier === 'local') {
     try {
-      const local = await searchLocalCorpusThreads({
-        row,
-        query,
-        max,
-      });
+      const local = await searchLocalCorpusThreads({ row, query, max, pageToken });
       return {
         account: row.accountId,
         query,
         items: local.items,
-        nextPageToken: undefined,
+        nextPageToken: local.nextPageToken,
         searchTier: 'local',
         route,
         ast: local.ast,
         dropped: local.dropped,
       };
     } catch (err: any) {
-      const structured = await searchNylasStructuredThreads({ row, query, max, pageToken });
+      const fallback = await searchNylasProviderThreads({
+        row,
+        query,
+        max,
+        pageToken: isLocalPageToken(pageToken) ? undefined : pageToken,
+      });
       return {
-        ...structured,
-        searchTier: 'structured',
-        route: { ...route, tier: 'structured', reason: 'local search failed; structured fallback used' },
+        ...fallback,
+        route: {
+          ...route,
+          tier: fallback.searchTier,
+          reason: 'local search failed; provider fallback used',
+        },
         fallbackReason: err?.message || 'local search failed',
       };
     }
   }
-  return {
-    ...(await searchNylasStructuredThreads({ row, query, max, pageToken })),
-    searchTier: 'structured',
-    route,
-  };
+  return { ...(await searchNylasProviderThreads({ row, query, max, pageToken })), route };
 }
 
-async function resolveAccountSearchRoute(row: NylasAccountRow, hasPageToken: boolean) {
+async function resolveAccountSearchRoute(row: NylasAccountRow, pageToken?: string) {
   const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, {
     userId: row.userId,
     accountId: row.accountId,
@@ -125,37 +153,11 @@ async function resolveAccountSearchRoute(row: NylasAccountRow, hasPageToken: boo
   return resolveSearchRoute({
     provider: row.provider,
     corpusReady: Boolean(syncState?.corpusReady && syncState?.grantId === row.grantId),
-    hasPageToken,
+    pageToken,
   });
 }
 
 async function searchLocalCorpusThreads({
-  row,
-  query,
-  max,
-}: {
-  row: NylasAccountRow;
-  query: string;
-  max: number;
-}) {
-  const ast = parseMailSearchQuery(query);
-  const plan = compileAstToLocalCorpusQuery(ast);
-  const rows = await convexQuery<CorpusMessageDocument[]>(mailCorpusApi.searchCorpusMessages, {
-    userId: row.userId,
-    accountId: row.accountId,
-    provider: row.provider,
-    query: plan.query,
-    limit: Math.min(100, Math.max(max * 4, max)),
-  });
-  const filtered = filterCorpusMessagesByAst(rows, ast);
-  return {
-    ast,
-    dropped: plan.dropped,
-    items: corpusMessagesToThreads(filtered, row.accountId).slice(0, max),
-  };
-}
-
-async function searchNylasStructuredThreads({
   row,
   query,
   max,
@@ -166,19 +168,127 @@ async function searchNylasStructuredThreads({
   max: number;
   pageToken?: string;
 }) {
-  const plan = planStructuredProviderSearch({
+  const ast = parseMailSearchQuery(query);
+  const plan = compileAstToLocalCorpusQuery(ast);
+  const cursorBefore = localPageTokenBefore(pageToken);
+  const before =
+    cursorBefore !== null && plan.before !== undefined
+      ? Math.min(cursorBefore, plan.before)
+      : (cursorBefore ?? plan.before);
+  const fetchLimit = Math.min(100, Math.max(max * 4, max));
+  const rows = await convexQuery<CorpusMessageDocument[]>(mailCorpusApi.searchCorpusMessages, {
+    userId: row.userId,
+    accountId: row.accountId,
     provider: row.provider,
-    query,
-    max,
-    pageToken,
+    query: plan.query,
+    after: plan.after,
+    before,
+    limit: fetchLimit,
   });
-  const result = await requireNylas().threads.list({
+  const filtered = filterCorpusMessagesByAst(rows, ast);
+  // Cursor paging only applies to browse-style queries; text searches are
+  // relevance-windowed by the Convex search index and do not page.
+  const nextPageToken =
+    !plan.query && rows.length >= fetchLimit && filtered.length
+      ? `${LOCAL_PAGE_TOKEN_PREFIX}${Math.min(...filtered.map((message) => message.receivedAt)) - 1}`
+      : undefined;
+  return {
+    ast,
+    dropped: plan.dropped,
+    items: corpusMessagesToThreads(filtered, row.accountId).slice(0, max),
+    nextPageToken,
+  };
+}
+
+function localPageTokenBefore(pageToken?: string) {
+  if (!pageToken || !isLocalPageToken(pageToken)) return null;
+  const value = Number(pageToken.slice(LOCAL_PAGE_TOKEN_PREFIX.length));
+  return Number.isFinite(value) ? value : null;
+}
+
+async function searchNylasProviderThreads({
+  row,
+  query,
+  max,
+  pageToken,
+}: {
+  row: NylasAccountRow;
+  query: string;
+  max: number;
+  pageToken?: string;
+}) {
+  if (fallbackTierForProvider(row.provider) === 'native') {
+    const plan = buildNativeSearchPlan({ provider: row.provider, query, max, pageToken });
+    const page = await requireNylas().threads.list({
+      identifier: row.grantId,
+      queryParams: plan.queryParams as any,
+    });
+    const items = page.data.map((thread) => normalizeNylasThread(thread, row.accountId));
+    return {
+      account: row.accountId,
+      query,
+      items,
+      nextPageToken: page.nextCursor,
+      searchTier: 'native' as const,
+      dropped: [] as unknown[],
+    };
+  }
+
+  const plan = compileQueryToNylasStructuredParams({ provider: row.provider, query, max, pageToken });
+  const queryParams: Record<string, unknown> = { ...plan.queryParams };
+  const unresolvedFolder = queryParams[UNRESOLVED_FOLDER_PARAM] as string | undefined;
+  delete queryParams[UNRESOLVED_FOLDER_PARAM];
+  if (unresolvedFolder) {
+    const folderId = await resolveProviderFolderId(row, unresolvedFolder).catch(() => null);
+    if (folderId) {
+      queryParams.in = folderId;
+    } else {
+      plan.dropped.push({
+        clause: { type: 'folder', value: unresolvedFolder },
+        reason: 'folder not found on provider; results are unscoped',
+      });
+    }
+  }
+  const page = await requireNylas().threads.list({
     identifier: row.grantId,
-    queryParams: plan.queryParams as any,
+    queryParams: queryParams as any,
   });
-  const page = await result;
   const items = page.data.map((thread) => normalizeNylasThread(thread, row.accountId));
-  return { account: row.accountId, query, items, nextPageToken: page.nextCursor };
+  return {
+    account: row.accountId,
+    query,
+    items,
+    nextPageToken: page.nextCursor,
+    searchTier: 'structured' as const,
+    dropped: plan.dropped,
+  };
+}
+
+const providerFolderCache = new Map<string, { at: number; rows: ProviderFolderRow[] }>();
+const PROVIDER_FOLDER_CACHE_TTL_MS = 10 * 60_000;
+
+interface ProviderFolderRow {
+  id: string;
+  name: string;
+  attributes?: string[];
+}
+
+async function resolveProviderFolderId(row: NylasAccountRow, canonicalFolder: string) {
+  const cached = providerFolderCache.get(row.grantId);
+  let rows = cached && Date.now() - cached.at < PROVIDER_FOLDER_CACHE_TTL_MS ? cached.rows : null;
+  if (!rows) {
+    const page = await requireNylas().folders.list({
+      identifier: row.grantId,
+      queryParams: { limit: 200 },
+    });
+    rows = page.data.map((folder: any) => ({
+      id: String(folder.id),
+      name: String(folder.name || ''),
+      attributes: Array.isArray(folder.attributes) ? folder.attributes.map(String) : undefined,
+    }));
+    providerFolderCache.set(row.grantId, { at: Date.now(), rows });
+  }
+  return rows.find((folder) => folderRowMatches(canonicalFolder, folder))?.id ?? null;
 }
 
 export function buildNylasStructuredSearchQueryParams({
@@ -192,7 +302,7 @@ export function buildNylasStructuredSearchQueryParams({
   pageToken?: string;
   provider?: NylasAccountRow['provider'];
 }) {
-  return planStructuredProviderSearch({ provider, query, max, pageToken }).queryParams;
+  return compileQueryToNylasStructuredParams({ provider, query, max, pageToken }).queryParams;
 }
 
 export async function getNylasThread({

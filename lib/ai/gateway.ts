@@ -140,6 +140,19 @@ export async function resolveAiRuntime(input: {
   );
 }
 
+// User-aware availability check: true when the current user can reach a model
+// through ANY source (their own BYOK key, or platform keys within budget).
+// Unlike the env-only hasAi() in lib/ai/client.ts, this does not break
+// BYOK-only deployments with no platform key.
+export async function hasAiForCurrentUser(feature = 'availability_check'): Promise<boolean> {
+  try {
+    await resolveAiRuntime({ feature });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function generateTextForCurrentUser(
   options: Record<string, any> & {
     feature?: string;

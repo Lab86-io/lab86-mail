@@ -1,11 +1,18 @@
 import type { SearchExecutionTier, SearchProvider } from './ast';
 
-const DEFAULT_LOCAL_PROVIDERS = new Set<SearchProvider>(['icloud', 'microsoft']);
+// Local (Convex corpus) search is the primary tier for every provider. The
+// fallback below only serves accounts whose corpus has not finished
+// backfilling, or providers explicitly disabled via env.
+const DEFAULT_LOCAL_PROVIDERS = new Set<SearchProvider>(['google', 'microsoft', 'icloud', 'imap']);
+
+// Cursors returned by the local tier are tagged so paging stays on-tier
+// instead of silently switching transports between pages.
+export const LOCAL_PAGE_TOKEN_PREFIX = 'local:';
 
 export interface SearchRouteInput {
   provider: SearchProvider;
   corpusReady: boolean;
-  hasPageToken?: boolean;
+  pageToken?: string;
 }
 
 export interface SearchRoute {
@@ -16,42 +23,33 @@ export interface SearchRoute {
   localEnabled: boolean;
 }
 
+export function fallbackTierForProvider(provider: SearchProvider): SearchExecutionTier {
+  // Gmail's native query language is excellent and the user's typed query is
+  // already in (a superset of) it, so Google falls back to a verbatim
+  // search_query_native pass. Other providers fall back to Nylas structured
+  // filters, which are lossy but correct.
+  return provider === 'google' ? 'native' : 'structured';
+}
+
+export function isLocalPageToken(pageToken?: string) {
+  return Boolean(pageToken?.startsWith(LOCAL_PAGE_TOKEN_PREFIX));
+}
+
 export function resolveSearchRoute(input: SearchRouteInput): SearchRoute {
   const localEnabled = isLocalSearchEnabledForProvider(input.provider);
-  if (input.hasPageToken) {
-    return {
-      tier: 'structured',
-      provider: input.provider,
-      reason: 'local search does not page through provider cursors',
-      corpusReady: input.corpusReady,
-      localEnabled,
-    };
+  const fallback = fallbackTierForProvider(input.provider);
+  const base = { provider: input.provider, corpusReady: input.corpusReady, localEnabled };
+
+  if (input.pageToken && !isLocalPageToken(input.pageToken)) {
+    return { ...base, tier: fallback, reason: 'continuing provider-cursor pagination' };
   }
   if (!localEnabled) {
-    return {
-      tier: 'structured',
-      provider: input.provider,
-      reason: 'provider local search flag is disabled',
-      corpusReady: input.corpusReady,
-      localEnabled,
-    };
+    return { ...base, tier: fallback, reason: 'provider local search flag is disabled' };
   }
   if (!input.corpusReady) {
-    return {
-      tier: 'structured',
-      provider: input.provider,
-      reason: 'corpus is not ready for this grant',
-      corpusReady: false,
-      localEnabled,
-    };
+    return { ...base, tier: fallback, reason: 'corpus is not ready for this grant' };
   }
-  return {
-    tier: 'local',
-    provider: input.provider,
-    reason: 'corpus-ready local search enabled',
-    corpusReady: true,
-    localEnabled,
-  };
+  return { ...base, tier: 'local', reason: 'corpus-ready local search enabled' };
 }
 
 export function isLocalSearchEnabledForProvider(provider: SearchProvider) {
@@ -65,7 +63,10 @@ export function isLocalSearchEnabledForProvider(provider: SearchProvider) {
   }
 
   const perProvider = process.env[`LAB86_MAIL_LOCAL_SEARCH_${provider.toUpperCase()}`];
-  if (perProvider !== undefined) return perProvider === '1' || perProvider.toLowerCase() === 'true';
+  if (perProvider !== undefined) {
+    const value = perProvider.trim().toLowerCase();
+    return value === '1' || value === 'true';
+  }
 
   return DEFAULT_LOCAL_PROVIDERS.has(provider);
 }

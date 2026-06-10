@@ -24,10 +24,53 @@ describe('agent mail lookup and prompt contract', () => {
       in: 'INBOX',
       unread: true,
       has_attachment: true,
-      latest_message_after: expect.any(String),
+      latest_message_after: expect.any(Number),
       page_token: 'next-page',
     });
     expect(params).not.toHaveProperty('search_query_native');
+    // Nylas takes Unix SECONDS; a millisecond value or date string here is the
+    // bug that blanked the entire inbox once already.
+    const after = params.latest_message_after as number;
+    expect(Number.isInteger(after)).toBe(true);
+    expect(after).toBeGreaterThan(Date.parse('2020-01-01') / 1000);
+    expect(after).toBeLessThan(Date.now() / 1000 + 86_400);
+  });
+
+  test('Gmail native fallback passes the user query verbatim with legal companions only', async () => {
+    const { buildNativeSearchPlan } = await import('../lib/mail/search/compiler');
+    const plan = buildNativeSearchPlan({
+      provider: 'google',
+      query: 'in:inbox newer_than:30d "magic link" -in:spam',
+      max: 30,
+      pageToken: 'cursor-1',
+    });
+
+    expect(plan.tier).toBe('native');
+    expect(plan.queryParams).toEqual({
+      limit: 30,
+      search_query_native: 'in:inbox newer_than:30d "magic link" -in:spam',
+      page_token: 'cursor-1',
+    });
+  });
+
+  test('structured compiler maps Gmail system folders and defers opaque provider folders', async () => {
+    const { compileQueryToNylasStructuredParams, UNRESOLVED_FOLDER_PARAM } = await import(
+      '../lib/mail/search/compiler'
+    );
+    const google = compileQueryToNylasStructuredParams({
+      provider: 'google',
+      query: 'in:drafts',
+      max: 10,
+    });
+    expect(google.queryParams.in).toBe('DRAFT');
+
+    const microsoft = compileQueryToNylasStructuredParams({
+      provider: 'microsoft',
+      query: 'in:inbox',
+      max: 10,
+    });
+    expect(microsoft.queryParams).not.toHaveProperty('in');
+    expect(microsoft.queryParams[UNRESOLVED_FOLDER_PARAM]).toBe('INBOX');
   });
 
   test('structured compiler reports unsupported clauses explicitly', async () => {
@@ -79,25 +122,35 @@ describe('provider capabilities', () => {
     const previousReady = process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
     const { mailProviderCapability } = await import('../lib/mail/provider-capabilities');
 
-    delete process.env.LAB86_MAIL_ICLOUD_MODE;
-    delete process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
-    expect(mailProviderCapability('icloud')).toMatchObject({
-      visible: false,
-      connectable: false,
-    });
+    try {
+      delete process.env.LAB86_MAIL_ICLOUD_MODE;
+      delete process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
+      expect(mailProviderCapability('icloud')).toMatchObject({
+        visible: false,
+        connectable: false,
+      });
 
-    process.env.LAB86_MAIL_ICLOUD_MODE = 'beta';
-    process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY = '1';
-    expect(mailProviderCapability('icloud')).toMatchObject({
-      visible: true,
-      connectable: true,
-      searchable: true,
-    });
+      // Mode flipped on but the Nylas connector not provisioned: visible so the
+      // rollout state shows in the UI, but not connectable.
+      process.env.LAB86_MAIL_ICLOUD_MODE = 'beta';
+      delete process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
+      expect(mailProviderCapability('icloud')).toMatchObject({
+        visible: true,
+        connectable: false,
+      });
 
-    if (previousMode === undefined) delete process.env.LAB86_MAIL_ICLOUD_MODE;
-    else process.env.LAB86_MAIL_ICLOUD_MODE = previousMode;
-    if (previousReady === undefined) delete process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
-    else process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY = previousReady;
+      process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY = '1';
+      expect(mailProviderCapability('icloud')).toMatchObject({
+        visible: true,
+        connectable: true,
+        searchable: true,
+      });
+    } finally {
+      if (previousMode === undefined) delete process.env.LAB86_MAIL_ICLOUD_MODE;
+      else process.env.LAB86_MAIL_ICLOUD_MODE = previousMode;
+      if (previousReady === undefined) delete process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
+      else process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY = previousReady;
+    }
   });
 });
 
@@ -144,46 +197,86 @@ describe('Convex mail corpus helpers', () => {
       truncated: true,
     });
   });
+
+  test('fallback webhook event ids never collide for distinct payloads', async () => {
+    const { extractNylasWebhookMetadata } = await import('../lib/mail/corpus');
+    // No id, no timestamp, no object ids — the worst-case payloads that used
+    // to collapse onto one dedup key and silently skip deliveries.
+    const first = extractNylasWebhookMetadata({ type: 'message.created', data: { object: { body: 'a' } } });
+    const second = extractNylasWebhookMetadata({ type: 'message.created', data: { object: { body: 'b' } } });
+
+    expect(first.eventId).not.toBe(second.eventId);
+    expect(first.eventId.length).toBeGreaterThan('message.created::'.length);
+  });
+
+  test('yearMonthFromTimestamp survives invalid inputs and fallbacks', async () => {
+    const { yearMonthFromTimestamp } = await import('../lib/mail/corpus');
+    expect(yearMonthFromTimestamp(Number.NaN, Number.NaN)).toMatch(/^\d{4}-\d{2}$/);
+    expect(yearMonthFromTimestamp('garbage', Date.parse('2026-02-01T00:00:00Z'))).toBe('2026-02');
+  });
 });
 
 describe('local-first mail search routing', () => {
-  test('routes iCloud and Microsoft to local only when corpus-ready', async () => {
+  test('local corpus is tier 1 for every provider with per-provider fallbacks', async () => {
     const previousProviders = process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
     const previousDisabled = process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
-    delete process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
-    delete process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
+    try {
+      delete process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
+      delete process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
 
-    const { resolveSearchRoute } = await import('../lib/mail/search/capabilities');
+      const { LOCAL_PAGE_TOKEN_PREFIX, resolveSearchRoute } = await import('../lib/mail/search/capabilities');
 
-    expect(resolveSearchRoute({ provider: 'icloud', corpusReady: true })).toMatchObject({
-      tier: 'local',
-      localEnabled: true,
-    });
-    expect(resolveSearchRoute({ provider: 'microsoft', corpusReady: false })).toMatchObject({
-      tier: 'structured',
-      localEnabled: true,
-      corpusReady: false,
-    });
-    expect(resolveSearchRoute({ provider: 'google', corpusReady: true })).toMatchObject({
-      tier: 'structured',
-      localEnabled: false,
-    });
+      // Corpus ready: every provider searches locally.
+      for (const provider of ['google', 'microsoft', 'icloud', 'imap'] as const) {
+        expect(resolveSearchRoute({ provider, corpusReady: true })).toMatchObject({
+          tier: 'local',
+          localEnabled: true,
+        });
+      }
 
-    process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS = 'all';
-    process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS = 'microsoft';
-    expect(resolveSearchRoute({ provider: 'google', corpusReady: true })).toMatchObject({
-      tier: 'local',
-      localEnabled: true,
-    });
-    expect(resolveSearchRoute({ provider: 'microsoft', corpusReady: true })).toMatchObject({
-      tier: 'structured',
-      localEnabled: false,
-    });
+      // Corpus not ready: Gmail falls back to verbatim native search, the
+      // rest to structured params.
+      expect(resolveSearchRoute({ provider: 'google', corpusReady: false })).toMatchObject({
+        tier: 'native',
+        corpusReady: false,
+      });
+      expect(resolveSearchRoute({ provider: 'microsoft', corpusReady: false })).toMatchObject({
+        tier: 'structured',
+        corpusReady: false,
+      });
+      expect(resolveSearchRoute({ provider: 'icloud', corpusReady: false })).toMatchObject({
+        tier: 'structured',
+      });
 
-    if (previousProviders === undefined) delete process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
-    else process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS = previousProviders;
-    if (previousDisabled === undefined) delete process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
-    else process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS = previousDisabled;
+      // Local cursors keep paging locally; provider cursors stay on the
+      // fallback transport.
+      expect(
+        resolveSearchRoute({
+          provider: 'google',
+          corpusReady: true,
+          pageToken: `${LOCAL_PAGE_TOKEN_PREFIX}1765000000000`,
+        }),
+      ).toMatchObject({ tier: 'local' });
+      expect(
+        resolveSearchRoute({ provider: 'google', corpusReady: true, pageToken: 'nylas-cursor' }),
+      ).toMatchObject({ tier: 'native' });
+
+      process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS = 'all';
+      process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS = 'microsoft';
+      expect(resolveSearchRoute({ provider: 'google', corpusReady: true })).toMatchObject({
+        tier: 'local',
+        localEnabled: true,
+      });
+      expect(resolveSearchRoute({ provider: 'microsoft', corpusReady: true })).toMatchObject({
+        tier: 'structured',
+        localEnabled: false,
+      });
+    } finally {
+      if (previousProviders === undefined) delete process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;
+      else process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS = previousProviders;
+      if (previousDisabled === undefined) delete process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS;
+      else process.env.LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS = previousDisabled;
+    }
   });
 
   test('filters local corpus messages with the search AST and groups threads newest-first', async () => {
@@ -293,6 +386,45 @@ describe('local-first mail search routing', () => {
       ),
     ).toEqual(['msg_icloud']);
   });
+
+  test('scopes natural-language account wording to a mailbox instead of sender search', async () => {
+    const { applyNaturalLanguageAccountHint, resolveAccountScopedQuery } = await import(
+      '../lib/mail/search/account-scope'
+    );
+    const hinted = applyNaturalLanguageAccountHint(
+      'stuff from my jjalangtry@outlook.com account older than 40 days',
+      'from:jjalangtry@outlook.com older_than:40d',
+    );
+    const scoped = resolveAccountScopedQuery(hinted, [
+      {
+        accountId: 'grant_outlook',
+        email: 'jjalangtry@outlook.com',
+        displayName: 'Outlook',
+      },
+      {
+        accountId: 'grant_gmail',
+        email: 'jjalangtry@gmail.com',
+        displayName: 'Gmail',
+      },
+    ]);
+
+    expect(hinted).toBe('account:jjalangtry@outlook.com older_than:40d');
+    expect(scoped).toEqual({
+      query: 'older_than:40d',
+      accountIds: ['grant_outlook'],
+      accountLabels: ['Outlook'],
+    });
+  });
+
+  test('local corpus plans carry date-only older-than filters to Convex', async () => {
+    const { parseMailSearchQuery } = await import('../lib/mail/search/parser');
+    const { compileAstToLocalCorpusQuery } = await import('../lib/mail/search/local');
+    const plan = compileAstToLocalCorpusQuery(parseMailSearchQuery('older_than:40d'));
+
+    expect(plan.query).toBe('');
+    expect(plan.before).toEqual(expect.any(Number));
+    expect(plan.after).toBeUndefined();
+  });
 });
 
 describe('compliance readiness', () => {
@@ -308,30 +440,19 @@ describe('compliance readiness', () => {
     expect(support).toContain('security@lab86.io');
   });
 
-  test('account deletion cascade covers hosted user data tables', () => {
+  test('account deletion cascade covers every schema table', () => {
+    // Derived from the schema so a newly added table fails this test until it
+    // is either added to the cascade or explicitly exempted here.
+    const schema = readFileSync(path.join(process.cwd(), 'convex/schema.ts'), 'utf8');
     const accounts = readFileSync(path.join(process.cwd(), 'convex/accounts.ts'), 'utf8');
-    for (const table of [
-      'connectedAccounts',
-      'providerGrants',
-      'nylasOAuthStates',
-      'aiSettings',
-      'aiProviderKeys',
-      'aiEntitlements',
-      'aiUsagePeriods',
-      'aiUsageEvents',
-      'threads',
-      'messages',
-      'dailyReports',
-      'memories',
-      'auditEvents',
-      'syncJobs',
-      'mailCorpusThreads',
-      'mailCorpusMessages',
-      'mailSyncStates',
-      'mailWebhookEvents',
-      'rateLimits',
-    ]) {
-      expect(accounts).toContain(`'${table}'`);
+    const cascadeSource = accounts.slice(accounts.indexOf('deleteUserCascade'));
+    const tables = [...schema.matchAll(/^\s{2}([a-zA-Z0-9]+): defineTable/gm)].map((match) => match[1]);
+    const exempt = new Set<string>([]);
+
+    expect(tables.length).toBeGreaterThan(10);
+    for (const table of tables) {
+      if (exempt.has(table)) continue;
+      expect(cascadeSource).toContain(`'${table}'`);
     }
   });
 });

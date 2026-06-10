@@ -40,9 +40,12 @@ export function mailProviderCapability(provider: MailProvider): MailProviderCapa
     return { ...base(provider, 'iCloud', false, false), reason: 'iCloud is hidden until validation.' };
   }
   if (!connectorReady) {
+    // Mode is beta/enabled but the Nylas connector has not been provisioned:
+    // show the button (disabled) so the rollout state is visible in the UI
+    // instead of silently absent.
     return {
-      ...base(provider, 'iCloud', false, false),
-      reason: 'Nylas iCloud connector is not marked ready.',
+      ...base(provider, mode === 'beta' ? 'iCloud beta' : 'iCloud', true, false),
+      reason: 'iCloud is almost ready — the Nylas connector is not configured yet.',
     };
   }
   return {

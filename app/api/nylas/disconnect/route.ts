@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireCurrentUser } from '@/lib/auth/current-user';
+import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { deleteNylasAccount } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -28,6 +28,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   } catch (err) {
     if (err instanceof RateLimitError) return rateLimitJson(err);
+    if (err instanceof AuthRequiredError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
+    }
     throw err;
   }
 }

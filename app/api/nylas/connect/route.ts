@@ -14,6 +14,13 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const user = await requireCurrentUser();
+  // Configuration problems should surface before any rate-limit quota is spent.
+  if (!isNylasConfigured()) {
+    return NextResponse.json(
+      { ok: false, error: 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.' },
+      { status: 503 },
+    );
+  }
   try {
     await enforceUserRateLimit({
       userId: user.userId,
@@ -24,12 +31,6 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     if (err instanceof RateLimitError) return rateLimitJson(err);
     throw err;
-  }
-  if (!isNylasConfigured()) {
-    return NextResponse.json(
-      { ok: false, error: 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.' },
-      { status: 503 },
-    );
   }
   const url = new URL(req.url);
   const provider = url.searchParams.get('provider') || 'google';

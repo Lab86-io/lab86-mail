@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireCurrentUser } from '@/lib/auth/current-user';
+import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { clerkBillingCheckoutUrl } from '@/lib/hosted/billing';
 import { isSubscriptionServiceDisabled } from '@/lib/hosted/controls';
 import { api, convexMutation } from '@/lib/hosted/convex';
@@ -18,8 +18,9 @@ export async function POST() {
       { status: 503 },
     );
   }
-  const user = await requireCurrentUser();
+  let user: Awaited<ReturnType<typeof requireCurrentUser>>;
   try {
+    user = await requireCurrentUser();
     await enforceUserRateLimit({
       userId: user.userId,
       key: 'billing_checkout',
@@ -28,6 +29,9 @@ export async function POST() {
     });
   } catch (err) {
     if (err instanceof RateLimitError) return rateLimitJson(err);
+    if (err instanceof AuthRequiredError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
+    }
     throw err;
   }
   await convexMutation(api.users.upsertFromClerk, {

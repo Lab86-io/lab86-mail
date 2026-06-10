@@ -53,6 +53,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ShineBorder } from '@/components/ui/shine-border';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
@@ -207,7 +208,12 @@ export function Inbox() {
       ) as Record<string, string>,
     [accountsData?.accounts],
   );
-  const authedAccountIds = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.accountId);
+  const authedAccounts = (accountsData?.accounts || []).filter((a) => a.authed);
+  const authedAccountIds = authedAccounts.map((a) => a.accountId);
+  const scopedQuery = useMemo(
+    () => resolveAccountScopedQuery(query, authedAccounts),
+    [authedAccounts, query],
+  );
   const { data: smartLabelsData } = useQuery({
     queryKey: ['smart-labels'],
     queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
@@ -220,84 +226,99 @@ export function Inbox() {
       ? SMART_CATEGORY_LABELS[smartCategory as keyof typeof SMART_CATEGORY_LABELS] || smartCategory
       : '';
 
-  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
-    useInfiniteQuery({
-      queryKey: [
-        'search',
-        account,
-        query,
-        smartCategory,
-        authedAccountIds.join(','),
-        Object.values(accountAliasById).join(','),
-        refreshNonce,
-      ],
-      initialPageParam: {} as Record<string, string>,
-      queryFn: async ({ pageParam }): Promise<InboxPage> => {
-        const pageTokens = pageParam as Record<string, string>;
-        if (account === ALL_ACCOUNTS) {
-          const initialPage = Object.keys(pageTokens).length === 0;
-          const accountIdsToFetch = initialPage
-            ? authedAccountIds
-            : authedAccountIds.filter((accountId) => pageTokens[accountId]);
-          const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(authedAccountIds.length, 1)));
-          const results = await Promise.all(
-            accountIdsToFetch.map((accountId) =>
-              callTool<SearchThreadsResult>(smartCategory ? 'list_smart_category' : 'search_threads', {
-                account: accountId,
-                category: smartCategory,
-                query: smartCategory ? undefined : query,
-                max: perAccount,
-                pageToken: pageTokens[accountId],
-              })
-                .then((r) => ({
-                  accountId,
-                  items: r.items.map((it) => ({
-                    ...it,
-                    account: accountId,
-                    accountAlias: accountAliasById[accountId],
-                  })),
-                  nextPageToken: r.nextPageToken,
-                }))
-                .catch(() => ({ accountId, items: [] as ThreadRow[], nextPageToken: undefined })),
-            ),
-          );
-          const merged = results.flatMap((result) => result.items);
-          merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
-          const nextPageTokens = Object.fromEntries(
-            results
-              .filter((result) => result.nextPageToken)
-              .map((result) => [result.accountId, result.nextPageToken as string]),
-          );
-          return { items: merged, nextPageTokens };
-        }
-        const result = await callTool<SearchThreadsResult>(
-          smartCategory ? 'list_smart_category' : 'search_threads',
-          {
-            account,
-            category: smartCategory,
-            query: smartCategory ? undefined : query,
-            max: INBOX_PAGE_SIZE,
-            pageToken: pageTokens[account],
-          },
+  const {
+    data,
+    isLoading,
+    isError,
+    error: searchError,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: [
+      'search',
+      account,
+      query,
+      scopedQuery.query,
+      scopedQuery.accountIds?.join(',') || '',
+      smartCategory,
+      authedAccountIds.join(','),
+      Object.values(accountAliasById).join(','),
+      refreshNonce,
+    ],
+    initialPageParam: {} as Record<string, string>,
+    queryFn: async ({ pageParam }): Promise<InboxPage> => {
+      const pageTokens = pageParam as Record<string, string>;
+      if (account === ALL_ACCOUNTS) {
+        const scopedAccountIds = scopedQuery.accountIds ?? authedAccountIds;
+        const initialPage = Object.keys(pageTokens).length === 0;
+        const accountIdsToFetch = initialPage
+          ? scopedAccountIds
+          : scopedAccountIds.filter((accountId) => pageTokens[accountId]);
+        const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(scopedAccountIds.length, 1)));
+        const results = await Promise.all(
+          accountIdsToFetch.map((accountId) =>
+            callTool<SearchThreadsResult>(smartCategory ? 'list_smart_category' : 'search_threads', {
+              account: accountId,
+              category: smartCategory,
+              query: smartCategory ? undefined : scopedQuery.query,
+              max: perAccount,
+              pageToken: pageTokens[accountId],
+            })
+              .then((r) => ({
+                accountId,
+                items: r.items.map((it) => ({
+                  ...it,
+                  account: accountId,
+                  accountAlias: accountAliasById[accountId],
+                })),
+                nextPageToken: r.nextPageToken,
+              }))
+              .catch(() => ({ accountId, items: [] as ThreadRow[], nextPageToken: undefined })),
+          ),
         );
-        return {
-          items: result.items.map((it) => ({ ...it, account, accountAlias: accountAliasById[account] })),
-          nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
-        };
-      },
-      getNextPageParam: (lastPage) =>
-        Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
-      enabled: !!account && (account !== ALL_ACCOUNTS || authedAccountIds.length > 0),
-      // Keep the visible list warm instead of treating every mount/focus as a
-      // cold provider read. The foreground poll still catches new mail.
-      staleTime: 45_000,
-      gcTime: 30 * 60_000,
-      refetchOnMount: false,
-      refetchOnWindowFocus: false,
-      refetchInterval: 60_000,
-      // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
-      refetchIntervalInBackground: false,
-    });
+        const merged = results.flatMap((result) => result.items);
+        merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+        const nextPageTokens = Object.fromEntries(
+          results
+            .filter((result) => result.nextPageToken)
+            .map((result) => [result.accountId, result.nextPageToken as string]),
+        );
+        return { items: merged, nextPageTokens };
+      }
+      if (scopedQuery.accountIds && !scopedQuery.accountIds.includes(account)) {
+        return { items: [], nextPageTokens: {} };
+      }
+      const result = await callTool<SearchThreadsResult>(
+        smartCategory ? 'list_smart_category' : 'search_threads',
+        {
+          account,
+          category: smartCategory,
+          query: smartCategory ? undefined : scopedQuery.query,
+          max: INBOX_PAGE_SIZE,
+          pageToken: pageTokens[account],
+        },
+      );
+      return {
+        items: result.items.map((it) => ({ ...it, account, accountAlias: accountAliasById[account] })),
+        nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
+      };
+    },
+    getNextPageParam: (lastPage) =>
+      Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
+    enabled: !!account && (account !== ALL_ACCOUNTS || authedAccountIds.length > 0),
+    // Keep the visible list warm instead of treating every mount/focus as a
+    // cold provider read. The foreground poll still catches new mail.
+    staleTime: 45_000,
+    gcTime: 30 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchInterval: 60_000,
+    // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
+    refetchIntervalInBackground: false,
+  });
 
   const refreshInbox = () => {
     setRefreshNonce((nonce) => nonce + 1);
@@ -634,6 +655,11 @@ export function Inbox() {
       <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
         {isLoading ? (
           <SkeletonRows />
+        ) : isError ? (
+          <SearchErrorState
+            message={(searchError as Error | null)?.message || 'Mail search failed.'}
+            onRetry={() => refetch()}
+          />
         ) : items.length === 0 ? (
           translatedQuery || nlSearchIntent ? (
             <SearchEmptyState
@@ -1026,6 +1052,25 @@ function EmptyState({ account }: { account: string }) {
             : 'Connect a mail account in settings.'}
         </EmptyDescription>
       </EmptyHeader>
+    </Empty>
+  );
+}
+
+// A failed fetch must look like a failure, not an empty mailbox — empty-state
+// rendering silently masked a broken search transport once already.
+function SearchErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <Empty className="grid flex-1 place-items-center px-6 py-12 text-center">
+      <EmptyHeader>
+        <EmptyMedia>
+          <InboxIcon className="h-4 w-4 text-[var(--color-danger,#b91c1c)]" />
+        </EmptyMedia>
+        <EmptyTitle>Could not load mail</EmptyTitle>
+        <EmptyDescription>{message}</EmptyDescription>
+      </EmptyHeader>
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        Retry
+      </Button>
     </Empty>
   );
 }
