@@ -309,6 +309,10 @@ export interface DailyReport {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
   generatedAt: number;
+  // Progressive generation: 'partial' editions stream lanes in as threads are
+  // analyzed; 'ready' is the finished edition. Absent on pre-existing docs.
+  status?: 'partial' | 'ready';
+  progress?: { stage: string; done: number; total: number };
   accounts: AccountEmail[];
   title: string;
   narrative: string;

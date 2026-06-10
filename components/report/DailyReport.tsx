@@ -57,6 +57,8 @@ interface DailyReportPayload {
   };
   model?: string;
   errors?: string[];
+  status?: 'partial' | 'ready';
+  progress?: { stage: string; done: number; total: number };
 }
 
 // Sections, in reading order. The report leads with what Jakob owes other
@@ -130,8 +132,12 @@ export function DailyReport() {
     queryKey: ['daily-report', 'latest'],
     queryFn: async () => callTool<{ report: DailyReportPayload | null }>('get_latest_daily_report', {}),
     staleTime: 30_000,
+    // While an edition is streaming in (status: partial), poll so lanes fill
+    // in live instead of the report appearing all at once at the end.
+    refetchInterval: (query) => (query.state.data?.report?.status === 'partial' ? 2_000 : false),
   });
   const report = reportQuery.data?.report || null;
+  const generating = report?.status === 'partial';
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['daily-report'] });
@@ -141,7 +147,9 @@ export function DailyReport() {
 
   const generate = useMutation({
     mutationFn: async () =>
-      callTool<{ report: DailyReportPayload }>('generate_daily_report', { kind: 'manual' }),
+      callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
+        kind: 'manual',
+      }),
     onSuccess: invalidate,
   });
 
@@ -222,19 +230,25 @@ export function DailyReport() {
             <Button
               type="button"
               size="sm"
-              disabled={generate.isPending}
+              disabled={generate.isPending || generating}
               onClick={() => generate.mutate()}
               aria-label="Generate a fresh report"
               title="Generate"
             >
-              {generate.isPending ? <Ring className="size-3" /> : <RefreshCw className="size-3" />}
+              {generate.isPending || generating ? (
+                <Ring className="size-3" />
+              ) : (
+                <RefreshCw className="size-3" />
+              )}
               <span className="hidden @[360px]:inline">Generate</span>
             </Button>
           </div>
         </div>
-        {generate.isPending ? (
+        {generate.isPending || generating ? (
           <TextShimmer className="mt-3 text-[12px] text-[var(--color-accent)]">
-            Reading your mail, tracked threads, and calendar to write today&apos;s brief…
+            {generating && report?.progress
+              ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total} threads` : ''}…`
+              : 'Reading your mail, tracked threads, and calendar to write today’s brief…'}
           </TextShimmer>
         ) : null}
       </header>

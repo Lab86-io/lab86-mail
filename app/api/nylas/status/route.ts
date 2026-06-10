@@ -18,7 +18,7 @@ export async function GET() {
   const accounts = await convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId: user.userId });
   const syncStates = await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
     userId: user.userId,
-    limit: 200,
+    limit: 500,
   });
   return NextResponse.json({
     ok: true,

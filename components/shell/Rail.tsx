@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { HostedSettingsButton } from '@/components/hosted/HostedSettings';
+import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -141,14 +142,32 @@ export function Rail() {
         accounts: {
           accountId: string;
           email: string;
+          provider: string;
           authed: boolean;
           primary?: boolean;
           displayName?: string;
+          sync?: {
+            status: string;
+            corpusReady: boolean;
+            messagesSynced?: number;
+            error?: string;
+          };
         }[];
       }>('list_accounts'),
+    // Poll quickly while any mailbox is still indexing so the status dots and
+    // message counts move; settle down once everything is ready.
+    refetchInterval: (query) =>
+      (query.state.data?.accounts || []).some(
+        (a) => a.sync && !a.sync.corpusReady && a.sync.status !== 'error',
+      )
+        ? 5_000
+        : 60_000,
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
+  const indexingAccounts = authedAccounts.filter(
+    (a) => a.sync && !a.sync.corpusReady && (a.sync.status === 'backfilling' || a.sync.status === 'syncing'),
+  );
   const countAccount = account && account !== ALL_ACCOUNTS ? account : '';
 
   const { data: smartCounts, isLoading: countsLoading } = useQuery({
@@ -179,17 +198,16 @@ export function Rail() {
   });
   const customLabels = (smartLabels?.custom || []).filter((label) => label.sidebarVisible);
 
-  // The inbox is always the unified "all mailboxes" view — there's no account
-  // selector. We still resolve the primary account (compose "from") and force
-  // ALL_ACCOUNTS whenever more than one mailbox is authed.
+  // Default to the unified "all mailboxes" view, but let the user scope the
+  // inbox to a single account from the rail. Only repair the selection when
+  // it points at an account that no longer exists.
   useEffect(() => {
     if (!accounts.length) return;
     const primary = authedAccounts.find((a) => a.primary) || authedAccounts[0] || accounts[0];
     if (primary) setPrimaryAccount(primary.accountId);
-    if (authedAccounts.length > 1) {
-      if (account !== ALL_ACCOUNTS) setAccount(ALL_ACCOUNTS);
-    } else if (!account && primary) {
-      setAccount(primary.accountId);
+    const valid = account === ALL_ACCOUNTS || accounts.some((a) => a.accountId === account);
+    if (!account || !valid) {
+      setAccount(authedAccounts.length > 1 ? ALL_ACCOUNTS : primary ? primary.accountId : ALL_ACCOUNTS);
     }
   }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 
@@ -278,6 +296,68 @@ export function Rail() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {authedAccounts.length > 1 || indexingAccounts.length ? (
+          <SidebarGroup>
+            <SidebarGroupLabel className="flex items-center gap-1">
+              Accounts
+              {indexingAccounts.length ? (
+                <span className="ml-auto flex items-center gap-1 text-[10px] text-[var(--color-accent)] group-data-[collapsible=icon]:hidden">
+                  <Ring className="size-3" />
+                  indexing
+                </span>
+              ) : null}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={primaryView === 'mail' && account === ALL_ACCOUNTS}
+                    tooltip="All accounts"
+                    onClick={() => {
+                      setAccount(ALL_ACCOUNTS);
+                      setPrimaryView('mail');
+                      closeMobileSidebar();
+                    }}
+                    className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                  >
+                    <Inbox />
+                    <span>All accounts</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                {authedAccounts.map((mailbox) => (
+                  <SidebarMenuItem key={mailbox.accountId}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <SidebarMenuButton
+                          isActive={primaryView === 'mail' && account === mailbox.accountId}
+                          tooltip={mailbox.displayName || mailbox.email}
+                          onClick={() => {
+                            setAccount(mailbox.accountId);
+                            setPrimaryView('mail');
+                            closeMobileSidebar();
+                          }}
+                          className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                        >
+                          <ProviderLogo provider={mailbox.provider} />
+                          <span className="truncate">{mailbox.displayName || mailbox.email}</span>
+                          <AccountSyncDot sync={mailbox.sync} authed={mailbox.authed} />
+                        </SidebarMenuButton>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-[260px] text-[11.5px]">
+                        <AccountSyncSummary
+                          email={mailbox.email}
+                          sync={mailbox.sync}
+                          authed={mailbox.authed}
+                        />
+                      </TooltipContent>
+                    </Tooltip>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
 
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-1">
@@ -676,5 +756,49 @@ function SmartLabelsSettings({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type AccountSync =
+  | {
+      status: string;
+      corpusReady: boolean;
+      messagesSynced?: number;
+      error?: string;
+    }
+  | undefined;
+
+// Green = indexed and searchable locally; pulsing accent = actively indexing;
+// red = sync error or needs reconnect; gray = waiting for its first sync.
+function AccountSyncDot({ sync, authed }: { sync: AccountSync; authed: boolean }) {
+  const color = !authed
+    ? 'bg-[var(--color-danger)]'
+    : sync?.status === 'error'
+      ? 'bg-[var(--color-danger)]'
+      : sync?.corpusReady
+        ? 'bg-emerald-500'
+        : sync?.status === 'backfilling' || sync?.status === 'syncing'
+          ? 'animate-pulse bg-[var(--color-accent)]'
+          : 'bg-[var(--color-text-faint)]';
+  return <span className={`ml-auto size-1.5 shrink-0 rounded-full ${color}`} />;
+}
+
+function AccountSyncSummary({ email, sync, authed }: { email: string; sync: AccountSync; authed: boolean }) {
+  const indexed = sync?.messagesSynced ? `${sync.messagesSynced.toLocaleString()} messages indexed` : null;
+  return (
+    <div className="space-y-1">
+      <div className="font-medium">{email}</div>
+      <div className="text-[var(--color-text-muted)]">
+        {!authed
+          ? 'Disconnected — reconnect from Settings.'
+          : sync?.status === 'error'
+            ? `Sync error: ${sync.error || 'unknown'}`
+            : sync?.corpusReady
+              ? `Fully indexed${indexed ? ` · ${indexed}` : ''} — instant search ready.`
+              : sync?.status === 'backfilling' || sync?.status === 'syncing'
+                ? `Downloading and indexing mail…${indexed ? ` ${indexed} so far.` : ''}`
+                : 'Waiting for first sync.'}
+      </div>
+    </div>
   );
 }

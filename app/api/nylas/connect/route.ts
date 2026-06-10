@@ -7,6 +7,7 @@ import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
 import { type MailProvider, mailProviderCapability } from '@/lib/mail/provider-capabilities';
 import { requireNylas } from '@/lib/nylas/client';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { sanitizeInternalPath } from '@/lib/security/redirect';
 
 const PROVIDERS = new Set(['google', 'microsoft', 'icloud', 'imap']);
 
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
     userId: user.userId,
     state,
     provider,
-    redirectTo: url.searchParams.get('redirectTo') || '/',
+    redirectTo: sanitizeInternalPath(url.searchParams.get('redirectTo')),
     ttlMs: 10 * 60_000,
   });
   const scopes = scopesForProvider(provider as MailProvider);

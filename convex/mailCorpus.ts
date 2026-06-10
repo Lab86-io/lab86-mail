@@ -73,7 +73,7 @@ export const listSyncTargets = query({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const limit = clampLimit(args.limit, 50, 200);
+    const limit = clampLimit(args.limit, 50, 500);
     if (args.status) {
       // For user-scoped sweeps, walk the user's own (small) state set so the
       // status filter is never starved by other users' rows.
@@ -138,34 +138,7 @@ export const upsertCorpusBatch = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const ts = now();
-    for (const thread of args.threads) {
-      const existing = await ctx.db
-        .query('mailCorpusThreads')
-        .withIndex('by_account_thread', (q) =>
-          q.eq('accountId', args.accountId).eq('providerThreadId', thread.providerThreadId),
-        )
-        .unique();
-      const patch = {
-        userId: args.userId,
-        accountId: args.accountId,
-        grantId: args.grantId,
-        provider: args.provider,
-        providerThreadId: thread.providerThreadId,
-        subject: thread.subject,
-        fromAddress: thread.fromAddress,
-        lastDate: thread.lastDate,
-        snippet: thread.snippet,
-        labels: thread.labels,
-        unread: thread.unread,
-        starred: thread.starred,
-        messageCount: thread.messageCount,
-        yearMonth: yearMonth(thread.lastDate),
-        updatedAt: ts,
-      };
-      if (existing) await ctx.db.patch(existing._id, patch);
-      else await ctx.db.insert('mailCorpusThreads', { ...patch, createdAt: ts });
-    }
-
+    let insertedMessages = 0;
     for (const message of args.messages) {
       const existing = await ctx.db
         .query('mailCorpusMessages')
@@ -197,8 +170,67 @@ export const upsertCorpusBatch = mutation({
         yearMonth: yearMonth(message.receivedAt),
         updatedAt: ts,
       };
+      if (existing) {
+        await ctx.db.patch(existing._id, patch);
+      } else {
+        await ctx.db.insert('mailCorpusMessages', { ...patch, createdAt: ts });
+        insertedMessages += 1;
+      }
+    }
+
+    // Thread aggregates are recomputed from STORED messages, not the batch:
+    // an out-of-order backfill page or a single-message webhook must never
+    // move lastDate backwards, shrink messageCount, or clear unread/starred.
+    const threadIds = new Set<string>([
+      ...args.threads.map((thread) => thread.providerThreadId),
+      ...args.messages.map((message) => message.providerThreadId),
+    ]);
+    for (const providerThreadId of threadIds) {
+      const AGGREGATE_WINDOW = 500;
+      const stored = await ctx.db
+        .query('mailCorpusMessages')
+        .withIndex('by_account_thread', (q) =>
+          q.eq('accountId', args.accountId).eq('providerThreadId', providerThreadId),
+        )
+        .take(AGGREGATE_WINDOW);
+      if (!stored.length) continue;
+      const windowCapped = stored.length >= AGGREGATE_WINDOW;
+      const latest = stored.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a));
+      const labels = [...new Set(stored.flatMap((message) => message.labels || []))];
+      const patch = {
+        userId: args.userId,
+        accountId: args.accountId,
+        grantId: args.grantId,
+        provider: args.provider,
+        providerThreadId,
+        subject: latest.subject || '(no subject)',
+        fromAddress: latest.from || '',
+        lastDate: latest.receivedAt,
+        snippet: latest.snippet || '',
+        labels,
+        unread: stored.some((message) => Boolean(message.unread)),
+        starred: stored.some((message) => Boolean(message.starred)) || undefined,
+        messageCount: stored.length,
+        yearMonth: yearMonth(latest.receivedAt),
+        updatedAt: ts,
+      };
+      const existing = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_account_thread', (q) =>
+          q.eq('accountId', args.accountId).eq('providerThreadId', providerThreadId),
+        )
+        .unique();
+      // For threads larger than the aggregate window, merge monotonically with
+      // the existing row instead of trusting a truncated recompute.
+      if (existing && windowCapped) {
+        patch.lastDate = Math.max(existing.lastDate || 0, patch.lastDate);
+        patch.messageCount = Math.max(existing.messageCount || 0, patch.messageCount);
+        patch.unread = Boolean(existing.unread) || patch.unread;
+        patch.starred = Boolean(existing.starred) || patch.starred || undefined;
+        patch.labels = [...new Set([...(existing.labels || []), ...patch.labels])];
+      }
       if (existing) await ctx.db.patch(existing._id, patch);
-      else await ctx.db.insert('mailCorpusMessages', { ...patch, createdAt: ts });
+      else await ctx.db.insert('mailCorpusThreads', { ...patch, createdAt: ts });
     }
 
     // Backfill batches pass an explicit corpusReady boolean and own the
@@ -211,6 +243,7 @@ export const upsertCorpusBatch = mutation({
         grantId: args.grantId,
         provider: args.provider,
         progress: args.progress,
+        messagesSyncedDelta: insertedMessages,
       });
     } else {
       await upsertSyncState(ctx, {
@@ -223,6 +256,7 @@ export const upsertCorpusBatch = mutation({
         corpusReady: Boolean(args.corpusReady),
         progress: args.progress,
         lastBackfillAt: ts,
+        messagesSyncedDelta: insertedMessages,
       });
     }
 
@@ -301,7 +335,16 @@ export const deleteCorpusMessage = mutation({
         q.eq('accountId', args.accountId).eq('providerMessageId', args.providerMessageId),
       )
       .unique();
-    if (row && row.userId === args.userId) await ctx.db.delete(row._id);
+    if (row && row.userId === args.userId) {
+      await ctx.db.delete(row._id);
+      await upsertSyncState(ctx, {
+        userId: args.userId,
+        accountId: args.accountId,
+        grantId: row.grantId,
+        provider: row.provider,
+        messagesSyncedDelta: -1,
+      });
+    }
     return { ok: true };
   },
 });
@@ -328,8 +371,22 @@ export const deleteCorpusThread = mutation({
         q.eq('accountId', args.accountId).eq('providerThreadId', args.providerThreadId),
       )
       .collect();
+    let deleted = 0;
     for (const message of messages) {
-      if (message.userId === args.userId) await ctx.db.delete(message._id);
+      if (message.userId === args.userId) {
+        await ctx.db.delete(message._id);
+        deleted += 1;
+      }
+    }
+    if (deleted && (thread || messages.length)) {
+      const source = thread || messages[0];
+      await upsertSyncState(ctx, {
+        userId: args.userId,
+        accountId: args.accountId,
+        grantId: source.grantId,
+        provider: source.provider,
+        messagesSyncedDelta: -deleted,
+      });
     }
     return { ok: true, messages: messages.length };
   },
@@ -405,6 +462,9 @@ async function upsertSyncState(ctx: any, args: any) {
   if (args.progress !== undefined) patch.progress = args.progress;
   if (args.lastBackfillAt !== undefined) patch.lastBackfillAt = args.lastBackfillAt;
   if (args.lastIncrementalSyncAt !== undefined) patch.lastIncrementalSyncAt = args.lastIncrementalSyncAt;
+  if (typeof args.messagesSyncedDelta === 'number' && args.messagesSyncedDelta !== 0) {
+    patch.messagesSynced = Math.max(0, (existing?.messagesSynced ?? 0) + args.messagesSyncedDelta);
+  }
   if (existing) {
     await ctx.db.patch(existing._id, patch);
     return { ok: true, id: existing._id };
