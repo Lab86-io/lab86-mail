@@ -45,7 +45,12 @@ function slugify(value: string) {
     .slice(0, 64);
 }
 
+// Seed once per process — listSmartLabels/getSmartLabel call this on every
+// read, and re-running the findOne+upsert each time is pure overhead.
+let seedEnsured = false;
+
 export async function ensureSeedSmartLabels() {
+  if (seedEnsured) return;
   const existing = await findOne<SmartLabelDefinition>(db().smartLabels, { _id: DEVOPS_LABEL_ID });
   const ts = now();
   const seeded = {
@@ -54,6 +59,7 @@ export async function ensureSeedSmartLabels() {
     updatedAt: existing?.updatedAt || ts,
   };
   await upsert(db().smartLabels, { _id: DEVOPS_LABEL_ID }, seeded);
+  seedEnsured = true;
 }
 
 export async function listSmartLabels(includeDisabled = false) {
@@ -79,11 +85,15 @@ export async function createSmartLabel(input: {
   const name = input.name.trim();
   const slug = slugify(name);
   if (!name || !slug) throw new Error('Smart label name is required');
+  // slug has a unique index; surface a friendly error instead of the raw
+  // constraint violation from the insert.
+  const slugTaken = await findOne<SmartLabelDefinition>(db().smartLabels, { slug });
+  if (slugTaken) throw new Error(`A smart label named "${slugTaken.name}" already exists.`);
   if (!input.description.trim()) throw new Error('Smart label description is required');
-  if (!input.positiveExamples.filter(Boolean).length)
-    throw new Error('At least one positive example is required');
-  if (!input.negativeExamples.filter(Boolean).length)
-    throw new Error('At least one negative example is required');
+  const positiveExamples = input.positiveExamples.map((v) => v.trim()).filter(Boolean);
+  const negativeExamples = input.negativeExamples.map((v) => v.trim()).filter(Boolean);
+  if (!positiveExamples.length) throw new Error('At least one positive example is required');
+  if (!negativeExamples.length) throw new Error('At least one negative example is required');
   const label: SmartLabelDefinition = {
     _id: randomUUID(),
     name,
@@ -93,8 +103,8 @@ export async function createSmartLabel(input: {
     sidebarVisible: input.sidebarVisible ?? true,
     gmailLabelName: `MailOS/${name}`,
     aiMode: 'metadata_snippet',
-    positiveExamples: input.positiveExamples.map((v) => v.trim()).filter(Boolean),
-    negativeExamples: input.negativeExamples.map((v) => v.trim()).filter(Boolean),
+    positiveExamples,
+    negativeExamples,
     candidateQuery: 'newer_than:90d',
     createdBy: input.createdBy || 'user',
     createdAt: ts,

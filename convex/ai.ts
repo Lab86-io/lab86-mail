@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { currentPeriod, now, requireInternalSecret } from './lib';
@@ -53,6 +52,9 @@ export const upsertSettings = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    if (args.mode === 'byok' && !args.provider) {
+      throw new Error('provider is required when mode is byok');
+    }
     const ts = now();
     const existing = await ctx.db
       .query('aiSettings')
@@ -211,12 +213,13 @@ export const recordUsage = mutation({
       error: args.error,
       createdAt: ts,
     });
-    if (args.source === 'lab86' || args.source === 'byok') {
+    const source = args.source;
+    if (source === 'lab86' || source === 'byok') {
       const period = currentPeriod(ts);
       const existing = await ctx.db
         .query('aiUsagePeriods')
         .withIndex('by_user_period_source', (q) =>
-          q.eq('userId', args.userId).eq('period', period).eq('source', args.source),
+          q.eq('userId', args.userId).eq('period', period).eq('source', source),
         )
         .unique();
       if (existing) {
@@ -229,7 +232,7 @@ export const recordUsage = mutation({
         await ctx.db.insert('aiUsagePeriods', {
           userId: args.userId,
           period,
-          source: args.source,
+          source,
           creditsUsed: args.estimatedCredits,
           calls: 1,
           updatedAt: ts,

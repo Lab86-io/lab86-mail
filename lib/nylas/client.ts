@@ -8,10 +8,12 @@ export function requireNylas() {
     throw new Error('Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.');
   }
   if (!client) {
+    const timeoutSeconds = Number(process.env.NYLAS_TIMEOUT_SECONDS || 45);
     client = new Nylas({
-      apiKey: process.env.NYLAS_API_KEY || '',
+      // isNylasConfigured() above guarantees the key is present.
+      apiKey: process.env.NYLAS_API_KEY!,
       apiUri: process.env.NYLAS_API_URI || 'https://api.us.nylas.com',
-      timeout: Number(process.env.NYLAS_TIMEOUT_SECONDS || 45),
+      timeout: Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 45,
     });
   }
   return client;

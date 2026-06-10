@@ -22,7 +22,10 @@ export async function POST() {
     userId: user.userId,
     email: user.email,
     name: user.name,
-  }).catch(() => undefined);
+  }).catch((error) => {
+    // Checkout still proceeds, but leave a trace for the missing Convex record.
+    console.error('[checkout] Failed to upsert user to Convex:', error);
+  });
   const url = clerkBillingCheckoutUrl() || '/pricing';
   return NextResponse.json({ ok: true, url });
 }

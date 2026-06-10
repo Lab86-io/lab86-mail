@@ -260,6 +260,9 @@ export const applySmartCorrection = defineTool({
       effect = 'always_noise';
       targetCategory = 'noise';
     } else if (action === 'move_to') {
+      if (!category && !customLabelId) {
+        throw new Error('Either category or customLabelId is required for the move_to action');
+      }
       effect = customLabelId ? 'always_custom_label' : 'always_category';
     } else if (action === 'create_label_from_this') {
       if (!newLabel) throw new Error('New label details are required');

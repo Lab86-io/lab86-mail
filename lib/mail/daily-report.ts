@@ -29,7 +29,6 @@ import { classifyThreadsBatched } from '../tools/ai';
 // for reply/follow-up detection and to keep him out of the "people" list. The
 // runtime also unions in the live connected accounts; the RIT address is included
 // here because it can show up as a sender.
-const SELF = new Set(['jjalangtry@gmail.com', 'jakob@lab86.io', 'jjl4287@g.rit.edu']);
 
 // Candidate gathering, category-aware and keyword-free. We trust Gmail's own
 // Primary/Important categorization to find human mail rather than guessing at
@@ -104,7 +103,9 @@ export async function generateDailyReport(input: {
     listTrackedThreads({ limit: 1000 }),
   ]);
   const trackedByKey = new Map(tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
-  const self = new Set<string>([...SELF, ...accounts.map((a) => a.toLowerCase())]);
+  // "Self" is whatever accounts are connected for this user — no hardcoded
+  // addresses, so the report works for any deployment/operator.
+  const self = new Set<string>(accounts.map((a) => a.toLowerCase()));
 
   // ---- Candidate gathering -------------------------------------------------
   const candidates = new Map<string, Thread>();
@@ -257,6 +258,7 @@ export async function generateDailyReport(input: {
       calendarContext,
       memoryContext,
       enrich: enrichKeys.has(key),
+      self,
     });
     insights.push(insight);
     await upsertThread(thread.account, { ...thread, smartCategory: smart }).catch(() => undefined);
@@ -618,9 +620,9 @@ async function buildThreadInsight(
   floor: FloorSignals,
   _tracked: boolean,
   now: number,
-  context: { calendarContext: string[]; memoryContext: string[]; enrich: boolean },
+  context: { calendarContext: string[]; memoryContext: string[]; enrich: boolean; self: Set<string> },
 ): Promise<ThreadInsight> {
-  const people = extractPeople(thread, messages);
+  const people = extractPeople(thread, messages, context.self);
   const commitments = floor.commitments;
   const surfacedBecause = surfacedBecauseFor(floor, now);
   const baseOpenLoops = [
@@ -675,7 +677,11 @@ async function buildThreadInsight(
         lane = laneMax(floor.lane, parseLane(parsed.suggestedLane) || floor.lane);
         model = describeProvider().primary || 'primary';
       }
-    } catch {}
+    } catch (err) {
+      // Enrichment is best-effort — the deterministic floor values still
+      // produce a briefing — but the failure should be visible in logs.
+      console.warn('Daily report AI enrichment failed:', err);
+    }
   }
 
   const demotionReason = lane === 'bulk' ? floor.demotionReason : null;
@@ -950,7 +956,7 @@ function threadText(thread: Thread, messages: Message[], maxChars: number) {
     .slice(0, maxChars);
 }
 
-function extractPeople(thread: Thread, messages: Message[]) {
+function extractPeople(thread: Thread, messages: Message[], self: Set<string>) {
   const values = [
     thread.fromAddress,
     ...messages.flatMap((message) => [message.from, message.to, message.cc]),
@@ -959,7 +965,7 @@ function extractPeople(thread: Thread, messages: Message[]) {
   for (const value of values) {
     for (const part of String(value || '').split(',')) {
       const email = emailFromHeader(part);
-      if (email && SELF.has(email)) continue;
+      if (email && self.has(email)) continue;
       const label = shortFrom(part);
       if (label) names.add(label);
     }

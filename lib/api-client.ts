@@ -17,6 +17,9 @@ export async function callTool<T = any>(name: string, args: any = {}, headers: H
   if (!res.ok || data?.ok === false) {
     throw new Error(data?.error || `${name} failed (${res.status})`);
   }
+  if (data === null) {
+    throw new Error(`${name} failed: invalid JSON response`);
+  }
   return data.result as T;
 }
 

@@ -123,6 +123,11 @@ export function ThreadView() {
         };
       });
     },
+    onError: () => {
+      // Allow a retry on the next visit; the ref is added optimistically
+      // before the mutation to dedupe while it is in flight.
+      markedReadRef.current.delete(`${account}:${threadId}`);
+    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['search'], refetchType: 'none' });
       queryClient.invalidateQueries({ queryKey: ['smart-counts'], refetchType: 'inactive' });

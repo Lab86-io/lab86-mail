@@ -1,6 +1,6 @@
 'use client';
 
-// Browser-only DOMPurify wrappers. Server-side these return empty/raw — the
+// Browser-only DOMPurify wrappers. Server-side these return empty — the
 // caller should only use the sanitized HTML after mount to avoid SSR/client
 // divergence.
 
@@ -21,7 +21,9 @@ export function sanitizeEmailHtml(html: string): string {
       instance.sanitize(input, {
         FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta'],
         FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover'],
-        ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/)/i,
+        // Raster image data: URIs only — keeps inline signature images working
+        // while excluding svg+xml and other embeddable documents.
+        ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|bmp);base64,)/i,
       }) as string;
   }
   return cachedRead(html);
@@ -32,7 +34,7 @@ export function sanitizeEmailHtml(html: string): string {
 // e.g. we keep <pre>, <code>, blockquote styling, simple inline styles for
 // emphasis. Still strips scripts and event handlers as a basic safety net.
 export function sanitizeOutgoingHtml(html: string): string {
-  if (typeof window === 'undefined') return html;
+  if (typeof window === 'undefined') return '';
   if (!cachedSend) {
     const instance = getDOMPurify();
     cachedSend = (input: string) =>

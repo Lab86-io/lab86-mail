@@ -223,6 +223,12 @@ function RailResizeHandle() {
   const setRailWidth = useClientStore((s) => s.setRailWidth);
   const ref = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState(false);
+  // Detaches the window listeners of an in-flight drag; needed so an unmount
+  // mid-drag doesn't leave pointermove/pointerup handlers (and the disabled
+  // text selection) behind.
+  const endDrag = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => endDrag.current?.(), []);
 
   const onPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
@@ -238,13 +244,18 @@ function RailResizeHandle() {
       latest = Math.max(RAIL_MIN, Math.min(RAIL_MAX, startW + (ev.clientX - startX)));
       wrapper.style.setProperty('--sidebar-width', `${latest}px`);
     };
-    const onUp = () => {
+    const detach = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       document.body.style.userSelect = '';
+      endDrag.current = null;
+    };
+    const onUp = () => {
+      detach();
       setDragging(false);
       setRailWidth(latest);
     };
+    endDrag.current = detach;
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };

@@ -1,6 +1,6 @@
 'use client';
 
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useClientStore } from '@/lib/client-state';
 
 const SHORTCUTS: [string[], string][] = [
@@ -31,6 +31,9 @@ export function ShortcutsSheet() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-[520px]">
         <DialogTitle>Keyboard shortcuts</DialogTitle>
+        <DialogDescription className="sr-only">
+          Keyboard shortcuts for navigating and acting on mail.
+        </DialogDescription>
         <div className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13px]">
           {SHORTCUTS.map(([keys, label]) => (
             <div key={label} className="contents">
