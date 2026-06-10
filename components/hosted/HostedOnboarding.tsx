@@ -280,7 +280,7 @@ export function HostedOnboarding() {
               >
                 <div className="flex items-center gap-2 text-[13px] font-semibold">Lab86 AI</div>
                 <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
-                  Use our hosted OpenRouter key and included dev credits.
+                  Included with Lab86 Mail. Usage safeguards run automatically.
                 </p>
               </button>
 
@@ -405,9 +405,9 @@ export function HostedOnboarding() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
               <p className="text-[11.5px] text-[var(--color-text-muted)]">
-                {ai?.usage
-                  ? `${ai.usage.remaining.toLocaleString()} credits available`
-                  : 'Credits appear after AI settings load.'}
+                {ai?.usage?.status === 'reduced_cost'
+                  ? 'AI is using reduced-cost routing for the rest of this period.'
+                  : 'AI settings are saved with your account.'}
               </p>
               <div className="flex gap-2">
                 <Button

@@ -48,7 +48,7 @@ export function aiCreditDefaults() {
     return value && Number.isFinite(parsed) ? parsed : fallback;
   };
   return {
-    freeMonthlyCredits: numberFromEnv(process.env.LAB86_AI_FREE_MONTHLY_CREDITS, 25_000),
-    proMonthlyCredits: numberFromEnv(process.env.LAB86_AI_PRO_MONTHLY_CREDITS, 2_000_000),
+    freeMonthlyCredits: numberFromEnv(process.env.LAB86_AI_FREE_MONTHLY_CREDITS, 0),
+    proMonthlyCredits: numberFromEnv(process.env.LAB86_AI_PRO_MONTHLY_CREDITS, 500),
   };
 }

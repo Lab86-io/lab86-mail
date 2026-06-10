@@ -51,10 +51,10 @@ Create separate development and production resources for:
 
 Clerk Billing plan shape:
 
-- Free/default: 25,000 Lab86 AI credits per month
-- Pro: $12/month, 2,000,000 Lab86 AI credits per month
-- Pro plan slug: `pro`
-- Pro feature slug: `ai_credits_2m`
+- Free/default: no Lab86-hosted AI budget
+- Pro: $15/month or $120/year with a 500-credit internal AI budget
+- Pro plan slug: `mail_pro`
+- Pro feature slug: `b2c_mail`
 
 Development uses Clerk's development billing gateway. Production connects the independent Lab86 Stripe
 account through Clerk Billing.
@@ -81,6 +81,8 @@ dashboard sessions:
   `https://web-development-292e.up.railway.app/api/nylas/callback`.
   Configure Nylas message/thread notifications to post to `/api/nylas/webhook`; the route records every event
   idempotently and re-fetches truncated message notifications before writing the Convex corpus.
+- OpenRouter: enable account or guardrail privacy controls that disallow training on prompts and enforce ZDR
+  routing for routed mail-content requests before enabling hosted AI in production.
 - CodeRabbit: install the GitHub App on `Lab86-io/lab86-mail` so PR #1 receives a review.
 
 ## Railway Variables
@@ -117,8 +119,10 @@ Set these in both Railway environments with environment-specific values:
 - `OPENROUTER_API_KEY` or another supported platform AI key
 - `LAB86_MAIL_OPENAI_MODEL`
 - `LAB86_MAIL_OPENAI_FAST_MODEL`
-- `LAB86_AI_FREE_MONTHLY_CREDITS=25000`
-- `LAB86_AI_PRO_MONTHLY_CREDITS=2000000`
+- `CLERK_PRO_PLAN_SLUG=mail_pro`
+- `CLERK_PRO_AI_FEATURE_SLUG=b2c_mail`
+- `LAB86_AI_FREE_MONTHLY_CREDITS=0`
+- `LAB86_AI_PRO_MONTHLY_CREDITS=500`
 
 Development-only:
 

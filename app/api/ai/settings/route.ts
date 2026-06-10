@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { B2C_ANNUAL_PRICE_USD, B2C_MONTHLY_PRICE_USD, resolveAiBudgetPolicy } from '@/lib/ai/budget';
 import {
   normalizeOpenRouterFastModel,
   normalizeOpenRouterPrimaryModel,
@@ -33,6 +34,11 @@ export async function GET() {
   const requireOpenRouter = isUserOpenRouterKeyRequired();
   const monthlyCredits = requireOpenRouter ? 0 : entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
+  const budget = resolveAiBudgetPolicy({
+    monthlyCredits,
+    creditsUsed,
+    feature: 'agent',
+  });
   return NextResponse.json({
     ok: true,
     configured: true,
@@ -48,7 +54,11 @@ export async function GET() {
           validatedAt: state.key.validatedAt,
         }
       : null,
-    entitlement,
+    entitlement: {
+      plan: entitlement.plan,
+      status: entitlement.status,
+      source: entitlement.source,
+    },
     lab86AiDisabled: isLab86AiDisabled(),
     requiresUserOpenRouterKey: requireOpenRouter,
     subscriptionsDisabled: isSubscriptionServiceDisabled(),
@@ -60,9 +70,11 @@ export async function GET() {
     },
     usage: {
       period: state.period,
-      creditsUsed,
-      monthlyCredits,
-      remaining: Math.max(0, monthlyCredits - creditsUsed),
+      status: budget.hardStopped ? 'exhausted' : budget.softLimited ? 'reduced_cost' : 'available',
+      paidPlan: {
+        monthlyUsd: B2C_MONTHLY_PRICE_USD,
+        annualUsd: B2C_ANNUAL_PRICE_USD,
+      },
     },
   });
 }

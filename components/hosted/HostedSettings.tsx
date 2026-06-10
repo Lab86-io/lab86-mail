@@ -263,7 +263,7 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
               <p className="text-[11.5px] text-[var(--color-text-muted)]">
                 {requireOpenRouter
                   ? 'Subscriptions are paused. Add your OpenRouter key to use AI features.'
-                  : 'Lab86 AI uses included credits. BYOK uses your provider key.'}
+                  : 'Lab86 AI is included with the paid plan. BYOK uses your provider key.'}
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -410,9 +410,11 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
               <span>
                 {subscriptionsDisabled
                   ? 'Subscriptions are paused. AI usage requires your OpenRouter key.'
-                  : ai?.usage
-                    ? `${ai.usage.remaining.toLocaleString()} / ${ai.usage.monthlyCredits.toLocaleString()} credits left`
-                    : 'Quota unavailable until Convex is configured'}
+                  : ai?.usage?.status === 'reduced_cost'
+                    ? 'AI is using reduced-cost routing for this billing period.'
+                    : ai?.usage?.status === 'exhausted'
+                      ? 'AI chat is paused for this billing period. Core mail automation continues.'
+                      : 'Lab86 Mail Pro is $15/month or $120/year.'}
               </span>
               {!subscriptionsDisabled ? (
                 <>

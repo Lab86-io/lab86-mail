@@ -13,9 +13,10 @@ export default function TermsPage() {
           mail before sending and verify important information independently.
         </p>
         <p>
-          Paid plans, when enabled, are managed through Clerk Billing with Stripe payment processing.
-          Subscription access and included AI credits may change as the product evolves. During launch, AI
-          features may require your own provider API key.
+          Paid plans are managed through Clerk Billing with Stripe payment processing. The B2C paid plan is
+          offered at $15/month or $120/year unless updated in the hosted pricing page. Hosted AI use is
+          protected by internal safeguards and may route to lower-cost models or pause chat when a period is
+          exhausted. During launch, AI features may require your own provider API key.
         </p>
         <p>
           The service may be suspended or limited to protect users, providers, infrastructure, or billing
