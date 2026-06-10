@@ -186,20 +186,27 @@ export function Inbox() {
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean; displayName?: string }[] }>('list_accounts'),
+      callTool<{
+        accounts: {
+          accountId: string;
+          email: string;
+          authed: boolean;
+          displayName?: string;
+        }[];
+      }>('list_accounts'),
     staleTime: 60_000,
   });
-  const accountAliasByEmail = useMemo(
+  const accountAliasById = useMemo(
     () =>
       Object.fromEntries(
         (accountsData?.accounts || []).map((account) => [
-          account.email,
+          account.accountId,
           account.displayName || account.email.split('@')[0],
         ]),
       ) as Record<string, string>,
     [accountsData?.accounts],
   );
-  const authedEmails = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.email);
+  const authedAccountIds = (accountsData?.accounts || []).filter((a) => a.authed).map((a) => a.accountId);
   const { data: smartLabelsData } = useQuery({
     queryKey: ['smart-labels'],
     queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
@@ -219,8 +226,8 @@ export function Inbox() {
         account,
         query,
         smartCategory,
-        authedEmails.join(','),
-        Object.values(accountAliasByEmail).join(','),
+        authedAccountIds.join(','),
+        Object.values(accountAliasById).join(','),
         refreshNonce,
       ],
       initialPageParam: {} as Record<string, string>,
@@ -228,29 +235,29 @@ export function Inbox() {
         const pageTokens = pageParam as Record<string, string>;
         if (account === ALL_ACCOUNTS) {
           const initialPage = Object.keys(pageTokens).length === 0;
-          const emailsToFetch = initialPage
-            ? authedEmails
-            : authedEmails.filter((email) => pageTokens[email]);
-          const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(authedEmails.length, 1)));
+          const accountIdsToFetch = initialPage
+            ? authedAccountIds
+            : authedAccountIds.filter((accountId) => pageTokens[accountId]);
+          const perAccount = Math.max(8, Math.ceil(INBOX_PAGE_SIZE / Math.max(authedAccountIds.length, 1)));
           const results = await Promise.all(
-            emailsToFetch.map((email) =>
+            accountIdsToFetch.map((accountId) =>
               callTool<SearchThreadsResult>(smartCategory ? 'list_smart_category' : 'search_threads', {
-                account: email,
+                account: accountId,
                 category: smartCategory,
                 query: smartCategory ? undefined : query,
                 max: perAccount,
-                pageToken: pageTokens[email],
+                pageToken: pageTokens[accountId],
               })
                 .then((r) => ({
-                  email,
+                  accountId,
                   items: r.items.map((it) => ({
                     ...it,
-                    account: email,
-                    accountAlias: accountAliasByEmail[email],
+                    account: accountId,
+                    accountAlias: accountAliasById[accountId],
                   })),
                   nextPageToken: r.nextPageToken,
                 }))
-                .catch(() => ({ email, items: [] as ThreadRow[], nextPageToken: undefined })),
+                .catch(() => ({ accountId, items: [] as ThreadRow[], nextPageToken: undefined })),
             ),
           );
           const merged = results.flatMap((result) => result.items);
@@ -258,7 +265,7 @@ export function Inbox() {
           const nextPageTokens = Object.fromEntries(
             results
               .filter((result) => result.nextPageToken)
-              .map((result) => [result.email, result.nextPageToken as string]),
+              .map((result) => [result.accountId, result.nextPageToken as string]),
           );
           return { items: merged, nextPageTokens };
         }
@@ -273,13 +280,13 @@ export function Inbox() {
           },
         );
         return {
-          items: result.items.map((it) => ({ ...it, account, accountAlias: accountAliasByEmail[account] })),
+          items: result.items.map((it) => ({ ...it, account, accountAlias: accountAliasById[account] })),
           nextPageTokens: result.nextPageToken ? { [account]: result.nextPageToken } : {},
         };
       },
       getNextPageParam: (lastPage) =>
         Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
-      enabled: !!account && (account !== ALL_ACCOUNTS || authedEmails.length > 0),
+      enabled: !!account && (account !== ALL_ACCOUNTS || authedAccountIds.length > 0),
       // Keep the visible list warm instead of treating every mount/focus as a
       // cold Gmail read. The foreground poll still catches new mail.
       staleTime: 45_000,

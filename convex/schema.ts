@@ -27,7 +27,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
-    .index('by_user_email', ['userId', 'email'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId']),
 

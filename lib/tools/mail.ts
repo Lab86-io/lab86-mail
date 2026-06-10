@@ -35,9 +35,9 @@ export const listAccounts = defineTool({
     accounts: z.array(
       z.object({
         email: z.string(),
-        provider: z.literal('gmail'),
+        provider: z.enum(['google', 'microsoft', 'icloud', 'imap']),
         authed: z.boolean(),
-        accountId: z.string().optional(),
+        accountId: z.string(),
         primary: z.boolean().optional(),
         displayName: z.string().optional(),
         services: z.array(z.string()).optional(),

@@ -45,11 +45,11 @@ export async function listNylasAccounts(userId?: string | null) {
   return rows.filter((row) => row.status === 'connected').map(normalizeNylasAccount);
 }
 
-export async function getNylasAccount(userId: string | null | undefined, email: string) {
+export async function getNylasAccount(userId: string | null | undefined, accountId: string) {
   if (!userId) throw new Error('Sign in required for hosted mail access.');
-  const row = await convexQuery<NylasAccountRow | null>(api.accounts.getConnectedAccountByEmail, {
+  const row = await convexQuery<NylasAccountRow | null>(api.accounts.getConnectedAccount, {
     userId,
-    email,
+    accountId,
   });
   return row?.status === 'connected' ? row : null;
 }
@@ -74,8 +74,8 @@ export async function searchNylasThreads({
     queryParams: buildNylasNativeSearchQueryParams({ query, max, pageToken }) as any,
   });
   const page = await result;
-  const items = page.data.map((thread) => normalizeNylasThread(thread, row.email));
-  return { account: row.email, query, items, nextPageToken: page.nextCursor };
+  const items = page.data.map((thread) => normalizeNylasThread(thread, row.accountId));
+  return { account: row.accountId, query, items, nextPageToken: page.nextCursor };
 }
 
 export function buildNylasNativeSearchQueryParams({
@@ -111,10 +111,10 @@ export async function getNylasThread({
     queryParams: { threadId, limit: 200 },
   });
   const messages = (await messagesPage).data
-    .map((message) => normalizeNylasMessage(message, row.email))
+    .map((message) => normalizeNylasMessage(message, row.accountId))
     .sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
   return {
-    account: row.email,
+    account: row.accountId,
     threadId,
     subject: messages[0]?.subject || '(no subject)',
     messages,
@@ -133,7 +133,7 @@ export async function getNylasMessage({
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
   const result = await requireNylas().messages.find({ identifier: row.grantId, messageId: id });
-  return normalizeNylasMessage(result.data, row.email);
+  return normalizeNylasMessage(result.data, row.accountId);
 }
 
 export async function listNylasLabels(userId: string | null | undefined, account: string) {
@@ -414,7 +414,7 @@ export async function sendNylasMessage({
       attachments,
     },
   });
-  return normalizeNylasMessage(result.data, row.email);
+  return normalizeNylasMessage(result.data, row.accountId);
 }
 
 export async function downloadNylasAttachment({

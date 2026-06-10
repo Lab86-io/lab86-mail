@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
-import { accountId, now, requireInternalSecret } from './lib';
+import { now, requireInternalSecret } from './lib';
 
 const providerValidator = v.union(
   v.literal('google'),
@@ -65,17 +65,17 @@ export const listConnectedAccounts = query({
   },
 });
 
-export const getConnectedAccountByEmail = query({
+export const getConnectedAccount = query({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
-    email: v.string(),
+    accountId: v.string(),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     return await ctx.db
       .query('connectedAccounts')
-      .withIndex('by_user_email', (q) => q.eq('userId', args.userId).eq('email', args.email.toLowerCase()))
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
       .unique();
   },
 });
@@ -96,18 +96,12 @@ export const upsertConnectedAccount = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const email = args.email.toLowerCase();
-    const id = accountId(args.userId, email);
+    const id = args.grantId;
     const ts = now();
     const existing = await ctx.db
       .query('connectedAccounts')
-      .withIndex('by_user_email', (q) => q.eq('userId', args.userId).eq('email', email))
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', id))
       .unique();
-    if (existing && existing.provider === 'google' && args.provider !== 'google') {
-      // The UI currently uses email as the mailbox key. If two providers report
-      // the same email, keep the Google mailbox active because Gmail query syntax
-      // and folder names drive the inbox view.
-      return { accountId: existing.accountId };
-    }
     const accountPatch = {
       accountId: id,
       email,

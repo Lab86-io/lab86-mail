@@ -136,9 +136,15 @@ export function Rail() {
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
-      callTool<{ accounts: { email: string; authed: boolean; primary?: boolean; displayName?: string }[] }>(
-        'list_accounts',
-      ),
+      callTool<{
+        accounts: {
+          accountId: string;
+          email: string;
+          authed: boolean;
+          primary?: boolean;
+          displayName?: string;
+        }[];
+      }>('list_accounts'),
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
@@ -178,11 +184,11 @@ export function Rail() {
   useEffect(() => {
     if (!accounts.length) return;
     const primary = authedAccounts.find((a) => a.primary) || authedAccounts[0] || accounts[0];
-    if (primary) setPrimaryAccount(primary.email);
+    if (primary) setPrimaryAccount(primary.accountId);
     if (authedAccounts.length > 1) {
       if (account !== ALL_ACCOUNTS) setAccount(ALL_ACCOUNTS);
     } else if (!account && primary) {
-      setAccount(primary.email);
+      setAccount(primary.accountId);
     }
   }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 

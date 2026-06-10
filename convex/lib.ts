@@ -12,10 +12,6 @@ export function now() {
   return Date.now();
 }
 
-export function accountId(userId: string, email: string) {
-  return `${userId}:${email.toLowerCase()}`;
-}
-
 export function currentPeriod(ts = Date.now()) {
   const date = new Date(ts);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;

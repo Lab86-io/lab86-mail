@@ -323,7 +323,7 @@ export async function generateDailyReport(input: {
 
 async function authedAccounts(userId?: string | null) {
   const accounts = await listNylasAccounts(userId).catch(() => []);
-  return [...new Set(accounts.filter((account) => account.authed).map((account) => account.email))];
+  return [...new Set(accounts.filter((account) => account.authed).map((account) => account.accountId))];
 }
 
 async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
