@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
 import type { PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
@@ -40,7 +41,7 @@ export interface ClientState {
   searchDraft: string;
   nlSearchIntent: string | null;
   translatedQuery: string | null;
-  querySource: 'default' | 'gmail' | 'natural_language' | 'category';
+  querySource: 'default' | 'typed' | 'natural_language' | 'category';
   queryError: string | null;
   selectedThreadId: string | null;
   selectedIds: string[];
@@ -98,7 +99,7 @@ const initialCompose: ComposeState = {
 };
 
 const PERSIST_KEY = 'lab86-mail-ui';
-const DEFAULT_QUERY = 'in:inbox newer_than:30d';
+const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
 
 export const useClientStore = create<ClientState>()(
   persist(
@@ -138,7 +139,7 @@ export const useClientStore = create<ClientState>()(
           nlSearchIntent: null,
           translatedQuery: null,
           queryError: null,
-          querySource: query === DEFAULT_QUERY ? 'default' : 'gmail',
+          querySource: query === DEFAULT_QUERY ? 'default' : 'typed',
         }),
       setSmartCategory: (smartCategory) =>
         set({
@@ -149,7 +150,7 @@ export const useClientStore = create<ClientState>()(
           nlSearchIntent: null,
           translatedQuery: null,
           queryError: null,
-          querySource: smartCategory ? 'category' : 'gmail',
+          querySource: smartCategory ? 'category' : 'typed',
         }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>

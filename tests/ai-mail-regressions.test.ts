@@ -11,9 +11,9 @@ process.env.OPENAI_API_KEY = '';
 process.env.ANTHROPIC_API_KEY = '';
 
 describe('agent mail lookup and prompt contract', () => {
-  test('Nylas native search does not mix unsupported Gmail query parameters', async () => {
-    const { buildNylasNativeSearchQueryParams } = await import('../lib/nylas/provider');
-    const params = buildNylasNativeSearchQueryParams({
+  test('Nylas structured search does not send raw Gmail native syntax', async () => {
+    const { buildNylasStructuredSearchQueryParams } = await import('../lib/nylas/provider');
+    const params = buildNylasStructuredSearchQueryParams({
       query: 'in:inbox is:unread has:attachment newer_than:30d',
       max: 50,
       pageToken: 'next-page',
@@ -21,12 +21,33 @@ describe('agent mail lookup and prompt contract', () => {
 
     expect(params).toEqual({
       limit: 50,
-      search_query_native: 'in:inbox is:unread has:attachment newer_than:30d',
+      in: 'INBOX',
+      unread: true,
+      has_attachment: true,
+      latest_message_after: expect.any(String),
       page_token: 'next-page',
     });
-    expect(params).not.toHaveProperty('unread');
-    expect(params).not.toHaveProperty('has_attachment');
-    expect(params).not.toHaveProperty('starred');
+    expect(params).not.toHaveProperty('search_query_native');
+  });
+
+  test('structured compiler reports unsupported clauses explicitly', async () => {
+    const { compileQueryToNylasStructuredParams } = await import('../lib/mail/search/compiler');
+    const plan = compileQueryToNylasStructuredParams({
+      provider: 'microsoft',
+      query: 'from:alerts@example.test -in:trash urgent',
+      max: 10,
+    });
+
+    expect(plan.queryParams).toMatchObject({
+      limit: 10,
+      from: 'alerts@example.test',
+    });
+    expect(plan.dropped.map((item: any) => item.reason)).toContain(
+      'structured search does not support negation yet',
+    );
+    expect(plan.dropped.map((item: any) => item.reason)).toContain(
+      'structured search does not support free-text body search yet',
+    );
   });
 
   test('search_threads fails clearly when no hosted account is available', async () => {
@@ -47,7 +68,7 @@ describe('agent mail lookup and prompt contract', () => {
     const { SYSTEM_PROMPT } = await import('../lib/ai/system-prompt');
 
     expect(SYSTEM_PROMPT).toContain('reply to this/open/current thread');
-    expect(SYSTEM_PROMPT).toContain('search Gmail even if another thread is currently focused');
+    expect(SYSTEM_PROMPT).toContain('search mail even if another thread is currently focused');
     expect(SYSTEM_PROMPT).toContain('Do not require the user to open the thread first');
   });
 });

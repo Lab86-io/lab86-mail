@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { hasAi } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
+import { parseMailSearchQuery } from '../mail/search/parser';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import { getNylasThread } from '../nylas/provider';
 import type { SmartCategory, SmartCategoryId, SmartLabelDefinition, SmartRule } from '../shared/types';
@@ -537,21 +538,22 @@ export const preSendCritique = defineTool({
 export const nlSearch = defineTool({
   name: 'nl_search',
   description:
-    'Translate a natural-language description into a Gmail query string (e.g. "from board members last quarter" → from:(...) newer_than:90d).',
+    'Translate a natural-language description into structured mail search intent and a temporary query string.',
   category: 'ai',
   mutating: false,
   input: z.object({ description: z.string() }),
-  output: z.object({ query: z.string(), model: z.string() }),
+  output: z.object({ query: z.string(), ast: z.any(), model: z.string() }),
   async handler({ description }) {
-    if (!hasAi()) return { query: description, model: 'local' };
+    if (!hasAi()) return { query: description, ast: parseMailSearchQuery(description), model: 'local' };
     const { text } = await generateTextForCurrentUser({
       feature: 'nl_search',
       speed: 'fast',
       system:
-        'You translate natural language into Gmail search syntax. Output only the query, no prose, no quotes. Use operators like from:, to:, subject:, newer_than:Nd, older_than:Nd, is:unread, has:attachment, in:inbox.',
+        'You translate natural language into a compact mail search query. Output only the query, no prose, no quotes. Prefer provider-neutral operators the app compiler understands: from:, to:, subject:, newer_than:Nd, older_than:Nd, is:unread, is:starred, has:attachment, in:inbox.',
       prompt: description,
     });
-    return { query: text.trim().replace(/^"|"$/g, ''), model: 'fast' };
+    const query = text.trim().replace(/^"|"$/g, '');
+    return { query, ast: parseMailSearchQuery(query), model: 'fast' };
   },
 });
 

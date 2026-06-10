@@ -118,7 +118,7 @@ const TOOL_ICONS: Record<string, any> = {
 
 const TOOL_VERBS: Record<string, string> = {
   search_threads: 'Searching',
-  nl_search: 'Translating to Gmail query',
+  nl_search: 'Translating to mail query',
   get_thread: 'Loading thread',
   get_message: 'Loading message',
   list_accounts: 'Listing accounts',

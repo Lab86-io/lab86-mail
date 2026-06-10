@@ -30,6 +30,7 @@ import {
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { DEFAULT_MAIL_QUERY, QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { shortFrom } from '@/lib/shared/format';
 
 export function CommandPalette() {
@@ -75,14 +76,14 @@ export function CommandPalette() {
 
             <CommandGroup heading="Mailboxes">
               {[
-                ['in:inbox newer_than:30d', 'Inbox', Inbox],
-                ['is:unread newer_than:30d', 'Unread', MailOpen],
-                ['is:starred newer_than:365d', 'Starred', Star],
-                ['is:important newer_than:60d', 'Important', Flag],
-                ['from:(icloud.com OR me.com) newer_than:365d', 'iCloud', Cloud],
-                ['has:attachment newer_than:90d', 'Attachments', Paperclip],
-                ['in:sent newer_than:365d', 'Sent', Send],
-                ['in:drafts', 'Drafts', Pencil],
+                [DEFAULT_MAIL_QUERY, 'Inbox', Inbox],
+                [QUICK_SEARCH_QUERIES.unread, 'Unread', MailOpen],
+                [QUICK_SEARCH_QUERIES.starred, 'Starred', Star],
+                [QUICK_SEARCH_QUERIES.important, 'Important', Flag],
+                [QUICK_SEARCH_QUERIES.icloud, 'iCloud', Cloud],
+                [QUICK_SEARCH_QUERIES.attachments, 'Attachments', Paperclip],
+                [QUICK_SEARCH_QUERIES.sent, 'Sent', Send],
+                [QUICK_SEARCH_QUERIES.drafts, 'Drafts', Pencil],
                 ['label:MailOS/Snoozed', 'Snoozed', AlarmClock],
               ].map(([q, label, Icon]: any) => (
                 <CommandItem key={q} value={`mailbox ${label}`} onSelect={() => run(() => setQuery(q))}>
