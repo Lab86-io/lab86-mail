@@ -39,7 +39,8 @@ export async function computeSmartCategoryStats(account?: string) {
       needsAttention: matching.filter((thread) => thread.smartCategory?.needsAttention).length,
       tracked: matching.filter((thread) => trackedKeys.has(`${thread.account}:${thread._id}`)).length,
       computedAt,
-      approximate: threads.length >= 5000,
+      // Either bounded fetch hitting its cap means the numbers may be off.
+      approximate: threads.length >= 5000 || tracked.length >= 1000,
     };
     await upsert(db().smartCategoryStats, { _id: stat._id }, stat).catch((err) => {
       console.error(`Failed to upsert category stat ${stat._id}:`, err);

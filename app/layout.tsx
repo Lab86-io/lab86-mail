@@ -31,8 +31,13 @@ export const metadata: Metadata = {
   },
 };
 
+// Static values (matching --color-bg in globals.css) — CSS variables don't
+// resolve in the theme-color meta tag, which is parsed before any stylesheet.
 export const viewport: Viewport = {
-  themeColor: 'var(--color-bg)',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f6f8fb' },
+    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

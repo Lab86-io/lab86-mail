@@ -4,32 +4,30 @@ import { cn } from '@/lib/utils';
 // definition isn't re-injected into the DOM for every rendered instance.
 function OrbitRing({ className, ...props }: React.ComponentProps<'span'>) {
   return (
-    <>
+    <span
+      role="status"
+      className={cn('relative inline-block', className)}
+      style={{
+        animation: 'loading-ui-orbit-ring-rotation var(--duration, 1s) linear infinite',
+      }}
+      {...props}
+    >
       <span
-        role="status"
-        className={cn('relative inline-block', className)}
+        aria-hidden="true"
+        className="absolute inset-0 rounded-full border-2 border-current"
+        style={{ opacity: 0.25 }}
+      />
+      <span
+        aria-hidden="true"
+        className="absolute top-1/2 left-1/2 rounded-full border-2 border-[var(--color-transparent)] border-b-current"
         style={{
-          animation: 'loading-ui-orbit-ring-rotation var(--duration, 1s) linear infinite',
+          width: '116.667%',
+          height: '116.667%',
+          transform: 'translate(-50%, -50%)',
         }}
-        {...props}
-      >
-        <span
-          aria-hidden="true"
-          className="absolute inset-0 rounded-full border-2 border-current"
-          style={{ opacity: 0.25 }}
-        />
-        <span
-          aria-hidden="true"
-          className="absolute top-1/2 left-1/2 rounded-full border-2 border-[var(--color-transparent)] border-b-current"
-          style={{
-            width: '116.667%',
-            height: '116.667%',
-            transform: 'translate(-50%, -50%)',
-          }}
-        />
-        <span className="sr-only">Loading</span>
-      </span>
-    </>
+      />
+      <span className="sr-only">Loading</span>
+    </span>
   );
 }
 

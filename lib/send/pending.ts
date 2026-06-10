@@ -23,15 +23,18 @@ export function queueSend(id: string, delayMs: number, run: () => Promise<void>)
     clearTimeout(existing.timerId);
   }
   const fireAt = Date.now() + Math.max(0, delayMs);
-  const timerId = setTimeout(async () => {
-    const task = tasks.get(id);
-    if (!task || task.cancelled || task.timerId !== timerId) return;
-    try {
-      await task.run();
-    } finally {
-      tasks.delete(id);
-    }
-  }, Math.max(0, delayMs));
+  const timerId = setTimeout(
+    async () => {
+      const task = tasks.get(id);
+      if (!task || task.cancelled || task.timerId !== timerId) return;
+      try {
+        await task.run();
+      } finally {
+        tasks.delete(id);
+      }
+    },
+    Math.max(0, delayMs),
+  );
   tasks.set(id, { id, fireAt, cancelled: false, run, timerId });
 }
 

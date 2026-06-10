@@ -90,10 +90,10 @@ export async function createSmartLabel(input: {
   const slugTaken = await findOne<SmartLabelDefinition>(db().smartLabels, { slug });
   if (slugTaken) throw new Error(`A smart label named "${slugTaken.name}" already exists.`);
   if (!input.description.trim()) throw new Error('Smart label description is required');
-  if (!input.positiveExamples.filter(Boolean).length)
-    throw new Error('At least one positive example is required');
-  if (!input.negativeExamples.filter(Boolean).length)
-    throw new Error('At least one negative example is required');
+  const positiveExamples = input.positiveExamples.map((v) => v.trim()).filter(Boolean);
+  const negativeExamples = input.negativeExamples.map((v) => v.trim()).filter(Boolean);
+  if (!positiveExamples.length) throw new Error('At least one positive example is required');
+  if (!negativeExamples.length) throw new Error('At least one negative example is required');
   const label: SmartLabelDefinition = {
     _id: randomUUID(),
     name,
@@ -103,8 +103,8 @@ export async function createSmartLabel(input: {
     sidebarVisible: input.sidebarVisible ?? true,
     gmailLabelName: `MailOS/${name}`,
     aiMode: 'metadata_snippet',
-    positiveExamples: input.positiveExamples.map((v) => v.trim()).filter(Boolean),
-    negativeExamples: input.negativeExamples.map((v) => v.trim()).filter(Boolean),
+    positiveExamples,
+    negativeExamples,
     candidateQuery: 'newer_than:90d',
     createdBy: input.createdBy || 'user',
     createdAt: ts,

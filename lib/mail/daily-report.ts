@@ -677,7 +677,11 @@ async function buildThreadInsight(
         lane = laneMax(floor.lane, parseLane(parsed.suggestedLane) || floor.lane);
         model = describeProvider().primary || 'primary';
       }
-    } catch {}
+    } catch (err) {
+      // Enrichment is best-effort — the deterministic floor values still
+      // produce a briefing — but the failure should be visible in logs.
+      console.warn('Daily report AI enrichment failed:', err);
+    }
   }
 
   const demotionReason = lane === 'bulk' ? floor.demotionReason : null;
