@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { aiCreditDefaults, isClerkConfigured } from './env';
 
 export interface AiBillingEntitlement {
-  plan: 'free' | 'pro' | 'admin';
+  plan: 'free' | 'byok' | 'pro' | 'admin';
   status: 'active';
   monthlyCredits: number;
   source: 'clerk';
@@ -48,6 +48,14 @@ export async function getAiBillingEntitlement(): Promise<AiBillingEntitlement> {
       monthlyCredits: defaults.proMonthlyCredits,
       source: 'clerk',
     };
+  }
+
+  // BYOK tier: full feature set with the subscriber's own model key — no
+  // Lab86-hosted AI budget.
+  const byokPlan = process.env.CLERK_BYOK_PLAN_SLUG || 'mail_byok';
+  const byok = await Promise.resolve(has({ plan: byokPlan })).catch(() => false);
+  if (byok) {
+    return { plan: 'byok', status: 'active', monthlyCredits: 0, source: 'clerk' };
   }
 
   return freeEntitlement(defaults.freeMonthlyCredits);

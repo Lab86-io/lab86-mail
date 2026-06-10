@@ -1,4 +1,10 @@
 import { PricingTable } from '@clerk/nextjs';
+import {
+  B2C_ANNUAL_PRICE_USD,
+  B2C_BYOK_ANNUAL_PRICE_USD,
+  B2C_BYOK_MONTHLY_PRICE_USD,
+  B2C_MONTHLY_PRICE_USD,
+} from '@/lib/ai/budget';
 import { isClerkConfigured } from '@/lib/hosted/env';
 
 export const dynamic = 'force-dynamic';
@@ -10,9 +16,11 @@ export default function PricingPage() {
       <section className="mx-auto max-w-4xl space-y-6">
         <h1 className="text-2xl font-semibold">Lab86 Mail</h1>
         <p className="max-w-2xl text-sm text-[var(--color-text-muted)]">
-          One paid plan: $15/month or $120/year. Lab86-hosted AI is included with the paid Pro plan (with a
-          monthly usage budget); the free tier requires bringing your own provider API key. You can also use
-          your own key on Pro if you prefer direct provider billing.
+          Two plans, one product. Pro (${B2C_MONTHLY_PRICE_USD}/month or ${B2C_ANNUAL_PRICE_USD}/year)
+          includes Lab86-hosted AI with a monthly usage budget. Bring-your-own-key ($
+          {B2C_BYOK_MONTHLY_PRICE_USD}/month or ${B2C_BYOK_ANNUAL_PRICE_USD}/year) unlocks the same full
+          feature set with your own OpenRouter, OpenAI, or Anthropic API key — you pay your model provider
+          directly.
         </p>
         {clerkConfigured ? (
           <PricingTable />

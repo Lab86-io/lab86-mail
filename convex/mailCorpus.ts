@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -74,25 +73,27 @@ export const listSyncTargets = query({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const limit = clampLimit(args.limit, 50, 500);
-    if (args.status) {
+    // Hoisted so TypeScript keeps the narrowing inside the index callbacks.
+    const { userId, status } = args;
+    if (status) {
       // For user-scoped sweeps, walk the user's own (small) state set so the
       // status filter is never starved by other users' rows.
-      if (args.userId) {
+      if (userId) {
         const rows = await ctx.db
           .query('mailSyncStates')
-          .withIndex('by_user', (q) => q.eq('userId', args.userId))
+          .withIndex('by_user', (q) => q.eq('userId', userId))
           .collect();
-        return rows.filter((row) => row.status === args.status).slice(0, limit);
+        return rows.filter((row) => row.status === status).slice(0, limit);
       }
       return await ctx.db
         .query('mailSyncStates')
-        .withIndex('by_status', (q) => q.eq('status', args.status))
+        .withIndex('by_status', (q) => q.eq('status', status))
         .take(limit);
     }
-    if (args.userId) {
+    if (userId) {
       return await ctx.db
         .query('mailSyncStates')
-        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .withIndex('by_user', (q) => q.eq('userId', userId))
         .take(limit);
     }
     return await ctx.db.query('mailSyncStates').take(limit);
@@ -120,6 +121,55 @@ export const markSyncState = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     return await upsertSyncState(ctx, args);
+  },
+});
+
+// Atomic cross-instance claim for a backfill run. Convex mutations are
+// serializable transactions, so two app instances racing here cannot both
+// win: the second sees the first's fresh 'backfilling' stamp and backs off.
+export const claimCorpusBackfill = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: providerValidator,
+    activeWindowMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    const activeWindowMs = Math.max(60_000, Number(args.activeWindowMs) || 5 * 60_000);
+    const existing = await ctx.db
+      .query('mailSyncStates')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
+    if (existing?.corpusReady) return { claimed: false, reason: 'ready' };
+    if (existing && existing.status === 'backfilling' && ts - existing.updatedAt < activeWindowMs) {
+      return { claimed: false, reason: 'active' };
+    }
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        grantId: args.grantId,
+        provider: args.provider,
+        status: 'backfilling',
+        progress: { stage: 'claimed' },
+        updatedAt: ts,
+      });
+    } else {
+      await ctx.db.insert('mailSyncStates', {
+        userId: args.userId,
+        accountId: args.accountId,
+        grantId: args.grantId,
+        provider: args.provider,
+        status: 'backfilling',
+        corpusReady: false,
+        progress: { stage: 'claimed' },
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    }
+    return { claimed: true };
   },
 });
 
@@ -411,20 +461,31 @@ export const searchCorpusMessages = query({
     const limit = clampLimit(args.limit, 25, 100);
     const text = (args.query || '').trim();
     if (!text) {
-      const rows = await ctx.db
-        .query('mailCorpusMessages')
-        .withIndex('by_user_account_received', (q) =>
-          applyReceivedAtBounds(q.eq('userId', args.userId).eq('accountId', args.accountId), args),
-        )
-        .order('desc')
-        .take(limit * 2);
-      return rows
-        .filter(
-          (row) =>
-            (!args.provider || row.provider === args.provider) &&
-            (!args.yearMonth || row.yearMonth === args.yearMonth),
-        )
-        .slice(0, limit);
+      // provider/yearMonth are applied in memory, so a single window can be
+      // starved by non-matching rows; advance the receivedAt cursor until the
+      // limit fills or the account is exhausted (bounded passes).
+      const matched: any[] = [];
+      let before = args.before;
+      for (let pass = 0; pass < 6 && matched.length < limit; pass += 1) {
+        const window = { ...args, before };
+        const rows = await ctx.db
+          .query('mailCorpusMessages')
+          .withIndex('by_user_account_received', (q) =>
+            applyReceivedAtBounds(q.eq('userId', args.userId).eq('accountId', args.accountId), window),
+          )
+          .order('desc')
+          .take(limit * 2);
+        matched.push(
+          ...rows.filter(
+            (row) =>
+              (!args.provider || row.provider === args.provider) &&
+              (!args.yearMonth || row.yearMonth === args.yearMonth),
+          ),
+        );
+        if (rows.length < limit * 2) break;
+        before = rows[rows.length - 1].receivedAt - 1;
+      }
+      return matched.slice(0, limit);
     }
     const search = ctx.db.query('mailCorpusMessages').withSearchIndex('by_search_text', (q) => {
       let builder = q.search('searchText', text).eq('userId', args.userId).eq('accountId', args.accountId);
