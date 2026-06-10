@@ -79,6 +79,8 @@ dashboard sessions:
   production Nylas values in Railway. The existing sandbox app has callbacks for
   `https://mail-staging.lab86.io/api/nylas/callback` and
   `https://web-development-292e.up.railway.app/api/nylas/callback`.
+  Configure Nylas message/thread notifications to post to `/api/nylas/webhook`; the route records every event
+  idempotently and re-fetches truncated message notifications before writing the Convex corpus.
 - CodeRabbit: install the GitHub App on `Lab86-io/lab86-mail` so PR #1 receives a review.
 
 ## Railway Variables
@@ -109,6 +111,7 @@ Set these in both Railway environments with environment-specific values:
 - `NYLAS_SCOPES`
 - `LAB86_MAIL_ICLOUD_MODE=hidden`
 - `LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY=0`
+- `LAB86_MAIL_CORPUS_RECONCILE_ENABLED=1`
 - `LAB86_MAIL_ENCRYPTION_KEY`
 - `OPENROUTER_API_KEY` or another supported platform AI key
 - `LAB86_MAIL_OPENAI_MODEL`
@@ -126,6 +129,7 @@ Emergency switches:
 - `LAB86_DISABLE_LAB86_AI=1`
 - `LAB86_DISABLE_OUTBOUND_SEND=1`
 - `LAB86_DISABLE_PUBLIC_SIGNUP=1`
+- `LAB86_MAIL_CORPUS_RECONCILE_ENABLED=0`
 
 ## DNS Cutover
 
@@ -190,9 +194,9 @@ railway redeploy --service web --environment production --yes
 
 ## Convex Export / Restore Runbook
 
-Provider mail remains the source of truth for mail content, but Convex stores hosted app state: users,
-connected account metadata, encrypted provider grants, AI settings, AI usage, entitlements/reporting mirrors,
-and cached mail state.
+Provider mail remains the source of truth for transport, but Convex stores hosted app state and the local mail
+corpus used for B2C search: users, connected account metadata, encrypted provider grants, AI settings, AI usage,
+entitlements/reporting mirrors, corpus sync state, webhook events, and indexed mail documents.
 
 Before public launch:
 
@@ -203,3 +207,31 @@ Before public launch:
 
 Do not restore production data into development unless provider grants and encrypted secrets are explicitly
 sanitized.
+
+## Mail Corpus Backfill / Reconcile
+
+Convex is the durable local mail corpus. Nylas is the interim transport used to fetch mail and receive webhook
+wake signals.
+
+Manual backfill for one grant-backed account:
+
+```bash
+curl --fail -X POST https://mail-staging.lab86.io/api/mail/corpus/backfill \
+  -H "Authorization: Bearer $LAB86_CONVEX_INTERNAL_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"user_...","accountId":"grant_...","limit":50}'
+```
+
+If the response includes `nextPageToken`, call the endpoint again with that token until `corpusReady` is true.
+
+Reconciliation cron:
+
+```bash
+curl --fail -X POST https://mail-staging.lab86.io/api/mail/corpus/reconcile \
+  -H "Authorization: Bearer $LAB86_CONVEX_INTERNAL_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"limit":10,"messageLimit":50}'
+```
+
+The reconciler re-reads recent provider messages for ready accounts and repairs missed webhook delivery. It is safe
+to run repeatedly; Convex upserts by `(accountId, providerMessageId)` and `(accountId, providerThreadId)`.

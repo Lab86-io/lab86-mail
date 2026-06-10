@@ -101,6 +101,51 @@ describe('provider capabilities', () => {
   });
 });
 
+describe('Convex mail corpus helpers', () => {
+  test('builds capped provider-neutral search text', async () => {
+    const { CORPUS_SEARCH_TEXT_MAX_CHARS, buildCorpusSearchText, yearMonthFromTimestamp } = await import(
+      '../lib/mail/corpus'
+    );
+    const text = buildCorpusSearchText({
+      subject: 'Invoice',
+      from: 'Billing <billing@example.test>',
+      to: 'Jakob <jakob@example.test>',
+      snippet: 'Payment due',
+      labels: ['INBOX', 'FINANCE'],
+      textBody: 'x'.repeat(CORPUS_SEARCH_TEXT_MAX_CHARS + 500),
+    });
+
+    expect(text).toContain('Invoice');
+    expect(text).toContain('billing@example.test');
+    expect(text.length).toBe(CORPUS_SEARCH_TEXT_MAX_CHARS);
+    expect(yearMonthFromTimestamp(Date.parse('2026-06-10T13:00:00.000Z'))).toBe('2026-06');
+  });
+
+  test('extracts Nylas grant and truncated message ids from webhook payloads', async () => {
+    const { extractNylasWebhookMetadata } = await import('../lib/mail/corpus');
+    const metadata = extractNylasWebhookMetadata({
+      id: 'evt_123',
+      type: 'message.updated.truncated',
+      data: {
+        object: {
+          id: 'msg_123',
+          grant_id: 'grant_123',
+          thread_id: 'thread_123',
+        },
+      },
+    });
+
+    expect(metadata).toEqual({
+      eventId: 'evt_123',
+      type: 'message.updated.truncated',
+      grantId: 'grant_123',
+      providerMessageId: 'msg_123',
+      providerThreadId: 'thread_123',
+      truncated: true,
+    });
+  });
+});
+
 describe('hosted OpenRouter model options', () => {
   test('normalizes arbitrary OpenRouter model slugs to approved choices', async () => {
     const {
