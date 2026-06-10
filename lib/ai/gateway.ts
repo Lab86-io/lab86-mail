@@ -4,13 +4,13 @@ import { generateText, type ModelMessage, streamText } from 'ai';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { aiCreditDefaults, isConvexConfigured } from '@/lib/hosted/env';
+import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
-type AiSource = 'lab86' | 'byok' | 'legacy';
+type AiSource = 'lab86' | 'byok';
 type AiSpeed = 'fast' | 'primary';
 type PlatformPreference = {
   provider?: AiProvider;
@@ -80,7 +80,7 @@ export async function resolveAiRuntime(input: {
   const speed = input.speed || 'fast';
   let platformPreference: PlatformPreference | undefined;
 
-  if (userId && isConvexConfigured()) {
+  if (userId) {
     const state = await convexQuery<RuntimeState>(api.ai.getRuntimeState, { userId });
     const mode = state.settings?.enabled === false ? 'lab86' : state.settings?.mode || 'lab86';
     if (isUserOpenRouterKeyRequired()) {
@@ -129,7 +129,7 @@ export async function resolveAiRuntime(input: {
   if (platform) {
     return {
       userId,
-      source: userId ? 'lab86' : 'legacy',
+      source: 'lab86',
       ...platform,
     };
   }
@@ -282,7 +282,7 @@ async function recordUsage(
   ok: boolean,
   error?: string,
 ) {
-  if (!runtime.userId || !isConvexConfigured()) return;
+  if (!runtime.userId) return;
   const promptTokens = numericUsage(usage?.inputTokens ?? usage?.promptTokens);
   const completionTokens = numericUsage(usage?.outputTokens ?? usage?.completionTokens);
   const totalTokens = numericUsage(usage?.totalTokens) ?? (promptTokens || 0) + (completionTokens || 0);

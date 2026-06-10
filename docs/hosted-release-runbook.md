@@ -113,7 +113,6 @@ Set these in both Railway environments with environment-specific values:
 - `LAB86_MAIL_OPENAI_FAST_MODEL`
 - `LAB86_AI_FREE_MONTHLY_CREDITS=25000`
 - `LAB86_AI_PRO_MONTHLY_CREDITS=2000000`
-- `LAB86_MAIL_ENABLE_GOG=0`
 
 Development-only:
 

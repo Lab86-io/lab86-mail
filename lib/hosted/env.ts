@@ -1,7 +1,5 @@
 import { isSubscriptionServiceDisabled } from './controls';
 
-export type HostedMode = 'legacy' | 'hosted';
-
 export function isClerkConfigured() {
   return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 }
@@ -20,17 +18,7 @@ export function isStripeConfigured() {
 
 export function isClerkBillingConfigured() {
   if (isSubscriptionServiceDisabled()) return false;
-  if (isClerkConfigured()) return true;
-  return Boolean(
-    process.env.CLERK_BILLING_CHECKOUT_URL ||
-      process.env.CLERK_BILLING_PORTAL_URL ||
-      process.env.NEXT_PUBLIC_CLERK_BILLING_CHECKOUT_URL ||
-      process.env.NEXT_PUBLIC_CLERK_BILLING_PORTAL_URL,
-  );
-}
-
-export function isGogEnabled() {
-  return process.env.LAB86_MAIL_ENABLE_GOG === '1';
+  return isClerkConfigured();
 }
 
 export function hostedPublicUrl() {
@@ -52,10 +40,6 @@ export function convexUrl() {
 
 export function convexInternalSecret() {
   return process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
-}
-
-export function appMode(): HostedMode {
-  return isClerkConfigured() ? 'hosted' : 'legacy';
 }
 
 export function aiCreditDefaults() {

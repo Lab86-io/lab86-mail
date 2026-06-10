@@ -1,6 +1,4 @@
 import { z } from 'zod';
-import { runGogJson } from '../gog/pool';
-import { isGogEnabled } from '../hosted/env';
 import { SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import {
   createNylasFolder,
@@ -11,7 +9,6 @@ import {
   updateNylasThreadFolders,
   updateNylasThreadFoldersWithRetry,
 } from '../nylas/provider';
-import { getThreadMessages } from '../store/messages';
 import { snoozeMessage, unsnoozeByMessage } from '../store/snooze';
 import {
   getThread,
@@ -31,47 +28,25 @@ const ThreadMutate = z.object({
   account: z.string(),
   threadId: z.string(),
 });
-const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
 
-async function gmailMutate(args: string[]): Promise<any> {
-  if (!isGogEnabled()) {
-    throw new Error('This action requires a connected Nylas account.');
-  }
-  return runGogJson(args, { timeoutMs: 60_000 });
-}
+const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
 
 export const archiveThread = defineTool({
   name: 'archive_thread',
-  description: 'Archive a thread (remove the INBOX label).',
+  description: 'Archive a thread.',
   category: 'mail',
   mutating: true,
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }, ctx) {
-    const nylas = await updateNylasThread({
-      userId: ctx.userId,
-      account,
-      threadId,
-      folders: [],
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'thread',
-      'modify',
-      threadId,
-      '--remove',
-      'INBOX',
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasThread({
+        userId: ctx.userId,
+        account,
+        threadId,
+        folders: [],
+      }),
+    );
   },
 });
 
@@ -83,32 +58,14 @@ export const trashThread = defineTool({
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }, ctx) {
-    const nylas = await updateNylasThread({
-      userId: ctx.userId,
-      account,
-      threadId,
-      folders: ['TRASH'],
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'thread',
-      'modify',
-      threadId,
-      '--add',
-      'TRASH',
-      '--remove',
-      'INBOX',
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasThread({
+        userId: ctx.userId,
+        account,
+        threadId,
+        folders: ['TRASH'],
+      }),
+    );
   },
 });
 
@@ -120,86 +77,58 @@ export const restoreFromTrash = defineTool({
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }, ctx) {
-    const nylas = await updateNylasThread({
-      userId: ctx.userId,
-      account,
-      threadId,
-      folders: ['INBOX'],
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'thread',
-      'modify',
-      threadId,
-      '--remove',
-      'TRASH',
-      '--add',
-      'INBOX',
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasThread({
+        userId: ctx.userId,
+        account,
+        threadId,
+        folders: ['INBOX'],
+      }),
+    );
   },
 });
 
 export const markRead = defineTool({
   name: 'mark_read',
-  description: 'Mark a message as read (remove UNREAD label).',
+  description: 'Mark a message as read.',
   category: 'mail',
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
-    const nylas = await updateNylasMessage({
-      userId: ctx.userId,
-      account,
-      messageId,
-      unread: false,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate(['--account', account, '--json', 'gmail', 'mark-read', messageId, '--no-input']);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasMessage({
+        userId: ctx.userId,
+        account,
+        messageId,
+        unread: false,
+      }),
+    );
   },
 });
 
 export const markUnread = defineTool({
   name: 'mark_unread',
-  description: 'Mark a message as unread (add UNREAD label).',
+  description: 'Mark a message as unread.',
   category: 'mail',
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
-    const nylas = await updateNylasMessage({
-      userId: ctx.userId,
-      account,
-      messageId,
-      unread: true,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate(['--account', account, '--json', 'gmail', 'unread', messageId, '--no-input']);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasMessage({
+        userId: ctx.userId,
+        account,
+        messageId,
+        unread: true,
+      }),
+    );
   },
 });
 
 export const markThreadRead = defineTool({
   name: 'mark_thread_read',
-  description: 'Mark every unread message in a thread as read and update the local cached thread state.',
+  description: 'Mark every unread message in a thread as read and update the cached thread state.',
   category: 'mail',
   mutating: true,
   input: z.object({
@@ -209,65 +138,14 @@ export const markThreadRead = defineTool({
   }),
   output: z.object({ ok: z.boolean(), marked: z.number() }),
   async handler({ account, threadId, messageIds }, ctx) {
-    const nylas = await updateNylasThread({
-      userId: ctx.userId,
-      account,
-      threadId,
-      unread: false,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return { ok: true, marked: messageIds?.length || 0 };
-
-    const cachedMessages = await getThreadMessages(account, threadId).catch(() => []);
-    const ids = [
-      ...new Set(
-        (messageIds?.length
-          ? messageIds
-          : cachedMessages.filter((m) => m.labels?.includes('UNREAD')).map((m) => m._id)
-        ).filter(Boolean),
-      ),
-    ];
-    let mutationSucceeded = false;
-    if (ids.length) {
-      const results = await Promise.allSettled(
-        ids.map((id) =>
-          gmailMutate(['--account', account, '--json', 'gmail', 'mark-read', id, '--no-input']),
-        ),
-      );
-      const rejected = results.filter(
-        (result): result is PromiseRejectedResult => result.status === 'rejected',
-      );
-      if (rejected.length) {
-        console.warn(
-          'Failed to mark one or more Gmail messages read:',
-          rejected.map((result) => result.reason),
-        );
-      }
-      mutationSucceeded = results.length > 0 && rejected.length === 0;
-    } else {
-      mutationSucceeded = await gmailMutate([
-        '--account',
+    await requireNylasResult(
+      updateNylasThread({
+        userId: ctx.userId,
         account,
-        '--json',
-        'gmail',
-        'thread',
-        'modify',
         threadId,
-        '--remove',
-        'UNREAD',
-        '--no-input',
-      ]).then(
-        () => true,
-        () => false,
-      );
-    }
-    // Don't mark the local cache read when Gmail rejected the mutation, or the
-    // UI would show "read" while Gmail still has UNREAD.
-    if (!mutationSucceeded) {
-      return { ok: false, marked: 0 };
-    }
+        unread: false,
+      }),
+    );
     const existing = await getThread(account, threadId).catch(() => null);
     await upsertThread(account, {
       _id: threadId,
@@ -280,180 +158,103 @@ export const markThreadRead = defineTool({
       openedAt: Date.now(),
       lastMarkedReadAt: Date.now(),
     }).catch(() => undefined);
-    return { ok: true, marked: ids.length };
+    return { ok: true, marked: messageIds?.length || 0 };
   },
 });
 
 export const starMessage = defineTool({
   name: 'star',
-  description: 'Star a message (add STARRED label).',
+  description: 'Star a message.',
   category: 'mail',
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
-    const nylas = await updateNylasMessage({
-      userId: ctx.userId,
-      account,
-      messageId,
-      starred: true,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'messages',
-      'modify',
-      messageId,
-      '--add',
-      'STARRED',
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasMessage({
+        userId: ctx.userId,
+        account,
+        messageId,
+        starred: true,
+      }),
+    );
   },
 });
 
 export const unstarMessage = defineTool({
   name: 'unstar',
-  description: 'Remove the STARRED label from a message.',
+  description: 'Remove the starred state from a message.',
   category: 'mail',
   mutating: true,
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
-    const nylas = await updateNylasMessage({
-      userId: ctx.userId,
-      account,
-      messageId,
-      starred: false,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'messages',
-      'modify',
-      messageId,
-      '--remove',
-      'STARRED',
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasMessage({
+        userId: ctx.userId,
+        account,
+        messageId,
+        starred: false,
+      }),
+    );
   },
 });
 
 export const addLabel = defineTool({
   name: 'add_label',
-  description: 'Add a label to a message.',
+  description: 'Add a folder/label to a message.',
   category: 'mail',
   mutating: true,
   input: BasicMutate.extend({ label: z.string() }),
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId, label }, ctx) {
-    const nylas = await updateNylasMessageFolders({
-      userId: ctx.userId,
-      account,
-      messageId,
-      add: [label],
-      createMissing: true,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'messages',
-      'modify',
-      messageId,
-      '--add',
-      label,
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasMessageFolders({
+        userId: ctx.userId,
+        account,
+        messageId,
+        add: [label],
+        createMissing: true,
+      }),
+    );
   },
 });
 
 export const removeLabel = defineTool({
   name: 'remove_label',
-  description: 'Remove a label from a message.',
+  description: 'Remove a folder/label from a message.',
   category: 'mail',
   mutating: true,
   input: BasicMutate.extend({ label: z.string() }),
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId, label }, ctx) {
-    const nylas = await updateNylasMessageFolders({
-      userId: ctx.userId,
-      account,
-      messageId,
-      remove: [label],
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'messages',
-      'modify',
-      messageId,
-      '--remove',
-      label,
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasMessageFolders({
+        userId: ctx.userId,
+        account,
+        messageId,
+        remove: [label],
+      }),
+    );
   },
 });
 
 export const createLabel = defineTool({
   name: 'create_label',
-  description: 'Create a new Gmail label.',
+  description: 'Create a new provider folder/label.',
   category: 'mail',
   mutating: true,
   input: z.object({ account: z.string(), name: z.string() }),
   output: z.object({ ok: z.boolean(), id: z.string().optional() }),
   async handler({ account, name }, ctx) {
-    const nylas = await createNylasFolder({
-      userId: ctx.userId,
-      account,
-      name,
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return { ok: true, id: nylas.id };
-
-    const raw = await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'labels',
-      'create',
-      name,
-      '--no-input',
-    ]);
-    return { ok: true, id: raw?.id || raw?.label?.id };
+    const created = await requireNylasResult(
+      createNylasFolder({
+        userId: ctx.userId,
+        account,
+        name,
+      }),
+    );
+    return { ok: true, id: created.id };
   },
 });
 
@@ -480,70 +281,39 @@ export const applySmartLabels = defineTool({
     const uniqueLabels = [
       ...new Set(items.flatMap((item) => item.labels).filter((label) => label.startsWith('MailOS/'))),
     ];
-    let hasNylasLabelPath = false;
-    try {
-      for (const label of uniqueLabels) {
-        const created = await createNylasFolder({ userId: ctx.userId, account, name: label });
-        hasNylasLabelPath ||= Boolean(created);
-        await delay(250);
-      }
-    } catch (err: any) {
-      if (!String(err?.message || '').includes('Nylas is not configured')) throw err;
-    }
-    if (!hasNylasLabelPath) {
-      await Promise.allSettled(
-        uniqueLabels.map((label) =>
-          gmailMutate(['--account', account, '--json', 'gmail', 'labels', 'create', label, '--no-input']),
-        ),
-      );
+    for (const label of uniqueLabels) {
+      await requireNylasResult(createNylasFolder({ userId: ctx.userId, account, name: label }));
+      await delay(250);
     }
 
     let applied = 0;
     for (const item of items) {
       const labels = [...new Set(item.labels)];
-      const nylas = item.messageId
-        ? await updateNylasMessageFoldersWithRetry({
+      if (item.messageId) {
+        await requireNylasResult(
+          updateNylasMessageFoldersWithRetry({
             userId: ctx.userId,
             account,
             messageId: item.messageId,
             add: labels,
             createMissing: true,
             retries: 5,
-          }).catch((err) => {
-            if (String(err?.message || '').includes('Nylas is not configured')) return null;
-            throw err;
-          })
-        : await updateNylasThreadFoldersWithRetry({
+          }),
+        );
+      } else {
+        await requireNylasResult(
+          updateNylasThreadFoldersWithRetry({
             userId: ctx.userId,
             account,
             threadId: item.threadId,
             add: labels,
             createMissing: true,
             retries: 5,
-          }).catch((err) => {
-            if (String(err?.message || '').includes('Nylas is not configured')) return null;
-            throw err;
-          });
-
-      if (nylas) {
-        applied += labels.length;
-      } else {
-        const targetId = item.messageId || item.threadId;
-        const command = item.messageId ? ['messages', 'modify', targetId] : ['thread', 'modify', targetId];
-        for (const label of labels) {
-          await gmailMutate([
-            '--account',
-            account,
-            '--json',
-            'gmail',
-            ...command,
-            '--add',
-            label,
-            '--no-input',
-          ]);
-          applied += 1;
-        }
+          }),
+        );
       }
+      applied += labels.length;
+
       const existing = await getThread(account, item.threadId).catch(() => null);
       const labelsApplied = [...new Set([...(existing?.gmailLabelSync?.labelsApplied || []), ...labels])];
       await setThreadGmailLabelSync(account, item.threadId, {
@@ -559,7 +329,7 @@ export const applySmartLabels = defineTool({
 
 export const setSmartCategoryTool = defineTool({
   name: 'set_smart_category',
-  description: 'Locally override a thread smart category without mutating Gmail labels.',
+  description: 'Locally override a thread smart category without mutating provider labels.',
   category: 'mail',
   mutating: true,
   input: z.object({
@@ -597,30 +367,14 @@ export const muteThread = defineTool({
   input: ThreadMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }, ctx) {
-    const nylas = await updateNylasThreadFolders({
-      userId: ctx.userId,
-      account,
-      threadId,
-      add: ['MUTE'],
-    }).catch((err) => {
-      if (String(err?.message || '').includes('Nylas is not configured')) return null;
-      throw err;
-    });
-    if (nylas) return nylas;
-
-    await gmailMutate([
-      '--account',
-      account,
-      '--json',
-      'gmail',
-      'thread',
-      'modify',
-      threadId,
-      '--add',
-      'MUTE',
-      '--no-input',
-    ]);
-    return { ok: true };
+    return await requireNylasResult(
+      updateNylasThreadFolders({
+        userId: ctx.userId,
+        account,
+        threadId,
+        add: ['MUTE'],
+      }),
+    );
   },
 });
 
@@ -655,6 +409,12 @@ export const unsnoozeThreadTool = defineTool({
     return { ok: true };
   },
 });
+
+async function requireNylasResult<T>(value: Promise<T | null>): Promise<T> {
+  const result = await value;
+  if (!result) throw new Error('Connected Nylas account not found.');
+  return result;
+}
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));

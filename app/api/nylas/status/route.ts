@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
-import { isConvexConfigured, isNylasConfigured } from '@/lib/hosted/env';
+import { isNylasConfigured } from '@/lib/hosted/env';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,13 +14,11 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
-  const accounts = isConvexConfigured()
-    ? await convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId: user.userId }).catch(() => [])
-    : [];
+  const accounts = await convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId: user.userId });
   return NextResponse.json({
     ok: true,
     configured: {
-      convex: isConvexConfigured(),
+      convex: true,
       nylas: isNylasConfigured(),
     },
     accounts,

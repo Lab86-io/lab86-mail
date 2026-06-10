@@ -13,7 +13,6 @@ import {
   isUserOpenRouterKeyRequired,
 } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { isConvexConfigured } from '@/lib/hosted/env';
 import { encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
 
 const PROVIDERS = new Set(['openrouter', 'openai', 'anthropic']);
@@ -28,14 +27,6 @@ export async function GET() {
   });
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
-  }
-  if (!isConvexConfigured()) {
-    return NextResponse.json({
-      ok: true,
-      configured: false,
-      mode: 'legacy',
-      message: 'Convex is not configured; AI uses server environment keys only.',
-    });
   }
   const state = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId });
   const entitlement = await getAiBillingEntitlement();
@@ -77,20 +68,13 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false }).catch((err) => {
+  const user = await requireCurrentUser().catch((err) => {
     if (err instanceof AuthRequiredError) return null;
     throw err;
   });
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
-  if (!isConvexConfigured()) {
-    return NextResponse.json(
-      { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },
-      { status: 503 },
-    );
-  }
-
   let body: Record<string, unknown>;
   try {
     const parsed = await req.json();
@@ -188,18 +172,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false }).catch((err) => {
+  const user = await requireCurrentUser().catch((err) => {
     if (err instanceof AuthRequiredError) return null;
     throw err;
   });
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
-  }
-  if (!isConvexConfigured()) {
-    return NextResponse.json(
-      { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },
-      { status: 503 },
-    );
   }
   const url = new URL(req.url);
   const provider = url.searchParams.get('provider') || '';

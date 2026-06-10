@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false });
+  const user = await requireCurrentUser();
   const body = await req.json().catch(() => ({}));
   const accountId = String(body.accountId || '');
   const email = String(body.email || '');

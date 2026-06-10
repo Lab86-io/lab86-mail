@@ -1,6 +1,5 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
-import { isClerkConfigured, isConvexConfigured } from '../hosted/env';
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
@@ -75,7 +74,7 @@ export function fastModel() {
 }
 
 export function hasAi() {
-  return Boolean(openrouter || openai || anthropic || (isClerkConfigured() && isConvexConfigured()));
+  return Boolean(openrouter || openai || anthropic);
 }
 
 export function describeProvider() {

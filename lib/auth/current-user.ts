@@ -5,21 +5,11 @@ export interface CurrentUser {
   userId: string;
   email: string;
   name: string;
-  source: 'clerk' | 'legacy';
+  source: 'clerk';
 }
 
-const LEGACY_USER: CurrentUser = {
-  userId: 'legacy:local',
-  email: process.env.LAB86_MAIL_LEGACY_EMAIL || 'local@lab86.dev',
-  name: process.env.LAB86_MAIL_LEGACY_NAME || 'Local User',
-  source: 'legacy',
-};
-
-export async function getCurrentUser(options: { allowLegacy?: boolean } = {}): Promise<CurrentUser | null> {
-  const allowLegacy =
-    options.allowLegacy === true &&
-    (process.env.NODE_ENV !== 'production' || process.env.LAB86_MAIL_ALLOW_LEGACY_AUTH === '1');
-  if (!isClerkConfigured()) return allowLegacy ? LEGACY_USER : null;
+export async function getCurrentUser(): Promise<CurrentUser | null> {
+  if (!isClerkConfigured()) return null;
 
   const session = await auth();
   if (!session.userId) return null;
@@ -38,8 +28,8 @@ export async function getCurrentUser(options: { allowLegacy?: boolean } = {}): P
   };
 }
 
-export async function requireCurrentUser(options: { allowLegacy?: boolean } = {}): Promise<CurrentUser> {
-  const user = await getCurrentUser(options);
+export async function requireCurrentUser(): Promise<CurrentUser> {
+  const user = await getCurrentUser();
   if (!user) {
     throw new AuthRequiredError('Sign in required.');
   }
