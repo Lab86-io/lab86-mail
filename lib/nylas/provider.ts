@@ -211,20 +211,24 @@ async function searchLocalCorpusThreads({
     if (collected.length >= max) break;
   }
   // Cursor paging only applies to browse-style queries; text searches are
-  // relevance-windowed by the Convex search index and do not page. The cursor
-  // resumes from the oldest RETURNED message so matches are never skipped,
-  // even when the next window held zero hits.
-  const returned = collected.slice(0, Math.max(max * 2, max));
+  // relevance-windowed by the Convex search index and do not page. Group ALL
+  // collected messages into threads first, then derive the cursor from the
+  // oldest thread actually included — threads trimmed by the per-page cap
+  // must reappear on the next page, never be skipped.
+  const threads = corpusMessagesToThreads(collected, row.accountId);
+  const items = threads.slice(0, max);
+  const trimmedThreads = threads.length > items.length;
+  const oldestIncluded = items.length ? Number(items[items.length - 1].lastDate) : null;
   const nextPageToken =
-    !plan.query && lastWindowFull
+    !plan.query && (trimmedThreads || lastWindowFull)
       ? `${LOCAL_PAGE_TOKEN_PREFIX}${
-          returned.length ? Math.min(...returned.map((message) => message.receivedAt)) - 1 : scanBefore
+          trimmedThreads && oldestIncluded !== null ? oldestIncluded - 1 : scanBefore
         }`
       : undefined;
   return {
     ast,
     dropped: plan.dropped,
-    items: corpusMessagesToThreads(returned, row.accountId).slice(0, max),
+    items,
     nextPageToken,
   };
 }

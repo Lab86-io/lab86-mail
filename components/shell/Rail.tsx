@@ -25,6 +25,7 @@ import {
   Terminal,
   Trash2,
   UserRound,
+  UsersRound,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { HostedSettingsButton } from '@/components/hosted/HostedSettings';
@@ -785,14 +786,12 @@ function AccountFilterDropdown({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <SidebarMenuButton tooltip="Choose accounts" className="justify-between">
-          <span className="flex min-w-0 items-center gap-2">
-            <Inbox className="size-4 shrink-0" />
-            <span className="truncate">{label}</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-1.5">
+        <SidebarMenuButton tooltip="Choose accounts">
+          <UsersRound />
+          <span className="truncate">{label}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {indexingCount ? <Ring className="size-3 text-[var(--color-accent)]" /> : null}
-            <ChevronsUpDown className="size-3 text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden" />
+            <ChevronsUpDown className="size-3 text-[var(--color-text-faint)]" />
           </span>
         </SidebarMenuButton>
       </DropdownMenuTrigger>
@@ -807,7 +806,7 @@ function AccountFilterDropdown({
           }}
           className="gap-2 text-[12.5px]"
         >
-          <Inbox className="size-3.5" />
+          <UsersRound className="size-3.5" />
           All accounts
           {allSelected ? <span className="ml-auto text-[var(--color-accent)]">✓</span> : null}
         </DropdownMenuItem>

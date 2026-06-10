@@ -1,7 +1,11 @@
 export type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 
+// Hosted-AI tier: Lab86 pays for the models, budgeted by credits.
 export const B2C_MONTHLY_PRICE_USD = 15;
-export const B2C_ANNUAL_PRICE_USD = 120;
+export const B2C_ANNUAL_PRICE_USD = 150;
+// BYOK tier: full feature set, user supplies their own model API key.
+export const B2C_BYOK_MONTHLY_PRICE_USD = 5;
+export const B2C_BYOK_ANNUAL_PRICE_USD = 50;
 export const B2C_INTERNAL_MONTHLY_CREDITS = 500;
 export const AI_CREDIT_VALUE_USD = 0.01;
 export const AI_BUDGET_SOFT_LIMIT_RATIO = 0.8;
