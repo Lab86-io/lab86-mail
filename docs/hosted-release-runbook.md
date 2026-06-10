@@ -112,6 +112,7 @@ Set these in both Railway environments with environment-specific values:
 - `LAB86_MAIL_ICLOUD_MODE=hidden`
 - `LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY=0`
 - `LAB86_MAIL_CORPUS_RECONCILE_ENABLED=1`
+- `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=icloud,microsoft`
 - `LAB86_MAIL_ENCRYPTION_KEY`
 - `OPENROUTER_API_KEY` or another supported platform AI key
 - `LAB86_MAIL_OPENAI_MODEL`
@@ -130,6 +131,7 @@ Emergency switches:
 - `LAB86_DISABLE_OUTBOUND_SEND=1`
 - `LAB86_DISABLE_PUBLIC_SIGNUP=1`
 - `LAB86_MAIL_CORPUS_RECONCILE_ENABLED=0`
+- `LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS=icloud,microsoft,google`
 
 ## DNS Cutover
 
@@ -235,3 +237,10 @@ curl --fail -X POST https://mail-staging.lab86.io/api/mail/corpus/reconcile \
 
 The reconciler re-reads recent provider messages for ready accounts and repairs missed webhook delivery. It is safe
 to run repeatedly; Convex upserts by `(accountId, providerMessageId)` and `(accountId, providerThreadId)`.
+
+Local-first search rollout is controlled by provider list:
+
+- `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=icloud,microsoft` is the default rollout state.
+- Set `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=all` to include Google once parity is validated.
+- Set `LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS=<provider>` for instant provider rollback to Nylas structured
+  search. Use `all` to force structured search for every provider.
