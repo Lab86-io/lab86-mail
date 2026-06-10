@@ -236,6 +236,69 @@ describe('local-first mail search routing', () => {
   });
 });
 
+describe('B2C AI budget accounting', () => {
+  test('derives internal credits from OpenAI list-price token costs', async () => {
+    const { estimateAiUsageCost } = await import('../lib/ai/budget');
+    const cost = estimateAiUsageCost({
+      provider: 'openai',
+      model: 'gpt-5.5',
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+    });
+
+    expect(cost.estimatedCostUsd).toBe(35);
+    expect(cost.estimatedCredits).toBe(3500);
+  });
+
+  test('accounts for Anthropic cached reads and batch discounts', async () => {
+    const { estimateAiUsageCost } = await import('../lib/ai/budget');
+    const cached = estimateAiUsageCost({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      promptTokens: 1_000_000,
+      cachedInputTokens: 1_000_000,
+      completionTokens: 1_000_000,
+    });
+    const batched = estimateAiUsageCost({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+      batch: true,
+    });
+
+    expect(cached.estimatedCostUsd).toBeCloseTo(15.3, 5);
+    expect(cached.estimatedCredits).toBe(1530);
+    expect(batched.estimatedCostUsd).toBe(9);
+    expect(batched.estimatedCredits).toBe(900);
+  });
+
+  test('soft-degrades at 80 percent and hard-stops chat at 100 percent only', async () => {
+    const { resolveAiBudgetPolicy, shouldDepleteLab86Budget } = await import('../lib/ai/budget');
+
+    expect(
+      resolveAiBudgetPolicy({ feature: 'daily_report_narrative', monthlyCredits: 500, creditsUsed: 400 }),
+    ).toMatchObject({
+      softLimited: true,
+      forceFastModel: true,
+      hardStopped: false,
+    });
+    expect(resolveAiBudgetPolicy({ feature: 'agent', monthlyCredits: 500, creditsUsed: 500 })).toMatchObject({
+      exhausted: true,
+      hardStopped: true,
+    });
+    expect(
+      resolveAiBudgetPolicy({ feature: 'classify_threads', monthlyCredits: 500, creditsUsed: 500 }),
+    ).toMatchObject({
+      exhausted: true,
+      hardStopped: false,
+      forceFastModel: true,
+    });
+    expect(shouldDepleteLab86Budget('byok')).toBe(false);
+    expect(shouldDepleteLab86Budget('lab86')).toBe(true);
+  });
+});
+
 describe('hosted OpenRouter model options', () => {
   test('normalizes arbitrary OpenRouter model slugs to approved choices', async () => {
     const {
