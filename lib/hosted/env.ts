@@ -59,8 +59,12 @@ export function appMode(): HostedMode {
 }
 
 export function aiCreditDefaults() {
+  const numberFromEnv = (value: string | undefined, fallback: number) => {
+    const parsed = Number(value);
+    return value && Number.isFinite(parsed) ? parsed : fallback;
+  };
   return {
-    freeMonthlyCredits: Number(process.env.LAB86_AI_FREE_MONTHLY_CREDITS || 25_000),
-    proMonthlyCredits: Number(process.env.LAB86_AI_PRO_MONTHLY_CREDITS || 2_000_000),
+    freeMonthlyCredits: numberFromEnv(process.env.LAB86_AI_FREE_MONTHLY_CREDITS, 25_000),
+    proMonthlyCredits: numberFromEnv(process.env.LAB86_AI_PRO_MONTHLY_CREDITS, 2_000_000),
   };
 }

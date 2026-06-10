@@ -31,6 +31,11 @@ function ensureDir(dir: string) {
 export function db() {
   if (instances) return instances;
   ensureDir(DATA_DIR);
+  try {
+    fs.accessSync(DATA_DIR, fs.constants.W_OK);
+  } catch (err) {
+    throw new Error(`Data directory ${DATA_DIR} is not writable: ${err}`);
+  }
 
   const open = (name: string, indexes: Array<{ fieldName: string; unique?: boolean }> = []) => {
     const ds = new Datastore({
@@ -41,10 +46,13 @@ export function db() {
       try {
         const res = ds.ensureIndex(idx) as unknown;
         if (res && typeof (res as any).catch === 'function') {
-          (res as Promise<unknown>).catch(() => undefined);
+          (res as Promise<unknown>).catch((err: unknown) => {
+            console.warn(`Failed to create index on ${name}.${idx.fieldName}:`, err);
+          });
         }
-      } catch {
-        // best-effort
+      } catch (err) {
+        // best-effort, but a missing index is worth a breadcrumb
+        console.warn(`Failed to create index on ${name}.${idx.fieldName}:`, err);
       }
     }
     return ds;

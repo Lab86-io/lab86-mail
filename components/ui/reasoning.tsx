@@ -123,14 +123,15 @@ function ReasoningContent({
     return () => observer.disconnect();
   }, [isOpen]);
 
-  const content = markdown ? <Markdown>{children as string}</Markdown> : children;
+  // Markdown rendering only works for string children; other nodes render as-is.
+  const content = markdown && typeof children === 'string' ? <Markdown>{children}</Markdown> : children;
 
   return (
     <div
       ref={contentRef}
       className={cn('overflow-hidden transition-[max-height] duration-150 ease-out', className)}
       style={{
-        maxHeight: isOpen ? contentRef.current?.scrollHeight : '0px',
+        maxHeight: isOpen ? (contentRef.current?.scrollHeight ?? 'none') : '0px',
       }}
       {...props}
     >

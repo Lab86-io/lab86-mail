@@ -32,6 +32,7 @@ export function ThemeSwitcher({ className }: { className?: string }) {
     <button
       type="button"
       onClick={() => setTheme(next)}
+      aria-label={`Switch theme from ${LABEL[current]} to ${LABEL[next]}`}
       title={`Theme: ${LABEL[current]} → ${LABEL[next]}`}
       className={cn(
         'grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',

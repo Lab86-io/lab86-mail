@@ -107,6 +107,9 @@ export const LAB86_MODEL_FAMILIES: Record<
 const primaryIds = new Set(OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => option.id));
 const fastIds = new Set(OPENROUTER_FAST_MODEL_OPTIONS.map((option) => option.id));
 
+// Maps any model id onto one of the two Lab86 preset families. Non-Anthropic
+// providers (Google, DeepSeek, Qwen, …) intentionally fall back to 'openai',
+// which is the generic OpenRouter preset, not a claim about the vendor.
 export function resolveLab86Family(model?: string, fastModel?: string): Lab86ModelFamily {
   const primary = model || '';
   if (primary) return primary.includes('anthropic/') ? 'claude' : 'openai';

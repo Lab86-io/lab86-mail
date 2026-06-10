@@ -106,6 +106,9 @@ export async function POST(req: NextRequest) {
   const mode = body.mode === 'byok' ? 'byok' : 'lab86';
   const provider =
     typeof body.provider === 'string' && PROVIDERS.has(body.provider) ? body.provider : undefined;
+  if (mode === 'byok' && !provider) {
+    return NextResponse.json({ ok: false, error: 'provider is required when mode is byok' }, { status: 400 });
+  }
   let model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
   const fastModel =
     typeof body.fastModel === 'string' && body.fastModel.trim() ? body.fastModel.trim() : undefined;
@@ -185,7 +188,13 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const user = await requireCurrentUser({ allowLegacy: false });
+  const user = await requireCurrentUser({ allowLegacy: false }).catch((err) => {
+    if (err instanceof AuthRequiredError) return null;
+    throw err;
+  });
+  if (!user) {
+    return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
+  }
   if (!isConvexConfigured()) {
     return NextResponse.json(
       { ok: false, error: 'Convex is not configured; AI settings cannot be saved.' },

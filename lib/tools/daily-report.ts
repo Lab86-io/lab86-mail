@@ -17,7 +17,6 @@ export const generateDailyReportTool = defineTool({
   mutating: true,
   input: z.object({
     kind: ReportKindSchema.default('manual'),
-    force: z.boolean().default(false),
   }),
   output: z.object({ report: z.any() }),
   async handler({ kind }, ctx) {

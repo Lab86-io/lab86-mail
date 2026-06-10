@@ -13,7 +13,7 @@ const OPENROUTER_DEFAULT_PRIMARY = 'openai/gpt-5.5';
 const OPENROUTER_DEFAULT_FAST = 'openai/gpt-5.4-mini';
 
 const OPENAI_DEFAULT_PRIMARY = 'gpt-5.5';
-const OPENAI_DEFAULT_FAST = 'gpt-5.5-mini';
+const OPENAI_DEFAULT_FAST = 'gpt-5.4-mini';
 
 export const openrouter = OPENROUTER_KEY
   ? createOpenAI({

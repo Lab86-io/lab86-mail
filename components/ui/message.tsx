@@ -40,9 +40,11 @@ const MessageContent = ({ children, markdown = false, className, ...props }: Mes
     className,
   );
 
-  return markdown ? (
+  // Markdown rendering only makes sense for string children; anything else
+  // falls through to the plain container instead of crashing the renderer.
+  return markdown && typeof children === 'string' ? (
     <Markdown className={classNames} {...props}>
-      {children as string}
+      {children}
     </Markdown>
   ) : (
     <div className={classNames} {...props}>

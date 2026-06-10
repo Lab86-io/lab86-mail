@@ -69,19 +69,20 @@ export const CodeBlock = ({
 }: CodeBlockProps) => {
   const [html, setHtml] = useState<string>('');
   const [darkHtml, setDarkHtml] = useState<string>('');
-  const mounted = useRef(false);
+  const highlightRequestId = useRef(0);
 
   useEffect(() => {
+    const requestId = ++highlightRequestId.current;
+    let cancelled = false;
     highlightCode(code, language, showLineNumbers).then(([light, dark]) => {
-      if (!mounted.current) {
+      if (!cancelled && requestId === highlightRequestId.current) {
         setHtml(light);
         setDarkHtml(dark);
-        mounted.current = true;
       }
     });
 
     return () => {
-      mounted.current = false;
+      cancelled = true;
     };
   }, [code, language, showLineNumbers]);
 
@@ -126,6 +127,14 @@ export const CodeBlockCopyButton = ({
 }: CodeBlockCopyButtonProps) => {
   const [isCopied, setIsCopied] = useState(false);
   const { code } = useContext(CodeBlockContext);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    },
+    [],
+  );
 
   const copyToClipboard = async () => {
     if (typeof window === 'undefined' || !navigator?.clipboard?.writeText) {
@@ -137,7 +146,8 @@ export const CodeBlockCopyButton = ({
       await navigator.clipboard.writeText(code);
       setIsCopied(true);
       onCopy?.();
-      setTimeout(() => setIsCopied(false), timeout);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => setIsCopied(false), timeout);
     } catch (error) {
       onError?.(error as Error);
     }

@@ -229,14 +229,25 @@ export const markThreadRead = defineTool({
         ).filter(Boolean),
       ),
     ];
+    let mutationSucceeded = false;
     if (ids.length) {
-      await Promise.allSettled(
+      const results = await Promise.allSettled(
         ids.map((id) =>
           gmailMutate(['--account', account, '--json', 'gmail', 'mark-read', id, '--no-input']),
         ),
       );
+      const rejected = results.filter(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      if (rejected.length) {
+        console.warn(
+          'Failed to mark one or more Gmail messages read:',
+          rejected.map((result) => result.reason),
+        );
+      }
+      mutationSucceeded = results.length > 0 && rejected.length === 0;
     } else {
-      await gmailMutate([
+      mutationSucceeded = await gmailMutate([
         '--account',
         account,
         '--json',
@@ -247,7 +258,15 @@ export const markThreadRead = defineTool({
         '--remove',
         'UNREAD',
         '--no-input',
-      ]).catch(() => undefined);
+      ]).then(
+        () => true,
+        () => false,
+      );
+    }
+    // Don't mark the local cache read when Gmail rejected the mutation, or the
+    // UI would show "read" while Gmail still has UNREAD.
+    if (!mutationSucceeded) {
+      return { ok: false, marked: 0 };
     }
     const existing = await getThread(account, threadId).catch(() => null);
     await upsertThread(account, {

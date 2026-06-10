@@ -12,18 +12,25 @@ export async function getAiBillingEntitlement(): Promise<AiBillingEntitlement> {
   const defaults = aiCreditDefaults();
   if (!isClerkConfigured()) return freeEntitlement(defaults.freeMonthlyCredits);
 
-  const session = await auth().catch(() => null);
-  const has = (session as any)?.has;
+  // auth() resolves to Clerk's Auth object, which exposes has() for plan and
+  // feature checks (it is not a Session, despite older naming here).
+  const authObject = await auth().catch(() => null);
+  const has = authObject?.has;
   if (typeof has !== 'function') return freeEntitlement(defaults.freeMonthlyCredits);
 
   const admin = await Promise.resolve(has({ plan: process.env.CLERK_ADMIN_PLAN_SLUG || 'admin' })).catch(
     () => false,
   );
   if (admin) {
+    const rawAdminMonthlyCredits = process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS;
+    const adminMonthlyCredits = Number(rawAdminMonthlyCredits);
     return {
       plan: 'admin',
       status: 'active',
-      monthlyCredits: Number(process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS || defaults.proMonthlyCredits),
+      monthlyCredits:
+        rawAdminMonthlyCredits && Number.isFinite(adminMonthlyCredits)
+          ? adminMonthlyCredits
+          : defaults.proMonthlyCredits,
       source: 'clerk',
     };
   }

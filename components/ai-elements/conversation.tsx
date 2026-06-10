@@ -67,6 +67,7 @@ export const ConversationScrollButton = ({ className, ...props }: ConversationSc
   return (
     !isAtBottom && (
       <Button
+        aria-label="Scroll to bottom"
         className={cn('absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full', className)}
         onClick={handleScrollToBottom}
         size="icon"

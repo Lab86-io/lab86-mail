@@ -45,15 +45,41 @@ function slugify(value: string) {
     .slice(0, 64);
 }
 
+// Seed once per process — listSmartLabels/getSmartLabel call this on every
+// read, and re-running the findOne+upsert each time is pure overhead.
+let seedEnsured = false;
+let seedPromise: Promise<void> | null = null;
+
 export async function ensureSeedSmartLabels() {
-  const existing = await findOne<SmartLabelDefinition>(db().smartLabels, { _id: DEVOPS_LABEL_ID });
-  const ts = now();
-  const seeded = {
-    ...DEVOPS_LABEL,
-    createdAt: existing?.createdAt || ts,
-    updatedAt: existing?.updatedAt || ts,
-  };
-  await upsert(db().smartLabels, { _id: DEVOPS_LABEL_ID }, seeded);
+  if (seedEnsured) return;
+  if (seedPromise) return await seedPromise;
+  seedPromise = (async () => {
+    const existing = await findOne<SmartLabelDefinition>(db().smartLabels, { _id: DEVOPS_LABEL_ID });
+    const ts = now();
+    const seeded = {
+      ...DEVOPS_LABEL,
+      createdAt: existing?.createdAt || ts,
+      updatedAt: existing?.updatedAt || ts,
+    };
+    await upsert(db().smartLabels, { _id: DEVOPS_LABEL_ID }, seeded);
+    seedEnsured = true;
+  })();
+  try {
+    await seedPromise;
+  } catch (err) {
+    seedPromise = null;
+    throw err;
+  } finally {
+    if (seedEnsured) seedPromise = null;
+  }
+}
+
+async function rethrowFriendlyDuplicateLabelError(err: unknown, slug: string, currentId?: string) {
+  const existingBySlug = await findOne<SmartLabelDefinition>(db().smartLabels, { slug }).catch(() => null);
+  if (existingBySlug && existingBySlug._id !== currentId) {
+    throw new Error(`A smart label named "${existingBySlug.name}" already exists.`);
+  }
+  throw err;
 }
 
 export async function listSmartLabels(includeDisabled = false) {
@@ -79,11 +105,15 @@ export async function createSmartLabel(input: {
   const name = input.name.trim();
   const slug = slugify(name);
   if (!name || !slug) throw new Error('Smart label name is required');
+  // slug has a unique index; surface a friendly error instead of the raw
+  // constraint violation from the insert.
+  const slugTaken = await findOne<SmartLabelDefinition>(db().smartLabels, { slug });
+  if (slugTaken) throw new Error(`A smart label named "${slugTaken.name}" already exists.`);
   if (!input.description.trim()) throw new Error('Smart label description is required');
-  if (!input.positiveExamples.filter(Boolean).length)
-    throw new Error('At least one positive example is required');
-  if (!input.negativeExamples.filter(Boolean).length)
-    throw new Error('At least one negative example is required');
+  const positiveExamples = input.positiveExamples.map((v) => v.trim()).filter(Boolean);
+  const negativeExamples = input.negativeExamples.map((v) => v.trim()).filter(Boolean);
+  if (!positiveExamples.length) throw new Error('At least one positive example is required');
+  if (!negativeExamples.length) throw new Error('At least one negative example is required');
   const label: SmartLabelDefinition = {
     _id: randomUUID(),
     name,
@@ -93,14 +123,18 @@ export async function createSmartLabel(input: {
     sidebarVisible: input.sidebarVisible ?? true,
     gmailLabelName: `MailOS/${name}`,
     aiMode: 'metadata_snippet',
-    positiveExamples: input.positiveExamples.map((v) => v.trim()).filter(Boolean),
-    negativeExamples: input.negativeExamples.map((v) => v.trim()).filter(Boolean),
+    positiveExamples,
+    negativeExamples,
     candidateQuery: 'newer_than:90d',
     createdBy: input.createdBy || 'user',
     createdAt: ts,
     updatedAt: ts,
   };
-  await upsert(db().smartLabels, { _id: label._id }, label);
+  try {
+    await upsert(db().smartLabels, { _id: label._id }, label);
+  } catch (err) {
+    await rethrowFriendlyDuplicateLabelError(err, slug);
+  }
   return label;
 }
 
@@ -129,7 +163,11 @@ export async function updateSmartLabel(
   };
   if (!next.positiveExamples.length) throw new Error('At least one positive example is required');
   if (!next.negativeExamples.length) throw new Error('At least one negative example is required');
-  await upsert(db().smartLabels, { _id: id }, next);
+  try {
+    await upsert(db().smartLabels, { _id: id }, next);
+  } catch (err) {
+    await rethrowFriendlyDuplicateLabelError(err, next.slug, id);
+  }
   return next;
 }
 
