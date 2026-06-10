@@ -72,6 +72,7 @@ export function HostedOnboarding() {
   });
 
   const accounts = nylas?.accounts || [];
+  const providerCapabilities = (nylas?.capabilities || []).filter((provider: any) => provider.visible);
   const hasAccounts = accounts.length > 0;
 
   useEffect(() => {
@@ -173,7 +174,7 @@ export function HostedOnboarding() {
                   <h3 className="text-[13px] font-semibold">Add email accounts</h3>
                 </div>
                 <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
-                  Gmail and Microsoft connect through Nylas OAuth.
+                  Mail accounts connect through Nylas hosted OAuth.
                 </p>
               </div>
               {hasAccounts ? (
@@ -182,13 +183,29 @@ export function HostedOnboarding() {
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1">
-              <Button asChild className="justify-start">
-                <a href="/api/nylas/connect?provider=google&redirectTo=/">Connect Gmail</a>
-              </Button>
-              <Button asChild variant="outline" className="justify-start">
-                <a href="/api/nylas/connect?provider=microsoft&redirectTo=/">Connect Microsoft</a>
-              </Button>
+              {providerCapabilities.map((provider: any, index: number) => (
+                <Button
+                  key={provider.provider}
+                  asChild={provider.connectable}
+                  className="justify-start"
+                  disabled={!provider.connectable}
+                  variant={index === 0 ? 'default' : 'outline'}
+                >
+                  {provider.connectable ? (
+                    <a href={`/api/nylas/connect?provider=${provider.provider}&redirectTo=/`}>
+                      Connect {provider.label}
+                    </a>
+                  ) : (
+                    <span>{provider.reason || `${provider.label} unavailable`}</span>
+                  )}
+                </Button>
+              ))}
             </div>
+            {providerCapabilities.some((provider: any) => provider.provider === 'icloud') ? (
+              <p className="text-[11px] text-[var(--color-text-muted)]">
+                iCloud requires an Apple app-specific password before connecting.
+              </p>
+            ) : null}
 
             <div className="space-y-2">
               {accounts.length ? (

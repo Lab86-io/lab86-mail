@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
+import { type MailProvider, mailProviderCapability } from '@/lib/mail/provider-capabilities';
 import { requireNylas } from '@/lib/nylas/client';
 
 const PROVIDERS = new Set(['google', 'microsoft', 'icloud', 'imap']);
@@ -22,6 +23,13 @@ export async function GET(req: NextRequest) {
   const provider = url.searchParams.get('provider') || 'google';
   if (!PROVIDERS.has(provider)) {
     return NextResponse.json({ ok: false, error: `Unsupported provider: ${provider}` }, { status: 400 });
+  }
+  const capability = mailProviderCapability(provider as MailProvider);
+  if (!capability.connectable) {
+    return NextResponse.json(
+      { ok: false, error: capability.reason || `${capability.label} is not available yet.` },
+      { status: provider === 'icloud' ? 409 : 404 },
+    );
   }
   await convexMutation(api.users.upsertFromClerk, {
     userId: user.userId,

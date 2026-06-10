@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { isNylasConfigured } from '@/lib/hosted/env';
+import { mailProviderCapabilities } from '@/lib/mail/provider-capabilities';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,7 @@ export async function GET() {
       convex: true,
       nylas: isNylasConfigured(),
     },
+    capabilities: mailProviderCapabilities(),
     accounts,
   });
 }
