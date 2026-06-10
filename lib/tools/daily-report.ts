@@ -17,10 +17,19 @@ export const generateDailyReportTool = defineTool({
   mutating: true,
   input: z.object({
     kind: ReportKindSchema.default('manual'),
+    // wait=false (default) starts generation and returns immediately; the
+    // edition streams into get_latest_daily_report as a status:'partial' doc.
+    wait: z.boolean().default(false),
   }),
-  output: z.object({ report: z.any() }),
-  async handler({ kind }, ctx) {
-    return { report: await generateDailyReport({ kind, includeCalendar: true, userId: ctx.userId }) };
+  output: z.object({ report: z.any().nullable(), started: z.boolean().optional() }),
+  async handler({ kind, wait }, ctx) {
+    if (wait) {
+      return { report: await generateDailyReport({ kind, includeCalendar: true, userId: ctx.userId }) };
+    }
+    void generateDailyReport({ kind, includeCalendar: true, userId: ctx.userId }).catch((err) => {
+      console.error('[daily-report] background generation failed:', err);
+    });
+    return { report: null, started: true };
   },
 });
 

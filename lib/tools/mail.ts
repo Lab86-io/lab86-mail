@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { api, convexQuery } from '../hosted/convex';
 import { DEFAULT_MAIL_QUERY, SMART_CATEGORY_CANDIDATE_QUERIES } from '../mail/search/constants';
 import {
   classifyThreadWithContext,
@@ -42,11 +43,44 @@ export const listAccounts = defineTool({
         primary: z.boolean().optional(),
         displayName: z.string().optional(),
         services: z.array(z.string()).optional(),
+        sync: z
+          .object({
+            status: z.string(),
+            corpusReady: z.boolean(),
+            messagesSynced: z.number().optional(),
+            error: z.string().optional(),
+            lastSyncAt: z.number().optional(),
+          })
+          .optional(),
       }),
     ),
   }),
   async handler(_args, ctx) {
-    return { accounts: await listNylasAccounts(ctx.userId) };
+    const accounts = await listNylasAccounts(ctx.userId);
+    const syncStates = ctx.userId
+      ? await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
+          userId: ctx.userId,
+          limit: 500,
+        }).catch(() => [])
+      : [];
+    const syncByAccount = new Map(syncStates.map((state) => [state.accountId, state]));
+    return {
+      accounts: accounts.map((account) => {
+        const state = syncByAccount.get(account.accountId);
+        return {
+          ...account,
+          sync: state
+            ? {
+                status: String(state.status || 'idle'),
+                corpusReady: Boolean(state.corpusReady),
+                messagesSynced: typeof state.messagesSynced === 'number' ? state.messagesSynced : undefined,
+                error: state.error || undefined,
+                lastSyncAt: state.lastIncrementalSyncAt || state.lastBackfillAt || undefined,
+              }
+            : undefined,
+        };
+      }),
+    };
   },
 });
 

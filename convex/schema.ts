@@ -254,6 +254,7 @@ export default defineSchema({
     corpusReady: v.boolean(),
     progress: v.optional(v.any()),
     error: v.optional(v.string()),
+    messagesSynced: v.optional(v.number()),
     lastBackfillAt: v.optional(v.number()),
     lastIncrementalSyncAt: v.optional(v.number()),
     createdAt: v.number(),

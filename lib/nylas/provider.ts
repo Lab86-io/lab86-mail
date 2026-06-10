@@ -182,31 +182,49 @@ async function searchLocalCorpusThreads({
   const ast = parseMailSearchQuery(query);
   const plan = compileAstToLocalCorpusQuery(ast);
   const cursorBefore = localPageTokenBefore(pageToken);
-  const before =
+  let scanBefore =
     cursorBefore !== null && plan.before !== undefined
       ? Math.min(cursorBefore, plan.before)
       : (cursorBefore ?? plan.before);
   const fetchLimit = Math.min(100, Math.max(max * 4, max));
-  const rows = await convexQuery<CorpusMessageDocument[]>(mailCorpusApi.searchCorpusMessages, {
-    userId: row.userId,
-    accountId: row.accountId,
-    provider: row.provider,
-    query: plan.query,
-    after: plan.after,
-    before,
-    limit: fetchLimit,
-  });
-  const filtered = filterCorpusMessagesByAst(rows, ast);
+  // Selective in-memory filters (folder, unread, ...) can match nothing inside
+  // a single recency window even though older matches exist, so browse-style
+  // queries keep advancing the cursor through additional windows instead of
+  // stopping after the first one.
+  const maxWindows = plan.query ? 1 : 5;
+  const collected: CorpusMessageDocument[] = [];
+  let lastWindowFull = false;
+  for (let window = 0; window < maxWindows; window += 1) {
+    const rows = await convexQuery<CorpusMessageDocument[]>(mailCorpusApi.searchCorpusMessages, {
+      userId: row.userId,
+      accountId: row.accountId,
+      provider: row.provider,
+      query: plan.query,
+      after: plan.after,
+      before: scanBefore,
+      limit: fetchLimit,
+    });
+    collected.push(...filterCorpusMessagesByAst(rows, ast));
+    lastWindowFull = rows.length >= fetchLimit;
+    if (!lastWindowFull) break;
+    scanBefore = Math.min(...rows.map((message) => message.receivedAt)) - 1;
+    if (collected.length >= max) break;
+  }
   // Cursor paging only applies to browse-style queries; text searches are
-  // relevance-windowed by the Convex search index and do not page.
+  // relevance-windowed by the Convex search index and do not page. The cursor
+  // resumes from the oldest RETURNED message so matches are never skipped,
+  // even when the next window held zero hits.
+  const returned = collected.slice(0, Math.max(max * 2, max));
   const nextPageToken =
-    !plan.query && rows.length >= fetchLimit && filtered.length
-      ? `${LOCAL_PAGE_TOKEN_PREFIX}${Math.min(...filtered.map((message) => message.receivedAt)) - 1}`
+    !plan.query && lastWindowFull
+      ? `${LOCAL_PAGE_TOKEN_PREFIX}${
+          returned.length ? Math.min(...returned.map((message) => message.receivedAt)) - 1 : scanBefore
+        }`
       : undefined;
   return {
     ast,
     dropped: plan.dropped,
-    items: corpusMessagesToThreads(filtered, row.accountId).slice(0, max),
+    items: corpusMessagesToThreads(returned, row.accountId).slice(0, max),
     nextPageToken,
   };
 }

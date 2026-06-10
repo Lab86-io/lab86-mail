@@ -4,6 +4,7 @@ import { hostedPublicUrl, nylasRedirectUri } from '@/lib/hosted/env';
 import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
 import { requireNylas } from '@/lib/nylas/client';
 import { encryptSecret } from '@/lib/security/crypto';
+import { sanitizeInternalPath } from '@/lib/security/redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,7 +59,7 @@ function normalizeProvider(provider: string) {
 }
 
 function redirectWithStatus(path: string, key: string, value: string) {
-  const target = new URL(path.startsWith('/') ? path : '/', hostedPublicUrl());
+  const target = new URL(sanitizeInternalPath(path), hostedPublicUrl());
   target.searchParams.set(key, value);
   return NextResponse.redirect(target);
 }

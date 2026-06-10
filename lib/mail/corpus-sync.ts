@@ -158,6 +158,9 @@ export function maybeKickCorpusBackfill(row: Pick<NylasAccountRow, 'userId' | 'a
   const key = `${row.userId}:${row.accountId}`;
   const last = backfillKickAt.get(key) || 0;
   if (Date.now() - last < BACKFILL_KICK_DEBOUNCE_MS) return;
+  // Reserve the slot immediately (so concurrent searches don't double-kick),
+  // but release it on failure — a crashed kick must not suppress retries for
+  // the whole debounce window.
   backfillKickAt.set(key, Date.now());
   void (async () => {
     try {
@@ -170,6 +173,7 @@ export function maybeKickCorpusBackfill(row: Pick<NylasAccountRow, 'userId' | 'a
       if (syncState?.status === 'backfilling' && Date.now() - updatedAt < BACKFILL_ACTIVE_WINDOW_MS) return;
       await runCorpusBackfill({ userId: row.userId, accountId: row.accountId });
     } catch (err: any) {
+      backfillKickAt.delete(key);
       console.error(`[corpus] background backfill failed for ${row.accountId}:`, err?.message || err);
     }
   })();
