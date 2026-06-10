@@ -266,3 +266,63 @@ export const deleteConnectedAccount = mutation({
     return { ok: true };
   },
 });
+
+export const deleteUserCascade = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const counts: Record<string, number> = {};
+    const userTables = [
+      'connectedAccounts',
+      'providerGrants',
+      'nylasOAuthStates',
+      'aiSettings',
+      'aiProviderKeys',
+      'aiEntitlements',
+      'aiUsagePeriods',
+      'aiUsageEvents',
+      'threads',
+      'messages',
+      'dailyReports',
+      'memories',
+      'auditEvents',
+      'syncJobs',
+      'mailCorpusThreads',
+      'mailCorpusMessages',
+      'mailSyncStates',
+      'mailWebhookEvents',
+      'rateLimits',
+    ] as const;
+
+    for (const table of userTables) {
+      const rows = await rowsByUser(ctx, table, args.userId);
+      counts[table] = rows.length;
+      for (const row of rows) await ctx.db.delete(row._id);
+    }
+
+    const userRows = await ctx.db
+      .query('users')
+      .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', args.userId))
+      .collect();
+    counts.users = userRows.length;
+    for (const row of userRows) await ctx.db.delete(row._id);
+
+    return { ok: true, counts };
+  },
+});
+
+async function rowsByUser(ctx: any, table: string, userId: string) {
+  return await ctx.db
+    .query(table)
+    .withIndex('by_user' as any, (q: any) => q.eq('userId', userId))
+    .collect()
+    .catch(async () =>
+      ctx.db
+        .query(table)
+        .withIndex('by_user_account' as any, (q: any) => q.eq('userId', userId))
+        .collect(),
+    );
+}

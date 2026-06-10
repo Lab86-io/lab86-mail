@@ -133,8 +133,10 @@ function setFirst(
 function normalizeFolder(value: string) {
   const lower = value.toLowerCase();
   if (lower === 'sent') return 'SENT';
+  if (lower === 'draft' || lower === 'drafts') return 'DRAFTS';
   if (lower === 'trash') return 'TRASH';
   if (lower === 'spam') return 'SPAM';
   if (lower === 'inbox') return 'INBOX';
+  if (lower === 'archive' || lower === 'archived') return 'ARCHIVE';
   return value;
 }

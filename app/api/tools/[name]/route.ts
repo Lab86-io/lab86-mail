@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { getTool } from '@/lib/tools';
 import { invokeTool, ToolValidationError } from '@/lib/tools/registry';
 
@@ -23,6 +24,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ name: stri
 
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: `tool:${tool.name}`,
+      limit: tool.mutating ? 60 : 180,
+      windowMs: 60_000,
+    });
     const result = await invokeTool(tool, body, {
       agent,
       account: body?.account,
@@ -31,6 +38,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ name: stri
     });
     return NextResponse.json({ ok: true, result });
   } catch (err: any) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
     const status = err instanceof AuthRequiredError ? 401 : err instanceof ToolValidationError ? 400 : 500;
     return NextResponse.json({ ok: false, error: err?.message || 'tool failure' }, { status });
   }

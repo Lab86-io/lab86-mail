@@ -409,7 +409,7 @@ export function Rail() {
               variant="outline"
               className="ml-2 px-1.5 py-0 text-[9px] group-data-[collapsible=icon]:hidden"
             >
-              Gmail
+              Providers
             </Badge>
           </SidebarGroupLabel>
           <SidebarGroupContent>

@@ -1,6 +1,6 @@
 import type { SearchAst, SearchClause } from './ast';
 
-const TOKEN_RE = /"[^"]+"|\([^)]*\)|\S+/g;
+const TOKEN_RE = /-?(?:[a-z_]+:)?\([^)]*\)|"[^"]+"|\S+/gi;
 
 export function parseMailSearchQuery(query: string): SearchAst {
   const clauses: SearchClause[] = [];
@@ -16,6 +16,13 @@ export function parseMailSearchQuery(query: string): SearchAst {
 function parseToken(token: string, negated: boolean): SearchClause | null {
   const [operator, rawValue] = splitOperator(token);
   const value = stripQuotes(rawValue);
+  const orValues = splitOrGroup(value);
+  if (orValues?.length) {
+    const clauses = orValues
+      .map((item) => parseToken(operator ? `${operator}:${item}` : item, false))
+      .filter(Boolean) as SearchClause[];
+    return clauses.length ? { type: 'or', clauses, negated } : null;
+  }
   if (!operator) return value ? { type: 'text', value, negated } : null;
 
   switch (operator) {
@@ -59,6 +66,15 @@ function splitOperator(token: string): [string, string] | ['', string] {
 
 function stripQuotes(value: string) {
   return value.replace(/^"|"$/g, '').trim();
+}
+
+function splitOrGroup(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('(') || !trimmed.endsWith(')') || !/\s+or\s+/i.test(trimmed)) return null;
+  return (trimmed.slice(1, -1).match(/"[^"]+"|[^\s()]+/g) || [])
+    .filter((item) => item.toLowerCase() !== 'or')
+    .map(stripQuotes)
+    .filter(Boolean);
 }
 
 function dateValue(value: string) {

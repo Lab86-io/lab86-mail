@@ -153,6 +153,17 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
     onError: (err: any) => toast.error(err?.message || 'Could not open billing portal'),
   });
 
+  const deleteAccount = useMutation({
+    mutationFn: async () => check(await fetch('/api/account', { method: 'DELETE' })),
+    onSuccess: () => {
+      toast.success('Account deletion started');
+      qc.clear();
+      onOpenChange(false);
+      window.location.href = '/';
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not delete account'),
+  });
+
   const accounts = nylas?.accounts || [];
   const providerCapabilities = (nylas?.capabilities || []).filter((provider: any) => provider.visible);
   const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
@@ -444,9 +455,33 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
           </section>
 
           {clerkEnabled ? (
-            <section className="flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-4">
-              <span className="text-[12px] text-[var(--color-text-muted)]">Signed in with Clerk</span>
-              <UserButton />
+            <section className="space-y-3 border-t border-[var(--color-border)] pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[12px] text-[var(--color-text-muted)]">Signed in with Clerk</span>
+                <UserButton />
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] px-3 py-2">
+                <div className="min-w-0 text-[12px] text-[var(--color-text-muted)]">
+                  Delete connected mail grants, cached mail data, AI settings, usage records, and your Lab86
+                  account.
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={deleteAccount.isPending}
+                  onClick={() => {
+                    const confirmed = window.confirm(
+                      'Delete your Lab86 Mail account and all Lab86-hosted mail data? This cannot be undone.',
+                    );
+                    if (confirmed) deleteAccount.mutate();
+                  }}
+                  className="shrink-0 text-destructive"
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete
+                </Button>
+              </div>
             </section>
           ) : null}
         </div>

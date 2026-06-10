@@ -14,6 +14,22 @@ export default function SupportPage() {
           Include the email address on your Lab86 Mail account, the connected provider, and the approximate
           time of the issue. Do not send passwords or provider API keys.
         </p>
+        <p>
+          To delete your account, open Accounts and AI in the app settings and choose Delete. You can also
+          email{' '}
+          <a href="mailto:support@lab86.io" className="underline">
+            support@lab86.io
+          </a>{' '}
+          from the address on your Lab86 Mail account.
+        </p>
+        <p>
+          Security reports should go to{' '}
+          <a href="mailto:security@lab86.io" className="underline">
+            security@lab86.io
+          </a>
+          . Include the affected endpoint or provider, timestamps, and any safe reproduction details. Do not
+          include secrets, access tokens, or full message bodies unless requested for incident response.
+        </p>
       </article>
     </main>
   );

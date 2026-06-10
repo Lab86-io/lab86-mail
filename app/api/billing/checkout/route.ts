@@ -3,6 +3,7 @@ import { requireCurrentUser } from '@/lib/auth/current-user';
 import { clerkBillingCheckoutUrl } from '@/lib/hosted/billing';
 import { isSubscriptionServiceDisabled } from '@/lib/hosted/controls';
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,17 @@ export async function POST() {
     );
   }
   const user = await requireCurrentUser();
+  try {
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'billing_checkout',
+      limit: 10,
+      windowMs: 10 * 60_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
+    throw err;
+  }
   await convexMutation(api.users.upsertFromClerk, {
     userId: user.userId,
     email: user.email,

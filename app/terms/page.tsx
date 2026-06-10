@@ -9,6 +9,11 @@ export default function TermsPage() {
           you connect, the actions you confirm, and compliance with your mail provider policies.
         </p>
         <p>
+          You may connect only mailboxes you are authorized to access. Revoking provider access or deleting
+          your Lab86 account can permanently remove Lab86-hosted grants, cached mail data, corpus records, AI
+          settings, and usage records. It does not delete mail that remains in your original provider mailbox.
+        </p>
+        <p>
           AI-generated summaries, classifications, and drafts can be incomplete or incorrect. Review outbound
           mail before sending and verify important information independently.
         </p>
@@ -21,6 +26,11 @@ export default function TermsPage() {
         <p>
           The service may be suspended or limited to protect users, providers, infrastructure, or billing
           systems from abuse, outages, or security risk.
+        </p>
+        <p>
+          Do not use Lab86 Mail to send spam, violate provider rules, access another person&apos;s mailbox
+          without authorization, or process regulated data unless Lab86 has agreed to the required contractual
+          terms in writing.
         </p>
         <p>
           Questions:{' '}

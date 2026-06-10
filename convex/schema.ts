@@ -333,4 +333,16 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_account', ['accountId']),
+
+  rateLimits: defineTable({
+    userId: v.string(),
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+    expiresAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_key_window', ['userId', 'key', 'windowStart'])
+    .index('by_expires', ['expiresAt']),
 });
