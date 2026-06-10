@@ -1,9 +1,10 @@
 export type AccountEmail = string;
+export type AccountProvider = 'google' | 'microsoft' | 'icloud' | 'imap';
 
 export interface Account {
-  accountId?: string;
+  accountId: string;
   email: AccountEmail;
-  provider: 'gmail';
+  provider: AccountProvider;
   authed: boolean;
   primary?: boolean;
   displayName?: string;

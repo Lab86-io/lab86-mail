@@ -98,17 +98,7 @@ const initialCompose: ComposeState = {
 };
 
 const PERSIST_KEY = 'lab86-mail-ui';
-const LEGACY_PERSIST_KEY = 'mail-os-ui';
 const DEFAULT_QUERY = 'in:inbox newer_than:30d';
-
-if (typeof window !== 'undefined') {
-  try {
-    if (!window.localStorage.getItem(PERSIST_KEY)) {
-      const legacy = window.localStorage.getItem(LEGACY_PERSIST_KEY);
-      if (legacy) window.localStorage.setItem(PERSIST_KEY, legacy);
-    }
-  } catch {}
-}
 
 export const useClientStore = create<ClientState>()(
   persist(
@@ -207,11 +197,13 @@ export const useClientStore = create<ClientState>()(
     }),
     {
       name: PERSIST_KEY,
-      version: 1,
+      version: 2,
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
       migrate: (persisted: any) => {
+        if (!persisted) return persisted;
+        persisted.account = '';
         if (persisted && persisted.query === '-in:trash newer_than:365d') {
           persisted.query = DEFAULT_QUERY;
         }
