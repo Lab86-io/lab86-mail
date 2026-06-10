@@ -81,8 +81,20 @@ dashboard sessions:
   `https://web-development-292e.up.railway.app/api/nylas/callback`.
   Configure Nylas message/thread notifications to post to `/api/nylas/webhook`; the route records every event
   idempotently and re-fetches truncated message notifications before writing the Convex corpus.
+- Google OAuth: before public launch, submit production OAuth verification with the public homepage, privacy
+  policy, terms, and support URLs. Keep development and staging in a separate Google Cloud project so test
+  sign-ins do not consume production OAuth quota. Start verification before public launch or at 70 lifetime
+  production Gmail authorizations, whichever comes first.
+- Google scopes: request only implemented mail scopes. With Nylas as the interim transport, keep the Nylas
+  provider connector scoped to read/search/sync, send, label/move, and trash actions currently visible in the
+  product. For a later direct Google driver, `gmail.modify` covers read/write/send without immediate permanent
+  delete; do not request `mail.google.com` unless bypassing trash becomes an implemented feature.
+- Microsoft OAuth: track Microsoft Partner Center publisher verification separately from Google verification
+  before B2C launch if Microsoft consumer accounts are included in public onboarding.
 - OpenRouter: enable account or guardrail privacy controls that disallow training on prompts and enforce ZDR
   routing for routed mail-content requests before enabling hosted AI in production.
+- Vendor/DPA tracker: keep current terms, DPAs, and no-training/security notes for Railway, Convex, Nylas,
+  Clerk, Stripe, OpenRouter, OpenAI, Anthropic, and any enabled model provider.
 - CodeRabbit: install the GitHub App on `Lab86-io/lab86-mail` so PR #1 receives a review.
 
 ## Railway Variables
@@ -248,3 +260,43 @@ Local-first search rollout is controlled by provider list:
 - Set `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=all` to include Google once parity is validated.
 - Set `LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS=<provider>` for instant provider rollback to Nylas structured
   search. Use `all` to force structured search for every provider.
+
+## Privacy / Deletion Readiness
+
+Public OAuth review URLs:
+
+- Homepage: `https://mail.lab86.io`
+- Privacy: `https://mail.lab86.io/privacy`
+- Terms: `https://mail.lab86.io/terms`
+- Support: `https://mail.lab86.io/support`
+
+Deletion behavior:
+
+- Provider disconnect calls Nylas grant revocation and deletes Lab86-hosted connected account rows, encrypted
+  grant rows, cached threads/messages, corpus rows, sync state, webhook rows, and account-scoped jobs.
+- Self-serve account deletion is exposed at `DELETE /api/account` through the app settings. It revokes every
+  connected Nylas grant, deletes all user-scoped Convex state including AI settings/usage and rate-limit rows,
+  then deletes the Clerk user.
+- Provider source mail remains in the user mailbox unless the user separately runs a provider delete/trash
+  action.
+
+Verification notes:
+
+- The privacy policy includes the Google API Services User Data Policy and Limited Use statement.
+- Keep Nylas, Google, and Microsoft dashboard scopes synchronized with the public privacy policy and implemented
+  UI actions.
+- Account deletion and provider disconnect are auditable through Convex table-count returns and tests that
+  enumerate cascade table coverage.
+
+## Security Incident Runbook
+
+1. Triage severity and affected providers. Preserve Railway, Convex, Nylas, Clerk, and AI-provider logs.
+2. Contain by disabling signups, outbound send, corpus reconcile, or hosted AI with emergency Railway variables.
+3. Rotate affected secrets in Railway and provider dashboards: Nylas, Clerk, Convex internal secret, AI keys,
+   Stripe/Clerk billing secrets, and webhook signing secrets.
+4. Revoke affected Nylas grants and run account deletion or provider disconnect cascades when user data exposure
+   requires it.
+5. Notify affected users and vendors according to contractual/legal requirements. Use Google and Microsoft
+   provider security/contact channels when their OAuth data or tokens are involved.
+6. Document the incident timeline, impacted tables, exposed data classes, containment actions, and follow-up
+   fixes before re-enabling disabled features.

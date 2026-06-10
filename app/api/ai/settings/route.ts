@@ -14,6 +14,7 @@ import {
   isUserOpenRouterKeyRequired,
 } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
 
 const PROVIDERS = new Set(['openrouter', 'openai', 'anthropic']);
@@ -86,6 +87,17 @@ export async function POST(req: NextRequest) {
   });
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
+  }
+  try {
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'ai_settings_write',
+      limit: 30,
+      windowMs: 60_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
+    throw err;
   }
   let body: Record<string, unknown>;
   try {
@@ -190,6 +202,17 @@ export async function DELETE(req: NextRequest) {
   });
   if (!user) {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
+  }
+  try {
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'ai_settings_delete',
+      limit: 30,
+      windowMs: 60_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
+    throw err;
   }
   const url = new URL(req.url);
   const provider = url.searchParams.get('provider') || '';

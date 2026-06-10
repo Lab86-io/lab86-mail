@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -233,6 +233,106 @@ describe('local-first mail search routing', () => {
       account: 'grant_microsoft',
       unread: true,
     });
+  });
+
+  test('parses OR groups and matches provider-neutral mailbox labels locally', async () => {
+    const { parseMailSearchQuery } = await import('../lib/mail/search/parser');
+    const { filterCorpusMessagesByAst } = await import('../lib/mail/search/local');
+    const now = Date.parse('2026-06-10T12:00:00.000Z');
+    const messages = [
+      {
+        accountId: 'grant_microsoft',
+        provider: 'microsoft' as const,
+        providerMessageId: 'msg_sent',
+        providerThreadId: 'thread_sent',
+        subject: 'Sent proposal',
+        from: 'Jakob <jakob@example.test>',
+        to: 'Tori <tori@example.test>',
+        receivedAt: now,
+        snippet: 'Sent proposal',
+        searchText: 'Sent proposal',
+        labels: ['Sent Items'],
+      },
+      {
+        accountId: 'grant_microsoft',
+        provider: 'microsoft' as const,
+        providerMessageId: 'msg_deleted',
+        providerThreadId: 'thread_deleted',
+        subject: 'Deleted notice',
+        from: 'Alerts <alerts@example.test>',
+        to: 'Jakob <jakob@example.test>',
+        receivedAt: now,
+        snippet: 'Deleted notice',
+        searchText: 'Deleted notice',
+        labels: ['Deleted Items'],
+      },
+      {
+        accountId: 'grant_icloud',
+        provider: 'icloud' as const,
+        providerMessageId: 'msg_icloud',
+        providerThreadId: 'thread_icloud',
+        subject: 'Apple storage',
+        from: 'iCloud <storage@icloud.com>',
+        to: 'Jakob <jakob@example.test>',
+        receivedAt: now,
+        snippet: 'Storage update',
+        searchText: 'Storage update',
+        labels: ['Inbox'],
+      },
+    ];
+
+    expect(
+      filterCorpusMessagesByAst(messages, parseMailSearchQuery('in:sent')).map((m) => m.providerMessageId),
+    ).toEqual(['msg_sent']);
+    expect(
+      filterCorpusMessagesByAst(messages, parseMailSearchQuery('in:trash')).map((m) => m.providerMessageId),
+    ).toEqual(['msg_deleted']);
+    expect(
+      filterCorpusMessagesByAst(messages, parseMailSearchQuery('from:(icloud.com OR me.com)')).map(
+        (m) => m.providerMessageId,
+      ),
+    ).toEqual(['msg_icloud']);
+  });
+});
+
+describe('compliance readiness', () => {
+  test('public legal pages include Limited Use and deletion guarantees', () => {
+    const privacy = readFileSync(path.join(process.cwd(), 'app/privacy/page.tsx'), 'utf8');
+    const support = readFileSync(path.join(process.cwd(), 'app/support/page.tsx'), 'utf8');
+    const privacyText = privacy.replace(/\s+/g, ' ');
+
+    expect(privacy).toContain('Google API Services User Data Policy');
+    expect(privacy).toContain('Limited Use requirements');
+    expect(privacyText).toContain('Disconnecting a provider');
+    expect(privacyText).toContain('Account deletion removes');
+    expect(support).toContain('security@lab86.io');
+  });
+
+  test('account deletion cascade covers hosted user data tables', () => {
+    const accounts = readFileSync(path.join(process.cwd(), 'convex/accounts.ts'), 'utf8');
+    for (const table of [
+      'connectedAccounts',
+      'providerGrants',
+      'nylasOAuthStates',
+      'aiSettings',
+      'aiProviderKeys',
+      'aiEntitlements',
+      'aiUsagePeriods',
+      'aiUsageEvents',
+      'threads',
+      'messages',
+      'dailyReports',
+      'memories',
+      'auditEvents',
+      'syncJobs',
+      'mailCorpusThreads',
+      'mailCorpusMessages',
+      'mailSyncStates',
+      'mailWebhookEvents',
+      'rateLimits',
+    ]) {
+      expect(accounts).toContain(`'${table}'`);
+    }
   });
 });
 

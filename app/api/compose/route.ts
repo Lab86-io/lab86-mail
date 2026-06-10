@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { sendNylasMessage } from '@/lib/nylas/provider';
+import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { sanitizeFilename } from '@/lib/shared/files';
 import { emailFromHeader } from '@/lib/shared/format';
 import type { Message } from '@/lib/shared/types';
@@ -52,6 +53,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'compose',
+      limit: 30,
+      windowMs: 60_000,
+    });
     const attachments: NylasAttachment[] = [];
     for (const file of files) {
       attachments.push({
@@ -105,6 +112,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err: any) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
     const status = err instanceof AuthRequiredError ? 401 : 500;
     await writeAudit({
       tool: `compose_route:${mode || 'new'}:nylas`,

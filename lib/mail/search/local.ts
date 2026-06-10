@@ -76,7 +76,6 @@ function collectLocalSearchTerm(clause: SearchClause, terms: string[], dropped: 
       terms.push(clause.value);
       return;
     case 'or':
-      for (const child of clause.clauses) collectLocalSearchTerm(child, terms, dropped);
       return;
     case 'folder':
     case 'unread':
@@ -99,13 +98,13 @@ function matchesClause(message: CorpusMessageDocument, clause: SearchClause): bo
 function matchesPositiveClause(message: CorpusMessageDocument, clause: SearchClause): boolean {
   switch (clause.type) {
     case 'folder':
-      return hasLabel(message, normalizeFolder(clause.value));
+      return hasSystemLabel(message, clause.value);
     case 'unread':
       return (Boolean(message.unread) || hasLabel(message, 'UNREAD')) === clause.value;
     case 'starred':
       return (Boolean(message.starred) || hasLabel(message, 'STARRED')) === clause.value;
     case 'important':
-      return hasLabel(message, 'IMPORTANT') === clause.value;
+      return hasAnyLabel(message, ['IMPORTANT', 'Important', 'FLAGGED', 'Flagged']) === clause.value;
     case 'attachment':
       return Boolean(message.attachments?.length) === clause.value;
     case 'from':
@@ -126,8 +125,23 @@ function matchesPositiveClause(message: CorpusMessageDocument, clause: SearchCla
 }
 
 function hasLabel(message: CorpusMessageDocument, label: string) {
-  const expected = label.toLowerCase();
-  return (message.labels || []).some((item) => item.toLowerCase() === expected);
+  const expected = normalizeLabel(label);
+  return (message.labels || []).some((item) => normalizeLabel(item) === expected);
+}
+
+function hasAnyLabel(message: CorpusMessageDocument, labels: readonly string[]) {
+  return labels.some((label) => hasLabel(message, label));
+}
+
+function hasSystemLabel(message: CorpusMessageDocument, folder: string) {
+  const normalized = normalizeFolder(folder);
+  if (normalized === 'ALL') {
+    return (
+      !hasAnyLabel(message, SYSTEM_LABEL_ALIASES.TRASH) && !hasAnyLabel(message, SYSTEM_LABEL_ALIASES.SPAM)
+    );
+  }
+  const aliases = SYSTEM_LABEL_ALIASES[normalized as keyof typeof SYSTEM_LABEL_ALIASES] || [normalized];
+  return hasAnyLabel(message, aliases);
 }
 
 function includesFolded(value: string | undefined, needle: string) {
@@ -148,10 +162,29 @@ function includesAllTerms(value: string | undefined, query: string) {
 function normalizeFolder(value: string) {
   const lower = value.toLowerCase();
   if (lower === 'sent') return 'SENT';
+  if (lower === 'draft' || lower === 'drafts') return 'DRAFTS';
   if (lower === 'trash') return 'TRASH';
   if (lower === 'spam') return 'SPAM';
   if (lower === 'inbox') return 'INBOX';
+  if (lower === 'archive' || lower === 'archived') return 'ARCHIVE';
+  if (lower === 'all' || lower === 'allmail' || lower === 'all_mail') return 'ALL';
   return value;
+}
+
+const SYSTEM_LABEL_ALIASES = {
+  INBOX: ['INBOX', 'Inbox', '\\Inbox'],
+  SENT: ['SENT', 'Sent', 'Sent Items', 'Sent Mail', '\\Sent'],
+  DRAFTS: ['DRAFT', 'DRAFTS', 'Draft', 'Drafts', '\\Drafts'],
+  TRASH: ['TRASH', 'Trash', 'Deleted Items', 'DeletedItems', '\\Trash'],
+  SPAM: ['SPAM', 'Spam', 'Junk', 'Junk Email', 'JunkEmail', '\\Junk'],
+  ARCHIVE: ['ARCHIVE', 'Archive', 'Archived', 'All Mail', '\\Archive'],
+} as const;
+
+function normalizeLabel(value: string) {
+  return String(value || '')
+    .replace(/^\\/, '')
+    .replace(/[\s_-]+/g, '')
+    .toLowerCase();
 }
 
 function startOfDay(value: string) {

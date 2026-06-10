@@ -5,6 +5,7 @@ import { api, convexMutation } from '@/lib/hosted/convex';
 import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
 import { type MailProvider, mailProviderCapability } from '@/lib/mail/provider-capabilities';
 import { requireNylas } from '@/lib/nylas/client';
+import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 const PROVIDERS = new Set(['google', 'microsoft', 'icloud', 'imap']);
 
@@ -13,6 +14,17 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const user = await requireCurrentUser();
+  try {
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'nylas_connect',
+      limit: 10,
+      windowMs: 10 * 60_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) return rateLimitJson(err);
+    throw err;
+  }
   if (!isNylasConfigured()) {
     return NextResponse.json(
       { ok: false, error: 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.' },
