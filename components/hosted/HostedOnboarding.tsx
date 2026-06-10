@@ -201,11 +201,13 @@ export function HostedOnboarding() {
                 </Button>
               ))}
             </div>
-            {providerCapabilities.some((provider: any) => provider.provider === 'icloud') ? (
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                iCloud requires an Apple app-specific password before connecting.
-              </p>
-            ) : null}
+            {providerCapabilities
+              .filter((provider: any) => provider.provider === 'icloud')
+              .map((provider: any) => (
+                <p key="icloud-hint" className="text-[11px] text-[var(--color-text-muted)]">
+                  {provider.reason || 'iCloud requires an Apple app-specific password before connecting.'}
+                </p>
+              ))}
 
             <div className="space-y-2">
               {accounts.length ? (
@@ -405,9 +407,11 @@ export function HostedOnboarding() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
               <p className="text-[11.5px] text-[var(--color-text-muted)]">
-                {ai?.usage?.status === 'reduced_cost'
-                  ? 'AI is using reduced-cost routing for the rest of this period.'
-                  : 'AI settings are saved with your account.'}
+                {ai?.usage?.status === 'exhausted'
+                  ? 'Your Lab86 AI budget is used up for this period. AI chat is paused — add your own API key or wait for the next period.'
+                  : ai?.usage?.status === 'reduced_cost'
+                    ? 'AI is using reduced-cost routing for the rest of this period.'
+                    : 'AI settings are saved with your account.'}
               </p>
               <div className="flex gap-2">
                 <Button

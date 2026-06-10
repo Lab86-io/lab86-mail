@@ -209,11 +209,13 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
                 })}
               </div>
             </div>
-            {providerCapabilities.some((provider: any) => provider.provider === 'icloud') ? (
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                iCloud requires an Apple app-specific password before connecting.
-              </p>
-            ) : null}
+            {providerCapabilities
+              .filter((provider: any) => provider.provider === 'icloud')
+              .map((provider: any) => (
+                <p key="icloud-hint" className="text-[11px] text-[var(--color-text-muted)]">
+                  {provider.reason || 'iCloud requires an Apple app-specific password before connecting.'}
+                </p>
+              ))}
             <div className="space-y-2">
               {accounts.length ? (
                 accounts.map((account: any) => (

@@ -176,7 +176,9 @@ export const getThread = defineTool({
         lastDate: newest.date,
         snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
         labels: newest.labels || [],
-        unread: nylas.messages.some((message) => message.labels?.includes('UNREAD')),
+        unread: nylas.messages.some(
+          (message) => Boolean(message.unread) || message.labels?.includes('UNREAD'),
+        ),
       }).catch(() => undefined);
     }
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);

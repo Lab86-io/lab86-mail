@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl, nylasRedirectUri } from '@/lib/hosted/env';
+import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
 import { requireNylas } from '@/lib/nylas/client';
 import { encryptSecret } from '@/lib/security/crypto';
 
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
       .split(/\s+/)
       .map((scope) => scope.trim())
       .filter(Boolean);
-    await convexMutation(api.accounts.upsertConnectedAccount, {
+    const upserted = await convexMutation<{ accountId: string }>(api.accounts.upsertConnectedAccount, {
       userId: stored.userId,
       email: token.email,
       provider,
@@ -40,6 +41,11 @@ export async function GET(req: NextRequest) {
       expiresAt: token.expiresIn ? Date.now() + token.expiresIn * 1000 : undefined,
       scopes,
     });
+    // Start building the local search corpus immediately; the search path
+    // re-issues the same kick if this one is interrupted.
+    if (upserted?.accountId) {
+      maybeKickCorpusBackfill({ userId: stored.userId, accountId: upserted.accountId });
+    }
     return redirectWithStatus(stored.redirectTo || '/', 'nylas_connected', token.email);
   } catch (err: any) {
     return redirectWithStatus(stored.redirectTo || '/', 'nylas_error', err?.message || 'connect failed');

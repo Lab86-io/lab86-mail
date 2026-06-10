@@ -18,6 +18,16 @@ export async function POST(req: NextRequest) {
   const userId = typeof body.userId === 'string' ? body.userId : undefined;
   const accountId = typeof body.accountId === 'string' ? body.accountId : undefined;
   const limit = typeof body.limit === 'number' ? body.limit : 10;
+  // Partial targeting must not silently widen into a bulk sweep.
+  if (Boolean(userId) !== Boolean(accountId)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'Provide both userId and accountId to target one account, or neither for a sweep.',
+      },
+      { status: 400 },
+    );
+  }
 
   try {
     if (userId && accountId) {

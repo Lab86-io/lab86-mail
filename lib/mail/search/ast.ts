@@ -1,5 +1,5 @@
 export type SearchProvider = 'google' | 'microsoft' | 'icloud' | 'imap';
-export type SearchExecutionTier = 'local' | 'structured';
+export type SearchExecutionTier = 'local' | 'structured' | 'native';
 
 export type SearchClause =
   | { type: 'folder'; value: string; negated?: boolean }

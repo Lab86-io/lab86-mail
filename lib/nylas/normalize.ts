@@ -71,6 +71,7 @@ export function normalizeNylasMessage(message: NylasMessage, account: string): M
     }),
     htmlBody: body,
     labels: message.folders || [],
+    unread: Boolean((message as any).unread),
     attachments: (message.attachments || []).map(normalizeNylasAttachment),
     headers,
     cachedAt: Date.now(),

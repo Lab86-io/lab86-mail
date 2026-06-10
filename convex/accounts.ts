@@ -166,18 +166,34 @@ export const upsertConnectedAccount = mutation({
       .query('mailSyncStates')
       .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', id))
       .unique();
-    const syncPatch = {
-      userId: args.userId,
-      accountId: id,
-      grantId: args.grantId,
-      provider: args.provider,
-      status: 'idle' as const,
-      corpusReady: false,
-      error: undefined,
-      updatedAt: ts,
-    };
-    if (syncState) await ctx.db.patch(syncState._id, syncPatch);
-    else await ctx.db.insert('mailSyncStates', { ...syncPatch, createdAt: ts });
+    if (!syncState) {
+      await ctx.db.insert('mailSyncStates', {
+        userId: args.userId,
+        accountId: id,
+        grantId: args.grantId,
+        provider: args.provider,
+        status: 'idle' as const,
+        corpusReady: false,
+        error: undefined,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    } else if (syncState.grantId !== args.grantId) {
+      // A new grant invalidates the old corpus cursors; restart from idle.
+      await ctx.db.patch(syncState._id, {
+        grantId: args.grantId,
+        provider: args.provider,
+        status: 'idle' as const,
+        corpusReady: false,
+        cursor: undefined,
+        error: undefined,
+        updatedAt: ts,
+      });
+    } else {
+      // Same-grant reconnects/token refreshes must not revoke an
+      // already-synced corpus or restart backfill.
+      await ctx.db.patch(syncState._id, { provider: args.provider, updatedAt: ts });
+    }
     return { accountId: id };
   },
 });

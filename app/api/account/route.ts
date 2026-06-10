@@ -31,6 +31,18 @@ export async function DELETE() {
         });
       }
     }
+    // Deleting the local linkage while a provider grant is still active would
+    // orphan that grant with no way to clean it up later — stop here instead.
+    if (disconnected.some((item) => !item.ok)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'One or more mail providers could not be disconnected. Account deletion was aborted.',
+          disconnected,
+        },
+        { status: 502 },
+      );
+    }
 
     const cascade = await convexMutation<any>((api as any).accounts.deleteUserCascade, {
       userId: user.userId,
