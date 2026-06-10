@@ -209,7 +209,13 @@ export function Inbox() {
     [accountsData?.accounts],
   );
   const authedAccounts = (accountsData?.accounts || []).filter((a) => a.authed);
-  const authedAccountIds = authedAccounts.map((a) => a.accountId);
+  const allAuthedAccountIds = authedAccounts.map((a) => a.accountId);
+  // The rail's account dropdown narrows the unified inbox to the checked
+  // mailboxes; an empty filter means every authed account.
+  const accountFilter = useClientStore((s) => s.accountFilter);
+  const authedAccountIds = accountFilter.length
+    ? allAuthedAccountIds.filter((id) => accountFilter.includes(id))
+    : allAuthedAccountIds;
   const scopedQuery = useMemo(
     () => resolveAccountScopedQuery(query, authedAccounts),
     [authedAccounts, query],
@@ -244,6 +250,7 @@ export function Inbox() {
       scopedQuery.query,
       scopedQuery.accountIds?.join(',') || '',
       smartCategory,
+      accountFilter.join(','),
       authedAccountIds.join(','),
       Object.values(accountAliasById).join(','),
       refreshNonce,
@@ -252,7 +259,9 @@ export function Inbox() {
     queryFn: async ({ pageParam }): Promise<InboxPage> => {
       const pageTokens = pageParam as Record<string, string>;
       if (account === ALL_ACCOUNTS) {
-        const scopedAccountIds = scopedQuery.accountIds ?? authedAccountIds;
+        const scopedAccountIds = scopedQuery.accountIds
+          ? scopedQuery.accountIds.filter((id) => authedAccountIds.includes(id))
+          : authedAccountIds;
         const initialPage = Object.keys(pageTokens).length === 0;
         const accountIdsToFetch = initialPage
           ? scopedAccountIds
