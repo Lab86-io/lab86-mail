@@ -80,6 +80,20 @@ export const getConnectedAccount = query({
   },
 });
 
+export const getConnectedAccountByGrant = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    grantId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
+      .unique();
+  },
+});
+
 export const upsertConnectedAccount = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -147,6 +161,23 @@ export const upsertConnectedAccount = mutation({
         createdAt: ts,
       });
     }
+
+    const syncState = await ctx.db
+      .query('mailSyncStates')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', id))
+      .unique();
+    const syncPatch = {
+      userId: args.userId,
+      accountId: id,
+      grantId: args.grantId,
+      provider: args.provider,
+      status: 'idle' as const,
+      corpusReady: false,
+      error: undefined,
+      updatedAt: ts,
+    };
+    if (syncState) await ctx.db.patch(syncState._id, syncPatch);
+    else await ctx.db.insert('mailSyncStates', { ...syncPatch, createdAt: ts });
     return { accountId: id };
   },
 });
@@ -182,7 +213,17 @@ export const deleteConnectedAccount = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const tables = ['connectedAccounts', 'providerGrants', 'threads', 'messages', 'syncJobs'] as const;
+    const tables = [
+      'connectedAccounts',
+      'providerGrants',
+      'threads',
+      'messages',
+      'syncJobs',
+      'mailCorpusThreads',
+      'mailCorpusMessages',
+      'mailSyncStates',
+      'mailWebhookEvents',
+    ] as const;
     for (const table of tables) {
       const rows = await ctx.db
         .query(table)
