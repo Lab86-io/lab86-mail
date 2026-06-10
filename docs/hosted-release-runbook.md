@@ -107,6 +107,8 @@ Set these in both Railway environments with environment-specific values:
 - `NYLAS_API_URI`
 - `NYLAS_REDIRECT_URI`
 - `NYLAS_SCOPES`
+- `LAB86_MAIL_ICLOUD_MODE=hidden`
+- `LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY=0`
 - `LAB86_MAIL_ENCRYPTION_KEY`
 - `OPENROUTER_API_KEY` or another supported platform AI key
 - `LAB86_MAIL_OPENAI_MODEL`

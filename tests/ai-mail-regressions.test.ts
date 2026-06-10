@@ -73,6 +73,34 @@ describe('agent mail lookup and prompt contract', () => {
   });
 });
 
+describe('provider capabilities', () => {
+  test('iCloud is hidden by default and connectable only when explicitly ready', async () => {
+    const previousMode = process.env.LAB86_MAIL_ICLOUD_MODE;
+    const previousReady = process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
+    const { mailProviderCapability } = await import('../lib/mail/provider-capabilities');
+
+    delete process.env.LAB86_MAIL_ICLOUD_MODE;
+    delete process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
+    expect(mailProviderCapability('icloud')).toMatchObject({
+      visible: false,
+      connectable: false,
+    });
+
+    process.env.LAB86_MAIL_ICLOUD_MODE = 'beta';
+    process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY = '1';
+    expect(mailProviderCapability('icloud')).toMatchObject({
+      visible: true,
+      connectable: true,
+      searchable: true,
+    });
+
+    if (previousMode === undefined) delete process.env.LAB86_MAIL_ICLOUD_MODE;
+    else process.env.LAB86_MAIL_ICLOUD_MODE = previousMode;
+    if (previousReady === undefined) delete process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY;
+    else process.env.LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY = previousReady;
+  });
+});
+
 describe('hosted OpenRouter model options', () => {
   test('normalizes arbitrary OpenRouter model slugs to approved choices', async () => {
     const {

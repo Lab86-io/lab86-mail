@@ -154,6 +154,7 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
   });
 
   const accounts = nylas?.accounts || [];
+  const providerCapabilities = (nylas?.capabilities || []).filter((provider: any) => provider.visible);
   const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
   const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
   const subscriptionsDisabled = Boolean(ai?.subscriptionsDisabled);
@@ -170,24 +171,38 @@ function HostedSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (
               <div>
                 <h3 className="text-[13px] font-semibold">Connected mail</h3>
                 <p className="text-[11.5px] text-[var(--color-text-muted)]">
-                  Gmail and Microsoft use Nylas hosted OAuth.
+                  Mail providers use Nylas hosted OAuth.
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" asChild>
-                  <a href="/api/nylas/connect?provider=google">
-                    <MailPlus className="size-3.5" />
-                    Gmail
-                  </a>
-                </Button>
-                <Button size="sm" variant="outline" asChild>
-                  <a href="/api/nylas/connect?provider=microsoft">
-                    <Link2 className="size-3.5" />
-                    Microsoft
-                  </a>
-                </Button>
+                {providerCapabilities.map((provider: any) => {
+                  const Icon = provider.provider === 'google' ? MailPlus : Link2;
+                  return (
+                    <Button
+                      key={provider.provider}
+                      size="sm"
+                      variant="outline"
+                      asChild={provider.connectable}
+                      disabled={!provider.connectable}
+                    >
+                      {provider.connectable ? (
+                        <a href={`/api/nylas/connect?provider=${provider.provider}`}>
+                          <Icon className="size-3.5" />
+                          {provider.label}
+                        </a>
+                      ) : (
+                        <span>{provider.label}</span>
+                      )}
+                    </Button>
+                  );
+                })}
               </div>
             </div>
+            {providerCapabilities.some((provider: any) => provider.provider === 'icloud') ? (
+              <p className="text-[11px] text-[var(--color-text-muted)]">
+                iCloud requires an Apple app-specific password before connecting.
+              </p>
+            ) : null}
             <div className="space-y-2">
               {accounts.length ? (
                 accounts.map((account: any) => (
