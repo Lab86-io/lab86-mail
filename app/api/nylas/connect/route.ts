@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import type { Provider, URLForAuthenticationConfig } from 'nylas';
 import { NextRequest, NextResponse } from 'next/server';
+import type { Provider, URLForAuthenticationConfig } from 'nylas';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
