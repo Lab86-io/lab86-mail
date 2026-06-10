@@ -21,7 +21,7 @@ export const uiFocusThread = defineTool({
   category: 'meta',
   mutating: false,
   input: z.object({
-    threadId: z.string().describe("The thread's Gmail id (from search_threads or get_thread)."),
+    threadId: z.string().describe('The provider thread id (from search_threads or get_thread).'),
     account: z.string().optional().describe('Override the active account, if needed.'),
   }),
   output: ack,
@@ -33,11 +33,11 @@ export const uiFocusThread = defineTool({
 export const uiSetQuery = defineTool({
   name: 'ui_set_query',
   description:
-    "Set the inbox's search bar to a Gmail query. The UI will run the search and show matching threads. Use this to filter the visible inbox when the user asks 'show me emails from X'.",
+    "Set the inbox's search bar to a typed mail query. The UI will run the search and show matching threads. Use this to filter the visible inbox when the user asks 'show me emails from X'.",
   category: 'meta',
   mutating: false,
   input: z.object({
-    query: z.string().describe('Gmail query string (e.g. "from:tori kogler newer_than:60d").'),
+    query: z.string().describe('Mail search query (e.g. "from:tori kogler newer_than:60d").'),
     label: z.string().optional().describe("Short label for the mailbox heading, e.g. 'From Tori'."),
   }),
   output: ack,
@@ -113,7 +113,7 @@ export const uiCloseBar = defineTool({
 
 export const uiSwitchAccount = defineTool({
   name: 'ui_switch_account',
-  description: 'Switch the active account in the UI to a different connected Gmail account.',
+  description: 'Switch the active account in the UI to a different connected mail account.',
   category: 'meta',
   mutating: false,
   input: z.object({ account: z.string() }),

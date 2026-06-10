@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_MAIL_QUERY, SMART_CATEGORY_CANDIDATE_QUERIES } from '../mail/search/constants';
 import {
   classifyThreadWithContext,
   includeInSmartCategory,
@@ -57,7 +58,7 @@ export const searchThreads = defineTool({
   mutating: false,
   input: z.object({
     account: z.string().describe('Connected hosted account identifier'),
-    query: z.string().default('in:inbox newer_than:30d').describe('Mail search query'),
+    query: z.string().default(DEFAULT_MAIL_QUERY).describe('Mail search query'),
     max: z.number().int().min(1).max(80).default(30),
     pageToken: z.string().optional(),
   }),
@@ -307,20 +308,5 @@ async function requireNylasResult<T>(value: Promise<T | null>, message: string):
 }
 
 function smartCandidateQuery(category: string) {
-  switch (category) {
-    case 'main':
-    case 'needs_reply':
-    case 'waiting':
-      return 'in:inbox (category:primary OR is:important) -in:trash -in:spam';
-    case 'codes':
-      return 'newer_than:30d (code OR verification OR login OR security OR "magic link") -in:trash -in:spam';
-    case 'orders':
-      return 'newer_than:90d (order OR shipped OR delivery OR tracking OR refund OR receipt OR invoice OR booking) -in:trash -in:spam';
-    case 'finance_admin':
-      return 'newer_than:180d (invoice OR billing OR payment OR tax OR legal OR contract OR subscription) -in:trash -in:spam';
-    case 'noise':
-      return 'newer_than:30d -in:trash -in:spam';
-    default:
-      return 'in:inbox newer_than:45d -in:trash -in:spam';
-  }
+  return SMART_CATEGORY_CANDIDATE_QUERIES[category] || SMART_CATEGORY_CANDIDATE_QUERIES.default;
 }

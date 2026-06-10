@@ -1,6 +1,7 @@
 import type { CreateAttachmentRequest } from 'nylas';
 import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { planStructuredProviderSearch } from '@/lib/mail/search/execute';
 import { requireNylas } from './client';
 import {
   emailList,
@@ -69,30 +70,33 @@ export async function searchNylasThreads({
 }) {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
+  const plan = planStructuredProviderSearch({
+    provider: row.provider,
+    query,
+    max,
+    pageToken,
+  });
   const result = await requireNylas().threads.list({
     identifier: row.grantId,
-    queryParams: buildNylasNativeSearchQueryParams({ query, max, pageToken }) as any,
+    queryParams: plan.queryParams as any,
   });
   const page = await result;
   const items = page.data.map((thread) => normalizeNylasThread(thread, row.accountId));
   return { account: row.accountId, query, items, nextPageToken: page.nextCursor };
 }
 
-export function buildNylasNativeSearchQueryParams({
+export function buildNylasStructuredSearchQueryParams({
   query,
   max,
   pageToken,
+  provider = 'google',
 }: {
   query: string;
   max: number;
   pageToken?: string;
+  provider?: NylasAccountRow['provider'];
 }) {
-  const queryParams: Record<string, unknown> = {
-    limit: Math.min(max, 80),
-    search_query_native: query,
-  };
-  if (pageToken) queryParams.page_token = pageToken;
-  return queryParams;
+  return planStructuredProviderSearch({ provider, query, max, pageToken }).queryParams;
 }
 
 export async function getNylasThread({

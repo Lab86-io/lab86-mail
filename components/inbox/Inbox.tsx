@@ -53,13 +53,14 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ShineBorder } from '@/components/ui/shine-border';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
 // inbox view across all mailboxes.
-const DEFAULT_QUERY = 'in:inbox newer_than:30d';
+const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
 const INBOX_PAGE_SIZE = 50;
 const SKELETON_ROW_KEYS = Array.from({ length: 12 }, (_, index) => `skeleton-row-${index + 1}`);
 
@@ -139,8 +140,8 @@ export function Inbox() {
     setSmartCategory('main');
   };
 
-  // Heuristic: a Gmail query has at least one operator. Natural language doesn't.
-  const looksLikeGmailQuery = (s: string) =>
+  // Heuristic: a typed mail query has at least one operator. Natural language doesn't.
+  const looksLikeTypedQuery = (s: string) =>
     /\b(from|to|cc|bcc|subject|is|in|has|label|larger|smaller|newer_than|older_than|after|before|filename|deliveredto|list)\s*:/i.test(
       s,
     );
@@ -156,9 +157,9 @@ export function Inbox() {
       return;
     }
     setSearchDraft(raw);
-    if (looksLikeGmailQuery(raw)) {
+    if (looksLikeTypedQuery(raw)) {
       setQuery(raw);
-      setTranslatedSearch(null, raw, 'gmail');
+      setTranslatedSearch(null, raw, 'typed');
       return;
     }
     // Natural language — translate via nl_search, then run.
@@ -182,7 +183,7 @@ export function Inbox() {
   const submitSearch = () => runSearch(searchInput);
 
   // When account is the synthetic ALL_ACCOUNTS marker, fan out across every
-  // authed Gmail account and merge by date. Otherwise just hit one.
+  // authed mail account and merge by date. Otherwise just hit one.
   const { data: accountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () =>
@@ -288,7 +289,7 @@ export function Inbox() {
         Object.keys(lastPage.nextPageTokens).length ? lastPage.nextPageTokens : undefined,
       enabled: !!account && (account !== ALL_ACCOUNTS || authedAccountIds.length > 0),
       // Keep the visible list warm instead of treating every mount/focus as a
-      // cold Gmail read. The foreground poll still catches new mail.
+      // cold provider read. The foreground poll still catches new mail.
       staleTime: 45_000,
       gcTime: 30 * 60_000,
       refetchOnMount: false,
@@ -525,7 +526,7 @@ export function Inbox() {
                   clearSearch();
                 }
               }}
-              placeholder='Ask for mail or type Gmail syntax, e.g. "order updates from this week"'
+              placeholder='Ask for mail or type search filters, e.g. "order updates from this week"'
               className="text-[13px]"
             />
             {searchInput ? (
@@ -642,7 +643,7 @@ export function Inbox() {
                 setQuery(editable);
                 setSearchInput(editable);
                 setSearchDraft(editable);
-                setTranslatedSearch(null, editable, 'gmail');
+                setTranslatedSearch(null, editable, 'typed');
               }}
               onRetryOriginal={() => {
                 if (!nlSearchIntent) return;
@@ -1022,7 +1023,7 @@ function EmptyState({ account }: { account: string }) {
         <EmptyDescription>
           {account
             ? 'Try a different search, smart category, or mailbox.'
-            : 'Connect a Gmail account in /scripts/auth-google.sh.'}
+            : 'Connect a mail account in settings.'}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -1072,7 +1073,7 @@ function SearchEmptyState({
           onClick={onUseRaw}
           className="h-8 rounded-md border px-2.5 text-[12px] hover:bg-[var(--color-bg-subtle)]"
         >
-          Use original as Gmail query
+          Use original as typed query
         </button>
         <button
           type="button"

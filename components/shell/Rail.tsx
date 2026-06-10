@@ -50,6 +50,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 interface MailboxItem {
@@ -59,16 +60,16 @@ interface MailboxItem {
 }
 
 const MAILBOXES: MailboxItem[] = [
-  { query: 'is:unread newer_than:30d', label: 'Unread', Icon: MailOpen },
-  { query: 'is:starred newer_than:365d', label: 'Starred', Icon: Star },
-  { query: 'is:important newer_than:60d', label: 'Important', Icon: Flag },
-  { query: 'has:attachment newer_than:90d', label: 'Attachments', Icon: Layers },
-  { query: 'newer_than:7d', label: 'This week', Icon: Calendar },
-  { query: 'in:sent newer_than:365d', label: 'Sent', Icon: Send },
-  { query: 'in:drafts', label: 'Drafts', Icon: Pencil },
-  { query: '-in:trash newer_than:365d', label: 'All mail', Icon: Archive },
+  { query: QUICK_SEARCH_QUERIES.unread, label: 'Unread', Icon: MailOpen },
+  { query: QUICK_SEARCH_QUERIES.starred, label: 'Starred', Icon: Star },
+  { query: QUICK_SEARCH_QUERIES.important, label: 'Important', Icon: Flag },
+  { query: QUICK_SEARCH_QUERIES.attachments, label: 'Attachments', Icon: Layers },
+  { query: QUICK_SEARCH_QUERIES.thisWeek, label: 'This week', Icon: Calendar },
+  { query: QUICK_SEARCH_QUERIES.sent, label: 'Sent', Icon: Send },
+  { query: QUICK_SEARCH_QUERIES.drafts, label: 'Drafts', Icon: Pencil },
+  { query: QUICK_SEARCH_QUERIES.allMail, label: 'All mail', Icon: Archive },
   { query: 'label:MailOS/Snoozed', label: 'Snoozed', Icon: AlarmClock },
-  { query: 'in:trash newer_than:365d', label: 'Trash', Icon: Trash2 },
+  { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash', Icon: Trash2 },
 ];
 
 export const ALL_ACCOUNTS = '__all__';
