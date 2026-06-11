@@ -297,6 +297,13 @@ export const upsertCorpusBatch = mutation({
         messagesSyncedDelta: insertedMessages,
       });
     } else {
+      // The horizon only moves on backfill batches: backfill pages walk the
+      // mailbox newest -> oldest contiguously, so min(receivedAt) is a valid
+      // "everything newer than this is indexed" bound. Webhook re-fetches of
+      // old messages must NOT extend it — one old message is not coverage.
+      const batchOldest = args.messages.length
+        ? Math.min(...args.messages.map((message) => message.receivedAt))
+        : undefined;
       await upsertSyncState(ctx, {
         userId: args.userId,
         accountId: args.accountId,
@@ -309,6 +316,7 @@ export const upsertCorpusBatch = mutation({
         progress: args.progress,
         lastBackfillAt: ts,
         messagesSyncedDelta: insertedMessages,
+        oldestIndexedCandidate: batchOldest,
       });
     }
 
@@ -530,6 +538,12 @@ async function upsertSyncState(ctx: any, args: any) {
   if (args.lastIncrementalSyncAt !== undefined) patch.lastIncrementalSyncAt = args.lastIncrementalSyncAt;
   if (typeof args.messagesSyncedDelta === 'number' && args.messagesSyncedDelta !== 0) {
     patch.messagesSynced = Math.max(0, (existing?.messagesSynced ?? 0) + args.messagesSyncedDelta);
+  }
+  if (typeof args.oldestIndexedCandidate === 'number') {
+    patch.oldestIndexedAt =
+      typeof existing?.oldestIndexedAt === 'number'
+        ? Math.min(existing.oldestIndexedAt, args.oldestIndexedCandidate)
+        : args.oldestIndexedCandidate;
   }
   if (existing) {
     await ctx.db.patch(existing._id, patch);

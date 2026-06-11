@@ -103,7 +103,8 @@ export async function searchNylasThreads({
 }): Promise<SearchNylasThreadsResult | null> {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
-  const route = await resolveAccountSearchRoute(row, pageToken).catch(() =>
+  const queryAfter = localQueryAfterBound(query);
+  const route = await resolveAccountSearchRoute(row, pageToken, queryAfter).catch(() =>
     resolveSearchRoute({ provider: row.provider, corpusReady: false, pageToken }),
   );
   if (route.localEnabled && !route.corpusReady) {
@@ -156,16 +157,30 @@ export async function searchNylasThreads({
   };
 }
 
-async function resolveAccountSearchRoute(row: NylasAccountRow, pageToken?: string) {
+async function resolveAccountSearchRoute(row: NylasAccountRow, pageToken?: string, queryAfter?: number) {
   const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, {
     userId: row.userId,
     accountId: row.accountId,
   });
+  const grantMatches = syncState?.grantId === row.grantId;
   return resolveSearchRoute({
     provider: row.provider,
-    corpusReady: Boolean(syncState?.corpusReady && syncState?.grantId === row.grantId),
+    corpusReady: Boolean(syncState?.corpusReady && grantMatches),
+    oldestIndexedAt:
+      grantMatches && typeof syncState?.oldestIndexedAt === 'number' ? syncState.oldestIndexedAt : null,
+    queryAfter,
     pageToken,
   });
+}
+
+// Lower date bound of the query (epoch ms), used to decide whether a
+// partially-backfilled corpus already covers the requested window.
+function localQueryAfterBound(query: string): number | undefined {
+  try {
+    return compileAstToLocalCorpusQuery(parseMailSearchQuery(query)).after;
+  } catch {
+    return undefined;
+  }
 }
 
 async function searchLocalCorpusThreads({

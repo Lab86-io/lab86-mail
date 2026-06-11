@@ -13,6 +13,10 @@ export interface SearchRouteInput {
   provider: SearchProvider;
   corpusReady: boolean;
   pageToken?: string;
+  /** Oldest receivedAt the contiguous newest-first backfill has indexed, if any. */
+  oldestIndexedAt?: number | null;
+  /** The query's lower date bound (epoch ms), when it has one. */
+  queryAfter?: number | null;
 }
 
 export interface SearchRoute {
@@ -47,6 +51,17 @@ export function resolveSearchRoute(input: SearchRouteInput): SearchRoute {
     return { ...base, tier: fallback, reason: 'provider local search flag is disabled' };
   }
   if (!input.corpusReady) {
+    // Backfill runs newest-first, so a partially-indexed corpus already holds
+    // everything newer than oldestIndexedAt. A query bounded inside that
+    // horizon (the default inbox view is newer_than:30d) can serve locally
+    // long before the full-history backfill finishes.
+    if (
+      typeof input.oldestIndexedAt === 'number' &&
+      typeof input.queryAfter === 'number' &&
+      input.oldestIndexedAt <= input.queryAfter
+    ) {
+      return { ...base, tier: 'local', reason: 'partial corpus covers the queried window' };
+    }
     return { ...base, tier: fallback, reason: 'corpus is not ready for this grant' };
   }
   return { ...base, tier: 'local', reason: 'corpus-ready local search enabled' };

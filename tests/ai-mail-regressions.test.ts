@@ -270,6 +270,31 @@ describe('local-first mail search routing', () => {
         tier: 'structured',
       });
 
+      // Horizon-aware: a partially-backfilled corpus (newest-first) serves a
+      // query locally when its lower date bound sits inside the indexed
+      // window, and falls back when the query reaches past the horizon or
+      // has no lower bound at all.
+      const horizon = Date.parse('2026-01-01');
+      expect(
+        resolveSearchRoute({
+          provider: 'google',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          queryAfter: Date.parse('2026-05-01'),
+        }),
+      ).toMatchObject({ tier: 'local', reason: 'partial corpus covers the queried window' });
+      expect(
+        resolveSearchRoute({
+          provider: 'google',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          queryAfter: Date.parse('2025-06-01'),
+        }),
+      ).toMatchObject({ tier: 'native' });
+      expect(
+        resolveSearchRoute({ provider: 'microsoft', corpusReady: false, oldestIndexedAt: horizon }),
+      ).toMatchObject({ tier: 'structured' });
+
       // Local cursors keep paging locally; provider cursors stay on the
       // fallback transport.
       expect(
