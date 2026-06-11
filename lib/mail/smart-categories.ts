@@ -76,7 +76,37 @@ export interface SmartClassificationContext {
   customLabels?: SmartLabelDefinition[];
 }
 
-function haystack(thread: Partial<Thread> & { from?: string; fromAddress?: string }) {
+// How much of the latest message body participates in classification. Enough
+// to catch footers ("unsubscribe", list boilerplate) and real content, small
+// enough that one giant email can't dominate regex time.
+const BODY_EXCERPT_CHARS = 2500;
+
+export function bodyExcerpt(thread: { bodyText?: string }) {
+  return String(thread.bodyText || '')
+    .replace(/\s+/g, ' ')
+    .slice(0, BODY_EXCERPT_CHARS)
+    .toLowerCase();
+}
+
+function haystack(thread: Partial<Thread> & { from?: string; fromAddress?: string; bodyText?: string }) {
+  return [
+    thread.fromAddress,
+    (thread as any).from,
+    thread.subject,
+    thread.snippet,
+    (thread.labels || []).join(' '),
+    bodyExcerpt(thread),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+// Header-level haystack (no body). Keyword branches that route mail TOWARD
+// the user's attention (codes/orders/finance) gate on this: nearly every
+// marketing body contains "sign in" / "view your order" / "billing" somewhere,
+// and matching those against the body would promote noise wholesale.
+function metaHaystack(thread: Partial<Thread> & { from?: string; fromAddress?: string }) {
   return [
     thread.fromAddress,
     (thread as any).from,
@@ -104,6 +134,16 @@ export function isNoReplyLike(value: string | null | undefined) {
 
 export function isCodeLike(text: string) {
   return /\b(verification|verify|code|otp|one[-\s]?time|2fa|mfa|login|sign[-\s]?in|security code|magic link|password reset|account access)\b/i.test(
+    text,
+  );
+}
+
+// Body-safe code detection. The loose isCodeLike terms ("login", "sign in")
+// appear in virtually every marketing footer, so matching them against body
+// text would promote noise into Codes/Main. Only unambiguous phrasings count
+// when the evidence comes from the body.
+export function isStrongCodeLike(text: string) {
+  return /\b(verification code|security code|one[-\s]?time (?:code|passcode|password)|otp|2fa|two[-\s]?factor|magic link|password reset|sign[-\s]?in code|login code)\b/i.test(
     text,
   );
 }
@@ -309,12 +349,15 @@ export function classifyThreadDeterministic(
 }
 
 export function classifyThreadWithContext(
-  thread: Partial<Thread> & { from?: string; fromAddress?: string },
+  thread: Partial<Thread> & { from?: string; fromAddress?: string; bodyText?: string },
   context: SmartClassificationContext = {},
 ): SmartCategory {
   const rules = context.rules || [];
   const customLabels = context.customLabels || [];
   const h = haystack(thread);
+  const hMeta = metaHaystack(thread);
+  const body = bodyExcerpt(thread);
+  const bulky = isBulkLike(thread);
   const labels = thread.labels || [];
   const isPersonalCat = labels.includes('CATEGORY_PERSONAL');
   const isImportantCat = labels.includes('IMPORTANT');
@@ -437,7 +480,7 @@ export function classifyThreadWithContext(
     );
   }
 
-  if (isCodeLike(h)) {
+  if (isCodeLike(hMeta) || isStrongCodeLike(body)) {
     return applyCustomLabels(
       verdict(
         thread,
@@ -458,7 +501,7 @@ export function classifyThreadWithContext(
     );
   }
 
-  if (isOrderLike(h)) {
+  if (isOrderLike(hMeta) || (!bulky && isOrderLike(h))) {
     const urgent = isUrgentOrderLike(h);
     return applyCustomLabels(
       verdict(
@@ -480,7 +523,7 @@ export function classifyThreadWithContext(
     );
   }
 
-  if (isFinanceAdminLike(h) && !PUBLISHER_PATTERNS.test(h)) {
+  if ((isFinanceAdminLike(hMeta) || (!bulky && isFinanceAdminLike(h))) && !PUBLISHER_PATTERNS.test(h)) {
     const urgent = isUrgentAdminLike(h);
     return applyCustomLabels(
       verdict(
@@ -504,7 +547,7 @@ export function classifyThreadWithContext(
     );
   }
 
-  if (isBulkLike(thread) && !human) {
+  if (bulky && !human) {
     return applyCustomLabels(
       verdict(thread, 'noise', 'Bulk, subscribed, list, or marketing mail defaults to Noise.', {
         confidence: 0.86,

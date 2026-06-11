@@ -1,11 +1,14 @@
 import { z } from 'zod';
 import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { api, convexQuery } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
 import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
 import { parseMailSearchQuery } from '../mail/search/parser';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import { getNylasThread } from '../nylas/provider';
 import type { SmartCategory, SmartCategoryId, SmartLabelDefinition, SmartRule } from '../shared/types';
+import { requireStoreUserId } from '../store/kv';
 import { recallSender } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
@@ -312,10 +315,11 @@ export interface ClassifyInputThread {
   labels?: string[];
   unread?: boolean;
   date?: string | number;
+  bodyText?: string;
 }
 
 const CLASSIFY_SYSTEM =
-  'You classify email threads for the user. Output only JSON lines. Categories: main, needs_reply, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. A Gmail CATEGORY_PERSONAL or IMPORTANT label means a real person — never classify those as noise. CATEGORY_PROMOTIONS, CATEGORY_UPDATES, and CATEGORY_SOCIAL are automated. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise.';
+  'You classify email threads for the user. Output only JSON lines. Categories: main, needs_reply, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. A Gmail CATEGORY_PERSONAL or IMPORTANT label means a real person — never classify those as noise. CATEGORY_PROMOTIONS, CATEGORY_UPDATES, and CATEGORY_SOCIAL are automated. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise. When a body excerpt is provided, ground the verdict in what the message actually says — boilerplate footers (unsubscribe links, "sign in" prompts, order-history links) signal automation, not codes or orders.';
 
 const CLASSIFY_INSTRUCTIONS = [
   'For each input line, return exactly one JSON object:',
@@ -324,7 +328,42 @@ const CLASSIFY_INSTRUCTIONS = [
 ].join('\n');
 
 function classifyLine(thread: ClassifyInputThread, idx: number) {
-  return `${idx + 1}. id=${thread.id} from=${thread.fromAddress || thread.from || ''} unread=${thread.unread ? 'yes' : 'no'} labels=${(thread.labels || []).join(',')} subject=${(thread.subject || '').slice(0, 120)} snippet=${(thread.snippet || '').slice(0, 240)}`;
+  const body = String(thread.bodyText || '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 600);
+  return `${idx + 1}. id=${thread.id} from=${thread.fromAddress || thread.from || ''} unread=${thread.unread ? 'yes' : 'no'} labels=${(thread.labels || []).join(',')} subject=${(thread.subject || '').slice(0, 120)} snippet=${(thread.snippet || '').slice(0, 240)}${body ? ` body=${body}` : ''}`;
+}
+
+// Pull latest-message body excerpts from the Convex corpus for threads that
+// arrived without one (the KV thread cache stores only snippets). Best-effort:
+// classification still works header-only when the corpus has no row yet.
+async function hydrateBodyExcerpts(threads: ClassifyInputThread[]) {
+  if (!isConvexConfigured()) return;
+  let userId: string;
+  try {
+    userId = requireStoreUserId();
+  } catch {
+    return;
+  }
+  const missing = threads.filter((thread) => !thread.bodyText && thread.account && thread.id);
+  for (let i = 0; i < missing.length; i += 50) {
+    const chunk = missing.slice(i, i + 50);
+    try {
+      const excerpts = await convexQuery<Record<string, string>>((api as any).mailCorpus.threadBodyExcerpts, {
+        userId,
+        items: chunk.map((thread) => ({
+          accountId: thread.account as string,
+          providerThreadId: thread.id,
+        })),
+      });
+      for (const thread of chunk) {
+        const body = excerpts[`${thread.account}:${thread.id}`];
+        if (body) thread.bodyText = body;
+      }
+    } catch {
+      return;
+    }
+  }
 }
 
 /**
@@ -341,6 +380,7 @@ export async function classifyThreadsBatched(
 ): Promise<Array<{ id: string; model: string } & SmartCategory>> {
   if (!threads.length) return [];
   const { rules, customLabels, force } = context;
+  await hydrateBodyExcerpts(threads);
   const local = threads.map((thread) => ({
     thread,
     verdict: classifyThreadWithContext(
@@ -353,6 +393,7 @@ export async function classifyThreadsBatched(
         labels: thread.labels || [],
         unread: thread.unread ?? false,
         lastDate: Number(thread.date || 0),
+        bodyText: thread.bodyText,
       },
       { rules, customLabels },
     ),

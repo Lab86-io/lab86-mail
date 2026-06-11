@@ -256,6 +256,7 @@ export const upsertCorpusBatch = mutation({
       if (!stored.length) continue;
       const windowCapped = stored.length >= AGGREGATE_WINDOW;
       const latest = stored.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a));
+      let classifyBody = String(latest.textBody || latest.searchText || '').slice(0, 4000);
       const labels = [...new Set(stored.flatMap((message) => message.labels || []))];
       const patch = {
         userId: args.userId,
@@ -291,6 +292,8 @@ export const upsertCorpusBatch = mutation({
         patch.fromAddress = fullLatest.from || patch.fromAddress;
         patch.snippet = fullLatest.snippet || patch.snippet;
         patch.yearMonth = yearMonth(fullLatest.receivedAt);
+        classifyBody =
+          String(fullLatest.textBody || fullLatest.searchText || '').slice(0, 4000) || classifyBody;
       }
       const existing = await ctx.db
         .query('mailCorpusThreads')
@@ -307,7 +310,7 @@ export const upsertCorpusBatch = mutation({
         patch.starred = Boolean(existing.starred) || patch.starred || undefined;
         patch.labels = [...new Set([...(existing.labels || []), ...patch.labels])];
       }
-      const classified = smartContext ? classifyCorpusThread(patch, smartContext) : {};
+      const classified = smartContext ? classifyCorpusThread(patch, smartContext, classifyBody) : {};
       if (existing) await ctx.db.patch(existing._id, { ...patch, ...classified });
       else await ctx.db.insert('mailCorpusThreads', { ...patch, ...classified, createdAt: ts });
     }
@@ -729,6 +732,38 @@ export const getCorpusThreadBundle = query({
 
 // Recent threads with stored verdicts, projected small. Feeds the category
 // stat counters and the command-palette seeds without scanning message rows.
+// Batched latest-message body excerpts, keyed `${accountId}:${providerThreadId}`.
+// Feeds body-grounded classification in the Next tool layer (deterministic +
+// LLM passes) without shipping full message docs over the wire.
+export const threadBodyExcerpts = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    items: v.array(v.object({ accountId: v.string(), providerThreadId: v.string() })),
+    maxChars: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const cap = Math.min(Math.max(Math.floor(args.maxChars ?? 2500), 200), 4000);
+    const out: Record<string, string> = {};
+    for (const item of args.items.slice(0, 100)) {
+      const latest = await ctx.db
+        .query('mailCorpusMessages')
+        .withIndex('by_user_account_thread_received', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', item.accountId)
+            .eq('providerThreadId', item.providerThreadId),
+        )
+        .order('desc')
+        .take(1);
+      const body = String(latest[0]?.textBody || latest[0]?.searchText || '').slice(0, cap);
+      if (body) out[`${item.accountId}:${item.providerThreadId}`] = body;
+    }
+    return out;
+  },
+});
+
 export const listRecentCorpusThreads = query({
   args: {
     internalSecret: v.optional(v.string()),
