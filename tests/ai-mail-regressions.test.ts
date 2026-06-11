@@ -272,8 +272,9 @@ describe('local-first mail search routing', () => {
 
       // Horizon-aware: a partially-backfilled corpus (newest-first) serves a
       // query locally when its lower date bound sits inside the indexed
-      // window, and falls back when the query reaches past the horizon or
-      // has no lower bound at all.
+      // window. Browse-style views (no free text) serve locally from ANY
+      // non-empty corpus — partial indexing must never slow down browsing —
+      // while text searches past the horizon still fall back for completeness.
       const horizon = Date.parse('2026-01-01');
       expect(
         resolveSearchRoute({
@@ -281,6 +282,7 @@ describe('local-first mail search routing', () => {
           corpusReady: false,
           oldestIndexedAt: horizon,
           queryAfter: Date.parse('2026-05-01'),
+          hasTextQuery: true,
         }),
       ).toMatchObject({ tier: 'local', reason: 'partial corpus covers the queried window' });
       expect(
@@ -289,10 +291,27 @@ describe('local-first mail search routing', () => {
           corpusReady: false,
           oldestIndexedAt: horizon,
           queryAfter: Date.parse('2025-06-01'),
+          hasTextQuery: true,
         }),
       ).toMatchObject({ tier: 'native' });
       expect(
+        resolveSearchRoute({
+          provider: 'google',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          queryAfter: Date.parse('2025-06-01'),
+        }),
+      ).toMatchObject({ tier: 'local', reason: 'partial corpus serves browse views while backfill runs' });
+      expect(
         resolveSearchRoute({ provider: 'microsoft', corpusReady: false, oldestIndexedAt: horizon }),
+      ).toMatchObject({ tier: 'local' });
+      expect(
+        resolveSearchRoute({
+          provider: 'microsoft',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          hasTextQuery: true,
+        }),
       ).toMatchObject({ tier: 'structured' });
 
       // Local cursors keep paging locally; provider cursors stay on the
@@ -439,23 +458,23 @@ describe('local-first mail search routing', () => {
       '../lib/mail/search/account-scope'
     );
     const hinted = applyNaturalLanguageAccountHint(
-      'stuff from my jjalangtry@outlook.com account older than 40 days',
-      'from:jjalangtry@outlook.com older_than:40d',
+      'stuff from my pat.demo@outlook.com account older than 40 days',
+      'from:pat.demo@outlook.com older_than:40d',
     );
     const scoped = resolveAccountScopedQuery(hinted, [
       {
         accountId: 'grant_outlook',
-        email: 'jjalangtry@outlook.com',
+        email: 'pat.demo@outlook.com',
         displayName: 'Outlook',
       },
       {
         accountId: 'grant_gmail',
-        email: 'jjalangtry@gmail.com',
+        email: 'pat.demo@gmail.com',
         displayName: 'Gmail',
       },
     ]);
 
-    expect(hinted).toBe('account:jjalangtry@outlook.com older_than:40d');
+    expect(hinted).toBe('account:pat.demo@outlook.com older_than:40d');
     expect(scoped).toEqual({
       query: 'older_than:40d',
       accountIds: ['grant_outlook'],

@@ -1,10 +1,21 @@
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 // Backing store for all per-user app state (see schema.ts userDocs). Every
 // access path is scoped by userId — this is the tenancy boundary that the old
 // NeDB file store did not have.
+
+// Smart rules/labels feed the write-time thread classifier; editing one makes
+// every stored verdict for that user stale, so changes schedule a background
+// re-sweep of their corpus. Slight delay batches rapid consecutive edits.
+const RECLASSIFY_KINDS = new Set(['smartRule', 'smartLabel']);
+
+async function maybeScheduleReclassify(ctx: any, kind: string, userId: string) {
+  if (!RECLASSIFY_KINDS.has(kind)) return;
+  await ctx.scheduler.runAfter(5_000, internal.smart.reclassifyUserThreads, { userId });
+}
 
 export const getDoc = query({
   args: {
@@ -76,6 +87,7 @@ export const upsertDoc = mutation({
       .unique();
     if (existing) {
       await ctx.db.patch(existing._id, { doc: args.doc, ref: args.ref, updatedAt: ts });
+      await maybeScheduleReclassify(ctx, args.kind, args.userId);
       return { ok: true, created: false };
     }
     await ctx.db.insert('userDocs', {
@@ -87,6 +99,7 @@ export const upsertDoc = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
+    await maybeScheduleReclassify(ctx, args.kind, args.userId);
     return { ok: true, created: true };
   },
 });
@@ -140,7 +153,10 @@ export const deleteDoc = mutation({
         q.eq('userId', args.userId).eq('kind', args.kind).eq('key', args.key),
       )
       .unique();
-    if (existing) await ctx.db.delete(existing._id);
+    if (existing) {
+      await ctx.db.delete(existing._id);
+      await maybeScheduleReclassify(ctx, args.kind, args.userId);
+    }
     return { ok: true, deleted: Boolean(existing) };
   },
 });

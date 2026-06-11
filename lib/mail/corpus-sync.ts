@@ -2,6 +2,7 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
+import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 
 const mailCorpusApi = (api as any).mailCorpus;
@@ -42,6 +43,7 @@ interface CorpusMessageInput {
   receivedAt: number;
   snippet: string;
   textBody?: string;
+  htmlBody?: string;
   searchText: string;
   labels: string[];
   unread?: boolean;
@@ -461,34 +463,61 @@ async function markWebhookProcessed(
 
 function corpusMessageFromNylas(row: NylasAccountRow, raw: any): CorpusMessageInput {
   const normalized = normalizeNylasMessage(raw, row.accountId);
-  const labels = normalized.labels || [];
+  return corpusMessageFromNormalized(normalized, {
+    unread: Boolean(raw?.unread),
+    starred: Boolean(raw?.starred),
+  });
+}
+
+function corpusMessageFromNormalized(
+  message: Message,
+  flags: { unread?: boolean; starred?: boolean } = {},
+): CorpusMessageInput {
+  const labels = message.labels || [];
   return {
-    providerMessageId: normalized._id,
-    providerThreadId: normalized.threadId,
-    subject: normalized.subject,
-    from: normalized.from,
-    to: normalized.to,
-    cc: normalized.cc || undefined,
-    bcc: normalized.bcc || undefined,
-    receivedAt: normalized.date,
-    snippet: normalized.snippet,
-    textBody: normalized.textBody,
+    providerMessageId: message._id,
+    providerThreadId: message.threadId,
+    subject: message.subject,
+    from: message.from,
+    to: message.to,
+    cc: message.cc || undefined,
+    bcc: message.bcc || undefined,
+    receivedAt: message.date,
+    snippet: message.snippet,
+    textBody: message.textBody,
+    // The provider hands us the full body on every list/find call; storing it
+    // is what makes opening a thread a pure local read.
+    htmlBody: message.htmlBody ?? '',
     searchText: buildCorpusSearchText({
-      subject: normalized.subject,
-      from: normalized.from,
-      to: normalized.to,
-      cc: normalized.cc,
-      bcc: normalized.bcc,
-      snippet: normalized.snippet,
-      textBody: normalized.textBody,
+      subject: message.subject,
+      from: message.from,
+      to: message.to,
+      cc: message.cc,
+      bcc: message.bcc,
+      snippet: message.snippet,
+      textBody: message.textBody,
       labels,
     }),
     labels,
-    unread: Boolean(raw?.unread) || labels.includes('UNREAD'),
-    starred: Boolean(raw?.starred) || labels.includes('STARRED'),
-    attachments: normalized.attachments,
-    headers: normalized.headers,
+    unread: Boolean(flags.unread) || Boolean(message.unread) || labels.includes('UNREAD'),
+    starred: Boolean(flags.starred) || labels.includes('STARRED'),
+    attachments: message.attachments,
+    headers: message.headers,
   };
+}
+
+// Write a freshly fetched (already normalized) thread into the corpus in one
+// batched mutation. Used by the read path to hydrate threads whose rows
+// predate body storage — after this, the live Convex queries serve them.
+export async function ingestThreadIntoCorpus(row: NylasAccountRow, messages: Message[]) {
+  if (!messages.length) return;
+  const corpusMessages = messages.map((message) => corpusMessageFromNormalized(message));
+  await upsertCorpus(row, {
+    messages: corpusMessages,
+    threads: corpusThreadsFromMessages(corpusMessages),
+    progress: { stage: 'read_hydrate', messages: corpusMessages.length },
+    incremental: true,
+  });
 }
 
 function corpusThreadsFromMessages(messages: CorpusMessageInput[]): CorpusThreadInput[] {

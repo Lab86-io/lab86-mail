@@ -55,10 +55,15 @@ export function ThreadView() {
   const queryClient = useQueryClient();
   const markedReadRef = useRef<Set<string>>(new Set());
 
+  // Primary source: the synced corpus via a live Convex query — opening a
+  // thread is a local read and updates in real time. `null` means the thread
+  // is not in the corpus yet (brand-new account mid-backfill); the HTTP
+  // fallback hydrates it once and the live query takes over.
   const liveThread = useConvexQuery({
     query: (api as any).liveMail.getThread,
     args: account && threadId ? { account, threadId } : 'skip',
   });
+  const liveData = liveThread.status === 'success' ? liveThread.data : undefined;
   const { data: fallbackThreadData, isLoading: fallbackThreadLoading } = useQuery({
     queryKey: ['thread', account, threadId],
     queryFn: async () =>
@@ -73,16 +78,30 @@ export function ThreadView() {
         threadId,
         refresh: false,
       }),
-    enabled: !!account && !!threadId && liveThread.status !== 'success',
+    enabled: !!account && !!threadId && !liveData,
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
-  const data = liveThread.status === 'success' ? liveThread.data : fallbackThreadData;
-  const isLoading =
-    (liveThread.status === 'pending' && !fallbackThreadData) ||
-    (liveThread.status !== 'success' && fallbackThreadLoading);
+  const data = liveData || fallbackThreadData;
+  const isLoading = !data && (liveThread.status === 'pending' || fallbackThreadLoading);
+
+  // Corpus rows synced before HTML bodies were stored render their text
+  // immediately; one background refresh pulls the real bodies into the corpus
+  // and the live query streams them in. Keyed so each thread hydrates once.
+  const hydratedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!account || !threadId || !liveData) return;
+    const liveMessages = liveData.messages || [];
+    if (!liveMessages.length || !liveMessages.some((m: any) => m.htmlBody == null)) return;
+    const key = `${account}:${threadId}`;
+    if (hydratedRef.current.has(key)) return;
+    hydratedRef.current.add(key);
+    callTool('get_thread', { account, threadId, refresh: true }).catch(() => {
+      hydratedRef.current.delete(key);
+    });
+  }, [account, threadId, liveData]);
 
   const archive = useMutation({
     mutationFn: async () => callTool('archive_thread', { account, threadId }),
@@ -103,8 +122,8 @@ export function ThreadView() {
   });
 
   // Collect every sender visible in this thread up front so we can resolve
-  // photos once, then pass them down to each card. (Same nedb-cached batch
-  // tool the inbox uses.)
+  // photos once, then pass them down to each card. (Same cached batch tool
+  // the inbox uses.)
   const messages = useMemo(
     () => [...(data?.messages || [])].sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0)),
     [data?.messages],

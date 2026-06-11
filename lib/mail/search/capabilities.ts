@@ -17,6 +17,8 @@ export interface SearchRouteInput {
   oldestIndexedAt?: number | null;
   /** The query's lower date bound (epoch ms), when it has one. */
   queryAfter?: number | null;
+  /** Whether the query carries free-text terms (vs a pure browse/filter view). */
+  hasTextQuery?: boolean;
 }
 
 export interface SearchRoute {
@@ -61,6 +63,14 @@ export function resolveSearchRoute(input: SearchRouteInput): SearchRoute {
       input.oldestIndexedAt <= input.queryAfter
     ) {
       return { ...base, tier: 'local', reason: 'partial corpus covers the queried window' };
+    }
+    // Browse-style views (no free-text terms) serve whatever the corpus holds
+    // immediately — newest mail is indexed first, which is exactly what a
+    // browse view shows, and the live queries fill in reactively as the
+    // backfill lands. Only text searches still need the provider for
+    // completeness until the corpus is ready.
+    if (!input.hasTextQuery && typeof input.oldestIndexedAt === 'number') {
+      return { ...base, tier: 'local', reason: 'partial corpus serves browse views while backfill runs' };
     }
     return { ...base, tier: fallback, reason: 'corpus is not ready for this grant' };
   }

@@ -493,10 +493,10 @@ export function AIBarSidebar() {
 }
 
 const BASE_SUGGESTIONS = [
-  'Do I have any emails from Tori Kogler? Open the latest.',
+  'What needs my reply today? Open the most urgent one.',
   'Triage my newest 25 inbox threads',
   'Summarize unread from this week',
-  'Find every Stripe receipt from 2025 and label them Receipts/2025',
+  'Find every receipt from last year and label them Receipts',
 ];
 
 const THREAD_SUGGESTIONS = [

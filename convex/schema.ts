@@ -188,6 +188,12 @@ export default defineSchema({
     unread: v.boolean(),
     starred: v.optional(v.boolean()),
     messageCount: v.optional(v.number()),
+    // Smart classification is computed at write time (see convex/smart.ts):
+    // the full verdict for the UI, plus flattened fields the indexes can key.
+    smartCategory: v.optional(v.any()),
+    smartPrimary: v.optional(v.string()),
+    smartCustomKeys: v.optional(v.array(v.string())),
+    classifiedAt: v.optional(v.number()),
     yearMonth: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -199,7 +205,11 @@ export default defineSchema({
     .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId'])
-    .index('by_user_account_updated', ['userId', 'accountId', 'lastDate']),
+    .index('by_user_account_updated', ['userId', 'accountId', 'lastDate'])
+    .index('by_user_primary_lastDate', ['userId', 'smartPrimary', 'lastDate'])
+    .index('by_user_account_primary_lastDate', ['userId', 'accountId', 'smartPrimary', 'lastDate'])
+    // Backlog sweep: rows without smartPrimary sort first under undefined.
+    .index('by_smart_primary', ['smartPrimary']),
 
   mailCorpusMessages: defineTable({
     userId: v.string(),
@@ -216,6 +226,10 @@ export default defineSchema({
     receivedAt: v.number(),
     snippet: v.string(),
     textBody: v.optional(v.string()),
+    // Full HTML body, stored at sync time so opening a thread never has to
+    // round-trip to the provider. Missing on rows synced before this existed;
+    // the read path hydrates those lazily.
+    htmlBody: v.optional(v.string()),
     searchText: v.string(),
     labels: v.array(v.string()),
     unread: v.optional(v.boolean()),

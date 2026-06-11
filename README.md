@@ -3,7 +3,7 @@
 Hosted mail client for Lab86's B2C mail product.
 
 - **Backend:** single Next.js 16 + React 19 app, run on **Bun**. Runtime infrastructure is Railway + Clerk + Convex + Nylas + Clerk Billing.
-- **AI:** OpenAI **GPT‑5.5** (primary) via Vercel **AI SDK 6**, with `@ai-sdk/anthropic` available as a fallback. API key is shared with `voice-agent` via `/home/jjalangtry/.config/lab86-private/voice-agent.env`.
+- **AI:** OpenAI **GPT‑5.5** (primary) via Vercel **AI SDK 6**, with `@ai-sdk/anthropic` available as a fallback. Set `OPENAI_API_KEY` (and optionally `ANTHROPIC_API_KEY`) in the deployment environment.
 - **Tools:** ~53 typed, Zod-validated tools in `lib/tools/*`. Every UI action and every AI agent action go through the same registry. Introspectable via `GET /api/tools` and callable via `POST /api/tools/<name>`.
 - **Frontend:** shadcn/ui primitives, Motion 12 transitions, Lucide + Phosphor icons, TipTap (planned for compose), cmdk palette, Sonner toasts, next-themes, TanStack Query, Zustand.
 - **Mail access:** Nylas is the interim provider transport for connected Google, Microsoft, iCloud, and IMAP accounts.
@@ -37,20 +37,9 @@ licensed MIT with commercial use allowed and no attribution required:
 
 ## Accounts
 
-- `jjalangtry@gmail.com` — direct.
-- `jakob@lab86.io` — primary, holds forwarded / imported mail. (auth pending.)
-
-## Service
-
-```bash
-systemctl --user status lab86-mail.service
-systemctl --user restart lab86-mail.service
-```
-
-`lab86-mail.service` runs `bun run start` and pulls env from both:
-
-- `/home/jjalangtry/.config/lab86-mail/lab86-mail.env` — service-local overrides (port, model names).
-- `/home/jjalangtry/.config/lab86-private/voice-agent.env` — `OPENAI_API_KEY` shared with the voice agent.
+Users connect their own mail accounts (Google, Microsoft, iCloud, IMAP) via the
+in-app Nylas OAuth flow; nothing is hardcoded per user. Each connected account
+syncs into a per-user Convex corpus that serves all reads.
 
 ## Architecture
 
@@ -101,6 +90,3 @@ Press `⌘K` (or click the pill at the top) to open the always-available agent. 
 
 `j/k` next/prev · `o` open · `u/esc` close · `e` archive · `#` trash · `r` reply · `c` compose · `/` focus search · `s` summarize · `t` triage · `g i/u/s/d/t/a` mailbox jumps · `⌘K` AI bar · `⌘P` palette · `?` shortcut sheet.
 
-## The 35-item brainstorm
-
-See `/home/jjalangtry/.claude/plans/think-of-35-ways-zany-starlight.md` for the master plan. v2 ships ~30 of the 35 by virtue of the tool registry being the action surface; the rest layer in trivially.

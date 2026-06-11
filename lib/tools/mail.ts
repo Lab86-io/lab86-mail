@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { api, convexQuery } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
+import { ingestThreadIntoCorpus, maybeKickCorpusBackfill } from '../mail/corpus-sync';
 import { DEFAULT_MAIL_QUERY, SMART_CATEGORY_CANDIDATE_QUERIES } from '../mail/search/constants';
 import {
   classifyThreadWithContext,
@@ -7,6 +9,7 @@ import {
   SMART_CATEGORY_IDS,
 } from '../mail/smart-categories';
 import {
+  getNylasAccount,
   getNylasMessage,
   getNylasThread,
   listNylasAccounts,
@@ -22,10 +25,11 @@ import {
   getThread as getThreadRecord,
   listRecentThreads,
   listThreadsForAccount,
-  setThreadSmartCategory,
   upsertThread,
 } from '../store/threads';
 import { defineTool } from './registry';
+
+const LOCAL_CURSOR_PREFIX = 'local:';
 
 export const listAccounts = defineTool({
   name: 'list_accounts',
@@ -113,8 +117,13 @@ export const searchThreads = defineTool({
       }),
       'Connected Nylas account not found.',
     );
-    for (const item of nylas.items) {
-      if (item._id) await upsertThread(account, item).catch(() => undefined);
+    // Local-tier results already came out of the corpus; only provider-tier
+    // results are worth caching, and those writes run in parallel, never as a
+    // serial per-row chain on the response path.
+    if (nylas.searchTier !== 'local') {
+      await Promise.allSettled(
+        nylas.items.filter((item) => item._id).map((item) => upsertThread(account, item)),
+      );
     }
     return nylas;
   },
@@ -125,7 +134,7 @@ const SmartCategorySchema = z.union([z.enum(SMART_CATEGORY_IDS), z.string().rege
 export const listSmartCategory = defineTool({
   name: 'list_smart_category',
   description:
-    'List a smart MailOS category. Fetches recent hosted mail candidates, classifies missing/stale rows locally, and filters into built-in or custom smart labels.',
+    'List a smart MailOS category from the synced corpus (indexed, instant). Falls back to a provider search only while a brand-new account awaits its first sync batch.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -143,29 +152,63 @@ export const listSmartCategory = defineTool({
     nextPageToken: z.string().optional(),
   }),
   async handler({ account, category, query, max, pageToken }, ctx) {
+    // Primary path: indexed corpus read over persisted write-time verdicts.
+    // No provider calls and no writes — this is a pure local query.
+    if (ctx.userId && isConvexConfigured() && (!pageToken || pageToken.startsWith(LOCAL_CURSOR_PREFIX))) {
+      const before = pageToken ? Number(pageToken.slice(LOCAL_CURSOR_PREFIX.length)) : undefined;
+      const result = await convexQuery<{ items: any[]; nextBefore?: number }>(
+        (api as any).mailCorpus.listSmartCategoryThreads,
+        {
+          userId: ctx.userId,
+          accountId: account,
+          category,
+          limit: max,
+          before: Number.isFinite(before) ? before : undefined,
+        },
+      ).catch(() => null);
+      if (result) {
+        const corpusEmpty = result.items.length === 0 && pageToken === undefined;
+        if (!corpusEmpty || (await accountHasCorpusRows(ctx.userId, account))) {
+          return {
+            account,
+            category,
+            query: query || '',
+            items: result.items,
+            nextPageToken:
+              result.nextBefore !== undefined ? `${LOCAL_CURSOR_PREFIX}${result.nextBefore}` : undefined,
+          };
+        }
+      }
+    }
+
+    // Fallback: the corpus has no rows for this account yet (first sync batch
+    // is still in flight). Serve a provider search so the view is never blank,
+    // kick the backfill, and let the reactive corpus queries take over.
     const customLabelId = category.startsWith('custom:') ? category.slice('custom:'.length) : '';
     const customLabel = customLabelId ? await getSmartLabel(customLabelId) : null;
     const candidateQuery = query || customLabel?.candidateQuery || smartCandidateQuery(category);
     const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
+    if (ctx.userId) {
+      const row = await getNylasAccount(ctx.userId, account).catch(() => null);
+      if (row) maybeKickCorpusBackfill(row);
+    }
     const nylas = await requireNylasResult(
       searchNylasThreads({
         userId: ctx.userId,
         account,
         query: candidateQuery,
         max: Math.min(80, Math.max(max * 2, 60)),
-        pageToken,
+        pageToken: pageToken?.startsWith(LOCAL_CURSOR_PREFIX) ? undefined : pageToken,
       }),
       'Connected Nylas account not found.',
     );
-    const matched: any[] = [];
-    for (const item of nylas.items) {
-      if (!item._id) continue;
-      const smartCategory = classifyThreadWithContext(item as Thread, { rules, customLabels });
-      const enriched = { ...item, smartCategory };
-      await upsertThread(account, enriched).catch(() => undefined);
-      await setThreadSmartCategory(account, item._id, smartCategory).catch(() => undefined);
-      if (includeInSmartCategory(enriched, category)) matched.push(enriched);
-    }
+    const matched = nylas.items
+      .filter((item) => item._id)
+      .map((item) => ({
+        ...item,
+        smartCategory: classifyThreadWithContext(item as Thread, { rules, customLabels }),
+      }))
+      .filter((item) => includeInSmartCategory(item, category));
     matched.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
     return {
       account,
@@ -177,9 +220,18 @@ export const listSmartCategory = defineTool({
   },
 });
 
+async function accountHasCorpusRows(userId: string, accountId: string) {
+  const state = await convexQuery<any | null>((api as any).mailCorpus.getSyncState, {
+    userId,
+    accountId,
+  }).catch(() => null);
+  return Boolean(state && (state.messagesSynced || state.corpusReady));
+}
+
 export const getThread = defineTool({
   name: 'get_thread',
-  description: 'Fetch a full hosted mail thread by thread id and cache its messages.',
+  description:
+    'Fetch a full hosted mail thread by thread id. Served from the synced corpus when bodies are present; otherwise fetched from the provider once and persisted so the next open is local.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -195,26 +247,56 @@ export const getThread = defineTool({
     summary: z.string().nullable().optional(),
     summaryAt: z.number().nullable().optional(),
   }),
-  async handler({ account, threadId }, ctx) {
+  async handler({ account, threadId, refresh }, ctx) {
+    // Fast path: the corpus already holds every message body — pure local
+    // read, no provider round-trip.
+    if (!refresh && ctx.userId && isConvexConfigured()) {
+      const bundle = await convexQuery<any | null>((api as any).mailCorpus.getCorpusThreadBundle, {
+        userId: ctx.userId,
+        accountId: account,
+        providerThreadId: threadId,
+      }).catch(() => null);
+      if (bundle?.bodiesComplete) {
+        const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
+        return {
+          account,
+          threadId,
+          subject: bundle.subject,
+          messages: bundle.messages,
+          summary: cachedThread?.summary ?? null,
+          summaryAt: cachedThread?.summaryAt ?? null,
+        };
+      }
+    }
+
+    // Hydration path: fetch once from the provider, then persist into the
+    // corpus in a single batched mutation (live queries update reactively) and
+    // refresh the legacy caches in parallel — no serial per-row awaits.
     const nylas = await requireNylasResult(
       getNylasThread({ userId: ctx.userId, account, threadId }),
       'Connected Nylas account not found.',
     );
-    for (const message of nylas.messages) await upsertMessageRecord(message).catch(() => undefined);
     const newest = nylas.messages[nylas.messages.length - 1];
-    if (newest) {
-      await upsertThread(account, {
-        _id: threadId,
-        subject: newest.subject || nylas.messages[0]?.subject || '(no subject)',
-        fromAddress: newest.from,
-        lastDate: newest.date,
-        snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
-        labels: newest.labels || [],
-        unread: nylas.messages.some(
-          (message) => Boolean(message.unread) || message.labels?.includes('UNREAD'),
-        ),
-      }).catch(() => undefined);
-    }
+    const row = ctx.userId ? await getNylasAccount(ctx.userId, account).catch(() => null) : null;
+    await Promise.all([
+      row && isConvexConfigured()
+        ? ingestThreadIntoCorpus(row, nylas.messages).catch(() => undefined)
+        : Promise.resolve(),
+      Promise.all(nylas.messages.map((message) => upsertMessageRecord(message).catch(() => undefined))),
+      newest
+        ? upsertThread(account, {
+            _id: threadId,
+            subject: newest.subject || nylas.messages[0]?.subject || '(no subject)',
+            fromAddress: newest.from,
+            lastDate: newest.date,
+            snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+            labels: newest.labels || [],
+            unread: nylas.messages.some(
+              (message) => Boolean(message.unread) || message.labels?.includes('UNREAD'),
+            ),
+          }).catch(() => undefined)
+        : Promise.resolve(),
+    ]);
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
     return {
       ...nylas,
@@ -272,24 +354,39 @@ export const listAttachments = defineTool({
 
 export const recentThreadsCached = defineTool({
   name: 'recent_threads',
-  description: 'Return up to N recent cached threads used to seed the command palette.',
+  description: 'Return up to N recent synced threads used to seed the command palette.',
   category: 'mail',
   mutating: false,
   input: z.object({ limit: z.number().int().min(1).max(200).default(80) }),
   output: z.object({ threads: z.array(z.any()) }),
-  async handler({ limit }) {
+  async handler({ limit }, ctx) {
+    if (ctx.userId && isConvexConfigured()) {
+      const rows = await convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
+        userId: ctx.userId,
+        limit,
+      }).catch(() => null);
+      if (rows?.length) return { threads: rows };
+    }
     return { threads: await listRecentThreads(limit) };
   },
 });
 
 export const listAccountThreads = defineTool({
   name: 'list_account_threads',
-  description: 'List cached threads for a specific account.',
+  description: 'List synced threads for a specific account.',
   category: 'mail',
   mutating: false,
   input: z.object({ account: z.string(), limit: z.number().int().min(1).max(200).default(80) }),
   output: z.object({ threads: z.array(z.any()) }),
-  async handler({ account, limit }) {
+  async handler({ account, limit }, ctx) {
+    if (ctx.userId && isConvexConfigured()) {
+      const rows = await convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
+        userId: ctx.userId,
+        accountId: account,
+        limit,
+      }).catch(() => null);
+      if (rows?.length) return { threads: rows };
+    }
     return { threads: await listThreadsForAccount(account, limit) };
   },
 });

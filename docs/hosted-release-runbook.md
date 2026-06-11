@@ -30,11 +30,11 @@ GitHub resources created on June 4, 2026:
 
 Convex resources created on June 4, 2026:
 
-- Development deployment: `jjalangtry:lab86-mail:development`
+- Development deployment: `<convex-team>:lab86-mail:development`
   - Deployment name: `precise-skunk-847`
   - URL: `https://precise-skunk-847.convex.cloud`
   - Site URL: `https://precise-skunk-847.convex.site`
-- Production deployment: `jjalangtry:lab86-mail:production`
+- Production deployment: `<convex-team>:lab86-mail:production`
   - Deployment name: `proficient-viper-594`
   - URL: `https://proficient-viper-594.convex.cloud`
   - Site URL: `https://proficient-viper-594.convex.site`

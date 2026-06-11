@@ -2,13 +2,7 @@
 
 'use client';
 
-import {
-  keepPreviousData,
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   Archive,
@@ -277,6 +271,8 @@ export function Inbox() {
     fetchNextPage,
     refetch,
   } = useInfiniteQuery({
+    // Key layout matters to the placeholderData guard below: [1] = account,
+    // [5] = smartCategory.
     queryKey: [
       'search',
       account,
@@ -355,9 +351,15 @@ export function Inbox() {
     // cold provider read. The foreground poll still catches new mail.
     staleTime: 45_000,
     gcTime: 30 * 60_000,
-    // Show the previous list (marked fetching) while a new query/category/
-    // filter loads instead of flashing an empty skeleton on every keystroke.
-    placeholderData: keepPreviousData,
+    // Show the previous list (marked fetching) while a refined query loads —
+    // but NEVER carry one category's (or account's) rows into another view:
+    // that reads as "wrong emails in my category", not as a loading state.
+    placeholderData: (previousData: any, previousQuery: any) => {
+      const prevKey = previousQuery?.queryKey as unknown[] | undefined;
+      if (!prevKey) return undefined;
+      if (prevKey[1] !== account || prevKey[5] !== smartCategory) return undefined;
+      return previousData;
+    },
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchInterval: 60_000,
@@ -403,7 +405,10 @@ export function Inbox() {
       (a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
     );
   }, [account, data?.pages, liveItems]);
-  const showInitialLoading = !items.length && liveInbox.status !== 'success' && isLoading;
+  // Skeleton while either source is still on its first load for this view —
+  // an empty live result alone must not flash "Nothing here" while the HTTP
+  // page (which can still backfill brand-new accounts) is in flight.
+  const showInitialLoading = !items.length && (isLoading || liveInbox.status === 'pending');
   const readerVisible = !!(selectedThreadId || composeMode);
 
   useEffect(() => {

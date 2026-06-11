@@ -103,8 +103,8 @@ export async function searchNylasThreads({
 }): Promise<SearchNylasThreadsResult | null> {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
-  const queryAfter = localQueryAfterBound(query);
-  const route = await resolveAccountSearchRoute(row, pageToken, queryAfter).catch(() =>
+  const bounds = localQueryBounds(query);
+  const route = await resolveAccountSearchRoute(row, pageToken, bounds).catch(() =>
     resolveSearchRoute({ provider: row.provider, corpusReady: false, pageToken }),
   );
   if (route.localEnabled && !route.corpusReady) {
@@ -157,7 +157,11 @@ export async function searchNylasThreads({
   };
 }
 
-async function resolveAccountSearchRoute(row: NylasAccountRow, pageToken?: string, queryAfter?: number) {
+async function resolveAccountSearchRoute(
+  row: NylasAccountRow,
+  pageToken?: string,
+  bounds: { queryAfter?: number; hasTextQuery?: boolean } = {},
+) {
   const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, {
     userId: row.userId,
     accountId: row.accountId,
@@ -168,18 +172,20 @@ async function resolveAccountSearchRoute(row: NylasAccountRow, pageToken?: strin
     corpusReady: Boolean(syncState?.corpusReady && grantMatches),
     oldestIndexedAt:
       grantMatches && typeof syncState?.oldestIndexedAt === 'number' ? syncState.oldestIndexedAt : null,
-    queryAfter,
+    queryAfter: bounds.queryAfter,
+    hasTextQuery: bounds.hasTextQuery,
     pageToken,
   });
 }
 
-// Lower date bound of the query (epoch ms), used to decide whether a
-// partially-backfilled corpus already covers the requested window.
-function localQueryAfterBound(query: string): number | undefined {
+// Lower date bound and text-ness of the query, used to decide whether a
+// partially-backfilled corpus can serve it.
+function localQueryBounds(query: string): { queryAfter?: number; hasTextQuery?: boolean } {
   try {
-    return compileAstToLocalCorpusQuery(parseMailSearchQuery(query)).after;
+    const plan = compileAstToLocalCorpusQuery(parseMailSearchQuery(query));
+    return { queryAfter: plan.after, hasTextQuery: Boolean(plan.query) };
   } catch {
-    return undefined;
+    return {};
   }
 }
 

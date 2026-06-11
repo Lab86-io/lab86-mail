@@ -6,6 +6,7 @@ import {
 } from '../lib/mail/smart-categories';
 import type { QueryCtx } from './_generated/server';
 import { query } from './_generated/server';
+import { loadSmartContext, normalizeCorpusThread, queryCategoryThreads } from './smart';
 
 const SmartCategoryValidator = v.union(...SMART_CATEGORY_IDS.map((id) => v.literal(id)), v.string());
 
@@ -27,23 +28,6 @@ function normalizeAccount(row: any) {
   };
 }
 
-function normalizeThread(row: any) {
-  return {
-    _id: row.providerThreadId,
-    account: row.accountId,
-    subject: row.subject || '(no subject)',
-    fromAddress: row.fromAddress || '',
-    lastDate: row.lastDate || 0,
-    date: row.lastDate || 0,
-    snippet: row.snippet || '',
-    labels: row.labels || [],
-    unread: Boolean(row.unread),
-    starred: Boolean(row.starred),
-    messageCount: row.messageCount || 0,
-    cachedAt: row.updatedAt || row.lastDate || 0,
-  };
-}
-
 function normalizeMessage(row: any) {
   return {
     _id: row.providerMessageId,
@@ -57,30 +41,15 @@ function normalizeMessage(row: any) {
     date: row.receivedAt || 0,
     snippet: row.snippet || '',
     textBody: row.textBody || '',
-    htmlBody: row.htmlBody || '',
+    // null = body not yet hydrated into the corpus; '' = synced and empty.
+    // The reader uses the distinction to decide whether to hydrate.
+    htmlBody: row.htmlBody ?? null,
     labels: row.labels || [],
     unread: Boolean(row.unread),
     starred: Boolean(row.starred),
     attachments: row.attachments || [],
     headers: row.headers || {},
     cachedAt: row.updatedAt || row.receivedAt || 0,
-  };
-}
-
-async function listSmartContext(ctx: any, userId: string) {
-  const [labels, rules] = await Promise.all([
-    ctx.db
-      .query('userDocs')
-      .withIndex('by_user_kind_updatedAt', (q: any) => q.eq('userId', userId).eq('kind', 'smartLabel'))
-      .collect(),
-    ctx.db
-      .query('userDocs')
-      .withIndex('by_user_kind_updatedAt', (q: any) => q.eq('userId', userId).eq('kind', 'smartRule'))
-      .collect(),
-  ]);
-  return {
-    customLabels: labels.map((row: any) => row.doc).filter((label: any) => label?.enabled !== false),
-    rules: rules.map((row: any) => row.doc).filter((rule: any) => rule?.enabled !== false),
   };
 }
 
@@ -130,14 +99,11 @@ export const listThreads = query({
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
-    const limit = Math.min(Math.max(Math.floor(Number(args.limit) || 50), 1), 100);
+    const limit = Math.min(Math.max(Math.floor(Number(args.limit) || 50), 1), 200);
     const requestedAccounts = args.accountIds?.filter(Boolean) || [];
     if (args.accountIds && requestedAccounts.length === 0) return { items: [], nextPageToken: undefined };
     const text = (args.query || '').trim();
     const category = (args.category || '').trim();
-    const needsSmartFilter = Boolean(category);
-    const smartContext = needsSmartFilter ? await listSmartContext(ctx, userId) : null;
-    let rows: any[] = [];
 
     if (text) {
       // Search index hits are message-level, so group the live result window by
@@ -174,8 +140,34 @@ export const listThreads = query({
           existing.starred = Boolean(existing.starred) || Boolean(message.starred);
         }
       }
-      rows = [...byThread.values()];
-    } else if (requestedAccounts.length) {
+      let items = [...byThread.values()].map(normalizeCorpusThread);
+      if (category) {
+        const smartContext = await loadSmartContext(ctx, userId);
+        items = items
+          .map((thread) => ({
+            ...thread,
+            smartCategory: classifyThreadWithContext(thread as any, smartContext),
+          }))
+          .filter((thread) => includeInSmartCategory(thread as any, category));
+      }
+      items.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
+      return { items: items.slice(0, limit), nextPageToken: undefined };
+    }
+
+    if (category) {
+      // Indexed read over the persisted write-time verdicts — no provider
+      // calls and no window-wide reclassification on the hot path.
+      const { items } = await queryCategoryThreads(ctx, {
+        userId,
+        accountIds: requestedAccounts.length ? requestedAccounts : null,
+        category,
+        limit,
+      });
+      return { items, nextPageToken: undefined };
+    }
+
+    let rows: any[] = [];
+    if (requestedAccounts.length) {
       const perAccount = Math.max(limit, Math.ceil((limit * 2) / Math.max(requestedAccounts.length, 1)));
       const accountRows = await Promise.all(
         requestedAccounts.map((accountId) =>
@@ -194,16 +186,7 @@ export const listThreads = query({
         .order('desc')
         .take(limit * 2);
     }
-
-    let items = rows.map(normalizeThread);
-    if (smartContext && category) {
-      items = items
-        .map((thread) => ({
-          ...thread,
-          smartCategory: classifyThreadWithContext(thread, smartContext),
-        }))
-        .filter((thread) => includeInSmartCategory(thread, category));
-    }
+    const items = rows.map(normalizeCorpusThread);
     items.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
     return { items: items.slice(0, limit), nextPageToken: undefined };
   },
@@ -222,7 +205,9 @@ export const getThread = query({
         q.eq('userId', userId).eq('accountId', args.account).eq('providerThreadId', args.threadId),
       )
       .unique();
-    if (!thread) throw new Error('Thread not found');
+    // Not-in-corpus is an expected state (brand-new account mid-backfill), not
+    // an error: return null and let the client hydrate over HTTP.
+    if (!thread) return null;
     const messages = await ctx.db
       .query('mailCorpusMessages')
       .withIndex('by_user_account_thread_received', (q) =>
@@ -230,6 +215,7 @@ export const getThread = query({
       )
       .order('asc')
       .collect();
+    if (!messages.length) return null;
     return {
       threadId: args.threadId,
       subject: thread.subject || messages[0]?.subject || '(no subject)',
