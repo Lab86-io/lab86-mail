@@ -6,7 +6,12 @@ import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/con
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
-import { estimateAiUsageCost, resolveAiBudgetPolicy, shouldDepleteLab86Budget } from './budget';
+import {
+  B2C_BYOK_MONTHLY_PRICE_USD,
+  estimateAiUsageCost,
+  resolveAiBudgetPolicy,
+  shouldDepleteLab86Budget,
+} from './budget';
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 
@@ -101,6 +106,14 @@ export async function resolveAiRuntime(input: {
       throw new Error('Add your OpenRouter API key in Accounts and AI before using AI features.');
     }
     if (mode === 'byok' && state.key) {
+      // BYOK AI is part of the paid tiers ($5 BYOK or $15 Pro). The
+      // subscriptions-paused escape hatch above stays unmetered.
+      const entitlement = await getAiBillingEntitlement().catch(() => null);
+      if (entitlement && entitlement.plan === 'free') {
+        throw new Error(
+          `Using your own API key requires the Lab86 Mail BYOK plan ($${B2C_BYOK_MONTHLY_PRICE_USD}/month) or Pro. Upgrade from Settings.`,
+        );
+      }
       const apiKey = decryptSecret(state.key.encryptedKey);
       const provider = state.key.provider;
       const modelName =

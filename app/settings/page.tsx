@@ -403,12 +403,15 @@ function AiSection() {
 
   const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
   const subscriptionsDisabled = Boolean(ai?.subscriptionsDisabled);
-  const monthlyUsd = ai?.usage?.paidPlan?.monthlyUsd;
-  const annualUsd = ai?.usage?.paidPlan?.annualUsd;
-  const priceLine =
-    typeof monthlyUsd === 'number' && typeof annualUsd === 'number'
-      ? `Lab86 Mail Pro is $${monthlyUsd}/month or $${annualUsd}/year.`
-      : 'Lab86 Mail Pro covers hosted AI with a monthly budget.';
+  const paidPlan = ai?.usage?.paidPlan;
+  const pricesPresent =
+    typeof paidPlan?.monthlyUsd === 'number' &&
+    typeof paidPlan?.annualUsd === 'number' &&
+    typeof paidPlan?.byokMonthlyUsd === 'number' &&
+    typeof paidPlan?.byokAnnualUsd === 'number';
+  const priceLine = pricesPresent
+    ? `Pro (hosted AI) is $${paidPlan.monthlyUsd}/mo or $${paidPlan.annualUsd}/yr · bring-your-own-key is $${paidPlan.byokMonthlyUsd}/mo or $${paidPlan.byokAnnualUsd}/yr.`
+    : 'Two plans: hosted AI, or bring your own key for less.';
   const primaryModelDetail = OPENROUTER_PRIMARY_MODEL_OPTIONS.find((option) => option.id === model)?.detail;
   const fastModelDetail = OPENROUTER_FAST_MODEL_OPTIONS.find((option) => option.id === fastModel)?.detail;
 

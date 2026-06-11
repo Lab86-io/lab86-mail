@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { B2C_ANNUAL_PRICE_USD, B2C_MONTHLY_PRICE_USD, resolveAiBudgetPolicy } from '@/lib/ai/budget';
+import {
+  B2C_ANNUAL_PRICE_USD,
+  B2C_BYOK_ANNUAL_PRICE_USD,
+  B2C_BYOK_MONTHLY_PRICE_USD,
+  B2C_MONTHLY_PRICE_USD,
+  resolveAiBudgetPolicy,
+} from '@/lib/ai/budget';
 import {
   normalizeOpenRouterFastModel,
   normalizeOpenRouterPrimaryModel,
@@ -75,6 +81,8 @@ export async function GET() {
       paidPlan: {
         monthlyUsd: B2C_MONTHLY_PRICE_USD,
         annualUsd: B2C_ANNUAL_PRICE_USD,
+        byokMonthlyUsd: B2C_BYOK_MONTHLY_PRICE_USD,
+        byokAnnualUsd: B2C_BYOK_ANNUAL_PRICE_USD,
       },
     },
   });
@@ -134,6 +142,21 @@ export async function POST(req: NextRequest) {
   if (provider === 'openai' || provider === 'anthropic') {
     model = undefined;
     normalizedFastModel = undefined;
+  }
+
+  // Fail at save time, not first use: BYOK is a paid-tier feature unless the
+  // subscriptions-paused escape hatch below is active.
+  if (mode === 'byok' && !isUserOpenRouterKeyRequired()) {
+    const entitlement = await getAiBillingEntitlement().catch(() => null);
+    if (entitlement && entitlement.plan === 'free') {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Using your own API key requires the Lab86 Mail BYOK plan ($${B2C_BYOK_MONTHLY_PRICE_USD}/month) or Pro. Upgrade from the pricing page.`,
+        },
+        { status: 402 },
+      );
+    }
   }
 
   if (isUserOpenRouterKeyRequired()) {

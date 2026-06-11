@@ -66,10 +66,11 @@ export async function backfillMailCorpusAccount({
   userId,
   accountId,
   pageToken,
-  limit = 50,
+  limit = 20,
 }: BackfillArgs): Promise<CorpusSyncResult> {
   const row = await getConnectedAccount(userId, accountId);
-  const batchLimit = clampLimit(limit, 50, 100);
+  // Nylas 429s message-object fetches above limit=20 (nyl.as/429-tmr).
+  const batchLimit = clampLimit(limit, 20, 20);
   await markSync(row, {
     status: 'backfilling',
     cursor: pageToken,
@@ -80,10 +81,12 @@ export async function backfillMailCorpusAccount({
     // page_token must be OMITTED when absent: the SDK serializes an explicit
     // undefined as the literal string "undefined", which every provider
     // rejects ("could not decode: undefined" / "Invalid page_token").
-    const page = await requireNylas().messages.list({
-      identifier: row.grantId,
-      queryParams: { limit: batchLimit, ...(pageToken ? { page_token: pageToken } : {}) } as any,
-    });
+    const page = await withRateLimitRetry(() =>
+      requireNylas().messages.list({
+        identifier: row.grantId,
+        queryParams: { limit: batchLimit, ...(pageToken ? { page_token: pageToken } : {}) } as any,
+      }),
+    );
     const messages = page.data.map((message) => corpusMessageFromNylas(row, message));
     const threads = corpusThreadsFromMessages(messages);
     const nextPageToken = page.nextCursor || undefined;
@@ -133,6 +136,22 @@ export async function backfillMailCorpusAccount({
   }
 }
 
+async function withRateLimitRetry<T>(operation: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (err: any) {
+      lastError = err;
+      const message = String(err?.message || '').toLowerCase();
+      const status = Number(err?.statusCode ?? err?.status);
+      if (status !== 429 && !message.includes('too many requests')) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * 2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+
 function isInvalidCursorError(err: any) {
   const message = String(err?.message || err || '').toLowerCase();
   return (
@@ -149,8 +168,8 @@ function isInvalidCursorError(err: any) {
 export async function runCorpusBackfill({
   userId,
   accountId,
-  maxPages = 40,
-  pageLimit = 100,
+  maxPages = 150,
+  pageLimit = 20,
 }: {
   userId: string;
   accountId: string;
@@ -182,24 +201,37 @@ const BACKFILL_KICK_DEBOUNCE_MS = 10 * 60_000;
 const BACKFILL_ACTIVE_WINDOW_MS = 5 * 60_000;
 
 // Fire-and-forget backfill kick used by the search path and OAuth callback.
-// Debounced in-process and skipped while another run is making fresh progress.
+// Ownership is decided by an atomic Convex claim (safe across instances); the
+// local Map is only a best-effort throttle so one instance doesn't spam the
+// claim mutation on every search.
 export function maybeKickCorpusBackfill(row: Pick<NylasAccountRow, 'userId' | 'accountId'>) {
   const key = `${row.userId}:${row.accountId}`;
   const last = backfillKickAt.get(key) || 0;
   if (Date.now() - last < BACKFILL_KICK_DEBOUNCE_MS) return;
-  // Reserve the slot immediately (so concurrent searches don't double-kick),
-  // but release it on failure — a crashed kick must not suppress retries for
-  // the whole debounce window.
-  backfillKickAt.set(key, Date.now());
   void (async () => {
     try {
-      const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, {
+      const account = await convexQuery<NylasAccountRow | null>(accountsApi.getConnectedAccount, {
         userId: row.userId,
         accountId: row.accountId,
       });
-      if (syncState?.corpusReady) return;
-      const updatedAt = Number(syncState?.updatedAt) || 0;
-      if (syncState?.status === 'backfilling' && Date.now() - updatedAt < BACKFILL_ACTIVE_WINDOW_MS) return;
+      if (!account || account.status !== 'connected') return;
+      const claim = await convexMutation<{ claimed: boolean; reason?: string }>(
+        mailCorpusApi.claimCorpusBackfill,
+        {
+          userId: row.userId,
+          accountId: row.accountId,
+          grantId: account.grantId,
+          provider: account.provider,
+          activeWindowMs: BACKFILL_ACTIVE_WINDOW_MS,
+        },
+      );
+      if (!claim.claimed) {
+        // Lost the claim (another instance owns it, or the corpus is ready):
+        // only suppress THIS instance briefly so retries aren't starved.
+        backfillKickAt.set(key, Date.now() - BACKFILL_KICK_DEBOUNCE_MS + 60_000);
+        return;
+      }
+      backfillKickAt.set(key, Date.now());
       await runCorpusBackfill({ userId: row.userId, accountId: row.accountId });
     } catch (err: any) {
       backfillKickAt.delete(key);
@@ -211,23 +243,25 @@ export function maybeKickCorpusBackfill(row: Pick<NylasAccountRow, 'userId' | 'a
 export async function reconcileMailCorpusAccount({
   userId,
   accountId,
-  limit = 50,
+  limit = 20,
 }: ReconcileArgs): Promise<CorpusSyncResult> {
   const row = await getConnectedAccount(userId, accountId);
   const prevState = await convexQuery<any | null>(mailCorpusApi.getSyncState, { userId, accountId }).catch(
     () => null,
   );
   const wasReady = Boolean(prevState?.corpusReady);
-  const batchLimit = clampLimit(limit, 50, 100);
+  const batchLimit = clampLimit(limit, 20, 20);
   await markSync(row, {
     status: 'syncing',
     progress: { stage: 'reconciling', limit: batchLimit },
   });
   try {
-    const page = await requireNylas().messages.list({
-      identifier: row.grantId,
-      queryParams: { limit: batchLimit } as any,
-    });
+    const page = await withRateLimitRetry(() =>
+      requireNylas().messages.list({
+        identifier: row.grantId,
+        queryParams: { limit: batchLimit } as any,
+      }),
+    );
     const messages = page.data.map((message) => corpusMessageFromNylas(row, message));
     const threads = corpusThreadsFromMessages(messages);
     await upsertCorpus(row, {
