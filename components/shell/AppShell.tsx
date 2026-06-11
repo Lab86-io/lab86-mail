@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
-import { HostedOnboarding } from '@/components/hosted/HostedOnboarding';
+import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { DailyReport } from '@/components/report/DailyReport';
@@ -135,7 +135,7 @@ export function AppShell() {
         <CommandPalette />
         <ShortcutsSheet />
         <ShortcutsBinding />
-        <HostedOnboarding />
+        <FirstRunRedirect />
       </TooltipProvider>
     );
   }
@@ -194,7 +194,7 @@ export function AppShell() {
       <CommandPalette />
       <ShortcutsSheet />
       <ShortcutsBinding />
-      <HostedOnboarding />
+      <FirstRunRedirect />
     </TooltipProvider>
   );
 }

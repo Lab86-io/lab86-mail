@@ -32,6 +32,7 @@ import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-l
 import { Ring } from '@/components/loading-ui/ring';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -39,8 +40,9 @@ import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sendi
 
 export default function SettingsPage() {
   return (
-    <main className="min-h-dvh bg-[var(--color-bg)] text-[var(--color-text)]">
-      <div className="mx-auto max-w-3xl px-5 py-8 sm:py-12">
+    <main className="app-paper relative min-h-dvh text-[var(--color-text)]">
+      <DotGridGlow />
+      <div className="relative z-10 mx-auto max-w-3xl px-5 py-8 sm:py-12">
         <header className="mb-8">
           <Link
             href="/"

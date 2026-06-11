@@ -574,6 +574,29 @@
       transparent 0
     );
   }
+
+  /* Cursor glow companion to .app-paper: the same dot lattice drawn in the
+     accent color and revealed only inside a soft circle around the pointer
+     (see components/ui/dot-grid-glow.tsx, which drives --glow-x/--glow-y). */
+  .dot-grid-glow {
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      color-mix(in srgb, var(--color-accent) 55%, transparent) 1.2px,
+      transparent 0
+    );
+    background-size: 24px 24px;
+    mask-image: radial-gradient(
+      240px circle at var(--glow-x, -400px) var(--glow-y, -400px),
+      black 0%,
+      transparent 72%
+    );
+    -webkit-mask-image: radial-gradient(
+      240px circle at var(--glow-x, -400px) var(--glow-y, -400px),
+      black 0%,
+      transparent 72%
+    );
+    transition: opacity 0.5s ease;
+  }
 }
 
 :root {
