@@ -97,6 +97,69 @@ dashboard sessions:
   Clerk, Stripe, OpenRouter, OpenAI, Anthropic, and any enabled model provider.
 - CodeRabbit: install the GitHub App on `Lab86-io/lab86-mail` so PR #1 receives a review.
 
+## Nylas Sandbox → Production Migration
+
+The production Railway env points at a dedicated Nylas app
+(`a0327d4f-cde6-4ebb-b49d-5baf9f366e31`, "Lab86 Mail Production"), but that app
+is still in the **sandbox** environment, which hard-caps at **5 connected
+grants**. Once full, new account connections fail with
+`Maximum number of sandbox grants reached for Application`. Audit current state
+any time with:
+
+```bash
+NYLAS_API_KEY=<prod key> bun scripts/nylas-provision.ts status
+```
+
+As of this writing the production app already has the callback, the webhook
+(`/api/nylas/webhook`), and connectors for google/microsoft/imap/icloud/ews
+created — so the connector/webhook wiring (step 5 below) is already done and the
+script will report everything `present`. **The only blocker is the sandbox
+environment itself.** Steps 1–4 are the real work; 5–6 are verify/cutover.
+
+You cannot flip `sandbox → production` via API or env — it is a dashboard +
+billing + OAuth process. Do it in this order (Google verification is the long
+pole; start it first):
+
+1. **Nylas paid plan → Production application.** In the Nylas dashboard, put the
+   org on a paid plan and create/convert to a production application. Production
+   apps have no 5-grant cap (billed per connected account beyond the plan
+   quota). Sandbox grants do **not** carry over to a new app — users reconnect
+   once after cutover.
+2. **Google Cloud (BYO OAuth, required in v3 production).** Create an OAuth
+   client + consent screen in a production Google Cloud project (keep dev/staging
+   in a separate project so test sign-ins don't burn production quota). Request
+   only implemented scopes — `gmail.modify` + `userinfo.email`; do **not**
+   request `mail.google.com`. Submit OAuth verification and the annual **CASA
+   Tier 2** assessment before public launch or at ~70 lifetime production Gmail
+   authorizations, whichever comes first.
+3. **Microsoft (Azure).** Register an Azure app (Mail.ReadWrite, Mail.Send,
+   offline_access, User.Read). Track Microsoft Partner Center publisher
+   verification separately from Google.
+4. **iCloud / IMAP.** No OAuth app — app-specific passwords only.
+5. **Configure the production Nylas app + webhook** (scriptable once 1–4 exist):
+
+   ```bash
+   NYLAS_API_KEY=<prod key> PUBLIC_URL=https://mail.lab86.io \
+   GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... \
+   MICROSOFT_CLIENT_ID=... MICROSOFT_CLIENT_SECRET=... \
+   SETUP_ICLOUD=1 \
+   bun scripts/nylas-provision.ts setup
+   ```
+
+   The script registers the `mail.lab86.io/api/nylas/callback` callback, creates
+   the Google/Microsoft/iCloud connectors, and creates the webhook against
+   `/api/nylas/webhook` (printing the one-time `webhook_secret`).
+6. **Railway production env cutover.** Set the production app's
+   `NYLAS_CLIENT_ID`, `NYLAS_CLIENT_SECRET`, `NYLAS_API_KEY`, and the
+   `NYLAS_WEBHOOK_SECRET` printed in step 5. `NYLAS_REDIRECT_URI` already points
+   at `https://mail.lab86.io/api/nylas/callback`. Redeploy and reconnect one
+   account to verify, then re-run `bun scripts/nylas-provision.ts status` to
+   confirm `environment: production` and the connectors/webhook are live.
+
+Stopgap while the above is in flight: delete a sandbox grant to free a slot
+(`DELETE /v3/grants/<id>` with the prod key, or revoke from the app's settings).
+This keeps you at the 5-grant cap and is for testing only.
+
 ## Railway Variables
 
 Set these in both Railway environments with environment-specific values:
