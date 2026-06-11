@@ -138,16 +138,31 @@ export async function backfillMailCorpusAccount({
   }
 }
 
-async function withRateLimitRetry<T>(operation: () => Promise<T>, attempts = 4): Promise<T> {
+// Retries transient upstream failures: 429 rate limits AND 5xx provider
+// outages (502/503/504, "service unavailable"). A brief Nylas/Google hiccup
+// during backfill must not permanently park the account in `error` state —
+// nothing re-kicks an errored account except a fresh search or reconnect.
+function isTransientUpstreamError(err: any): boolean {
+  const message = String(err?.message || '').toLowerCase();
+  const status = Number(err?.statusCode ?? err?.status);
+  if (status === 429 || (status >= 500 && status <= 599)) return true;
+  return (
+    message.includes('too many requests') ||
+    message.includes('service unavailable') ||
+    message.includes('bad gateway') ||
+    message.includes('gateway timeout') ||
+    message.includes('temporarily unavailable')
+  );
+}
+
+async function withRateLimitRetry<T>(operation: () => Promise<T>, attempts = 5): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await operation();
     } catch (err: any) {
       lastError = err;
-      const message = String(err?.message || '').toLowerCase();
-      const status = Number(err?.statusCode ?? err?.status);
-      if (status !== 429 && !message.includes('too many requests')) throw err;
+      if (!isTransientUpstreamError(err)) throw err;
       await new Promise((resolve) => setTimeout(resolve, 2_000 * 2 ** attempt));
     }
   }
