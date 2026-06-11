@@ -93,7 +93,7 @@ function MailboxesSection() {
       (query.state.data?.syncStates || []).some(
         (s: SyncState) => !s.corpusReady && s.status !== 'error' && s.status !== 'idle',
       )
-        ? 5_000
+        ? 15_000
         : false,
   });
 
