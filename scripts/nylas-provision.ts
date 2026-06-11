@@ -78,14 +78,11 @@ async function getApplication() {
 async function ensureCallback(app: any) {
   const uris: any[] = app.callback_uris || [];
   if (uris.some((u) => u.url === CALLBACK_URI)) return 'present';
-  await nylas('/applications', {
-    method: 'PATCH',
-    body: JSON.stringify({
-      callback_uris: [
-        ...uris.map((u) => ({ url: u.url, platform: u.platform || 'web' })),
-        { url: CALLBACK_URI, platform: 'web' },
-      ],
-    }),
+  // PATCH /applications silently ignores callback_uris; the real endpoint is
+  // the dedicated redirect-uris collection.
+  await nylas('/applications/redirect-uris', {
+    method: 'POST',
+    body: JSON.stringify({ url: CALLBACK_URI, platform: 'web' }),
   });
   return 'created';
 }
