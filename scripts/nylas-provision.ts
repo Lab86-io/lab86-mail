@@ -91,7 +91,8 @@ async function ensureCallback(app: any) {
 }
 
 async function ensureWebhook() {
-  const existing: any[] = (await nylas('/webhooks')) || [];
+  const listed = await nylas('/webhooks').catch(() => []);
+  const existing: any[] = Array.isArray(listed) ? listed : [];
   const match = existing.find((w) => w.webhook_url === WEBHOOK_URI);
   if (match) return { state: 'present', id: match.id };
   const created = await nylas('/webhooks', {
@@ -141,8 +142,10 @@ async function listGrants() {
 
 async function main() {
   const app = await getApplication();
-  const connectors: any[] = (await nylas('/connectors').catch(() => [])) || [];
-  const webhooks: any[] = (await nylas('/webhooks').catch(() => [])) || [];
+  const connectorsRaw = await nylas('/connectors').catch(() => []);
+  const connectors: any[] = Array.isArray(connectorsRaw) ? connectorsRaw : [];
+  const webhooksRaw = await nylas('/webhooks').catch(() => []);
+  const webhooks: any[] = Array.isArray(webhooksRaw) ? webhooksRaw : [];
   const grants = await listGrants();
 
   console.log('Application:');
