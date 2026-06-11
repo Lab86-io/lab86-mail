@@ -1,12 +1,10 @@
-import type { Pref } from '../shared/types';
-import { db, findOne, upsert } from './db';
+import { kvGet, kvUpsert } from './kv';
 
 export async function getPref(key: string): Promise<string | null> {
-  const row = await findOne<Pref>(db().prefs, { _id: key });
-  return row?.value ?? null;
+  const doc = await kvGet<{ value: string }>('pref', key);
+  return doc?.value ?? null;
 }
 
 export async function setPref(key: string, value: string) {
-  const doc: Pref = { _id: key, value };
-  await upsert(db().prefs, { _id: key }, doc);
+  await kvUpsert('pref', key, { value });
 }

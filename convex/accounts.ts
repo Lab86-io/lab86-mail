@@ -311,6 +311,7 @@ export const deleteUserCascade = mutation({
       'mailSyncStates',
       'mailWebhookEvents',
       'rateLimits',
+      'userDocs',
     ] as const;
 
     for (const table of userTables) {

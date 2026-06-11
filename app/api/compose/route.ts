@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -69,21 +70,27 @@ export async function POST(req: NextRequest) {
       } as NylasAttachment);
     }
 
-    const sent = await composeWithNylas({
-      userId: user.userId,
-      account,
-      mode,
-      to,
-      cc,
-      bcc,
-      subject,
-      body,
-      html,
-      threadId,
-      messageId,
-      attachments,
-    });
-    await cacheSentMessage(account, sent);
+    const sent = await runWithAiRequestContext(
+      { userId: user.userId, userEmail: user.email, userName: user.name, agent: 'user' },
+      async () => {
+        const message = await composeWithNylas({
+          userId: user.userId,
+          account,
+          mode,
+          to,
+          cc,
+          bcc,
+          subject,
+          body,
+          html,
+          threadId,
+          messageId,
+          attachments,
+        });
+        await cacheSentMessage(account, message);
+        return message;
+      },
+    );
     await writeAudit({
       tool: `compose_route:${mode || 'new'}:nylas`,
       userId: user.userId,

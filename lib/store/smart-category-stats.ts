@@ -1,13 +1,13 @@
 import { includeInSmartCategory, SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import type { SmartCategoryStat, Thread } from '../shared/types';
-import { db, findMany, upsert } from './db';
+import { kvList, kvUpsert } from './kv';
 import { listSmartLabels } from './smart-labels';
 import { listTrackedThreads } from './tracked-threads';
 
 export async function computeSmartCategoryStats(account?: string) {
   const accountKey = account || '__all__';
   const [threads, labels, tracked] = await Promise.all([
-    findMany<Thread>(db().threads, account ? { account } : {}, { sort: { lastDate: -1 }, limit: 5000 }),
+    kvList<Thread>('thread', { ref: account, limit: 1000 }),
     listSmartLabels(),
     listTrackedThreads({ limit: 1000 }),
   ]);
@@ -40,9 +40,9 @@ export async function computeSmartCategoryStats(account?: string) {
       tracked: matching.filter((thread) => trackedKeys.has(`${thread.account}:${thread._id}`)).length,
       computedAt,
       // Either bounded fetch hitting its cap means the numbers may be off.
-      approximate: threads.length >= 5000 || tracked.length >= 1000,
+      approximate: threads.length >= 1000 || tracked.length >= 1000,
     };
-    await upsert(db().smartCategoryStats, { _id: stat._id }, stat).catch((err) => {
+    await kvUpsert('categoryStat', stat._id, stat).catch((err) => {
       console.error(`Failed to upsert category stat ${stat._id}:`, err);
     });
     stats[category] = stat;

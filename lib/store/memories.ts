@@ -1,20 +1,21 @@
 import type { Memory } from '../shared/types';
-import { db, findMany, findOne, removeMany, upsert } from './db';
+import { kvDelete, kvGet, kvList, kvUpsert } from './kv';
 
 export async function rememberSender(email: string, notes: string) {
-  const doc: Memory = { email: email.toLowerCase(), notes, updatedAt: Date.now() };
-  await upsert(db().memories, { email: doc.email }, doc);
+  const key = email.toLowerCase();
+  const doc: Memory = { email: key, notes, updatedAt: Date.now() } as Memory;
+  await kvUpsert('memory', key, doc);
   return doc;
 }
 
 export async function recallSender(email: string): Promise<Memory | null> {
-  return await findOne<Memory>(db().memories, { email: email.toLowerCase() });
+  return await kvGet<Memory>('memory', email.toLowerCase());
 }
 
 export async function listMemories(): Promise<Memory[]> {
-  return await findMany<Memory>(db().memories, {}, { sort: { updatedAt: -1 } });
+  return await kvList<Memory>('memory', { limit: 500 });
 }
 
 export async function forgetSender(email: string) {
-  return await removeMany(db().memories, { email: email.toLowerCase() });
+  await kvDelete('memory', email.toLowerCase());
 }

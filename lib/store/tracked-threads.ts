@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { TrackedThread } from '../shared/types';
-import { db, findMany, findOne, upsert } from './db';
+import { kvGet, kvList, kvUpsert } from './kv';
 
 const now = () => Date.now();
 
+const pairRef = (account: string, threadId: string) => `${account}:${threadId}`;
+
 export async function getTrackedThread(account: string, threadId: string) {
-  return await findOne<TrackedThread>(db().trackedThreads, { account, threadId });
+  const rows = await kvList<TrackedThread>('trackedThread', { ref: pairRef(account, threadId), limit: 5 });
+  return rows[0] || null;
 }
 
 export async function getTrackedThreadById(id: string) {
-  return await findOne<TrackedThread>(db().trackedThreads, { _id: id });
+  return await kvGet<TrackedThread>('trackedThread', id);
 }
 
 export async function upsertTrackedThread(
@@ -38,9 +41,8 @@ export async function upsertTrackedThread(
     aiSuggestedResolved: input.aiSuggestedResolved ?? existing?.aiSuggestedResolved,
     createdAt: existing?.createdAt || ts,
     updatedAt: ts,
-    resolvedAt: input.resolvedAt ?? existing?.resolvedAt ?? null,
   };
-  await upsert(db().trackedThreads, { _id: next._id }, next);
+  await kvUpsert('trackedThread', next._id, next, pairRef(next.account, next.threadId));
   return next;
 }
 
@@ -55,20 +57,26 @@ export async function updateTrackedThread(id: string, patch: Partial<TrackedThre
     threadId: existing.threadId,
     updatedAt: now(),
   };
-  await upsert(db().trackedThreads, { _id: id }, next);
+  await kvUpsert('trackedThread', id, next, pairRef(next.account, next.threadId));
   return next;
 }
 
 export async function listTrackedThreads(
   options: { status?: TrackedThread['status']; includeResolved?: boolean; limit?: number } = {},
 ) {
-  const query: Record<string, unknown> = {};
-  if (options.status) query.status = options.status;
-  if (!options.includeResolved && !options.status) {
-    query.status = { $nin: ['resolved', 'dismissed'] };
+  const rows = await kvList<TrackedThread>('trackedThread', { limit: 1000 });
+  let filtered = rows;
+  if (options.status) {
+    filtered = filtered.filter((row) => row.status === options.status);
+  } else if (!options.includeResolved) {
+    filtered = filtered.filter((row) => row.status !== 'resolved' && row.status !== 'dismissed');
   }
-  return await findMany<TrackedThread>(db().trackedThreads, query, {
-    sort: { importance: 1, dueAt: 1, updatedAt: -1 },
-    limit: options.limit || 120,
-  });
+  // Mirror the old NeDB compound sort: importance asc, dueAt asc, updatedAt desc.
+  filtered.sort(
+    (a, b) =>
+      (a.importance || 2) - (b.importance || 2) ||
+      (a.dueAt ?? Number.POSITIVE_INFINITY) - (b.dueAt ?? Number.POSITIVE_INFINITY) ||
+      (b.updatedAt || 0) - (a.updatedAt || 0),
+  );
+  return filtered.slice(0, options.limit || 120);
 }

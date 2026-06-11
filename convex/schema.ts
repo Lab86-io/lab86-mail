@@ -236,6 +236,25 @@ export default defineSchema({
       filterFields: ['userId', 'accountId', 'grantId', 'provider', 'yearMonth'],
     }),
 
+  // Generic per-user document store backing all server-side app state that
+  // previously lived in the single-tenant NeDB files (memories, smart labels,
+  // tracked threads, drafts, chat, prefs, caches, ...). `kind` namespaces the
+  // record type, `key` is the stable identity within a kind, and `ref` is an
+  // optional secondary lookup (e.g. account or threadId).
+  userDocs: defineTable({
+    userId: v.string(),
+    kind: v.string(),
+    key: v.string(),
+    ref: v.optional(v.string()),
+    doc: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_kind', ['userId', 'kind'])
+    .index('by_user_kind_key', ['userId', 'kind', 'key'])
+    .index('by_user_kind_ref', ['userId', 'kind', 'ref']),
+
   mailSyncStates: defineTable({
     userId: v.string(),
     accountId: v.string(),

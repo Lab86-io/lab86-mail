@@ -7,6 +7,7 @@ export interface ToolContext {
   account?: string;
   userId?: string | null;
   userEmail?: string | null;
+  userName?: string | null;
 }
 
 export interface ToolDefinition<
@@ -32,7 +33,7 @@ export type AnyTool = ToolDefinition<any, any>;
 
 export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext) {
   return runWithAiRequestContext(
-    { userId: ctx.userId, userEmail: ctx.userEmail, agent: ctx.agent },
+    { userId: ctx.userId, userEmail: ctx.userEmail, userName: ctx.userName, agent: ctx.agent },
     async () => {
       let parsed: unknown;
       try {

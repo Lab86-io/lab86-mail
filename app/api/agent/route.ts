@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
       extraSystem: body.extraSystem,
       userId: user.userId,
       userEmail: user.email,
+      userName: user.name,
     });
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {

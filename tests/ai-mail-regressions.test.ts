@@ -569,118 +569,126 @@ describe('hosted OpenRouter model options', () => {
 
 describe('AI tools on fake noreply mail with no provider configured', () => {
   test('local fallback paths stay available for all agent-facing AI helpers', async () => {
-    const { upsertMessage } = await import('../lib/store/messages');
-    const {
-      bulkTriage,
-      classifyThreads,
-      draftReply,
-      extractActionItems,
-      nlSearch,
-      preSendCritique,
-      summarizeThread,
-      translateThread,
-      triageThread,
-    } = await import('../lib/tools/ai');
+    // Stores are tenancy-scoped via the ambient request context; tool handlers
+    // called directly (outside invokeTool) need it established explicitly.
+    const { runWithAiRequestContext } = await import('../lib/ai/context');
+    await runWithAiRequestContext(
+      { userId: 'test_user', userEmail: 'jakob@example.test', agent: 'codex' },
+      async () => {
+        const { upsertMessage } = await import('../lib/store/messages');
+        const {
+          bulkTriage,
+          classifyThreads,
+          draftReply,
+          extractActionItems,
+          nlSearch,
+          preSendCritique,
+          summarizeThread,
+          translateThread,
+          triageThread,
+        } = await import('../lib/tools/ai');
 
-    const account = 'jakob@example.test';
-    const threadId = 'thread-noreply-ai';
-    await upsertMessage({
-      _id: 'msg-noreply-ai',
-      threadId,
-      account,
-      subject: 'Automated account notice',
-      from: 'No Reply <noreply@example.test>',
-      to: 'Jakob <jakob@example.test>',
-      cc: '',
-      bcc: '',
-      date: Date.parse('2026-06-03T12:00:00.000Z'),
-      snippet: 'Your fake account notice is ready.',
-      textBody: 'Your fake account notice is ready. No response is needed.',
-      htmlBody: '',
-      labels: ['INBOX', 'UNREAD', 'CATEGORY_UPDATES'],
-      attachments: [],
-      headers: {},
-      cachedAt: Date.now(),
-    });
+        const account = 'jakob@example.test';
+        const threadId = 'thread-noreply-ai';
+        await upsertMessage({
+          _id: 'msg-noreply-ai',
+          threadId,
+          account,
+          subject: 'Automated account notice',
+          from: 'No Reply <noreply@example.test>',
+          to: 'Jakob <jakob@example.test>',
+          cc: '',
+          bcc: '',
+          date: Date.parse('2026-06-03T12:00:00.000Z'),
+          snippet: 'Your fake account notice is ready.',
+          textBody: 'Your fake account notice is ready. No response is needed.',
+          htmlBody: '',
+          labels: ['INBOX', 'UNREAD', 'CATEGORY_UPDATES'],
+          attachments: [],
+          headers: {},
+          cachedAt: Date.now(),
+        });
 
-    const summary = await summarizeThread.handler({ account, threadId }, { agent: 'codex' });
-    expect(summary.model).toBe('local');
-    expect(summary.summary).toContain('Automated account notice');
+        const summary = await summarizeThread.handler({ account, threadId }, { agent: 'codex' });
+        expect(summary.model).toBe('local');
+        expect(summary.summary).toContain('Automated account notice');
 
-    const triage = await triageThread.handler({ account, threadId }, { agent: 'codex' });
-    expect(triage.model).toBe('local');
-    expect(triage.action).toBe('read');
+        const triage = await triageThread.handler({ account, threadId }, { agent: 'codex' });
+        expect(triage.model).toBe('local');
+        expect(triage.action).toBe('read');
 
-    const draft = await draftReply.handler(
-      {
-        account,
-        threadId,
-        instructions: 'politely confirm no action is needed',
-        tone: 'direct',
-      },
-      { agent: 'codex' },
-    );
-    expect(draft.model).toBe('local');
-    expect(draft.draft).toContain('no action is needed');
-
-    const batch = await bulkTriage.handler(
-      {
-        items: [
+        const draft = await draftReply.handler(
           {
-            id: threadId,
-            from: 'noreply@example.test',
-            subject: 'Automated account notice',
-            snippet: 'No response is needed.',
-          },
-        ],
-      },
-      { agent: 'codex' },
-    );
-    expect(batch.model).toBe('local');
-    expect(batch.verdicts[0].id).toBe(threadId);
-
-    const classified = await classifyThreads.handler(
-      {
-        threads: [
-          {
-            id: threadId,
             account,
-            from: 'noreply@example.test',
-            subject: 'Automated account notice',
-            snippet: 'No response is needed.',
-            labels: ['CATEGORY_UPDATES'],
-            unread: true,
+            threadId,
+            instructions: 'politely confirm no action is needed',
+            tone: 'direct',
           },
-        ],
+          { agent: 'codex' },
+        );
+        expect(draft.model).toBe('local');
+        expect(draft.draft).toContain('no action is needed');
+
+        const batch = await bulkTriage.handler(
+          {
+            items: [
+              {
+                id: threadId,
+                from: 'noreply@example.test',
+                subject: 'Automated account notice',
+                snippet: 'No response is needed.',
+              },
+            ],
+          },
+          { agent: 'codex' },
+        );
+        expect(batch.model).toBe('local');
+        expect(batch.verdicts[0].id).toBe(threadId);
+
+        const classified = await classifyThreads.handler(
+          {
+            threads: [
+              {
+                id: threadId,
+                account,
+                from: 'noreply@example.test',
+                subject: 'Automated account notice',
+                snippet: 'No response is needed.',
+                labels: ['CATEGORY_UPDATES'],
+                unread: true,
+              },
+            ],
+          },
+          { agent: 'codex' },
+        );
+        expect(classified.model).toBe('local');
+        expect(classified.verdicts[0].id).toBe(threadId);
+
+        const actions = await extractActionItems.handler({ account, threadId }, { agent: 'codex' });
+        expect(actions.model).toBe('local');
+        expect(actions.items).toEqual([]);
+
+        const translation = await translateThread.handler(
+          { account, threadId, language: 'english' },
+          { agent: 'codex' },
+        );
+        expect(translation.model).toBe('none');
+        expect(translation.translation).toBe('');
+
+        const critique = await preSendCritique.handler(
+          { draftBody: 'thanks, no action needed.', threadContext: 'fake noreply notice' },
+          { agent: 'codex' },
+        );
+        expect(critique.model).toBe('local');
+        expect(critique.verdict).toBe('ok');
+
+        const search = await nlSearch.handler(
+          { description: 'from noreply@example.test newer than 30 days' },
+          { agent: 'codex' },
+        );
+        expect(search.model).toBe('local');
+        expect(search.query).toBe('from noreply@example.test newer than 30 days');
       },
-      { agent: 'codex' },
     );
-    expect(classified.model).toBe('local');
-    expect(classified.verdicts[0].id).toBe(threadId);
-
-    const actions = await extractActionItems.handler({ account, threadId }, { agent: 'codex' });
-    expect(actions.model).toBe('local');
-    expect(actions.items).toEqual([]);
-
-    const translation = await translateThread.handler(
-      { account, threadId, language: 'english' },
-      { agent: 'codex' },
-    );
-    expect(translation.model).toBe('none');
-    expect(translation.translation).toBe('');
-
-    const critique = await preSendCritique.handler(
-      { draftBody: 'thanks, no action needed.', threadContext: 'fake noreply notice' },
-      { agent: 'codex' },
-    );
-    expect(critique.model).toBe('local');
-    expect(critique.verdict).toBe('ok');
-
-    const search = await nlSearch.handler(
-      { description: 'from noreply@example.test newer than 30 days' },
-      { agent: 'codex' },
-    );
-    expect(search.model).toBe('local');
-    expect(search.query).toBe('from noreply@example.test newer than 30 days');
   });
 });

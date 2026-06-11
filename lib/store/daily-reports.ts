@@ -1,24 +1,24 @@
 import type { DailyReport } from '../shared/types';
-import { db, findMany, findOne, upsert } from './db';
+import { kvGet, kvList, kvUpsert } from './kv';
 
 export async function saveDailyReport(report: DailyReport) {
-  await upsert(db().dailyReports, { _id: report._id }, report);
+  await kvUpsert('dailyReport', report._id, report);
   return report;
 }
 
 export async function getDailyReport(id: string) {
-  return await findOne<DailyReport>(db().dailyReports, { _id: id });
+  return await kvGet<DailyReport>('dailyReport', id);
 }
 
 export async function getLatestDailyReport(kind?: DailyReport['kind']) {
-  const query = kind ? { kind } : {};
-  const reports = await findMany<DailyReport>(db().dailyReports, query, {
-    sort: { generatedAt: -1 },
-    limit: 1,
-  });
-  return reports[0] || null;
+  const reports = await kvList<DailyReport>('dailyReport', { limit: 60 });
+  const matching = kind ? reports.filter((report) => report.kind === kind) : reports;
+  matching.sort((a, b) => b.generatedAt - a.generatedAt);
+  return matching[0] || null;
 }
 
 export async function listDailyReports(limit = 20) {
-  return await findMany<DailyReport>(db().dailyReports, {}, { sort: { generatedAt: -1 }, limit });
+  const reports = await kvList<DailyReport>('dailyReport', { limit: Math.max(limit, 60) });
+  reports.sort((a, b) => b.generatedAt - a.generatedAt);
+  return reports.slice(0, limit);
 }

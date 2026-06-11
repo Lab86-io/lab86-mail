@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { describeProvider, hasAi } from '@/lib/ai/client';
+import { runWithAiRequestContext } from '@/lib/ai/context';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import {
   isLab86AiDisabled,
@@ -23,9 +24,9 @@ export async function GET() {
   let accounts: any = { accounts: [] };
   const user = await getCurrentUser().catch(() => null);
   try {
-    accounts = await listAccounts.handler(
-      {},
-      { agent: 'user', userId: user?.userId, userEmail: user?.email },
+    accounts = await runWithAiRequestContext(
+      { userId: user?.userId, userEmail: user?.email, agent: 'user' },
+      () => listAccounts.handler({}, { agent: 'user', userId: user?.userId, userEmail: user?.email }),
     );
   } catch {}
   return NextResponse.json({
