@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 
 export default function SettingsPage() {
   return (
@@ -55,6 +56,7 @@ export default function SettingsPage() {
         </header>
         <div className="space-y-10">
           <MailboxesSection />
+          <SendingSection />
           <AiSection />
           <AccountSection />
         </div>
@@ -69,6 +71,54 @@ function SectionHeading({ title, blurb }: { title: string; blurb: string }) {
       <h2 className="text-[16px] font-semibold tracking-tight">{title}</h2>
       <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{blurb}</p>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sending
+// ---------------------------------------------------------------------------
+
+function SendingSection() {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['prefs'],
+    queryFn: async () => (await fetchJson('/api/prefs')).prefs as { undoSendSeconds: number },
+  });
+  const undoSendSeconds = data?.undoSendSeconds ?? DEFAULT_UNDO_SEND_SECONDS;
+
+  const save = useMutation({
+    mutationFn: async (seconds: number) => postJson('/api/prefs', { undoSendSeconds: seconds }),
+    onSuccess: () => {
+      toast.success('Saved');
+      qc.invalidateQueries({ queryKey: ['prefs'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not save'),
+  });
+
+  return (
+    <section>
+      <SectionHeading title="Sending" blurb="How long a sent email is held so you can change your mind." />
+      <div className="flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
+        <div>
+          <div className="text-[13px] font-medium">Undo send window</div>
+          <div className="text-[12px] text-[var(--color-text-muted)]">
+            Sends are held on the server for this long; an Undo toast lets you cancel.
+          </div>
+        </div>
+        <Select value={String(undoSendSeconds)} onValueChange={(value) => save.mutate(Number(value))}>
+          <SelectTrigger size="sm" className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="end">
+            {UNDO_SEND_CHOICES.map((choice) => (
+              <SelectItem key={choice.value} value={String(choice.value)}>
+                {choice.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </section>
   );
 }
 

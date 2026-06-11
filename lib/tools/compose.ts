@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { sendNylasMessage } from '../nylas/provider';
+import { listNylasScheduledMessages, sendNylasMessage, stopNylasScheduledMessage } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
 import type { Draft } from '../shared/types';
 import {
@@ -294,28 +294,54 @@ export const listDraftsTool = defineTool({
 export const scheduleSend = defineTool({
   name: 'schedule_send',
   description:
-    'Schedule a send for a future time by persisting it as a draft with scheduledFor. A worker polls and sends when due.',
+    'Schedule an email to send at a future time (provider-side via Nylas send_at). Returns a scheduleId usable with cancel_scheduled.',
   category: 'compose',
   mutating: true,
   input: SendBase.extend({ scheduledFor: z.number().describe('Epoch ms when to send') }),
-  output: z.object({ ok: z.boolean(), draftId: z.string().optional() }),
-  async handler(args) {
-    const draft: Draft = { ...args, updatedAt: Date.now() };
-    const saved = await saveDraftRecord(draft);
-    return { ok: true, draftId: saved._id };
+  output: z.object({ ok: z.boolean(), scheduleId: z.string().optional(), messageId: z.string().optional() }),
+  async handler({ account, to, cc, bcc, subject, body, html, scheduledFor }, ctx) {
+    if (scheduledFor < Date.now() + 60_000) {
+      throw new Error('scheduledFor must be at least a minute in the future.');
+    }
+    const sent = await sendWithNylas({
+      userId: ctx.userId,
+      account,
+      to,
+      cc,
+      bcc,
+      subject,
+      body,
+      html,
+      sendAt: scheduledFor,
+    });
+    return { ok: true, scheduleId: (sent as any).scheduleId, messageId: sent._id };
   },
 });
 
 export const cancelScheduled = defineTool({
   name: 'cancel_scheduled',
-  description: 'Cancel a scheduled send by draft id.',
+  description: 'Cancel a scheduled send by its Nylas scheduleId (see list_scheduled / schedule_send).',
   category: 'compose',
   mutating: true,
-  input: z.object({ draftId: z.string() }),
+  input: z.object({ account: z.string(), scheduleId: z.string() }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ draftId }) {
-    await deleteDraftRecord(draftId);
+  async handler({ account, scheduleId }, ctx) {
+    const result = await stopNylasScheduledMessage({ userId: ctx.userId, account, scheduleId });
+    if (!result) throw new Error('Connect this mailbox with Nylas before cancelling scheduled sends.');
     return { ok: true };
+  },
+});
+
+export const listScheduled = defineTool({
+  name: 'list_scheduled',
+  description: 'List emails scheduled to send later on this account.',
+  category: 'compose',
+  mutating: false,
+  input: z.object({ account: z.string() }),
+  output: z.object({ scheduled: z.array(z.any()) }),
+  async handler({ account }, ctx) {
+    const scheduled = await listNylasScheduledMessages({ userId: ctx.userId, account });
+    return { scheduled: scheduled?.schedules ?? [] };
   },
 });
 

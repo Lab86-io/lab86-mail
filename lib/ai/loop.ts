@@ -32,6 +32,7 @@ const AGENT_TOOL_NAMES = new Set([
   'list_drafts',
   'schedule_send',
   'cancel_scheduled',
+  'list_scheduled',
   'undo_send',
   'summarize_thread',
   'triage_thread',

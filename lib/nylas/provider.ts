@@ -682,7 +682,42 @@ export async function sendNylasMessage({
       attachments,
     },
   });
-  return normalizeNylasMessage(result.data, row.accountId);
+  const normalized = normalizeNylasMessage(result.data, row.accountId);
+  // Scheduled sends come back with a schedule id used to cancel them later.
+  const scheduleId = (result.data as any)?.scheduleId ?? (result.data as any)?.schedule_id;
+  if (scheduleId !== undefined) (normalized as any).scheduleId = String(scheduleId);
+  return normalized;
+}
+
+export async function listNylasScheduledMessages({
+  userId,
+  account,
+}: {
+  userId?: string | null;
+  account: string;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await requireNylas().messages.listScheduledMessages({ identifier: row.grantId });
+  return result.data;
+}
+
+export async function stopNylasScheduledMessage({
+  userId,
+  account,
+  scheduleId,
+}: {
+  userId?: string | null;
+  account: string;
+  scheduleId: string;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await requireNylas().messages.stopScheduledMessage({
+    identifier: row.grantId,
+    scheduleId,
+  });
+  return result.data;
 }
 
 export async function downloadNylasAttachment({
