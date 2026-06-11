@@ -720,6 +720,30 @@ export async function listNylasScheduledMessages({
   return result.data;
 }
 
+// Real status of one provider-side scheduled send (the undo-window path).
+// Nylas status codes: pending → close_to_send_time → sucess/success | failed | cancelled.
+export async function getNylasScheduledSendStatus({
+  userId,
+  account,
+  scheduleId,
+}: {
+  userId?: string | null;
+  account: string;
+  scheduleId: string;
+}): Promise<'pending' | 'sent' | 'failed' | 'cancelled' | null> {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await requireNylas().messages.findScheduledMessage({
+    identifier: row.grantId,
+    scheduleId,
+  });
+  const code = String(result.data?.status?.code || '').toLowerCase();
+  if (/succ?ess/.test(code)) return 'sent';
+  if (/fail|error/.test(code)) return 'failed';
+  if (/cancel/.test(code)) return 'cancelled';
+  return 'pending';
+}
+
 export async function stopNylasScheduledMessage({
   userId,
   account,

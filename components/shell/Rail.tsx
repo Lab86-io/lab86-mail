@@ -1,36 +1,19 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  AlarmClock,
-  Archive,
-  Calendar,
-  ChevronsUpDown,
-  CreditCard,
-  Flag,
-  Inbox,
-  Keyboard,
-  KeyRound,
-  Layers,
-  MailOpen,
-  MessageCircle,
-  Newspaper,
-  Pencil,
-  Plus,
-  Receipt,
-  Send,
-  Settings2,
-  Star,
-  Terminal,
-  Trash2,
-  UserRound,
-  UsersRound,
-} from 'lucide-react';
+import { ChevronsUpDown, Keyboard, Newspaper, Terminal, UsersRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { HostedSettingsButton } from '@/components/hosted/HostedSettings';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { AlarmClockIcon } from '@/components/ui/alarm-clock';
+import { ArchiveIcon } from '@/components/ui/archive';
 import { Badge } from '@/components/ui/badge';
+import { BellIcon } from '@/components/ui/bell';
+import { BookmarkIcon } from '@/components/ui/bookmark';
+import { CalendarDaysIcon } from '@/components/ui/calendar-days';
+import { CreditCardIcon } from '@/components/ui/credit-card';
+import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -41,6 +24,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { FlameIcon } from '@/components/ui/flame';
+import { KeyIcon } from '@/components/ui/key';
+import { LayersIcon } from '@/components/ui/layers';
+import { MailCheckIcon } from '@/components/ui/mail-check';
+import { MessageCircleIcon } from '@/components/ui/message-circle';
+import { PlusIcon } from '@/components/ui/plus';
+import { ReceiptIcon } from '@/components/ui/receipt';
+import { rowIcon } from '@/components/ui/row-icon';
+import { SendIcon } from '@/components/ui/send';
+import { SettingsIcon } from '@/components/ui/settings';
 import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
@@ -58,7 +51,9 @@ import {
   SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar';
+import { SquarePenIcon } from '@/components/ui/square-pen';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { UserIcon } from '@/components/ui/user';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
@@ -70,17 +65,19 @@ interface MailboxItem {
   Icon: any;
 }
 
+// Animated registry icons (lucide-animated): each carries its own unique
+// hover animation, triggered by row hover via the rowIcon adapter.
 const MAILBOXES: MailboxItem[] = [
-  { query: QUICK_SEARCH_QUERIES.unread, label: 'Unread', Icon: MailOpen },
-  { query: QUICK_SEARCH_QUERIES.starred, label: 'Starred', Icon: Star },
-  { query: QUICK_SEARCH_QUERIES.important, label: 'Important', Icon: Flag },
-  { query: QUICK_SEARCH_QUERIES.attachments, label: 'Attachments', Icon: Layers },
-  { query: QUICK_SEARCH_QUERIES.thisWeek, label: 'This week', Icon: Calendar },
-  { query: QUICK_SEARCH_QUERIES.sent, label: 'Sent', Icon: Send },
-  { query: QUICK_SEARCH_QUERIES.drafts, label: 'Drafts', Icon: Pencil },
-  { query: QUICK_SEARCH_QUERIES.allMail, label: 'All mail', Icon: Archive },
-  { query: 'label:MailOS/Snoozed', label: 'Snoozed', Icon: AlarmClock },
-  { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash', Icon: Trash2 },
+  { query: QUICK_SEARCH_QUERIES.unread, label: 'Unread', Icon: rowIcon(BellIcon) },
+  { query: QUICK_SEARCH_QUERIES.starred, label: 'Starred', Icon: rowIcon(BookmarkIcon) },
+  { query: QUICK_SEARCH_QUERIES.important, label: 'Important', Icon: rowIcon(FlameIcon) },
+  { query: QUICK_SEARCH_QUERIES.attachments, label: 'Attachments', Icon: rowIcon(LayersIcon) },
+  { query: QUICK_SEARCH_QUERIES.thisWeek, label: 'This week', Icon: rowIcon(CalendarDaysIcon) },
+  { query: QUICK_SEARCH_QUERIES.sent, label: 'Sent', Icon: rowIcon(SendIcon) },
+  { query: QUICK_SEARCH_QUERIES.drafts, label: 'Drafts', Icon: rowIcon(SquarePenIcon) },
+  { query: QUICK_SEARCH_QUERIES.allMail, label: 'All mail', Icon: rowIcon(ArchiveIcon) },
+  { query: 'label:MailOS/Snoozed', label: 'Snoozed', Icon: rowIcon(AlarmClockIcon) },
+  { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash', Icon: rowIcon(DeleteIcon) },
 ];
 
 export const ALL_ACCOUNTS = '__all__';
@@ -89,38 +86,38 @@ const SMART_CATEGORIES = [
   {
     id: 'main',
     label: 'Main',
-    Icon: Inbox,
+    Icon: rowIcon(MailCheckIcon),
     help: 'Personal human conversations, plus only urgent unread automated exceptions.',
   },
   {
     id: 'needs_reply',
     label: 'Needs Reply',
-    Icon: MessageCircle,
+    Icon: rowIcon(MessageCircleIcon),
     help: 'Human conversations likely worth a response.',
   },
   {
     id: 'codes',
     label: 'Codes',
-    Icon: KeyRound,
+    Icon: rowIcon(KeyIcon),
     help: 'Verification codes, login links, and account security.',
   },
   {
     id: 'orders',
     label: 'Orders',
-    Icon: Receipt,
+    Icon: rowIcon(ReceiptIcon),
     help: 'Receipts, shipping, refunds, returns, bookings, and order problems.',
   },
   {
     id: 'finance_admin',
     label: 'Finance/Admin',
-    Icon: CreditCard,
+    Icon: rowIcon(CreditCardIcon),
     help: 'Billing, legal, contracts, tax, and admin.',
   },
-  { id: 'review', label: 'Review', Icon: UserRound, help: 'Uncertain mail that needs a decision.' },
+  { id: 'review', label: 'Review', Icon: rowIcon(UserIcon), help: 'Uncertain mail that needs a decision.' },
   {
     id: 'noise',
     label: 'Noise',
-    Icon: Trash2,
+    Icon: rowIcon(DeleteIcon),
     help: 'Bulk, subscribed, platform, publisher, rewards, and promo mail.',
   },
 ];
@@ -267,7 +264,7 @@ export function Rail() {
                   'var(--color-accent-shine-3)',
                 ]}
               />
-              <Plus />
+              <PlusIcon size={16} />
               <span>Compose</span>
               <span className="ml-auto text-[10px] text-[var(--color-accent-foreground)]/75">c</span>
             </SidebarMenuButton>
@@ -335,7 +332,7 @@ export function Rail() {
               className="ml-auto grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:hidden"
               title="Smart label settings"
             >
-              <Settings2 className="size-3" />
+              <SettingsIcon size={12} />
             </button>
           </SidebarGroupLabel>
           <SidebarGroupContent>

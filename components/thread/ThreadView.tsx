@@ -2,29 +2,21 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import {
-  Archive,
-  ChevronDown,
-  ChevronRight,
-  Download,
-  ExternalLink,
-  Forward,
-  Mail,
-  Reply,
-  Search,
-  Trash2,
-  UserRound,
-  X,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, ExternalLink, Mail, Search, UserRound, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { CornerUpLeftIcon } from '@/components/ui/corner-up-left';
+import { CornerUpRightIcon } from '@/components/ui/corner-up-right';
+import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RowIcon } from '@/components/ui/row-icon';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
@@ -336,7 +328,13 @@ export function ThreadView() {
   const activeNonce = composeForThisThread?.nonce ?? 0;
 
   return (
-    <div className="flex h-full flex-col bg-[var(--color-bg)]">
+    <motion.div
+      key={`${account}:${threadId}`}
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      className="flex h-full flex-col bg-[var(--color-bg)]"
+    >
       <header
         className={cn(
           '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
@@ -365,7 +363,7 @@ export function ThreadView() {
             className="gap-1 hover:bg-[var(--color-bg-subtle)]"
             title="Reply (r)"
           >
-            <Reply className="h-3.5 w-3.5" />
+            <RowIcon icon={CornerUpLeftIcon} size={14} />
             <span className="hidden @[520px]:inline">Reply</span>
           </Button>
           <Button
@@ -377,7 +375,7 @@ export function ThreadView() {
             className="gap-1 hover:bg-[var(--color-bg-subtle)]"
             title="Reply all"
           >
-            <Reply className="h-3.5 w-3.5" />
+            <RowIcon icon={CornerUpLeftIcon} size={14} />
             <span className="hidden @[520px]:inline">Reply all</span>
           </Button>
           <Button
@@ -389,15 +387,15 @@ export function ThreadView() {
             className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
             title="Forward"
           >
-            <Forward className="h-3.5 w-3.5" />
+            <RowIcon icon={CornerUpRightIcon} size={14} />
             <span className="hidden @[520px]:inline">Forward</span>
           </Button>
           <span className="mx-1 h-5 w-px bg-[var(--color-border)]" aria-hidden />
           <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
-            <Archive className="h-3.5 w-3.5" />
+            <RowIcon icon={ArchiveIcon} size={14} />
           </IconBtn>
           <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
-            <Trash2 className="h-3.5 w-3.5" />
+            <RowIcon icon={DeleteIcon} size={14} />
           </IconBtn>
           <Button
             asChild
@@ -466,7 +464,7 @@ export function ThreadView() {
           </div>
         </LayoutGroup>
       </div>
-    </div>
+    </motion.div>
   );
 }
 

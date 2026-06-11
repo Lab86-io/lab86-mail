@@ -13,12 +13,10 @@ import {
   Eye,
   Gauge,
   Globe,
-  History,
   Languages,
   ListChecks,
   Mail,
   MailOpen,
-  MessagesSquare,
   Pencil,
   Plus,
   ScrollText,
@@ -37,7 +35,6 @@ import { motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
-import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
@@ -49,9 +46,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { HistoryIcon } from '@/components/ui/history';
 import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { Message, MessageContent } from '@/components/ui/message';
+import { MessageSquareIcon } from '@/components/ui/message-square';
+import { PlusIcon } from '@/components/ui/plus';
 import {
   PromptInput,
   PromptInputAction,
@@ -60,6 +60,7 @@ import {
 } from '@/components/ui/prompt-input';
 import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
+import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
 import { useClientStore } from '@/lib/client-state';
 import { formatDate } from '@/lib/shared/format';
@@ -227,8 +228,8 @@ export function AIBarTrigger() {
       title="Ask Assistant (⌘K)"
       className="ask-assistant-glow group absolute bottom-4 right-4 z-30 flex items-center gap-2 overflow-hidden rounded-full bg-[var(--color-bg-elevated)] px-4 py-2 text-[12.5px] font-medium text-[var(--color-text)]"
     >
-      {/* Magic UI traveling-light border + the pulsing outer glow (CSS class). */}
-      <BorderBeam size={64} duration={6} borderWidth={1.5} />
+      {/* Magic UI traveling light inside the hairline ring (CSS class). */}
+      <BorderBeam size={56} duration={9} borderWidth={1} />
       <span>Ask Assistant</span>
       <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1 py-px font-mono text-[9.5px] text-[var(--color-text-faint)]">
         ⌘K
@@ -503,11 +504,7 @@ export function AIBarSidebar() {
 
       <header className="flex items-center justify-between gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
-          <AnimatedIcon
-            as={MessagesSquare}
-            variant="wiggle"
-            className="size-3.5 shrink-0 text-[var(--color-accent)]"
-          />
+          <RowIcon icon={MessageSquareIcon} size={14} className="text-[var(--color-accent)]" />
           <span className="truncate font-medium text-[var(--color-text)]">Ask Assistant</span>
         </div>
         <div className="flex items-center gap-0.5">
@@ -518,7 +515,7 @@ export function AIBarSidebar() {
             title="New chat"
             className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
           >
-            <Plus className="h-3.5 w-3.5" />
+            <RowIcon icon={PlusIcon} size={14} />
             <span className="sr-only">New chat</span>
           </Button>
           <DropdownMenu>
@@ -529,7 +526,7 @@ export function AIBarSidebar() {
                 title="Chat history"
                 className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
               >
-                <History className="h-3.5 w-3.5" />
+                <RowIcon icon={HistoryIcon} size={14} />
                 <span className="sr-only">Chat history</span>
               </Button>
             </DropdownMenuTrigger>

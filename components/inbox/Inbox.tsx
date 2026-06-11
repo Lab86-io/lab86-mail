@@ -4,19 +4,7 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import {
-  Archive,
-  Ban,
-  CheckCircle2,
-  Gauge,
-  Inbox as InboxIcon,
-  MoreHorizontal,
-  RefreshCw,
-  Search,
-  Tag,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Ban, CheckCircle2, Inbox as InboxIcon, MoreHorizontal, Search, Tag, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -31,11 +19,13 @@ import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -49,8 +39,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { GaugeIcon } from '@/components/ui/gauge';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RefreshCWIcon } from '@/components/ui/refresh-cw';
+import { RowIcon } from '@/components/ui/row-icon';
+import { SearchIcon } from '@/components/ui/search';
 import { ShineBorder } from '@/components/ui/shine-border';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
@@ -626,7 +620,7 @@ export function Inbox() {
               {translating ? (
                 <OrbitRing className="size-4 text-[var(--color-accent)]" />
               ) : (
-                <Search className="size-4 text-[var(--color-text-faint)]" />
+                <RowIcon icon={SearchIcon} size={16} className="text-[var(--color-text-faint)]" />
               )}
             </InputGroupAddon>
             <InputGroupInput
@@ -667,7 +661,7 @@ export function Inbox() {
             {isFetching && !isFetchingNextPage ? (
               <Ring className="size-4" />
             ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RowIcon icon={RefreshCWIcon} size={14} />
             )}
           </Button>
         </div>
@@ -715,7 +709,7 @@ export function Inbox() {
               onClick={() => bulkArchive.mutate(selectedIds)}
               className="ml-2 flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
             >
-              <Archive className="h-3 w-3" />
+              <RowIcon icon={ArchiveIcon} size={12} />
               Archive
             </button>
             <button
@@ -723,7 +717,7 @@ export function Inbox() {
               onClick={() => bulkTrash.mutate(selectedIds)}
               className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
             >
-              <Trash2 className="h-3 w-3" />
+              <RowIcon icon={DeleteIcon} size={12} />
               Trash
             </button>
             <button
@@ -731,7 +725,7 @@ export function Inbox() {
               onClick={() => bulkTriage.mutate()}
               className="flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
             >
-              <Gauge className="h-3 w-3" />
+              <RowIcon icon={GaugeIcon} size={12} />
               AI: triage
             </button>
             <button
@@ -781,7 +775,12 @@ export function Inbox() {
             <EmptyState account={account} />
           )
         ) : (
-          <>
+          <motion.div
+            key={`${account}:${smartCategory || 'search'}`}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+          >
             {items.map((it) => {
               const senderEmail = emailFromHeader(it.from || it.fromAddress);
               const key = rowKey(it);
@@ -821,7 +820,7 @@ export function Inbox() {
             })}
             <div ref={loadMoreRef} className="min-h-1" aria-hidden />
             {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
-          </>
+          </motion.div>
         )}
       </div>
       <LabelConfirmDialog
@@ -906,7 +905,7 @@ function ThreadRowCard({
       role="button"
       tabIndex={0}
       className={cn(
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left hover:bg-[var(--color-hover-soft)]',
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors duration-150 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
