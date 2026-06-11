@@ -133,14 +133,21 @@ pole; start it first):
    Tier 2** assessment before public launch or at ~70 lifetime production Gmail
    authorizations, whichever comes first.
 
-   Provisioned 2026-06-11 via gcloud (project `lab86-mail-prod`, number
-   965430081258, billing `01ABBC-9D4798-74856E`):
+   Provisioned 2026-06-11 via gcloud as jakob@lab86.io (org lab86.io
+   459734099637; project `lab86-mail-production`, number 452431903621, billing
+   `016424-9F9740-E75146`). An earlier duplicate under jjalangtry@gmail.com
+   (`lab86-mail-prod`) is obsolete and can be deleted.
    - APIs enabled: `gmail.googleapis.com`, `pubsub.googleapis.com`.
-   - Service account `nylas-gmail-realtime@lab86-mail-prod.iam.gserviceaccount.com`
+   - Org policy note: the lab86.io org's Domain Restricted Sharing default
+     blocks the Gmail push grant; a project-level override
+     (`constraints/iam.allowedPolicyMemberDomains` → allow all) was applied
+     (needed roles/orgpolicy.policyAdmin granted to jakob@lab86.io at the org).
+   - Service account
+     `nylas-gmail-realtime@lab86-mail-production.iam.gserviceaccount.com`
      (exact name required by the Nylas connector).
-   - Pub/Sub topic `projects/lab86-mail-prod/topics/nylas-gmail-realtime` with
-     `gmail-api-push@system.gserviceaccount.com` as Pub/Sub Publisher — this is
-     the value for the connector's "Google Pub/Sub topic name" field.
+   - Pub/Sub topic `projects/lab86-mail-production/topics/nylas-gmail-realtime`
+     with `gmail-api-push@system.gserviceaccount.com` as Pub/Sub Publisher —
+     this is the connector's "Google Pub/Sub topic name" value.
    - Authenticated push subscription `nylas-gmail-realtime-sub` →
      `https://gmailrealtime.us.nylas.com` (OIDC as the service account, never
      expires; the Pub/Sub service agent holds `iam.serviceAccountTokenCreator`).
