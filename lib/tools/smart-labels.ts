@@ -1,7 +1,10 @@
 import { z } from 'zod';
+import { api, convexMutation } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import { emailFromHeader } from '../shared/format';
 import type { SmartRule } from '../shared/types';
+import { requireStoreUserId } from '../store/kv';
 import {
   listSmartCorrections as listSmartCorrectionRecords,
   writeSmartCorrection,
@@ -19,6 +22,23 @@ import {
 } from '../store/smart-rules';
 import { getThread, listRecentThreads, setThreadSmartCategory } from '../store/threads';
 import { defineTool } from './registry';
+
+// Synchronously flip every recent corpus thread the new rule matches before
+// the tool returns, so the client's immediate refetch (and the Convex live
+// query) already reflect the correction instead of waiting for the deferred
+// full-corpus sweep.
+async function reclassifyRuleMatches(rule: Pick<SmartRule, 'scope' | 'match'>) {
+  if (!isConvexConfigured()) return;
+  try {
+    await convexMutation((api as any).smart.reclassifyMatchingThreads, {
+      userId: requireStoreUserId(),
+      scope: rule.scope,
+      match: rule.match,
+    });
+  } catch {
+    // Best-effort: the scheduled reclassify sweep converges regardless.
+  }
+}
 
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
 const RuleScopeSchema = z.enum(['thread', 'sender', 'domain', 'subject_pattern', 'header']);
@@ -287,6 +307,7 @@ export const applySmartCorrection = defineTool({
     const labels = await listSmartLabelRecords();
     const smartCategory = classifyThreadWithContext(thread, { rules, customLabels: labels });
     await setThreadSmartCategory(account, threadId, smartCategory).catch(() => undefined);
+    await reclassifyRuleMatches(rule);
     await writeSmartCorrection({
       account,
       threadId,
@@ -329,6 +350,7 @@ export const markSenderHuman = defineTool({
     const [rules, labels] = await Promise.all([listSmartRuleRecords(), listSmartLabelRecords()]);
     const smartCategory = classifyThreadWithContext(thread, { rules, customLabels: labels });
     await setThreadSmartCategory(account, threadId, smartCategory).catch(() => undefined);
+    await reclassifyRuleMatches(rule);
     await writeSmartCorrection({
       account,
       threadId,

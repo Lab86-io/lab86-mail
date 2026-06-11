@@ -97,6 +97,23 @@ interface AccountsResult {
   accounts: AccountRow[];
 }
 
+// Optimistic record of a quick-fix correction (Never Main / Always Noise /
+// Move to). Rows the pending rule will reclassify out of the current view are
+// hidden immediately; the Convex live query and search refetch confirm it.
+interface QuickFixSuppression {
+  id: string;
+  senderEmail: string;
+  action: string;
+  category?: string;
+}
+
+function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) {
+  if (s.action === 'never_main') return smartCategory === 'main';
+  if (s.action === 'always_noise') return smartCategory !== 'noise';
+  if (s.action === 'move_to' && s.category) return !!smartCategory && smartCategory !== s.category;
+  return false;
+}
+
 export function Inbox() {
   const account = useClientStore((s) => s.account);
   const query = useClientStore((s) => s.query);
@@ -126,6 +143,7 @@ export function Inbox() {
   const [translating, setTranslating] = useState(false);
   const [labelPreview, setLabelPreview] = useState<ThreadRow | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [suppressions, setSuppressions] = useState<QuickFixSuppression[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -395,10 +413,14 @@ export function Inbox() {
       const key = `${item.account || account}:${item._id}`;
       if (!byKey.has(key)) byKey.set(key, item);
     }
-    return [...byKey.values()].sort(
-      (a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
-    );
-  }, [account, data?.pages, liveItems]);
+    const active = suppressions.filter((s) => suppressionHides(s, smartCategory));
+    const rows = [...byKey.values()].filter((item) => {
+      if (!active.length) return true;
+      const email = (emailFromHeader(item.from || item.fromAddress) || '').toLowerCase();
+      return !email || !active.some((s) => s.senderEmail === email);
+    });
+    return rows.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+  }, [account, data?.pages, liveItems, suppressions, smartCategory]);
   // Skeleton while either source is still on its first load for this view —
   // an empty live result alone must not flash "Nothing here" while the HTTP
   // page (which can still backfill brand-new accounts) is in flight.
@@ -575,13 +597,34 @@ export function Inbox() {
   });
   const applyCorrection = useMutation({
     mutationFn: async (input: any) => callTool('apply_smart_correction', input),
+    // Hide the sender's rows right away — the rule is deterministic, so the
+    // outcome is known before the server confirms it.
+    onMutate: (input: any) => {
+      const row = items.find((it) => it._id === input.threadId && (it.account || account) === input.account);
+      const senderEmail = (emailFromHeader(row?.from || row?.fromAddress || '') || '').toLowerCase();
+      if (!senderEmail) return {};
+      const suppression: QuickFixSuppression = {
+        id: `${input.action}:${senderEmail}:${Date.now()}`,
+        senderEmail,
+        action: input.action,
+        category: input.category,
+      };
+      if (!suppressionHides(suppression, smartCategory)) return {};
+      setSuppressions((prev) => [...prev, suppression]);
+      return { suppressionId: suppression.id };
+    },
     onSuccess: () => {
       toast.success('Smart rule saved');
       queryClient.invalidateQueries({ queryKey: ['search'] });
       queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
       queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
     },
-    onError: (err: any) => toast.error(`Could not save correction: ${err?.message || 'unknown error'}`),
+    onError: (err: any, _input, context: any) => {
+      if (context?.suppressionId) {
+        setSuppressions((prev) => prev.filter((s) => s.id !== context.suppressionId));
+      }
+      toast.error(`Could not save correction: ${err?.message || 'unknown error'}`);
+    },
   });
   const undoLastRule = useMutation({
     mutationFn: async () => {
@@ -592,6 +635,7 @@ export function Inbox() {
     },
     onSuccess: () => {
       toast.success('Last smart rule disabled');
+      setSuppressions([]);
       queryClient.invalidateQueries({ queryKey: ['search'] });
       queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     },

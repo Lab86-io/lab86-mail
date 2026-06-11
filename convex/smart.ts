@@ -4,9 +4,10 @@ import {
   includeInSmartCategory,
   type SmartClassificationContext,
 } from '../lib/mail/smart-categories';
+import { emailFromHeader } from '../lib/shared/format';
 import { internal } from './_generated/api';
-import { internalMutation } from './_generated/server';
-import { now } from './lib';
+import { internalMutation, mutation } from './_generated/server';
+import { now, requireInternalSecret } from './lib';
 
 // Write-time smart classification. Categories are computed once when a thread
 // row is written (backfill page, webhook delta, read-path hydration) and
@@ -32,7 +33,9 @@ export async function loadSmartContext(ctx: any, userId: string): Promise<SmartC
 
 // The classifier reads thread-summary fields only; corpus rows carry all of
 // them under slightly different names (fromAddress / providerThreadId).
-function classifierInput(row: any) {
+// bodyText is the latest message body when the caller has it — classification
+// is grounded in actual content, not just headers and snippets.
+function classifierInput(row: any, bodyText?: string) {
   return {
     _id: row.providerThreadId,
     subject: row.subject,
@@ -41,17 +44,34 @@ function classifierInput(row: any) {
     labels: row.labels || [],
     unread: Boolean(row.unread),
     starred: Boolean(row.starred),
+    bodyText: bodyText || undefined,
   };
 }
 
-export function classifyCorpusThread(row: any, context: SmartClassificationContext) {
-  const verdict = classifyThreadWithContext(classifierInput(row) as any, context);
+export function classifyCorpusThread(row: any, context: SmartClassificationContext, bodyText?: string) {
+  const verdict = classifyThreadWithContext(classifierInput(row, bodyText) as any, context);
   return {
     smartCategory: verdict,
     smartPrimary: verdict.primary,
     smartCustomKeys: verdict.customLabels || [],
     classifiedAt: now(),
   };
+}
+
+// Latest message body for a corpus thread — the content signal for the
+// background sweeps, which don't have the message batch in hand the way the
+// write path does.
+export async function latestThreadBody(ctx: any, row: any): Promise<string | undefined> {
+  const latest = await ctx.db
+    .query('mailCorpusMessages')
+    .withIndex('by_user_account_thread_received', (q: any) =>
+      q.eq('userId', row.userId).eq('accountId', row.accountId).eq('providerThreadId', row.providerThreadId),
+    )
+    .order('desc')
+    .take(1);
+  const message = latest[0];
+  if (!message) return undefined;
+  return String(message.textBody || message.searchText || '').slice(0, 4000) || undefined;
 }
 
 export function normalizeCorpusThread(row: any) {
@@ -165,10 +185,13 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
 export const classifyBacklog = internalMutation({
   args: {},
   handler: async (ctx) => {
+    // 100/batch (was 200): each row now also reads its latest message body,
+    // and message docs carry full bodies — keep the per-mutation read volume
+    // well under Convex limits.
     const rows = await ctx.db
       .query('mailCorpusThreads')
       .withIndex('by_smart_primary', (q: any) => q.eq('smartPrimary', undefined))
-      .take(200);
+      .take(100);
     if (!rows.length) return { classified: 0, done: true };
     const contexts = new Map<string, SmartClassificationContext>();
     for (const row of rows) {
@@ -177,12 +200,58 @@ export const classifyBacklog = internalMutation({
         context = await loadSmartContext(ctx, row.userId);
         contexts.set(row.userId, context);
       }
-      await ctx.db.patch(row._id, classifyCorpusThread(row, context));
+      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadBody(ctx, row)));
     }
-    if (rows.length === 200) {
+    if (rows.length === 100) {
       await ctx.scheduler.runAfter(1_000, internal.smart.classifyBacklog, {});
     }
-    return { classified: rows.length, done: rows.length < 200 };
+    return { classified: rows.length, done: rows.length < 100 };
+  },
+});
+
+function rowMatchesRuleScope(row: any, scope: string, match: string) {
+  const email = (emailFromHeader(String(row.fromAddress || '')) || '').toLowerCase();
+  if (scope === 'sender') return email === match;
+  if (scope === 'domain') return (email.split('@')[1] || '') === match;
+  if (scope === 'subject_pattern')
+    return String(row.subject || '')
+      .toLowerCase()
+      .includes(match);
+  if (scope === 'thread') return row.providerThreadId === match;
+  return false;
+}
+
+// Targeted, synchronous reclassification of the threads a just-created rule
+// matches. The full-corpus sweep that rule edits schedule runs ~5s later in
+// background pages; this exists so the rows the user is looking at flip
+// before their search refetch lands (quick fixes feel instant instead of
+// resurrecting the sender until the sweep catches up).
+export const reclassifyMatchingThreads = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    scope: v.string(),
+    match: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const context = await loadSmartContext(ctx, args.userId);
+    const match = args.match.trim().toLowerCase();
+    if (!match) return { patched: 0 };
+    // Bounded recency window — covers everything a paged inbox view can show;
+    // the scheduled sweep converges the older tail.
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q: any) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(1500);
+    let patched = 0;
+    for (const row of rows) {
+      if (!rowMatchesRuleScope(row, args.scope, match)) continue;
+      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadBody(ctx, row)));
+      patched += 1;
+    }
+    return { patched };
   },
 });
 
@@ -192,12 +261,13 @@ export const reclassifyUserThreads = internalMutation({
   args: { userId: v.string(), cursor: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const context = await loadSmartContext(ctx, args.userId);
+    // 50/page (was 100): the body lookup per row reads full message docs.
     const page = await ctx.db
       .query('mailCorpusThreads')
       .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
-      .paginate({ cursor: args.cursor ?? null, numItems: 100 });
+      .paginate({ cursor: args.cursor ?? null, numItems: 50 });
     for (const row of page.page) {
-      await ctx.db.patch(row._id, classifyCorpusThread(row, context));
+      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadBody(ctx, row)));
     }
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.smart.reclassifyUserThreads, {
