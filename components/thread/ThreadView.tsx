@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { MaximizeIcon } from '@/components/ui/maximize';
 import { MinimizeIcon } from '@/components/ui/minimize';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ReplyAllIcon } from '@/components/ui/reply-all';
 import { RowIcon } from '@/components/ui/row-icon';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { api } from '@/convex/_generated/api';
@@ -25,7 +26,7 @@ import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
-import { emailFromHeader, formatDate, gmailUrlFor, shortFrom } from '@/lib/shared/format';
+import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
@@ -346,7 +347,7 @@ export function ThreadView() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.15 }}
           onClick={() => setThreadFullscreen(false)}
-          className="fixed inset-0 z-40 cursor-default bg-black/45 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[70] cursor-default bg-black/50 backdrop-blur-[2px]"
         />
       ) : null}
       <motion.div
@@ -357,7 +358,7 @@ export function ThreadView() {
         className={cn(
           'flex h-full flex-col bg-[var(--color-bg)]',
           threadFullscreen &&
-            'fixed inset-2 z-50 h-auto overflow-hidden rounded-xl border border-[var(--color-border)] shadow-[var(--shadow-pop)] md:inset-x-12 md:inset-y-6',
+            'thread-popout fixed inset-2 z-[80] h-auto overflow-hidden rounded-2xl border border-[var(--color-border)] shadow-[0_24px_80px_-12px_rgb(0_0_0/0.45)] md:inset-x-10 md:inset-y-5 lg:inset-x-20',
         )}
       >
         <header
@@ -379,76 +380,6 @@ export function ThreadView() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => startReply('reply')}
-              disabled={!replyAnchor}
-              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
-              title="Reply (r)"
-            >
-              <RowIcon icon={CornerUpLeftIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Reply
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => startReply('reply_all')}
-              disabled={!replyAnchor}
-              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
-              title="Reply all"
-            >
-              <RowIcon icon={CornerUpLeftIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Reply all
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => startReply('forward')}
-              disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-              title="Forward"
-            >
-              <RowIcon icon={CornerUpRightIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Forward
-              </span>
-            </Button>
-            <span className="mx-1 h-5 w-px bg-[var(--color-border)]" aria-hidden />
-            <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
-              <RowIcon icon={ArchiveIcon} size={14} />
-            </IconBtn>
-            <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
-              <RowIcon icon={DeleteIcon} size={14} />
-            </IconBtn>
-            <IconBtn
-              title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
-              onClick={() => setThreadFullscreen(!threadFullscreen)}
-            >
-              {threadFullscreen ? (
-                <RowIcon icon={MinimizeIcon} size={14} />
-              ) : (
-                <RowIcon icon={MaximizeIcon} size={14} />
-              )}
-            </IconBtn>
-            <Button
-              asChild
-              variant="outline"
-              size="icon-sm"
-              title="Open in Gmail"
-              className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-            >
-              <a href={gmailUrlFor(account, threadId)} target="_blank" rel="noreferrer">
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </Button>
             <IconBtn
               title="Close"
               onClick={() => {

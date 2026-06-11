@@ -199,6 +199,7 @@ function toolMeta(name: string) {
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  const threadFullscreen = useClientStore((s) => s.threadFullscreen);
 
   // ⌘K toggles the sidebar.
   useEffect(() => {
@@ -213,8 +214,9 @@ export function AIBarTrigger() {
   }, [setAiBarOpen, aiBarOpen]);
 
   // When the sidebar is open it owns its own pane and Close button, so we
-  // only render this floating trigger while it's closed.
-  if (aiBarOpen) return null;
+  // only render this floating trigger while it's closed. The fullscreen
+  // reader popout owns the whole window — no floating chrome above it.
+  if (aiBarOpen || threadFullscreen) return null;
 
   return (
     <motion.button
