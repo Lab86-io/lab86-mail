@@ -808,7 +808,12 @@ function UndoSendToastBody({ fireAt, onUndo }: { fireAt: number; onUndo: () => v
   return (
     <div className="pointer-events-auto flex w-[320px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 shadow-lg">
       <div className="relative grid h-8 w-8 shrink-0 place-items-center">
-        <svg viewBox="0 0 32 32" className="absolute inset-0 -rotate-90" aria-hidden>
+        <svg
+          viewBox="0 0 32 32"
+          className="absolute inset-0 -rotate-90"
+          role="presentation"
+          aria-hidden="true"
+        >
           <circle cx="16" cy="16" r="13" fill="none" stroke="var(--color-border)" strokeWidth="2.5" />
           <circle
             cx="16"
