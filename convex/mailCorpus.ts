@@ -265,6 +265,24 @@ export const upsertCorpusBatch = mutation({
         yearMonth: yearMonth(latest.receivedAt),
         updatedAt: ts,
       };
+      if (windowCapped) {
+        const fullThread = await ctx.db
+          .query('mailCorpusMessages')
+          .withIndex('by_account_thread', (q) =>
+            q.eq('accountId', args.accountId).eq('providerThreadId', providerThreadId),
+          )
+          .collect();
+        const fullLatest = fullThread.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a), latest);
+        patch.lastDate = fullLatest.receivedAt;
+        patch.messageCount = fullThread.length;
+        patch.labels = [...new Set(fullThread.flatMap((message) => message.labels || []))];
+        patch.unread = fullThread.some((message) => Boolean(message.unread));
+        patch.starred = fullThread.some((message) => Boolean(message.starred)) || undefined;
+        patch.subject = fullLatest.subject || patch.subject;
+        patch.fromAddress = fullLatest.from || patch.fromAddress;
+        patch.snippet = fullLatest.snippet || patch.snippet;
+        patch.yearMonth = yearMonth(fullLatest.receivedAt);
+      }
       const existing = await ctx.db
         .query('mailCorpusThreads')
         .withIndex('by_account_thread', (q) =>
@@ -579,7 +597,7 @@ export const countCorpusMessages = query({
         )
         .take(CAP);
       const matched = rows.filter((row) => withinReceivedAtBounds(row, args));
-      return { count: matched.length, approximate: rows.length >= CAP };
+      return { count: matched.length, approximate: rows.length >= CAP && matched.length >= CAP };
     }
     const rows = await ctx.db
       .query('mailCorpusMessages')

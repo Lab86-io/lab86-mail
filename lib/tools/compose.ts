@@ -341,21 +341,37 @@ export const listScheduled = defineTool({
   output: z.object({ scheduled: z.array(z.any()) }),
   async handler({ account }, ctx) {
     const scheduled = await listNylasScheduledMessages({ userId: ctx.userId, account });
-    return { scheduled: scheduled?.schedules ?? [] };
+    return { scheduled: Array.isArray(scheduled) ? scheduled : (scheduled?.schedules ?? []) };
   },
 });
 
 export const undoSend = defineTool({
   name: 'undo_send',
-  description:
-    'Cancel a recently-queued send (operates on the in-memory pending queue handled by /api/agent/send).',
+  description: 'Cancel a recently-queued undo-send window, including provider-backed scheduled sends.',
   category: 'compose',
   mutating: true,
   input: z.object({ pendingId: z.string() }),
   output: z.object({ ok: z.boolean(), undone: z.boolean() }),
-  async handler({ pendingId }) {
+  async handler({ pendingId }, ctx) {
     // Lazy-load the pending queue from a shared module to avoid circular imports.
-    const { cancelPending } = await import('../send/pending');
+    const { cancelPending, parseProviderPendingId, rememberPendingStatus } = await import('../send/pending');
+    const providerPending = parseProviderPendingId(pendingId, ctx.userId ?? undefined);
+    if (providerPending) {
+      const { stopNylasScheduledMessage } = await import('../nylas/provider');
+      try {
+        const result = await stopNylasScheduledMessage({
+          userId: ctx.userId,
+          account: providerPending.account,
+          scheduleId: providerPending.scheduleId,
+        });
+        const undone = Boolean(result);
+        rememberPendingStatus(pendingId, undone ? 'cancelled' : 'failed');
+        return { ok: true, undone };
+      } catch (err) {
+        rememberPendingStatus(pendingId, 'failed', err);
+        return { ok: true, undone: false };
+      }
+    }
     const undone = cancelPending(pendingId);
     return { ok: true, undone };
   },

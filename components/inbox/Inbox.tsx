@@ -9,6 +9,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   Archive,
   Ban,
@@ -57,6 +58,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ShineBorder } from '@/components/ui/shine-border';
+import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
@@ -94,6 +96,17 @@ interface SearchThreadsResult {
 interface InboxPage {
   items: ThreadRow[];
   nextPageTokens: Record<string, string>;
+}
+
+interface AccountRow {
+  accountId: string;
+  email: string;
+  authed: boolean;
+  displayName?: string;
+}
+
+interface AccountsResult {
+  accounts: AccountRow[];
 }
 
 export function Inbox() {
@@ -191,19 +204,15 @@ export function Inbox() {
 
   // When account is the synthetic ALL_ACCOUNTS marker, fan out across every
   // authed mail account and merge by date. Otherwise just hit one.
-  const { data: accountsData } = useQuery({
+  const liveAccounts = useConvexQuery({ query: (api as any).liveMail.listAccounts, args: {} });
+  const { data: fallbackAccountsData } = useQuery({
     queryKey: ['accounts'],
-    queryFn: async () =>
-      callTool<{
-        accounts: {
-          accountId: string;
-          email: string;
-          authed: boolean;
-          displayName?: string;
-        }[];
-      }>('list_accounts'),
+    queryFn: async () => callTool<AccountsResult>('list_accounts'),
+    enabled: liveAccounts.status !== 'success',
     staleTime: 60_000,
   });
+  const accountsData =
+    liveAccounts.status === 'success' ? (liveAccounts.data as AccountsResult) : fallbackAccountsData;
   const accountAliasById = useMemo(
     () =>
       Object.fromEntries(
@@ -237,6 +246,25 @@ export function Inbox() {
     : smartCategory
       ? SMART_CATEGORY_LABELS[smartCategory as keyof typeof SMART_CATEGORY_LABELS] || smartCategory
       : '';
+
+  const liveInboxArgs =
+    account && (account !== ALL_ACCOUNTS || authedAccountIds.length > 0)
+      ? {
+          accountIds:
+            account === ALL_ACCOUNTS
+              ? scopedQuery.accountIds?.filter((id) => authedAccountIds.includes(id)) || authedAccountIds
+              : scopedQuery.accountIds && !scopedQuery.accountIds.includes(account)
+                ? []
+                : [account],
+          category: smartCategory || undefined,
+          query: smartCategory || scopedQuery.query === DEFAULT_QUERY ? undefined : scopedQuery.query,
+          limit: INBOX_PAGE_SIZE * 3,
+        }
+      : 'skip';
+  const liveInbox = useConvexQuery({
+    query: (api as any).liveMail.listThreads,
+    args: liveInboxArgs,
+  });
 
   const {
     data,
@@ -360,15 +388,22 @@ export function Inbox() {
     }
   };
 
+  const liveItems =
+    liveInbox.status === 'success' ? (liveInbox.data?.items as ThreadRow[] | undefined) : undefined;
   const items = useMemo(() => {
     const byKey = new Map<string, ThreadRow>();
-    for (const item of data?.pages.flatMap((page) => page.items) || []) {
+    for (const item of liveItems || []) {
       byKey.set(`${item.account || account}:${item._id}`, item);
+    }
+    for (const item of data?.pages.flatMap((page) => page.items) || []) {
+      const key = `${item.account || account}:${item._id}`;
+      if (!byKey.has(key)) byKey.set(key, item);
     }
     return [...byKey.values()].sort(
       (a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
     );
-  }, [account, data?.pages]);
+  }, [account, data?.pages, liveItems]);
+  const showInitialLoading = !items.length && liveInbox.status !== 'success' && isLoading;
   const readerVisible = !!(selectedThreadId || composeMode);
 
   useEffect(() => {
@@ -439,18 +474,22 @@ export function Inbox() {
   // Each item knows its own account (set by the fan-out above), so bulk
   // operations dispatch per-item using that account rather than the
   // currently-selected one. Required for ALL_ACCOUNTS view.
-  const accountOfRow = (id: string) => items.find((it) => it._id === id)?.account || account;
+  const rowKey = (item: ThreadRow) => `${item.account || account}:${item._id}`;
+  const rowForKey = (id: string) => items.find((it) => rowKey(it) === id || it._id === id);
+  const accountOfRow = (id: string) => rowForKey(id)?.account || account;
+  const threadIdOfRow = (id: string) => rowForKey(id)?._id || id.split(':').slice(1).join(':') || id;
 
   // Optimistically drop rows from every cached search page so archive/trash
   // feel instant; a failure invalidates and refetches the truth.
   const removeRowsFromSearchCache = (ids: string[]) => {
+    const keys = new Set(ids);
     queryClient.setQueriesData({ queryKey: ['search'] }, (old: any) => {
       if (!old?.pages) return old;
       return {
         ...old,
         pages: old.pages.map((page: any) => ({
           ...page,
-          items: (page.items || []).filter((it: any) => !ids.includes(it._id)),
+          items: (page.items || []).filter((it: any) => !keys.has(`${it.account || account}:${it._id}`)),
         })),
       };
     });
@@ -458,9 +497,13 @@ export function Inbox() {
 
   const bulkArchive = useMutation({
     mutationFn: async (ids: string[]) => {
-      await Promise.allSettled(
-        ids.map((id) => callTool('archive_thread', { account: accountOfRow(id), threadId: id })),
+      const results = await Promise.allSettled(
+        ids.map((id) =>
+          callTool('archive_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) }),
+        ),
       );
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length) throw new Error(`Failed to archive ${failures.length} thread(s).`);
     },
     onMutate: (ids) => {
       removeRowsFromSearchCache(ids);
@@ -477,9 +520,11 @@ export function Inbox() {
 
   const bulkTrash = useMutation({
     mutationFn: async (ids: string[]) => {
-      await Promise.allSettled(
-        ids.map((id) => callTool('trash_thread', { account: accountOfRow(id), threadId: id })),
+      const results = await Promise.allSettled(
+        ids.map((id) => callTool('trash_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) })),
       );
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length) throw new Error(`Failed to trash ${failures.length} thread(s).`);
     },
     onMutate: (ids) => {
       removeRowsFromSearchCache(ids);
@@ -497,7 +542,7 @@ export function Inbox() {
   const bulkTriage = useMutation({
     mutationFn: async () => {
       const list = items
-        .filter((it) => selectedIds.includes(it._id))
+        .filter((it) => selectedIds.includes(rowKey(it)))
         .map((it) => ({
           id: it._id,
           from: it.from || it.fromAddress,
@@ -697,7 +742,7 @@ export function Inbox() {
       </AnimatePresence>
 
       <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
-        {isLoading ? (
+        {showInitialLoading ? (
           <SkeletonRows />
         ) : isError ? (
           <SearchErrorState
@@ -734,20 +779,22 @@ export function Inbox() {
           <>
             {items.map((it) => {
               const senderEmail = emailFromHeader(it.from || it.fromAddress);
+              const key = rowKey(it);
+              const rowAccount = it.account || account;
               return (
                 <ThreadRowCard
-                  key={`${it.account}:${it._id}`}
+                  key={key}
                   item={it}
                   photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
                   showAccount={account === ALL_ACCOUNTS}
-                  selected={selectedIds.includes(it._id)}
-                  active={selectedThreadId === it._id}
-                  onToggle={() => toggleSelected(it._id)}
+                  selected={selectedIds.includes(key)}
+                  active={selectedThreadId === it._id && threadAccount === rowAccount}
+                  onToggle={() => toggleSelected(key)}
                   onPrefetch={() => prefetchThread(it)}
                   onApplyLabels={() => setLabelPreview(it)}
                   onCorrect={(action, payload = {}) =>
                     applyCorrection.mutate({
-                      account: it.account || account,
+                      account: rowAccount,
                       threadId: it._id,
                       action,
                       scope: 'sender',
@@ -760,7 +807,7 @@ export function Inbox() {
                     // Unified inbox stays put; just remember which mailbox this
                     // thread belongs to so the reader can load/reply correctly.
                     startTransition(() => {
-                      setThreadAccount(it.account || account);
+                      setThreadAccount(rowAccount);
                       setSelectedThread(it._id);
                     });
                   }}

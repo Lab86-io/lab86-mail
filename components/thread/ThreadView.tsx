@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   Archive,
   ChevronDown,
@@ -25,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
@@ -53,7 +55,11 @@ export function ThreadView() {
   const queryClient = useQueryClient();
   const markedReadRef = useRef<Set<string>>(new Set());
 
-  const { data, isLoading } = useQuery({
+  const liveThread = useConvexQuery({
+    query: (api as any).liveMail.getThread,
+    args: account && threadId ? { account, threadId } : 'skip',
+  });
+  const { data: fallbackThreadData, isLoading: fallbackThreadLoading } = useQuery({
     queryKey: ['thread', account, threadId],
     queryFn: async () =>
       callTool<{
@@ -67,12 +73,16 @@ export function ThreadView() {
         threadId,
         refresh: false,
       }),
-    enabled: !!account && !!threadId,
+    enabled: !!account && !!threadId && liveThread.status !== 'success',
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
+  const data = liveThread.status === 'success' ? liveThread.data : fallbackThreadData;
+  const isLoading =
+    (liveThread.status === 'pending' && !fallbackThreadData) ||
+    (liveThread.status !== 'success' && fallbackThreadLoading);
 
   const archive = useMutation({
     mutationFn: async () => callTool('archive_thread', { account, threadId }),

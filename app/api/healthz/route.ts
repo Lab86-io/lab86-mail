@@ -25,8 +25,12 @@ export async function GET() {
   const user = await getCurrentUser().catch(() => null);
   try {
     accounts = await runWithAiRequestContext(
-      { userId: user?.userId, userEmail: user?.email, agent: 'user' },
-      () => listAccounts.handler({}, { agent: 'user', userId: user?.userId, userEmail: user?.email }),
+      { userId: user?.userId, userEmail: user?.email, userName: user?.name, agent: 'user' },
+      () =>
+        listAccounts.handler(
+          {},
+          { agent: 'user', userId: user?.userId, userEmail: user?.email, userName: user?.name },
+        ),
     );
   } catch {}
   return NextResponse.json({

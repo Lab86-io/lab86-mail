@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DEVOPS_LABEL_ID } from '../mail/smart-categories';
 import type { SmartLabelDefinition } from '../shared/types';
-import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
+import { kvCreateIfAbsent, kvDelete, kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 
 const now = () => Date.now();
 
@@ -45,21 +45,66 @@ function slugify(value: string) {
     .slice(0, 64);
 }
 
-// Seed once per user per process — reads call this every time, and the
-// repeated lookup/upsert would be pure overhead.
+// Seed writes are idempotent in Convex; this only avoids repeated read/upsert
+// overhead while a long-running server process handles the same user.
 const seededUsers = new Set<string>();
+
+interface SmartLabelSlugIndex {
+  _id: string;
+  slug: string;
+  labelId: string;
+  createdAt: number;
+}
+
+async function writeSlugIndex(slug: string, labelId: string) {
+  return await kvCreateIfAbsent<SmartLabelSlugIndex>(
+    'smartLabelSlug',
+    slug,
+    { _id: slug, slug, labelId, createdAt: now() },
+    slug,
+  );
+}
+
+async function reserveSlug(slug: string, labelId: string) {
+  const slugTaken = await findBySlug(slug);
+  if (slugTaken && slugTaken._id !== labelId) {
+    throw new Error(`A smart label named "${slugTaken.name}" already exists.`);
+  }
+  const reservation = await writeSlugIndex(slug, labelId);
+  if (!reservation.created && reservation.doc.labelId !== labelId) {
+    const owner = await kvGet<SmartLabelDefinition>('smartLabel', reservation.doc.labelId);
+    throw new Error(`A smart label named "${owner?.name || slug}" already exists.`);
+  }
+}
 
 export async function ensureSeedSmartLabels() {
   const userId = requireStoreUserId();
   if (seededUsers.has(userId)) return;
   const existing = await kvGet<SmartLabelDefinition>('smartLabel', DEVOPS_LABEL_ID);
   const ts = now();
-  const seeded = {
+  if (existing) {
+    const seeded: SmartLabelDefinition = {
+      ...DEVOPS_LABEL,
+      ...existing,
+      createdAt: existing.createdAt || ts,
+      updatedAt: existing.updatedAt || ts,
+    };
+    const changed = Object.keys(seeded).some(
+      (key) =>
+        JSON.stringify(seeded[key as keyof SmartLabelDefinition]) !==
+        JSON.stringify(existing[key as keyof SmartLabelDefinition]),
+    );
+    if (changed) await kvUpsert('smartLabel', DEVOPS_LABEL_ID, seeded);
+    await writeSlugIndex(DEVOPS_LABEL.slug, DEVOPS_LABEL_ID);
+    seededUsers.add(userId);
+    return;
+  }
+  await kvUpsert('smartLabel', DEVOPS_LABEL_ID, {
     ...DEVOPS_LABEL,
-    createdAt: existing?.createdAt || ts,
-    updatedAt: existing?.updatedAt || ts,
-  };
-  await kvUpsert('smartLabel', DEVOPS_LABEL_ID, seeded);
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  await writeSlugIndex(DEVOPS_LABEL.slug, DEVOPS_LABEL_ID);
   seededUsers.add(userId);
 }
 
@@ -77,6 +122,7 @@ export async function getSmartLabel(id: string) {
 }
 
 async function findBySlug(slug: string) {
+  await ensureSeedSmartLabels();
   const labels = await kvList<SmartLabelDefinition>('smartLabel', { limit: 500 });
   return labels.find((label) => label.slug === slug) || null;
 }
@@ -93,15 +139,15 @@ export async function createSmartLabel(input: {
   const name = input.name.trim();
   const slug = slugify(name);
   if (!name || !slug) throw new Error('Smart label name is required');
-  const slugTaken = await findBySlug(slug);
-  if (slugTaken) throw new Error(`A smart label named "${slugTaken.name}" already exists.`);
   if (!input.description.trim()) throw new Error('Smart label description is required');
   const positiveExamples = input.positiveExamples.map((v) => v.trim()).filter(Boolean);
   const negativeExamples = input.negativeExamples.map((v) => v.trim()).filter(Boolean);
   if (!positiveExamples.length) throw new Error('At least one positive example is required');
   if (!negativeExamples.length) throw new Error('At least one negative example is required');
+  const labelId = randomUUID();
+  await reserveSlug(slug, labelId);
   const label: SmartLabelDefinition = {
-    _id: randomUUID(),
+    _id: labelId,
     name,
     slug,
     description: input.description.trim(),
@@ -116,7 +162,12 @@ export async function createSmartLabel(input: {
     createdAt: ts,
     updatedAt: ts,
   };
-  await kvUpsert('smartLabel', label._id, label);
+  try {
+    await kvUpsert('smartLabel', label._id, label);
+  } catch (err) {
+    await kvDelete('smartLabelSlug', slug).catch(() => undefined);
+    throw err;
+  }
   return label;
 }
 
@@ -131,19 +182,18 @@ export async function updateSmartLabel(
 ) {
   const existing = await getSmartLabel(id);
   if (!existing) throw new Error('Smart label not found');
-  const nextSlug = patch.name ? slugify(patch.name) : existing.slug;
-  if (patch.name) {
-    const slugTaken = await findBySlug(nextSlug);
-    if (slugTaken && slugTaken._id !== id) {
-      throw new Error(`A smart label named "${slugTaken.name}" already exists.`);
-    }
+  const trimmedName = patch.name === undefined ? undefined : patch.name.trim();
+  if (trimmedName !== undefined && !trimmedName) throw new Error('Smart label name is required');
+  const nextSlug = trimmedName ? slugify(trimmedName) : existing.slug;
+  if (trimmedName && nextSlug !== existing.slug) {
+    await reserveSlug(nextSlug, id);
   }
   const next: SmartLabelDefinition = {
     ...existing,
     ...patch,
-    name: patch.name?.trim() || existing.name,
+    name: trimmedName || existing.name,
     slug: nextSlug,
-    gmailLabelName: patch.name ? `MailOS/${patch.name.trim()}` : existing.gmailLabelName,
+    gmailLabelName: trimmedName ? `MailOS/${trimmedName}` : existing.gmailLabelName,
     positiveExamples:
       patch.positiveExamples?.map((v) => v.trim()).filter(Boolean) || existing.positiveExamples,
     negativeExamples:
@@ -153,6 +203,10 @@ export async function updateSmartLabel(
   if (!next.positiveExamples.length) throw new Error('At least one positive example is required');
   if (!next.negativeExamples.length) throw new Error('At least one negative example is required');
   await kvUpsert('smartLabel', id, next);
+  if (nextSlug !== existing.slug) {
+    const oldReservation = await kvGet<SmartLabelSlugIndex>('smartLabelSlug', existing.slug);
+    if (oldReservation?.labelId === id) await kvDelete('smartLabelSlug', existing.slug);
+  }
   return next;
 }
 

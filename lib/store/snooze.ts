@@ -3,13 +3,14 @@ import type { Snooze } from '../shared/types';
 import { kvDeleteMany, kvList, kvUpsert } from './kv';
 
 export async function snoozeMessage(account: string, messageId: string, threadId: string, untilTs: number) {
-  const doc: Snooze = { account, messageId, threadId, untilTs, createdAt: Date.now() } as Snooze;
-  await kvUpsert('snooze', randomUUID(), doc, `${account}:${messageId}`);
+  const id = randomUUID();
+  const doc: Snooze = { _id: id, account, messageId, threadId, untilTs, createdAt: Date.now() } as Snooze;
+  await kvUpsert('snooze', id, doc, `${account}:${messageId}`);
   return doc;
 }
 
 export async function listDueSnoozes(now = Date.now()): Promise<Snooze[]> {
-  const rows = await kvList<Snooze>('snooze', { limit: 1000 });
+  const rows = await kvList<Snooze>('snooze');
   return rows.filter((row) => row.untilTs <= now);
 }
 

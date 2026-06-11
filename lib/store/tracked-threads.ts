@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { TrackedThread } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
 
@@ -7,8 +6,7 @@ const now = () => Date.now();
 const pairRef = (account: string, threadId: string) => `${account}:${threadId}`;
 
 export async function getTrackedThread(account: string, threadId: string) {
-  const rows = await kvList<TrackedThread>('trackedThread', { ref: pairRef(account, threadId), limit: 5 });
-  return rows[0] || null;
+  return await kvGet<TrackedThread>('trackedThread', pairRef(account, threadId));
 }
 
 export async function getTrackedThreadById(id: string) {
@@ -25,7 +23,7 @@ export async function upsertTrackedThread(
   const existing = await getTrackedThread(input.account, input.threadId);
   const ts = now();
   const next: TrackedThread = {
-    _id: existing?._id || randomUUID(),
+    _id: existing?._id || pairRef(input.account, input.threadId),
     account: input.account,
     threadId: input.threadId,
     subject: input.subject || existing?.subject || '(no subject)',
@@ -64,7 +62,7 @@ export async function updateTrackedThread(id: string, patch: Partial<TrackedThre
 export async function listTrackedThreads(
   options: { status?: TrackedThread['status']; includeResolved?: boolean; limit?: number } = {},
 ) {
-  const rows = await kvList<TrackedThread>('trackedThread', { limit: 1000 });
+  const rows = await kvList<TrackedThread>('trackedThread');
   let filtered = rows;
   if (options.status) {
     filtered = filtered.filter((row) => row.status === options.status);

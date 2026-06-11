@@ -9,7 +9,7 @@ export async function writeSmartCorrection(input: Omit<SmartCorrection, '_id' | 
 }
 
 export async function listSmartCorrections(limit = 100) {
-  const rows = await kvList<SmartCorrection>('smartCorrection', { limit: Math.max(limit, 100) });
+  const rows = await kvList<SmartCorrection>('smartCorrection', { limit });
   rows.sort((a, b) => b.createdAt - a.createdAt);
   return rows.slice(0, limit);
 }

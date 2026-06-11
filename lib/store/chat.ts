@@ -9,7 +9,7 @@ export async function appendChat(entry: Omit<ChatMessage, 'ts'> & { ts?: number 
 }
 
 export async function recentChat(account: string, threadId: string, limit = 30): Promise<ChatMessage[]> {
-  const rows = await kvList<ChatMessage>('chat', { ref: `${account}:${threadId}`, limit: limit * 3 });
+  const rows = await kvList<ChatMessage>('chat', { ref: `${account}:${threadId}`, limit: limit * 10 });
   rows.sort((a, b) => b.ts - a.ts);
   return rows.slice(0, limit).reverse();
 }

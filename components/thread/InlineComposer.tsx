@@ -37,6 +37,8 @@ import { AttachmentIcon } from './attachment-chip';
 // Hard guard: gmail's hard ceiling is 25MB total per send. We refuse slightly
 // under to leave headroom for MIME encoding overhead.
 const MAX_TOTAL_BYTES = 23 * 1024 * 1024;
+const SEND_STATUS_POLL_INTERVAL_MS = 600;
+const SEND_STATUS_CONFIRM_TIMEOUT_MS = 12_000;
 
 interface InlineComposerProps {
   mode: ComposeMode;
@@ -176,6 +178,12 @@ export function InlineComposer({
   const openComposeReply = useClientStore((s) => s.openComposeReply);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [customSendAt, setCustomSendAt] = useState('');
+  const customSendAtMin = toDatetimeLocalValue(Date.now() + 60_000);
+  const customSendAtMs = useMemo(
+    () => (customSendAt ? Date.parse(customSendAt) : Number.NaN),
+    [customSendAt],
+  );
+  const customSendAtIsFuture = Number.isFinite(customSendAtMs) && customSendAtMs > Date.now();
 
   // Undo-send window (seconds). Server-side pref; default applies while loading.
   const prefsQuery = useQuery({
@@ -223,6 +231,9 @@ export function InlineComposer({
 
   const send = useMutation({
     mutationFn: async ({ sendAt }: { sendAt?: number } = {}) => {
+      if (sendAt !== undefined && sendAt <= Date.now()) {
+        throw new Error('Choose a future send time.');
+      }
       const fd = new FormData();
       fd.set('mode', composerMode);
       fd.set('account', fromAccount || account);
@@ -305,15 +316,20 @@ export function InlineComposer({
         let toastId: string | number = '';
         const fireTimer = window.setTimeout(() => {
           if (undone) return;
-          toast.dismiss(toastId);
-          fireSendEffect();
-          toast.success('Sent');
-          // The server fires the real send at the same instant; give it a
-          // beat before refetching so the sent message shows up.
-          window.setTimeout(() => {
+          void waitForPendingSendStatus(pending.id).then((status) => {
+            if (undone) return;
+            toast.dismiss(toastId);
+            if (status === 'sent') {
+              fireSendEffect();
+              toast.success('Sent');
+            } else if (status === 'failed') {
+              toast.error('Send failed after the undo window.');
+            } else {
+              toast('Send is still syncing — refreshing.');
+            }
             void queryClient.invalidateQueries({ queryKey: ['thread'] });
             void queryClient.invalidateQueries({ queryKey: ['search'] });
-          }, 1_800);
+          });
         }, windowMs);
         toastId = toast.custom(
           () => (
@@ -734,13 +750,14 @@ export function InlineComposer({
                 <input
                   type="datetime-local"
                   value={customSendAt}
+                  min={customSendAtMin}
                   onChange={(e) => setCustomSendAt(e.target.value)}
                   className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[12px] outline-none"
                 />
                 <button
                   type="button"
-                  disabled={!customSendAt || Number.isNaN(Date.parse(customSendAt))}
-                  onClick={() => send.mutate({ sendAt: Date.parse(customSendAt) })}
+                  disabled={!customSendAtIsFuture}
+                  onClick={() => send.mutate({ sendAt: customSendAtMs })}
                   className="mt-1.5 w-full rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-[12px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                 >
                   Schedule
@@ -783,8 +800,9 @@ function schedulePresets(): { label: string; hint: string; at: number }[] {
   tomorrow9.setDate(tomorrow9.getDate() + 1);
   tomorrow9.setHours(9, 0, 0, 0);
   const monday9 = new Date(now);
-  monday9.setDate(monday9.getDate() + ((8 - monday9.getDay()) % 7 || 7));
+  monday9.setDate(monday9.getDate() + ((1 - monday9.getDay() + 7) % 7));
   monday9.setHours(9, 0, 0, 0);
+  if (monday9 <= now) monday9.setDate(monday9.getDate() + 7);
   const fmt = (d: Date) =>
     d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   return [
@@ -794,16 +812,42 @@ function schedulePresets(): { label: string; hint: string; at: number }[] {
   ];
 }
 
+function toDatetimeLocalValue(ts: number) {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function waitForPendingSendStatus(
+  pendingId: string,
+  timeoutMs = SEND_STATUS_CONFIRM_TIMEOUT_MS,
+): Promise<'sent' | 'failed' | 'cancelled' | 'missing' | 'timeout'> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const params = new URLSearchParams({ pendingId });
+    const res = await fetch(`/api/compose/status?${params.toString()}`, { cache: 'no-store' }).catch(
+      () => null,
+    );
+    const data = res?.ok ? await res.json().catch(() => null) : null;
+    const status = data?.status as string | undefined;
+    if (status === 'sent' || status === 'failed' || status === 'cancelled' || status === 'missing') {
+      return status;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, SEND_STATUS_POLL_INTERVAL_MS));
+  }
+  return 'timeout';
+}
+
 // Countdown toast shown while a send is held in the undo window.
 function UndoSendToastBody({ fireAt, onUndo }: { fireAt: number; onUndo: () => void }) {
-  const [remaining, setRemaining] = useState(() => Math.max(0, fireAt - Date.now()));
+  const [initialMs] = useState(() => Math.max(1, fireAt - Date.now()));
+  const [remaining, setRemaining] = useState(initialMs);
   useEffect(() => {
     const interval = window.setInterval(() => {
       setRemaining(Math.max(0, fireAt - Date.now()));
     }, 250);
     return () => window.clearInterval(interval);
   }, [fireAt]);
-  const [initialMs] = useState(() => Math.max(1, fireAt - Date.now()));
   const seconds = Math.ceil(remaining / 1000);
   return (
     <div className="pointer-events-auto flex w-[320px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 shadow-lg">

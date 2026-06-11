@@ -11,14 +11,14 @@ export async function getDailyReport(id: string) {
 }
 
 export async function getLatestDailyReport(kind?: DailyReport['kind']) {
-  const reports = await kvList<DailyReport>('dailyReport', { limit: 60 });
+  const reports = await kvList<DailyReport>('dailyReport');
   const matching = kind ? reports.filter((report) => report.kind === kind) : reports;
   matching.sort((a, b) => b.generatedAt - a.generatedAt);
   return matching[0] || null;
 }
 
 export async function listDailyReports(limit = 20) {
-  const reports = await kvList<DailyReport>('dailyReport', { limit: Math.max(limit, 60) });
+  const reports = await kvList<DailyReport>('dailyReport', { limit: Math.max(limit, 1000) });
   reports.sort((a, b) => b.generatedAt - a.generatedAt);
   return reports.slice(0, limit);
 }

@@ -651,6 +651,7 @@ export async function sendNylasMessage({
   html,
   replyToMessageId,
   sendAt,
+  useDraft,
   attachments,
 }: {
   userId?: string | null;
@@ -663,6 +664,7 @@ export async function sendNylasMessage({
   html?: string;
   replyToMessageId?: string;
   sendAt?: number;
+  useDraft?: boolean;
   attachments?: CreateAttachmentRequest[];
 }) {
   assertOutboundSendEnabled();
@@ -679,6 +681,7 @@ export async function sendNylasMessage({
       isPlaintext: !html,
       replyToMessageId,
       sendAt: sendAt ? Math.floor(sendAt / 1000) : undefined,
+      useDraft,
       attachments,
     },
   });

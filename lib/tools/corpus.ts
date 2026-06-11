@@ -15,13 +15,13 @@ const mailCorpusApi = (api as any).mailCorpus;
 
 async function authedAccountIds(userId?: string | null): Promise<string[]> {
   const accounts = await listNylasAccounts(userId);
-  return accounts.filter((account: any) => account.authed).map((account: any) => account.accountId);
+  return accounts.map((account) => account.accountId);
 }
 
 export const corpusSearch = defineTool({
   name: 'corpus_search',
   description:
-    'Search mail across ALL connected accounts at once (local index first, provider fallback). Prefer this over per-account search_threads when the user has not named a specific mailbox.',
+    'Search mail across ALL connected accounts at once through the standard account search path. Prefer this over per-account search_threads when the user has not named a specific mailbox.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -157,7 +157,7 @@ export const threadTimeline = defineTool({
       userId: ctx.userId,
       accountId: account,
       providerThreadId: threadId,
-    });
+    }).catch(() => []);
     return {
       messages: (rows || []).map((row) => ({
         from: row.from,

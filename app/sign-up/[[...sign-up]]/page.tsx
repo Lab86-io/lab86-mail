@@ -34,13 +34,15 @@ export default async function SignUpPage() {
   return (
     <main className="app-paper relative grid min-h-dvh place-items-center px-4 py-10">
       <DotGridGlow />
-      <SignUp
-        fallbackRedirectUrl="/"
-        forceRedirectUrl="/"
-        signInFallbackRedirectUrl="/"
-        signInForceRedirectUrl="/"
-        signInUrl="/sign-in"
-      />
+      <div className="relative z-10">
+        <SignUp
+          fallbackRedirectUrl="/"
+          forceRedirectUrl="/"
+          signInFallbackRedirectUrl="/"
+          signInForceRedirectUrl="/"
+          signInUrl="/sign-in"
+        />
+      </div>
     </main>
   );
 }

@@ -27,6 +27,26 @@ import {
 
 const STORAGE_KEY = 'lab86-mail-onboarding-dismissed-v1';
 
+interface NylasAccount {
+  accountId: string;
+  email: string;
+  provider: 'google' | 'microsoft' | 'icloud' | 'imap';
+  displayName?: string;
+}
+
+interface NylasCapability {
+  provider: NylasAccount['provider'];
+  label: string;
+  visible: boolean;
+  connectable: boolean;
+  reason?: string;
+}
+
+interface NylasStatus {
+  accounts?: NylasAccount[];
+  capabilities?: NylasCapability[];
+}
+
 // First-run gate rendered inside the app shell: when the signed-in user has
 // no connected mailboxes (or never finished onboarding), route them to the
 // dedicated /welcome page instead of popping a modal over an empty inbox.
@@ -39,7 +59,7 @@ export function FirstRunRedirect() {
     isError,
   } = useQuery({
     queryKey: ['nylas-status'],
-    queryFn: async () => fetchJson('/api/nylas/status'),
+    queryFn: async () => fetchJson('/api/nylas/status') as Promise<NylasStatus>,
     retry: false,
   });
   useEffect(() => {
@@ -71,7 +91,7 @@ export function WelcomeFlow() {
     refetch: refetchAccounts,
   } = useQuery({
     queryKey: ['nylas-status'],
-    queryFn: async () => fetchJson('/api/nylas/status'),
+    queryFn: async () => fetchJson('/api/nylas/status') as Promise<NylasStatus>,
     retry: false,
   });
   // Seed the form state from the server only once; refetches (e.g. the
@@ -107,13 +127,17 @@ export function WelcomeFlow() {
   const aiLoaded = Boolean(ai);
 
   const accounts = nylas?.accounts || [];
-  const providerCapabilities = (nylas?.capabilities || []).filter((capability: any) => capability.visible);
-  const icloud = providerCapabilities.find((capability: any) => capability.provider === 'icloud');
+  const providerCapabilities = (nylas?.capabilities || []).filter((capability) => capability.visible);
+  const icloud = providerCapabilities.find((capability) => capability.provider === 'icloud');
   const hasAccounts = accounts.length > 0;
 
   useEffect(() => {
     setDismissed(window.localStorage.getItem(STORAGE_KEY) === '1');
   }, []);
+
+  useEffect(() => {
+    if (dismissed === true && hasAccounts && !loadingAccounts) router.replace('/');
+  }, [dismissed, hasAccounts, loadingAccounts, router]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -208,7 +232,7 @@ export function WelcomeFlow() {
             blurb="Each mailbox is downloaded into your private search index — search stays instant."
           />
           <div className="mt-3 space-y-2">
-            {accounts.map((account: any) => (
+            {accounts.map((account) => (
               <div
                 key={account.accountId || account.email}
                 className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-2.5"
@@ -240,7 +264,7 @@ export function WelcomeFlow() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {providerCapabilities.map((capability: any) => (
+            {providerCapabilities.map((capability) => (
               <Button
                 key={capability.provider}
                 asChild={capability.connectable}

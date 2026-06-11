@@ -32,7 +32,9 @@ export async function POST(req: NextRequest) {
   let body: any = {};
   try {
     body = await req.json();
-  } catch {}
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Malformed JSON in request body' }, { status: 400 });
+  }
   try {
     const user = await requireCurrentUser();
     const prefs = await runWithAiRequestContext(

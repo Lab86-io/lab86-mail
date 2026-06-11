@@ -10,6 +10,8 @@ export async function getThreadInsight(account: string, threadId: string) {
 }
 
 export async function upsertThreadInsight(insight: ThreadInsight) {
-  await kvUpsert('threadInsight', insight._id, insight);
-  return insight;
+  const key = insightId(insight.account, insight.threadId);
+  const next = { ...insight, _id: key };
+  await kvUpsert('threadInsight', key, next);
+  return next;
 }

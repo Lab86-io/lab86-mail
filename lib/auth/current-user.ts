@@ -24,7 +24,11 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   if (!session.userId) return null;
 
   const cached = profileCache.get(session.userId);
-  if (cached && Date.now() - cached.at < PROFILE_CACHE_TTL_MS) return cached.user;
+  if (cached && Date.now() - cached.at < PROFILE_CACHE_TTL_MS) {
+    profileCache.delete(session.userId);
+    profileCache.set(session.userId, cached);
+    return cached.user;
+  }
 
   const client = await clerkClient();
   const clerkUser = await client.users.getUser(session.userId).catch(() => null);
@@ -44,6 +48,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
       const oldest = profileCache.keys().next().value;
       if (oldest) profileCache.delete(oldest);
     }
+    profileCache.delete(session.userId);
     profileCache.set(session.userId, { user, at: Date.now() });
   }
   return user;

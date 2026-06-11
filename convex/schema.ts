@@ -194,9 +194,11 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_lastDate', ['userId', 'lastDate'])
     .index('by_grant', ['grantId'])
     .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
+    .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId'])
     .index('by_user_account_updated', ['userId', 'accountId', 'lastDate']),
 
   mailCorpusMessages: defineTable({
@@ -229,6 +231,7 @@ export default defineSchema({
     .index('by_grant', ['grantId'])
     .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
+    .index('by_user_account_thread_received', ['userId', 'accountId', 'providerThreadId', 'receivedAt'])
     .index('by_account_message', ['accountId', 'providerMessageId'])
     .index('by_user_account_received', ['userId', 'accountId', 'receivedAt'])
     .searchIndex('by_search_text', {
@@ -252,8 +255,10 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_kind', ['userId', 'kind'])
+    .index('by_user_kind_updatedAt', ['userId', 'kind', 'updatedAt'])
     .index('by_user_kind_key', ['userId', 'kind', 'key'])
-    .index('by_user_kind_ref', ['userId', 'kind', 'ref']),
+    .index('by_user_kind_ref', ['userId', 'kind', 'ref'])
+    .index('by_user_kind_ref_updatedAt', ['userId', 'kind', 'ref', 'updatedAt']),
 
   mailSyncStates: defineTable({
     userId: v.string(),

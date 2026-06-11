@@ -52,21 +52,21 @@ export async function getThread(account: string, id: string): Promise<Thread | n
 }
 
 export async function listRecentThreads(limit = 80): Promise<Thread[]> {
-  const rows = await kvList<Thread>('thread', { limit: 1000 });
+  const rows = await kvList<Thread>('thread', { limit });
   rows.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
   return rows.slice(0, limit);
 }
 
 export async function listThreadsForAccount(account: string, limit = 80): Promise<Thread[]> {
-  const rows = await kvList<Thread>('thread', { ref: account, limit: 1000 });
+  const rows = await kvList<Thread>('thread', { ref: account, limit });
   rows.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
   return rows.slice(0, limit);
 }
 
 async function patchThread(account: string, id: string, patch: Partial<Thread>) {
   const existing = await getThread(account, id);
-  if (!existing) return;
-  await kvUpsert('thread', threadKey(account, id), { ...existing, ...patch }, account);
+  if (!existing) throw new Error(`Thread not found: ${id}`);
+  await upsertThread(account, { _id: id, ...patch });
 }
 
 export async function setThreadSummary(account: string, id: string, summary: string) {
@@ -102,7 +102,7 @@ export async function listThreadsBySmartCategory(
   category: string,
   limit = 80,
 ): Promise<Thread[]> {
-  const rows = await kvList<Thread>('thread', { ref: account ?? undefined, limit: 1000 });
+  const rows = await kvList<Thread>('thread', { ref: account ?? undefined });
   const matching = rows.filter((thread) => thread.smartCategory?.primary === category);
   matching.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
   return matching.slice(0, limit);

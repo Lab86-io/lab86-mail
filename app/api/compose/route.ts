@@ -1,11 +1,10 @@
-import { randomUUID } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
-import { queueSend } from '@/lib/send/pending';
+import { makeProviderPendingId, rememberPendingStatus } from '@/lib/send/pending';
 import { sanitizeFilename } from '@/lib/shared/files';
 import { emailFromHeader } from '@/lib/shared/format';
 import type { Message } from '@/lib/shared/types';
@@ -47,7 +46,7 @@ export async function POST(req: NextRequest) {
   // Undo-send window (seconds, 0–300) and optional scheduled send time (epoch ms).
   const undoSeconds = Math.min(300, Math.max(0, Math.floor(Number(form.get('undoSeconds')) || 0)));
   const sendAtRaw = Math.floor(Number(form.get('sendAt')) || 0);
-  const sendAt = sendAtRaw > Date.now() + 30_000 ? sendAtRaw : undefined;
+  const sendAt = sendAtRaw > Date.now() + 60_000 ? sendAtRaw : undefined;
   if (sendAtRaw && !sendAt) {
     return NextResponse.json(
       { ok: false, error: 'Scheduled send time must be at least a minute in the future.' },
@@ -143,37 +142,22 @@ export async function POST(req: NextRequest) {
     }
 
     if (undoSeconds > 0) {
-      // Deferred send: held in this instance's memory for the undo window.
-      // The id is user-prefixed so only its owner can cancel it.
-      const pendingId = `${user.userId}:${randomUUID()}`;
       const fireAt = Date.now() + undoSeconds * 1000;
-      queueSend(pendingId, undoSeconds * 1000, async () => {
-        try {
-          await runWithAiRequestContext(requestContext, async () => {
-            const message = await sendPrepared(user.userId, prepared);
-            await cacheSentMessage(account, message);
-          });
-          await writeAudit({
-            tool: `compose_route:${mode || 'new'}:undo_window`,
-            userId: user.userId,
-            account,
-            args: auditArgs,
-            result: 'ok',
-            agent: 'user',
-          }).catch(() => undefined);
-        } catch (err: any) {
-          console.error('[compose] deferred send failed:', err?.message || err);
-          await writeAudit({
-            tool: `compose_route:${mode || 'new'}:undo_window`,
-            userId: user.userId,
-            account,
-            args: auditArgs,
-            result: 'error',
-            detail: err?.message,
-            agent: 'user',
-          }).catch(() => undefined);
-        }
+      const scheduled = await runWithAiRequestContext(requestContext, async () => {
+        return await sendPrepared(user.userId, { ...prepared, useDraft: true }, fireAt);
       });
+      const scheduleId = (scheduled as any).scheduleId;
+      if (!scheduleId) throw new Error('Mail provider did not return a scheduled-send id.');
+      const pendingId = makeProviderPendingId({ userId: user.userId, account, scheduleId, fireAt });
+      rememberPendingStatus(pendingId, 'pending');
+      await writeAudit({
+        tool: `compose_route:${mode || 'new'}:undo_window`,
+        userId: user.userId,
+        account,
+        args: { ...auditArgs, fireAt },
+        result: 'ok',
+        agent: 'user',
+      }).catch(() => undefined);
       return NextResponse.json({
         ok: true,
         pending: { id: pendingId, fireAt, undoSeconds, account, threadId: threadId || null },

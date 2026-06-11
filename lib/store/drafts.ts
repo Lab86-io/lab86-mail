@@ -3,10 +3,10 @@ import type { Draft } from '../shared/types';
 import { kvDelete, kvGet, kvList, kvUpsert } from './kv';
 
 export async function saveDraft(draft: Draft): Promise<Draft> {
-  draft.updatedAt = Date.now();
-  if (!draft._id) draft._id = randomUUID();
-  await kvUpsert('draft', draft._id, draft, draft.account);
-  return draft;
+  const doc: Draft = { ...draft, updatedAt: Date.now() };
+  if (!doc._id) doc._id = randomUUID();
+  await kvUpsert('draft', doc._id, doc, doc.account);
+  return doc;
 }
 
 export async function listDrafts(account: string): Promise<Draft[]> {

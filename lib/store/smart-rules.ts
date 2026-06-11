@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { SmartCategoryId, SmartRule } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
 
+// kv* helpers scope every read and write to the signed-in user's ambient
+// request context; rule IDs only need to be unique inside that user scope.
 export async function listSmartRules(includeDisabled = false) {
   const rules = await kvList<SmartRule>('smartRule', { limit: 1000 });
   const filtered = includeDisabled ? rules : rules.filter((rule) => rule.enabled);
