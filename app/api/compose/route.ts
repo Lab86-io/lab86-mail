@@ -143,9 +143,39 @@ export async function POST(req: NextRequest) {
 
     if (undoSeconds > 0) {
       const fireAt = Date.now() + undoSeconds * 1000;
-      const scheduled = await runWithAiRequestContext(requestContext, async () => {
-        return await sendPrepared(user.userId, { ...prepared, useDraft: true }, fireAt);
-      });
+      let scheduled: Message | null = null;
+      try {
+        scheduled = await runWithAiRequestContext(requestContext, async () => {
+          return await sendPrepared(user.userId, { ...prepared, useDraft: true }, fireAt);
+        });
+      } catch (err: any) {
+        // The undo window elapsed in transit (slow upload, provider clock
+        // skew): the window is over either way, so send immediately instead
+        // of failing a message the user already committed to sending.
+        if (!/send_at/i.test(String(err?.message || ''))) throw err;
+        const sent = await runWithAiRequestContext(requestContext, async () => {
+          const message = await sendPrepared(user.userId, prepared);
+          await cacheSentMessage(account, message);
+          return message;
+        });
+        await writeAudit({
+          tool: `compose_route:${mode || 'new'}:undo_window_expired_send`,
+          userId: user.userId,
+          account,
+          args: auditArgs,
+          result: 'ok',
+          agent: 'user',
+        }).catch(() => undefined);
+        return NextResponse.json({
+          ok: true,
+          sent: {
+            account,
+            threadId: sent.threadId || threadId || sent._id,
+            messageId: sent._id,
+            refreshed: true,
+          },
+        });
+      }
       const scheduleId = (scheduled as any).scheduleId;
       if (!scheduleId) throw new Error('Mail provider did not return a scheduled-send id.');
       const pendingId = makeProviderPendingId({ userId: user.userId, account, scheduleId, fireAt });

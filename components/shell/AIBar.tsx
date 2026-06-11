@@ -1,7 +1,7 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DefaultChatTransport } from 'ai';
 import {
   AlarmClock,
@@ -13,31 +13,40 @@ import {
   Eye,
   Gauge,
   Globe,
+  History,
   Languages,
   ListChecks,
   Mail,
   MailOpen,
-  PanelRightOpen,
   Pencil,
+  Plus,
   ScrollText,
   Search,
   Send,
   ShieldCheck,
+  Sparkles,
   Square,
   Star,
   Tag,
-  Trash,
   Trash2,
   User,
   Wrench,
   X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { Message, MessageContent } from '@/components/ui/message';
@@ -51,7 +60,22 @@ import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { ScrollButton } from '@/components/ui/scroll-button';
 import { useClientStore } from '@/lib/client-state';
+import { formatDate } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
+
+interface ChatSessionSummary {
+  _id: string;
+  title: string;
+  messageCount: number;
+  updatedAt: number;
+}
+
+function newChatId() {
+  return (
+    globalThis.crypto?.randomUUID?.().replaceAll('-', '') ??
+    `chat${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+  );
+}
 
 const TOOL_ICONS: Record<string, any> = {
   search_threads: Search,
@@ -166,7 +190,9 @@ function toolMeta(name: string) {
   return { Icon, verb, isUi };
 }
 
-// ---------- Trigger: the pill at the top of the app shell ----------
+// ---------- Trigger: the labeled "Ask AI" pill at the top of the shell ----------
+// The old bare panel icon read as a layout toggle; this one says what it is,
+// breathes a soft accent glow so it's discoverable, and animates open.
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
@@ -188,17 +214,36 @@ export function AIBarTrigger() {
   if (aiBarOpen) return null;
 
   return (
-    <Button
+    <motion.button
       type="button"
-      variant="outline"
-      size="icon-sm"
+      initial={{ opacity: 0, y: -6, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      whileHover={{ scale: 1.04 }}
+      whileTap={{ scale: 0.97 }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
       onClick={() => setAiBarOpen(true)}
-      className="absolute right-3 top-3 z-30 text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-      title="Open agent sidebar (⌘K)"
+      title="Ask AI — chat with your inbox (⌘K)"
+      className="group absolute right-3 top-3 z-30 flex items-center gap-1.5 rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] py-1.5 pl-2.5 pr-2 text-[12px] font-medium text-[var(--color-text)] shadow-[var(--shadow-soft)] transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]"
     >
-      <PanelRightOpen className="h-3.5 w-3.5" />
-      <span className="sr-only">Open agent sidebar</span>
-    </Button>
+      {/* Breathing glow ring — the discoverability cue. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-full [animation:askai-breathe_3.2s_ease-in-out_infinite]"
+        style={{ boxShadow: '0 0 0 0 var(--color-accent)' }}
+      />
+      <Sparkles className="size-3.5 text-[var(--color-accent)] transition-transform group-hover:rotate-12" />
+      <span>Ask AI</span>
+      <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1 py-px font-mono text-[9.5px] text-[var(--color-text-faint)]">
+        ⌘K
+      </kbd>
+      <style>{`
+        @keyframes askai-breathe {
+          0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 28%, transparent); }
+          50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent) 0%, transparent); }
+        }
+      `}</style>
+      <span className="sr-only">Open the AI assistant</span>
+    </motion.button>
   );
 }
 
@@ -222,6 +267,81 @@ export function AIBarSidebar() {
 
   const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
   const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport });
+
+  // --- Persistent sessions: restore the last chat, autosave as you go ---
+  const lastChatId = useClientStore((s) => s.lastChatId);
+  const setLastChatId = useClientStore((s) => s.setLastChatId);
+  const sessionIdRef = useRef<string | null>(null);
+  const restoredRef = useRef(false);
+  const saveTimer = useRef<number | null>(null);
+
+  const loadSession = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/chats?id=${encodeURIComponent(id)}`);
+        const data = await res.json();
+        if (data?.ok && Array.isArray(data.session?.messages)) {
+          sessionIdRef.current = id;
+          setLastChatId(id);
+          setMessages(data.session.messages);
+          return true;
+        }
+      } catch {
+        // history is best-effort; a failed load just starts fresh
+      }
+      return false;
+    },
+    [setLastChatId, setMessages],
+  );
+
+  // First open: pick up where the user left off.
+  useEffect(() => {
+    if (!aiBarOpen || restoredRef.current) return;
+    restoredRef.current = true;
+    if (lastChatId && messages.length === 0) {
+      sessionIdRef.current = lastChatId;
+      void loadSession(lastChatId);
+    }
+  }, [aiBarOpen, lastChatId, messages.length, loadSession]);
+
+  // Autosave once the stream settles (debounced so multi-step turns save once).
+  useEffect(() => {
+    if (status === 'streaming' || status === 'submitted') return;
+    if (!messages.length || !sessionIdRef.current) return;
+    if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    const id = sessionIdRef.current;
+    saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = null;
+      void fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, messages }),
+      })
+        .then(() => qc.invalidateQueries({ queryKey: ['chat-sessions'] }))
+        .catch(() => undefined);
+    }, 600);
+    return () => {
+      if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    };
+  }, [messages, status, qc]);
+
+  const startNewChat = useCallback(() => {
+    sessionIdRef.current = null;
+    setLastChatId(null);
+    setMessages([]);
+  }, [setLastChatId, setMessages]);
+
+  const { data: sessionsData } = useQuery({
+    queryKey: ['chat-sessions'],
+    queryFn: async () => {
+      const res = await fetch('/api/chats');
+      const data = await res.json();
+      return (data?.sessions || []) as ChatSessionSummary[];
+    },
+    enabled: aiBarOpen,
+    staleTime: 30_000,
+  });
+  const chatSessions = sessionsData || [];
 
   // Auto-focus the textarea when the sidebar opens.
   useEffect(() => {
@@ -341,6 +461,12 @@ export function AIBarSidebar() {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     setInput('');
+    // Lazily mint a session id on the first message so autosave has a home
+    // and the conversation shows up in history.
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = newChatId();
+      setLastChatId(sessionIdRef.current);
+    }
     const activeAccount =
       threadAccount && threadAccount !== ALL_ACCOUNTS
         ? threadAccount
@@ -385,22 +511,61 @@ export function AIBarSidebar() {
       <TopProgressBar active={busy} />
 
       <header className="flex items-center justify-between gap-2 px-3 py-2.5">
-        <div className="flex items-baseline gap-1.5 text-[13px]">
-          <span className="font-medium text-[var(--color-text)]">Agent</span>
-          <span className="text-[var(--color-text-faint)]">·</span>
-          <span className="text-[11.5px] text-[var(--color-text-muted)]">gpt-5.5</span>
+        <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
+          <Sparkles className="size-3.5 shrink-0 text-[var(--color-accent)]" />
+          <span className="truncate font-medium text-[var(--color-text)]">Ask AI</span>
         </div>
         <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => setMessages([])}
-            title="Clear conversation"
+            onClick={startNewChat}
+            title="New chat"
             className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
           >
-            <Trash className="h-3.5 w-3.5" />
-            <span className="sr-only">Clear conversation</span>
+            <Plus className="h-3.5 w-3.5" />
+            <span className="sr-only">New chat</span>
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title="Chat history"
+                className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+              >
+                <History className="h-3.5 w-3.5" />
+                <span className="sr-only">Chat history</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
+              <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
+              {chatSessions.length === 0 ? (
+                <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
+              ) : (
+                chatSessions.map((session) => (
+                  <DropdownMenuItem
+                    key={session._id}
+                    onSelect={() => void loadSession(session._id)}
+                    className="flex flex-col items-start gap-0.5"
+                  >
+                    <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
+                      {session.title || 'Untitled chat'}
+                    </span>
+                    <span className="text-[10.5px] text-[var(--color-text-faint)]">
+                      {formatDate(session.updatedAt)} · {session.messageCount} message
+                      {session.messageCount === 1 ? '' : 's'}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={startNewChat}>
+                <Plus className="size-3.5" />
+                Start a new chat
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon-sm"

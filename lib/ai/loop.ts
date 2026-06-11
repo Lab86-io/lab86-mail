@@ -1,8 +1,9 @@
 import { tool as aiTool, type ModelMessage, stepCountIs } from 'ai';
 import { z } from 'zod';
+import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
-import { getAiRequestContext } from './context';
+import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { hasPlatformAi, streamTextForUser } from './gateway';
 import { buildSystemPrompt } from './system-prompt';
 
@@ -112,7 +113,15 @@ export async function runAgent({ messages, extraSystem, userId, userEmail, userN
       'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
     );
   }
-  const base = buildSystemPrompt({ name: userName, email: userEmail });
+  // Memories are injected at conversation start so remembered facts and
+  // preferences are ALWAYS in play — the recall tool remains for ad-hoc
+  // lookups, but the agent never starts blind.
+  const memories = userId
+    ? await runWithAiRequestContext({ userId, userEmail, userName, agent: 'ai' }, () =>
+        listMemories().catch(() => []),
+      ).then((rows) => rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })))
+    : [];
+  const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
   const system = extraSystem ? `${base}\n\n${extraSystem}` : base;
   const stream = await streamTextForUser({
     userId,

@@ -676,6 +676,15 @@ export async function sendNylasMessage({
   assertOutboundSendEnabled();
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
+  // Nylas rejects send_at values that are not in the future AT VALIDATION
+  // TIME ("provided send_at field is less than current epoch time"). Short
+  // undo windows plus request/upload latency made stale timestamps common, so
+  // clamp to a small floor at dispatch: the send goes out a few seconds late
+  // in the worst case instead of failing outright.
+  const SEND_AT_FLOOR_SECONDS = 10;
+  const sendAtSeconds = sendAt
+    ? Math.max(Math.floor(sendAt / 1000), Math.floor(Date.now() / 1000) + SEND_AT_FLOOR_SECONDS)
+    : undefined;
   const result = await requireNylas().messages.send({
     identifier: row.grantId,
     requestBody: {
@@ -686,7 +695,7 @@ export async function sendNylasMessage({
       body: html || body,
       isPlaintext: !html,
       replyToMessageId,
-      sendAt: sendAt ? Math.floor(sendAt / 1000) : undefined,
+      sendAt: sendAtSeconds,
       useDraft,
       attachments,
     },
