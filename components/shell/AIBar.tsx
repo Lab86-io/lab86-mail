@@ -18,13 +18,13 @@ import {
   ListChecks,
   Mail,
   MailOpen,
+  MessagesSquare,
   Pencil,
   Plus,
   ScrollText,
   Search,
   Send,
   ShieldCheck,
-  Sparkles,
   Square,
   Star,
   Tag,
@@ -37,6 +37,8 @@ import { motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { AnimatedIcon } from '@/components/ui/animated-icon';
+import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
 import {
@@ -190,9 +192,9 @@ function toolMeta(name: string) {
   return { Icon, verb, isUi };
 }
 
-// ---------- Trigger: the labeled "Ask AI" pill at the top of the shell ----------
-// The old bare panel icon read as a layout toggle; this one says what it is,
-// breathes a soft accent glow so it's discoverable, and animates open.
+// ---------- Trigger: the "Ask Assistant" launcher, bottom-right of the shell ----------
+// Text-only (no icon), anchored bottom-right, with an animated Magic UI glow
+// around the border so it reads as the live AI entry point.
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
@@ -216,33 +218,22 @@ export function AIBarTrigger() {
   return (
     <motion.button
       type="button"
-      initial={{ opacity: 0, y: -6, scale: 0.96 }}
+      initial={{ opacity: 0, y: 8, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       whileHover={{ scale: 1.04 }}
       whileTap={{ scale: 0.97 }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       onClick={() => setAiBarOpen(true)}
-      title="Ask AI — chat with your inbox (⌘K)"
-      className="group absolute right-3 top-3 z-30 flex items-center gap-1.5 rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] py-1.5 pl-2.5 pr-2 text-[12px] font-medium text-[var(--color-text)] shadow-[var(--shadow-soft)] transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]"
+      title="Ask Assistant (⌘K)"
+      className="ask-assistant-glow group absolute bottom-4 right-4 z-30 flex items-center gap-2 overflow-hidden rounded-full bg-[var(--color-bg-elevated)] px-4 py-2 text-[12.5px] font-medium text-[var(--color-text)]"
     >
-      {/* Breathing glow ring — the discoverability cue. */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-0 rounded-full [animation:askai-breathe_3.2s_ease-in-out_infinite]"
-        style={{ boxShadow: '0 0 0 0 var(--color-accent)' }}
-      />
-      <Sparkles className="size-3.5 text-[var(--color-accent)] transition-transform group-hover:rotate-12" />
-      <span>Ask AI</span>
+      {/* Magic UI traveling-light border + the pulsing outer glow (CSS class). */}
+      <BorderBeam size={64} duration={6} borderWidth={1.5} />
+      <span>Ask Assistant</span>
       <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1 py-px font-mono text-[9.5px] text-[var(--color-text-faint)]">
         ⌘K
       </kbd>
-      <style>{`
-        @keyframes askai-breathe {
-          0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 28%, transparent); }
-          50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent) 0%, transparent); }
-        }
-      `}</style>
-      <span className="sr-only">Open the AI assistant</span>
+      <span className="sr-only">Open the assistant</span>
     </motion.button>
   );
 }
@@ -512,8 +503,12 @@ export function AIBarSidebar() {
 
       <header className="flex items-center justify-between gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
-          <Sparkles className="size-3.5 shrink-0 text-[var(--color-accent)]" />
-          <span className="truncate font-medium text-[var(--color-text)]">Ask AI</span>
+          <AnimatedIcon
+            as={MessagesSquare}
+            variant="wiggle"
+            className="size-3.5 shrink-0 text-[var(--color-accent)]"
+          />
+          <span className="truncate font-medium text-[var(--color-text)]">Ask Assistant</span>
         </div>
         <div className="flex items-center gap-0.5">
           <Button

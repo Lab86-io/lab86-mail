@@ -630,3 +630,56 @@
   --sidebar-border: var(--color-border);
   --sidebar-ring: var(--color-accent);
 }
+
+/* ---------------------------------------------------------------------------
+   Animated icons (app-wide). Every Lucide icon inside an interactive control
+   gets a slight ease on hover/press, so the whole UI feels alive without
+   touching each call site. Icons rendered through <AnimatedIcon> carry
+   data-anim and opt out here (they run their own motion). Respects reduced
+   motion.
+--------------------------------------------------------------------------- */
+button svg.lucide:not([data-anim]),
+a svg.lucide:not([data-anim]),
+label svg.lucide:not([data-anim]),
+[role="button"] svg.lucide:not([data-anim]),
+[role="menuitem"] svg.lucide:not([data-anim]),
+[role="tab"] svg.lucide:not([data-anim]) {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+button:hover svg.lucide:not([data-anim]),
+a:hover svg.lucide:not([data-anim]),
+label:hover svg.lucide:not([data-anim]),
+[role="button"]:hover svg.lucide:not([data-anim]),
+[role="menuitem"]:hover svg.lucide:not([data-anim]),
+[role="tab"]:hover svg.lucide:not([data-anim]),
+.group:hover svg.lucide:not([data-anim]) {
+  transform: translateY(-1px) scale(1.12);
+}
+button:active svg.lucide:not([data-anim]),
+[role="button"]:active svg.lucide:not([data-anim]) {
+  transform: scale(0.9);
+}
+
+@keyframes ask-assistant-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent),
+      0 0 16px 0 color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent),
+      0 0 26px 4px color-mix(in srgb, var(--color-accent) 38%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  svg.lucide {
+    transition: none !important;
+  }
+  .ask-assistant-glow {
+    animation: none !important;
+  }
+}
