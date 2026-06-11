@@ -33,7 +33,7 @@ export function RowIcon({
   className?: string;
 }) {
   const handleRef = useRef<IconHandle>(null);
-  const hostRef = useRef<HTMLSpanElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -49,10 +49,13 @@ export function RowIcon({
     };
   }, []);
 
+  // The host must NOT be a <span>: the shadcn sidebar hides every direct span
+  // child of a menu button in icon-collapsed mode (max-w-0 + opacity-0), which
+  // made these icons vanish when the rail collapsed.
   return (
-    <span ref={hostRef} className="inline-flex shrink-0">
+    <div ref={hostRef} className="inline-flex shrink-0">
       <Icon ref={handleRef} size={size} className={cn('flex items-center justify-center', className)} />
-    </span>
+    </div>
   );
 }
 

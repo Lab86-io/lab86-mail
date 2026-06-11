@@ -55,6 +55,8 @@ export interface ClientState {
   railOpen: boolean;
   railWidth: number;
   aiBarOpen: boolean;
+  // Reader takes over (almost) the whole window; not persisted.
+  threadFullscreen: boolean;
   // Persisted id of the most recent AI chat session, so reopening the app
   // restores the last conversation instead of starting blank.
   lastChatId: string | null;
@@ -93,6 +95,7 @@ export interface ClientState {
   setRailOpen: (open: boolean) => void;
   setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
+  setThreadFullscreen: (full: boolean) => void;
   setLastChatId: (id: string | null) => void;
   setPendingReplyBody: (body: string | null) => void;
 }
@@ -133,6 +136,7 @@ export const useClientStore = create<ClientState>()(
       railOpen: true,
       railWidth: 240,
       aiBarOpen: false,
+      threadFullscreen: false,
       lastChatId: null,
       pendingReplyBody: null,
 
@@ -205,6 +209,7 @@ export const useClientStore = create<ClientState>()(
       setRailOpen: (railOpen) => set({ railOpen }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
+      setThreadFullscreen: (threadFullscreen) => set({ threadFullscreen }),
       setLastChatId: (lastChatId) => set({ lastChatId }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
     }),

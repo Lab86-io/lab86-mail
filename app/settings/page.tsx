@@ -30,6 +30,7 @@ import {
 } from '@/components/hosted/ai-options';
 import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
@@ -60,6 +61,7 @@ export default function SettingsPage() {
           <MailboxesSection />
           <SendingSection />
           <AiSection />
+          <ShortcutsSection />
           <AccountSection />
         </div>
       </div>
@@ -73,6 +75,35 @@ function SectionHeading({ title, blurb }: { title: string; blurb: string }) {
       <h2 className="text-[16px] font-semibold tracking-tight">{title}</h2>
       <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{blurb}</p>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts (moved here from the rail's footer sheet)
+// ---------------------------------------------------------------------------
+
+function ShortcutsSection() {
+  return (
+    <section>
+      <SectionHeading title="Keyboard shortcuts" blurb="Everything is reachable without the mouse." />
+      <div className="grid grid-cols-1 gap-x-10 gap-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 text-[13px] shadow-[var(--shadow-soft)] sm:grid-cols-2">
+        {SHORTCUTS.map(([keys, label]) => (
+          <div key={label} className="flex items-center justify-between gap-3 py-0.5">
+            <span className="text-[var(--color-text-muted)]">{label}</span>
+            <span className="flex shrink-0 items-center gap-1">
+              {keys.map((k) => (
+                <kbd
+                  key={k}
+                  className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--color-text)]"
+                >
+                  {k}
+                </kbd>
+              ))}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

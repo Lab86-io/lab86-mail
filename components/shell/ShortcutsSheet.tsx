@@ -3,7 +3,7 @@
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useClientStore } from '@/lib/client-state';
 
-const SHORTCUTS: [string[], string][] = [
+export const SHORTCUTS: [string[], string][] = [
   [['j', '↓'], 'Next thread'],
   [['k', '↑'], 'Previous thread'],
   [['↵', 'o'], 'Open thread'],
