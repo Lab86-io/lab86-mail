@@ -968,22 +968,13 @@ function QuickFixMenu({
             Move to...
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            {(
-              [
-                'main',
-                'needs_reply',
-                'waiting',
-                'codes',
-                'orders',
-                'finance_admin',
-                'review',
-                'noise',
-              ] as const
-            ).map((category) => (
-              <DropdownMenuItem key={category} onSelect={() => onCorrect('move_to', { category })}>
-                {SMART_CATEGORY_LABELS[category]}
-              </DropdownMenuItem>
-            ))}
+            {(['main', 'needs_reply', 'codes', 'orders', 'finance_admin', 'review', 'noise'] as const).map(
+              (category) => (
+                <DropdownMenuItem key={category} onSelect={() => onCorrect('move_to', { category })}>
+                  {SMART_CATEGORY_LABELS[category]}
+                </DropdownMenuItem>
+              ),
+            )}
             {customLabels.length ? <DropdownMenuSeparator /> : null}
             {customLabels.map((label) => (
               <DropdownMenuItem

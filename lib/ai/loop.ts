@@ -4,7 +4,7 @@ import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext } from './context';
 import { hasPlatformAi, streamTextForUser } from './gateway';
-import { SYSTEM_PROMPT } from './system-prompt';
+import { buildSystemPrompt } from './system-prompt';
 
 const AGENT_TOOL_NAMES = new Set([
   'list_accounts',
@@ -83,6 +83,7 @@ function liftToolsForAgent(): Record<string, any> {
           agent: 'ai',
           userId: context.userId,
           userEmail: context.userEmail,
+          userName: context.userName,
         });
         return result;
       },
@@ -97,18 +98,21 @@ export interface AgentRunOpts {
   extraSystem?: string;
   userId?: string | null;
   userEmail?: string | null;
+  userName?: string | null;
 }
 
-export async function runAgent({ messages, extraSystem, userId, userEmail }: AgentRunOpts) {
+export async function runAgent({ messages, extraSystem, userId, userEmail, userName }: AgentRunOpts) {
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
     );
   }
-  const system = extraSystem ? `${SYSTEM_PROMPT}\n\n${extraSystem}` : SYSTEM_PROMPT;
+  const base = buildSystemPrompt({ name: userName, email: userEmail });
+  const system = extraSystem ? `${base}\n\n${extraSystem}` : base;
   const stream = await streamTextForUser({
     userId,
     userEmail,
+    userName,
     feature: 'agent',
     speed: 'fast',
     system,

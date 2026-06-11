@@ -204,7 +204,7 @@ export const useClientStore = create<ClientState>()(
     }),
     {
       name: PERSIST_KEY,
-      version: 2,
+      version: 3,
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
@@ -214,6 +214,8 @@ export const useClientStore = create<ClientState>()(
         if (persisted && persisted.query === '-in:trash newer_than:365d') {
           persisted.query = DEFAULT_QUERY;
         }
+        // The Waiting smart category was removed; fold it into Review.
+        if (persisted.smartCategory === 'waiting') persisted.smartCategory = 'review';
         return persisted;
       },
       partialize: (s) => ({

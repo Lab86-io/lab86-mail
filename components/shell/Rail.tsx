@@ -6,7 +6,6 @@ import {
   Archive,
   Calendar,
   ChevronsUpDown,
-  ClipboardList,
   CreditCard,
   Flag,
   Inbox,
@@ -99,7 +98,6 @@ const SMART_CATEGORIES = [
     Icon: MessageCircle,
     help: 'Human conversations likely worth a response.',
   },
-  { id: 'waiting', label: 'Waiting', Icon: ClipboardList, help: 'Threads where the next move is waiting.' },
   {
     id: 'codes',
     label: 'Codes',

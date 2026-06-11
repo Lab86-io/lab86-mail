@@ -2,14 +2,12 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { defineTool } from './registry';
 
+// Hosted deploys don't ship the Browserbase CLIs; without the env vars these
+// tools degrade to empty results instead of spawning a nonexistent binary.
 const BROWSERBASE_SEARCH =
-  process.env.LAB86_MAIL_BROWSERBASE_SEARCH ||
-  process.env.MAIL_OS_BROWSERBASE_SEARCH ||
-  '/home/jjalangtry/.local/bin/browserbase-search';
+  process.env.LAB86_MAIL_BROWSERBASE_SEARCH || process.env.MAIL_OS_BROWSERBASE_SEARCH || '';
 const BROWSERBASE_FETCH =
-  process.env.LAB86_MAIL_BROWSERBASE_FETCH ||
-  process.env.MAIL_OS_BROWSERBASE_FETCH ||
-  '/home/jjalangtry/.local/bin/browserbase-fetch';
+  process.env.LAB86_MAIL_BROWSERBASE_FETCH || process.env.MAIL_OS_BROWSERBASE_FETCH || '';
 
 function runCli(bin: string, args: string[], timeoutMs = 45_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -34,6 +32,7 @@ export const browserbaseSearch = defineTool({
   input: z.object({ query: z.string(), limit: z.number().int().min(1).max(20).default(10) }),
   output: z.object({ results: z.array(z.any()) }),
   async handler({ query, limit }) {
+    if (!BROWSERBASE_SEARCH) return { results: [] };
     const out = await runCli(BROWSERBASE_SEARCH, [query]).catch(() => '');
     try {
       const parsed = JSON.parse(out);
@@ -52,6 +51,7 @@ export const browserbaseFetch = defineTool({
   input: z.object({ url: z.string().url() }),
   output: z.object({ content: z.string() }),
   async handler({ url }) {
+    if (!BROWSERBASE_FETCH) return { content: '' };
     const out = await runCli(BROWSERBASE_FETCH, ['--redirects', url]).catch(() => '');
     try {
       const parsed = JSON.parse(out);

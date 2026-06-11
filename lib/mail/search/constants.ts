@@ -3,7 +3,6 @@ export const DEFAULT_MAIL_QUERY = 'in:inbox newer_than:30d';
 export const SMART_CATEGORY_CANDIDATE_QUERIES: Record<string, string> = {
   main: 'in:inbox newer_than:45d -in:trash -in:spam',
   needs_reply: 'in:inbox newer_than:45d -in:trash -in:spam',
-  waiting: 'in:inbox newer_than:45d -in:trash -in:spam',
   codes: 'newer_than:30d (code OR verification OR login OR security OR "magic link") -in:trash -in:spam',
   orders:
     'newer_than:90d (order OR shipped OR delivery OR tracking OR refund OR receipt OR invoice OR booking) -in:trash -in:spam',

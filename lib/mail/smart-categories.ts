@@ -12,7 +12,6 @@ export const DEVOPS_LABEL_ID = 'smart-label-dev-ops';
 export const SMART_CATEGORY_IDS = [
   'main',
   'needs_reply',
-  'waiting',
   'codes',
   'orders',
   'finance_admin',
@@ -23,7 +22,6 @@ export const SMART_CATEGORY_IDS = [
 export const SMART_CATEGORY_LABELS: Record<SmartCategoryId, string> = {
   main: 'Main',
   needs_reply: 'Needs Reply',
-  waiting: 'Waiting',
   codes: 'Codes',
   orders: 'Orders',
   finance_admin: 'Finance/Admin',
@@ -34,7 +32,6 @@ export const SMART_CATEGORY_LABELS: Record<SmartCategoryId, string> = {
 export const SMART_CATEGORY_GMAIL_LABELS: Record<SmartCategoryId, string> = {
   main: 'MailOS/Main',
   needs_reply: 'MailOS/Needs Reply',
-  waiting: 'MailOS/Waiting',
   codes: 'MailOS/Codes',
   orders: 'MailOS/Orders',
   finance_admin: 'MailOS/Finance Admin',
@@ -530,7 +527,7 @@ export function classifyThreadWithContext(
   ) {
     return applyCustomLabels(
       verdict(thread, 'main', `AI triage says ${triage.action}: ${triage.reason}`, {
-        secondary: triage.action === 'wait' ? ['waiting'] : ['needs_reply'],
+        secondary: ['needs_reply'],
         confidence: 0.86,
         needsAttention: true,
         suggestedAction: triage.action === 'wait' ? 'wait' : 'reply',
