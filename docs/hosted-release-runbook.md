@@ -132,6 +132,23 @@ pole; start it first):
    request `mail.google.com`. Submit OAuth verification and the annual **CASA
    Tier 2** assessment before public launch or at ~70 lifetime production Gmail
    authorizations, whichever comes first.
+
+   Provisioned 2026-06-11 via gcloud (project `lab86-mail-prod`, number
+   965430081258, billing `01ABBC-9D4798-74856E`):
+   - APIs enabled: `gmail.googleapis.com`, `pubsub.googleapis.com`.
+   - Service account `nylas-gmail-realtime@lab86-mail-prod.iam.gserviceaccount.com`
+     (exact name required by the Nylas connector).
+   - Pub/Sub topic `projects/lab86-mail-prod/topics/nylas-gmail-realtime` with
+     `gmail-api-push@system.gserviceaccount.com` as Pub/Sub Publisher — this is
+     the value for the connector's "Google Pub/Sub topic name" field.
+   - Authenticated push subscription `nylas-gmail-realtime-sub` →
+     `https://gmailrealtime.us.nylas.com` (OIDC as the service account, never
+     expires; the Pub/Sub service agent holds `iam.serviceAccountTokenCreator`).
+
+   Console-only remainder (no API exists for external consent screens): the
+   OAuth consent screen/branding, scopes, test users, and the **Web application
+   OAuth client** with redirect `https://api.us.nylas.com/v3/connect/callback`
+   — its client ID/secret go into the Nylas Google connector form.
 3. **Microsoft (Azure).** Register an Azure app (Mail.ReadWrite, Mail.Send,
    offline_access, User.Read). Track Microsoft Partner Center publisher
    verification separately from Google.
