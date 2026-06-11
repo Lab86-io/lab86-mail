@@ -6,7 +6,11 @@ import type { NextConfig } from 'next';
 // production environment), every sign-in dies on CORS with an empty page.
 // Fail the build loudly instead of shipping that.
 const clerkProxyUrl = process.env.NEXT_PUBLIC_CLERK_PROXY_URL || '';
-const publicUrl = process.env.LAB86_MAIL_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || '';
+const publicUrl =
+  process.env.LAB86_MAIL_PUBLIC_URL ||
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.MAIL_OS_PUBLIC_URL ||
+  'http://127.0.0.1:18837';
 if (clerkProxyUrl.startsWith('http') && publicUrl.startsWith('http')) {
   const proxyOrigin = new URL(clerkProxyUrl).origin;
   const appOrigin = new URL(publicUrl).origin;
