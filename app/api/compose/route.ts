@@ -1,8 +1,10 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { makeProviderPendingId, rememberPendingStatus } from '@/lib/send/pending';
 import { sanitizeFilename } from '@/lib/shared/files';
 import { emailFromHeader } from '@/lib/shared/format';
 import type { Message } from '@/lib/shared/types';
@@ -41,6 +43,22 @@ export async function POST(req: NextRequest) {
   const html = (form.get('html') as string | null) || undefined;
   const threadId = (form.get('threadId') as string | null) || undefined;
   const messageId = (form.get('messageId') as string | null) || undefined;
+  // Undo-send window (seconds, 0–300) and optional scheduled send time (epoch ms).
+  const undoSeconds = Math.min(300, Math.max(0, Math.floor(Number(form.get('undoSeconds')) || 0)));
+  const sendAtRaw = Math.floor(Number(form.get('sendAt')) || 0);
+  const sendAt = sendAtRaw > Date.now() + 60_000 ? sendAtRaw : undefined;
+  if (sendAtRaw && !sendAt) {
+    return NextResponse.json(
+      { ok: false, error: 'Scheduled send time must be at least a minute in the future.' },
+      { status: 400 },
+    );
+  }
+  if (sendAt && sendAt > Date.now() + 30 * 24 * 60 * 60_000) {
+    return NextResponse.json(
+      { ok: false, error: 'Scheduled send time must be within 30 days.' },
+      { status: 400 },
+    );
+  }
 
   const files = form.getAll('attachments').filter((value): value is File => value instanceof File);
   const total = files.reduce((sum, file) => sum + file.size, 0);
@@ -69,35 +87,123 @@ export async function POST(req: NextRequest) {
       } as NylasAttachment);
     }
 
-    const sent = await composeWithNylas({
+    const requestContext = {
       userId: user.userId,
-      account,
-      mode,
+      userEmail: user.email,
+      userName: user.name,
+      agent: 'user' as const,
+    };
+    const auditArgs = {
+      mode: mode || 'new',
       to,
       cc,
       bcc,
       subject,
-      body,
-      html,
       threadId,
       messageId,
-      attachments,
-    });
-    await cacheSentMessage(account, sent);
-    await writeAudit({
-      tool: `compose_route:${mode || 'new'}:nylas`,
-      userId: user.userId,
-      account,
-      args: {
-        mode: mode || 'new',
+      attachments: files.map((file) => file.name),
+    };
+    // Reply/forward targets are resolved NOW, while the user is watching —
+    // a missing anchor must fail the request, not a timer five minutes later.
+    const prepared = await runWithAiRequestContext(requestContext, () =>
+      prepareComposeSend({
+        account,
+        mode,
         to,
         cc,
         bcc,
         subject,
+        body,
+        html,
         threadId,
         messageId,
-        attachments: files.map((file) => file.name),
-      },
+        attachments,
+      }),
+    );
+
+    if (sendAt) {
+      const sent = await runWithAiRequestContext(requestContext, async () => {
+        const message = await sendPrepared(user.userId, prepared, sendAt);
+        await cacheSentMessage(account, message);
+        return message;
+      });
+      await writeAudit({
+        tool: `compose_route:${mode || 'new'}:scheduled`,
+        userId: user.userId,
+        account,
+        args: { ...auditArgs, sendAt },
+        result: 'ok',
+        agent: 'user',
+      }).catch(() => undefined);
+      return NextResponse.json({
+        ok: true,
+        scheduled: { account, sendAt, messageId: sent._id },
+      });
+    }
+
+    if (undoSeconds > 0) {
+      const fireAt = Date.now() + undoSeconds * 1000;
+      let scheduled: Message | null = null;
+      try {
+        scheduled = await runWithAiRequestContext(requestContext, async () => {
+          return await sendPrepared(user.userId, { ...prepared, useDraft: true }, fireAt);
+        });
+      } catch (err: any) {
+        // The undo window elapsed in transit (slow upload, provider clock
+        // skew): the window is over either way, so send immediately instead
+        // of failing a message the user already committed to sending.
+        if (!/send_at/i.test(String(err?.message || ''))) throw err;
+        const sent = await runWithAiRequestContext(requestContext, async () => {
+          const message = await sendPrepared(user.userId, prepared);
+          await cacheSentMessage(account, message);
+          return message;
+        });
+        await writeAudit({
+          tool: `compose_route:${mode || 'new'}:undo_window_expired_send`,
+          userId: user.userId,
+          account,
+          args: auditArgs,
+          result: 'ok',
+          agent: 'user',
+        }).catch(() => undefined);
+        return NextResponse.json({
+          ok: true,
+          sent: {
+            account,
+            threadId: sent.threadId || threadId || sent._id,
+            messageId: sent._id,
+            refreshed: true,
+          },
+        });
+      }
+      const scheduleId = (scheduled as any).scheduleId;
+      if (!scheduleId) throw new Error('Mail provider did not return a scheduled-send id.');
+      const pendingId = makeProviderPendingId({ userId: user.userId, account, scheduleId, fireAt });
+      rememberPendingStatus(pendingId, 'pending');
+      await writeAudit({
+        tool: `compose_route:${mode || 'new'}:undo_window`,
+        userId: user.userId,
+        account,
+        args: { ...auditArgs, fireAt },
+        result: 'ok',
+        agent: 'user',
+      }).catch(() => undefined);
+      return NextResponse.json({
+        ok: true,
+        pending: { id: pendingId, fireAt, undoSeconds, account, threadId: threadId || null },
+      });
+    }
+
+    const sent = await runWithAiRequestContext(requestContext, async () => {
+      const message = await sendPrepared(user.userId, prepared);
+      await cacheSentMessage(account, message);
+      return message;
+    });
+    await writeAudit({
+      tool: `compose_route:${mode || 'new'}:nylas`,
+      userId: user.userId,
+      account,
+      args: auditArgs,
       result: 'ok',
       agent: 'user',
     }).catch(() => undefined);
@@ -127,8 +233,15 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function composeWithNylas({
-  userId,
+type PreparedSend = Omit<Parameters<typeof sendNylasMessage>[0], 'userId' | 'sendAt'>;
+
+async function sendPrepared(userId: string, prepared: PreparedSend, sendAt?: number): Promise<Message> {
+  const sent = await sendNylasMessage({ userId, ...prepared, sendAt });
+  if (!sent) throw new Error('Connect this mailbox with Nylas before sending.');
+  return sent;
+}
+
+async function prepareComposeSend({
   account,
   mode,
   to,
@@ -141,7 +254,6 @@ async function composeWithNylas({
   messageId,
   attachments,
 }: {
-  userId: string;
   account: string;
   mode: string;
   to: string;
@@ -153,15 +265,14 @@ async function composeWithNylas({
   threadId?: string;
   messageId?: string;
   attachments: NylasAttachment[];
-}): Promise<Message> {
+}): Promise<PreparedSend> {
   if (mode === 'reply' || mode === 'reply_all') {
     if (!messageId && !threadId) throw new Error('messageId or threadId is required for reply/reply_all');
     const target =
       mode === 'reply_all'
         ? await resolveReplyAllTarget(account, messageId, threadId)
         : await resolveReplyTarget(account, messageId, threadId);
-    const sent = await sendNylasMessage({
-      userId,
+    return {
       account,
       to: to || target.to,
       cc,
@@ -171,9 +282,7 @@ async function composeWithNylas({
       html,
       replyToMessageId: messageId,
       attachments,
-    });
-    if (!sent) throw new Error('Connect this mailbox with Nylas before sending.');
-    return sent;
+    };
   }
 
   if (mode === 'forward') {
@@ -214,8 +323,7 @@ async function composeWithNylas({
           original.htmlBody || `<pre>${escapeHtml(original.textBody || '')}</pre>`,
         ].join('')
       : undefined;
-    const sent = await sendNylasMessage({
-      userId,
+    return {
       account,
       to,
       cc,
@@ -224,26 +332,12 @@ async function composeWithNylas({
       body: quotedText,
       html: quotedHtml,
       attachments,
-    });
-    if (!sent) throw new Error('Connect this mailbox with Nylas before sending.');
-    return sent;
+    };
   }
 
   if (!to) throw new Error('to is required');
   if (!subject) throw new Error('subject is required');
-  const sent = await sendNylasMessage({
-    userId,
-    account,
-    to,
-    cc,
-    bcc,
-    subject,
-    body,
-    html,
-    attachments,
-  });
-  if (!sent) throw new Error('Connect this mailbox with Nylas before sending.');
-  return sent;
+  return { account, to, cc, bcc, subject, body, html, attachments };
 }
 
 async function cacheSentMessage(account: string, sent: Message) {

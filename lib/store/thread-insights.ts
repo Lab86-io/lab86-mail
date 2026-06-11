@@ -1,15 +1,17 @@
 import type { ThreadInsight } from '../shared/types';
-import { db, findOne, upsert } from './db';
+import { kvGet, kvUpsert } from './kv';
 
 export function insightId(account: string, threadId: string) {
   return `${account}:${threadId}`;
 }
 
 export async function getThreadInsight(account: string, threadId: string) {
-  return await findOne<ThreadInsight>(db().threadInsights, { _id: insightId(account, threadId) });
+  return await kvGet<ThreadInsight>('threadInsight', insightId(account, threadId));
 }
 
 export async function upsertThreadInsight(insight: ThreadInsight) {
-  await upsert(db().threadInsights, { _id: insight._id }, insight);
-  return insight;
+  const key = insightId(insight.account, insight.threadId);
+  const next = { ...insight, _id: key };
+  await kvUpsert('threadInsight', key, next);
+  return next;
 }

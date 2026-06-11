@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
+import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
@@ -25,7 +26,7 @@ import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
 import { classifyThreadsBatched } from '../tools/ai';
 
-// Jakob's own addresses. Used to decide message direction (inbound vs outbound)
+// The user's own addresses. Used to decide message direction (inbound vs outbound)
 // for reply/follow-up detection and to keep him out of the "people" list. The
 // runtime also unions in the live connected accounts; the RIT address is included
 // here because it can show up as a sender.
@@ -45,9 +46,9 @@ const RECENT_QUERIES: Array<{ q: string; max: number; human?: boolean }> = [
   { q: 'in:inbox newer_than:14d', max: 40 },
 ];
 
-// Outbound pass — surfaces threads where Jakob sent last (for follow-up-owed)
+// Outbound pass — surfaces threads where the user sent last (for follow-up-owed)
 // and seeds the "prior correspondent" allowlist. Not time-boxed either, so an
-// old thread Jakob is still waiting on is not silently dropped.
+// old thread the user is still waiting on is not silently dropped.
 const SENT_QUERY = { q: 'in:sent -in:trash -in:spam', max: 200 };
 
 const CANDIDATE_LIMIT = 320;
@@ -184,7 +185,7 @@ export async function generateDailyReport(input: {
     const key = `${thread.account}:${thread._id}`;
     const messages = await loadThreadMessages(thread.account, thread._id, input.userId);
     messagesByKey.set(key, messages);
-    // Reliable allowlist: anyone Jakob has actually emailed in these threads.
+    // Reliable allowlist: anyone the user has actually emailed in these threads.
     for (const message of messages) {
       const fromEmail = emailFromHeader(message.from) || '';
       if (!fromEmail || !self.has(fromEmail)) continue;
@@ -462,8 +463,8 @@ function unionLabels(thread: Thread, messages: Message[]): string[] {
   return [...set];
 }
 
-// replyOwed   = newest message is inbound from a non-no-reply human (not Jakob).
-// followUpOwed = newest message is from Jakob, an earlier inbound human exists,
+// replyOwed   = newest message is inbound from a non-no-reply human (not the user).
+// followUpOwed = newest message is from the user, an earlier inbound human exists,
 //                and it has been at least 3 days.
 function computeOwed(messages: Message[], now: number, self: Set<string>) {
   const sorted = [...messages].sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
@@ -525,7 +526,7 @@ function computeFloor(
   const listSignals = bulkReasons.includes('unsubscribe') || bulkReasons.includes('bulk_or_list');
 
   // An automated "series": many inbound messages, all the same subject, that
-  // Jakob has never once answered. This catches dunning bots / drip
+  // the user has never once answered. This catches dunning bots / drip
   // notifications that wear a CATEGORY_PERSONAL costume (e.g. EliseAI leasing
   // reminders from a human-looking "Camden") — distinct from a real
   // conversation (which gets a reply) or a fresh cold intro (a single message).
@@ -701,7 +702,7 @@ async function buildThreadInsight(
         feature: 'daily_report_insight',
         speed: 'primary',
         system:
-          'You are a deep personal email analyst for Jakob. Use the full thread, calendar, and memory context. Never demote a thread that is from a real person, is in Gmail\'s personal or important category, or owes a reply — you may only raise its priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"...","importance":1|2|3,"suggestedLane":"reply_owed|follow_up_owed|new_people|time_sensitive|tracked|fyi|bulk"}.',
+          'You are a deep personal email analyst for the user. Use the full thread, calendar, and memory context. Never demote a thread that is from a real person, is in Gmail\'s personal or important category, or owes a reply — you may only raise its priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"...","importance":1|2|3,"suggestedLane":"reply_owed|follow_up_owed|new_people|time_sensitive|tracked|fyi|bulk"}.',
         prompt: [
           `Now: ${new Date(now).toString()}`,
           `Floor lane (minimum — you may only raise it): ${floor.lane}`,
@@ -866,8 +867,7 @@ async function composeReport(input: {
       const { text } = await generateTextForCurrentUser({
         feature: 'daily_report_narrative',
         speed: 'primary',
-        system:
-          "Write Jakob a warm, narrative Daily Report from his email, calendar, memories, and tracked threads — like a sharp chief-of-staff briefing him over coffee. Tell the story of where things stand: open it with the through-line of the day, then walk through the replies he owes and conversations awaiting his follow-up (name the people and what's at stake), then new people and anything time-sensitive, and close with a clear nudge on what to do first. Use flowing prose in 2-3 short paragraphs, concrete and investigative, naming names. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 140-180 words.",
+        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from their email, calendar, memories, and tracked threads — like a sharp chief-of-staff briefing them over coffee. Tell the story of where things stand: open it with the through-line of the day, then walk through the replies they owe and conversations awaiting their follow-up (name the people and what's at stake), then new people and anything time-sensitive, and close with a clear nudge on what to do first. Use flowing prose in 2-3 short paragraphs, concrete and investigative, naming names. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 140-180 words.`,
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,

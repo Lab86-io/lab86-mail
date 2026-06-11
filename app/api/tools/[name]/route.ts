@@ -35,6 +35,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ name: stri
       account: body?.account,
       userId: user.userId,
       userEmail: user.email,
+      userName: user.name,
     });
     return NextResponse.json({ ok: true, result });
   } catch (err: any) {

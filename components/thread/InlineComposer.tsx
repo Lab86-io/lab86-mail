@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  CalendarClock,
   Pencil as EditIcon,
   ExternalLink,
   Eye,
@@ -10,28 +11,34 @@ import {
   PenLine,
   Reply as ReplyIcon,
   Send as SendIcon,
+  Undo2,
   X,
 } from 'lucide-react';
 import { marked } from 'marked';
 import { motion } from 'motion/react';
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { Avatar } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { callTool } from '@/lib/api-client';
 import { type ComposeMode, useClientStore } from '@/lib/client-state';
+import { fireSendEffect } from '@/lib/effects/send-effect';
 import { sanitizeOutgoingHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
+import { DEFAULT_UNDO_SEND_SECONDS } from '@/lib/shared/sending';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
 
 // Hard guard: gmail's hard ceiling is 25MB total per send. We refuse slightly
 // under to leave headroom for MIME encoding overhead.
 const MAX_TOTAL_BYTES = 23 * 1024 * 1024;
+const SEND_STATUS_POLL_INTERVAL_MS = 600;
+const SEND_STATUS_CONFIRM_TIMEOUT_MS = 12_000;
 
 interface InlineComposerProps {
   mode: ComposeMode;
@@ -167,12 +174,83 @@ export function InlineComposer({
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
+  const openComposeNew = useClientStore((s) => s.openComposeNew);
+  const openComposeReply = useClientStore((s) => s.openComposeReply);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [customSendAt, setCustomSendAt] = useState('');
+  const customSendAtMin = toDatetimeLocalValue(Date.now() + 60_000);
+  const customSendAtMs = useMemo(
+    () => (customSendAt ? Date.parse(customSendAt) : Number.NaN),
+    [customSendAt],
+  );
+  const customSendAtIsFuture = Number.isFinite(customSendAtMs) && customSendAtMs > Date.now();
+
+  // Undo-send window (seconds). Server-side pref; default applies while loading.
+  const prefsQuery = useQuery({
+    queryKey: ['prefs'],
+    queryFn: async () => {
+      const res = await fetch('/api/prefs', { cache: 'no-store' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || data?.ok === false) throw new Error(data?.error || 'prefs failed');
+      return data.prefs as { undoSendSeconds: number };
+    },
+    staleTime: 60_000,
+  });
+  const undoSendSeconds = prefsQuery.data?.undoSendSeconds ?? DEFAULT_UNDO_SEND_SECONDS;
+
+  // Snapshot of the draft taken at send time so Undo can restore it after
+  // the composer has already cleared/closed.
+  const sendSnapshot = useRef<{
+    mode: ComposeMode;
+    account: string;
+    to: string;
+    cc: string;
+    bcc: string;
+    subject: string;
+    body: string;
+    threadId?: string | null;
+    anchorMessageId?: string | null;
+    hadFiles: boolean;
+  } | null>(null);
+
+  const restoreSnapshot = useCallback(() => {
+    const snap = sendSnapshot.current;
+    if (!snap) return;
+    if (snap.mode !== 'new' && (snap.threadId || snap.anchorMessageId)) {
+      openComposeReply({
+        mode: snap.mode,
+        threadId: snap.threadId || '',
+        messageId: snap.anchorMessageId || '',
+        account: snap.account,
+        prefill: { to: snap.to, cc: snap.cc, bcc: snap.bcc, subject: snap.subject, body: snap.body },
+      });
+    } else {
+      openComposeNew({ to: snap.to, cc: snap.cc, bcc: snap.bcc, subject: snap.subject, body: snap.body });
+    }
+  }, [openComposeNew, openComposeReply]);
 
   const send = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ sendAt }: { sendAt?: number } = {}) => {
+      if (sendAt !== undefined && sendAt <= Date.now()) {
+        throw new Error('Choose a future send time.');
+      }
       const fd = new FormData();
       fd.set('mode', composerMode);
       fd.set('account', fromAccount || account);
+      if (sendAt) fd.set('sendAt', String(sendAt));
+      else if (undoSendSeconds > 0) fd.set('undoSeconds', String(undoSendSeconds));
+      sendSnapshot.current = {
+        mode: composerMode,
+        account: fromAccount || account,
+        to,
+        cc,
+        bcc,
+        subject,
+        body,
+        threadId,
+        anchorMessageId,
+        hadFiles: files.length > 0,
+      };
       if (composerNeedsReplyAnchor && !anchorMessageId && !threadId) {
         throw new Error(
           'Cannot send reply: original message/thread is missing. Reopen the thread and try again.',
@@ -215,7 +293,101 @@ export function InlineComposer({
     },
     onMutate: () => setPhase('sending'),
     onSuccess: (data) => {
+      if (data?.pending) {
+        const pending = data.pending as { id: string; fireAt: number; undoSeconds: number };
+        const hadFiles = Boolean(sendSnapshot.current?.hadFiles);
+        setPhase('sent');
+        window.setTimeout(() => {
+          setPhase('draft');
+          setBody('');
+          setFiles([]);
+          setPreviewFile(null);
+          if (composerMode === 'new' || composerMode === 'forward') {
+            setTo('');
+            setCc('');
+            setBcc('');
+            setSubject('');
+          }
+          onSent?.(undefined);
+        }, 400);
+
+        const windowMs = Math.max(0, pending.fireAt - Date.now());
+        let undone = false;
+        let toastId: string | number = '';
+        const fireTimer = window.setTimeout(() => {
+          if (undone) return;
+          void waitForPendingSendStatus(pending.id).then((status) => {
+            if (undone) return;
+            toast.dismiss(toastId);
+            if (status === 'sent') {
+              fireSendEffect();
+              toast.success('Sent');
+            } else if (status === 'failed') {
+              toast.error('Send failed after the undo window.');
+            } else {
+              toast('Send is still syncing — refreshing.');
+            }
+            void queryClient.invalidateQueries({ queryKey: ['thread'] });
+            void queryClient.invalidateQueries({ queryKey: ['search'] });
+          });
+        }, windowMs);
+        toastId = toast.custom(
+          () => (
+            <UndoSendToastBody
+              fireAt={pending.fireAt}
+              onUndo={async () => {
+                undone = true;
+                window.clearTimeout(fireTimer);
+                toast.dismiss(toastId);
+                try {
+                  const res = await fetch('/api/compose/undo', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ pendingId: pending.id }),
+                  });
+                  const result = await res.json().catch(() => null);
+                  if (result?.undone) {
+                    restoreSnapshot();
+                    toast(
+                      hadFiles
+                        ? 'Send cancelled — draft restored, re-attach files'
+                        : 'Send cancelled — draft restored',
+                    );
+                  } else {
+                    toast.error('Too late — already sent.');
+                  }
+                } catch {
+                  toast.error('Could not reach the server to cancel.');
+                }
+              }}
+            />
+          ),
+          { duration: windowMs + 1_000 },
+        );
+        return;
+      }
+
+      if (data?.scheduled) {
+        const scheduled = data.scheduled as { sendAt: number };
+        setPhase('draft');
+        setScheduleOpen(false);
+        setCustomSendAt('');
+        setBody('');
+        setFiles([]);
+        setPreviewFile(null);
+        if (composerMode === 'new' || composerMode === 'forward') {
+          setTo('');
+          setCc('');
+          setBcc('');
+          setSubject('');
+        }
+        toast.success(`Scheduled for ${new Date(scheduled.sendAt).toLocaleString()}`);
+        onSent?.(undefined);
+        return;
+      }
+
       setPhase('sent');
+      fireSendEffect();
       const sent = data?.sent as SentMessageRef | undefined;
       const sentAccount = sent?.account || fromAccount || account;
       const sentThreadId = sent?.threadId || threadId || null;
@@ -547,21 +719,68 @@ export function InlineComposer({
             </button>
           ) : null}
         </div>
-        <button
-          type="button"
-          onClick={() => send.mutate()}
-          disabled={!canSend}
-          className={cn(
-            'flex items-center gap-1 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors',
-            phase === 'sent'
-              ? 'bg-[var(--color-success)] text-[var(--color-success-foreground)]'
-              : 'bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]',
-            'disabled:opacity-50',
-          )}
-        >
-          <SendIcon className={cn('h-3 w-3', phase === 'sending' && 'animate-pulse')} />
-          {phase === 'sending' ? 'Sending…' : phase === 'sent' ? 'Sent' : 'Send'}
-        </button>
+        <div className="flex items-center gap-1">
+          <Popover open={scheduleOpen} onOpenChange={setScheduleOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                disabled={!canSend}
+                className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+                title="Schedule send"
+              >
+                <CalendarClock className="h-3.5 w-3.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-60 p-2">
+              <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-faint)]">
+                Schedule send
+              </div>
+              {schedulePresets().map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => send.mutate({ sendAt: preset.at })}
+                  className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-muted)]"
+                >
+                  <span>{preset.label}</span>
+                  <span className="text-[11px] text-[var(--color-text-faint)]">{preset.hint}</span>
+                </button>
+              ))}
+              <div className="mt-2 border-t border-[var(--color-border)] pt-2">
+                <input
+                  type="datetime-local"
+                  value={customSendAt}
+                  min={customSendAtMin}
+                  onChange={(e) => setCustomSendAt(e.target.value)}
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[12px] outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={!customSendAtIsFuture}
+                  onClick={() => send.mutate({ sendAt: customSendAtMs })}
+                  className="mt-1.5 w-full rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-[12px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                >
+                  Schedule
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
+          <button
+            type="button"
+            onClick={() => send.mutate({})}
+            disabled={!canSend}
+            className={cn(
+              'flex items-center gap-1 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors',
+              phase === 'sent'
+                ? 'bg-[var(--color-success)] text-[var(--color-success-foreground)]'
+                : 'bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]',
+              'disabled:opacity-50',
+            )}
+          >
+            <SendIcon className={cn('h-3 w-3', phase === 'sending' && 'animate-pulse')} />
+            {phase === 'sending' ? 'Sending…' : phase === 'sent' ? 'Sent' : 'Send'}
+          </button>
+        </div>
       </footer>
 
       <Dialog open={!!previewFile} onOpenChange={(open) => !open && setPreviewFile(null)}>
@@ -570,6 +789,106 @@ export function InlineComposer({
         </DialogContent>
       </Dialog>
     </motion.section>
+  );
+}
+
+// Quick options for the schedule-send popover, computed at open time.
+function schedulePresets(): { label: string; hint: string; at: number }[] {
+  const now = new Date();
+  const inOneHour = new Date(now.getTime() + 60 * 60_000);
+  const tomorrow9 = new Date(now);
+  tomorrow9.setDate(tomorrow9.getDate() + 1);
+  tomorrow9.setHours(9, 0, 0, 0);
+  const monday9 = new Date(now);
+  monday9.setDate(monday9.getDate() + ((1 - monday9.getDay() + 7) % 7));
+  monday9.setHours(9, 0, 0, 0);
+  if (monday9 <= now) monday9.setDate(monday9.getDate() + 7);
+  const fmt = (d: Date) =>
+    d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  return [
+    { label: 'In 1 hour', hint: fmt(inOneHour), at: inOneHour.getTime() },
+    { label: 'Tomorrow morning', hint: fmt(tomorrow9), at: tomorrow9.getTime() },
+    { label: 'Monday morning', hint: fmt(monday9), at: monday9.getTime() },
+  ];
+}
+
+function toDatetimeLocalValue(ts: number) {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function waitForPendingSendStatus(
+  pendingId: string,
+  timeoutMs = SEND_STATUS_CONFIRM_TIMEOUT_MS,
+): Promise<'sent' | 'failed' | 'cancelled' | 'missing' | 'timeout'> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const params = new URLSearchParams({ pendingId });
+    const res = await fetch(`/api/compose/status?${params.toString()}`, { cache: 'no-store' }).catch(
+      () => null,
+    );
+    const data = res?.ok ? await res.json().catch(() => null) : null;
+    const status = data?.status as string | undefined;
+    if (status === 'sent' || status === 'failed' || status === 'cancelled' || status === 'missing') {
+      return status;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, SEND_STATUS_POLL_INTERVAL_MS));
+  }
+  return 'timeout';
+}
+
+// Countdown toast shown while a send is held in the undo window.
+function UndoSendToastBody({ fireAt, onUndo }: { fireAt: number; onUndo: () => void }) {
+  const [initialMs] = useState(() => Math.max(1, fireAt - Date.now()));
+  const [remaining, setRemaining] = useState(initialMs);
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setRemaining(Math.max(0, fireAt - Date.now()));
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [fireAt]);
+  const seconds = Math.ceil(remaining / 1000);
+  return (
+    <div className="pointer-events-auto flex w-[320px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 shadow-lg">
+      <div className="relative grid h-8 w-8 shrink-0 place-items-center">
+        <svg
+          viewBox="0 0 32 32"
+          className="absolute inset-0 -rotate-90"
+          role="presentation"
+          aria-hidden="true"
+        >
+          <circle cx="16" cy="16" r="13" fill="none" stroke="var(--color-border)" strokeWidth="2.5" />
+          <circle
+            cx="16"
+            cy="16"
+            r="13"
+            fill="none"
+            stroke="var(--color-accent)"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={2 * Math.PI * 13}
+            strokeDashoffset={(1 - remaining / initialMs) * 2 * Math.PI * 13}
+            className="transition-[stroke-dashoffset] duration-200 ease-linear"
+          />
+        </svg>
+        <span className="text-[11px] font-semibold tabular-nums text-[var(--color-text)]">{seconds}</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[12.5px] font-medium text-[var(--color-text)]">Sending…</div>
+        <div className="truncate text-[11px] text-[var(--color-text-muted)]">
+          Goes out in {seconds}s — change your mind?
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onUndo}
+        className="flex shrink-0 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-muted)]"
+      >
+        <Undo2 className="h-3.5 w-3.5" />
+        Undo
+      </button>
+    </div>
   );
 }
 

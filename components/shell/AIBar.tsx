@@ -1,7 +1,7 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DefaultChatTransport } from 'ai';
 import {
   AlarmClock,
@@ -17,8 +17,8 @@ import {
   ListChecks,
   Mail,
   MailOpen,
-  PanelRightOpen,
   Pencil,
+  Plus,
   ScrollText,
   Search,
   Send,
@@ -26,21 +26,32 @@ import {
   Square,
   Star,
   Tag,
-  Trash,
   Trash2,
   User,
   Wrench,
   X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { HistoryIcon } from '@/components/ui/history';
 import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { Message, MessageContent } from '@/components/ui/message';
+import { MessageSquareIcon } from '@/components/ui/message-square';
+import { PlusIcon } from '@/components/ui/plus';
 import {
   PromptInput,
   PromptInputAction,
@@ -49,9 +60,25 @@ import {
 } from '@/components/ui/prompt-input';
 import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
+import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
 import { useClientStore } from '@/lib/client-state';
+import { formatDate } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
+
+interface ChatSessionSummary {
+  _id: string;
+  title: string;
+  messageCount: number;
+  updatedAt: number;
+}
+
+function newChatId() {
+  return (
+    globalThis.crypto?.randomUUID?.().replaceAll('-', '') ??
+    `chat${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+  );
+}
 
 const TOOL_ICONS: Record<string, any> = {
   search_threads: Search,
@@ -166,10 +193,13 @@ function toolMeta(name: string) {
   return { Icon, verb, isUi };
 }
 
-// ---------- Trigger: the pill at the top of the app shell ----------
+// ---------- Trigger: the "Ask Assistant" launcher, bottom-right of the shell ----------
+// Text-only (no icon), anchored bottom-right, with an animated Magic UI glow
+// around the border so it reads as the live AI entry point.
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  const threadFullscreen = useClientStore((s) => s.threadFullscreen);
 
   // ⌘K toggles the sidebar.
   useEffect(() => {
@@ -184,21 +214,30 @@ export function AIBarTrigger() {
   }, [setAiBarOpen, aiBarOpen]);
 
   // When the sidebar is open it owns its own pane and Close button, so we
-  // only render this floating trigger while it's closed.
-  if (aiBarOpen) return null;
+  // only render this floating trigger while it's closed. The fullscreen
+  // reader popout owns the whole window — no floating chrome above it.
+  if (aiBarOpen || threadFullscreen) return null;
 
   return (
-    <Button
+    <motion.button
       type="button"
-      variant="outline"
-      size="icon-sm"
+      initial={{ opacity: 0, y: 8, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      whileHover={{ scale: 1.04 }}
+      whileTap={{ scale: 0.97 }}
+      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       onClick={() => setAiBarOpen(true)}
-      className="absolute right-3 top-3 z-30 text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-      title="Open agent sidebar (⌘K)"
+      title="Ask Assistant (⌘K)"
+      className="ask-assistant-glow group absolute bottom-4 right-4 z-30 flex items-center gap-2 overflow-hidden rounded-full bg-[var(--color-bg-elevated)] px-4 py-2 text-[12.5px] font-medium text-[var(--color-text)]"
     >
-      <PanelRightOpen className="h-3.5 w-3.5" />
-      <span className="sr-only">Open agent sidebar</span>
-    </Button>
+      {/* Magic UI traveling light inside the hairline ring (CSS class). */}
+      <BorderBeam size={56} duration={9} borderWidth={1} />
+      <span>Ask Assistant</span>
+      <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1 py-px font-mono text-[9.5px] text-[var(--color-text-faint)]">
+        ⌘K
+      </kbd>
+      <span className="sr-only">Open the assistant</span>
+    </motion.button>
   );
 }
 
@@ -222,6 +261,81 @@ export function AIBarSidebar() {
 
   const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
   const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport });
+
+  // --- Persistent sessions: restore the last chat, autosave as you go ---
+  const lastChatId = useClientStore((s) => s.lastChatId);
+  const setLastChatId = useClientStore((s) => s.setLastChatId);
+  const sessionIdRef = useRef<string | null>(null);
+  const restoredRef = useRef(false);
+  const saveTimer = useRef<number | null>(null);
+
+  const loadSession = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/chats?id=${encodeURIComponent(id)}`);
+        const data = await res.json();
+        if (data?.ok && Array.isArray(data.session?.messages)) {
+          sessionIdRef.current = id;
+          setLastChatId(id);
+          setMessages(data.session.messages);
+          return true;
+        }
+      } catch {
+        // history is best-effort; a failed load just starts fresh
+      }
+      return false;
+    },
+    [setLastChatId, setMessages],
+  );
+
+  // First open: pick up where the user left off.
+  useEffect(() => {
+    if (!aiBarOpen || restoredRef.current) return;
+    restoredRef.current = true;
+    if (lastChatId && messages.length === 0) {
+      sessionIdRef.current = lastChatId;
+      void loadSession(lastChatId);
+    }
+  }, [aiBarOpen, lastChatId, messages.length, loadSession]);
+
+  // Autosave once the stream settles (debounced so multi-step turns save once).
+  useEffect(() => {
+    if (status === 'streaming' || status === 'submitted') return;
+    if (!messages.length || !sessionIdRef.current) return;
+    if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    const id = sessionIdRef.current;
+    saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = null;
+      void fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, messages }),
+      })
+        .then(() => qc.invalidateQueries({ queryKey: ['chat-sessions'] }))
+        .catch(() => undefined);
+    }, 600);
+    return () => {
+      if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    };
+  }, [messages, status, qc]);
+
+  const startNewChat = useCallback(() => {
+    sessionIdRef.current = null;
+    setLastChatId(null);
+    setMessages([]);
+  }, [setLastChatId, setMessages]);
+
+  const { data: sessionsData } = useQuery({
+    queryKey: ['chat-sessions'],
+    queryFn: async () => {
+      const res = await fetch('/api/chats');
+      const data = await res.json();
+      return (data?.sessions || []) as ChatSessionSummary[];
+    },
+    enabled: aiBarOpen,
+    staleTime: 30_000,
+  });
+  const chatSessions = sessionsData || [];
 
   // Auto-focus the textarea when the sidebar opens.
   useEffect(() => {
@@ -341,6 +455,12 @@ export function AIBarSidebar() {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     setInput('');
+    // Lazily mint a session id on the first message so autosave has a home
+    // and the conversation shows up in history.
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = newChatId();
+      setLastChatId(sessionIdRef.current);
+    }
     const activeAccount =
       threadAccount && threadAccount !== ALL_ACCOUNTS
         ? threadAccount
@@ -385,22 +505,61 @@ export function AIBarSidebar() {
       <TopProgressBar active={busy} />
 
       <header className="flex items-center justify-between gap-2 px-3 py-2.5">
-        <div className="flex items-baseline gap-1.5 text-[13px]">
-          <span className="font-medium text-[var(--color-text)]">Agent</span>
-          <span className="text-[var(--color-text-faint)]">·</span>
-          <span className="text-[11.5px] text-[var(--color-text-muted)]">gpt-5.5</span>
+        <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
+          <RowIcon icon={MessageSquareIcon} size={14} className="text-[var(--color-accent)]" />
+          <span className="truncate font-medium text-[var(--color-text)]">Ask Assistant</span>
         </div>
         <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => setMessages([])}
-            title="Clear conversation"
+            onClick={startNewChat}
+            title="New chat"
             className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
           >
-            <Trash className="h-3.5 w-3.5" />
-            <span className="sr-only">Clear conversation</span>
+            <RowIcon icon={PlusIcon} size={14} />
+            <span className="sr-only">New chat</span>
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title="Chat history"
+                className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+              >
+                <RowIcon icon={HistoryIcon} size={14} />
+                <span className="sr-only">Chat history</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
+              <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
+              {chatSessions.length === 0 ? (
+                <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
+              ) : (
+                chatSessions.map((session) => (
+                  <DropdownMenuItem
+                    key={session._id}
+                    onSelect={() => void loadSession(session._id)}
+                    className="flex flex-col items-start gap-0.5"
+                  >
+                    <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
+                      {session.title || 'Untitled chat'}
+                    </span>
+                    <span className="text-[10.5px] text-[var(--color-text-faint)]">
+                      {formatDate(session.updatedAt)} · {session.messageCount} message
+                      {session.messageCount === 1 ? '' : 's'}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={startNewChat}>
+                <Plus className="size-3.5" />
+                Start a new chat
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -493,10 +652,10 @@ export function AIBarSidebar() {
 }
 
 const BASE_SUGGESTIONS = [
-  'Do I have any emails from Tori Kogler? Open the latest.',
+  'What needs my reply today? Open the most urgent one.',
   'Triage my newest 25 inbox threads',
   'Summarize unread from this week',
-  'Find every Stripe receipt from 2025 and label them Receipts/2025',
+  'Find every receipt from last year and label them Receipts',
 ];
 
 const THREAD_SUGGESTIONS = [

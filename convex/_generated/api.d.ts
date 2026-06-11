@@ -10,7 +10,13 @@
 
 import type * as accounts from "../accounts.js";
 import type * as ai from "../ai.js";
+import type * as crons from "../crons.js";
 import type * as lib from "../lib.js";
+import type * as liveMail from "../liveMail.js";
+import type * as mailCorpus from "../mailCorpus.js";
+import type * as rateLimits from "../rateLimits.js";
+import type * as smart from "../smart.js";
+import type * as userData from "../userData.js";
 import type * as users from "../users.js";
 
 import type {
@@ -22,7 +28,13 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   ai: typeof ai;
+  crons: typeof crons;
   lib: typeof lib;
+  liveMail: typeof liveMail;
+  mailCorpus: typeof mailCorpus;
+  rateLimits: typeof rateLimits;
+  smart: typeof smart;
+  userData: typeof userData;
   users: typeof users;
 }>;
 

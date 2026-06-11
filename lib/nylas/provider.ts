@@ -103,7 +103,8 @@ export async function searchNylasThreads({
 }): Promise<SearchNylasThreadsResult | null> {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
-  const route = await resolveAccountSearchRoute(row, pageToken).catch(() =>
+  const bounds = localQueryBounds(query);
+  const route = await resolveAccountSearchRoute(row, pageToken, bounds).catch(() =>
     resolveSearchRoute({ provider: row.provider, corpusReady: false, pageToken }),
   );
   if (route.localEnabled && !route.corpusReady) {
@@ -156,16 +157,36 @@ export async function searchNylasThreads({
   };
 }
 
-async function resolveAccountSearchRoute(row: NylasAccountRow, pageToken?: string) {
+async function resolveAccountSearchRoute(
+  row: NylasAccountRow,
+  pageToken?: string,
+  bounds: { queryAfter?: number; hasTextQuery?: boolean } = {},
+) {
   const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, {
     userId: row.userId,
     accountId: row.accountId,
   });
+  const grantMatches = syncState?.grantId === row.grantId;
   return resolveSearchRoute({
     provider: row.provider,
-    corpusReady: Boolean(syncState?.corpusReady && syncState?.grantId === row.grantId),
+    corpusReady: Boolean(syncState?.corpusReady && grantMatches),
+    oldestIndexedAt:
+      grantMatches && typeof syncState?.oldestIndexedAt === 'number' ? syncState.oldestIndexedAt : null,
+    queryAfter: bounds.queryAfter,
+    hasTextQuery: bounds.hasTextQuery,
     pageToken,
   });
+}
+
+// Lower date bound and text-ness of the query, used to decide whether a
+// partially-backfilled corpus can serve it.
+function localQueryBounds(query: string): { queryAfter?: number; hasTextQuery?: boolean } {
+  try {
+    const plan = compileAstToLocalCorpusQuery(parseMailSearchQuery(query));
+    return { queryAfter: plan.after, hasTextQuery: Boolean(plan.query) };
+  } catch {
+    return {};
+  }
 }
 
 async function searchLocalCorpusThreads({
@@ -636,6 +657,7 @@ export async function sendNylasMessage({
   html,
   replyToMessageId,
   sendAt,
+  useDraft,
   attachments,
 }: {
   userId?: string | null;
@@ -648,11 +670,21 @@ export async function sendNylasMessage({
   html?: string;
   replyToMessageId?: string;
   sendAt?: number;
+  useDraft?: boolean;
   attachments?: CreateAttachmentRequest[];
 }) {
   assertOutboundSendEnabled();
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
+  // Nylas rejects send_at values that are not in the future AT VALIDATION
+  // TIME ("provided send_at field is less than current epoch time"). Short
+  // undo windows plus request/upload latency made stale timestamps common, so
+  // clamp to a small floor at dispatch: the send goes out a few seconds late
+  // in the worst case instead of failing outright.
+  const SEND_AT_FLOOR_SECONDS = 10;
+  const sendAtSeconds = sendAt
+    ? Math.max(Math.floor(sendAt / 1000), Math.floor(Date.now() / 1000) + SEND_AT_FLOOR_SECONDS)
+    : undefined;
   const result = await requireNylas().messages.send({
     identifier: row.grantId,
     requestBody: {
@@ -663,11 +695,71 @@ export async function sendNylasMessage({
       body: html || body,
       isPlaintext: !html,
       replyToMessageId,
-      sendAt: sendAt ? Math.floor(sendAt / 1000) : undefined,
+      sendAt: sendAtSeconds,
+      useDraft,
       attachments,
     },
   });
-  return normalizeNylasMessage(result.data, row.accountId);
+  const normalized = normalizeNylasMessage(result.data, row.accountId);
+  // Scheduled sends come back with a schedule id used to cancel them later.
+  const scheduleId = (result.data as any)?.scheduleId ?? (result.data as any)?.schedule_id;
+  if (scheduleId !== undefined) (normalized as any).scheduleId = String(scheduleId);
+  return normalized;
+}
+
+export async function listNylasScheduledMessages({
+  userId,
+  account,
+}: {
+  userId?: string | null;
+  account: string;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await requireNylas().messages.listScheduledMessages({ identifier: row.grantId });
+  return result.data;
+}
+
+// Real status of one provider-side scheduled send (the undo-window path).
+// Nylas status codes: pending → close_to_send_time → sucess/success | failed | cancelled.
+export async function getNylasScheduledSendStatus({
+  userId,
+  account,
+  scheduleId,
+}: {
+  userId?: string | null;
+  account: string;
+  scheduleId: string;
+}): Promise<'pending' | 'sent' | 'failed' | 'cancelled' | null> {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await requireNylas().messages.findScheduledMessage({
+    identifier: row.grantId,
+    scheduleId,
+  });
+  const code = String(result.data?.status?.code || '').toLowerCase();
+  if (/succ?ess/.test(code)) return 'sent';
+  if (/fail|error/.test(code)) return 'failed';
+  if (/cancel/.test(code)) return 'cancelled';
+  return 'pending';
+}
+
+export async function stopNylasScheduledMessage({
+  userId,
+  account,
+  scheduleId,
+}: {
+  userId?: string | null;
+  account: string;
+  scheduleId: string;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await requireNylas().messages.stopScheduledMessage({
+    identifier: row.grantId,
+    scheduleId,
+  });
+  return result.data;
 }
 
 export async function downloadNylasAttachment({

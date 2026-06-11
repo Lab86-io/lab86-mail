@@ -1,7 +1,14 @@
 'use client';
 
+import { useAuth } from '@clerk/nextjs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ConvexProvider, ConvexReactClient } from 'convex/react';
+import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { useState } from 'react';
+
+const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
 
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -22,5 +29,12 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
         },
       }),
   );
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const content = <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  if (!convex) return content;
+  if (!clerkPublishableKey) return <ConvexProvider client={convex}>{content}</ConvexProvider>;
+  return (
+    <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+      {content}
+    </ConvexProviderWithClerk>
+  );
 }

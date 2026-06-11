@@ -61,7 +61,7 @@ interface DailyReportPayload {
   progress?: { stage: string; done: number; total: number };
 }
 
-// Sections, in reading order. The report leads with what Jakob owes other
+// Sections, in reading order. The report leads with what the user owes other
 // people, then who's new, then anything time-boxed, then quieter context.
 const SECTION_LABELS: Array<[string, string, number, boolean]> = [
   ['replyOwed', 'Needs You — Reply Owed', 5, true],

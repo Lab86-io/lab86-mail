@@ -55,6 +55,11 @@ export interface ClientState {
   railOpen: boolean;
   railWidth: number;
   aiBarOpen: boolean;
+  // Reader takes over (almost) the whole window; not persisted.
+  threadFullscreen: boolean;
+  // Persisted id of the most recent AI chat session, so reopening the app
+  // restores the last conversation instead of starting blank.
+  lastChatId: string | null;
   pendingReplyBody: string | null;
 
   setAccount: (account: string) => void;
@@ -90,6 +95,8 @@ export interface ClientState {
   setRailOpen: (open: boolean) => void;
   setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
+  setThreadFullscreen: (full: boolean) => void;
+  setLastChatId: (id: string | null) => void;
   setPendingReplyBody: (body: string | null) => void;
 }
 
@@ -129,6 +136,8 @@ export const useClientStore = create<ClientState>()(
       railOpen: true,
       railWidth: 240,
       aiBarOpen: false,
+      threadFullscreen: false,
+      lastChatId: null,
       pendingReplyBody: null,
 
       setAccount: (account) => set({ account }),
@@ -200,11 +209,13 @@ export const useClientStore = create<ClientState>()(
       setRailOpen: (railOpen) => set({ railOpen }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
+      setThreadFullscreen: (threadFullscreen) => set({ threadFullscreen }),
+      setLastChatId: (lastChatId) => set({ lastChatId }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
     }),
     {
       name: PERSIST_KEY,
-      version: 2,
+      version: 3,
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
@@ -214,6 +225,8 @@ export const useClientStore = create<ClientState>()(
         if (persisted && persisted.query === '-in:trash newer_than:365d') {
           persisted.query = DEFAULT_QUERY;
         }
+        // The Waiting smart category was removed; fold it into Review.
+        if (persisted.smartCategory === 'waiting') persisted.smartCategory = 'review';
         return persisted;
       },
       partialize: (s) => ({
@@ -224,6 +237,7 @@ export const useClientStore = create<ClientState>()(
         rightRailOpen: s.rightRailOpen,
         railOpen: s.railOpen,
         railWidth: s.railWidth,
+        lastChatId: s.lastChatId,
       }),
     },
   ),

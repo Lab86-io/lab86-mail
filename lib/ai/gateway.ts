@@ -194,6 +194,7 @@ export async function streamTextForUser(
     speed?: AiSpeed;
     userId?: string | null;
     userEmail?: string | null;
+    userName?: string | null;
     messages: ModelMessage[];
   },
 ) {
@@ -202,13 +203,14 @@ export async function streamTextForUser(
     speed = 'fast',
     userId,
     userEmail,
+    userName,
     model: _ignored,
     onFinish,
     onError,
     ...rest
   } = options as any;
   const runtime = await resolveAiRuntime({ userId, speed, feature });
-  return runWithAiRequestContext({ userId: runtime.userId, userEmail }, () =>
+  return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, () =>
     streamText({
       ...rest,
       model: runtime.model,

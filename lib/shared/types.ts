@@ -142,7 +142,6 @@ export type PrimaryView = 'daily_report' | 'mail';
 export type SmartCategoryId =
   | 'main'
   | 'needs_reply'
-  | 'waiting'
   | 'codes'
   | 'orders'
   | 'finance_admin'

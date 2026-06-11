@@ -188,16 +188,28 @@ export default defineSchema({
     unread: v.boolean(),
     starred: v.optional(v.boolean()),
     messageCount: v.optional(v.number()),
+    // Smart classification is computed at write time (see convex/smart.ts):
+    // the full verdict for the UI, plus flattened fields the indexes can key.
+    smartCategory: v.optional(v.any()),
+    smartPrimary: v.optional(v.string()),
+    smartCustomKeys: v.optional(v.array(v.string())),
+    classifiedAt: v.optional(v.number()),
     yearMonth: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_lastDate', ['userId', 'lastDate'])
     .index('by_grant', ['grantId'])
     .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
-    .index('by_user_account_updated', ['userId', 'accountId', 'lastDate']),
+    .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId'])
+    .index('by_user_account_updated', ['userId', 'accountId', 'lastDate'])
+    .index('by_user_primary_lastDate', ['userId', 'smartPrimary', 'lastDate'])
+    .index('by_user_account_primary_lastDate', ['userId', 'accountId', 'smartPrimary', 'lastDate'])
+    // Backlog sweep: rows without smartPrimary sort first under undefined.
+    .index('by_smart_primary', ['smartPrimary']),
 
   mailCorpusMessages: defineTable({
     userId: v.string(),
@@ -214,6 +226,10 @@ export default defineSchema({
     receivedAt: v.number(),
     snippet: v.string(),
     textBody: v.optional(v.string()),
+    // Full HTML body, stored at sync time so opening a thread never has to
+    // round-trip to the provider. Missing on rows synced before this existed;
+    // the read path hydrates those lazily.
+    htmlBody: v.optional(v.string()),
     searchText: v.string(),
     labels: v.array(v.string()),
     unread: v.optional(v.boolean()),
@@ -229,12 +245,34 @@ export default defineSchema({
     .index('by_grant', ['grantId'])
     .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
+    .index('by_user_account_thread_received', ['userId', 'accountId', 'providerThreadId', 'receivedAt'])
     .index('by_account_message', ['accountId', 'providerMessageId'])
     .index('by_user_account_received', ['userId', 'accountId', 'receivedAt'])
     .searchIndex('by_search_text', {
       searchField: 'searchText',
       filterFields: ['userId', 'accountId', 'grantId', 'provider', 'yearMonth'],
     }),
+
+  // Generic per-user document store backing all server-side app state that
+  // previously lived in the single-tenant NeDB files (memories, smart labels,
+  // tracked threads, drafts, chat, prefs, caches, ...). `kind` namespaces the
+  // record type, `key` is the stable identity within a kind, and `ref` is an
+  // optional secondary lookup (e.g. account or threadId).
+  userDocs: defineTable({
+    userId: v.string(),
+    kind: v.string(),
+    key: v.string(),
+    ref: v.optional(v.string()),
+    doc: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_kind', ['userId', 'kind'])
+    .index('by_user_kind_updatedAt', ['userId', 'kind', 'updatedAt'])
+    .index('by_user_kind_key', ['userId', 'kind', 'key'])
+    .index('by_user_kind_ref', ['userId', 'kind', 'ref'])
+    .index('by_user_kind_ref_updatedAt', ['userId', 'kind', 'ref', 'updatedAt']),
 
   mailSyncStates: defineTable({
     userId: v.string(),
@@ -255,6 +293,7 @@ export default defineSchema({
     progress: v.optional(v.any()),
     error: v.optional(v.string()),
     messagesSynced: v.optional(v.number()),
+    oldestIndexedAt: v.optional(v.number()),
     lastBackfillAt: v.optional(v.number()),
     lastIncrementalSyncAt: v.optional(v.number()),
     createdAt: v.number(),

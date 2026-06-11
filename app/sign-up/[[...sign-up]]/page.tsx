@@ -1,6 +1,7 @@
 import { SignUp } from '@clerk/nextjs';
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
+import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { isPublicSignupDisabled } from '@/lib/hosted/controls';
 
 export default async function SignUpPage() {
@@ -31,14 +32,17 @@ export default async function SignUpPage() {
     );
   }
   return (
-    <main className="grid min-h-dvh place-items-center bg-[var(--color-bg)] px-4">
-      <SignUp
-        fallbackRedirectUrl="/"
-        forceRedirectUrl="/"
-        signInFallbackRedirectUrl="/"
-        signInForceRedirectUrl="/"
-        signInUrl="/sign-in"
-      />
+    <main className="app-paper relative grid min-h-dvh place-items-center px-4 py-10">
+      <DotGridGlow />
+      <div className="relative z-10">
+        <SignUp
+          fallbackRedirectUrl="/"
+          forceRedirectUrl="/"
+          signInFallbackRedirectUrl="/"
+          signInForceRedirectUrl="/"
+          signInUrl="/sign-in"
+        />
+      </div>
     </main>
   );
 }

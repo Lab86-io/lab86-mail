@@ -1,13 +1,15 @@
 import type { Thread } from '../shared/types';
-import { db, findMany, findOne, upsert } from './db';
+import { kvGet, kvList, kvUpsert } from './kv';
 
 // Read-merge-write below is racy if two upserts for the same thread interleave
 // (the later read clobbers the earlier write), so same-key upserts are
 // serialized through a per-key promise chain.
 const pendingUpserts = new Map<string, Promise<unknown>>();
 
+const threadKey = (account: string, id: string) => `${account}:${id}`;
+
 export function upsertThread(account: string, partial: Partial<Thread> & { _id: string }) {
-  const key = `${account}:${partial._id}`;
+  const key = threadKey(account, partial._id);
   const prev = pendingUpserts.get(key) ?? Promise.resolve();
   const next = prev.then(
     () => doUpsertThread(account, partial),
@@ -41,28 +43,38 @@ async function doUpsertThread(account: string, partial: Partial<Thread> & { _id:
     gmailLabelSync: partial.gmailLabelSync ?? existing?.gmailLabelSync ?? null,
     cachedAt: Date.now(),
   };
-  await upsert(db().threads, { _id: merged._id, account }, merged);
+  await kvUpsert('thread', threadKey(account, merged._id), merged, account);
   return merged;
 }
 
 export async function getThread(account: string, id: string): Promise<Thread | null> {
-  return await findOne<Thread>(db().threads, { _id: id, account });
+  return await kvGet<Thread>('thread', threadKey(account, id));
 }
 
 export async function listRecentThreads(limit = 80): Promise<Thread[]> {
-  return await findMany<Thread>(db().threads, {}, { sort: { lastDate: -1 }, limit });
+  const rows = await kvList<Thread>('thread');
+  rows.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
+  return rows.slice(0, limit);
 }
 
 export async function listThreadsForAccount(account: string, limit = 80): Promise<Thread[]> {
-  return await findMany<Thread>(db().threads, { account }, { sort: { lastDate: -1 }, limit });
+  const rows = await kvList<Thread>('thread', { ref: account });
+  rows.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
+  return rows.slice(0, limit);
+}
+
+async function patchThread(account: string, id: string, patch: Partial<Thread>) {
+  const existing = await getThread(account, id);
+  if (!existing) throw new Error(`Thread not found: ${id}`);
+  await upsertThread(account, { _id: id, ...patch });
 }
 
 export async function setThreadSummary(account: string, id: string, summary: string) {
-  await db().threads.updateAsync({ _id: id, account }, { $set: { summary, summaryAt: Date.now() } });
+  await patchThread(account, id, { summary, summaryAt: Date.now() });
 }
 
 export async function setThreadTriage(account: string, id: string, triage: Thread['triage']) {
-  await db().threads.updateAsync({ _id: id, account }, { $set: { triage } });
+  await patchThread(account, id, { triage });
 }
 
 export async function setThreadSmartCategory(
@@ -70,11 +82,11 @@ export async function setThreadSmartCategory(
   id: string,
   smartCategory: Thread['smartCategory'],
 ) {
-  await db().threads.updateAsync({ _id: id, account }, { $set: { smartCategory } });
+  await patchThread(account, id, { smartCategory });
 }
 
 export async function setThreadReadState(account: string, id: string, readState: Thread['readState']) {
-  await db().threads.updateAsync({ _id: id, account }, { $set: { readState, unread: false } });
+  await patchThread(account, id, { readState, unread: false });
 }
 
 export async function setThreadGmailLabelSync(
@@ -82,7 +94,7 @@ export async function setThreadGmailLabelSync(
   id: string,
   gmailLabelSync: Thread['gmailLabelSync'],
 ) {
-  await db().threads.updateAsync({ _id: id, account }, { $set: { gmailLabelSync } });
+  await patchThread(account, id, { gmailLabelSync });
 }
 
 export async function listThreadsBySmartCategory(
@@ -90,8 +102,8 @@ export async function listThreadsBySmartCategory(
   category: string,
   limit = 80,
 ): Promise<Thread[]> {
-  const query = account
-    ? { account, 'smartCategory.primary': category }
-    : { 'smartCategory.primary': category };
-  return await findMany<Thread>(db().threads, query, { sort: { lastDate: -1 }, limit });
+  const rows = await kvList<Thread>('thread', { ref: account ?? undefined });
+  const matching = rows.filter((thread) => thread.smartCategory?.primary === category);
+  matching.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
+  return matching.slice(0, limit);
 }

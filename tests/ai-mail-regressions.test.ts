@@ -270,6 +270,50 @@ describe('local-first mail search routing', () => {
         tier: 'structured',
       });
 
+      // Horizon-aware: a partially-backfilled corpus (newest-first) serves a
+      // query locally when its lower date bound sits inside the indexed
+      // window. Browse-style views (no free text) serve locally from ANY
+      // non-empty corpus — partial indexing must never slow down browsing —
+      // while text searches past the horizon still fall back for completeness.
+      const horizon = Date.parse('2026-01-01');
+      expect(
+        resolveSearchRoute({
+          provider: 'google',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          queryAfter: Date.parse('2026-05-01'),
+          hasTextQuery: true,
+        }),
+      ).toMatchObject({ tier: 'local', reason: 'partial corpus covers the queried window' });
+      expect(
+        resolveSearchRoute({
+          provider: 'google',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          queryAfter: Date.parse('2025-06-01'),
+          hasTextQuery: true,
+        }),
+      ).toMatchObject({ tier: 'native' });
+      expect(
+        resolveSearchRoute({
+          provider: 'google',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          queryAfter: Date.parse('2025-06-01'),
+        }),
+      ).toMatchObject({ tier: 'local', reason: 'partial corpus serves browse views while backfill runs' });
+      expect(
+        resolveSearchRoute({ provider: 'microsoft', corpusReady: false, oldestIndexedAt: horizon }),
+      ).toMatchObject({ tier: 'local' });
+      expect(
+        resolveSearchRoute({
+          provider: 'microsoft',
+          corpusReady: false,
+          oldestIndexedAt: horizon,
+          hasTextQuery: true,
+        }),
+      ).toMatchObject({ tier: 'structured' });
+
       // Local cursors keep paging locally; provider cursors stay on the
       // fallback transport.
       expect(
@@ -414,23 +458,23 @@ describe('local-first mail search routing', () => {
       '../lib/mail/search/account-scope'
     );
     const hinted = applyNaturalLanguageAccountHint(
-      'stuff from my jjalangtry@outlook.com account older than 40 days',
-      'from:jjalangtry@outlook.com older_than:40d',
+      'stuff from my pat.demo@outlook.com account older than 40 days',
+      'from:pat.demo@outlook.com older_than:40d',
     );
     const scoped = resolveAccountScopedQuery(hinted, [
       {
         accountId: 'grant_outlook',
-        email: 'jjalangtry@outlook.com',
+        email: 'pat.demo@outlook.com',
         displayName: 'Outlook',
       },
       {
         accountId: 'grant_gmail',
-        email: 'jjalangtry@gmail.com',
+        email: 'pat.demo@gmail.com',
         displayName: 'Gmail',
       },
     ]);
 
-    expect(hinted).toBe('account:jjalangtry@outlook.com older_than:40d');
+    expect(hinted).toBe('account:pat.demo@outlook.com older_than:40d');
     expect(scoped).toEqual({
       query: 'older_than:40d',
       accountIds: ['grant_outlook'],
@@ -569,118 +613,126 @@ describe('hosted OpenRouter model options', () => {
 
 describe('AI tools on fake noreply mail with no provider configured', () => {
   test('local fallback paths stay available for all agent-facing AI helpers', async () => {
-    const { upsertMessage } = await import('../lib/store/messages');
-    const {
-      bulkTriage,
-      classifyThreads,
-      draftReply,
-      extractActionItems,
-      nlSearch,
-      preSendCritique,
-      summarizeThread,
-      translateThread,
-      triageThread,
-    } = await import('../lib/tools/ai');
+    // Stores are tenancy-scoped via the ambient request context; tool handlers
+    // called directly (outside invokeTool) need it established explicitly.
+    const { runWithAiRequestContext } = await import('../lib/ai/context');
+    await runWithAiRequestContext(
+      { userId: 'test_user', userEmail: 'jakob@example.test', agent: 'codex' },
+      async () => {
+        const { upsertMessage } = await import('../lib/store/messages');
+        const {
+          bulkTriage,
+          classifyThreads,
+          draftReply,
+          extractActionItems,
+          nlSearch,
+          preSendCritique,
+          summarizeThread,
+          translateThread,
+          triageThread,
+        } = await import('../lib/tools/ai');
 
-    const account = 'jakob@example.test';
-    const threadId = 'thread-noreply-ai';
-    await upsertMessage({
-      _id: 'msg-noreply-ai',
-      threadId,
-      account,
-      subject: 'Automated account notice',
-      from: 'No Reply <noreply@example.test>',
-      to: 'Jakob <jakob@example.test>',
-      cc: '',
-      bcc: '',
-      date: Date.parse('2026-06-03T12:00:00.000Z'),
-      snippet: 'Your fake account notice is ready.',
-      textBody: 'Your fake account notice is ready. No response is needed.',
-      htmlBody: '',
-      labels: ['INBOX', 'UNREAD', 'CATEGORY_UPDATES'],
-      attachments: [],
-      headers: {},
-      cachedAt: Date.now(),
-    });
+        const account = 'jakob@example.test';
+        const threadId = 'thread-noreply-ai';
+        await upsertMessage({
+          _id: 'msg-noreply-ai',
+          threadId,
+          account,
+          subject: 'Automated account notice',
+          from: 'No Reply <noreply@example.test>',
+          to: 'Jakob <jakob@example.test>',
+          cc: '',
+          bcc: '',
+          date: Date.parse('2026-06-03T12:00:00.000Z'),
+          snippet: 'Your fake account notice is ready.',
+          textBody: 'Your fake account notice is ready. No response is needed.',
+          htmlBody: '',
+          labels: ['INBOX', 'UNREAD', 'CATEGORY_UPDATES'],
+          attachments: [],
+          headers: {},
+          cachedAt: Date.now(),
+        });
 
-    const summary = await summarizeThread.handler({ account, threadId }, { agent: 'codex' });
-    expect(summary.model).toBe('local');
-    expect(summary.summary).toContain('Automated account notice');
+        const summary = await summarizeThread.handler({ account, threadId }, { agent: 'codex' });
+        expect(summary.model).toBe('local');
+        expect(summary.summary).toContain('Automated account notice');
 
-    const triage = await triageThread.handler({ account, threadId }, { agent: 'codex' });
-    expect(triage.model).toBe('local');
-    expect(triage.action).toBe('read');
+        const triage = await triageThread.handler({ account, threadId }, { agent: 'codex' });
+        expect(triage.model).toBe('local');
+        expect(triage.action).toBe('read');
 
-    const draft = await draftReply.handler(
-      {
-        account,
-        threadId,
-        instructions: 'politely confirm no action is needed',
-        tone: 'direct',
-      },
-      { agent: 'codex' },
-    );
-    expect(draft.model).toBe('local');
-    expect(draft.draft).toContain('no action is needed');
-
-    const batch = await bulkTriage.handler(
-      {
-        items: [
+        const draft = await draftReply.handler(
           {
-            id: threadId,
-            from: 'noreply@example.test',
-            subject: 'Automated account notice',
-            snippet: 'No response is needed.',
-          },
-        ],
-      },
-      { agent: 'codex' },
-    );
-    expect(batch.model).toBe('local');
-    expect(batch.verdicts[0].id).toBe(threadId);
-
-    const classified = await classifyThreads.handler(
-      {
-        threads: [
-          {
-            id: threadId,
             account,
-            from: 'noreply@example.test',
-            subject: 'Automated account notice',
-            snippet: 'No response is needed.',
-            labels: ['CATEGORY_UPDATES'],
-            unread: true,
+            threadId,
+            instructions: 'politely confirm no action is needed',
+            tone: 'direct',
           },
-        ],
+          { agent: 'codex' },
+        );
+        expect(draft.model).toBe('local');
+        expect(draft.draft).toContain('no action is needed');
+
+        const batch = await bulkTriage.handler(
+          {
+            items: [
+              {
+                id: threadId,
+                from: 'noreply@example.test',
+                subject: 'Automated account notice',
+                snippet: 'No response is needed.',
+              },
+            ],
+          },
+          { agent: 'codex' },
+        );
+        expect(batch.model).toBe('local');
+        expect(batch.verdicts[0].id).toBe(threadId);
+
+        const classified = await classifyThreads.handler(
+          {
+            threads: [
+              {
+                id: threadId,
+                account,
+                from: 'noreply@example.test',
+                subject: 'Automated account notice',
+                snippet: 'No response is needed.',
+                labels: ['CATEGORY_UPDATES'],
+                unread: true,
+              },
+            ],
+          },
+          { agent: 'codex' },
+        );
+        expect(classified.model).toBe('local');
+        expect(classified.verdicts[0].id).toBe(threadId);
+
+        const actions = await extractActionItems.handler({ account, threadId }, { agent: 'codex' });
+        expect(actions.model).toBe('local');
+        expect(actions.items).toEqual([]);
+
+        const translation = await translateThread.handler(
+          { account, threadId, language: 'english' },
+          { agent: 'codex' },
+        );
+        expect(translation.model).toBe('none');
+        expect(translation.translation).toBe('');
+
+        const critique = await preSendCritique.handler(
+          { draftBody: 'thanks, no action needed.', threadContext: 'fake noreply notice' },
+          { agent: 'codex' },
+        );
+        expect(critique.model).toBe('local');
+        expect(critique.verdict).toBe('ok');
+
+        const search = await nlSearch.handler(
+          { description: 'from noreply@example.test newer than 30 days' },
+          { agent: 'codex' },
+        );
+        expect(search.model).toBe('local');
+        expect(search.query).toBe('from noreply@example.test newer than 30 days');
       },
-      { agent: 'codex' },
     );
-    expect(classified.model).toBe('local');
-    expect(classified.verdicts[0].id).toBe(threadId);
-
-    const actions = await extractActionItems.handler({ account, threadId }, { agent: 'codex' });
-    expect(actions.model).toBe('local');
-    expect(actions.items).toEqual([]);
-
-    const translation = await translateThread.handler(
-      { account, threadId, language: 'english' },
-      { agent: 'codex' },
-    );
-    expect(translation.model).toBe('none');
-    expect(translation.translation).toBe('');
-
-    const critique = await preSendCritique.handler(
-      { draftBody: 'thanks, no action needed.', threadContext: 'fake noreply notice' },
-      { agent: 'codex' },
-    );
-    expect(critique.model).toBe('local');
-    expect(critique.verdict).toBe('ok');
-
-    const search = await nlSearch.handler(
-      { description: 'from noreply@example.test newer than 30 days' },
-      { agent: 'codex' },
-    );
-    expect(search.model).toBe('local');
-    expect(search.query).toBe('from noreply@example.test newer than 30 days');
   });
 });

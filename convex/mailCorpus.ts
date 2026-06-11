@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
+import { classifyCorpusThread, loadSmartContext, queryCategoryThreads } from './smart';
 
 const providerValidator = v.union(
   v.literal('google'),
@@ -40,6 +41,7 @@ const corpusMessageValidator = v.object({
   receivedAt: v.number(),
   snippet: v.string(),
   textBody: v.optional(v.string()),
+  htmlBody: v.optional(v.string()),
   searchText: v.string(),
   labels: v.array(v.string()),
   unread: v.optional(v.boolean()),
@@ -197,7 +199,7 @@ export const upsertCorpusBatch = mutation({
           q.eq('accountId', args.accountId).eq('providerMessageId', message.providerMessageId),
         )
         .unique();
-      const patch = {
+      const patch: Record<string, unknown> = {
         userId: args.userId,
         accountId: args.accountId,
         grantId: args.grantId,
@@ -221,10 +223,14 @@ export const upsertCorpusBatch = mutation({
         yearMonth: yearMonth(message.receivedAt),
         updatedAt: ts,
       };
+      // Preserve markup verbatim (no whitespace collapse). The key is only set
+      // when the batch carried a body: patch(.., {htmlBody: undefined}) would
+      // strip a body an earlier hydration already stored.
+      if (message.htmlBody !== undefined) patch.htmlBody = trimCorpusHtml(message.htmlBody);
       if (existing) {
         await ctx.db.patch(existing._id, patch);
       } else {
-        await ctx.db.insert('mailCorpusMessages', { ...patch, createdAt: ts });
+        await ctx.db.insert('mailCorpusMessages', { ...patch, createdAt: ts } as any);
         insertedMessages += 1;
       }
     }
@@ -236,6 +242,9 @@ export const upsertCorpusBatch = mutation({
       ...args.threads.map((thread) => thread.providerThreadId),
       ...args.messages.map((message) => message.providerThreadId),
     ]);
+    // Classify at write time so category listing is an indexed read. One
+    // context load serves the whole batch.
+    const smartContext = threadIds.size ? await loadSmartContext(ctx, args.userId) : null;
     for (const providerThreadId of threadIds) {
       const AGGREGATE_WINDOW = 500;
       const stored = await ctx.db
@@ -265,6 +274,24 @@ export const upsertCorpusBatch = mutation({
         yearMonth: yearMonth(latest.receivedAt),
         updatedAt: ts,
       };
+      if (windowCapped) {
+        const fullThread = await ctx.db
+          .query('mailCorpusMessages')
+          .withIndex('by_account_thread', (q) =>
+            q.eq('accountId', args.accountId).eq('providerThreadId', providerThreadId),
+          )
+          .collect();
+        const fullLatest = fullThread.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a), latest);
+        patch.lastDate = fullLatest.receivedAt;
+        patch.messageCount = fullThread.length;
+        patch.labels = [...new Set(fullThread.flatMap((message) => message.labels || []))];
+        patch.unread = fullThread.some((message) => Boolean(message.unread));
+        patch.starred = fullThread.some((message) => Boolean(message.starred)) || undefined;
+        patch.subject = fullLatest.subject || patch.subject;
+        patch.fromAddress = fullLatest.from || patch.fromAddress;
+        patch.snippet = fullLatest.snippet || patch.snippet;
+        patch.yearMonth = yearMonth(fullLatest.receivedAt);
+      }
       const existing = await ctx.db
         .query('mailCorpusThreads')
         .withIndex('by_account_thread', (q) =>
@@ -280,8 +307,9 @@ export const upsertCorpusBatch = mutation({
         patch.starred = Boolean(existing.starred) || patch.starred || undefined;
         patch.labels = [...new Set([...(existing.labels || []), ...patch.labels])];
       }
-      if (existing) await ctx.db.patch(existing._id, patch);
-      else await ctx.db.insert('mailCorpusThreads', { ...patch, createdAt: ts });
+      const classified = smartContext ? classifyCorpusThread(patch, smartContext) : {};
+      if (existing) await ctx.db.patch(existing._id, { ...patch, ...classified });
+      else await ctx.db.insert('mailCorpusThreads', { ...patch, ...classified, createdAt: ts });
     }
 
     // Backfill batches pass an explicit corpusReady boolean and own the
@@ -297,6 +325,13 @@ export const upsertCorpusBatch = mutation({
         messagesSyncedDelta: insertedMessages,
       });
     } else {
+      // The horizon only moves on backfill batches: backfill pages walk the
+      // mailbox newest -> oldest contiguously, so min(receivedAt) is a valid
+      // "everything newer than this is indexed" bound. Webhook re-fetches of
+      // old messages must NOT extend it — one old message is not coverage.
+      const batchOldest = args.messages.length
+        ? Math.min(...args.messages.map((message) => message.receivedAt))
+        : undefined;
       await upsertSyncState(ctx, {
         userId: args.userId,
         accountId: args.accountId,
@@ -309,6 +344,7 @@ export const upsertCorpusBatch = mutation({
         progress: args.progress,
         lastBackfillAt: ts,
         messagesSyncedDelta: insertedMessages,
+        oldestIndexedCandidate: batchOldest,
       });
     }
 
@@ -531,6 +567,12 @@ async function upsertSyncState(ctx: any, args: any) {
   if (typeof args.messagesSyncedDelta === 'number' && args.messagesSyncedDelta !== 0) {
     patch.messagesSynced = Math.max(0, (existing?.messagesSynced ?? 0) + args.messagesSyncedDelta);
   }
+  if (typeof args.oldestIndexedCandidate === 'number') {
+    patch.oldestIndexedAt =
+      typeof existing?.oldestIndexedAt === 'number'
+        ? Math.min(existing.oldestIndexedAt, args.oldestIndexedCandidate)
+        : args.oldestIndexedCandidate;
+  }
   if (existing) {
     await ctx.db.patch(existing._id, patch);
     return { ok: true, id: existing._id };
@@ -544,11 +586,200 @@ async function upsertSyncState(ctx: any, args: any) {
   return { ok: true, id };
 }
 
+export const countCorpusMessages = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    query: v.optional(v.string()),
+    after: v.optional(v.number()),
+    before: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const CAP = 1000;
+    const text = (args.query || '').trim();
+    if (text) {
+      const rows = await ctx.db
+        .query('mailCorpusMessages')
+        .withSearchIndex('by_search_text', (q) =>
+          q.search('searchText', text).eq('userId', args.userId).eq('accountId', args.accountId),
+        )
+        .take(CAP);
+      const matched = rows.filter((row) => withinReceivedAtBounds(row, args));
+      return { count: matched.length, approximate: rows.length >= CAP && matched.length >= CAP };
+    }
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_user_account_received', (q) =>
+        applyReceivedAtBounds(q.eq('userId', args.userId).eq('accountId', args.accountId), args),
+      )
+      .take(CAP);
+    return { count: rows.length, approximate: rows.length >= CAP };
+  },
+});
+
+export const listCorpusThreadMessages = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerThreadId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 100, 500);
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_account_thread', (q) =>
+        q.eq('accountId', args.accountId).eq('providerThreadId', args.providerThreadId),
+      )
+      .take(limit);
+    // The index has no userId column; enforce tenancy in the filter.
+    return rows.filter((row) => row.userId === args.userId).sort((a, b) => a.receivedAt - b.receivedAt);
+  },
+});
+
+// Server-side (internal-secret) category listing for the HTTP tool layer:
+// same indexed plan as the browser's live query, plus a lastDate cursor for
+// pagination. Replaces the old provider-search-per-category path entirely.
+export const listSmartCategoryThreads = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.optional(v.string()),
+    category: v.string(),
+    limit: v.optional(v.number()),
+    before: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const { items, nextBefore } = await queryCategoryThreads(ctx, {
+      userId: args.userId,
+      accountIds: args.accountId ? [args.accountId] : null,
+      category: args.category,
+      limit: clampLimit(args.limit, 50, 200),
+      before: args.before,
+    });
+    return { items, nextBefore };
+  },
+});
+
+// Full thread read for the tool layer: row + ordered messages with bodies.
+// bodiesComplete tells the caller whether a provider hydration pass is still
+// needed (rows synced before htmlBody existed).
+export const getCorpusThreadBundle = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerThreadId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const thread = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_account_thread', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('accountId', args.accountId)
+          .eq('providerThreadId', args.providerThreadId),
+      )
+      .unique();
+    if (!thread) return null;
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_user_account_thread_received', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('accountId', args.accountId)
+          .eq('providerThreadId', args.providerThreadId),
+      )
+      .order('asc')
+      .collect();
+    const messages = rows.map((row) => ({
+      _id: row.providerMessageId,
+      threadId: row.providerThreadId,
+      account: row.accountId,
+      subject: row.subject || '(no subject)',
+      from: row.from || '',
+      to: row.to || '',
+      cc: row.cc || '',
+      bcc: row.bcc || '',
+      date: row.receivedAt || 0,
+      snippet: row.snippet || '',
+      textBody: row.textBody || '',
+      htmlBody: row.htmlBody ?? null,
+      labels: row.labels || [],
+      unread: Boolean(row.unread),
+      starred: Boolean(row.starred),
+      attachments: row.attachments || [],
+      headers: row.headers || {},
+      cachedAt: row.updatedAt || row.receivedAt || 0,
+    }));
+    return {
+      threadId: args.providerThreadId,
+      subject: thread.subject || messages[0]?.subject || '(no subject)',
+      messages,
+      bodiesComplete: messages.length > 0 && rows.every((row) => row.htmlBody !== undefined),
+    };
+  },
+});
+
+// Recent threads with stored verdicts, projected small. Feeds the category
+// stat counters and the command-palette seeds without scanning message rows.
+export const listRecentCorpusThreads = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 200, 1000);
+    const rows = args.accountId
+      ? await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_user_account_updated', (q) =>
+            q.eq('userId', args.userId).eq('accountId', args.accountId as string),
+          )
+          .order('desc')
+          .take(limit)
+      : await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId))
+          .order('desc')
+          .take(limit);
+    return rows.map((row) => ({
+      _id: row.providerThreadId,
+      account: row.accountId,
+      subject: row.subject || '(no subject)',
+      fromAddress: row.fromAddress || '',
+      lastDate: row.lastDate || 0,
+      snippet: (row.snippet || '').slice(0, 200),
+      labels: row.labels || [],
+      unread: Boolean(row.unread),
+      starred: Boolean(row.starred),
+      smartCategory: row.smartCategory || undefined,
+      cachedAt: row.updatedAt || row.lastDate || 0,
+    }));
+  },
+});
+
 function trimCorpusText(value: unknown) {
   return String(value ?? '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 32_000);
+}
+
+// HTML keeps its whitespace (markup-significant) and gets a larger budget
+// than search text; 200KB covers effectively all real emails while staying
+// far under the Convex document limit.
+function trimCorpusHtml(value: unknown) {
+  return String(value ?? '').slice(0, 200_000);
 }
 
 function yearMonth(ts: unknown) {

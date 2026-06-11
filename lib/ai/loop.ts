@@ -1,14 +1,19 @@
 import { tool as aiTool, type ModelMessage, stepCountIs } from 'ai';
 import { z } from 'zod';
+import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
-import { getAiRequestContext } from './context';
+import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { hasPlatformAi, streamTextForUser } from './gateway';
-import { SYSTEM_PROMPT } from './system-prompt';
+import { buildSystemPrompt } from './system-prompt';
 
 const AGENT_TOOL_NAMES = new Set([
   'list_accounts',
   'search_threads',
+  'corpus_search',
+  'sender_profile',
+  'corpus_count',
+  'thread_timeline',
   'list_smart_category',
   'get_thread',
   'get_message',
@@ -32,6 +37,7 @@ const AGENT_TOOL_NAMES = new Set([
   'list_drafts',
   'schedule_send',
   'cancel_scheduled',
+  'list_scheduled',
   'undo_send',
   'summarize_thread',
   'triage_thread',
@@ -83,6 +89,7 @@ function liftToolsForAgent(): Record<string, any> {
           agent: 'ai',
           userId: context.userId,
           userEmail: context.userEmail,
+          userName: context.userName,
         });
         return result;
       },
@@ -97,18 +104,29 @@ export interface AgentRunOpts {
   extraSystem?: string;
   userId?: string | null;
   userEmail?: string | null;
+  userName?: string | null;
 }
 
-export async function runAgent({ messages, extraSystem, userId, userEmail }: AgentRunOpts) {
+export async function runAgent({ messages, extraSystem, userId, userEmail, userName }: AgentRunOpts) {
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
     );
   }
-  const system = extraSystem ? `${SYSTEM_PROMPT}\n\n${extraSystem}` : SYSTEM_PROMPT;
+  // Memories are injected at conversation start so remembered facts and
+  // preferences are ALWAYS in play — the recall tool remains for ad-hoc
+  // lookups, but the agent never starts blind.
+  const memories = userId
+    ? await runWithAiRequestContext({ userId, userEmail, userName, agent: 'ai' }, () =>
+        listMemories().catch(() => []),
+      ).then((rows) => rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })))
+    : [];
+  const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
+  const system = extraSystem ? `${base}\n\n${extraSystem}` : base;
   const stream = await streamTextForUser({
     userId,
     userEmail,
+    userName,
     feature: 'agent',
     speed: 'fast',
     system,

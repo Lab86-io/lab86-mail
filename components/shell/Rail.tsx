@@ -1,37 +1,19 @@
 'use client';
 
+import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  AlarmClock,
-  Archive,
-  Calendar,
-  ChevronsUpDown,
-  ClipboardList,
-  CreditCard,
-  Flag,
-  Inbox,
-  Keyboard,
-  KeyRound,
-  Layers,
-  MailOpen,
-  MessageCircle,
-  Newspaper,
-  Pencil,
-  Plus,
-  Receipt,
-  Send,
-  Settings2,
-  Star,
-  Terminal,
-  Trash2,
-  UserRound,
-  UsersRound,
-} from 'lucide-react';
+import { Terminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { HostedSettingsButton } from '@/components/hosted/HostedSettings';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { AlarmClockIcon } from '@/components/ui/alarm-clock';
+import { ArchiveIcon } from '@/components/ui/archive';
 import { Badge } from '@/components/ui/badge';
+import { BellIcon } from '@/components/ui/bell';
+import { BookmarkIcon } from '@/components/ui/bookmark';
+import { CalendarDaysIcon } from '@/components/ui/calendar-days';
+import { CreditCardIcon } from '@/components/ui/credit-card';
+import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -42,6 +24,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { FileTextIcon } from '@/components/ui/file-text';
+import { FlameIcon } from '@/components/ui/flame';
+import { KeyIcon } from '@/components/ui/key';
+import { LayersIcon } from '@/components/ui/layers';
+import { MailCheckIcon } from '@/components/ui/mail-check';
+import { MessageCircleIcon } from '@/components/ui/message-circle';
+import { PlusIcon } from '@/components/ui/plus';
+import { ReceiptIcon } from '@/components/ui/receipt';
+import { RowIcon, rowIcon } from '@/components/ui/row-icon';
+import { SendIcon } from '@/components/ui/send';
+import { SettingsIcon } from '@/components/ui/settings';
 import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
@@ -59,7 +52,10 @@ import {
   SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar';
+import { SquarePenIcon } from '@/components/ui/square-pen';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { UserIcon } from '@/components/ui/user';
+import { UsersIcon } from '@/components/ui/users';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
@@ -71,17 +67,19 @@ interface MailboxItem {
   Icon: any;
 }
 
+// Animated registry icons (lucide-animated): each carries its own unique
+// hover animation, triggered by row hover via the rowIcon adapter.
 const MAILBOXES: MailboxItem[] = [
-  { query: QUICK_SEARCH_QUERIES.unread, label: 'Unread', Icon: MailOpen },
-  { query: QUICK_SEARCH_QUERIES.starred, label: 'Starred', Icon: Star },
-  { query: QUICK_SEARCH_QUERIES.important, label: 'Important', Icon: Flag },
-  { query: QUICK_SEARCH_QUERIES.attachments, label: 'Attachments', Icon: Layers },
-  { query: QUICK_SEARCH_QUERIES.thisWeek, label: 'This week', Icon: Calendar },
-  { query: QUICK_SEARCH_QUERIES.sent, label: 'Sent', Icon: Send },
-  { query: QUICK_SEARCH_QUERIES.drafts, label: 'Drafts', Icon: Pencil },
-  { query: QUICK_SEARCH_QUERIES.allMail, label: 'All mail', Icon: Archive },
-  { query: 'label:MailOS/Snoozed', label: 'Snoozed', Icon: AlarmClock },
-  { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash', Icon: Trash2 },
+  { query: QUICK_SEARCH_QUERIES.unread, label: 'Unread', Icon: rowIcon(BellIcon) },
+  { query: QUICK_SEARCH_QUERIES.starred, label: 'Starred', Icon: rowIcon(BookmarkIcon) },
+  { query: QUICK_SEARCH_QUERIES.important, label: 'Important', Icon: rowIcon(FlameIcon) },
+  { query: QUICK_SEARCH_QUERIES.attachments, label: 'Attachments', Icon: rowIcon(LayersIcon) },
+  { query: QUICK_SEARCH_QUERIES.thisWeek, label: 'This week', Icon: rowIcon(CalendarDaysIcon) },
+  { query: QUICK_SEARCH_QUERIES.sent, label: 'Sent', Icon: rowIcon(SendIcon) },
+  { query: QUICK_SEARCH_QUERIES.drafts, label: 'Drafts', Icon: rowIcon(SquarePenIcon) },
+  { query: QUICK_SEARCH_QUERIES.allMail, label: 'All mail', Icon: rowIcon(ArchiveIcon) },
+  { query: 'label:MailOS/Snoozed', label: 'Snoozed', Icon: rowIcon(AlarmClockIcon) },
+  { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash', Icon: rowIcon(DeleteIcon) },
 ];
 
 export const ALL_ACCOUNTS = '__all__';
@@ -90,39 +88,38 @@ const SMART_CATEGORIES = [
   {
     id: 'main',
     label: 'Main',
-    Icon: Inbox,
+    Icon: rowIcon(MailCheckIcon),
     help: 'Personal human conversations, plus only urgent unread automated exceptions.',
   },
   {
     id: 'needs_reply',
     label: 'Needs Reply',
-    Icon: MessageCircle,
+    Icon: rowIcon(MessageCircleIcon),
     help: 'Human conversations likely worth a response.',
   },
-  { id: 'waiting', label: 'Waiting', Icon: ClipboardList, help: 'Threads where the next move is waiting.' },
   {
     id: 'codes',
     label: 'Codes',
-    Icon: KeyRound,
+    Icon: rowIcon(KeyIcon),
     help: 'Verification codes, login links, and account security.',
   },
   {
     id: 'orders',
     label: 'Orders',
-    Icon: Receipt,
+    Icon: rowIcon(ReceiptIcon),
     help: 'Receipts, shipping, refunds, returns, bookings, and order problems.',
   },
   {
     id: 'finance_admin',
     label: 'Finance/Admin',
-    Icon: CreditCard,
+    Icon: rowIcon(CreditCardIcon),
     help: 'Billing, legal, contracts, tax, and admin.',
   },
-  { id: 'review', label: 'Review', Icon: UserRound, help: 'Uncertain mail that needs a decision.' },
+  { id: 'review', label: 'Review', Icon: rowIcon(UserIcon), help: 'Uncertain mail that needs a decision.' },
   {
     id: 'noise',
     label: 'Noise',
-    Icon: Trash2,
+    Icon: rowIcon(DeleteIcon),
     help: 'Bulk, subscribed, platform, publisher, rewards, and promo mail.',
   },
 ];
@@ -140,7 +137,6 @@ export function Rail() {
   const smartCategory = useClientStore((s) => s.smartCategory);
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
-  const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
   const { isMobile, setOpenMobile } = useSidebar();
   const queryClient = useQueryClient();
   const [smartSettingsOpen, setSmartSettingsOpen] = useState(false);
@@ -269,7 +265,7 @@ export function Rail() {
                   'var(--color-accent-shine-3)',
                 ]}
               />
-              <Plus />
+              <PlusIcon size={16} />
               <span>Compose</span>
               <span className="ml-auto text-[10px] text-[var(--color-accent-foreground)]/75">c</span>
             </SidebarMenuButton>
@@ -302,30 +298,13 @@ export function Rail() {
                       ]}
                     />
                   ) : null}
-                  <Newspaper />
+                  <RowIcon icon={FileTextIcon} size={16} />
                   <span>Daily Report</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-        {authedAccounts.length > 1 ? (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <AccountFilterDropdown
-                    accounts={authedAccounts}
-                    accountFilter={accountFilter}
-                    setAccountFilter={setAccountFilter}
-                    indexingCount={indexingAccounts.length}
-                  />
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
 
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-1">
@@ -337,7 +316,7 @@ export function Rail() {
               className="ml-auto grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:hidden"
               title="Smart label settings"
             >
-              <Settings2 className="size-3" />
+              <SettingsIcon size={12} />
             </button>
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -484,20 +463,30 @@ export function Rail() {
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
-          <ThemeSwitcher />
-          <HostedSettingsButton />
-          <button
-            type="button"
-            onClick={() => {
-              setShortcutsOpen(true);
-              closeMobileSidebar();
-            }}
-            className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-            title="Keyboard shortcuts (?)"
-          >
-            <Keyboard className="h-3.5 w-3.5" />
-          </button>
+        {/* One quiet control strip: profile (settings lives in its popout),
+            account scope, and theme. Collapses to a vertical stack. */}
+        <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
+          <div className="grid h-7 w-7 place-items-center">
+            <UserButton appearance={{ elements: { avatarBox: 'size-6' } }}>
+              <UserButton.MenuItems>
+                <UserButton.Link
+                  label="Mail settings"
+                  href="/settings"
+                  labelIcon={<SettingsIcon size={14} />}
+                />
+              </UserButton.MenuItems>
+            </UserButton>
+          </div>
+          <div className="mx-0.5 h-4 w-px bg-[var(--color-border)] group-data-[collapsible=icon]:hidden" />
+          <AccountScopePopover
+            accounts={authedAccounts}
+            accountFilter={accountFilter}
+            setAccountFilter={setAccountFilter}
+            indexingCount={indexingAccounts.length}
+          />
+          <div className="ml-auto group-data-[collapsible=icon]:ml-0">
+            <ThemeSwitcher />
+          </div>
         </div>
       </SidebarFooter>
       <SmartLabelsSettings
@@ -751,7 +740,7 @@ function AccountSyncDot({ sync, authed }: { sync: AccountSync; authed: boolean }
   return <span className={`ml-auto size-1.5 shrink-0 rounded-full ${color}`} />;
 }
 
-function AccountFilterDropdown({
+function AccountScopePopover({
   accounts,
   accountFilter,
   setAccountFilter,
@@ -786,18 +775,27 @@ function AccountFilterDropdown({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <SidebarMenuButton tooltip="Choose accounts">
-          <UsersRound />
-          <span className="truncate">{label}</span>
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            {indexingCount ? <Ring className="size-3 text-[var(--color-accent)]" /> : null}
-            <ChevronsUpDown className="size-3 text-[var(--color-text-faint)]" />
-          </span>
-        </SidebarMenuButton>
+        <button
+          type="button"
+          title={label}
+          className="relative grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+        >
+          <RowIcon icon={UsersIcon} size={15} />
+          {!allSelected ? (
+            <span className="absolute right-0.5 top-0.5 grid size-3 place-items-center rounded-full bg-[var(--color-accent)] text-[7px] font-semibold leading-none text-[var(--color-accent-foreground)]">
+              {effective.length}
+            </span>
+          ) : indexingCount ? (
+            <span className="absolute right-0.5 top-0.5">
+              <Ring className="size-2.5 text-[var(--color-accent)]" />
+            </span>
+          ) : null}
+          <span className="sr-only">Choose accounts</span>
+        </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
+      <DropdownMenuContent align="start" side="top" className="w-64">
         <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
-          Inbox shows
+          Inbox shows · {label}
         </DropdownMenuLabel>
         <DropdownMenuItem
           onSelect={(event) => {
@@ -806,7 +804,7 @@ function AccountFilterDropdown({
           }}
           className="gap-2 text-[12.5px]"
         >
-          <UsersRound className="size-3.5" />
+          <RowIcon icon={UsersIcon} size={14} />
           All accounts
           {allSelected ? <span className="ml-auto text-[var(--color-accent)]">✓</span> : null}
         </DropdownMenuItem>

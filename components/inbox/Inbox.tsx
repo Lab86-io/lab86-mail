@@ -3,19 +3,8 @@
 'use client';
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Archive,
-  Ban,
-  CheckCircle2,
-  Gauge,
-  Inbox as InboxIcon,
-  MoreHorizontal,
-  RefreshCw,
-  Search,
-  Tag,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { useQuery_experimental as useConvexQuery } from 'convex/react';
+import { Ban, CheckCircle2, Inbox as InboxIcon, MoreHorizontal, Search, Tag, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -30,11 +19,13 @@ import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -48,9 +39,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { GaugeIcon } from '@/components/ui/gauge';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RefreshCWIcon } from '@/components/ui/refresh-cw';
+import { RowIcon } from '@/components/ui/row-icon';
+import { SearchIcon } from '@/components/ui/search';
 import { ShineBorder } from '@/components/ui/shine-border';
+import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
@@ -88,6 +84,17 @@ interface SearchThreadsResult {
 interface InboxPage {
   items: ThreadRow[];
   nextPageTokens: Record<string, string>;
+}
+
+interface AccountRow {
+  accountId: string;
+  email: string;
+  authed: boolean;
+  displayName?: string;
+}
+
+interface AccountsResult {
+  accounts: AccountRow[];
 }
 
 export function Inbox() {
@@ -185,19 +192,15 @@ export function Inbox() {
 
   // When account is the synthetic ALL_ACCOUNTS marker, fan out across every
   // authed mail account and merge by date. Otherwise just hit one.
-  const { data: accountsData } = useQuery({
+  const liveAccounts = useConvexQuery({ query: (api as any).liveMail.listAccounts, args: {} });
+  const { data: fallbackAccountsData } = useQuery({
     queryKey: ['accounts'],
-    queryFn: async () =>
-      callTool<{
-        accounts: {
-          accountId: string;
-          email: string;
-          authed: boolean;
-          displayName?: string;
-        }[];
-      }>('list_accounts'),
+    queryFn: async () => callTool<AccountsResult>('list_accounts'),
+    enabled: liveAccounts.status !== 'success',
     staleTime: 60_000,
   });
+  const accountsData =
+    liveAccounts.status === 'success' ? (liveAccounts.data as AccountsResult) : fallbackAccountsData;
   const accountAliasById = useMemo(
     () =>
       Object.fromEntries(
@@ -232,6 +235,25 @@ export function Inbox() {
       ? SMART_CATEGORY_LABELS[smartCategory as keyof typeof SMART_CATEGORY_LABELS] || smartCategory
       : '';
 
+  const liveInboxArgs =
+    account && (account !== ALL_ACCOUNTS || authedAccountIds.length > 0)
+      ? {
+          accountIds:
+            account === ALL_ACCOUNTS
+              ? scopedQuery.accountIds?.filter((id) => authedAccountIds.includes(id)) || authedAccountIds
+              : scopedQuery.accountIds && !scopedQuery.accountIds.includes(account)
+                ? []
+                : [account],
+          category: smartCategory || undefined,
+          query: smartCategory || scopedQuery.query === DEFAULT_QUERY ? undefined : scopedQuery.query,
+          limit: INBOX_PAGE_SIZE * 3,
+        }
+      : 'skip';
+  const liveInbox = useConvexQuery({
+    query: (api as any).liveMail.listThreads,
+    args: liveInboxArgs,
+  });
+
   const {
     data,
     isLoading,
@@ -243,6 +265,8 @@ export function Inbox() {
     fetchNextPage,
     refetch,
   } = useInfiniteQuery({
+    // Key layout matters to the placeholderData guard below: [1] = account,
+    // [5] = smartCategory.
     queryKey: [
       'search',
       account,
@@ -252,7 +276,6 @@ export function Inbox() {
       smartCategory,
       accountFilter.join(','),
       authedAccountIds.join(','),
-      Object.values(accountAliasById).join(','),
       refreshNonce,
     ],
     initialPageParam: {} as Record<string, string>,
@@ -322,6 +345,15 @@ export function Inbox() {
     // cold provider read. The foreground poll still catches new mail.
     staleTime: 45_000,
     gcTime: 30 * 60_000,
+    // Show the previous list (marked fetching) while a refined query loads —
+    // but NEVER carry one category's (or account's) rows into another view:
+    // that reads as "wrong emails in my category", not as a loading state.
+    placeholderData: (previousData: any, previousQuery: any) => {
+      const prevKey = previousQuery?.queryKey as unknown[] | undefined;
+      if (!prevKey) return undefined;
+      if (prevKey[1] !== account || prevKey[5] !== smartCategory) return undefined;
+      return previousData;
+    },
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchInterval: 60_000,
@@ -352,15 +384,25 @@ export function Inbox() {
     }
   };
 
+  const liveItems =
+    liveInbox.status === 'success' ? (liveInbox.data?.items as ThreadRow[] | undefined) : undefined;
   const items = useMemo(() => {
     const byKey = new Map<string, ThreadRow>();
-    for (const item of data?.pages.flatMap((page) => page.items) || []) {
+    for (const item of liveItems || []) {
       byKey.set(`${item.account || account}:${item._id}`, item);
+    }
+    for (const item of data?.pages.flatMap((page) => page.items) || []) {
+      const key = `${item.account || account}:${item._id}`;
+      if (!byKey.has(key)) byKey.set(key, item);
     }
     return [...byKey.values()].sort(
       (a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
     );
-  }, [account, data?.pages]);
+  }, [account, data?.pages, liveItems]);
+  // Skeleton while either source is still on its first load for this view —
+  // an empty live result alone must not flash "Nothing here" while the HTTP
+  // page (which can still backfill brand-new accounts) is in flight.
+  const showInitialLoading = !items.length && (isLoading || liveInbox.status === 'pending');
   const readerVisible = !!(selectedThreadId || composeMode);
 
   useEffect(() => {
@@ -431,38 +473,75 @@ export function Inbox() {
   // Each item knows its own account (set by the fan-out above), so bulk
   // operations dispatch per-item using that account rather than the
   // currently-selected one. Required for ALL_ACCOUNTS view.
-  const accountOfRow = (id: string) => items.find((it) => it._id === id)?.account || account;
+  const rowKey = (item: ThreadRow) => `${item.account || account}:${item._id}`;
+  const rowForKey = (id: string) => items.find((it) => rowKey(it) === id || it._id === id);
+  const accountOfRow = (id: string) => rowForKey(id)?.account || account;
+  const threadIdOfRow = (id: string) => rowForKey(id)?._id || id.split(':').slice(1).join(':') || id;
+
+  // Optimistically drop rows from every cached search page so archive/trash
+  // feel instant; a failure invalidates and refetches the truth.
+  const removeRowsFromSearchCache = (ids: string[]) => {
+    const keys = new Set(ids);
+    queryClient.setQueriesData({ queryKey: ['search'] }, (old: any) => {
+      if (!old?.pages) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page: any) => ({
+          ...page,
+          items: (page.items || []).filter((it: any) => !keys.has(`${it.account || account}:${it._id}`)),
+        })),
+      };
+    });
+  };
 
   const bulkArchive = useMutation({
     mutationFn: async (ids: string[]) => {
-      await Promise.allSettled(
-        ids.map((id) => callTool('archive_thread', { account: accountOfRow(id), threadId: id })),
+      const results = await Promise.allSettled(
+        ids.map((id) =>
+          callTool('archive_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) }),
+        ),
       );
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length) throw new Error(`Failed to archive ${failures.length} thread(s).`);
     },
-    onSuccess: () => {
-      toast.success(`Archived ${selectedIds.length}`);
+    onMutate: (ids) => {
+      removeRowsFromSearchCache(ids);
       clearSelected();
-      refetch();
+    },
+    onSuccess: (_data, ids) => {
+      toast.success(`Archived ${ids.length}`);
+    },
+    onError: () => {
+      toast.error('Archive failed — restoring');
+      queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
 
   const bulkTrash = useMutation({
     mutationFn: async (ids: string[]) => {
-      await Promise.allSettled(
-        ids.map((id) => callTool('trash_thread', { account: accountOfRow(id), threadId: id })),
+      const results = await Promise.allSettled(
+        ids.map((id) => callTool('trash_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) })),
       );
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length) throw new Error(`Failed to trash ${failures.length} thread(s).`);
     },
-    onSuccess: () => {
-      toast.success(`Trashed ${selectedIds.length}`);
+    onMutate: (ids) => {
+      removeRowsFromSearchCache(ids);
       clearSelected();
-      refetch();
+    },
+    onSuccess: (_data, ids) => {
+      toast.success(`Trashed ${ids.length}`);
+    },
+    onError: () => {
+      toast.error('Trash failed — restoring');
+      queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
 
   const bulkTriage = useMutation({
     mutationFn: async () => {
       const list = items
-        .filter((it) => selectedIds.includes(it._id))
+        .filter((it) => selectedIds.includes(rowKey(it)))
         .map((it) => ({
           id: it._id,
           from: it.from || it.fromAddress,
@@ -541,7 +620,7 @@ export function Inbox() {
               {translating ? (
                 <OrbitRing className="size-4 text-[var(--color-accent)]" />
               ) : (
-                <Search className="size-4 text-[var(--color-text-faint)]" />
+                <RowIcon icon={SearchIcon} size={16} className="text-[var(--color-text-faint)]" />
               )}
             </InputGroupAddon>
             <InputGroupInput
@@ -582,7 +661,7 @@ export function Inbox() {
             {isFetching && !isFetchingNextPage ? (
               <Ring className="size-4" />
             ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RowIcon icon={RefreshCWIcon} size={14} />
             )}
           </Button>
         </div>
@@ -630,7 +709,7 @@ export function Inbox() {
               onClick={() => bulkArchive.mutate(selectedIds)}
               className="ml-2 flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
             >
-              <Archive className="h-3 w-3" />
+              <RowIcon icon={ArchiveIcon} size={12} />
               Archive
             </button>
             <button
@@ -638,7 +717,7 @@ export function Inbox() {
               onClick={() => bulkTrash.mutate(selectedIds)}
               className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
             >
-              <Trash2 className="h-3 w-3" />
+              <RowIcon icon={DeleteIcon} size={12} />
               Trash
             </button>
             <button
@@ -646,7 +725,7 @@ export function Inbox() {
               onClick={() => bulkTriage.mutate()}
               className="flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
             >
-              <Gauge className="h-3 w-3" />
+              <RowIcon icon={GaugeIcon} size={12} />
               AI: triage
             </button>
             <button
@@ -662,7 +741,7 @@ export function Inbox() {
       </AnimatePresence>
 
       <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
-        {isLoading ? (
+        {showInitialLoading ? (
           <SkeletonRows />
         ) : isError ? (
           <SearchErrorState
@@ -696,23 +775,30 @@ export function Inbox() {
             <EmptyState account={account} />
           )
         ) : (
-          <>
+          <motion.div
+            key={`${account}:${smartCategory || 'search'}`}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+          >
             {items.map((it) => {
               const senderEmail = emailFromHeader(it.from || it.fromAddress);
+              const key = rowKey(it);
+              const rowAccount = it.account || account;
               return (
                 <ThreadRowCard
-                  key={`${it.account}:${it._id}`}
+                  key={key}
                   item={it}
                   photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
                   showAccount={account === ALL_ACCOUNTS}
-                  selected={selectedIds.includes(it._id)}
-                  active={selectedThreadId === it._id}
-                  onToggle={() => toggleSelected(it._id)}
+                  selected={selectedIds.includes(key)}
+                  active={selectedThreadId === it._id && threadAccount === rowAccount}
+                  onToggle={() => toggleSelected(key)}
                   onPrefetch={() => prefetchThread(it)}
                   onApplyLabels={() => setLabelPreview(it)}
                   onCorrect={(action, payload = {}) =>
                     applyCorrection.mutate({
-                      account: it.account || account,
+                      account: rowAccount,
                       threadId: it._id,
                       action,
                       scope: 'sender',
@@ -725,7 +811,7 @@ export function Inbox() {
                     // Unified inbox stays put; just remember which mailbox this
                     // thread belongs to so the reader can load/reply correctly.
                     startTransition(() => {
-                      setThreadAccount(it.account || account);
+                      setThreadAccount(rowAccount);
                       setSelectedThread(it._id);
                     });
                   }}
@@ -734,7 +820,7 @@ export function Inbox() {
             })}
             <div ref={loadMoreRef} className="min-h-1" aria-hidden />
             {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
-          </>
+          </motion.div>
         )}
       </div>
       <LabelConfirmDialog
@@ -819,7 +905,7 @@ function ThreadRowCard({
       role="button"
       tabIndex={0}
       className={cn(
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left hover:bg-[var(--color-hover-soft)]',
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors duration-150 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
@@ -968,22 +1054,13 @@ function QuickFixMenu({
             Move to...
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            {(
-              [
-                'main',
-                'needs_reply',
-                'waiting',
-                'codes',
-                'orders',
-                'finance_admin',
-                'review',
-                'noise',
-              ] as const
-            ).map((category) => (
-              <DropdownMenuItem key={category} onSelect={() => onCorrect('move_to', { category })}>
-                {SMART_CATEGORY_LABELS[category]}
-              </DropdownMenuItem>
-            ))}
+            {(['main', 'needs_reply', 'codes', 'orders', 'finance_admin', 'review', 'noise'] as const).map(
+              (category) => (
+                <DropdownMenuItem key={category} onSelect={() => onCorrect('move_to', { category })}>
+                  {SMART_CATEGORY_LABELS[category]}
+                </DropdownMenuItem>
+              ),
+            )}
             {customLabels.length ? <DropdownMenuSeparator /> : null}
             {customLabels.map((label) => (
               <DropdownMenuItem

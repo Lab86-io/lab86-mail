@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { SmartCategoryId, SmartRule } from '../shared/types';
-import { db, findMany, findOne, upsert } from './db';
+import { kvGet, kvList, kvUpsert } from './kv';
 
+// kv* helpers scope every read and write to the signed-in user's ambient
+// request context; rule IDs only need to be unique inside that user scope.
 export async function listSmartRules(includeDisabled = false) {
-  return await findMany<SmartRule>(db().smartRules, includeDisabled ? {} : { enabled: true }, {
-    sort: { createdAt: -1 },
-  });
+  const rules = await kvList<SmartRule>('smartRule', { limit: 1000 });
+  const filtered = includeDisabled ? rules : rules.filter((rule) => rule.enabled);
+  filtered.sort((a, b) => b.createdAt - a.createdAt);
+  return filtered;
 }
 
 export async function getSmartRule(id: string) {
-  return await findOne<SmartRule>(db().smartRules, { _id: id });
+  return await kvGet<SmartRule>('smartRule', id);
 }
 
 export async function createSmartRule(input: {
@@ -38,7 +41,7 @@ export async function createSmartRule(input: {
     updatedAt: ts,
   };
   if (!rule.match) throw new Error('Rule match is required');
-  await upsert(db().smartRules, { _id: rule._id }, rule);
+  await kvUpsert('smartRule', rule._id, rule);
   return rule;
 }
 
@@ -46,6 +49,6 @@ export async function setSmartRuleEnabled(id: string, enabled: boolean) {
   const existing = await getSmartRule(id);
   if (!existing) throw new Error('Smart rule not found');
   const next = { ...existing, enabled, updatedAt: Date.now() };
-  await upsert(db().smartRules, { _id: id }, next);
+  await kvUpsert('smartRule', id, next);
   return next;
 }

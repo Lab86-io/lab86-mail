@@ -30,11 +30,11 @@ GitHub resources created on June 4, 2026:
 
 Convex resources created on June 4, 2026:
 
-- Development deployment: `jjalangtry:lab86-mail:development`
+- Development deployment: `<convex-team>:lab86-mail:development`
   - Deployment name: `precise-skunk-847`
   - URL: `https://precise-skunk-847.convex.cloud`
   - Site URL: `https://precise-skunk-847.convex.site`
-- Production deployment: `jjalangtry:lab86-mail:production`
+- Production deployment: `<convex-team>:lab86-mail:production`
   - Deployment name: `proficient-viper-594`
   - URL: `https://proficient-viper-594.convex.cloud`
   - Site URL: `https://proficient-viper-594.convex.site`
@@ -96,6 +96,93 @@ dashboard sessions:
 - Vendor/DPA tracker: keep current terms, DPAs, and no-training/security notes for Railway, Convex, Nylas,
   Clerk, Stripe, OpenRouter, OpenAI, Anthropic, and any enabled model provider.
 - CodeRabbit: install the GitHub App on `Lab86-io/lab86-mail` so PR #1 receives a review.
+
+## Nylas Sandbox → Production Migration
+
+The production Railway env points at a dedicated Nylas app
+(`a0327d4f-cde6-4ebb-b49d-5baf9f366e31`, "Lab86 Mail Production"), but that app
+is still in the **sandbox** environment, which hard-caps at **5 connected
+grants**. Once full, new account connections fail with
+`Maximum number of sandbox grants reached for Application`. Audit current state
+any time with:
+
+```bash
+NYLAS_API_KEY=<prod key> bun scripts/nylas-provision.ts status
+```
+
+As of this writing the production app already has the callback, the webhook
+(`/api/nylas/webhook`), and connectors for google/microsoft/imap/icloud/ews
+created — so the connector/webhook wiring (step 5 below) is already done and the
+script will report everything `present`. **The only blocker is the sandbox
+environment itself.** Steps 1–4 are the real work; 5–6 are verify/cutover.
+
+You cannot flip `sandbox → production` via API or env — it is a dashboard +
+billing + OAuth process. Do it in this order (Google verification is the long
+pole; start it first):
+
+1. **Nylas paid plan → Production application.** In the Nylas dashboard, put the
+   org on a paid plan and create/convert to a production application. Production
+   apps have no 5-grant cap (billed per connected account beyond the plan
+   quota). Sandbox grants do **not** carry over to a new app — users reconnect
+   once after cutover.
+2. **Google Cloud (BYO OAuth, required in v3 production).** Create an OAuth
+   client + consent screen in a production Google Cloud project (keep dev/staging
+   in a separate project so test sign-ins don't burn production quota). Request
+   only implemented scopes — `gmail.modify` + `userinfo.email`; do **not**
+   request `mail.google.com`. Submit OAuth verification and the annual **CASA
+   Tier 2** assessment before public launch or at ~70 lifetime production Gmail
+   authorizations, whichever comes first.
+
+   Provisioned 2026-06-11 via gcloud as jakob@lab86.io (org lab86.io
+   459734099637; project `lab86-mail-production`, number 452431903621, billing
+   `016424-9F9740-E75146`). An earlier duplicate under jjalangtry@gmail.com
+   (`lab86-mail-prod`) is obsolete and can be deleted.
+   - APIs enabled: `gmail.googleapis.com`, `pubsub.googleapis.com`.
+   - Org policy note: the lab86.io org's Domain Restricted Sharing default
+     blocks the Gmail push grant; a project-level override
+     (`constraints/iam.allowedPolicyMemberDomains` → allow all) was applied
+     (needed roles/orgpolicy.policyAdmin granted to jakob@lab86.io at the org).
+   - Service account
+     `nylas-gmail-realtime@lab86-mail-production.iam.gserviceaccount.com`
+     (exact name required by the Nylas connector).
+   - Pub/Sub topic `projects/lab86-mail-production/topics/nylas-gmail-realtime`
+     with `gmail-api-push@system.gserviceaccount.com` as Pub/Sub Publisher —
+     this is the connector's "Google Pub/Sub topic name" value.
+   - Authenticated push subscription `nylas-gmail-realtime-sub` →
+     `https://gmailrealtime.us.nylas.com` (OIDC as the service account, never
+     expires; the Pub/Sub service agent holds `iam.serviceAccountTokenCreator`).
+
+   Console-only remainder (no API exists for external consent screens): the
+   OAuth consent screen/branding, scopes, test users, and the **Web application
+   OAuth client** with redirect `https://api.us.nylas.com/v3/connect/callback`
+   — its client ID/secret go into the Nylas Google connector form.
+3. **Microsoft (Azure).** Register an Azure app (Mail.ReadWrite, Mail.Send,
+   offline_access, User.Read). Track Microsoft Partner Center publisher
+   verification separately from Google.
+4. **iCloud / IMAP.** No OAuth app — app-specific passwords only.
+5. **Configure the production Nylas app + webhook** (scriptable once 1–4 exist):
+
+   ```bash
+   NYLAS_API_KEY=<prod key> PUBLIC_URL=https://mail.lab86.io \
+   GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... \
+   MICROSOFT_CLIENT_ID=... MICROSOFT_CLIENT_SECRET=... \
+   SETUP_ICLOUD=1 \
+   bun scripts/nylas-provision.ts setup
+   ```
+
+   The script registers the `mail.lab86.io/api/nylas/callback` callback, creates
+   the Google/Microsoft/iCloud connectors, and creates the webhook against
+   `/api/nylas/webhook` (printing the one-time `webhook_secret`).
+6. **Railway production env cutover.** Set the production app's
+   `NYLAS_CLIENT_ID`, `NYLAS_CLIENT_SECRET`, `NYLAS_API_KEY`, and the
+   `NYLAS_WEBHOOK_SECRET` printed in step 5. `NYLAS_REDIRECT_URI` already points
+   at `https://mail.lab86.io/api/nylas/callback`. Redeploy and reconnect one
+   account to verify, then re-run `bun scripts/nylas-provision.ts status` to
+   confirm `environment: production` and the connectors/webhook are live.
+
+Stopgap while the above is in flight: delete a sandbox grant to free a slot
+(`DELETE /v3/grants/<id>` with the prod key, or revoke from the app's settings).
+This keeps you at the 5-grant cap and is for testing only.
 
 ## Railway Variables
 

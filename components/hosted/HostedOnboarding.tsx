@@ -2,13 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight, Check, KeyRound, Plus, Sparkles } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -27,10 +27,56 @@ import {
 
 const STORAGE_KEY = 'lab86-mail-onboarding-dismissed-v1';
 
-export function HostedOnboarding() {
-  const qc = useQueryClient();
+interface NylasAccount {
+  accountId: string;
+  email: string;
+  provider: 'google' | 'microsoft' | 'icloud' | 'imap';
+  displayName?: string;
+}
+
+interface NylasCapability {
+  provider: NylasAccount['provider'];
+  label: string;
+  visible: boolean;
+  connectable: boolean;
+  reason?: string;
+}
+
+interface NylasStatus {
+  accounts?: NylasAccount[];
+  capabilities?: NylasCapability[];
+}
+
+// First-run gate rendered inside the app shell: when the signed-in user has
+// no connected mailboxes (or never finished onboarding), route them to the
+// dedicated /welcome page instead of popping a modal over an empty inbox.
+export function FirstRunRedirect() {
+  const router = useRouter();
   const [dismissed, setDismissed] = useState<boolean | null>(null);
-  const [open, setOpen] = useState(false);
+  const {
+    data: nylas,
+    isLoading,
+    isError,
+  } = useQuery({
+    queryKey: ['nylas-status'],
+    queryFn: async () => fetchJson('/api/nylas/status') as Promise<NylasStatus>,
+    retry: false,
+  });
+  useEffect(() => {
+    setDismissed(window.localStorage.getItem(STORAGE_KEY) === '1');
+  }, []);
+  useEffect(() => {
+    if (dismissed === null || isLoading || isError) return;
+    const hasAccounts = (nylas?.accounts || []).length > 0;
+    if (!hasAccounts || !dismissed) router.replace('/welcome');
+  }, [dismissed, isLoading, isError, nylas, router]);
+  return null;
+}
+
+export function WelcomeFlow() {
+  const qc = useQueryClient();
+  const router = useRouter();
+  const [dismissed, setDismissed] = useState<boolean | null>(null);
   const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('byok');
   const [lab86Family, setLab86Family] = useState<Lab86ModelFamily>('openai');
   const [provider, setProvider] = useState<Provider>('openrouter');
@@ -45,7 +91,7 @@ export function HostedOnboarding() {
     refetch: refetchAccounts,
   } = useQuery({
     queryKey: ['nylas-status'],
-    queryFn: async () => fetchJson('/api/nylas/status'),
+    queryFn: async () => fetchJson('/api/nylas/status') as Promise<NylasStatus>,
     retry: false,
   });
   // Seed the form state from the server only once; refetches (e.g. the
@@ -81,13 +127,17 @@ export function HostedOnboarding() {
   const aiLoaded = Boolean(ai);
 
   const accounts = nylas?.accounts || [];
-  const providerCapabilities = (nylas?.capabilities || []).filter((capability: any) => capability.visible);
-  const icloud = providerCapabilities.find((capability: any) => capability.provider === 'icloud');
+  const providerCapabilities = (nylas?.capabilities || []).filter((capability) => capability.visible);
+  const icloud = providerCapabilities.find((capability) => capability.provider === 'icloud');
   const hasAccounts = accounts.length > 0;
 
   useEffect(() => {
     setDismissed(window.localStorage.getItem(STORAGE_KEY) === '1');
   }, []);
+
+  useEffect(() => {
+    if (dismissed === true && hasAccounts && !loadingAccounts) router.replace('/');
+  }, [dismissed, hasAccounts, loadingAccounts, router]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -100,11 +150,6 @@ export function HostedOnboarding() {
     const qs = params.toString();
     window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
   }, [qc]);
-
-  useEffect(() => {
-    if (dismissed === null || loadingAccounts) return;
-    if (!hasAccounts || !dismissed) setOpen(true);
-  }, [dismissed, hasAccounts, loadingAccounts]);
 
   const saveAi = useMutation({
     mutationFn: async () => {
@@ -139,15 +184,7 @@ export function HostedOnboarding() {
     if (!hasAccounts) return;
     window.localStorage.setItem(STORAGE_KEY, '1');
     setDismissed(true);
-    setOpen(false);
-  };
-
-  const close = (nextOpen: boolean) => {
-    if (nextOpen) {
-      setOpen(true);
-      return;
-    }
-    if (hasAccounts) complete();
+    router.replace('/');
   };
 
   const selected = LAB86_MODEL_FAMILIES[lab86Family];
@@ -156,276 +193,274 @@ export function HostedOnboarding() {
   const fastModelDetail = OPENROUTER_FAST_MODEL_OPTIONS.find((option) => option.id === fastModel)?.detail;
 
   return (
-    <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto p-0">
-        <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 pb-5 pt-6">
-          <DialogTitle className="text-[19px] tracking-tight">Welcome to Lab86 Mail</DialogTitle>
-          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
-            Two steps: connect a mailbox, pick how AI runs. Everything else is ready.
-          </p>
-        </div>
+    <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft,0_8px_40px_rgb(0_0_0/0.08))]">
+      <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 pb-5 pt-6">
+        <h1 className="text-[19px] font-semibold tracking-tight">Welcome to Lab86 Mail</h1>
+        <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+          Two steps: connect a mailbox, pick how AI runs. Everything else is ready.
+        </p>
+      </div>
 
-        <div className="space-y-7 px-6 py-6">
-          {accountsError ? (
-            <div className="flex items-start gap-2.5 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[var(--color-danger)]" />
-              <div className="min-w-0 text-[12.5px]">
-                <div className="font-medium">The backend isn&apos;t reachable right now.</div>
-                <div className="mt-0.5 text-[var(--color-text-muted)]">
-                  Your accounts and settings are safe — this screen will recover once the service is back.
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="mt-2"
-                  onClick={() => refetchAccounts()}
-                >
-                  Retry
-                </Button>
+      <div className="space-y-7 px-6 py-6">
+        {accountsError ? (
+          <div className="flex items-start gap-2.5 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[var(--color-danger)]" />
+            <div className="min-w-0 text-[12.5px]">
+              <div className="font-medium">The backend isn&apos;t reachable right now.</div>
+              <div className="mt-0.5 text-[var(--color-text-muted)]">
+                Your accounts and settings are safe — this screen will recover once the service is back.
               </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => refetchAccounts()}
+              >
+                Retry
+              </Button>
             </div>
-          ) : null}
-
-          {/* ---- Step 1: mailboxes -------------------------------------- */}
-          <section>
-            <StepHeading
-              step={1}
-              done={hasAccounts}
-              title="Connect your mail"
-              blurb="Each mailbox is downloaded into your private search index — search stays instant."
-            />
-            <div className="mt-3 space-y-2">
-              {accounts.map((account: any) => (
-                <div
-                  key={account.accountId || account.email}
-                  className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-2.5"
-                >
-                  <div className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
-                    <ProviderLogo provider={account.provider} className="size-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium">
-                      {account.displayName || account.email}
-                    </div>
-                    <div className="truncate text-[11px] text-[var(--color-text-muted)]">
-                      {account.email} · {providerDisplayName(account.provider)}
-                    </div>
-                  </div>
-                  <Check className="size-4 shrink-0 text-emerald-500" aria-label="Connected" />
-                </div>
-              ))}
-              {!accounts.length && !loadingAccounts && !accountsError ? (
-                <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-4 text-center text-[12.5px] text-[var(--color-text-muted)]">
-                  Nothing connected yet — pick a provider below.
-                </div>
-              ) : null}
-              {loadingAccounts ? (
-                <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">
-                  <Ring className="size-3.5" /> Checking connected mailboxes…
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {providerCapabilities.map((capability: any) => (
-                <Button
-                  key={capability.provider}
-                  asChild={capability.connectable}
-                  disabled={!capability.connectable}
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                >
-                  {capability.connectable ? (
-                    <a href={`/api/nylas/connect?provider=${capability.provider}&redirectTo=/`}>
-                      <ProviderLogo provider={capability.provider} className="size-3.5" />
-                      {capability.label}
-                      <Plus className="size-3 text-[var(--color-text-faint)]" />
-                    </a>
-                  ) : (
-                    <span>
-                      <ProviderLogo provider={capability.provider} className="size-3.5 opacity-50" />
-                      {capability.label}
-                    </span>
-                  )}
-                </Button>
-              ))}
-            </div>
-            {icloud ? (
-              <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-                {icloud.connectable
-                  ? 'iCloud needs an app-specific password — create one at appleid.apple.com first.'
-                  : icloud.reason}
-              </p>
-            ) : null}
-          </section>
-
-          {/* ---- Step 2: AI --------------------------------------------- */}
-          <section>
-            <StepHeading
-              step={2}
-              done={false}
-              title="Choose how AI runs"
-              blurb="Summaries, triage, drafts, and the daily brief — hosted by Lab86 or on your own key."
-            />
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <ModeCard
-                active={aiMode === 'lab86'}
-                disabled={requireOpenRouter}
-                icon={<Sparkles className="size-4" />}
-                title="Lab86 AI"
-                description="Included with Pro. Curated models, zero setup, budgeted automatically."
-                onClick={() => setAiMode('lab86')}
-              />
-              <ModeCard
-                active={aiMode === 'byok'}
-                icon={<KeyRound className="size-4" />}
-                title="My own API key"
-                description="OpenRouter, OpenAI, or Anthropic — you pay your provider directly."
-                onClick={() => setAiMode('byok')}
-              />
-            </div>
-
-            <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
-              {aiMode === 'lab86' ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>Model family</Label>
-                    <Select
-                      value={lab86Family}
-                      onValueChange={(value) => setLab86Family(value as Lab86ModelFamily)}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="claude">Claude</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                    {selected.detail}
-                  </div>
-                </div>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>Provider</Label>
-                    <Select
-                      value={provider}
-                      onValueChange={(value) =>
-                        setProviderForByok(value as Provider, setProvider, setModel, setFastModel)
-                      }
-                      disabled={requireOpenRouter}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="openrouter">OpenRouter</SelectItem>
-                        {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
-                        {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>API key</Label>
-                    <Input
-                      value={apiKey}
-                      onChange={(event) => setApiKey(event.target.value)}
-                      placeholder={ai?.key?.masked || 'Paste key'}
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Primary model</Label>
-                    {provider === 'openrouter' ? (
-                      <Select value={model} onValueChange={setModel}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => (
-                            <SelectItem key={option.id} value={option.id}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input value="Provider default" readOnly />
-                    )}
-                    {provider === 'openrouter' && primaryModelDetail ? (
-                      <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
-                    ) : null}
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Fast model</Label>
-                    {provider === 'openrouter' ? (
-                      <Select value={fastModel} onValueChange={setFastModel}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {OPENROUTER_FAST_MODEL_OPTIONS.map((option) => (
-                            <SelectItem key={option.id} value={option.id}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input value="Provider default" readOnly />
-                    )}
-                    {provider === 'openrouter' && fastModelDetail ? (
-                      <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 py-4">
-          <p className="text-[11.5px] text-[var(--color-text-muted)]">
-            {ai?.usage?.status === 'exhausted'
-              ? 'Your Lab86 AI budget is used up for this period — AI chat is paused.'
-              : ai?.usage?.status === 'reduced_cost'
-                ? 'AI is using reduced-cost routing for the rest of this period.'
-                : 'You can change all of this later in Settings.'}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => saveAi.mutate()}
-              disabled={!aiLoaded || saveAi.isPending}
-            >
-              {saveAi.isPending ? <Ring className="size-3" /> : null}
-              Save AI
-            </Button>
-            <Button
-              type="button"
-              onClick={async () => {
-                try {
-                  await saveAi.mutateAsync();
-                  complete();
-                } catch {}
-              }}
-              disabled={!hasAccounts || !aiLoaded || saveAi.isPending}
-            >
-              Continue
-              <ArrowRight className="size-3.5" />
-            </Button>
           </div>
+        ) : null}
+
+        {/* ---- Step 1: mailboxes -------------------------------------- */}
+        <section>
+          <StepHeading
+            step={1}
+            done={hasAccounts}
+            title="Connect your mail"
+            blurb="Each mailbox is downloaded into your private search index — search stays instant."
+          />
+          <div className="mt-3 space-y-2">
+            {accounts.map((account) => (
+              <div
+                key={account.accountId || account.email}
+                className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-2.5"
+              >
+                <div className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+                  <ProviderLogo provider={account.provider} className="size-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium">
+                    {account.displayName || account.email}
+                  </div>
+                  <div className="truncate text-[11px] text-[var(--color-text-muted)]">
+                    {account.email} · {providerDisplayName(account.provider)}
+                  </div>
+                </div>
+                <Check className="size-4 shrink-0 text-emerald-500" aria-label="Connected" />
+              </div>
+            ))}
+            {!accounts.length && !loadingAccounts && !accountsError ? (
+              <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-4 text-center text-[12.5px] text-[var(--color-text-muted)]">
+                Nothing connected yet — pick a provider below.
+              </div>
+            ) : null}
+            {loadingAccounts ? (
+              <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">
+                <Ring className="size-3.5" /> Checking connected mailboxes…
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {providerCapabilities.map((capability) => (
+              <Button
+                key={capability.provider}
+                asChild={capability.connectable}
+                disabled={!capability.connectable}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                {capability.connectable ? (
+                  <a href={`/api/nylas/connect?provider=${capability.provider}&redirectTo=/welcome`}>
+                    <ProviderLogo provider={capability.provider} className="size-3.5" />
+                    {capability.label}
+                    <Plus className="size-3 text-[var(--color-text-faint)]" />
+                  </a>
+                ) : (
+                  <span>
+                    <ProviderLogo provider={capability.provider} className="size-3.5 opacity-50" />
+                    {capability.label}
+                  </span>
+                )}
+              </Button>
+            ))}
+          </div>
+          {icloud ? (
+            <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+              {icloud.connectable
+                ? 'iCloud needs an app-specific password — create one at appleid.apple.com first.'
+                : icloud.reason}
+            </p>
+          ) : null}
+        </section>
+
+        {/* ---- Step 2: AI --------------------------------------------- */}
+        <section>
+          <StepHeading
+            step={2}
+            done={false}
+            title="Choose how AI runs"
+            blurb="Summaries, triage, drafts, and the daily brief — hosted by Lab86 or on your own key."
+          />
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <ModeCard
+              active={aiMode === 'lab86'}
+              disabled={requireOpenRouter}
+              icon={<Sparkles className="size-4" />}
+              title="Lab86 AI"
+              description="Included with Pro. Curated models, zero setup, budgeted automatically."
+              onClick={() => setAiMode('lab86')}
+            />
+            <ModeCard
+              active={aiMode === 'byok'}
+              icon={<KeyRound className="size-4" />}
+              title="My own API key"
+              description="OpenRouter, OpenAI, or Anthropic — you pay your provider directly."
+              onClick={() => setAiMode('byok')}
+            />
+          </div>
+
+          <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+            {aiMode === 'lab86' ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Model family</Label>
+                  <Select
+                    value={lab86Family}
+                    onValueChange={(value) => setLab86Family(value as Lab86ModelFamily)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                      <SelectItem value="claude">Claude</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
+                  {selected.detail}
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Provider</Label>
+                  <Select
+                    value={provider}
+                    onValueChange={(value) =>
+                      setProviderForByok(value as Provider, setProvider, setModel, setFastModel)
+                    }
+                    disabled={requireOpenRouter}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openrouter">OpenRouter</SelectItem>
+                      {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
+                      {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>API key</Label>
+                  <Input
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={ai?.key?.masked || 'Paste key'}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Primary model</Label>
+                  {provider === 'openrouter' ? (
+                    <Select value={model} onValueChange={setModel}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value="Provider default" readOnly />
+                  )}
+                  {provider === 'openrouter' && primaryModelDetail ? (
+                    <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
+                  ) : null}
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Fast model</Label>
+                  {provider === 'openrouter' ? (
+                    <Select value={fastModel} onValueChange={setFastModel}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {OPENROUTER_FAST_MODEL_OPTIONS.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value="Provider default" readOnly />
+                  )}
+                  {provider === 'openrouter' && fastModelDetail ? (
+                    <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 py-4">
+        <p className="text-[11.5px] text-[var(--color-text-muted)]">
+          {ai?.usage?.status === 'exhausted'
+            ? 'Your Lab86 AI budget is used up for this period — AI chat is paused.'
+            : ai?.usage?.status === 'reduced_cost'
+              ? 'AI is using reduced-cost routing for the rest of this period.'
+              : 'You can change all of this later in Settings.'}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => saveAi.mutate()}
+            disabled={!aiLoaded || saveAi.isPending}
+          >
+            {saveAi.isPending ? <Ring className="size-3" /> : null}
+            Save AI
+          </Button>
+          <Button
+            type="button"
+            onClick={async () => {
+              try {
+                await saveAi.mutateAsync();
+                complete();
+              } catch {}
+            }}
+            disabled={!hasAccounts || !aiLoaded || saveAi.isPending}
+          >
+            Continue
+            <ArrowRight className="size-3.5" />
+          </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }
 

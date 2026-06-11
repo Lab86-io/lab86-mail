@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
 import { parseMailSearchQuery } from '../mail/search/parser';
@@ -76,7 +77,7 @@ export const summarizeThread = defineTool({
       return { summary, model: 'local' };
     }
     const prompt = [
-      'Summarize this email thread for Jakob as a tight TL;DR.',
+      'Summarize this email thread for the user as a tight TL;DR.',
       'Output: one plain sentence (max ~25 words) capturing the gist. Then, ONLY if the thread genuinely warrants it, up to 3 short bullets (each "- ", max ~12 words) for the key facts, asks, or deadlines.',
       'No headings, no preamble, no sign-off. Omit the bullets entirely for simple threads.',
       '',
@@ -88,7 +89,7 @@ export const summarizeThread = defineTool({
         feature: 'summarize_thread',
         speed: 'fast',
         system:
-          "You are lab86-mail, Jakob's local email assistant. Be concrete. Never claim an action was performed; you can only reason.",
+          "You are lab86-mail, the user's email assistant. Be concrete. Never claim an action was performed; you can only reason.",
         prompt,
       });
       const summary = text.trim();
@@ -184,17 +185,19 @@ export const draftReply = defineTool({
     const memory = await recallSender(last.from);
     if (!(await hasAiForCurrentUser())) {
       const sender = String(last.from).replace(/<.*?>/g, '').trim().split(/\s+/)[0] || 'there';
+      const firstName = contextFirstName();
+      const signoff = firstName ? `\n\nBest,\n${firstName}` : '';
       return {
-        draft: `Hi ${sender},\n\nThanks for reaching out. ${instructions || 'I will take a look.'}\n\nBest,\nJakob`,
+        draft: `Hi ${sender},\n\nThanks for reaching out. ${instructions || 'I will take a look.'}${signoff}`,
         model: 'local',
       };
     }
     const prompt = [
-      `Draft a reply for Jakob to the last message in this thread.`,
+      `Draft a reply for the user to the last message in this thread.`,
       tone ? `Tone: ${tone}.` : '',
-      instructions ? `Jakob's instruction: ${instructions}` : '',
+      instructions ? `The user's instruction: ${instructions}` : '',
       memory ? `Memory about ${memory.email}: ${memory.notes}` : '',
-      "Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match Jakob's style: concise, warm, lower-case openers ok.",
+      "Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match the user's style: concise, warm, lower-case openers ok.",
       '',
       'Thread:',
       concatThread(messages),
@@ -204,7 +207,7 @@ export const draftReply = defineTool({
     const { text } = await generateTextForCurrentUser({
       feature: 'draft_reply',
       speed: 'fast',
-      system: "You are lab86-mail drafting on Jakob's behalf. Never claim the message was sent.",
+      system: "You are lab86-mail drafting on the user's behalf. Never claim the message was sent.",
       prompt,
     });
     return { draft: text.trim(), model: 'fast' };
@@ -312,11 +315,11 @@ export interface ClassifyInputThread {
 }
 
 const CLASSIFY_SYSTEM =
-  'You classify email threads for Jakob. Output only JSON lines. Categories: main, needs_reply, waiting, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. A Gmail CATEGORY_PERSONAL or IMPORTANT label means a real person — never classify those as noise. CATEGORY_PROMOTIONS, CATEGORY_UPDATES, and CATEGORY_SOCIAL are automated. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise.';
+  'You classify email threads for the user. Output only JSON lines. Categories: main, needs_reply, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. A Gmail CATEGORY_PERSONAL or IMPORTANT label means a real person — never classify those as noise. CATEGORY_PROMOTIONS, CATEGORY_UPDATES, and CATEGORY_SOCIAL are automated. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise.';
 
 const CLASSIFY_INSTRUCTIONS = [
   'For each input line, return exactly one JSON object:',
-  '{"id":"...","primary":"main|needs_reply|waiting|codes|orders|finance_admin|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
+  '{"id":"...","primary":"main|needs_reply|codes|orders|finance_admin|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
   'No prose. One JSON object per line.',
 ].join('\n');
 
@@ -395,7 +398,7 @@ export async function classifyThreadsBatched(
 export const classifyThreads = defineTool({
   name: 'classify_threads',
   description:
-    'Classify visible threads into smart MailOS categories: main, needs_reply, waiting, codes, orders, finance_admin, noise, or review.',
+    'Classify visible threads into smart MailOS categories: main, needs_reply, codes, orders, finance_admin, noise, or review.',
   category: 'ai',
   mutating: false,
   input: z.object({
