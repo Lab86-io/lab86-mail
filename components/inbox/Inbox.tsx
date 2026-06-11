@@ -2,7 +2,13 @@
 
 'use client';
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   Archive,
   Ban,
@@ -252,7 +258,6 @@ export function Inbox() {
       smartCategory,
       accountFilter.join(','),
       authedAccountIds.join(','),
-      Object.values(accountAliasById).join(','),
       refreshNonce,
     ],
     initialPageParam: {} as Record<string, string>,
@@ -322,6 +327,9 @@ export function Inbox() {
     // cold provider read. The foreground poll still catches new mail.
     staleTime: 45_000,
     gcTime: 30 * 60_000,
+    // Show the previous list (marked fetching) while a new query/category/
+    // filter loads instead of flashing an empty skeleton on every keystroke.
+    placeholderData: keepPreviousData,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchInterval: 60_000,
@@ -433,16 +441,37 @@ export function Inbox() {
   // currently-selected one. Required for ALL_ACCOUNTS view.
   const accountOfRow = (id: string) => items.find((it) => it._id === id)?.account || account;
 
+  // Optimistically drop rows from every cached search page so archive/trash
+  // feel instant; a failure invalidates and refetches the truth.
+  const removeRowsFromSearchCache = (ids: string[]) => {
+    queryClient.setQueriesData({ queryKey: ['search'] }, (old: any) => {
+      if (!old?.pages) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page: any) => ({
+          ...page,
+          items: (page.items || []).filter((it: any) => !ids.includes(it._id)),
+        })),
+      };
+    });
+  };
+
   const bulkArchive = useMutation({
     mutationFn: async (ids: string[]) => {
       await Promise.allSettled(
         ids.map((id) => callTool('archive_thread', { account: accountOfRow(id), threadId: id })),
       );
     },
-    onSuccess: () => {
-      toast.success(`Archived ${selectedIds.length}`);
+    onMutate: (ids) => {
+      removeRowsFromSearchCache(ids);
       clearSelected();
-      refetch();
+    },
+    onSuccess: (_data, ids) => {
+      toast.success(`Archived ${ids.length}`);
+    },
+    onError: () => {
+      toast.error('Archive failed — restoring');
+      queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
 
@@ -452,10 +481,16 @@ export function Inbox() {
         ids.map((id) => callTool('trash_thread', { account: accountOfRow(id), threadId: id })),
       );
     },
-    onSuccess: () => {
-      toast.success(`Trashed ${selectedIds.length}`);
+    onMutate: (ids) => {
+      removeRowsFromSearchCache(ids);
       clearSelected();
-      refetch();
+    },
+    onSuccess: (_data, ids) => {
+      toast.success(`Trashed ${ids.length}`);
+    },
+    onError: () => {
+      toast.error('Trash failed — restoring');
+      queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
 
