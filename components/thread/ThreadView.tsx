@@ -364,17 +364,19 @@ export function ThreadView() {
   const reader = (
     <motion.div
       key={`${account}:${threadId}:${threadFullscreen ? 'popout' : 'pane'}`}
-      initial={threadFullscreen ? { opacity: 0.35, scale: 0.965, x: '-50%', y: 16 } : { opacity: 0, y: 6 }}
-      animate={threadFullscreen ? { opacity: 1, scale: 1, x: '-50%', y: 0 } : { opacity: 1, y: 0 }}
-      exit={threadFullscreen ? { opacity: 0, scale: 0.98, x: '-50%', y: 8 } : undefined}
-      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      initial={threadFullscreen ? { opacity: 0.3, x: 56 } : { opacity: 0, y: 6 }}
+      animate={threadFullscreen ? { opacity: 1, x: 0 } : { opacity: 1, y: 0 }}
+      exit={threadFullscreen ? { opacity: 0, x: 40 } : undefined}
+      transition={{ duration: threadFullscreen ? 0.24 : 0.18, ease: [0.16, 1, 0.3, 1] }}
       role={threadFullscreen ? 'dialog' : undefined}
       aria-modal={threadFullscreen ? true : undefined}
       aria-label={threadFullscreen ? data.subject : undefined}
       className={cn(
         'flex h-full flex-col bg-[var(--color-bg)]',
+        // GitHub-projects-style side panel: full height, flush to the right
+        // edge (squared), rounded on the left, sliding in from the right.
         threadFullscreen &&
-          'fixed top-2 bottom-2 left-1/2 z-[80] h-auto w-[calc(100vw-16px)] overflow-hidden rounded-xl border border-[var(--color-border)] shadow-[0_24px_80px_-12px_rgb(0_0_0/0.45)] sm:top-4 sm:bottom-4 sm:w-[min(calc(100vw-48px),1180px)] lg:top-6 lg:bottom-6',
+          'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
       )}
     >
       <header
