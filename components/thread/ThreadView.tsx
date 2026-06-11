@@ -5,6 +5,7 @@ import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import { ChevronDown, ChevronRight, Download, ExternalLink, Mail, Search, UserRound, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
@@ -51,6 +52,9 @@ export function ThreadView() {
   const setThreadFullscreen = useClientStore((s) => s.setThreadFullscreen);
   const queryClient = useQueryClient();
   const markedReadRef = useRef<Set<string>>(new Set());
+  const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => setPortalReady(true), []);
 
   // Primary source: the synced corpus via a live Convex query — opening a
   // thread is a local read and updates in real time. `null` means the thread
@@ -88,6 +92,26 @@ export function ThreadView() {
   useEffect(() => {
     if (!threadId) setThreadFullscreen(false);
   }, [threadId, setThreadFullscreen]);
+
+  useEffect(() => {
+    if (!threadFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const closePopout = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setThreadFullscreen(false);
+    };
+
+    window.addEventListener('keydown', closePopout, true);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closePopout, true);
+    };
+  }, [threadFullscreen, setThreadFullscreen]);
 
   // Corpus rows synced before HTML bodies were stored render their text
   // immediately; one background refresh pulls the real bodies into the corpus
@@ -337,178 +361,193 @@ export function ThreadView() {
   const activePrefill = composeForThisThread?.prefill || undefined;
   const activeNonce = composeForThisThread?.nonce ?? 0;
 
-  return (
-    <>
-      {threadFullscreen ? (
+  const reader = (
+    <motion.div
+      key={`${account}:${threadId}:${threadFullscreen ? 'popout' : 'pane'}`}
+      initial={threadFullscreen ? { opacity: 0.35, scale: 0.965, x: '-50%', y: 16 } : { opacity: 0, y: 6 }}
+      animate={threadFullscreen ? { opacity: 1, scale: 1, x: '-50%', y: 0 } : { opacity: 1, y: 0 }}
+      exit={threadFullscreen ? { opacity: 0, scale: 0.98, x: '-50%', y: 8 } : undefined}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      role={threadFullscreen ? 'dialog' : undefined}
+      aria-modal={threadFullscreen ? true : undefined}
+      aria-label={threadFullscreen ? data.subject : undefined}
+      className={cn(
+        'flex h-full flex-col bg-[var(--color-bg)]',
+        threadFullscreen &&
+          'fixed top-2 bottom-2 left-1/2 z-[80] h-auto w-[calc(100vw-16px)] overflow-hidden rounded-xl border border-[var(--color-border)] shadow-[0_24px_80px_-12px_rgb(0_0_0/0.45)] sm:top-4 sm:bottom-4 sm:w-[min(calc(100vw-48px),1180px)] lg:top-6 lg:bottom-6',
+      )}
+    >
+      <header
+        className={cn(
+          '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+          !aiBarOpen && !threadFullscreen && 'pr-12',
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-[15px] font-semibold leading-tight">{data.subject}</h1>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
+            <span className="shrink-0">
+              {messages.length} message{messages.length === 1 ? '' : 's'}
+            </span>
+            <span className="shrink-0">·</span>
+            <span className="truncate">{shortFrom(lastMessage?.from)}</span>
+            <span className="shrink-0">·</span>
+            <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* Reply cluster — labels fade out below 640px of reader width. */}
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => startReply('reply')}
+              disabled={!replyAnchor}
+              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+              title="Reply (r)"
+            >
+              <RowIcon icon={CornerUpLeftIcon} size={14} />
+              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                Reply
+              </span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => startReply('reply_all')}
+              disabled={!replyAnchor}
+              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+              title="Reply all"
+            >
+              <RowIcon icon={ReplyAllIcon} size={14} />
+              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                Reply all
+              </span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => startReply('forward')}
+              disabled={!replyAnchor}
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              title="Forward"
+            >
+              <RowIcon icon={CornerUpRightIcon} size={14} />
+              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                Forward
+              </span>
+            </Button>
+          </div>
+          {/* Utility cluster — one segmented group so the icons read as a set. */}
+          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)] [&>button]:rounded-none [&>button]:border-0 [&>button+button]:border-l [&>button+button]:border-[var(--color-border)]">
+            <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
+              <RowIcon icon={ArchiveIcon} size={14} />
+            </IconBtn>
+            <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
+              <RowIcon icon={DeleteIcon} size={14} />
+            </IconBtn>
+            <IconBtn
+              title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
+              onClick={() => setThreadFullscreen(!threadFullscreen)}
+            >
+              {threadFullscreen ? (
+                <RowIcon icon={MinimizeIcon} size={14} />
+              ) : (
+                <RowIcon icon={MaximizeIcon} size={14} />
+              )}
+            </IconBtn>
+            <IconBtn
+              title={threadFullscreen ? 'Close popout' : 'Close'}
+              onClick={() => {
+                if (threadFullscreen) {
+                  setThreadFullscreen(false);
+                  return;
+                }
+                setSelectedThread(null);
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </IconBtn>
+          </div>
+        </div>
+      </header>
+
+      <div className="scrollable flex-1 px-5 py-4">
+        <SummaryCard
+          data={summary.data?.summary || cachedSummary}
+          model={summary.data?.model || (cachedSummary ? 'cached' : '')}
+          loading={!cachedSummary && summaryEnabled && summary.isLoading}
+          error={summary.error ? (summary.error as Error).message : null}
+          onRetry={() => {
+            setSummaryEnabled(true);
+            summary.refetch();
+          }}
+        />
+
+        {composeForThisThread && activeMode && activeAnchorMessageId ? (
+          <div className="mt-4">
+            <InlineComposer
+              key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
+              mode={activeMode}
+              account={activeAccount}
+              threadId={threadId}
+              anchorMessageId={activeAnchorMessageId}
+              replyToLabel={replyLabel}
+              initialPrefill={activePrefill}
+              prefillNonce={activeNonce}
+              onSent={() => closeCompose()}
+              onClose={() => closeCompose()}
+            />
+          </div>
+        ) : null}
+
+        <LayoutGroup>
+          <div className="mt-4 flex flex-col gap-2">
+            {ordered.map((m, i) => {
+              const email = emailFromHeader(m?.from);
+              return (
+                <MessageCard
+                  key={m._id}
+                  message={m}
+                  defaultOpen={i === 0}
+                  account={account}
+                  photoUrl={email ? (photos[email] ?? null) : null}
+                  onShowContactEmails={(contactEmail) => {
+                    setQuery(`(from:${contactEmail} OR to:${contactEmail}) -in:trash -in:spam`);
+                    setSelectedThread(null);
+                  }}
+                />
+              );
+            })}
+          </div>
+        </LayoutGroup>
+      </div>
+    </motion.div>
+  );
+
+  if (threadFullscreen && portalReady) {
+    return createPortal(
+      <>
         <motion.button
           type="button"
           aria-label="Exit full screen"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
           onClick={() => setThreadFullscreen(false)}
           className="fixed inset-0 z-[70] cursor-default bg-black/50 backdrop-blur-[2px]"
         />
-      ) : null}
-      <motion.div
-        key={`${account}:${threadId}`}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-        className={cn(
-          'flex h-full flex-col bg-[var(--color-bg)]',
-          threadFullscreen &&
-            'thread-popout fixed inset-2 z-[80] h-auto overflow-hidden rounded-2xl border border-[var(--color-border)] shadow-[0_24px_80px_-12px_rgb(0_0_0/0.45)] md:inset-x-10 md:inset-y-5 lg:inset-x-20',
-        )}
-      >
-        <header
-          className={cn(
-            '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
-            !aiBarOpen && 'pr-12',
-          )}
-        >
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[15px] font-semibold leading-tight">{data.subject}</h1>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
-              <span className="shrink-0">
-                {messages.length} message{messages.length === 1 ? '' : 's'}
-              </span>
-              <span className="shrink-0">·</span>
-              <span className="truncate">{shortFrom(lastMessage?.from)}</span>
-              <span className="shrink-0">·</span>
-              <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {/* Reply cluster — labels fade out below 640px of reader width. */}
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => startReply('reply')}
-                disabled={!replyAnchor}
-                className="gap-1 hover:bg-[var(--color-bg-subtle)]"
-                title="Reply (r)"
-              >
-                <RowIcon icon={CornerUpLeftIcon} size={14} />
-                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                  Reply
-                </span>
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => startReply('reply_all')}
-                disabled={!replyAnchor}
-                className="gap-1 hover:bg-[var(--color-bg-subtle)]"
-                title="Reply all"
-              >
-                <RowIcon icon={ReplyAllIcon} size={14} />
-                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                  Reply all
-                </span>
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => startReply('forward')}
-                disabled={!replyAnchor}
-                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-                title="Forward"
-              >
-                <RowIcon icon={CornerUpRightIcon} size={14} />
-                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                  Forward
-                </span>
-              </Button>
-            </div>
-            {/* Utility cluster — one segmented group so the icons read as a set. */}
-            <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)] [&>button]:rounded-none [&>button]:border-0 [&>button+button]:border-l [&>button+button]:border-[var(--color-border)]">
-              <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
-                <RowIcon icon={ArchiveIcon} size={14} />
-              </IconBtn>
-              <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
-                <RowIcon icon={DeleteIcon} size={14} />
-              </IconBtn>
-              <IconBtn
-                title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
-                onClick={() => setThreadFullscreen(!threadFullscreen)}
-              >
-                {threadFullscreen ? (
-                  <RowIcon icon={MinimizeIcon} size={14} />
-                ) : (
-                  <RowIcon icon={MaximizeIcon} size={14} />
-                )}
-              </IconBtn>
-              <IconBtn
-                title="Close"
-                onClick={() => {
-                  setThreadFullscreen(false);
-                  setSelectedThread(null);
-                }}
-              >
-                <X className="h-3.5 w-3.5" />
-              </IconBtn>
-            </div>
-          </div>
-        </header>
+        {reader}
+      </>,
+      document.body,
+    );
+  }
 
-        <div className="scrollable flex-1 px-5 py-4">
-          <SummaryCard
-            data={summary.data?.summary || cachedSummary}
-            model={summary.data?.model || (cachedSummary ? 'cached' : '')}
-            loading={!cachedSummary && summaryEnabled && summary.isLoading}
-            error={summary.error ? (summary.error as Error).message : null}
-            onRetry={() => {
-              setSummaryEnabled(true);
-              summary.refetch();
-            }}
-          />
-
-          {composeForThisThread && activeMode && activeAnchorMessageId ? (
-            <div className="mt-4">
-              <InlineComposer
-                key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
-                mode={activeMode}
-                account={activeAccount}
-                threadId={threadId}
-                anchorMessageId={activeAnchorMessageId}
-                replyToLabel={replyLabel}
-                initialPrefill={activePrefill}
-                prefillNonce={activeNonce}
-                onSent={() => closeCompose()}
-                onClose={() => closeCompose()}
-              />
-            </div>
-          ) : null}
-
-          <LayoutGroup>
-            <div className="mt-4 flex flex-col gap-2">
-              {ordered.map((m, i) => {
-                const email = emailFromHeader(m?.from);
-                return (
-                  <MessageCard
-                    key={m._id}
-                    message={m}
-                    defaultOpen={i === 0}
-                    account={account}
-                    photoUrl={email ? (photos[email] ?? null) : null}
-                    onShowContactEmails={(contactEmail) => {
-                      setQuery(`(from:${contactEmail} OR to:${contactEmail}) -in:trash -in:spam`);
-                      setSelectedThread(null);
-                    }}
-                  />
-                );
-              })}
-            </div>
-          </LayoutGroup>
-        </div>
-      </motion.div>
-    </>
-  );
+  return reader;
 }
 
 function SummaryCard({
