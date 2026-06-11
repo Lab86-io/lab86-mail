@@ -379,16 +379,80 @@ export function ThreadView() {
               <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <IconBtn
-              title="Close"
-              onClick={() => {
-                setThreadFullscreen(false);
-                setSelectedThread(null);
-              }}
-            >
-              <X className="h-3.5 w-3.5" />
-            </IconBtn>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {/* Reply cluster — labels fade out below 640px of reader width. */}
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => startReply('reply')}
+                disabled={!replyAnchor}
+                className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+                title="Reply (r)"
+              >
+                <RowIcon icon={CornerUpLeftIcon} size={14} />
+                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                  Reply
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => startReply('reply_all')}
+                disabled={!replyAnchor}
+                className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+                title="Reply all"
+              >
+                <RowIcon icon={ReplyAllIcon} size={14} />
+                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                  Reply all
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => startReply('forward')}
+                disabled={!replyAnchor}
+                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+                title="Forward"
+              >
+                <RowIcon icon={CornerUpRightIcon} size={14} />
+                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                  Forward
+                </span>
+              </Button>
+            </div>
+            {/* Utility cluster — one segmented group so the icons read as a set. */}
+            <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)] [&>button]:rounded-none [&>button]:border-0 [&>button+button]:border-l [&>button+button]:border-[var(--color-border)]">
+              <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
+                <RowIcon icon={ArchiveIcon} size={14} />
+              </IconBtn>
+              <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
+                <RowIcon icon={DeleteIcon} size={14} />
+              </IconBtn>
+              <IconBtn
+                title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
+                onClick={() => setThreadFullscreen(!threadFullscreen)}
+              >
+                {threadFullscreen ? (
+                  <RowIcon icon={MinimizeIcon} size={14} />
+                ) : (
+                  <RowIcon icon={MaximizeIcon} size={14} />
+                )}
+              </IconBtn>
+              <IconBtn
+                title="Close"
+                onClick={() => {
+                  setThreadFullscreen(false);
+                  setSelectedThread(null);
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </IconBtn>
+            </div>
           </div>
         </header>
 
