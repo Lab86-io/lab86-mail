@@ -173,7 +173,7 @@ export function Rail() {
       (query.state.data?.accounts || []).some(
         (a) => a.sync && !a.sync.corpusReady && a.sync.status !== 'error',
       )
-        ? 5_000
+        ? 15_000
         : 60_000,
   });
   const accounts = accountsData?.accounts || [];
