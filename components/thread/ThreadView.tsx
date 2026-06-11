@@ -398,15 +398,15 @@ export function ThreadView() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Reply cluster — labels fade out below 640px of reader width. */}
-          <div className="flex items-center gap-1">
+          {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
+          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)] [&>button]:rounded-none [&>button]:border-0 [&>button+button]:border-l [&>button+button]:border-[var(--color-border)]">
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => startReply('reply')}
               disabled={!replyAnchor}
-              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               title="Reply (r)"
             >
               <RowIcon icon={CornerUpLeftIcon} size={14} />
@@ -420,7 +420,7 @@ export function ThreadView() {
               size="sm"
               onClick={() => startReply('reply_all')}
               disabled={!replyAnchor}
-              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               title="Reply all"
             >
               <RowIcon icon={ReplyAllIcon} size={14} />
