@@ -52,13 +52,13 @@ export async function getThread(account: string, id: string): Promise<Thread | n
 }
 
 export async function listRecentThreads(limit = 80): Promise<Thread[]> {
-  const rows = await kvList<Thread>('thread', { limit });
+  const rows = await kvList<Thread>('thread');
   rows.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
   return rows.slice(0, limit);
 }
 
 export async function listThreadsForAccount(account: string, limit = 80): Promise<Thread[]> {
-  const rows = await kvList<Thread>('thread', { ref: account, limit });
+  const rows = await kvList<Thread>('thread', { ref: account });
   rows.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
   return rows.slice(0, limit);
 }
