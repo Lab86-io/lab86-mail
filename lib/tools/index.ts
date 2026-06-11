@@ -26,6 +26,7 @@ import {
   updateDraft,
 } from './compose';
 import { contactLookup, expandAlias } from './contacts';
+import { corpusCount, corpusSearch, senderProfile, threadTimeline } from './corpus';
 import {
   generateDailyReportTool,
   getDailyReportTool,
@@ -98,6 +99,10 @@ import { browserbaseFetch, browserbaseSearch } from './web';
 const allTools: AnyTool[] = [
   listAccounts,
   searchThreads,
+  corpusSearch,
+  senderProfile,
+  corpusCount,
+  threadTimeline,
   listSmartCategory,
   getSmartCategoryStats,
   getThread,

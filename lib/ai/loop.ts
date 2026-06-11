@@ -9,6 +9,10 @@ import { buildSystemPrompt } from './system-prompt';
 const AGENT_TOOL_NAMES = new Set([
   'list_accounts',
   'search_threads',
+  'corpus_search',
+  'sender_profile',
+  'corpus_count',
+  'thread_timeline',
   'list_smart_category',
   'get_thread',
   'get_message',

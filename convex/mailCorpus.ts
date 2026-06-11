@@ -558,6 +558,61 @@ async function upsertSyncState(ctx: any, args: any) {
   return { ok: true, id };
 }
 
+export const countCorpusMessages = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    query: v.optional(v.string()),
+    after: v.optional(v.number()),
+    before: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const CAP = 1000;
+    const text = (args.query || '').trim();
+    if (text) {
+      const rows = await ctx.db
+        .query('mailCorpusMessages')
+        .withSearchIndex('by_search_text', (q) =>
+          q.search('searchText', text).eq('userId', args.userId).eq('accountId', args.accountId),
+        )
+        .take(CAP);
+      const matched = rows.filter((row) => withinReceivedAtBounds(row, args));
+      return { count: matched.length, approximate: rows.length >= CAP };
+    }
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_user_account_received', (q) =>
+        applyReceivedAtBounds(q.eq('userId', args.userId).eq('accountId', args.accountId), args),
+      )
+      .take(CAP);
+    return { count: rows.length, approximate: rows.length >= CAP };
+  },
+});
+
+export const listCorpusThreadMessages = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerThreadId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 100, 500);
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_account_thread', (q) =>
+        q.eq('accountId', args.accountId).eq('providerThreadId', args.providerThreadId),
+      )
+      .take(limit);
+    // The index has no userId column; enforce tenancy in the filter.
+    return rows.filter((row) => row.userId === args.userId).sort((a, b) => a.receivedAt - b.receivedAt);
+  },
+});
+
 function trimCorpusText(value: unknown) {
   return String(value ?? '')
     .replace(/\s+/g, ' ')
