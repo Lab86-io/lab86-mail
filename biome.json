@@ -2,7 +2,15 @@
   "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**/*", "!**/.next", "!**/node_modules", "!**/data", "!next-env.d.ts", "!convex/_generated"]
+    "includes": [
+      "**/*",
+      "!**/.next",
+      "!**/node_modules",
+      "!**/data",
+      "!next-env.d.ts",
+      "!convex/_generated",
+      "!apps"
+    ]
   },
   "formatter": {
     "enabled": true,
