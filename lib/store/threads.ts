@@ -1,5 +1,7 @@
+import { api, convexQuery } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
 import type { Thread } from '../shared/types';
-import { kvGet, kvList, kvUpsert } from './kv';
+import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 
 // Read-merge-write below is racy if two upserts for the same thread interleave
 // (the later read clobbers the earlier write), so same-key upserts are
@@ -51,6 +53,45 @@ export async function getThread(account: string, id: string): Promise<Thread | n
   return await kvGet<Thread>('thread', threadKey(account, id));
 }
 
+// Corpus-first thread identity. The corpus is the source of truth for thread
+// existence and headers; the KV row (when present) only contributes the AI
+// metadata overlay (summary/triage/readState) that isn't on corpus rows.
+// Tools acting on rows the UI displays must use this, not getThread: the UI
+// lists straight from the corpus, which never touches the KV cache.
+export async function resolveThread(account: string, id: string): Promise<Thread | null> {
+  const kv = await getThread(account, id);
+  if (!isConvexConfigured()) return kv;
+  let corpus: any = null;
+  try {
+    corpus = await convexQuery((api as any).mailCorpus.getCorpusThread, {
+      userId: requireStoreUserId(),
+      accountId: account,
+      providerThreadId: id,
+    });
+  } catch {
+    return kv;
+  }
+  if (!corpus) return kv;
+  return {
+    _id: corpus._id,
+    account,
+    subject: corpus.subject || kv?.subject || '',
+    fromAddress: corpus.fromAddress || kv?.fromAddress || '',
+    lastDate: corpus.lastDate || kv?.lastDate || 0,
+    snippet: corpus.snippet || kv?.snippet || '',
+    labels: corpus.labels?.length ? corpus.labels : kv?.labels || [],
+    unread: Boolean(corpus.unread),
+    starred: Boolean(corpus.starred),
+    summary: kv?.summary ?? null,
+    summaryAt: kv?.summaryAt ?? null,
+    triage: kv?.triage ?? null,
+    smartCategory: corpus.smartCategory ?? kv?.smartCategory ?? null,
+    readState: kv?.readState ?? null,
+    gmailLabelSync: kv?.gmailLabelSync ?? null,
+    cachedAt: corpus.cachedAt || kv?.cachedAt || Date.now(),
+  };
+}
+
 export async function listRecentThreads(limit = 80): Promise<Thread[]> {
   const rows = await kvList<Thread>('thread');
   rows.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
@@ -97,13 +138,3 @@ export async function setThreadGmailLabelSync(
   await patchThread(account, id, { gmailLabelSync });
 }
 
-export async function listThreadsBySmartCategory(
-  account: string | null,
-  category: string,
-  limit = 80,
-): Promise<Thread[]> {
-  const rows = await kvList<Thread>('thread', { ref: account ?? undefined });
-  const matching = rows.filter((thread) => thread.smartCategory?.primary === category);
-  matching.sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
-  return matching.slice(0, limit);
-}

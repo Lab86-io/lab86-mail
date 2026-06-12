@@ -20,7 +20,7 @@ import {
   listSmartRules as listSmartRuleRecords,
   setSmartRuleEnabled,
 } from '../store/smart-rules';
-import { getThread, listRecentThreads, setThreadSmartCategory } from '../store/threads';
+import { listRecentThreads, resolveThread, setThreadSmartCategory } from '../store/threads';
 import { defineTool } from './registry';
 
 // Synchronously flip every recent corpus thread the new rule matches before
@@ -268,8 +268,8 @@ export const applySmartCorrection = defineTool({
   }),
   output: z.object({ ok: z.boolean(), rule: z.any().optional(), label: z.any().optional() }),
   async handler({ account, threadId, action, scope = 'sender', category, customLabelId, newLabel }, ctx) {
-    const thread = await getThread(account, threadId);
-    if (!thread) throw new Error('Thread not found in local cache');
+    const thread = await resolveThread(account, threadId);
+    if (!thread) throw new Error('Thread not found');
     const previousCategory = thread.smartCategory?.primary;
     let label = null;
     let rule = null;
@@ -333,8 +333,8 @@ export const markSenderHuman = defineTool({
   input: z.object({ account: z.string(), threadId: z.string() }),
   output: z.object({ ok: z.boolean(), rule: z.any() }),
   async handler({ account, threadId }) {
-    const thread = await getThread(account, threadId);
-    if (!thread) throw new Error('Thread not found in local cache');
+    const thread = await resolveThread(account, threadId);
+    if (!thread) throw new Error('Thread not found');
     const email = threadEmail(thread);
     if (!email) throw new Error('No sender email to mark as human');
     const previousCategory = thread.smartCategory?.primary;
