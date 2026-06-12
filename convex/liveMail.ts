@@ -6,7 +6,13 @@ import {
 } from '../lib/mail/smart-categories';
 import type { QueryCtx } from './_generated/server';
 import { query } from './_generated/server';
-import { loadSmartContext, normalizeCorpusThread, queryCategoryThreads } from './smart';
+import {
+  CATEGORY_COUNT_CAP,
+  computeCategoryUnreadCounts,
+  loadSmartContext,
+  normalizeCorpusThread,
+  queryCategoryThreads,
+} from './smart';
 
 const SmartCategoryValidator = v.union(...SMART_CATEGORY_IDS.map((id) => v.literal(id)), v.string());
 
@@ -189,6 +195,18 @@ export const listThreads = query({
     const items = rows.map(normalizeCorpusThread);
     items.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
     return { items: items.slice(0, limit), nextPageToken: undefined };
+  },
+});
+
+// Live rail badges. One unread number per category from the unread indexes —
+// no scans, and Convex pushes updates whenever corpus rows change. The UI
+// renders counts at the cap as "99+".
+export const categoryCounts = query({
+  args: { accountIds: v.optional(v.array(v.string())) },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const counts = await computeCategoryUnreadCounts(ctx, userId, args.accountIds);
+    return { counts, cap: CATEGORY_COUNT_CAP };
   },
 });
 

@@ -2,6 +2,7 @@
 
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import { Terminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
@@ -48,7 +49,6 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSkeleton,
   SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar';
@@ -56,6 +56,7 @@ import { SquarePenIcon } from '@/components/ui/square-pen';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { UserIcon } from '@/components/ui/user';
 import { UsersIcon } from '@/components/ui/users';
+import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
@@ -179,27 +180,16 @@ export function Rail() {
   );
   const countAccount = account && account !== ALL_ACCOUNTS ? account : '';
 
-  const { data: smartCounts, isLoading: countsLoading } = useQuery({
-    queryKey: ['smart-counts', countAccount],
-    queryFn: async () => {
-      const result = await callTool<{
-        categories: Record<
-          string,
-          {
-            total: number;
-            unread: number;
-            needsAttention: number;
-            tracked: number;
-            computedAt: number;
-            approximate: boolean;
-          }
-        >;
-      }>('get_smart_category_stats', { account: countAccount || undefined });
-      return result.categories;
-    },
-    enabled: account === ALL_ACCOUNTS || !!countAccount,
-    staleTime: 60_000,
+  // Live unread-per-category badges straight from the indexed corpus — Convex
+  // pushes updates as rows change, so the rail never needs manual refresh.
+  const liveCounts = useConvexQuery({
+    query: (api as any).liveMail.categoryCounts,
+    args: { accountIds: countAccount ? [countAccount] : undefined },
   });
+  const smartCounts =
+    liveCounts.status === 'success'
+      ? (liveCounts.data?.counts as Record<string, { unread: number; attention: boolean }> | undefined)
+      : undefined;
   const { data: smartLabels } = useQuery({
     queryKey: ['smart-labels'],
     queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
@@ -236,13 +226,17 @@ export function Rail() {
       <SidebarHeader className="gap-3">
         {/* Title bar: the title only shows when expanded; the trigger centers
             itself when collapsed so it doubles as the expand button. */}
-        <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+        {/* gap-0 when collapsed: the zero-width title span would otherwise
+            still contribute its flex gap and nudge the trigger off the icon
+            column's center axis. Gap/padding both ease so the trigger glides
+            into place instead of snapping. */}
+        <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
           <span className="max-w-40 whitespace-nowrap text-[15px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
           <SidebarTrigger
             title="Toggle navigation rail"
-            className="shrink-0 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
+            className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
           />
         </div>
 
@@ -309,7 +303,6 @@ export function Rail() {
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center gap-1">
             Smart
-            {countsLoading ? <Ring className="ml-1 size-3 text-[var(--color-accent)]" /> : null}
             <button
               type="button"
               onClick={() => setSmartSettingsOpen(true)}
@@ -347,23 +340,16 @@ export function Rail() {
                         ) : null}
                         <Icon />
                         <span>{label}</span>
-                        {countsLoading ? (
-                          <SidebarMenuSkeleton
-                            showIcon={false}
-                            className="ml-auto h-4 w-7 group-data-[collapsible=icon]:hidden"
-                          />
-                        ) : (
-                          <SmartCountBadge stat={smartCounts?.[id]} />
-                        )}
+                        <SmartCountBadge stat={smartCounts?.[id]} />
                       </SidebarMenuButton>
                     </TooltipTrigger>
                     <TooltipContent side="right" className="max-w-[240px] text-[11.5px]">
                       <div className="space-y-1">
                         <div>{help}</div>
-                        {smartCounts?.[id] ? (
+                        {smartCounts?.[id]?.unread ? (
                           <div className="text-[10.5px] text-[var(--color-text-faint)]">
-                            {smartCounts[id].total} total · {smartCounts[id].unread} unread ·{' '}
-                            {smartCounts[id].needsAttention} attention
+                            {smartCounts[id].unread >= 100 ? '99+' : smartCounts[id].unread} unread
+                            {smartCounts[id].attention ? ' · needs attention' : ''}
                           </div>
                         ) : null}
                       </div>
@@ -404,16 +390,7 @@ export function Rail() {
                               ) : null}
                               <Terminal />
                               <span>{label.name}</span>
-                              {countsLoading ? (
-                                <SidebarMenuSkeleton
-                                  showIcon={false}
-                                  className="ml-auto h-4 w-7 group-data-[collapsible=icon]:hidden"
-                                />
-                              ) : (
-                                <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">
-                                  {smartCounts?.[id]?.total ?? 0}
-                                </SidebarMenuBadge>
-                              )}
+                              <SmartCountBadge stat={smartCounts?.[id]} />
                             </SidebarMenuButton>
                           </TooltipTrigger>
                           <TooltipContent side="right" className="max-w-[260px] text-[11.5px]">
@@ -495,29 +472,26 @@ export function Rail() {
         labels={customLabels}
         onChanged={() => {
           queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
-          queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
         }}
       />
     </Sidebar>
   );
 }
 
-function SmartCountBadge({
-  stat,
-}: {
-  stat?: { total: number; unread: number; needsAttention: number; tracked: number };
-}) {
+// One number: unread. Zero (or still loading) renders nothing — no ghost
+// pill, no skeleton. Needs-attention is an ambient dot, not another number.
+function SmartCountBadge({ stat }: { stat?: { unread: number; attention: boolean } }) {
+  if (!stat?.unread) return null;
   return (
-    <SidebarMenuBadge className="gap-1 group-data-[collapsible=icon]:hidden">
-      <span>{stat?.total ?? 0}</span>
-      {stat?.unread ? (
-        <span className="rounded bg-[var(--color-accent-soft)] px-1">{stat.unread}</span>
+    <SidebarMenuBadge className="gap-1 tabular-nums text-[var(--color-text-muted)] group-data-[collapsible=icon]:hidden">
+      {stat.attention ? (
+        <span
+          role="img"
+          aria-label="Needs attention"
+          className="size-1.5 rounded-full bg-[var(--color-accent)]"
+        />
       ) : null}
-      {stat?.needsAttention ? (
-        <span className="rounded bg-[var(--color-danger)]/10 px-1 text-[var(--color-danger)]">
-          {stat.needsAttention}
-        </span>
-      ) : null}
+      <span>{stat.unread >= 100 ? '99+' : stat.unread}</span>
     </SidebarMenuBadge>
   );
 }

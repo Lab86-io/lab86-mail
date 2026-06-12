@@ -142,7 +142,6 @@ export function DailyReport() {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['daily-report'] });
     queryClient.invalidateQueries({ queryKey: ['tracked-threads'] });
-    queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
   };
 
   const generate = useMutation({

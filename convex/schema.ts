@@ -194,6 +194,12 @@ export default defineSchema({
     smartPrimary: v.optional(v.string()),
     smartCustomKeys: v.optional(v.array(v.string())),
     classifiedAt: v.optional(v.number()),
+    // LLM-once classification: threads the deterministic pass isn't sure about
+    // get exactly one model verdict (nano tier), persisted here forever.
+    // llmPending flags rows awaiting that verdict; user rules always override.
+    llmCategory: v.optional(v.any()),
+    llmClassifiedAt: v.optional(v.number()),
+    llmPending: v.optional(v.boolean()),
     yearMonth: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -208,6 +214,10 @@ export default defineSchema({
     .index('by_user_account_updated', ['userId', 'accountId', 'lastDate'])
     .index('by_user_primary_lastDate', ['userId', 'smartPrimary', 'lastDate'])
     .index('by_user_account_primary_lastDate', ['userId', 'accountId', 'smartPrimary', 'lastDate'])
+    // Rail badges: unread-per-category is an indexed range read, never a scan.
+    .index('by_user_primary_unread', ['userId', 'smartPrimary', 'unread', 'lastDate'])
+    .index('by_user_account_primary_unread', ['userId', 'accountId', 'smartPrimary', 'unread', 'lastDate'])
+    .index('by_user_llm_pending', ['userId', 'llmPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.
     .index('by_smart_primary', ['smartPrimary']),
 

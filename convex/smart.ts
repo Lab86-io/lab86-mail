@@ -48,13 +48,35 @@ function classifierInput(row: any, bodyText?: string) {
   };
 }
 
+// Verdicts the deterministic pass is confident about skip the model entirely.
+const OBVIOUS_CONFIDENCE = 0.9;
+
 export function classifyCorpusThread(row: any, context: SmartClassificationContext, bodyText?: string) {
-  const verdict = classifyThreadWithContext(classifierInput(row, bodyText) as any, context);
+  const det = classifyThreadWithContext(classifierInput(row, bodyText) as any, context);
+  const ruleDriven = det.model === 'user_rule';
+  // Precedence: user rules > persisted LLM verdict > deterministic. Custom
+  // labels and rule hits are always the deterministic computation (they're
+  // exact matching, not judgment), and attention follows live unread state
+  // rather than whatever was true when the model looked.
+  const llm =
+    !ruleDriven && row.llmCategory
+      ? {
+          ...row.llmCategory,
+          customLabels: det.customLabels || [],
+          ruleHits: det.ruleHits || [],
+          needsAttention: Boolean(row.llmCategory.needsAttention) && Boolean(row.unread),
+        }
+      : null;
+  const verdict = llm || det;
+  const obvious = ruleDriven || det.confidence >= OBVIOUS_CONFIDENCE;
   return {
     smartCategory: verdict,
     smartPrimary: verdict.primary,
     smartCustomKeys: verdict.customLabels || [],
     classifiedAt: now(),
+    // true = waiting for its one model verdict; absent otherwise (patch with
+    // undefined removes the field, keeping the pending index small).
+    llmPending: !obvious && !row.llmCategory ? true : undefined,
   };
 }
 
@@ -254,6 +276,87 @@ export const reclassifyMatchingThreads = mutation({
     return { patched };
   },
 });
+
+// Indexed unread-per-category counts, shared by the authenticated live query
+// (liveMail.categoryCounts) and the internal-secret tool path. Counts cap at
+// CATEGORY_COUNT_CAP; needs_reply and secondary hits derive from the unread
+// Main window (the classifier only attaches secondary to Main verdicts).
+export const CATEGORY_COUNT_CAP = 100;
+
+export async function computeCategoryUnreadCounts(ctx: any, userId: string, accountIds?: string[] | null) {
+  const accounts = accountIds?.filter(Boolean) || [];
+  const CAP = CATEGORY_COUNT_CAP;
+
+  const unreadRows = async (primary: string) => {
+    if (accounts.length) {
+      const chunks = await Promise.all(
+        accounts.map((accountId) =>
+          ctx.db
+            .query('mailCorpusThreads')
+            .withIndex('by_user_account_primary_unread', (q: any) =>
+              q
+                .eq('userId', userId)
+                .eq('accountId', accountId)
+                .eq('smartPrimary', primary)
+                .eq('unread', true),
+            )
+            .order('desc')
+            .take(CAP),
+        ),
+      );
+      return chunks.flat();
+    }
+    return await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_primary_unread', (q: any) =>
+        q.eq('userId', userId).eq('smartPrimary', primary).eq('unread', true),
+      )
+      .order('desc')
+      .take(CAP);
+  };
+
+  const counts: Record<string, { unread: number; attention: boolean }> = {};
+  const mainRows = await unreadRows('main');
+  const SMART_IDS = ['main', 'needs_reply', 'codes', 'orders', 'finance_admin', 'noise', 'review'];
+  for (const id of SMART_IDS) {
+    if (id === 'needs_reply') {
+      const rows = mainRows.filter((row: any) => row.smartCategory?.secondary?.includes('needs_reply'));
+      counts[id] = {
+        unread: Math.min(rows.length, CAP),
+        attention: rows.some((row: any) => row.smartCategory?.needsAttention),
+      };
+      continue;
+    }
+    const rows = id === 'main' ? mainRows : await unreadRows(id);
+    const secondaryHits =
+      id === 'main' ? [] : mainRows.filter((row: any) => row.smartCategory?.secondary?.includes(id));
+    counts[id] = {
+      unread: Math.min(rows.length + secondaryHits.length, CAP),
+      attention: [...rows, ...secondaryHits].some((row: any) => row.smartCategory?.needsAttention),
+    };
+  }
+
+  // Custom labels: arrays can't be index keys, so count over a bounded recent
+  // window — the badge is a freshness signal, not an inventory.
+  const recent = await ctx.db
+    .query('mailCorpusThreads')
+    .withIndex('by_user_lastDate', (q: any) => q.eq('userId', userId))
+    .order('desc')
+    .take(300);
+  const accountSet = accounts.length ? new Set(accounts) : null;
+  for (const row of recent) {
+    if (!row.unread || !row.smartCustomKeys?.length) continue;
+    if (accountSet && !accountSet.has(row.accountId)) continue;
+    for (const key of row.smartCustomKeys) {
+      const id = `custom:${key}`;
+      const entry = counts[id] || { unread: 0, attention: false };
+      entry.unread = Math.min(entry.unread + 1, CAP);
+      entry.attention = entry.attention || Boolean(row.smartCategory?.needsAttention);
+      counts[id] = entry;
+    }
+  }
+  return counts;
+}
 
 // Rule/label edits change what every existing verdict means; re-run the
 // classifier over the user's corpus in scheduled pages.

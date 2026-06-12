@@ -374,7 +374,10 @@ export function Inbox() {
     },
     refetchOnMount: false,
     refetchOnWindowFocus: false,
-    refetchInterval: 60_000,
+    // The Convex live query already pushes new mail in real time; polling the
+    // HTTP path on top of it only burns provider quota. Poll only when the
+    // live query isn't serving this view.
+    refetchInterval: liveInbox.status === 'success' ? false : 60_000,
     // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
     refetchIntervalInBackground: false,
   });
@@ -382,7 +385,6 @@ export function Inbox() {
   const refreshInbox = () => {
     setRefreshNonce((nonce) => nonce + 1);
     clearSelected();
-    queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     queryClient.invalidateQueries({ queryKey: ['daily-report'], refetchType: 'inactive' });
     if (selectedThreadId) {
       const openAccount = threadAccount || (account !== ALL_ACCOUNTS ? account : '');
@@ -591,7 +593,6 @@ export function Inbox() {
       toast.success('Smart labels applied');
       setLabelPreview(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     },
     onError: (err: any) => toast.error(`Could not apply labels: ${err?.message || 'unknown error'}`),
   });
@@ -616,7 +617,6 @@ export function Inbox() {
     onSuccess: () => {
       toast.success('Smart rule saved');
       queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
       queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
     },
     onError: (err: any, _input, context: any) => {
@@ -637,7 +637,6 @@ export function Inbox() {
       toast.success('Last smart rule disabled');
       setSuppressions([]);
       queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     },
     onError: (err: any) => toast.error(`Could not undo: ${err?.message || 'unknown error'}`),
   });

@@ -192,7 +192,6 @@ export function ThreadView() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['search'], refetchType: 'none' });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['daily-report'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['tracked-threads'], refetchType: 'inactive' });
     },
