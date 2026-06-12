@@ -30,7 +30,15 @@ export async function POST(req: NextRequest) {
   // subscription as failing after 15 minutes of timeouts. Ingest (provider
   // fetch + corpus upsert + classification) runs from an in-process queue;
   // events are idempotent by eventId and the reconciler repairs any gap.
-  enqueueNylasWebhook(payload);
+  // If the buffer is full, return 503 so Nylas retries rather than dropping
+  // the delivery (the reconciler does not replay deletes).
+  const accepted = enqueueNylasWebhook(payload);
+  if (!accepted) {
+    return NextResponse.json(
+      { ok: false, error: 'Webhook queue saturated; retry later.', queue: webhookQueueDepth() },
+      { status: 503 },
+    );
+  }
   return NextResponse.json({ ok: true, accepted: true, queue: webhookQueueDepth() });
 }
 

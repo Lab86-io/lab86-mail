@@ -107,7 +107,9 @@ export async function backfillMailCorpusAccount({
     // New rows may be flagged llmPending; drain them once the batch lands.
     // Dynamic import: llm-classify pulls in the AI tool layer, which loops
     // back into this module at static-import time.
-    void import('./llm-classify').then(({ kickLlmClassification }) => kickLlmClassification(userId));
+    void import('./llm-classify')
+      .then(({ kickLlmClassification }) => kickLlmClassification(userId))
+      .catch(() => undefined);
     return {
       ok: true,
       accountId: row.accountId,
@@ -346,7 +348,9 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
       progress: { stage: 'webhook', type: metadata.type, eventId: metadata.eventId },
       lastIncrementalSyncAt: Date.now(),
     });
-    void import('./llm-classify').then(({ kickLlmClassification }) => kickLlmClassification(row.userId));
+    void import('./llm-classify')
+      .then(({ kickLlmClassification }) => kickLlmClassification(row.userId))
+      .catch(() => undefined);
     return { ok: true, duplicate: false, eventId: metadata.eventId };
   } catch (err: any) {
     await markWebhookProcessed(metadata, 'error', err?.message || 'webhook processing failed');

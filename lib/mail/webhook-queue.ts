@@ -13,18 +13,20 @@ const queue: unknown[] = [];
 let active = 0;
 let dropped = 0;
 
-export function enqueueNylasWebhook(payload: unknown) {
+// Returns false when the buffer is full so the caller can reject the delivery
+// with a non-2xx — that tells Nylas to retry it later instead of the event
+// being silently dropped (and the reconciler doesn't cover deletes).
+export function enqueueNylasWebhook(payload: unknown): boolean {
   if (queue.length >= MAX_QUEUE) {
     dropped += 1;
     if (dropped % 100 === 1) {
-      console.error(
-        `[nylas-webhook] queue full (${MAX_QUEUE}); dropped ${dropped} events — reconciler will repair`,
-      );
+      console.error(`[nylas-webhook] queue full (${MAX_QUEUE}); rejected ${dropped} events for retry`);
     }
-    return;
+    return false;
   }
   queue.push(payload);
   pump();
+  return true;
 }
 
 export function webhookQueueDepth() {

@@ -75,11 +75,14 @@ export async function resolveThread(account: string, id: string): Promise<Thread
   return {
     _id: corpus._id,
     account,
-    subject: corpus.subject || kv?.subject || '',
-    fromAddress: corpus.fromAddress || kv?.fromAddress || '',
-    lastDate: corpus.lastDate || kv?.lastDate || 0,
-    snippet: corpus.snippet || kv?.snippet || '',
-    labels: corpus.labels?.length ? corpus.labels : kv?.labels || [],
+    // The corpus owns these fields; an empty value from it is intentional, not
+    // a miss, so coalesce on null/undefined only — never revive stale KV data
+    // (e.g. labels cleared in the corpus must not show old KV labels).
+    subject: corpus.subject ?? kv?.subject ?? '',
+    fromAddress: corpus.fromAddress ?? kv?.fromAddress ?? '',
+    lastDate: corpus.lastDate ?? kv?.lastDate ?? 0,
+    snippet: corpus.snippet ?? kv?.snippet ?? '',
+    labels: Array.isArray(corpus.labels) ? corpus.labels : (kv?.labels ?? []),
     unread: Boolean(corpus.unread),
     starred: Boolean(corpus.starred),
     summary: kv?.summary ?? null,

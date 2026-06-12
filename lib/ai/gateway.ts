@@ -294,7 +294,9 @@ function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
 }
 
 function modelFor(provider: AiProvider, speed: AiSpeed) {
-  return speed === 'primary' ? DEFAULT_MODELS[provider].primary : DEFAULT_MODELS[provider].fast;
+  if (speed === 'primary') return DEFAULT_MODELS[provider].primary;
+  if (speed === 'nano') return DEFAULT_MODELS[provider].nano;
+  return DEFAULT_MODELS[provider].fast;
 }
 
 function assertLab86Budget(

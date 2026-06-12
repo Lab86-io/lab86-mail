@@ -611,10 +611,21 @@ export const nlSearch = defineTool({
 });
 
 function normalizeAiVerdict(parsed: any) {
-  const primary = SMART_CATEGORY_IDS.includes(parsed.primary as SmartCategoryId) ? parsed.primary : 'review';
-  const secondary = Array.isArray(parsed.secondary)
+  const rawSecondary: SmartCategoryId[] = Array.isArray(parsed.secondary)
     ? parsed.secondary.filter((id: string) => SMART_CATEGORY_IDS.includes(id as SmartCategoryId)).slice(0, 3)
     : [];
+  const rawPrimary = SMART_CATEGORY_IDS.includes(parsed.primary as SmartCategoryId)
+    ? (parsed.primary as SmartCategoryId)
+    : 'review';
+  // needs_reply exists only as a secondary tag of Main in this system (the
+  // category query derives it from the unread-Main window). A model that
+  // returns it as the primary would otherwise be invisible everywhere; fold
+  // it into Main + secondary so it lands in both Main and Needs Reply.
+  const primary = rawPrimary === 'needs_reply' ? 'main' : rawPrimary;
+  const secondary =
+    rawPrimary === 'needs_reply' && !rawSecondary.includes('needs_reply')
+      ? (['needs_reply', ...rawSecondary].slice(0, 3) as SmartCategoryId[])
+      : rawSecondary;
   const action = ['reply', 'read', 'archive', 'label', 'snooze', 'wait', 'none'].includes(
     parsed.suggestedAction,
   )

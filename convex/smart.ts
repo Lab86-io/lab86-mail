@@ -232,15 +232,29 @@ export const classifyBacklog = internalMutation({
 });
 
 function rowMatchesRuleScope(row: any, scope: string, match: string) {
+  // Mirror matchRule() in lib/mail/smart-categories.ts so the immediate
+  // reclassify covers the same rule surface as the eventual full sweep:
+  // subject_pattern honors regex, and header rules match the same haystack.
   const email = (emailFromHeader(String(row.fromAddress || '')) || '').toLowerCase();
+  const subject = String(row.subject || '').toLowerCase();
+  const headerHaystack = [row.fromAddress, row.subject, row.snippet, ...(row.labels || [])]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
   if (scope === 'sender') return email === match;
   if (scope === 'domain') return (email.split('@')[1] || '') === match;
-  if (scope === 'subject_pattern')
-    return String(row.subject || '')
-      .toLowerCase()
-      .includes(match);
-  if (scope === 'thread') return row.providerThreadId === match;
+  if (scope === 'subject_pattern') return subject.includes(match) || safeRegexTest(match, subject);
+  if (scope === 'header') return headerHaystack.includes(match);
+  if (scope === 'thread') return String(row.providerThreadId || '').toLowerCase() === match;
   return false;
+}
+
+function safeRegexTest(pattern: string, value: string) {
+  try {
+    return new RegExp(pattern, 'i').test(value);
+  } catch {
+    return false;
+  }
 }
 
 // Targeted, synchronous reclassification of the threads a just-created rule

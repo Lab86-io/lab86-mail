@@ -125,6 +125,9 @@ function dateGroupLabel(ts: number): string {
 }
 
 function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) {
+  // Only a category view can optimistically drop a row — in search / all-mail
+  // (smartCategory null) the row still belongs to the underlying query.
+  if (!smartCategory) return false;
   if (s.action === 'never_main') return smartCategory === 'main';
   if (s.action === 'always_noise') return smartCategory !== 'noise';
   if (s.action === 'move_to' && s.category) return !!smartCategory && smartCategory !== s.category;

@@ -17,10 +17,19 @@ const KICK_DEBOUNCE_MS = 5_000;
 
 const sweeping = new Set<string>();
 const pendingKicks = new Map<string, ReturnType<typeof setTimeout>>();
+// Kicks that arrive mid-sweep (when the per-kick batch cap may have left rows
+// behind, or new rows landed during the run) are coalesced here and replayed
+// once the current sweep finishes, so the backlog always drains.
+const rerunRequested = new Set<string>();
 
 export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEBOUNCE_MS) {
   const uid = userId || getAiRequestContext().userId;
-  if (!uid || !isConvexConfigured() || pendingKicks.has(uid)) return;
+  if (!uid || !isConvexConfigured()) return;
+  if (sweeping.has(uid)) {
+    rerunRequested.add(uid);
+    return;
+  }
+  if (pendingKicks.has(uid)) return;
   pendingKicks.set(
     uid,
     setTimeout(() => {
@@ -35,17 +44,21 @@ export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEB
 export async function runLlmClassificationSweep(userId: string) {
   if (sweeping.has(userId) || !isConvexConfigured()) return { classified: 0 };
   sweeping.add(userId);
+  let result: { classified: number; moreRemaining?: boolean } = { classified: 0 };
   try {
-    return await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
+    result = await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
       if (!(await hasAiForCurrentUser('classify_threads'))) return { classified: 0 };
       const [rules, labels] = await Promise.all([listSmartRules(), listSmartLabels()]);
       let classified = 0;
+      let moreRemaining = false;
       for (let batch = 0; batch < MAX_BATCHES_PER_KICK; batch++) {
         const pending = await convexQuery<any[]>((api as any).mailCorpus.listLlmPending, {
           userId,
           limit: SWEEP_BATCH,
         });
         if (!pending.length) break;
+        // A full final batch under the per-kick cap means rows likely remain.
+        if (batch === MAX_BATCHES_PER_KICK - 1 && pending.length === SWEEP_BATCH) moreRemaining = true;
         const verdicts = await classifyThreadsBatched(
           pending.map((row) => ({
             id: `${row.accountId}:${row.providerThreadId}`,
@@ -74,17 +87,22 @@ export async function runLlmClassificationSweep(userId: string) {
             verdict: { ...category, classifiedAt: Date.now() },
           };
         });
-        const result = await convexMutation<{ stored: number }>((api as any).mailCorpus.storeLlmVerdicts, {
-          userId,
-          items,
-        });
-        classified += result.stored;
+        const batchResult = await convexMutation<{ stored: number }>(
+          (api as any).mailCorpus.storeLlmVerdicts,
+          { userId, items },
+        );
+        classified += batchResult.stored;
         if (pending.length < SWEEP_BATCH) break;
       }
       if (classified) console.log(`[llm-classify] stored ${classified} verdicts for ${userId}`);
-      return { classified };
+      return { classified, moreRemaining };
     });
+    return result;
   } finally {
     sweeping.delete(userId);
+    // Drain the rest: rows left by the per-kick cap, or a kick that arrived
+    // while we were running. A short delay yields the event loop and re-debounces.
+    const replay = rerunRequested.delete(userId) || result?.moreRemaining;
+    if (replay) kickLlmClassification(userId, 1_000);
   }
 }

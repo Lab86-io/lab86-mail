@@ -178,13 +178,22 @@ export function Rail() {
   const indexingAccounts = authedAccounts.filter(
     (a) => a.sync && !a.sync.corpusReady && (a.sync.status === 'backfilling' || a.sync.status === 'syncing'),
   );
-  const countAccount = account && account !== ALL_ACCOUNTS ? account : '';
+  // Scope the badge counts to exactly the mailboxes the inbox is showing: a
+  // single account when scoped, otherwise the account-filter subset (or all
+  // authed mailboxes when the filter is empty). Keeps badges from drifting
+  // away from the visible list in the unified view.
+  const countAccountIds =
+    account && account !== ALL_ACCOUNTS
+      ? [account]
+      : accountFilter.length
+        ? authedAccounts.map((item) => item.accountId).filter((id) => accountFilter.includes(id))
+        : undefined;
 
   // Live unread-per-category badges straight from the indexed corpus — Convex
   // pushes updates as rows change, so the rail never needs manual refresh.
   const liveCounts = useConvexQuery({
     query: (api as any).liveMail.categoryCounts,
-    args: { accountIds: countAccount ? [countAccount] : undefined },
+    args: { accountIds: countAccountIds },
   });
   const smartCounts =
     liveCounts.status === 'success'

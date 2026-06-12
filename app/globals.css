@@ -593,6 +593,19 @@
     border-radius: var(--radius);
     padding: 12px 16px;
   }
+  /* Descendants resolve dark-theme surface vars otherwise, leaving dark
+     blocks under dark text inside the white island. Pin them to light. */
+  .dark .email-body blockquote {
+    border-left-color: #d1d5db;
+    color: #4b5563;
+  }
+  .dark .email-body code {
+    background: #f3f4f6;
+    color: #111827;
+  }
+  .dark .email-body pre {
+    background: #f8fafc;
+  }
   .dark .email-body a {
     color: #1d4ed8;
   }

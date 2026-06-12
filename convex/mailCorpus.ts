@@ -317,7 +317,12 @@ export const upsertCorpusBatch = mutation({
         patch.starred = Boolean(existing.starred) || patch.starred || undefined;
         patch.labels = [...new Set([...(existing.labels || []), ...patch.labels])];
       }
-      const classified = smartContext ? classifyCorpusThread(patch, smartContext, classifyBody) : {};
+      // Classify against the merged row so an existing stored LLM verdict
+      // (llmCategory) keeps precedence — patch alone omits it, and a webhook
+      // or backfill recompute would otherwise clobber it with the
+      // deterministic result.
+      const classifyRow = existing ? { ...existing, ...patch } : patch;
+      const classified = smartContext ? classifyCorpusThread(classifyRow, smartContext, classifyBody) : {};
       if (existing) await ctx.db.patch(existing._id, { ...patch, ...classified });
       else await ctx.db.insert('mailCorpusThreads', { ...patch, ...classified, createdAt: ts });
     }

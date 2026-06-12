@@ -154,9 +154,9 @@ export const listSmartCategory = defineTool({
     // The user is looking at categories — opportunistically drain any threads
     // still waiting for their one LLM verdict (debounced, runs off-request).
     if (ctx.userId) {
-      void import('../mail/llm-classify').then(({ kickLlmClassification }) =>
-        kickLlmClassification(ctx.userId),
-      );
+      void import('../mail/llm-classify')
+        .then(({ kickLlmClassification }) => kickLlmClassification(ctx.userId))
+        .catch(() => undefined);
     }
     // Primary path: indexed corpus read over persisted write-time verdicts.
     // No provider calls and no writes — this is a pure local query.
