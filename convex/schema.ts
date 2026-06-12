@@ -508,9 +508,17 @@ export default defineSchema({
     dueAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     order: v.number(),
-    // Link/file attachments: { name, url }. Files upload elsewhere (e.g.
-    // Convex storage) and land here as URLs.
-    attachments: v.optional(v.array(v.object({ name: v.string(), url: v.string() }))),
+    // Attachments: pasted links carry url; uploaded files carry a Convex
+    // storage id (URL resolved at read time).
+    attachments: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          url: v.optional(v.string()),
+          storageId: v.optional(v.id('_storage')),
+        }),
+      ),
+    ),
     // Embedded comment thread; boards are small-team, so no separate table.
     comments: v.optional(
       v.array(
@@ -525,6 +533,19 @@ export default defineSchema({
     ),
     // Provenance chip: where this card came from.
     source: v.optional(v.any()),
+    // Per-card audit trail (sse-era parity): every mutation appends.
+    activity: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          actorUserId: v.string(),
+          actorEmail: v.optional(v.string()),
+          action: v.string(),
+          detail: v.optional(v.string()),
+          createdAt: v.number(),
+        }),
+      ),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

@@ -88,16 +88,17 @@ export const upsertCalendarBatch = mutation({
       }
     }
     if (args.pruneMissing) {
-      for (const row of existing) {
-        if (seen.has(row.providerCalendarId)) continue;
-        await ctx.db.delete(row._id);
-        // Orphaned events of a deleted calendar go with it.
+      const removed = existing.filter((row) => !seen.has(row.providerCalendarId));
+      if (removed.length) {
+        // One account-wide event fetch, not one per removed calendar.
         const events = await ctx.db
           .query('calendarEvents')
           .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
           .collect();
+        const removedIds = new Set(removed.map((row) => row.providerCalendarId));
+        for (const row of removed) await ctx.db.delete(row._id);
         for (const event of events) {
-          if (event.providerCalendarId === row.providerCalendarId) await ctx.db.delete(event._id);
+          if (removedIds.has(event.providerCalendarId)) await ctx.db.delete(event._id);
         }
       }
     }

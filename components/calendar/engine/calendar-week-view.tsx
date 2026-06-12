@@ -18,7 +18,7 @@ interface IProps {
 }
 
 export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
-  const { selectedDate, use24HourFormat, hourHeight } = useCalendar();
+  const { selectedDate, use24HourFormat, hourHeight, setHourHeight } = useCalendar();
 
   const weekStart = startOfWeek(selectedDate);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -31,6 +31,20 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
     const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]');
     if (viewport) viewport.scrollTop = 7.5 * hourHeight;
   }, [hourHeight]);
+
+  // Trackpad pinch arrives as ctrl+wheel; map it onto the hour-height zoom.
+  useEffect(() => {
+    const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]');
+    if (!viewport) return;
+    const onWheel = (event: Event) => {
+      const wheel = event as WheelEvent;
+      if (!wheel.ctrlKey) return;
+      wheel.preventDefault();
+      setHourHeight(hourHeight - Math.sign(wheel.deltaY) * 8);
+    };
+    viewport.addEventListener('wheel', onWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', onWheel);
+  }, [hourHeight, setHourHeight]);
 
   return (
     <motion.div initial="initial" animate="animate" exit="exit" variants={fadeIn} transition={transition}>

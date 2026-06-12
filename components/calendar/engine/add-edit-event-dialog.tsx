@@ -8,6 +8,17 @@ import { COLORS } from '@/components/calendar/engine/constants';
 import { useDisclosure } from '@/components/calendar/engine/hooks';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { eventSchema, type TEventFormData } from '@/components/calendar/engine/schemas';
+
+// Tailwind JIT can't see template-built class names; spell them out.
+const COLOR_SWATCH_CLASS: Record<string, string> = {
+  blue: 'bg-blue-600 dark:bg-blue-700',
+  green: 'bg-green-600 dark:bg-green-700',
+  red: 'bg-red-600 dark:bg-red-700',
+  yellow: 'bg-yellow-600 dark:bg-yellow-700',
+  purple: 'bg-purple-600 dark:bg-purple-700',
+  orange: 'bg-orange-600 dark:bg-orange-700',
+};
+
 import { Button } from '@/components/ui/button';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -166,7 +177,9 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
                         {COLORS.map((color) => (
                           <SelectItem value={color} key={color}>
                             <div className="flex items-center gap-2">
-                              <div className={`size-3.5 rounded-full bg-${color}-600 dark:bg-${color}-700`} />
+                              <div
+                                className={`size-3.5 rounded-full ${COLOR_SWATCH_CLASS[color] || COLOR_SWATCH_CLASS.blue}`}
+                              />
                               {color}
                             </div>
                           </SelectItem>

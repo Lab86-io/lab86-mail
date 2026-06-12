@@ -253,6 +253,37 @@ const ACCOUNT_BULK_TABLES = [
 
 const PURGE_BATCH = 250;
 
+// Whole-user purge twin of purgeAccountDataBatch: account deletion already
+// batches, and user deletion must too — a populated mailbox exceeds Convex's
+// per-transaction limits if swept inline.
+export const purgeUserDataBatch = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    let deleted = 0;
+    for (const table of ACCOUNT_BULK_TABLES) {
+      if (deleted >= PURGE_BATCH) break;
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_user' as any, (q: any) => q.eq('userId', args.userId))
+        .take(PURGE_BATCH - deleted)
+        .catch(async () =>
+          ctx.db
+            .query(table)
+            .withIndex('by_user_account' as any, (q: any) => q.eq('userId', args.userId))
+            .take(PURGE_BATCH - deleted),
+        );
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+    if (deleted > 0) {
+      await ctx.scheduler.runAfter(0, internal.accounts.purgeUserDataBatch, args);
+    }
+    return { deleted };
+  },
+});
+
 export const purgeAccountDataBatch = internalMutation({
   args: { userId: v.string(), accountId: v.string() },
   handler: async (ctx, args) => {
@@ -355,6 +386,10 @@ export const deleteUserCascade = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const counts: Record<string, number> = {};
+    // Small tables sweep inline. Bulk tables ('threads', 'messages',
+    // 'mailCorpusThreads', 'mailCorpusMessages', 'mailWebhookEvents',
+    // 'calendarEvents') would blow Convex's per-transaction limits on a real
+    // mailbox, so they drain through the scheduled purge instead.
     const userTables = [
       'connectedAccounts',
       'providerGrants',
@@ -364,22 +399,16 @@ export const deleteUserCascade = mutation({
       'aiEntitlements',
       'aiUsagePeriods',
       'aiUsageEvents',
-      'threads',
-      'messages',
       'dailyReports',
       'memories',
       'auditEvents',
       'syncJobs',
-      'mailCorpusThreads',
-      'mailCorpusMessages',
       'mailSyncStates',
-      'mailWebhookEvents',
       'rateLimits',
       'userDocs',
       'aiOperations',
       'suggestions',
       'calendars',
-      'calendarEvents',
       'calendarSyncStates',
     ] as const;
 
@@ -388,6 +417,7 @@ export const deleteUserCascade = mutation({
       counts[table] = rows.length;
       for (const row of rows) await ctx.db.delete(row._id);
     }
+    await ctx.scheduler.runAfter(0, internal.accounts.purgeUserDataBatch, { userId: args.userId });
 
     // Kanban: boards key on ownerUserId, so they need their own pass. Owned
     // boards go down with their 'boardColumns', 'cards', and 'boardMembers';

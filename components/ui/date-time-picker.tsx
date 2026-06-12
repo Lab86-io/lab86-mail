@@ -69,23 +69,38 @@ export function DateTimePicker({ form, field }: DatePickerProps) {
             <div className="flex flex-col sm:flex-row sm:h-[300px] divide-y sm:divide-y-0 sm:divide-x">
               <ScrollArea className="w-64 sm:w-auto">
                 <div className="flex sm:flex-col p-2">
-                  {Array.from({ length: use24HourFormat ? 24 : 12 }, (_, i) => i).map((hour) => (
-                    <Button
-                      key={hour}
-                      size="icon"
-                      variant={
-                        field.value &&
-                        field.value.getHours() % (use24HourFormat ? 24 : 12) ===
-                          hour % (use24HourFormat ? 24 : 12)
-                          ? 'default'
-                          : 'ghost'
-                      }
-                      className="sm:w-full shrink-0 aspect-square"
-                      onClick={() => handleTimeChange('hour', hour.toString())}
-                    >
-                      {hour.toString().padStart(2, '0')}
-                    </Button>
-                  ))}
+                  {(use24HourFormat
+                    ? Array.from({ length: 24 }, (_, i) => i)
+                    : [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+                  ).map((hour) => {
+                    const selected = field.value
+                      ? use24HourFormat
+                        ? field.value.getHours() === hour
+                        : (field.value.getHours() % 12 || 12) === hour
+                      : false;
+                    return (
+                      <Button
+                        key={hour}
+                        size="icon"
+                        variant={selected ? 'default' : 'ghost'}
+                        className="sm:w-full shrink-0 aspect-square"
+                        onClick={() => {
+                          if (use24HourFormat) {
+                            handleTimeChange('hour', hour.toString());
+                            return;
+                          }
+                          // Convert the civilian display hour back to 24h,
+                          // keeping the currently selected AM/PM half.
+                          const current = (form.getValues(field.name) as Date | undefined) || new Date();
+                          const isPm = current.getHours() >= 12;
+                          const hour24 = (hour % 12) + (isPm ? 12 : 0);
+                          handleTimeChange('hour', hour24.toString());
+                        }}
+                      >
+                        {hour.toString().padStart(2, '0')}
+                      </Button>
+                    );
+                  })}
                 </div>
                 <ScrollBar orientation="horizontal" className="sm:hidden" />
               </ScrollArea>
@@ -105,6 +120,25 @@ export function DateTimePicker({ form, field }: DatePickerProps) {
                 </div>
                 <ScrollBar orientation="horizontal" className="sm:hidden" />
               </ScrollArea>
+              {!use24HourFormat ? (
+                <div className="flex p-2 sm:flex-col">
+                  {(['AM', 'PM'] as const).map((half) => (
+                    <Button
+                      key={half}
+                      size="icon"
+                      variant={
+                        field.value && (field.value.getHours() >= 12 ? 'PM' : 'AM') === half
+                          ? 'default'
+                          : 'ghost'
+                      }
+                      className="sm:w-full shrink-0 aspect-square text-[11px]"
+                      onClick={() => handleTimeChange('ampm', half)}
+                    >
+                      {half}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
         </PopoverContent>

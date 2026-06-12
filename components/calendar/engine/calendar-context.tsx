@@ -146,33 +146,19 @@ export function CalendarProvider({
     updateSettings({ hourHeight: clamped });
   };
 
+  // Both filter dimensions always compose — toggling one re-applies the other.
   const filterEventsBySelectedColors = (color: TEventColor) => {
     const isColorSelected = selectedColors.includes(color);
     const newColors = isColorSelected
       ? selectedColors.filter((c) => c !== color)
       : [...selectedColors, color];
-
-    if (newColors.length > 0) {
-      const filtered = allEvents.filter((event) => {
-        const eventColor = event.color || 'blue';
-        return newColors.includes(eventColor);
-      });
-      setFilteredEvents(filtered);
-    } else {
-      setFilteredEvents(allEvents);
-    }
-
     setSelectedColors(newColors);
+    setFilteredEvents(applyFilters(allEvents, selectedUserId, newColors));
   };
 
   const filterEventsBySelectedUser = (userId: IUser['id'] | 'all') => {
     setSelectedUserId(userId);
-    if (userId === 'all') {
-      setFilteredEvents(allEvents);
-    } else {
-      const filtered = allEvents.filter((event) => event.user.id === userId);
-      setFilteredEvents(filtered);
-    }
+    setFilteredEvents(applyFilters(allEvents, userId, selectedColors));
   };
 
   const handleSelectDate = (date: Date | undefined) => {
@@ -190,7 +176,10 @@ export function CalendarProvider({
 
   const addEvent = (event: IEvent) => {
     setAllEvents((prev) => [...prev, event]);
-    setFilteredEvents((prev) => [...prev, event]);
+    // Only surface the new event if it matches the active filters.
+    setFilteredEvents((prev) =>
+      applyFilters([event], selectedUserId, selectedColors).length ? [...prev, event] : prev,
+    );
     void persistence?.onEventAdded?.(event);
   };
 
@@ -202,8 +191,11 @@ export function CalendarProvider({
     };
 
     const previous = allEvents.find((e) => e.id === event.id);
-    setAllEvents((prev) => prev.map((e) => (e.id === event.id ? updated : e)));
-    setFilteredEvents((prev) => prev.map((e) => (e.id === event.id ? updated : e)));
+    const nextAll = allEvents.map((e) => (e.id === event.id ? updated : e));
+    setAllEvents(nextAll);
+    // Re-derive instead of in-place mapping: the update may change fields the
+    // active filters key on (calendar, color).
+    setFilteredEvents(applyFilters(nextAll, selectedUserId, selectedColors));
     void persistence?.onEventUpdated?.(updated, previous);
   };
 

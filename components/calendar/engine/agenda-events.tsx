@@ -30,8 +30,12 @@ export const AgendaEvents: FC = () => {
     return agendaModeGroupBy === 'date' ? format(parseISO(event.startDate), 'yyyy-MM-dd') : event.color;
   });
 
-  const groupedAndSortedEvents = Object.entries(agendaEvents).sort(
-    (a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime(),
+  // Date keys sort chronologically; color keys are plain strings and would
+  // all become Invalid Date under the date comparator.
+  const groupedAndSortedEvents = Object.entries(agendaEvents).sort((a, b) =>
+    agendaModeGroupBy === 'color'
+      ? a[0].localeCompare(b[0])
+      : new Date(a[0]).getTime() - new Date(b[0]).getTime(),
   );
 
   return (

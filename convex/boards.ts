@@ -76,6 +76,29 @@ const callerArgs = {
 
 const STARTER_COLUMNS = ['Today', 'This Week', 'Backlog', 'Done'];
 
+const ACTIVITY_CAP = 100;
+
+async function actorEmail(ctx: QueryCtx | MutationCtx, userId: string): Promise<string | undefined> {
+  const me = await ctx.db
+    .query('users')
+    .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', userId))
+    .first();
+  return me?.email;
+}
+
+async function appendActivity(ctx: MutationCtx, card: any, userId: string, action: string, detail?: string) {
+  const entry = {
+    id: `a_${now()}_${Math.floor(Math.random() * 1e6)}`,
+    actorUserId: userId,
+    actorEmail: await actorEmail(ctx, userId),
+    action,
+    detail: detail?.slice(0, 300),
+    createdAt: now(),
+  };
+  const activity = [...(card.activity || []), entry].slice(-ACTIVITY_CAP);
+  await ctx.db.patch(card._id, { activity });
+}
+
 export const ensureDefaultBoard = mutation({
   args: { ...callerArgs },
   handler: async (ctx, args) => {
@@ -300,7 +323,15 @@ const cardFields = {
   weight: v.optional(v.union(v.number(), v.null())),
   dueAt: v.optional(v.union(v.number(), v.null())),
   completedAt: v.optional(v.union(v.number(), v.null())),
-  attachments: v.optional(v.array(v.object({ name: v.string(), url: v.string() }))),
+  attachments: v.optional(
+    v.array(
+      v.object({
+        name: v.string(),
+        url: v.optional(v.string()),
+        storageId: v.optional(v.id('_storage')),
+      }),
+    ),
+  ),
 };
 
 export const createCard = mutation({
@@ -314,7 +345,15 @@ export const createCard = mutation({
     priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
     weight: v.optional(v.number()),
     dueAt: v.optional(v.number()),
-    attachments: v.optional(v.array(v.object({ name: v.string(), url: v.string() }))),
+    attachments: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          url: v.optional(v.string()),
+          storageId: v.optional(v.id('_storage')),
+        }),
+      ),
+    ),
     source: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -327,7 +366,7 @@ export const createCard = mutation({
       .withIndex('by_column_order', (q) => q.eq('columnId', args.columnId))
       .collect();
     const ts = now();
-    return ctx.db.insert('cards', {
+    const createdId = await ctx.db.insert('cards', {
       boardId: args.boardId,
       columnId: args.columnId,
       userId,
@@ -343,6 +382,9 @@ export const createCard = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
+    const created = await ctx.db.get(createdId);
+    if (created) await appendActivity(ctx, created, userId, 'created');
+    return createdId;
   },
 });
 
@@ -365,6 +407,11 @@ export const updateCard = mutation({
     if (args.completedAt !== undefined)
       patch.completedAt = args.completedAt === null ? undefined : args.completedAt;
     await ctx.db.patch(args.cardId, patch);
+    const changed = Object.keys(patch).filter((key) => key !== 'updatedAt');
+    if (changed.length) {
+      const fresh = await ctx.db.get(args.cardId);
+      if (fresh) await appendActivity(ctx, fresh, userId, 'updated', changed.join(', '));
+    }
     return { previous: snapshotCard(card) };
   },
 });
@@ -389,19 +436,25 @@ export const moveCard = mutation({
     let order: number;
     if (args.beforeOrder !== undefined && args.afterOrder !== undefined) {
       order = (args.beforeOrder + args.afterOrder) / 2;
-      // Midpoints exhausted — renumber the destination column.
+      // Midpoints exhausted — renumber the destination column, then place
+      // the card between its intended neighbours' NEW orders (appending it
+      // to the end here was a drop-position bug).
       if (!(args.beforeOrder < order && order < args.afterOrder)) {
         const siblings = await ctx.db
           .query('cards')
           .withIndex('by_column_order', (q) => q.eq('columnId', args.columnId))
           .collect();
         siblings.sort((a, b) => a.order - b.order);
+        const beforeIdx = siblings.findIndex((s) => s.order === args.beforeOrder);
         let cursor = ORDER_STEP;
+        const reassigned: number[] = [];
         for (const sibling of siblings) {
           await ctx.db.patch(sibling._id, { order: cursor });
+          reassigned.push(cursor);
           cursor += ORDER_STEP;
         }
-        order = cursor;
+        const newBefore = beforeIdx >= 0 ? reassigned[beforeIdx] : reassigned[reassigned.length - 1];
+        order = newBefore + ORDER_STEP / 2;
       }
     } else if (args.beforeOrder !== undefined) {
       order = args.beforeOrder + ORDER_STEP;
@@ -416,6 +469,10 @@ export const moveCard = mutation({
     }
     const previous = { columnId: card.columnId, order: card.order };
     await ctx.db.patch(args.cardId, { columnId: args.columnId, order, updatedAt: now() });
+    if (previous.columnId !== args.columnId) {
+      const fresh = await ctx.db.get(args.cardId);
+      if (fresh) await appendActivity(ctx, fresh, userId, 'moved', `to ${column.name}`);
+    }
     return { previous };
   },
 });
@@ -438,17 +495,14 @@ export const addComment = mutation({
     const userId = await resolveUserId(ctx, args);
     const card = await ctx.db.get(args.cardId);
     if (!card) throw new Error('Card not found.');
-    await requireBoard(ctx, card.boardId, userId, 'member');
-    const me = await ctx.db
-      .query('users')
-      .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', userId))
-      .first();
+    // Everyone with board access can join the conversation, viewers included.
+    await requireBoard(ctx, card.boardId, userId, 'viewer');
     const body = args.body.trim();
     if (!body) throw new Error('Comment is empty.');
     const comment = {
       id: `c_${now()}_${Math.floor(Math.random() * 1e6)}`,
       authorUserId: userId,
-      authorEmail: me?.email,
+      authorEmail: await actorEmail(ctx, userId),
       body: body.slice(0, 4000),
       createdAt: now(),
     };
@@ -456,7 +510,21 @@ export const addComment = mutation({
       comments: [...(card.comments || []), comment],
       updatedAt: now(),
     });
+    await appendActivity(ctx, { ...card, _id: args.cardId }, userId, 'commented');
     return comment;
+  },
+});
+
+// File uploads go straight from the browser to Convex storage; the returned
+// storage id lands in the card's attachments.
+export const generateAttachmentUploadUrl = mutation({
+  args: { ...callerArgs, cardId: v.id('cards') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const card = await ctx.db.get(args.cardId);
+    if (!card) throw new Error('Card not found.');
+    await requireBoard(ctx, card.boardId, userId, 'member');
+    return await ctx.storage.generateUploadUrl();
   },
 });
 
@@ -591,13 +659,20 @@ async function boardPayload(ctx: QueryCtx | MutationCtx, board: any, role: Role)
   ]);
   columns.sort((a, b) => a.order - b.order);
   cards.sort((a, b) => a.order - b.order);
+  const cardPayloads = await Promise.all(
+    cards.map(async (card) => ({
+      cardId: card._id,
+      ...snapshotCard(card),
+      attachments: await resolveAttachments(ctx, card.attachments),
+    })),
+  );
   return {
     boardId: board._id,
     title: board.title,
     role,
     publicToken: role === 'owner' ? board.publicToken || null : null,
     columns: columns.map((column) => ({ columnId: column._id, name: column.name, order: column.order })),
-    cards: cards.map((card) => ({ cardId: card._id, ...snapshotCard(card) })),
+    cards: cardPayloads,
     members:
       role === 'owner'
         ? members.map((member) => ({
@@ -608,6 +683,18 @@ async function boardPayload(ctx: QueryCtx | MutationCtx, board: any, role: Role)
           }))
         : [],
   };
+}
+
+// Uploaded attachments store a Convex storage id; the browser needs a URL.
+async function resolveAttachments(ctx: QueryCtx | MutationCtx, attachments: any[] | undefined) {
+  if (!attachments?.length) return attachments;
+  return Promise.all(
+    attachments.map(async (attachment) => {
+      if (attachment.url || !attachment.storageId) return attachment;
+      const url = await ctx.storage.getUrl(attachment.storageId).catch(() => null);
+      return { ...attachment, url: url || undefined };
+    }),
+  );
 }
 
 function snapshotCard(card: any) {
@@ -624,6 +711,7 @@ function snapshotCard(card: any) {
     order: card.order,
     attachments: card.attachments,
     comments: card.comments,
+    activity: card.activity,
     source: card.source,
   };
 }

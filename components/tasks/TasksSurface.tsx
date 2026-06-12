@@ -1,7 +1,24 @@
 'use client';
 
 import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
-import { CalendarClock, Link2, Mail, Plus, Share2, SquareKanban, Trash2, Users, X } from 'lucide-react';
+import {
+  CalendarClock,
+  Check,
+  History,
+  LayoutList,
+  Link2,
+  Mail,
+  MoreHorizontal,
+  Paperclip,
+  Pencil,
+  Plus,
+  Share2,
+  SquareKanban,
+  Trash2,
+  Upload,
+  Users,
+  X,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { DragEndEvent } from '@/components/kibo-ui/kanban';
@@ -25,13 +42,27 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
 const boardsApi = (api as any).boards;
+
+interface CardAttachment {
+  name: string;
+  url?: string;
+  storageId?: string;
+}
 
 interface BoardCard {
   cardId: string;
@@ -45,8 +76,9 @@ interface BoardCard {
   dueAt?: number;
   completedAt?: number;
   order: number;
-  attachments?: Array<{ name: string; url: string }>;
+  attachments?: CardAttachment[];
   comments?: Array<{ id: string; authorEmail?: string; body: string; createdAt: number }>;
+  activity?: Array<{ id: string; actorEmail?: string; action: string; detail?: string; createdAt: number }>;
   source?: { kind: string; accountId?: string; threadId?: string; messageId?: string };
 }
 
@@ -60,9 +92,12 @@ interface BoardPayload {
   members: Array<{ memberId: string; email: string; role: string; status: string }>;
 }
 
+type BoardViewMode = 'kanban' | 'list';
+
 export function TasksSurface() {
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [newBoardOpen, setNewBoardOpen] = useState(false);
+  const [renameBoardOpen, setRenameBoardOpen] = useState(false);
 
   const boardsQuery = useConvexQuery({ query: boardsApi.listMyBoards, args: {} });
   const boards: any[] = boardsQuery.status === 'success' ? boardsQuery.data || [] : [];
@@ -70,6 +105,7 @@ export function TasksSurface() {
   const ensureDefault = useConvexMutation(boardsApi.ensureDefaultBoard);
   const claimInvites = useConvexMutation(boardsApi.claimInvites);
   const createBoard = useConvexMutation(boardsApi.createBoard);
+  const renameBoard = useConvexMutation(boardsApi.renameBoard);
 
   // First load: link any email invites to this user, and make sure a starter
   // board exists so the surface is never an empty void.
@@ -85,6 +121,7 @@ export function TasksSurface() {
     selectedBoardId && boards.some((board) => board.boardId === selectedBoardId)
       ? selectedBoardId
       : boards[0]?.boardId || null;
+  const activeBoard = boards.find((board) => board.boardId === activeBoardId);
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
@@ -93,20 +130,31 @@ export function TasksSurface() {
           Tasks
         </h1>
         {boards.map((board) => (
-          <button
-            key={board.boardId}
-            type="button"
-            onClick={() => setSelectedBoardId(board.boardId)}
-            className={cn(
-              'shrink-0 rounded-full border px-3 py-1 text-[12.5px] transition-colors',
-              board.boardId === activeBoardId
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {board.title}
-            {!board.owned ? <Users className="ml-1 inline size-3 opacity-60" /> : null}
-          </button>
+          <span key={board.boardId} className="flex shrink-0 items-center">
+            <button
+              type="button"
+              onClick={() => setSelectedBoardId(board.boardId)}
+              className={cn(
+                'rounded-full border px-3 py-1 text-[12.5px] transition-colors',
+                board.boardId === activeBoardId
+                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+              )}
+            >
+              {board.title}
+              {!board.owned ? <Users className="ml-1 inline size-3 opacity-60" /> : null}
+            </button>
+            {board.boardId === activeBoardId && board.owned ? (
+              <button
+                type="button"
+                onClick={() => setRenameBoardOpen(true)}
+                className="ml-0.5 grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)]"
+                title="Rename board"
+              >
+                <Pencil className="size-3" />
+              </button>
+            ) : null}
+          </span>
         ))}
         <button
           type="button"
@@ -137,6 +185,22 @@ export function TasksSurface() {
           }
         }}
       />
+      <NameDialog
+        open={renameBoardOpen}
+        title="Rename board"
+        placeholder="Board name"
+        submitLabel="Rename"
+        initialValue={activeBoard?.title || ''}
+        onClose={() => setRenameBoardOpen(false)}
+        onSubmit={async (title) => {
+          if (!activeBoardId) return;
+          try {
+            await renameBoard({ boardId: activeBoardId, title });
+          } catch (err: any) {
+            toast.error(err?.message || 'Could not rename board');
+          }
+        }}
+      />
     </div>
   );
 }
@@ -163,8 +227,21 @@ function BoardView({ boardId }: { boardId: string }) {
   const moveCard = useConvexMutation(boardsApi.moveCard);
   const createCard = useConvexMutation(boardsApi.createCard);
   const createColumn = useConvexMutation(boardsApi.createColumn);
+  const updateColumn = useConvexMutation(boardsApi.updateColumn);
+  const deleteColumn = useConvexMutation(boardsApi.deleteColumn);
 
   const canEdit = board ? board.role !== 'viewer' : false;
+
+  const [viewMode, setViewMode] = useState<BoardViewMode>(() => {
+    if (typeof window === 'undefined') return 'kanban';
+    return (window.localStorage.getItem(`board-view:${boardId}`) as BoardViewMode) || 'kanban';
+  });
+  const switchView = (mode: BoardViewMode) => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem(`board-view:${boardId}`, mode);
+    } catch {}
+  };
 
   // kibo's controlled data: local mirror for fluid drag, server resyncs on
   // every Convex push (which also covers collaborators' edits in real time).
@@ -181,7 +258,10 @@ function BoardView({ boardId }: { boardId: string }) {
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [newColumnOpen, setNewColumnOpen] = useState(false);
+  const [renameColumn, setRenameColumn] = useState<{ columnId: string; name: string } | null>(null);
   const [createInColumn, setCreateInColumn] = useState<string | null>(null);
+
+  const openCard = openCardId ? cardsById.get(openCardId) : null;
 
   const handleDragEnd = (event: DragEndEvent) => {
     if (!board || !canEdit) return;
@@ -190,7 +270,6 @@ function BoardView({ boardId }: { boardId: string }) {
     const local = items.find((item) => item.id === cardId);
     if (!previous || !local) return;
     const targetColumn = local.column;
-    // Position within the column after the local reorder.
     const columnItems = items.filter((item) => item.column === targetColumn);
     const index = columnItems.findIndex((item) => item.id === cardId);
     const beforeId = index > 0 ? columnItems[index - 1].id : undefined;
@@ -212,93 +291,143 @@ function BoardView({ boardId }: { boardId: string }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 px-5 py-2">
-        <span className="text-[12px] text-[var(--color-text-faint)]">
-          {board.cards.length} card{board.cards.length === 1 ? '' : 's'}
-          {board.role !== 'owner' ? ` · shared with you (${board.role})` : ''}
-        </span>
-        <div className="ml-auto flex items-center gap-1.5">
-          {canEdit ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1.5 px-2 text-[12px]"
-              onClick={() => setNewColumnOpen(true)}
-            >
-              <Plus className="size-3" /> Column
-            </Button>
-          ) : null}
-          {board.role === 'owner' ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1.5 px-2 text-[12px]"
-              onClick={() => setShareOpen(true)}
-            >
-              <Share2 className="size-3" /> Share
-            </Button>
-          ) : null}
+    <div className="flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-2 px-5 py-2">
+          <span className="text-[12px] text-[var(--color-text-faint)]">
+            {board.cards.length} card{board.cards.length === 1 ? '' : 's'}
+            {board.role !== 'owner' ? ` · shared with you (${board.role})` : ''}
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <div className="flex overflow-hidden rounded-md border border-[var(--color-border)]">
+              <button
+                type="button"
+                onClick={() => switchView('kanban')}
+                className={cn(
+                  'grid h-7 w-8 place-items-center',
+                  viewMode === 'kanban'
+                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]',
+                )}
+                title="Kanban view"
+              >
+                <SquareKanban className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => switchView('list')}
+                className={cn(
+                  'grid h-7 w-8 place-items-center border-l border-[var(--color-border)]',
+                  viewMode === 'list'
+                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]',
+                )}
+                title="To-do list view"
+              >
+                <LayoutList className="size-3.5" />
+              </button>
+            </div>
+            {canEdit ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 px-2 text-[12px]"
+                onClick={() => setNewColumnOpen(true)}
+              >
+                <Plus className="size-3" /> Column
+              </Button>
+            ) : null}
+            {board.role === 'owner' ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 px-2 text-[12px]"
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 className="size-3" /> Share
+              </Button>
+            ) : null}
+          </div>
         </div>
+
+        {viewMode === 'kanban' ? (
+          <div className="min-h-0 flex-1 overflow-x-auto px-5 pb-5">
+            <KanbanProvider
+              columns={board.columns.map((column) => ({ id: column.columnId, name: column.name }))}
+              data={items}
+              onDataChange={setItems}
+              onDragEnd={handleDragEnd}
+              className="h-full min-w-fit"
+            >
+              {(column) => (
+                <KanbanBoard id={column.id} key={column.id} className="w-72 bg-[var(--color-bg-subtle)]">
+                  <KanbanHeader className="flex items-center px-3 py-2">
+                    <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                      {column.name}
+                    </span>
+                    <span className="ml-auto mr-1 text-[11px] tabular-nums text-[var(--color-text-faint)]">
+                      {items.filter((item) => item.column === column.id).length}
+                    </span>
+                    {canEdit ? (
+                      <ColumnMenu
+                        onRename={() => setRenameColumn({ columnId: column.id, name: String(column.name) })}
+                        onDelete={async () => {
+                          try {
+                            await deleteColumn({ columnId: column.id });
+                          } catch (err: any) {
+                            toast.error(err?.message || 'Could not delete column');
+                          }
+                        }}
+                        cardCount={items.filter((item) => item.column === column.id).length}
+                        columnName={String(column.name)}
+                      />
+                    ) : null}
+                  </KanbanHeader>
+                  <KanbanCards id={column.id}>
+                    {(item: any) => {
+                      const card = cardsById.get(item.id);
+                      return (
+                        <KanbanCard key={item.id} {...item}>
+                          <button
+                            type="button"
+                            className="block w-full text-left"
+                            onClick={() => setOpenCardId(item.id)}
+                          >
+                            <CardFace card={card} fallbackTitle={item.name} />
+                          </button>
+                        </KanbanCard>
+                      );
+                    }}
+                  </KanbanCards>
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => setCreateInColumn(column.id)}
+                      className="m-2 rounded-md border border-dashed border-[var(--color-border)] px-2.5 py-1.5 text-left text-[12.5px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                    >
+                      Add a card…
+                    </button>
+                  ) : null}
+                </KanbanBoard>
+              )}
+            </KanbanProvider>
+          </div>
+        ) : (
+          <ListView
+            board={board}
+            canEdit={canEdit}
+            onOpenCard={setOpenCardId}
+            onAddCard={setCreateInColumn}
+          />
+        )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-x-auto px-5 pb-5">
-        <KanbanProvider
-          columns={board.columns.map((column) => ({ id: column.columnId, name: column.name }))}
-          data={items}
-          onDataChange={setItems}
-          onDragEnd={handleDragEnd}
-          className="h-full min-w-fit"
-        >
-          {(column) => (
-            <KanbanBoard id={column.id} key={column.id} className="w-72 bg-[var(--color-bg-subtle)]">
-              <KanbanHeader className="flex items-center justify-between px-3 py-2">
-                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                  {column.name}
-                </span>
-                <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
-                  {items.filter((item) => item.column === column.id).length}
-                </span>
-              </KanbanHeader>
-              <KanbanCards id={column.id}>
-                {(item: any) => {
-                  const card = cardsById.get(item.id);
-                  return (
-                    <KanbanCard key={item.id} {...item}>
-                      <button
-                        type="button"
-                        className="block w-full text-left"
-                        onClick={() => setOpenCardId(item.id)}
-                      >
-                        <CardFace card={card} fallbackTitle={item.name} />
-                      </button>
-                    </KanbanCard>
-                  );
-                }}
-              </KanbanCards>
-              {canEdit ? (
-                <button
-                  type="button"
-                  onClick={() => setCreateInColumn(column.id)}
-                  className="m-2 rounded-md border border-dashed border-[var(--color-border)] px-2.5 py-1.5 text-left text-[12.5px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-                >
-                  Add a card…
-                </button>
-              ) : null}
-            </KanbanBoard>
-          )}
-        </KanbanProvider>
-      </div>
-
-      {openCardId && cardsById.get(openCardId) ? (
-        <CardSheet
-          card={cardsById.get(openCardId) as BoardCard}
-          canEdit={canEdit}
-          onClose={() => setOpenCardId(null)}
-        />
+      {openCard ? (
+        <CardPanel card={openCard} canEdit={canEdit} role={board.role} onClose={() => setOpenCardId(null)} />
       ) : null}
+
       {shareOpen ? <ShareDialog board={board} onClose={() => setShareOpen(false)} /> : null}
       {createInColumn ? (
         <CreateCardDialog
@@ -333,6 +462,154 @@ function BoardView({ boardId }: { boardId: string }) {
           }
         }}
       />
+      <NameDialog
+        open={Boolean(renameColumn)}
+        title="Rename column"
+        placeholder="Column name"
+        submitLabel="Rename"
+        initialValue={renameColumn?.name || ''}
+        onClose={() => setRenameColumn(null)}
+        onSubmit={async (name) => {
+          if (!renameColumn) return;
+          try {
+            await updateColumn({ columnId: renameColumn.columnId, name });
+          } catch (err: any) {
+            toast.error(err?.message || 'Could not rename column');
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+function ColumnMenu({
+  onRename,
+  onDelete,
+  cardCount,
+  columnName,
+}: {
+  onRename: () => void;
+  onDelete: () => void;
+  cardCount: number;
+  columnName: string;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+          title="Column actions"
+        >
+          <MoreHorizontal className="size-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuItem onSelect={onRename} className="gap-2 text-[12.5px]">
+          <Pencil className="size-3.5" /> Rename
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <DropdownMenuItem
+              onSelect={(event) => event.preventDefault()}
+              className="gap-2 text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+            >
+              <Trash2 className="size-3.5" /> Delete column
+            </DropdownMenuItem>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete “{columnName}”?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {cardCount
+                  ? `Its ${cardCount} card${cardCount === 1 ? '' : 's'} will be deleted with it.`
+                  : 'The column is empty.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// To-do list mode: same data, grouped by column as checkable rows.
+function ListView({
+  board,
+  canEdit,
+  onOpenCard,
+  onAddCard,
+}: {
+  board: BoardPayload;
+  canEdit: boolean;
+  onOpenCard: (cardId: string) => void;
+  onAddCard: (columnId: string) => void;
+}) {
+  const updateCard = useConvexMutation(boardsApi.updateCard);
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+      {board.columns.map((column) => {
+        const cards = board.cards.filter((card) => card.columnId === column.columnId);
+        return (
+          <section key={column.columnId} className="mb-5">
+            <div className="mb-1.5 flex items-center gap-2">
+              <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                {column.name}
+              </h2>
+              <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{cards.length}</span>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => onAddCard(column.columnId)}
+                  className="grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)]"
+                  title={`Add to ${column.name}`}
+                >
+                  <Plus className="size-3" />
+                </button>
+              ) : null}
+            </div>
+            <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+              {cards.map((card) => (
+                <li key={card.cardId} className="flex items-center gap-2.5 px-3 py-2">
+                  <Checkbox
+                    checked={Boolean(card.completedAt)}
+                    disabled={!canEdit}
+                    onCheckedChange={(checked) => {
+                      void updateCard({
+                        cardId: card.cardId,
+                        completedAt: checked ? Date.now() : null,
+                      }).catch((err: any) => toast.error(err?.message || 'Could not update'));
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onOpenCard(card.cardId)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span
+                      className={cn(
+                        'block truncate text-[13.5px]',
+                        card.completedAt && 'text-[var(--color-text-faint)] line-through',
+                      )}
+                    >
+                      {card.title}
+                    </span>
+                  </button>
+                  <CardMetaChips card={card} />
+                </li>
+              ))}
+              {!cards.length ? (
+                <li className="px-3 py-2 text-[12px] text-[var(--color-text-faint)]">Nothing here.</li>
+              ) : null}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -343,9 +620,53 @@ const PRIORITY_DOT: Record<string, string> = {
   low: 'bg-emerald-500',
 };
 
+function CardMetaChips({ card }: { card?: BoardCard }) {
+  if (!card) return null;
+  const overdue = card.dueAt && !card.completedAt && card.dueAt < Date.now();
+  return (
+    <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+      {card.priority ? (
+        <span
+          className={cn('size-1.5 rounded-full', PRIORITY_DOT[card.priority])}
+          title={`${card.priority} priority`}
+        />
+      ) : null}
+      {(card.labels || []).slice(0, 3).map((label) => (
+        <Badge key={label} variant="outline" className="px-1.5 py-0 text-[9.5px]">
+          {label}
+        </Badge>
+      ))}
+      {card.dueAt ? (
+        <span
+          className={cn(
+            'inline-flex items-center gap-1 text-[10.5px]',
+            overdue ? 'font-medium text-[var(--color-danger)]' : 'text-[var(--color-text-faint)]',
+          )}
+        >
+          <CalendarClock className="size-3" />
+          {new Date(card.dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+        </span>
+      ) : null}
+      {card.source?.threadId ? (
+        <Mail className="size-3 text-[var(--color-text-faint)]" aria-label="From an email" />
+      ) : null}
+      {card.attachments?.length ? (
+        <Paperclip className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />
+      ) : null}
+      {card.comments?.length ? (
+        <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">
+          💬 {card.comments.length}
+        </span>
+      ) : null}
+      {card.weight !== undefined ? (
+        <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">w{card.weight}</span>
+      ) : null}
+    </span>
+  );
+}
+
 function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: string }) {
   const done = Boolean(card?.completedAt);
-  const overdue = card?.dueAt && !done && card.dueAt < Date.now();
   return (
     <div className="space-y-1.5">
       <p
@@ -356,60 +677,35 @@ function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: st
       >
         {card?.title || fallbackTitle}
       </p>
-      {card?.labels?.length ||
-      card?.dueAt ||
-      card?.priority ||
-      card?.source?.threadId ||
-      card?.attachments?.length ||
-      card?.comments?.length ||
-      card?.weight !== undefined ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {card?.priority ? (
-            <span
-              className={cn('size-1.5 rounded-full', PRIORITY_DOT[card.priority])}
-              title={`${card.priority} priority`}
-            />
-          ) : null}
-          {(card?.labels || []).slice(0, 3).map((label) => (
-            <Badge key={label} variant="outline" className="px-1.5 py-0 text-[9.5px]">
-              {label}
-            </Badge>
-          ))}
-          {card?.dueAt ? (
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 text-[10.5px]',
-                overdue ? 'font-medium text-[var(--color-danger)]' : 'text-[var(--color-text-faint)]',
-              )}
-            >
-              <CalendarClock className="size-3" />
-              {new Date(card.dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-            </span>
-          ) : null}
-          {card?.source?.threadId ? (
-            <Mail className="size-3 text-[var(--color-text-faint)]" aria-label="Created from an email" />
-          ) : null}
-          {card?.attachments?.length ? (
-            <Link2 className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />
-          ) : null}
-          {card?.comments?.length ? (
-            <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">
-              💬 {card.comments.length}
-            </span>
-          ) : null}
-          {card?.weight !== undefined ? (
-            <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">w{card.weight}</span>
-          ) : null}
-        </div>
+      {card?.description ? (
+        <p className="line-clamp-2 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
+          {card.description}
+        </p>
       ) : null}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <CardMetaChips card={card} />
+      </div>
     </div>
   );
 }
 
-function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boolean; onClose: () => void }) {
+// Full-height detail panel, in the same spirit as the email reader pane:
+// the card opens beside the board, not over it.
+function CardPanel({
+  card,
+  canEdit,
+  role,
+  onClose,
+}: {
+  card: BoardCard;
+  canEdit: boolean;
+  role: 'owner' | 'member' | 'viewer';
+  onClose: () => void;
+}) {
   const updateCard = useConvexMutation(boardsApi.updateCard);
   const deleteCard = useConvexMutation(boardsApi.deleteCard);
   const addComment = useConvexMutation(boardsApi.addComment);
+  const generateUploadUrl = useConvexMutation(boardsApi.generateAttachmentUploadUrl);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -420,10 +716,12 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
   const [priority, setPriority] = useState<string>(card.priority || '');
   const [weight, setWeight] = useState(card.weight !== undefined ? String(card.weight) : '');
   const [due, setDue] = useState(card.dueAt ? toLocalInputValue(card.dueAt) : '');
-  const [attachments, setAttachments] = useState(card.attachments || []);
   const [attachName, setAttachName] = useState('');
   const [attachUrl, setAttachUrl] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const done = Boolean(card.completedAt);
 
   const save = async () => {
@@ -439,89 +737,216 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
         priority: (priority || undefined) as any,
         weight: weight === '' ? null : Number(weight),
         dueAt: due ? new Date(due).getTime() : null,
-        attachments,
       });
-      onClose();
+      toast.success('Saved');
     } catch (err: any) {
       toast.error(err?.message || 'Could not save card');
     }
   };
 
+  const addAttachment = async (attachment: CardAttachment) => {
+    try {
+      await updateCard({
+        cardId: card.cardId,
+        attachments: [
+          ...(card.attachments || []).map(({ name, url, storageId }) => ({ name, url, storageId })),
+          attachment,
+        ],
+      });
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not attach');
+    }
+  };
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const uploadUrl = await generateUploadUrl({ cardId: card.cardId });
+      const response = await fetch(uploadUrl as string, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+      const { storageId } = (await response.json()) as { storageId: string };
+      await addAttachment({ name: file.name, storageId });
+      toast.success(`Uploaded ${file.name}`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogTitle className="sr-only">Card details</DialogTitle>
-        <div className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
-          <Input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            disabled={!canEdit}
-            className="border-none px-0 font-display text-[17px] font-semibold shadow-none focus-visible:ring-0"
-          />
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            disabled={!canEdit}
-            placeholder="Notes (markdown)"
-            className="min-h-28 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-2 text-[13px] leading-relaxed"
-          />
-          <div className="grid grid-cols-3 gap-2">
-            <label htmlFor="card-due" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
-              Due
-              <Input
-                id="card-due"
-                type="datetime-local"
-                value={due}
-                onChange={(event) => setDue(event.target.value)}
-                disabled={!canEdit}
-                className="h-8 text-[12.5px]"
-              />
-            </label>
-            <label htmlFor="card-priority" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
-              Priority
-              <select
-                id="card-priority"
-                value={priority}
-                onChange={(event) => setPriority(event.target.value)}
-                disabled={!canEdit}
-                className="h-8 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2 text-[12.5px]"
+    <aside className="flex w-[440px] shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-2.5">
+        <span className="text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">Card</span>
+        {canEdit ? (
+          <Button type="button" size="sm" className="ml-auto h-7 px-2.5 text-[12px]" onClick={save}>
+            <Check className="mr-1 size-3" /> Save
+          </Button>
+        ) : (
+          <span className="ml-auto" />
+        )}
+        {canEdit ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-[12px]"
+            onClick={async () => {
+              try {
+                await updateCard({ cardId: card.cardId, completedAt: done ? null : Date.now() });
+              } catch (err: any) {
+                toast.error(err?.message || 'Could not update card');
+              }
+            }}
+          >
+            {done ? 'Reopen' : 'Mark done'}
+          </Button>
+        ) : null}
+        {canEdit ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                title="Delete card"
               >
-                <option value="">None</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </label>
-            <label htmlFor="card-weight" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
-              Weight
-              <Input
-                id="card-weight"
-                type="number"
-                min={0}
-                value={weight}
-                onChange={(event) => setWeight(event.target.value)}
-                disabled={!canEdit}
-                className="h-8 text-[12.5px]"
-              />
-            </label>
-          </div>
-          <label htmlFor="card-labels" className="block space-y-1 text-[11px] text-[var(--color-text-muted)]">
-            Labels (comma-separated)
+                <Trash2 className="size-3.5" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this card?</AlertDialogTitle>
+                <AlertDialogDescription>“{card.title}” will be removed.</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={async () => {
+                    try {
+                      await deleteCard({ cardId: card.cardId });
+                      onClose();
+                    } catch (err: any) {
+                      toast.error(err?.message || 'Could not delete card');
+                    }
+                  }}
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
+        <button
+          type="button"
+          onClick={onClose}
+          className="grid size-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+          title="Close"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
+        <Input
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          disabled={!canEdit}
+          className="border-none px-0 font-display text-[17px] font-semibold shadow-none focus-visible:ring-0"
+        />
+        <textarea
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          disabled={!canEdit}
+          placeholder="Notes (markdown)"
+          className="min-h-28 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-2 text-[13px] leading-relaxed"
+        />
+        <div className="grid grid-cols-3 gap-2">
+          <label htmlFor="card-due" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
+            Due
             <Input
-              id="card-labels"
-              value={labels}
-              onChange={(event) => setLabels(event.target.value)}
+              id="card-due"
+              type="datetime-local"
+              value={due}
+              onChange={(event) => setDue(event.target.value)}
+              disabled={!canEdit}
+              className="h-8 text-[12px]"
+            />
+          </label>
+          <label htmlFor="card-priority" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
+            Priority
+            <select
+              id="card-priority"
+              value={priority}
+              onChange={(event) => setPriority(event.target.value)}
+              disabled={!canEdit}
+              className="h-8 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2 text-[12.5px]"
+            >
+              <option value="">None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label htmlFor="card-weight" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
+            Weight
+            <Input
+              id="card-weight"
+              type="number"
+              min={0}
+              value={weight}
+              onChange={(event) => setWeight(event.target.value)}
               disabled={!canEdit}
               className="h-8 text-[12.5px]"
             />
           </label>
-          <div className="space-y-1.5">
-            <p className="text-[11px] text-[var(--color-text-muted)]">Attachments</p>
-            {attachments.length ? (
-              <ul className="space-y-1">
-                {attachments.map((attachment, index) => (
-                  <li key={attachment.url} className="flex items-center gap-2 text-[12.5px]">
+        </div>
+        <label htmlFor="card-labels" className="block space-y-1 text-[11px] text-[var(--color-text-muted)]">
+          Labels (comma-separated)
+          <Input
+            id="card-labels"
+            value={labels}
+            onChange={(event) => setLabels(event.target.value)}
+            disabled={!canEdit}
+            className="h-8 text-[12.5px]"
+          />
+        </label>
+
+        {card.source?.threadId ? (
+          <button
+            type="button"
+            onClick={() => {
+              if (card.source?.accountId) setThreadAccount(card.source.accountId);
+              setSelectedThread(card.source?.threadId || null);
+              setPrimaryView('mail');
+              onClose();
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            <Mail className="size-3" /> From this email — open thread
+          </button>
+        ) : null}
+
+        <div className="space-y-1.5">
+          <p className="text-[11px] text-[var(--color-text-muted)]">Attachments</p>
+          {card.attachments?.length ? (
+            <ul className="space-y-1">
+              {card.attachments.map((attachment, index) => (
+                <li
+                  key={attachment.storageId || attachment.url || index}
+                  className="flex items-center gap-2 text-[12.5px]"
+                >
+                  {attachment.storageId ? (
+                    <Paperclip className="size-3 shrink-0 text-[var(--color-text-faint)]" />
+                  ) : (
                     <Link2 className="size-3 shrink-0 text-[var(--color-text-faint)]" />
+                  )}
+                  {attachment.url ? (
                     <a
                       href={attachment.url}
                       target="_blank"
@@ -530,185 +955,162 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
                     >
                       {attachment.name || attachment.url}
                     </a>
-                    {canEdit ? (
-                      <button
-                        type="button"
-                        onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
-                        className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
-                        title="Remove attachment"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-[11.5px] text-[var(--color-text-faint)]">No links or files attached.</p>
-            )}
-            {canEdit ? (
-              <div className="flex items-center gap-1.5">
-                <Input
-                  value={attachName}
-                  onChange={(event) => setAttachName(event.target.value)}
-                  placeholder="Name"
-                  className="h-7 w-28 text-[12px]"
-                />
-                <Input
-                  value={attachUrl}
-                  onChange={(event) => setAttachUrl(event.target.value)}
-                  placeholder="https://…"
-                  className="h-7 flex-1 text-[12px]"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-[11.5px]"
-                  disabled={!/^https?:\/\//.test(attachUrl)}
-                  onClick={() => {
-                    setAttachments([
-                      ...attachments,
-                      { name: attachName.trim() || attachUrl, url: attachUrl },
-                    ]);
-                    setAttachName('');
-                    setAttachUrl('');
-                  }}
-                >
-                  Attach
-                </Button>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="space-y-1.5">
-            <p className="text-[11px] text-[var(--color-text-muted)]">
-              Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
-            </p>
-            {(card.comments || []).map((comment) => (
-              <div
-                key={comment.id}
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5"
-              >
-                <p className="text-[12.5px] leading-relaxed">{comment.body}</p>
-                <p className="mt-0.5 text-[10.5px] text-[var(--color-text-faint)]">
-                  {comment.authorEmail || 'someone'} ·{' '}
-                  {new Date(comment.createdAt).toLocaleString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })}
-                </p>
-              </div>
-            ))}
-            {canEdit ? (
-              <form
-                className="flex items-center gap-1.5"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  const body = commentDraft.trim();
-                  if (!body) return;
-                  try {
-                    await addComment({ cardId: card.cardId, body });
-                    setCommentDraft('');
-                  } catch (err: any) {
-                    toast.error(err?.message || 'Could not comment');
-                  }
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                  )}
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void updateCard({
+                          cardId: card.cardId,
+                          attachments: (card.attachments || [])
+                            .filter((_, i) => i !== index)
+                            .map(({ name, url, storageId }) => ({ name, url, storageId })),
+                        }).catch((err: any) => toast.error(err?.message || 'Could not remove'));
+                      }}
+                      className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
+                      title="Remove attachment"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[11.5px] text-[var(--color-text-faint)]">Nothing attached.</p>
+          )}
+          {canEdit ? (
+            <div className="flex items-center gap-1.5">
+              <Input
+                value={attachName}
+                onChange={(event) => setAttachName(event.target.value)}
+                placeholder="Name"
+                className="h-7 w-24 text-[12px]"
+              />
+              <Input
+                value={attachUrl}
+                onChange={(event) => setAttachUrl(event.target.value)}
+                placeholder="https://…"
+                className="h-7 flex-1 text-[12px]"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-[11.5px]"
+                disabled={!/^https?:\/\//.test(attachUrl)}
+                onClick={() => {
+                  void addAttachment({ name: attachName.trim() || attachUrl, url: attachUrl });
+                  setAttachName('');
+                  setAttachUrl('');
                 }}
               >
-                <Input
-                  value={commentDraft}
-                  onChange={(event) => setCommentDraft(event.target.value)}
-                  placeholder="Add a comment…"
-                  className="h-7 flex-1 text-[12px]"
-                />
-                <Button type="submit" size="sm" variant="outline" className="h-7 px-2 text-[11.5px]">
-                  Post
-                </Button>
-              </form>
-            ) : null}
-          </div>
-
-          {card.source?.threadId ? (
-            <button
-              type="button"
-              onClick={() => {
-                if (card.source?.accountId) setThreadAccount(card.source.accountId);
-                setSelectedThread(card.source?.threadId || null);
-                setPrimaryView('mail');
-                onClose();
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-            >
-              <Mail className="size-3" /> From this email — open thread
-            </button>
-          ) : null}
-          {canEdit ? (
-            <div className="flex items-center gap-2 pt-1">
-              <Button type="button" size="sm" onClick={save} className="h-8 px-3 text-[12.5px]">
-                Save
+                Link
               </Button>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-8 px-3 text-[12.5px]"
-                onClick={async () => {
-                  try {
-                    await updateCard({
-                      cardId: card.cardId,
-                      completedAt: done ? null : Date.now(),
-                    });
-                    onClose();
-                  } catch (err: any) {
-                    toast.error(err?.message || 'Could not update card');
-                  }
-                }}
+                className="h-7 gap-1 px-2 text-[11.5px]"
+                disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
               >
-                {done ? 'Reopen' : 'Mark done'}
+                <Upload className="size-3" />
+                {uploading ? 'Uploading…' : 'File'}
               </Button>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    className="ml-auto text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                    title="Delete card"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this card?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      “{card.title}” will be removed from the board.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={async () => {
-                        try {
-                          await deleteCard({ cardId: card.cardId });
-                          onClose();
-                        } catch (err: any) {
-                          toast.error(err?.message || 'Could not delete card');
-                        }
-                      }}
-                    >
-                      Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadFile(file);
+                  event.target.value = '';
+                }}
+              />
             </div>
           ) : null}
         </div>
-      </DialogContent>
-    </Dialog>
+
+        <div className="space-y-1.5">
+          <p className="text-[11px] text-[var(--color-text-muted)]">
+            Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
+          </p>
+          {(card.comments || []).map((comment) => (
+            <div
+              key={comment.id}
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5"
+            >
+              <p className="text-[12.5px] leading-relaxed">{comment.body}</p>
+              <p className="mt-0.5 text-[10.5px] text-[var(--color-text-faint)]">
+                {comment.authorEmail || 'someone'} ·{' '}
+                {new Date(comment.createdAt).toLocaleString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </p>
+            </div>
+          ))}
+          {/* Everyone with access can comment — viewers included. */}
+          <form
+            className="flex items-center gap-1.5"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const body = commentDraft.trim();
+              if (!body) return;
+              try {
+                await addComment({ cardId: card.cardId, body });
+                setCommentDraft('');
+              } catch (err: any) {
+                toast.error(err?.message || 'Could not comment');
+              }
+            }}
+          >
+            <Input
+              value={commentDraft}
+              onChange={(event) => setCommentDraft(event.target.value)}
+              placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
+              className="h-7 flex-1 text-[12px]"
+            />
+            <Button type="submit" size="sm" variant="outline" className="h-7 px-2 text-[11.5px]">
+              Post
+            </Button>
+          </form>
+        </div>
+
+        <div className="space-y-1.5 pb-3">
+          <button
+            type="button"
+            onClick={() => setShowActivity(!showActivity)}
+            className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            <History className="size-3" />
+            Activity{card.activity?.length ? ` · ${card.activity.length}` : ''}
+          </button>
+          {showActivity ? (
+            <ul className="space-y-1">
+              {[...(card.activity || [])].reverse().map((entry) => (
+                <li key={entry.id} className="text-[11px] text-[var(--color-text-faint)]">
+                  <span className="text-[var(--color-text-muted)]">{entry.actorEmail || 'someone'}</span>{' '}
+                  {entry.action}
+                  {entry.detail ? ` — ${entry.detail}` : ''} ·{' '}
+                  {new Date(entry.createdAt).toLocaleString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -972,6 +1374,7 @@ function NameDialog({
   title,
   placeholder,
   submitLabel,
+  initialValue = '',
   onClose,
   onSubmit,
 }: {
@@ -979,13 +1382,14 @@ function NameDialog({
   title: string;
   placeholder: string;
   submitLabel: string;
+  initialValue?: string;
   onClose: () => void;
   onSubmit: (value: string) => void;
 }) {
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(initialValue);
   useEffect(() => {
-    if (open) setValue('');
-  }, [open]);
+    if (open) setValue(initialValue);
+  }, [open, initialValue]);
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="max-w-sm">
