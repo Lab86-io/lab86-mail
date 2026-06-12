@@ -25,7 +25,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { sanitizeEmailHtml } from '@/lib/sanitize';
+import { emailDeclaresOwnBackground, sanitizeEmailHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
@@ -781,9 +781,13 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
     if (html) setSafe(sanitizeEmailHtml(html));
   }, [html]);
   if (safe) {
+    // Emails that paint their own background keep their original colors on a
+    // light paper island; backgroundless ones adapt to dark mode (see the
+    // .email-adaptive / paper-island rules in globals.css).
+    const adaptive = !emailDeclaresOwnBackground(safe);
     return (
       <div
-        className="email-body reflow-text break-words text-[13.5px]"
+        className={cn('email-body reflow-text break-words text-[13.5px]', adaptive && 'email-adaptive')}
         // biome-ignore lint/security/noDangerouslySetInnerHtml: provider HTML is sanitized before rendering.
         dangerouslySetInnerHTML={{ __html: safe }}
       />
