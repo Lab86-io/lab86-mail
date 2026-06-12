@@ -65,6 +65,12 @@ export interface ClientState {
   // accent family (see globals.css). null = the default forest green.
   accentHue: number | null;
   accentChroma: number | null;
+  // 0..1 how much accent hue bleeds into the background surfaces.
+  surfaceTint: number;
+  // 0..~0.3 film-grain overlay opacity.
+  grainOpacity: number;
+  // UI font: null/sans = Geist, 'serif' = Fraunces, 'news' = Averia Serif Libre.
+  appFont: 'sans' | 'serif' | 'news' | null;
 
   setAccount: (account: string) => void;
   setAccountFilter: (accountIds: string[]) => void;
@@ -103,6 +109,9 @@ export interface ClientState {
   setLastChatId: (id: string | null) => void;
   setPendingReplyBody: (body: string | null) => void;
   setAccent: (hue: number | null, chroma: number | null) => void;
+  setSurfaceTint: (tint: number) => void;
+  setGrainOpacity: (opacity: number) => void;
+  setAppFont: (font: 'sans' | 'serif' | 'news' | null) => void;
 }
 
 const initialCompose: ComposeState = {
@@ -146,6 +155,9 @@ export const useClientStore = create<ClientState>()(
       pendingReplyBody: null,
       accentHue: null,
       accentChroma: null,
+      surfaceTint: 0,
+      grainOpacity: 0,
+      appFont: null,
 
       setAccount: (account) => set({ account }),
       setAccountFilter: (accountIds) => set({ accountFilter: accountIds }),
@@ -220,6 +232,9 @@ export const useClientStore = create<ClientState>()(
       setLastChatId: (lastChatId) => set({ lastChatId }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
       setAccent: (accentHue, accentChroma) => set({ accentHue, accentChroma }),
+      setSurfaceTint: (surfaceTint) => set({ surfaceTint }),
+      setGrainOpacity: (grainOpacity) => set({ grainOpacity }),
+      setAppFont: (appFont) => set({ appFont }),
     }),
     {
       name: PERSIST_KEY,
@@ -248,6 +263,9 @@ export const useClientStore = create<ClientState>()(
         lastChatId: s.lastChatId,
         accentHue: s.accentHue,
         accentChroma: s.accentChroma,
+        surfaceTint: s.surfaceTint,
+        grainOpacity: s.grainOpacity,
+        appFont: s.appFont,
       }),
     },
   ),

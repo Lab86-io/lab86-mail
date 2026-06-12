@@ -152,6 +152,32 @@
   :root {
     --accent-hue: 156;
     --accent-chroma: 0.09;
+    /* Background tint (0..1): how much of the accent hue bleeds into the
+       neutral surfaces. 0 reproduces the original neutral palette exactly. */
+    --surface-tint: 0;
+    /* Film grain overlay opacity (0..~0.3), drawn by body::after. */
+    --grain-opacity: 0;
+
+    /* Surfaces derive from the same hue so a background tint follows the
+       accent (Arc's background/backgroundExtra pattern). */
+    --color-bg: oklch(
+      calc(0.977 - var(--surface-tint) * 0.012) calc(0.005 + var(--surface-tint) * 0.022) var(--accent-hue)
+    );
+    --color-bg-elevated: oklch(
+      calc(0.995 - var(--surface-tint) * 0.008) calc(var(--surface-tint) * 0.014) var(--accent-hue)
+    );
+    --color-bg-subtle: oklch(
+      calc(0.965 - var(--surface-tint) * 0.012) calc(0.006 + var(--surface-tint) * 0.024) var(--accent-hue)
+    );
+    --color-bg-muted: oklch(
+      calc(0.93 - var(--surface-tint) * 0.015) calc(0.008 + var(--surface-tint) * 0.026) var(--accent-hue)
+    );
+    --color-border: oklch(
+      calc(0.905 - var(--surface-tint) * 0.015) calc(0.01 + var(--surface-tint) * 0.026) var(--accent-hue)
+    );
+    --color-border-strong: oklch(
+      calc(0.85 - var(--surface-tint) * 0.02) calc(0.012 + var(--surface-tint) * 0.028) var(--accent-hue)
+    );
 
     --color-accent: oklch(0.45 var(--accent-chroma) var(--accent-hue));
     --color-accent-hover: oklch(0.39 var(--accent-chroma) var(--accent-hue));
@@ -209,15 +235,25 @@
     --input: var(--color-bg-elevated);
     --ring: var(--color-accent);
 
-    /* Pure-black base; neutral grey on raised elements (cards, bubbles, inputs)
-       — no brown backgrounds. elevated/muted step lighter for depth. Brown and
-       green live only as accents. */
-    --color-bg: #000000;
-    --color-bg-elevated: #1c1c1c;
-    --color-bg-subtle: #141414;
-    --color-bg-muted: #282828;
-    --color-border: #242424;
-    --color-border-strong: #383838;
+    /* Pure-black base at tint 0 (oklch L=0); raising --surface-tint lifts and
+       tints every surface toward the accent hue, Arc-style. The lightness
+       offsets reproduce the original neutral greys exactly at tint 0. */
+    --color-bg: oklch(calc(var(--surface-tint) * 0.16) calc(var(--surface-tint) * 0.04) var(--accent-hue));
+    --color-bg-elevated: oklch(
+      calc(0.22 + var(--surface-tint) * 0.025) calc(var(--surface-tint) * 0.032) var(--accent-hue)
+    );
+    --color-bg-subtle: oklch(
+      calc(0.178 + var(--surface-tint) * 0.025) calc(var(--surface-tint) * 0.034) var(--accent-hue)
+    );
+    --color-bg-muted: oklch(
+      calc(0.27 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.03) var(--accent-hue)
+    );
+    --color-border: oklch(
+      calc(0.25 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.03) var(--accent-hue)
+    );
+    --color-border-strong: oklch(
+      calc(0.335 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.028) var(--accent-hue)
+    );
     --color-text: #ededed;
     --color-text-muted: #9a9a9a;
     --color-text-faint: #5e5e5e;
@@ -266,6 +302,26 @@
     height: 100%;
     overscroll-behavior-y: none;
     scroll-behavior: smooth;
+  }
+
+  /* UI font choice from the theme panel: --app-font is set inline on <html>
+     (Fraunces serif or Averia Serif Libre "news"); unset = Geist sans. */
+  body {
+    font-family: var(--app-font, var(--font-sans));
+  }
+
+  /* Film grain: a fixed fractal-noise wash over the whole app, opacity driven
+     by the theme panel. Zero-cost at opacity 0 (still composited, no paints). */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 2147483646;
+    pointer-events: none;
+    opacity: var(--grain-opacity, 0);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 160px 160px;
+    mix-blend-mode: overlay;
   }
 
   /* GPU acceleration for scrollable areas */
@@ -502,28 +558,23 @@
     color: var(--color-text) !important;
   }
 
-  .dark .email-body [style*="color:#fff" i],
-  .dark .email-body [style*="color: #fff" i],
-  .dark .email-body [style*="color:#ffffff" i],
-  .dark .email-body [style*="color: #ffffff" i],
-  .dark .email-body [style*="color:white" i],
-  .dark .email-body [style*="color: white" i],
-  .dark .email-body [style*="color:rgb(255,255,255)" i],
-  .dark .email-body [style*="color: rgb(255,255,255)" i],
-  .dark .email-body [style*="color:rgb(255, 255, 255)" i],
-  .dark .email-body [style*="color: rgb(255, 255, 255)" i] {
-    color: var(--color-text) !important;
+  /* HTML mail is designed against its own (almost always light) background.
+     In dark mode, render it on a light "paper island" with its ORIGINAL
+     colors instead of forcing dark-mode text over backgrounds we don't
+     control — the old blanket color override produced white-on-white the
+     moment an email carried its own white card. Emails that set white text
+     also set their own dark background inline, which is preserved. */
+  .email-body {
+    color-scheme: light;
   }
-
-  /* Dark mode: arbitrary email HTML ships dark-on-light inline colors that go
-     near-invisible on our dark surface. Force readable text on the common text
-     elements (links are excluded so they keep the accent color, which is light
-     in dark mode). Legibility wins over an email's own faint greys. */
-  .dark .email-body,
-  .dark
-    .email-body
-    :where(p, div, span, td, th, li, h1, h2, h3, h4, h5, h6, strong, em, b, blockquote, label):not(a *) {
-    color: var(--color-text) !important;
+  .dark .email-body {
+    background: #ffffff;
+    color: #1f2937;
+    border-radius: var(--radius);
+    padding: 12px 16px;
+  }
+  .dark .email-body a {
+    color: #1d4ed8;
   }
 }
 
@@ -634,29 +685,15 @@
   }
 }
 
-:root {
-  /* shadcn sidebar tokens mapped onto the lab86 palette. */
-  --color-hover-soft: #edf4f0;
-  --color-selected: #0f5132;
-  --color-selected-soft: #e5f2eb;
-  --rail-bg: #f9fbfe;
-
-  --sidebar: #f9fbfe;
-  --sidebar-foreground: var(--color-text);
-  --sidebar-primary: var(--color-accent);
-  --sidebar-primary-foreground: var(--color-accent-foreground);
-  --sidebar-accent: var(--color-bg-muted);
-  --sidebar-accent-foreground: var(--color-text);
-  --sidebar-border: var(--color-border);
-  --sidebar-ring: var(--color-accent);
-}
-
+/* shadcn sidebar tokens mapped onto the lab86 palette. NOTE: this block is
+   unlayered, so it beats every @layer rule — hover/selected/accent values must
+   NEVER be hardcoded here or the accent picker silently stops applying to
+   selection (that exact bug shipped once). Everything aliases the derived
+   palette. */
+:root,
 :root.dark {
-  --color-hover-soft: #1a1a1a;
-  --color-selected: #73a984;
-  --color-selected-soft: #15291f;
-  --rail-bg: #000000;
-  --sidebar: #000000;
+  --rail-bg: var(--color-bg);
+  --sidebar: var(--color-bg);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
   --sidebar-primary-foreground: var(--color-accent-foreground);

@@ -776,7 +776,7 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
   if (safe) {
     return (
       <div
-        className="email-body reflow-text break-words text-[13.5px] text-[var(--color-text)]"
+        className="email-body reflow-text break-words text-[13.5px]"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: provider HTML is sanitized before rendering.
         dangerouslySetInnerHTML={{ __html: safe }}
       />
