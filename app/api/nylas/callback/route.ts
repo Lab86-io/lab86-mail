@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { maybeKickCalendarSync } from '@/lib/calendar/sync';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl, nylasRedirectUri } from '@/lib/hosted/env';
 import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
@@ -46,6 +47,7 @@ export async function GET(req: NextRequest) {
     // re-issues the same kick if this one is interrupted.
     if (upserted?.accountId) {
       maybeKickCorpusBackfill({ userId: stored.userId, accountId: upserted.accountId });
+      maybeKickCalendarSync({ userId: stored.userId, accountId: upserted.accountId });
     }
     return redirectWithStatus(stored.redirectTo || '/', 'nylas_connected', token.email);
   } catch (err: any) {

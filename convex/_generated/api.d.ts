@@ -10,6 +10,7 @@
 
 import type * as accounts from "../accounts.js";
 import type * as ai from "../ai.js";
+import type * as calendarData from "../calendarData.js";
 import type * as crons from "../crons.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
@@ -30,6 +31,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   ai: typeof ai;
+  calendarData: typeof calendarData;
   crons: typeof crons;
   lib: typeof lib;
   liveMail: typeof liveMail;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { getAiRequestContext } from './context';
 
 // Act-then-undo framework (docs/productivity-platform-spec.md): every mutating
 // productivity tool records the operation it applied together with a
@@ -17,7 +18,8 @@ export interface InverseOp {
 
 export interface RecordOperationInput {
   userId: string;
-  agent: 'user' | 'ai';
+  // Defaults from the ambient AI request context when omitted.
+  agent?: 'user' | 'ai';
   tool: string;
   surface: OperationSurface;
   summary: string;
@@ -49,7 +51,13 @@ export async function recordOperation(input: RecordOperationInput): Promise<stri
     // Catch typos at write time, not when the user reaches for undo.
     throw new Error(`No undo executor registered for inverse kind "${input.inverse.kind}".`);
   }
-  return convexMutation<string>(api.operations.record, { ...input });
+  const ctx = getAiRequestContext();
+  return convexMutation<string>(api.operations.record, {
+    ...input,
+    agent: input.agent ?? (ctx.agent === 'user' ? 'user' : 'ai'),
+    batchId: input.batchId ?? ctx.operationBatchId,
+    chatId: input.chatId ?? ctx.chatId,
+  });
 }
 
 export async function listRecentOperations(userId: string, opts?: { batchId?: string; limit?: number }) {
