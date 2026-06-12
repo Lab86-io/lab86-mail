@@ -11,6 +11,7 @@ struct ReplyComposerView: View {
     @State private var sending = false
     @State private var sentPendingId: String?
     @State private var undoCountdown = 0
+    @AppStorage("compose.undoSeconds") private var undoSecondsSetting = 5
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -69,7 +70,7 @@ struct ReplyComposerView: View {
     private func send() {
         guard let lastMessage else { return }
         sending = true
-        let undoSeconds = 5
+        let undoSeconds = undoSecondsSetting
         Task {
             defer { sending = false }
             do {

@@ -7,6 +7,7 @@ import Observation
 enum MailScope: Hashable {
     case inbox
     case category(SmartCategory)
+    case customLabel(String)  // categoryCounts key, e.g. "custom:smart-label-dev-ops"
     case quickSearch(QuickSearch)
     case search(String)
 
@@ -14,6 +15,7 @@ enum MailScope: Hashable {
         switch self {
         case .inbox: "Inbox"
         case let .category(category): category.title
+        case let .customLabel(key): MailStore.customLabelTitle(for: key)
         case let .quickSearch(quick): quick.title
         case .search: "Search"
         }
@@ -27,6 +29,15 @@ final class MailStore {
     let api: MailAPI
 
     var accounts: [MailAccount] = []
+    // nil = unified inbox across every connected account.
+    var accountFilter: [String]? {
+        didSet {
+            if accountFilter != oldValue {
+                resubscribeCounts()
+                resubscribeThreads()
+            }
+        }
+    }
     var scope: MailScope = .inbox {
         didSet { if scope != oldValue { resubscribeThreads() } }
     }
@@ -34,6 +45,8 @@ final class MailStore {
     var threadsLoading = false
     var categoryCounts: [String: Int] = [:]
     var attention: Set<String> = []
+    // Custom smart labels discovered from live categoryCounts keys.
+    var customLabelKeys: [String] = []
 
     var selectedThreadKey: String? {
         didSet { if selectedThreadKey != oldValue { resubscribeDetail() } }
@@ -59,20 +72,25 @@ final class MailStore {
         threads.first { $0.id == selectedThreadKey }
     }
 
+    static func customLabelTitle(for key: String) -> String {
+        key.replacingOccurrences(of: "custom:", with: "")
+            .replacingOccurrences(of: "smart-label-", with: "")
+            .split(separator: "-")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
     func start() {
-        accountsCancellable = convex.accounts()
-            .receive(on: DispatchQueue.main)
-            .sink { _ in } receiveValue: { [weak self] result in
-                self?.accounts = result.accounts
-            }
-        countsCancellable = convex.categoryCounts(accountIds: nil)
-            .receive(on: DispatchQueue.main)
-            .sink { _ in } receiveValue: { [weak self] result in
-                guard let self else { return }
-                categoryCounts = result.counts.mapValues { Int($0.unread ?? 0) }
-                attention = Set(result.counts.filter { $0.value.attention == true }.keys)
-            }
-        resubscribeThreads()
+        // Complete the Clerk→Convex token exchange BEFORE subscribing.
+        // Subscriptions opened mid-handshake execute unauthenticated, the
+        // server throws ("Server Error"), and the dead publishers never
+        // recover — which is how the rail ended up with no accounts/badges.
+        Task { @MainActor in
+            _ = await convex.client.loginFromCache()
+            subscribeAccounts()
+            resubscribeCounts()
+            resubscribeThreads()
+        }
     }
 
     func stop() {
@@ -83,12 +101,37 @@ final class MailStore {
         threads = []
         accounts = []
         threadDetail = nil
+        categoryCounts = [:]
+        customLabelKeys = []
     }
 
     func loadMore() {
         guard pageLimit < 200 else { return }
         pageLimit = min(200, pageLimit + 60)
         resubscribeThreads()
+    }
+
+    private func subscribeAccounts() {
+        accountsCancellable = convex.accounts()
+            .retry(2)
+            .receive(on: DispatchQueue.main)
+            .sink { _ in } receiveValue: { [weak self] result in
+                self?.accounts = result.accounts
+            }
+    }
+
+    private func resubscribeCounts() {
+        countsCancellable = convex.categoryCounts(accountIds: accountFilter)
+            .retry(2)
+            .receive(on: DispatchQueue.main)
+            .sink { _ in } receiveValue: { [weak self] result in
+                guard let self else { return }
+                categoryCounts = result.counts.mapValues { Int($0.unread ?? 0) }
+                attention = Set(result.counts.filter { $0.value.attention == true }.keys)
+                customLabelKeys = result.counts.keys
+                    .filter { $0.hasPrefix("custom:") }
+                    .sorted()
+            }
     }
 
     private func resubscribeThreads() {
@@ -100,13 +143,16 @@ final class MailStore {
             break
         case let .category(c):
             category = c.rawValue
+        case let .customLabel(key):
+            category = key
         case let .quickSearch(quick):
             query = quick.query
         case let .search(text):
             query = text
         }
         threadsCancellable = convex
-            .threads(accountIds: nil, category: category, query: query, limit: pageLimit)
+            .threads(accountIds: accountFilter, category: category, query: query, limit: pageLimit)
+            .retry(2)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] completion in
                 self?.threadsLoading = false
@@ -127,6 +173,7 @@ final class MailStore {
         }
         detailLoading = true
         detailCancellable = convex.thread(account: thread.account, threadId: thread.threadId)
+            .retry(2)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] completion in
                 self?.detailLoading = false

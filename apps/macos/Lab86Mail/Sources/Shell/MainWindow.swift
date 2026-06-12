@@ -9,16 +9,28 @@ struct MainWindow: View {
         NavigationSplitView {
             RailView()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
-        } content: {
-            ThreadListView()
-                .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 560)
-                .searchable(text: $searchText, placement: .toolbar, prompt: "Search mail")
-                .onSubmit(of: .search) {
-                    let text = searchText.trimmingCharacters(in: .whitespaces)
-                    store.scope = text.isEmpty ? .inbox : .search(text)
-                }
         } detail: {
-            ThreadReaderView()
+            // Web-app behavior: the inbox owns the full width until a thread
+            // is opened; the reader then slides in beside it.
+            HStack(spacing: 0) {
+                ThreadListView()
+                    .frame(
+                        minWidth: store.selectedThreadKey == nil ? nil : 340,
+                        maxWidth: store.selectedThreadKey == nil ? .infinity : 420
+                    )
+                if store.selectedThreadKey != nil {
+                    Divider()
+                    ThreadReaderView()
+                        .frame(maxWidth: .infinity)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.25), value: store.selectedThreadKey == nil)
+            .searchable(text: $searchText, placement: .toolbar, prompt: "Search mail")
+            .onSubmit(of: .search) {
+                let text = searchText.trimmingCharacters(in: .whitespaces)
+                store.scope = text.isEmpty ? .inbox : .search(text)
+            }
         }
         .navigationTitle(store.scope.title)
         .toolbar {

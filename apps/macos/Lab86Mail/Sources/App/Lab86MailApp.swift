@@ -43,6 +43,14 @@ struct Lab86MailApp: App {
                     .keyboardShortcut("k", modifiers: [])
             }
         }
+
+        Settings {
+            SettingsView()
+                .environment(Clerk.shared)
+                .environment(store)
+                .environment(theme)
+                .tint(theme.accent)
+        }
     }
 }
 
