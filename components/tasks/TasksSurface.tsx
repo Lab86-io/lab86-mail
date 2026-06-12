@@ -12,6 +12,17 @@ import {
   KanbanHeader,
   KanbanProvider,
 } from '@/components/kibo-ui/kanban';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -48,6 +59,7 @@ interface BoardPayload {
 
 export function TasksSurface() {
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
+  const [newBoardOpen, setNewBoardOpen] = useState(false);
 
   const boardsQuery = useConvexQuery({ query: boardsApi.listMyBoards, args: {} });
   const boards: any[] = boardsQuery.status === 'success' ? boardsQuery.data || [] : [];
@@ -95,16 +107,7 @@ export function TasksSurface() {
         ))}
         <button
           type="button"
-          onClick={async () => {
-            const title = window.prompt('Board name');
-            if (!title) return;
-            try {
-              const boardId = await createBoard({ title });
-              setSelectedBoardId(boardId as string);
-            } catch (err: any) {
-              toast.error(err?.message || 'Could not create board');
-            }
-          }}
+          onClick={() => setNewBoardOpen(true)}
           className="grid size-6 shrink-0 place-items-center rounded-full border border-dashed border-[var(--color-border)] text-[var(--color-text-faint)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           title="New board"
         >
@@ -116,6 +119,21 @@ export function TasksSurface() {
       ) : (
         <EmptyState loading={boardsQuery.status !== 'success'} />
       )}
+      <NameDialog
+        open={newBoardOpen}
+        title="New board"
+        placeholder="Board name"
+        submitLabel="Create board"
+        onClose={() => setNewBoardOpen(false)}
+        onSubmit={async (title) => {
+          try {
+            const boardId = await createBoard({ title });
+            setSelectedBoardId(boardId as string);
+          } catch (err: any) {
+            toast.error(err?.message || 'Could not create board');
+          }
+        }}
+      />
     </div>
   );
 }
@@ -159,6 +177,7 @@ function BoardView({ boardId }: { boardId: string }) {
 
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [newColumnOpen, setNewColumnOpen] = useState(false);
 
   const handleDragEnd = (event: DragEndEvent) => {
     if (!board || !canEdit) return;
@@ -202,15 +221,7 @@ function BoardView({ boardId }: { boardId: string }) {
               size="sm"
               variant="outline"
               className="h-7 gap-1.5 px-2 text-[12px]"
-              onClick={async () => {
-                const name = window.prompt('Column name');
-                if (!name) return;
-                try {
-                  await createColumn({ boardId: board.boardId, name });
-                } catch (err: any) {
-                  toast.error(err?.message || 'Could not add column');
-                }
-              }}
+              onClick={() => setNewColumnOpen(true)}
             >
               <Plus className="size-3" /> Column
             </Button>
@@ -292,6 +303,20 @@ function BoardView({ boardId }: { boardId: string }) {
         />
       ) : null}
       {shareOpen ? <ShareDialog board={board} onClose={() => setShareOpen(false)} /> : null}
+      <NameDialog
+        open={newColumnOpen}
+        title="New column"
+        placeholder="Column name"
+        submitLabel="Add column"
+        onClose={() => setNewColumnOpen(false)}
+        onSubmit={async (name) => {
+          try {
+            await createColumn({ boardId: board.boardId, name });
+          } catch (err: any) {
+            toast.error(err?.message || 'Could not add column');
+          }
+        }}
+      />
     </div>
   );
 }
@@ -498,24 +523,42 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
               >
                 {done ? 'Reopen' : 'Mark done'}
               </Button>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                className="ml-auto text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                title="Delete card"
-                onClick={async () => {
-                  if (!window.confirm('Delete this card?')) return;
-                  try {
-                    await deleteCard({ cardId: card.cardId });
-                    onClose();
-                  } catch (err: any) {
-                    toast.error(err?.message || 'Could not delete card');
-                  }
-                }}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    className="ml-auto text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                    title="Delete card"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this card?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      “{card.title}” will be removed from the board.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async () => {
+                        try {
+                          await deleteCard({ cardId: card.cardId });
+                          onClose();
+                        } catch (err: any) {
+                          toast.error(err?.message || 'Could not delete card');
+                        }
+                      }}
+                    >
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           ) : null}
         </div>
@@ -643,6 +686,66 @@ function ShareDialog({ board, onClose }: { board: BoardPayload; onClose: () => v
             ) : null}
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function NameDialog({
+  open,
+  title,
+  placeholder,
+  submitLabel,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  title: string;
+  placeholder: string;
+  submitLabel: string;
+  onClose: () => void;
+  onSubmit: (value: string) => void;
+}) {
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    if (open) setValue('');
+  }, [open]);
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogTitle>{title}</DialogTitle>
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const trimmed = value.trim();
+            if (!trimmed) return;
+            onSubmit(trimmed);
+            onClose();
+          }}
+        >
+          <Input
+            autoFocus
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder={placeholder}
+            className="h-9 text-[13px]"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-3 text-[12.5px]"
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" className="h-8 px-3 text-[12.5px]">
+              {submitLabel}
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );

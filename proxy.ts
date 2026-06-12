@@ -98,6 +98,12 @@ function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
   if (pathname === '/api/clerk/webhook') return false;
+  // Convex validates Clerk JWTs by fetching the issuer's OIDC discovery
+  // document server-to-server — it can never present staging basic auth.
+  // With the proxy URL as the issuer, /__clerk must be reachable bare, or
+  // every browser live query fails ("Auth provider discovery ... 401").
+  // The Clerk Frontend API behind it is public by design.
+  if (pathname.startsWith('/__clerk')) return false;
   // Nylas deliveries authenticate via HMAC signature in the route handler;
   // the challenge GET and signed POSTs come from Nylas servers, which can
   // never satisfy staging basic auth.
