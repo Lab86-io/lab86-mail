@@ -5,6 +5,7 @@
 // divergence.
 
 let cachedRead: ((html: string) => string) | null = null;
+let cachedFrame: ((html: string) => string) | null = null;
 let cachedSend: ((html: string) => string) | null = null;
 
 function getDOMPurify(): any {
@@ -27,6 +28,27 @@ export function sanitizeEmailHtml(html: string): string {
       }) as string;
   }
   return cachedRead(html);
+}
+
+// Sanitizer for HTML rendered inside the isolated email iframe. Unlike the
+// inline read path, it KEEPS <style> blocks — marketing emails define their
+// text colors and layout there, and stripping it leaves text uncolored
+// (inheriting a stray inline white onto a white card = invisible). The iframe
+// is a no-scripts sandbox, so the style is scoped and can't touch the app;
+// scripts/objects/external documents are still removed as defense in depth.
+export function sanitizeEmailFrameHtml(html: string): string {
+  if (typeof window === 'undefined') return '';
+  if (!cachedFrame) {
+    const instance = getDOMPurify();
+    cachedFrame = (input: string) =>
+      instance.sanitize(input, {
+        WHOLE_DOCUMENT: true,
+        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'link', 'meta', 'base'],
+        FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover'],
+        ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|bmp);base64,)/i,
+      }) as string;
+  }
+  return cachedFrame(html);
 }
 
 // Does this email ship its own (opaque) background? Branded HTML mail paints

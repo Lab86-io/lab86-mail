@@ -607,31 +607,16 @@
     color: var(--color-text);
   }
 
-  /* 2) Mail that paints its own background is designed against it. Render it
-        on a light "paper island" with its ORIGINAL colors — forcing dark-mode
-        text over a white card it ships would be white-on-white. */
-  .dark .email-body:not(.email-adaptive) {
-    color-scheme: light;
-    background: #ffffff;
-    color: #1f2937;
+  /* 2) Mail that paints its own background/colors is rendered in an isolated
+        iframe (components/thread/ThreadView EmailFrame) so its own <style> and
+        colors survive exactly as designed — a light document, like every other
+        mail client. The frame is its own white card here. */
+  .email-frame {
+    display: block;
+    border: 0;
     border-radius: var(--radius);
-    padding: 12px 16px;
-  }
-  /* Descendants resolve dark-theme surface vars otherwise, leaving dark blocks
-     under dark text inside the white island. Pin them to light. */
-  .dark .email-body:not(.email-adaptive) blockquote {
-    border-left-color: #d1d5db;
-    color: #4b5563;
-  }
-  .dark .email-body:not(.email-adaptive) code {
-    background: #f3f4f6;
-    color: #111827;
-  }
-  .dark .email-body:not(.email-adaptive) pre {
-    background: #f8fafc;
-  }
-  .dark .email-body:not(.email-adaptive) a {
-    color: #1d4ed8;
+    background: #ffffff;
+    color-scheme: light;
   }
 }
 

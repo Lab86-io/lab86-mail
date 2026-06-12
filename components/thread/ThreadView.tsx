@@ -25,7 +25,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { emailDeclaresOwnBackground, sanitizeEmailHtml } from '@/lib/sanitize';
+import { emailDeclaresOwnBackground, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
@@ -776,27 +776,120 @@ function ContactButton({
 }
 
 function MessageBody({ html, text }: { html?: string; text?: string }) {
-  const [safe, setSafe] = useState<string | null>(null);
+  const [rendered, setRendered] = useState<{ mode: 'adaptive' | 'frame'; html: string } | null>(null);
   useEffect(() => {
-    if (html) setSafe(sanitizeEmailHtml(html));
+    if (!html) {
+      setRendered(null);
+      return;
+    }
+    // Emails that paint their own background/colors (marketing HTML, which
+    // often defines text color in a <style> block) render in an isolated
+    // iframe so they look exactly as designed. Backgroundless mail (plain-text
+    // replies, light notes) adapts to dark mode inline — see EmailFrame and
+    // the .email-adaptive rules in globals.css.
+    if (emailDeclaresOwnBackground(html)) {
+      setRendered({ mode: 'frame', html: sanitizeEmailFrameHtml(html) });
+    } else {
+      setRendered({ mode: 'adaptive', html: sanitizeEmailHtml(html) });
+    }
   }, [html]);
-  if (safe) {
-    // Emails that paint their own background keep their original colors on a
-    // light paper island; backgroundless ones adapt to dark mode (see the
-    // .email-adaptive / paper-island rules in globals.css).
-    const adaptive = !emailDeclaresOwnBackground(safe);
+  if (rendered?.mode === 'frame') {
+    return <EmailFrame html={rendered.html} />;
+  }
+  if (rendered?.mode === 'adaptive') {
     return (
       <div
-        className={cn('email-body reflow-text break-words text-[13.5px]', adaptive && 'email-adaptive')}
+        className="email-body email-adaptive reflow-text break-words text-[13.5px]"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: provider HTML is sanitized before rendering.
-        dangerouslySetInnerHTML={{ __html: safe }}
+        dangerouslySetInnerHTML={{ __html: rendered.html }}
       />
     );
   }
-  if (html && !safe) {
+  if (html && !rendered) {
     return <div className="h-24 rounded shimmer" />;
   }
   return <PlainTextBody text={text || ''} />;
+}
+
+// Renders styled email HTML inside a sandboxed iframe: the email's own <style>
+// and colors survive, scoped away from the app, and it reads as a light "paper"
+// document the way every other mail client shows it. sandbox has NO
+// allow-scripts (email JS can never run); allow-same-origin lets us measure the
+// content height from the parent. Links open in a new tab via <base>.
+const EMAIL_FRAME_RESET =
+  '<meta name="color-scheme" content="light"><base target="_blank" rel="noopener noreferrer"><style>' +
+  ':root{color-scheme:light}' +
+  // Defaults only — element selectors (0,0,1), so the email's own class/id
+  // rules always win. Unstyled emails fall back to dark-on-white.
+  'html,body{margin:0;padding:0;background:#ffffff;color:#1f2937;' +
+  "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5}" +
+  'body{padding:6px 2px;overflow-x:auto}' +
+  'img{max-width:100%;height:auto}' +
+  '</style>';
+
+// Inject the reset into the email's own <head> (preserving its document so its
+// stylesheet applies natively); synthesize a head/document for fragments.
+function buildEmailSrcDoc(html: string): string {
+  if (/<head[\s>]/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${EMAIL_FRAME_RESET}`);
+  if (/<html[\s>]/i.test(html))
+    return html.replace(/<html([^>]*)>/i, `<html$1><head>${EMAIL_FRAME_RESET}</head>`);
+  return `<!doctype html><html><head>${EMAIL_FRAME_RESET}</head><body>${html}</body></html>`;
+}
+
+function EmailFrame({ html }: { html: string }) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const [height, setHeight] = useState(160);
+  const srcDoc = useMemo(() => buildEmailSrcDoc(html), [html]);
+
+  useEffect(() => {
+    const iframe = ref.current;
+    if (!iframe) return;
+    let raf = 0;
+    const measure = () => {
+      const doc = iframe.contentDocument;
+      if (!doc?.body) return;
+      const next = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight, 40);
+      setHeight((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+    };
+    const onLoad = () => {
+      measure();
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      // Re-measure as images and webfonts settle (they change layout height).
+      for (const img of Array.from(doc.images)) {
+        if (!img.complete) img.addEventListener('load', measure, { once: true });
+      }
+      if ('ResizeObserver' in window && doc.body) {
+        const ro = new ResizeObserver(() => {
+          cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(measure);
+        });
+        ro.observe(doc.body);
+        observerRef.current = ro;
+      }
+    };
+    iframe.addEventListener('load', onLoad);
+    // srcDoc may already be loaded on mount.
+    if (iframe.contentDocument?.readyState === 'complete') onLoad();
+    return () => {
+      iframe.removeEventListener('load', onLoad);
+      cancelAnimationFrame(raf);
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+    };
+  }, []);
+
+  return (
+    <iframe
+      ref={ref}
+      title="Email message"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      srcDoc={srcDoc}
+      className="email-frame w-full"
+      style={{ height }}
+    />
+  );
 }
 
 function PlainTextBody({ text }: { text: string }) {
