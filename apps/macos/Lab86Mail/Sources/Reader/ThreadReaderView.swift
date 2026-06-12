@@ -61,34 +61,49 @@ struct ThreadReaderView: View {
             .onAppear {
                 proxy.scrollTo(detail.messages.last?.id, anchor: .top)
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
-        .toolbar {
-            ToolbarItemGroup {
-                if OnDeviceSummarizer.isAvailable {
-                    Button {
-                        summarize(detail: detail)
-                    } label: {
-                        if summarizing {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Label("Summarize", systemImage: "sparkles")
+        // Floating liquid-glass action cluster — the reader's primary actions
+        // hover over content instead of crowding the toolbar.
+        .overlay(alignment: .bottomTrailing) {
+            GlassEffectContainer(spacing: 14) {
+                HStack(spacing: 14) {
+                    if OnDeviceSummarizer.isAvailable {
+                        Button {
+                            summarize(detail: detail)
+                        } label: {
+                            Group {
+                                if summarizing {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "sparkles")
+                                }
+                            }
+                            .frame(width: 22, height: 22)
                         }
+                        .help("Summarize on-device")
                     }
-                    .help("Summarize on-device")
+                    Button {
+                        store.archive(thread)
+                    } label: {
+                        Image(systemName: "archivebox")
+                            .frame(width: 22, height: 22)
+                    }
+                    .help("Archive (e)")
+                    Button(role: .destructive) {
+                        store.trash(thread)
+                    } label: {
+                        Image(systemName: "trash")
+                            .frame(width: 22, height: 22)
+                    }
+                    .help("Move to trash")
                 }
-                Button {
-                    store.archive(thread)
-                } label: {
-                    Label("Archive", systemImage: "archivebox")
-                }
-                .help("Archive (e)")
-                Button {
-                    store.trash(thread)
-                } label: {
-                    Label("Trash", systemImage: "trash")
-                }
-                .help("Move to trash")
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
             }
+            .padding(.trailing, 24)
+            .padding(.bottom, 90)
         }
     }
 
@@ -134,6 +149,6 @@ private struct OnDeviceSummaryCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: .rect(cornerRadius: 12))
+        .glassEffect(.regular.tint(theme.accent.opacity(0.12)), in: .rect(cornerRadius: 14))
     }
 }

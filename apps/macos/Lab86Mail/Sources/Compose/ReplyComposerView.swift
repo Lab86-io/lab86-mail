@@ -58,7 +58,7 @@ struct ReplyComposerView: View {
             }
         }
         .padding(12)
-        .background(.thinMaterial, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
         .onChange(of: thread.id) {
             body_ = ""
             sentPendingId = nil
