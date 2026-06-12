@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { ingestNylasWebhookPayload } from '@/lib/mail/corpus-sync';
+import { enqueueNylasWebhook, webhookQueueDepth } from '@/lib/mail/webhook-queue';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,15 +26,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Invalid JSON payload.' }, { status: 400 });
   }
 
-  try {
-    const result = await ingestNylasWebhookPayload(payload);
-    return NextResponse.json(result);
-  } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message || 'Nylas webhook processing failed.' },
-      { status: 500 },
-    );
-  }
+  // ACK before processing: Nylas times deliveries out at ~20s and flags the
+  // subscription as failing after 15 minutes of timeouts. Ingest (provider
+  // fetch + corpus upsert + classification) runs from an in-process queue;
+  // events are idempotent by eventId and the reconciler repairs any gap.
+  enqueueNylasWebhook(payload);
+  return NextResponse.json({ ok: true, accepted: true, queue: webhookQueueDepth() });
 }
 
 // Nylas v3 signs webhook deliveries with HMAC-SHA256 over the raw body using
