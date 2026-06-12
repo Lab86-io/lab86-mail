@@ -5,7 +5,7 @@ import type { HTMLAttributes } from 'react';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { DraggableEvent } from '@/components/calendar/engine/draggable-event';
 import { EventDetailsDialog } from '@/components/calendar/engine/event-details-dialog';
-import { formatTime } from '@/components/calendar/engine/helpers';
+import { contrastTextColor, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { ResizableEvent } from '@/components/calendar/engine/resizable-event';
 import { cn } from '@/lib/utils';
@@ -78,7 +78,16 @@ export function EventBlock({ event, className }: IProps) {
           <button
             type="button"
             className={calendarWeekEventCardClasses}
-            style={{ height: `${heightInPixels}px` }}
+            style={{
+              height: `${heightInPixels}px`,
+              ...(event.colorHex
+                ? {
+                    backgroundColor: event.colorHex,
+                    borderColor: event.colorHex,
+                    color: contrastTextColor(event.colorHex),
+                  }
+                : {}),
+            }}
           >
             <div className="flex items-center gap-1.5 truncate">
               {badgeVariant === 'dot' && (

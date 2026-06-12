@@ -111,12 +111,28 @@ export const upsertConnectedAccount = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const email = args.email.toLowerCase();
-    const id = args.grantId;
     const ts = now();
-    const existing = await ctx.db
+    let existing = await ctx.db
       .query('connectedAccounts')
-      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', id))
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.grantId))
       .unique();
+    // Re-auth detection: a fresh OAuth/app-password flow for a mailbox we
+    // already track mints a NEW grant id. Match on (email, provider) and
+    // reuse the existing accountId so every synced row stays attached —
+    // otherwise the same mailbox lands twice and everything shows doubled.
+    let replacedGrantId: string | undefined;
+    if (!existing) {
+      const sameMailbox = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .collect();
+      const match = sameMailbox.find((row) => row.email === email && row.provider === args.provider);
+      if (match) {
+        existing = match;
+        if (match.grantId !== args.grantId) replacedGrantId = match.grantId;
+      }
+    }
+    const id = existing?.accountId ?? args.grantId;
     const accountPatch = {
       accountId: id,
       email,
@@ -195,7 +211,7 @@ export const upsertConnectedAccount = mutation({
       // already-synced corpus or restart backfill.
       await ctx.db.patch(syncState._id, { provider: args.provider, updatedAt: ts });
     }
-    return { accountId: id };
+    return { accountId: id, replacedGrantId };
   },
 });
 
@@ -271,22 +287,33 @@ export const deleteConnectedAccount = mutation({
     requireInternalSecret(args.internalSecret);
     // Small tables go inline so the account vanishes from the UI immediately;
     // the bulk corpus drains in scheduled batches right after.
-    const smallTables = [
-      'connectedAccounts',
-      'providerGrants',
-      'syncJobs',
-      'mailSyncStates',
-      'calendars',
-      'calendarSyncStates',
-    ] as const;
-    for (const table of smallTables) {
-      const rows = await ctx.db
-        .query(table)
-        .withIndex('by_user_account' as any, (q: any) =>
-          q.eq('userId', args.userId).eq('accountId', args.accountId),
-        )
-        .collect();
-      for (const row of rows) await ctx.db.delete(row._id);
+    // Index per table — syncJobs only has by_account; assuming
+    // by_user_account everywhere is exactly how this mutation Server-Errored.
+    const smallTables: Array<[string, 'by_user_account' | 'by_account']> = [
+      ['connectedAccounts', 'by_user_account'],
+      ['providerGrants', 'by_user_account'],
+      ['syncJobs', 'by_account'],
+      ['mailSyncStates', 'by_user_account'],
+      ['calendars', 'by_user_account'],
+      ['calendarSyncStates', 'by_user_account'],
+    ];
+    for (const [table, index] of smallTables) {
+      const rows =
+        index === 'by_account'
+          ? await ctx.db
+              .query(table as any)
+              .withIndex('by_account' as any, (q: any) => q.eq('accountId', args.accountId))
+              .collect()
+          : await ctx.db
+              .query(table as any)
+              .withIndex('by_user_account' as any, (q: any) =>
+                q.eq('userId', args.userId).eq('accountId', args.accountId),
+              )
+              .collect();
+      for (const row of rows) {
+        if (row.userId && row.userId !== args.userId) continue;
+        await ctx.db.delete(row._id);
+      }
     }
     await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, {
       userId: args.userId,

@@ -8,12 +8,27 @@ import { type CalendarPersistence, CalendarProvider } from '@/components/calenda
 import { CalendarHeader } from '@/components/calendar/engine/calendar-header';
 import { DndProvider } from '@/components/calendar/engine/dnd-context';
 import type { IEvent, IUser } from '@/components/calendar/engine/interfaces';
-import type { TEventColor } from '@/components/calendar/engine/types';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 
-const EVENT_COLORS: TEventColor[] = ['blue', 'green', 'red', 'yellow', 'purple', 'orange'];
+// Tableau-10 categorical palette: opaque, distinguishable, configurable
+// per calendar (calendars.colorIndex).
+export const TABLEAU10 = [
+  '#4E79A7',
+  '#F28E2B',
+  '#E15759',
+  '#76B7B2',
+  '#59A14E',
+  '#EDC948',
+  '#B07AA1',
+  '#FF9DA7',
+  '#9C755F',
+  '#BAB0AC',
+] as const;
+
+const TASKS_COLOR = '#EDC948';
 
 // Due-dated Kanban cards appear as a pseudo-calendar lane; their event ids
 // are prefixed so persistence can route them to card mutations instead of
@@ -61,9 +76,9 @@ export function CalendarSurface() {
   const eventRows: any[] = liveEvents.status === 'success' ? liveEvents.data || [] : [];
 
   const colorByCalendar = useMemo(() => {
-    const map = new Map<string, TEventColor>();
+    const map = new Map<string, string>();
     calendars.forEach((cal, index) => {
-      map.set(cal.providerCalendarId, EVENT_COLORS[index % EVENT_COLORS.length]);
+      map.set(cal.providerCalendarId, TABLEAU10[(cal.colorIndex ?? index) % TABLEAU10.length]);
     });
     return map;
   }, [calendars]);
@@ -89,6 +104,7 @@ export function CalendarSurface() {
       title: card.completedAt ? `✓ ${card.title}` : card.title,
       description: card.description || '',
       color: 'yellow',
+      colorHex: TASKS_COLOR,
       user: { id: TASKS_LANE_ID, name: 'Tasks', picturePath: null },
       calendarId: TASKS_LANE_ID,
     }));
@@ -101,7 +117,8 @@ export function CalendarSurface() {
           endDate: new Date(row.endAt).toISOString(),
           title: row.title,
           description: row.description || '',
-          color: colorByCalendar.get(row.providerCalendarId) || 'blue',
+          color: 'blue',
+          colorHex: colorByCalendar.get(row.providerCalendarId) || TABLEAU10[0],
           user: {
             id: row.providerCalendarId,
             name: calendars.find((cal) => cal.providerCalendarId === row.providerCalendarId)?.name || '',
@@ -243,10 +260,71 @@ export function CalendarSurface() {
         <CalendarProvider users={users} events={events} view="week" persistence={persistence}>
           <DndProvider>
             <CalendarHeader />
+            <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} />
             <CalendarBody />
           </DndProvider>
         </CalendarProvider>
       </div>
+    </div>
+  );
+}
+
+// One chip per synced calendar: shows its categorical color; clicking opens
+// the ten-swatch picker. Colors persist per calendar (colorIndex).
+function CalendarColorBar({
+  calendars,
+  colorByCalendar,
+}: {
+  calendars: any[];
+  colorByCalendar: Map<string, string>;
+}) {
+  const setCalendarColor = useConvexMutation((api as any).calendarData.setCalendarColor);
+  if (!calendars.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-4 py-1.5">
+      {calendars
+        .filter((cal) => !cal.hidden)
+        .map((cal) => (
+          <Popover key={cal._id}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+                title={`${cal.name} — change color`}
+              >
+                <span
+                  className="size-2.5 rounded-full"
+                  style={{ backgroundColor: colorByCalendar.get(cal.providerCalendarId) }}
+                />
+                <span className="max-w-36 truncate">{cal.name}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-2" align="start">
+              <div className="flex gap-1.5">
+                {TABLEAU10.map((hex, index) => (
+                  <button
+                    key={hex}
+                    type="button"
+                    title={hex}
+                    onClick={() => {
+                      void setCalendarColor({ calendarId: cal._id, colorIndex: index }).catch((err: any) =>
+                        toast.error(err?.message || 'Could not set color'),
+                      );
+                    }}
+                    className={
+                      colorByCalendar.get(cal.providerCalendarId) === hex
+                        ? 'size-6 rounded-full ring-2 ring-[var(--color-text)] ring-offset-1'
+                        : 'size-6 rounded-full transition-transform hover:scale-110'
+                    }
+                    style={{ backgroundColor: hex }}
+                  >
+                    <span className="sr-only">{hex}</span>
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        ))}
     </div>
   );
 }

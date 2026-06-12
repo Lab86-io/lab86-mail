@@ -46,8 +46,6 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
 
       <motion.div className="flex-col sm:flex" variants={staggerContainer}>
         <div>
-          <WeekViewMultiDayEventsRow selectedDate={selectedDate} multiDayEvents={multiDayEvents} />
-
           {/* Week header */}
           <motion.div
             className="relative z-20 flex border-b"
@@ -80,6 +78,9 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
               ))}
             </div>
           </motion.div>
+
+          {/* All-day & multi-day events band, directly under the dates */}
+          <WeekViewMultiDayEventsRow selectedDate={selectedDate} multiDayEvents={multiDayEvents} />
         </div>
 
         <ScrollArea className="h-[736px]" type="always" ref={scrollRef}>

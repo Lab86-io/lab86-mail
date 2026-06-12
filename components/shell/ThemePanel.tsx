@@ -15,13 +15,21 @@ import { cn } from '@/lib/utils';
 const DEFAULT_HUE = 156;
 const DEFAULT_CHROMA = 0.09;
 
-const PRESETS: { name: string; hue: number; chroma: number }[] = [
-  { name: 'Forest', hue: DEFAULT_HUE, chroma: DEFAULT_CHROMA },
-  { name: 'Ocean', hue: 235, chroma: 0.11 },
-  { name: 'Iris', hue: 290, chroma: 0.11 },
-  { name: 'Rose', hue: 15, chroma: 0.11 },
-  { name: 'Ember', hue: 60, chroma: 0.1 },
-  { name: 'Mono', hue: 250, chroma: 0.015 },
+// Each quick swatch is a curated accent + background pairing, not just an
+// accent: complementary-leaning paper tints that sit well under the accent.
+const PRESETS: {
+  name: string;
+  hue: number;
+  chroma: number;
+  bgHue: number | null;
+  surfaceTint: number;
+}[] = [
+  { name: 'Forest', hue: DEFAULT_HUE, chroma: DEFAULT_CHROMA, bgHue: 95, surfaceTint: 0.22 },
+  { name: 'Ocean', hue: 235, chroma: 0.11, bgHue: 215, surfaceTint: 0.28 },
+  { name: 'Iris', hue: 290, chroma: 0.11, bgHue: 310, surfaceTint: 0.2 },
+  { name: 'Rose', hue: 15, chroma: 0.11, bgHue: 35, surfaceTint: 0.24 },
+  { name: 'Ember', hue: 60, chroma: 0.1, bgHue: 80, surfaceTint: 0.3 },
+  { name: 'Mono', hue: 250, chroma: 0.015, bgHue: null, surfaceTint: 0 },
 ];
 
 // Display-layer font: wordmark, sender names, subjects, section headers.
@@ -187,18 +195,31 @@ export function ThemePanel({ className }: { className?: string }) {
                   key={preset.name}
                   type="button"
                   title={preset.name}
-                  onClick={() =>
-                    preset.hue === DEFAULT_HUE && preset.chroma === DEFAULT_CHROMA
-                      ? setAccent(null, null)
-                      : setAccent(preset.hue, preset.chroma)
-                  }
+                  onClick={() => {
+                    if (preset.hue === DEFAULT_HUE && preset.chroma === DEFAULT_CHROMA) {
+                      setAccent(null, null);
+                    } else {
+                      setAccent(preset.hue, preset.chroma);
+                    }
+                    setBgHue(preset.bgHue);
+                    setSurfaceTint(preset.surfaceTint);
+                  }}
                   className={cn(
-                    'h-7 w-7 rounded-full transition-transform duration-[var(--duration-fast)] hover:scale-110',
+                    'grid h-7 w-7 place-items-center rounded-full border border-[var(--color-border)] transition-transform duration-[var(--duration-fast)] hover:scale-110',
                     selected &&
                       'ring-2 ring-[var(--color-text)] ring-offset-2 ring-offset-[var(--color-bg-elevated)]',
                   )}
-                  style={{ background: `oklch(0.62 ${preset.chroma} ${preset.hue})` }}
+                  style={{
+                    background:
+                      preset.bgHue == null
+                        ? 'var(--color-bg)'
+                        : `oklch(0.96 ${0.012 + preset.surfaceTint * 0.03} ${preset.bgHue})`,
+                  }}
                 >
+                  <span
+                    className="block h-3.5 w-3.5 rounded-full"
+                    style={{ background: `oklch(0.62 ${preset.chroma} ${preset.hue})` }}
+                  />
                   <span className="sr-only">{preset.name}</span>
                 </button>
               );

@@ -14,6 +14,9 @@ export interface IEvent {
   endDate: string;
   title: string;
   color: TEventColor;
+  // Concrete categorical color (e.g. Tableau-10 hex). When present it wins
+  // over the legacy TEventColor variants and renders solid/opaque.
+  colorHex?: string;
   description: string;
   user: IUser;
   // lab86 provenance: which account/calendar the event belongs to, so

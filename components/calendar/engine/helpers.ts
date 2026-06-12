@@ -381,3 +381,16 @@ export const toCapitalize = (str: string): string => {
   if (!str) return '';
   return str.charAt(0).toUpperCase() + str.slice(1);
 };
+
+// Black-or-white text decision for a solid categorical background.
+export function contrastTextColor(hex: string): string {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) return '#ffffff';
+  const value = Number.parseInt(match[1], 16);
+  const r = (value >> 16) & 0xff;
+  const g = (value >> 8) & 0xff;
+  const b = value & 0xff;
+  // Perceived luminance (ITU-R BT.601).
+  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luma > 165 ? '#1f1f1f' : '#ffffff';
+}

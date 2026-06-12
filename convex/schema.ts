@@ -376,6 +376,8 @@ export default defineSchema({
     readOnly: v.optional(v.boolean()),
     // Provider-reported hex color; the UI maps it into the OKLCH family.
     hexColor: v.optional(v.string()),
+    // User-chosen Tableau-10 palette slot (0-9); unset = assigned by order.
+    colorIndex: v.optional(v.number()),
     // User pref: hide this calendar from the merged view (still synced).
     hidden: v.optional(v.boolean()),
     createdAt: v.number(),

@@ -5,7 +5,7 @@ import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { DraggableEvent } from '@/components/calendar/engine/draggable-event';
 import { EventBullet } from '@/components/calendar/engine/event-bullet';
 import { EventDetailsDialog } from '@/components/calendar/engine/event-details-dialog';
-import { formatTime } from '@/components/calendar/engine/helpers';
+import { contrastTextColor, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { cn } from '@/lib/utils';
 
@@ -106,7 +106,19 @@ export function MonthEventBadge({
   return (
     <DraggableEvent event={event} className={marginClass}>
       <EventDetailsDialog event={event}>
-        <button type="button" className={eventBadgeClasses}>
+        <button
+          type="button"
+          className={eventBadgeClasses}
+          style={
+            event.colorHex
+              ? {
+                  backgroundColor: event.colorHex,
+                  borderColor: event.colorHex,
+                  color: contrastTextColor(event.colorHex),
+                }
+              : undefined
+          }
+        >
           <div className="flex items-center gap-1.5 truncate">
             {!['middle', 'last'].includes(position) && badgeVariant === 'dot' && (
               <EventBullet color={event.color} />

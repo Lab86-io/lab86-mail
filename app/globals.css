@@ -320,12 +320,12 @@
     background-image:
       radial-gradient(
         120% 70% at 0% 0%,
-        oklch(0.55 calc(var(--accent-chroma) * 0.9) var(--accent-hue) / calc(var(--wash-opacity, 0) * 0.45)),
+        oklch(0.55 calc(var(--accent-chroma) * 1.1) var(--accent-hue) / calc(var(--wash-opacity, 0) * 0.95)),
         transparent 70%
       ),
       radial-gradient(
         130% 80% at 100% 100%,
-        oklch(0.5 0.07 var(--bg-hue) / calc(var(--wash-opacity, 0) * 0.35)),
+        oklch(0.5 0.09 var(--bg-hue) / calc(var(--wash-opacity, 0) * 0.75)),
         transparent 72%
       );
   }
@@ -338,7 +338,7 @@
     inset: 0;
     z-index: 2147483646;
     pointer-events: none;
-    opacity: var(--grain-opacity, 0);
+    opacity: min(1, calc(var(--grain-opacity, 0) * 2.6));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     background-size: 160px 160px;
     mix-blend-mode: overlay;

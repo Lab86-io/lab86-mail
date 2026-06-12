@@ -325,6 +325,19 @@ export const listEvents = query({
   },
 });
 
+// User-facing calendar prefs (Clerk identity — called from the surface).
+export const setCalendarColor = mutation({
+  args: { calendarId: v.id('calendars'), colorIndex: v.number() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) throw new Error('Not authenticated');
+    const row = await ctx.db.get(args.calendarId);
+    if (!row || row.userId !== identity.subject) throw new Error('Calendar not found.');
+    const colorIndex = Math.min(9, Math.max(0, Math.round(args.colorIndex)));
+    await ctx.db.patch(args.calendarId, { colorIndex, updatedAt: now() });
+  },
+});
+
 // Live feeds for the calendar surface.
 export const liveCalendars = query({
   args: {},

@@ -21,10 +21,19 @@ const eventBulletVariants = cva('size-2 rounded-full', {
   },
 });
 
-export function EventBullet({ color, className }: { color: TEventColor; className?: string }) {
+export function EventBullet({
+  color,
+  colorHex,
+  className,
+}: {
+  color: TEventColor;
+  colorHex?: string;
+  className?: string;
+}) {
   return (
     <motion.div
       className={cn(eventBulletVariants({ color, className }))}
+      style={colorHex ? { backgroundColor: colorHex } : undefined}
       initial={{ scale: 0, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       whileHover={{ scale: 1.2 }}
