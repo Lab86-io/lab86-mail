@@ -376,10 +376,15 @@ async function hydrateBodyExcerpts(threads: ClassifyInputThread[]) {
  */
 export async function classifyThreadsBatched(
   threads: ClassifyInputThread[],
-  context: { rules: SmartRule[]; customLabels: SmartLabelDefinition[]; force?: boolean },
+  context: {
+    rules: SmartRule[];
+    customLabels: SmartLabelDefinition[];
+    force?: boolean;
+    speed?: 'fast' | 'nano';
+  },
 ): Promise<Array<{ id: string; model: string } & SmartCategory>> {
   if (!threads.length) return [];
-  const { rules, customLabels, force } = context;
+  const { rules, customLabels, force, speed = 'fast' } = context;
   await hydrateBodyExcerpts(threads);
   const local = threads.map((thread) => ({
     thread,
@@ -409,7 +414,7 @@ export async function classifyThreadsBatched(
       try {
         const { text } = await generateTextForCurrentUser({
           feature: 'classify_threads',
-          speed: 'fast',
+          speed,
           system: CLASSIFY_SYSTEM,
           prompt: [
             CLASSIFY_INSTRUCTIONS,
@@ -432,7 +437,7 @@ export async function classifyThreadsBatched(
   return local.map(({ thread, verdict }) => {
     const ai = aiById.get(thread.id);
     const merged = (ai || verdict) as SmartCategory;
-    return { id: thread.id, ...merged, model: ai ? 'fast' : verdict.model || 'deterministic' };
+    return { id: thread.id, ...merged, model: ai ? speed : verdict.model || 'deterministic' };
   });
 }
 
