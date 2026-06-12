@@ -123,10 +123,15 @@ critique) keeps using the hosted model routing through the existing endpoints.
   (⌘P), settings (mailbox management, AI mode, undo window), drafts, snooze,
   labels, schedule send, contact popovers, full keyboard shortcut map (j/k/e/#/
   r/c//, g-sequences, ⌘K).
-- **M8 — Distribution:** App Store Connect record, TestFlight for macOS
-  (requires App Sandbox — already on — and a Distribution cert; only an
-  Apple Development identity exists on the Mac today), then notarized DMG +
-  Sparkle for direct distribution.
+- **M8 — Real signing & distribution:** App Store Connect record, a
+  provisioned signing config (automatic signing with the dev/distribution
+  cert) that adds back the `com.apple.developer.associated-domains:
+  [webcredentials:clerk.mail.lab86.io]` entitlement — this UNLOCKS PASSKEYS,
+  which are impossible under the current ad-hoc dev signing ("calling process
+  does not have an application identifier"). Clerk already serves the matching
+  AASA at `clerk.mail.lab86.io/.well-known/apple-app-site-association` with
+  `5JZV7V6Y4Z.io.lab86.mail.mac`. Then TestFlight, then notarized DMG +
+  Sparkle. Until M8, sign in with Google or email/password.
 
 ## Build & release workflow
 

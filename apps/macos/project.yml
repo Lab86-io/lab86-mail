@@ -34,6 +34,11 @@ targets:
         com.apple.security.network.client: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.files.downloads.read-write: true
+        # NOTE: passkeys need `com.apple.developer.associated-domains:
+        # [webcredentials:clerk.mail.lab86.io]` — but that entitlement forces a
+        # provisioning profile and breaks ad-hoc dev builds. It's added in the
+        # release/TestFlight signing config only (PLAN.md M8). Clerk already
+        # serves the matching AASA. Until then, sign in with Google or email.
     info:
       path: Lab86Mail/Supporting/Info.plist
       properties:
