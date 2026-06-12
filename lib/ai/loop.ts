@@ -54,6 +54,8 @@ const AGENT_TOOL_NAMES = new Set([
   'calendar_free_busy',
   'calendar_suggest_times',
   'calendar_create_event',
+  'list_recent_operations',
+  'undo_operation',
   'contact_lookup',
   'expand_alias',
   'browserbase_search',

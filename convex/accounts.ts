@@ -312,6 +312,8 @@ export const deleteUserCascade = mutation({
       'mailWebhookEvents',
       'rateLimits',
       'userDocs',
+      'aiOperations',
+      'suggestions',
     ] as const;
 
     for (const table of userTables) {
@@ -332,14 +334,18 @@ export const deleteUserCascade = mutation({
 });
 
 async function rowsByUser(ctx: any, table: string, userId: string) {
-  return await ctx.db
-    .query(table)
-    .withIndex('by_user' as any, (q: any) => q.eq('userId', userId))
-    .collect()
-    .catch(async () =>
-      ctx.db
+  // Tables expose one of these userId-prefixed indexes; try each in turn.
+  const indexes = ['by_user', 'by_user_account', 'by_user_created'];
+  let lastErr: unknown;
+  for (const index of indexes) {
+    try {
+      return await ctx.db
         .query(table)
-        .withIndex('by_user_account' as any, (q: any) => q.eq('userId', userId))
-        .collect(),
-    );
+        .withIndex(index as any, (q: any) => q.eq('userId', userId))
+        .collect();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }

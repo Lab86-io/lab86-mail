@@ -3,7 +3,7 @@
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { Terminal } from 'lucide-react';
+import { SquareKanban, Terminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -84,6 +84,14 @@ const MAILBOXES: MailboxItem[] = [
 ];
 
 export const ALL_ACCOUNTS = '__all__';
+
+// Top-level surfaces of the workspace. Mail itself is reached through the
+// Smart/Mailboxes groups below (those force primaryView back to 'mail').
+const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: string; Icon: any }> = [
+  { view: 'daily_report', label: 'Daily Report', Icon: rowIcon(FileTextIcon) },
+  { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
+  { view: 'tasks', label: 'Tasks', Icon: SquareKanban },
+];
 
 const SMART_CATEGORIES = [
   {
@@ -280,31 +288,33 @@ export function Rail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={primaryView === 'daily_report'}
-                  tooltip="Daily Report"
-                  onClick={() => {
-                    setPrimaryView('daily_report');
-                    closeMobileSidebar();
-                  }}
-                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
-                >
-                  {primaryView === 'daily_report' ? (
-                    <ShineBorder
-                      borderWidth={1}
-                      duration={10}
-                      shineColor={[
-                        'var(--color-accent-shine-1)',
-                        'var(--color-accent-shine-2)',
-                        'var(--color-accent-shine-3)',
-                      ]}
-                    />
-                  ) : null}
-                  <RowIcon icon={FileTextIcon} size={16} />
-                  <span>Daily Report</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {SURFACES.map(({ view, label, Icon }) => (
+                <SidebarMenuItem key={view}>
+                  <SidebarMenuButton
+                    isActive={primaryView === view}
+                    tooltip={label}
+                    onClick={() => {
+                      setPrimaryView(view);
+                      closeMobileSidebar();
+                    }}
+                    className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                  >
+                    {primaryView === view ? (
+                      <ShineBorder
+                        borderWidth={1}
+                        duration={10}
+                        shineColor={[
+                          'var(--color-accent-shine-1)',
+                          'var(--color-accent-shine-2)',
+                          'var(--color-accent-shine-3)',
+                        ]}
+                      />
+                    ) : null}
+                    <Icon />
+                    <span>{label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

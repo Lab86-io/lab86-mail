@@ -138,7 +138,7 @@ export interface LabelRecord {
 
 export type Priority = 1 | 2 | 3;
 export type TriageAction = 'reply' | 'read' | 'archive' | 'delegate' | 'wait';
-export type PrimaryView = 'daily_report' | 'mail';
+export type PrimaryView = 'daily_report' | 'mail' | 'calendar' | 'tasks';
 export type SmartCategoryId =
   | 'main'
   | 'needs_reply'

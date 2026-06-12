@@ -3,15 +3,18 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { DailyReport } from '@/components/report/DailyReport';
+import { TasksSurface } from '@/components/tasks/TasksSurface';
 import { ThreadView } from '@/components/thread/ThreadView';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
+import type { PrimaryView } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
 import { AIBarSidebar, AIBarTrigger } from './AIBar';
 import { Rail } from './Rail';
@@ -35,7 +38,10 @@ export function AppShell() {
   const [panelResizing, setPanelResizing] = useState(false);
   const mobileHistoryThreadRef = useRef<string | null>(null);
 
-  const readerVisible = !!(selectedThreadId || composeMode);
+  // The thread reader rides along with the mail-ish surfaces; calendar and
+  // tasks keep their pane to themselves. Compose stays available everywhere.
+  const mailish = primaryView === 'mail' || primaryView === 'daily_report';
+  const readerVisible = !!(composeMode || (selectedThreadId && mailish));
   const permutation = `i${readerVisible ? 't' : ''}${aiBarOpen ? 'a' : ''}`;
   const panelIds = ['inbox', ...(readerVisible ? ['reader'] : []), ...(aiBarOpen ? ['ai'] : [])];
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -93,7 +99,7 @@ export function AppShell() {
                 className="absolute inset-0 h-full w-full"
                 aria-hidden={readerVisible}
               >
-                {primaryView === 'daily_report' ? <DailyReport /> : <Inbox />}
+                <PrimarySurface view={primaryView} />
               </motion.div>
 
               <AnimatePresence initial={false}>
@@ -165,7 +171,9 @@ export function AppShell() {
               className="h-full w-full"
             >
               <Panel id="inbox" defaultSize="40%" minSize="280px">
-                <ReflowPanel>{primaryView === 'daily_report' ? <DailyReport /> : <Inbox />}</ReflowPanel>
+                <ReflowPanel>
+                  <PrimarySurface view={primaryView} />
+                </ReflowPanel>
               </Panel>
 
               {readerVisible ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
@@ -197,6 +205,19 @@ export function AppShell() {
       <FirstRunRedirect />
     </TooltipProvider>
   );
+}
+
+function PrimarySurface({ view }: { view: PrimaryView }) {
+  switch (view) {
+    case 'daily_report':
+      return <DailyReport />;
+    case 'calendar':
+      return <CalendarSurface />;
+    case 'tasks':
+      return <TasksSurface />;
+    default:
+      return <Inbox />;
+  }
 }
 
 function ReflowPanel({ children, className }: { children: ReactNode; className?: string }) {

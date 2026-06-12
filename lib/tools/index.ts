@@ -64,6 +64,7 @@ import {
   unstarMessage,
 } from './mail-mutate';
 import { forget, listMemories, recall, remember } from './memories';
+import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
 import type { AnyTool } from './registry';
 import {
@@ -181,6 +182,8 @@ const allTools: AnyTool[] = [
   browserbaseFetch,
   logAction,
   listAuditEntries,
+  listRecentOperationsTool,
+  undoOperationTool,
   // UI tools — server returns ack, client intercepts for the real mutation.
   uiFocusThread,
   uiSetQuery,

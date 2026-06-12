@@ -14,8 +14,10 @@ import type * as crons from "../crons.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
 import type * as mailCorpus from "../mailCorpus.js";
+import type * as operations from "../operations.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as smart from "../smart.js";
+import type * as suggestions from "../suggestions.js";
 import type * as userData from "../userData.js";
 import type * as users from "../users.js";
 
@@ -32,8 +34,10 @@ declare const fullApi: ApiFromModules<{
   lib: typeof lib;
   liveMail: typeof liveMail;
   mailCorpus: typeof mailCorpus;
+  operations: typeof operations;
   rateLimits: typeof rateLimits;
   smart: typeof smart;
+  suggestions: typeof suggestions;
   userData: typeof userData;
   users: typeof users;
 }>;

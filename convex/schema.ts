@@ -359,6 +359,59 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_email', ['userId', 'email']),
 
+  // Every mutating action the AI (or a user clicking an AI suggestion) applies
+  // to mail/calendar/tasks. `inverse` is a declarative undo descriptor executed
+  // by lib/ai/operations.ts; rows without one are not undoable. `batchId`
+  // groups the operations of a single agent turn into one reviewable
+  // change-set ("created 4 events, 10 tasks").
+  aiOperations: defineTable({
+    userId: v.string(),
+    agent: v.union(v.literal('user'), v.literal('ai')),
+    tool: v.string(),
+    surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks')),
+    summary: v.string(),
+    batchId: v.optional(v.string()),
+    chatId: v.optional(v.string()),
+    // What was touched: { kind, id, accountId?, ... } — shape owned by the
+    // surface that recorded it; the UI only needs kind/id for deep links.
+    target: v.any(),
+    inverse: v.optional(v.object({ kind: v.string(), payload: v.any() })),
+    status: v.union(v.literal('applied'), v.literal('undone'), v.literal('undo_failed')),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    undoneAt: v.optional(v.number()),
+  })
+    .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_user_batch', ['userId', 'batchId'])
+    .index('by_user_status_created', ['userId', 'status', 'createdAt']),
+
+  // Proactive-agent proposals (task drafts, detected events, automations).
+  // Nothing here touches real calendars or boards until accepted; accepting
+  // runs the normal tool path and records an aiOperation. `dedupeKey` keeps
+  // re-scans of the same email from piling up duplicate suggestions.
+  suggestions: defineTable({
+    userId: v.string(),
+    kind: v.union(v.literal('task'), v.literal('event'), v.literal('automation')),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('accepted'),
+      v.literal('dismissed'),
+      v.literal('expired'),
+    ),
+    title: v.string(),
+    payload: v.any(),
+    // Where this came from: { source: 'email'|'sweep'|'chat', accountId?,
+    // threadId?, messageId? } — rendered as a provenance chip in the tray.
+    provenance: v.any(),
+    dedupeKey: v.optional(v.string()),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+  })
+    .index('by_user_status_created', ['userId', 'status', 'createdAt'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
+    .index('by_user_created', ['userId', 'createdAt']),
+
   auditEvents: defineTable({
     userId: v.optional(v.string()),
     accountId: v.optional(v.string()),
