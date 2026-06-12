@@ -1,7 +1,14 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
-import { classifyCorpusThread, loadSmartContext, queryCategoryThreads } from './smart';
+import {
+  classifyCorpusThread,
+  computeCategoryUnreadCounts,
+  latestThreadBody,
+  loadSmartContext,
+  normalizeCorpusThread,
+  queryCategoryThreads,
+} from './smart';
 
 const providerValidator = v.union(
   v.literal('google'),
@@ -256,6 +263,7 @@ export const upsertCorpusBatch = mutation({
       if (!stored.length) continue;
       const windowCapped = stored.length >= AGGREGATE_WINDOW;
       const latest = stored.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a));
+      let classifyBody = String(latest.textBody || latest.searchText || '').slice(0, 4000);
       const labels = [...new Set(stored.flatMap((message) => message.labels || []))];
       const patch = {
         userId: args.userId,
@@ -291,6 +299,8 @@ export const upsertCorpusBatch = mutation({
         patch.fromAddress = fullLatest.from || patch.fromAddress;
         patch.snippet = fullLatest.snippet || patch.snippet;
         patch.yearMonth = yearMonth(fullLatest.receivedAt);
+        classifyBody =
+          String(fullLatest.textBody || fullLatest.searchText || '').slice(0, 4000) || classifyBody;
       }
       const existing = await ctx.db
         .query('mailCorpusThreads')
@@ -307,7 +317,12 @@ export const upsertCorpusBatch = mutation({
         patch.starred = Boolean(existing.starred) || patch.starred || undefined;
         patch.labels = [...new Set([...(existing.labels || []), ...patch.labels])];
       }
-      const classified = smartContext ? classifyCorpusThread(patch, smartContext) : {};
+      // Classify against the merged row so an existing stored LLM verdict
+      // (llmCategory) keeps precedence — patch alone omits it, and a webhook
+      // or backfill recompute would otherwise clobber it with the
+      // deterministic result.
+      const classifyRow = existing ? { ...existing, ...patch } : patch;
+      const classified = smartContext ? classifyCorpusThread(classifyRow, smartContext, classifyBody) : {};
       if (existing) await ctx.db.patch(existing._id, { ...patch, ...classified });
       else await ctx.db.insert('mailCorpusThreads', { ...patch, ...classified, createdAt: ts });
     }
@@ -729,6 +744,162 @@ export const getCorpusThreadBundle = query({
 
 // Recent threads with stored verdicts, projected small. Feeds the category
 // stat counters and the command-palette seeds without scanning message rows.
+// Server-tool variant of liveMail.categoryCounts (internal secret instead of
+// Clerk identity) — backs the agent-facing get_smart_category_stats tool.
+export const categoryCountsInternal = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountIds: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const counts = await computeCategoryUnreadCounts(ctx, args.userId, args.accountIds);
+    return { counts };
+  },
+});
+
+// LLM-once classification queue. Rows the write-time deterministic pass
+// flagged uncertain, newest first, with the body excerpt the model needs —
+// the Next server runs the sweep (it owns the AI gateway and billing).
+export const listLlmPending = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 40), 1), 60);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
+      .order('desc')
+      .take(limit);
+    return await Promise.all(
+      rows.map(async (row) => ({
+        accountId: row.accountId,
+        providerThreadId: row.providerThreadId,
+        subject: row.subject,
+        fromAddress: row.fromAddress,
+        snippet: row.snippet,
+        labels: row.labels || [],
+        unread: Boolean(row.unread),
+        lastDate: row.lastDate,
+        bodyText: (await latestThreadBody(ctx, row)) || '',
+      })),
+    );
+  },
+});
+
+// Persist one model verdict per thread and recompute the merged write-time
+// classification. Rows listed without a verdict (model returned garbage) are
+// closed out too — LLM-once means one attempt, not a retry loop; they keep
+// their deterministic verdict.
+export const storeLlmVerdicts = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    items: v.array(
+      v.object({
+        accountId: v.string(),
+        providerThreadId: v.string(),
+        verdict: v.optional(v.any()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const context = await loadSmartContext(ctx, args.userId);
+    const ts = now();
+    let stored = 0;
+    for (const item of args.items.slice(0, 60)) {
+      const row = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', item.accountId)
+            .eq('providerThreadId', item.providerThreadId),
+        )
+        .unique();
+      if (!row) continue;
+      const llmCategory = item.verdict ?? undefined;
+      const merged = classifyCorpusThread(
+        { ...row, llmCategory: llmCategory ?? row.llmCategory },
+        context,
+        await latestThreadBody(ctx, row),
+      );
+      await ctx.db.patch(row._id, {
+        ...(llmCategory ? { llmCategory } : {}),
+        llmClassifiedAt: ts,
+        ...merged,
+        llmPending: undefined,
+      });
+      if (llmCategory) stored += 1;
+    }
+    return { stored };
+  },
+});
+
+// One thread row in client shape. Light corpus-first identity lookup for
+// tools that act on a thread the UI is showing (quick-fix corrections etc.);
+// the KV thread cache only ever held provider-transport reads, so corpus rows
+// were invisible to it.
+export const getCorpusThread = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerThreadId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_account_thread', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('accountId', args.accountId)
+          .eq('providerThreadId', args.providerThreadId),
+      )
+      .unique();
+    return row ? normalizeCorpusThread(row) : null;
+  },
+});
+
+// Batched latest-message body excerpts, keyed `${accountId}:${providerThreadId}`.
+// Feeds body-grounded classification in the Next tool layer (deterministic +
+// LLM passes) without shipping full message docs over the wire.
+export const threadBodyExcerpts = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    items: v.array(v.object({ accountId: v.string(), providerThreadId: v.string() })),
+    maxChars: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const cap = Math.min(Math.max(Math.floor(args.maxChars ?? 2500), 200), 4000);
+    const out: Record<string, string> = {};
+    for (const item of args.items.slice(0, 100)) {
+      const latest = await ctx.db
+        .query('mailCorpusMessages')
+        .withIndex('by_user_account_thread_received', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', item.accountId)
+            .eq('providerThreadId', item.providerThreadId),
+        )
+        .order('desc')
+        .take(1);
+      const body = String(latest[0]?.textBody || latest[0]?.searchText || '').slice(0, cap);
+      if (body) out[`${item.accountId}:${item.providerThreadId}`] = body;
+    }
+    return out;
+  },
+});
+
 export const listRecentCorpusThreads = query({
   args: {
     internalSecret: v.optional(v.string()),

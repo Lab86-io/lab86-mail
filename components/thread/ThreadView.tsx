@@ -192,7 +192,6 @@ export function ThreadView() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['search'], refetchType: 'none' });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['daily-report'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['tracked-threads'], refetchType: 'inactive' });
     },
@@ -302,7 +301,9 @@ export function ThreadView() {
             !aiBarOpen && 'pr-12',
           )}
         >
-          <h1 className="truncate text-[15px] font-semibold leading-tight">New message</h1>
+          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+            New message
+          </h1>
           <button
             type="button"
             onClick={() => closeCompose()}
@@ -386,7 +387,9 @@ export function ThreadView() {
         )}
       >
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[15px] font-semibold leading-tight">{data.subject}</h1>
+          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+            {data.subject}
+          </h1>
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
             <span className="shrink-0">
               {messages.length} message{messages.length === 1 ? '' : 's'}
@@ -398,15 +401,15 @@ export function ThreadView() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Reply cluster — labels fade out below 640px of reader width. */}
-          <div className="flex items-center gap-1">
+          {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
+          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)] [&>button]:rounded-none [&>button]:border-0 [&>button+button]:border-l [&>button+button]:border-[var(--color-border)]">
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => startReply('reply')}
               disabled={!replyAnchor}
-              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               title="Reply (r)"
             >
               <RowIcon icon={CornerUpLeftIcon} size={14} />
@@ -420,7 +423,7 @@ export function ThreadView() {
               size="sm"
               onClick={() => startReply('reply_all')}
               disabled={!replyAnchor}
-              className="gap-1 hover:bg-[var(--color-bg-subtle)]"
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               title="Reply all"
             >
               <RowIcon icon={ReplyAllIcon} size={14} />
@@ -570,12 +573,15 @@ function SummaryCard({
       layout
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3"
+      className="relative overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3 pl-4"
     >
+      {/* Editorial pull-quote rule. */}
+      <span
+        aria-hidden
+        className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-[var(--color-accent)]/70"
+      />
       <header className="mb-1.5 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
-          Summary
-        </span>
+        <span className="font-display text-[11.5px] italic text-[var(--color-text-muted)]">Summary</span>
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-[var(--color-text-faint)]">{model || 'gpt-5.5-mini'}</span>
           <button
@@ -777,7 +783,7 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
   if (safe) {
     return (
       <div
-        className="email-body reflow-text break-words text-[13.5px] text-[var(--color-text)]"
+        className="email-body reflow-text break-words text-[13.5px]"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: provider HTML is sanitized before rendering.
         dangerouslySetInnerHTML={{ __html: safe }}
       />

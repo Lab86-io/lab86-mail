@@ -6,7 +6,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import { Ban, CheckCircle2, Inbox as InboxIcon, MoreHorizontal, Search, Tag, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Confirmation,
@@ -97,6 +97,43 @@ interface AccountsResult {
   accounts: AccountRow[];
 }
 
+// Optimistic record of a quick-fix correction (Never Main / Always Noise /
+// Move to). Rows the pending rule will reclassify out of the current view are
+// hidden immediately; the Convex live query and search refetch confirm it.
+interface QuickFixSuppression {
+  id: string;
+  senderEmail: string;
+  action: string;
+  category?: string;
+}
+
+// Day bucket for the editorial date headers: Today / Yesterday / weekday for
+// the last week / month (with year once it isn't this year).
+function dateGroupLabel(ts: number): string {
+  if (!ts) return 'Undated';
+  const date = new Date(ts);
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayMs = 86_400_000;
+  const today = startOfDay(now);
+  const that = startOfDay(date);
+  if (that >= today) return 'Today';
+  if (that >= today - dayMs) return 'Yesterday';
+  if (that >= today - 6 * dayMs) return date.toLocaleDateString(undefined, { weekday: 'long' });
+  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: 'long' });
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) {
+  // Only a category view can optimistically drop a row — in search / all-mail
+  // (smartCategory null) the row still belongs to the underlying query.
+  if (!smartCategory) return false;
+  if (s.action === 'never_main') return smartCategory === 'main';
+  if (s.action === 'always_noise') return smartCategory !== 'noise';
+  if (s.action === 'move_to' && s.category) return !!smartCategory && smartCategory !== s.category;
+  return false;
+}
+
 export function Inbox() {
   const account = useClientStore((s) => s.account);
   const query = useClientStore((s) => s.query);
@@ -126,6 +163,7 @@ export function Inbox() {
   const [translating, setTranslating] = useState(false);
   const [labelPreview, setLabelPreview] = useState<ThreadRow | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [suppressions, setSuppressions] = useState<QuickFixSuppression[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -356,7 +394,10 @@ export function Inbox() {
     },
     refetchOnMount: false,
     refetchOnWindowFocus: false,
-    refetchInterval: 60_000,
+    // The Convex live query already pushes new mail in real time; polling the
+    // HTTP path on top of it only burns provider quota. Poll only when the
+    // live query isn't serving this view.
+    refetchInterval: liveInbox.status === 'success' ? false : 60_000,
     // Don't keep polling a buried tab — pairs with onWindowFocus to catch up.
     refetchIntervalInBackground: false,
   });
@@ -364,7 +405,6 @@ export function Inbox() {
   const refreshInbox = () => {
     setRefreshNonce((nonce) => nonce + 1);
     clearSelected();
-    queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     queryClient.invalidateQueries({ queryKey: ['daily-report'], refetchType: 'inactive' });
     if (selectedThreadId) {
       const openAccount = threadAccount || (account !== ALL_ACCOUNTS ? account : '');
@@ -395,10 +435,14 @@ export function Inbox() {
       const key = `${item.account || account}:${item._id}`;
       if (!byKey.has(key)) byKey.set(key, item);
     }
-    return [...byKey.values()].sort(
-      (a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
-    );
-  }, [account, data?.pages, liveItems]);
+    const active = suppressions.filter((s) => suppressionHides(s, smartCategory));
+    const rows = [...byKey.values()].filter((item) => {
+      if (!active.length) return true;
+      const email = (emailFromHeader(item.from || item.fromAddress) || '').toLowerCase();
+      return !email || !active.some((s) => s.senderEmail === email);
+    });
+    return rows.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+  }, [account, data?.pages, liveItems, suppressions, smartCategory]);
   // Skeleton while either source is still on its first load for this view —
   // an empty live result alone must not flash "Nothing here" while the HTTP
   // page (which can still backfill brand-new accounts) is in flight.
@@ -569,19 +613,38 @@ export function Inbox() {
       toast.success('Smart labels applied');
       setLabelPreview(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     },
     onError: (err: any) => toast.error(`Could not apply labels: ${err?.message || 'unknown error'}`),
   });
   const applyCorrection = useMutation({
     mutationFn: async (input: any) => callTool('apply_smart_correction', input),
+    // Hide the sender's rows right away — the rule is deterministic, so the
+    // outcome is known before the server confirms it.
+    onMutate: (input: any) => {
+      const row = items.find((it) => it._id === input.threadId && (it.account || account) === input.account);
+      const senderEmail = (emailFromHeader(row?.from || row?.fromAddress || '') || '').toLowerCase();
+      if (!senderEmail) return {};
+      const suppression: QuickFixSuppression = {
+        id: `${input.action}:${senderEmail}:${Date.now()}`,
+        senderEmail,
+        action: input.action,
+        category: input.category,
+      };
+      if (!suppressionHides(suppression, smartCategory)) return {};
+      setSuppressions((prev) => [...prev, suppression]);
+      return { suppressionId: suppression.id };
+    },
     onSuccess: () => {
       toast.success('Smart rule saved');
       queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
       queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
     },
-    onError: (err: any) => toast.error(`Could not save correction: ${err?.message || 'unknown error'}`),
+    onError: (err: any, _input, context: any) => {
+      if (context?.suppressionId) {
+        setSuppressions((prev) => prev.filter((s) => s.id !== context.suppressionId));
+      }
+      toast.error(`Could not save correction: ${err?.message || 'unknown error'}`);
+    },
   });
   const undoLastRule = useMutation({
     mutationFn: async () => {
@@ -592,8 +655,8 @@ export function Inbox() {
     },
     onSuccess: () => {
       toast.success('Last smart rule disabled');
+      setSuppressions([]);
       queryClient.invalidateQueries({ queryKey: ['search'] });
-      queryClient.invalidateQueries({ queryKey: ['smart-counts'] });
     },
     onError: (err: any) => toast.error(`Could not undo: ${err?.message || 'unknown error'}`),
   });
@@ -781,41 +844,58 @@ export function Inbox() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
           >
-            {items.map((it) => {
+            {items.map((it, index) => {
               const senderEmail = emailFromHeader(it.from || it.fromAddress);
               const key = rowKey(it);
               const rowAccount = it.account || account;
+              // Editorial datelines: a serif group header whenever the day
+              // bucket changes (the list is already date-sorted).
+              const groupLabel = dateGroupLabel(Number(it.lastDate ?? it.date) || 0);
+              const previous = index > 0 ? items[index - 1] : null;
+              const showHeader =
+                !previous || dateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
               return (
-                <ThreadRowCard
-                  key={key}
-                  item={it}
-                  photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
-                  showAccount={account === ALL_ACCOUNTS}
-                  selected={selectedIds.includes(key)}
-                  active={selectedThreadId === it._id && threadAccount === rowAccount}
-                  onToggle={() => toggleSelected(key)}
-                  onPrefetch={() => prefetchThread(it)}
-                  onApplyLabels={() => setLabelPreview(it)}
-                  onCorrect={(action, payload = {}) =>
-                    applyCorrection.mutate({
-                      account: rowAccount,
-                      threadId: it._id,
-                      action,
-                      scope: 'sender',
-                      ...payload,
-                    })
-                  }
-                  onUndoLast={() => undoLastRule.mutate()}
-                  customLabels={customLabels}
-                  onClick={() => {
-                    // Unified inbox stays put; just remember which mailbox this
-                    // thread belongs to so the reader can load/reply correctly.
-                    startTransition(() => {
-                      setThreadAccount(rowAccount);
-                      setSelectedThread(it._id);
-                    });
-                  }}
-                />
+                <Fragment key={key}>
+                  {showHeader ? (
+                    <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
+                      <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+                        {groupLabel}
+                      </span>
+                      <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+                    </div>
+                  ) : null}
+                  <ThreadRowCard
+                    item={it}
+                    photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                    showAccount={account === ALL_ACCOUNTS}
+                    accountLabel={accountAliasById[rowAccount] || ''}
+                    activeCategory={smartCategory}
+                    selected={selectedIds.includes(key)}
+                    active={selectedThreadId === it._id && threadAccount === rowAccount}
+                    onToggle={() => toggleSelected(key)}
+                    onPrefetch={() => prefetchThread(it)}
+                    onApplyLabels={() => setLabelPreview(it)}
+                    onCorrect={(action, payload = {}) =>
+                      applyCorrection.mutate({
+                        account: rowAccount,
+                        threadId: it._id,
+                        action,
+                        scope: 'sender',
+                        ...payload,
+                      })
+                    }
+                    onUndoLast={() => undoLastRule.mutate()}
+                    customLabels={customLabels}
+                    onClick={() => {
+                      // Unified inbox stays put; just remember which mailbox this
+                      // thread belongs to so the reader can load/reply correctly.
+                      startTransition(() => {
+                        setThreadAccount(rowAccount);
+                        setSelectedThread(it._id);
+                      });
+                    }}
+                  />
+                </Fragment>
               );
             })}
             <div ref={loadMoreRef} className="min-h-1" aria-hidden />
@@ -847,6 +927,8 @@ function ThreadRowCard({
   onUndoLast,
   customLabels,
   showAccount,
+  accountLabel,
+  activeCategory,
 }: {
   item: ThreadRow;
   photoUrl?: string | null;
@@ -860,6 +942,8 @@ function ThreadRowCard({
   onUndoLast: () => void;
   customLabels: any[];
   showAccount?: boolean;
+  accountLabel?: string;
+  activeCategory?: string | null;
 }) {
   const triage = (item as any).triage;
   const smart = (item as any).smartCategory;
@@ -905,7 +989,7 @@ function ThreadRowCard({
       role="button"
       tabIndex={0}
       className={cn(
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors duration-150 hover:bg-[var(--color-hover-soft)]',
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left transition-colors duration-150 last:border-b-0 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
@@ -922,8 +1006,8 @@ function ThreadRowCard({
         <div className="flex items-center gap-1.5">
           <span
             className={cn(
-              'truncate text-[13px]',
-              item.unread ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text)]',
+              'truncate font-display text-[13.5px]',
+              item.unread ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text)]/90',
             )}
           >
             {displaySenderLabel}
@@ -950,7 +1034,10 @@ function ThreadRowCard({
               aria-hidden
             />
           ) : null}
-          {smart?.primary ? (
+          {/* The category chip only earns its place when it says something the
+              view doesn't already — inside a category view every row would
+              repeat the view's own name. */}
+          {smart?.primary && smart.primary !== activeCategory ? (
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -977,9 +1064,11 @@ function ThreadRowCard({
               </PopoverContent>
             </Popover>
           ) : null}
-          {showAccount && item.account ? (
-            <Badge variant="outline" className="font-mono text-[9px] normal-case">
-              {item.accountAlias || item.account.split('@')[0]}
+          {/* Mailbox chip: human alias only — a raw grant id is never useful
+              in a list row. No alias resolved yet = no chip. */}
+          {showAccount && (accountLabel || item.accountAlias) ? (
+            <Badge variant="outline" className="max-w-28 truncate text-[9px] normal-case">
+              {accountLabel || item.accountAlias}
             </Badge>
           ) : null}
         </div>
@@ -987,7 +1076,7 @@ function ThreadRowCard({
 
       {/* Hover-only row actions — overlaid so they add no height at rest. */}
       {smart ? (
-        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
+        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none transition-opacity duration-[var(--duration-normal)] ease-[var(--ease-default)] group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
           <Button
             type="button"
             variant="ghost"
@@ -1131,7 +1220,7 @@ function EmptyState({ account }: { account: string }) {
         <EmptyMedia>
           <InboxIcon className="h-4 w-4 text-[var(--color-text-faint)]" />
         </EmptyMedia>
-        <EmptyTitle>Nothing here yet</EmptyTitle>
+        <EmptyTitle className="font-display italic">Nothing here yet</EmptyTitle>
         <EmptyDescription>
           {account
             ? 'Try a different search, smart category, or mailbox.'

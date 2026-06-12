@@ -17,30 +17,44 @@ import { getAiRequestContext, runWithAiRequestContext } from './context';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
-type AiSpeed = 'fast' | 'primary';
+type AiSpeed = 'fast' | 'primary' | 'nano';
 type PlatformPreference = {
   provider?: AiProvider;
   modelName?: string;
 };
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
-const DEFAULT_MODELS: Record<AiProvider, { primary: string; fast: string }> = {
+// 'nano' is the bulk-classification tier: high-volume single-shot labeling
+// (one LLM verdict per corpus thread) where per-token cost dominates. It
+// always resolves to the platform default — user model preferences only steer
+// the fast/primary tiers.
+const DEFAULT_MODELS: Record<AiProvider, { primary: string; fast: string; nano: string }> = {
   openrouter: {
     primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'openai/gpt-5.5',
     fast:
       process.env.LAB86_MAIL_OPENAI_FAST_MODEL ||
       process.env.MAIL_OS_OPENAI_FAST_MODEL ||
       'openai/gpt-5.4-mini',
+    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'openai/gpt-5.4-nano',
   },
   openai: {
     primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'gpt-5.5',
     fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || 'gpt-5.5-mini',
+    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'gpt-5-nano',
   },
   anthropic: {
     primary: process.env.LAB86_MAIL_ANTHROPIC_MODEL || 'claude-sonnet-4-6',
     fast: process.env.LAB86_MAIL_ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5-20251001',
+    nano: process.env.LAB86_MAIL_ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5-20251001',
   },
 };
+
+// User model overrides apply to fast/primary only; nano stays on the cheap
+// platform default so a bulk sweep can never burn the user's premium model.
+function settingsModelFor(speed: AiSpeed, settings?: RuntimeState['settings'] | null) {
+  if (speed === 'nano') return undefined;
+  return speed === 'fast' ? settings?.fastModel : settings?.model;
+}
 
 interface RuntimeState {
   settings?: {
@@ -92,9 +106,7 @@ export async function resolveAiRuntime(input: {
     if (isUserOpenRouterKeyRequired()) {
       if (state.key?.provider === 'openrouter') {
         const apiKey = decryptSecret(state.key.encryptedKey);
-        const modelName =
-          (speed === 'fast' ? state.settings?.fastModel : state.settings?.model) ||
-          modelFor('openrouter', speed);
+        const modelName = settingsModelFor(speed, state.settings) || modelFor('openrouter', speed);
         return {
           userId,
           source: 'byok',
@@ -116,8 +128,7 @@ export async function resolveAiRuntime(input: {
       }
       const apiKey = decryptSecret(state.key.encryptedKey);
       const provider = state.key.provider;
-      const modelName =
-        (speed === 'fast' ? state.settings?.fastModel : state.settings?.model) || modelFor(provider, speed);
+      const modelName = settingsModelFor(speed, state.settings) || modelFor(provider, speed);
       return {
         userId,
         source: 'byok',
@@ -129,10 +140,10 @@ export async function resolveAiRuntime(input: {
 
     const entitlement = await getAiBillingEntitlement();
     const budgetPolicy = assertLab86Budget(state, entitlement, input.feature);
-    if (budgetPolicy.forceFastModel) speed = 'fast';
+    if (budgetPolicy.forceFastModel && speed === 'primary') speed = 'fast';
     platformPreference = {
       provider: state.settings?.provider,
-      modelName: speed === 'fast' ? state.settings?.fastModel : state.settings?.model,
+      modelName: settingsModelFor(speed, state.settings),
     };
   }
 
@@ -283,7 +294,9 @@ function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
 }
 
 function modelFor(provider: AiProvider, speed: AiSpeed) {
-  return speed === 'primary' ? DEFAULT_MODELS[provider].primary : DEFAULT_MODELS[provider].fast;
+  if (speed === 'primary') return DEFAULT_MODELS[provider].primary;
+  if (speed === 'nano') return DEFAULT_MODELS[provider].nano;
+  return DEFAULT_MODELS[provider].fast;
 }
 
 function assertLab86Budget(

@@ -18,7 +18,6 @@ import {
 } from '../nylas/provider';
 import type { Thread } from '../shared/types';
 import { upsertMessage as upsertMessageRecord } from '../store/messages';
-import { computeSmartCategoryStats } from '../store/smart-category-stats';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
 import {
@@ -152,6 +151,13 @@ export const listSmartCategory = defineTool({
     nextPageToken: z.string().optional(),
   }),
   async handler({ account, category, query, max, pageToken }, ctx) {
+    // The user is looking at categories — opportunistically drain any threads
+    // still waiting for their one LLM verdict (debounced, runs off-request).
+    if (ctx.userId) {
+      void import('../mail/llm-classify')
+        .then(({ kickLlmClassification }) => kickLlmClassification(ctx.userId))
+        .catch(() => undefined);
+    }
     // Primary path: indexed corpus read over persisted write-time verdicts.
     // No provider calls and no writes — this is a pure local query.
     if (ctx.userId && isConvexConfigured() && (!pageToken || pageToken.startsWith(LOCAL_CURSOR_PREFIX))) {
@@ -394,43 +400,22 @@ export const listAccountThreads = defineTool({
 export const getSmartCategoryStats = defineTool({
   name: 'get_smart_category_stats',
   description:
-    'Return locally computed smart category stats: total, unread, needs-attention, tracked, and freshness.',
+    'Return unread counts per smart category (capped at 100) with a needs-attention flag. Indexed corpus read — instant.',
   category: 'mail',
   mutating: false,
   input: z.object({
     account: z.string().optional(),
-    refresh: z.boolean().default(false).optional(),
   }),
   output: z.object({
-    categories: z.record(
-      z.string(),
-      z.object({
-        total: z.number(),
-        unread: z.number(),
-        needsAttention: z.number(),
-        tracked: z.number(),
-        computedAt: z.number(),
-        approximate: z.boolean(),
-      }),
-    ),
+    categories: z.record(z.string(), z.object({ unread: z.number(), attention: z.boolean() })),
   }),
-  async handler({ account }) {
-    const categories = await computeSmartCategoryStats(account);
-    return {
-      categories: Object.fromEntries(
-        Object.entries(categories).map(([id, stat]) => [
-          id,
-          {
-            total: stat.total,
-            unread: stat.unread,
-            needsAttention: stat.needsAttention,
-            tracked: stat.tracked,
-            computedAt: stat.computedAt,
-            approximate: stat.approximate,
-          },
-        ]),
-      ),
-    };
+  async handler({ account }, ctx) {
+    if (!ctx.userId || !isConvexConfigured()) return { categories: {} };
+    const result = await convexQuery<{ counts: Record<string, { unread: number; attention: boolean }> }>(
+      (api as any).mailCorpus.categoryCountsInternal,
+      { userId: ctx.userId, accountIds: account ? [account] : undefined },
+    );
+    return { categories: result.counts };
   },
 });
 

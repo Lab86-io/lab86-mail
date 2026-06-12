@@ -2,7 +2,7 @@ import { ClerkProvider } from '@clerk/nextjs';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { Metadata, Viewport } from 'next';
-import { Fraunces } from 'next/font/google';
+import { Averia_Serif_Libre, Fraunces } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
@@ -16,6 +16,16 @@ const fraunces = Fraunces({
   weight: ['400', '500', '600', '700'],
   style: ['normal', 'italic'],
   variable: '--font-fraunces',
+  display: 'swap',
+});
+
+// Friendly hand-drawn-ish serif — the "News" UI font option in the theme
+// panel (rounded terminals, newspaper warmth).
+const averia = Averia_Serif_Libre({
+  subsets: ['latin'],
+  weight: ['300', '400', '700'],
+  style: ['normal', 'italic'],
+  variable: '--font-averia',
   display: 'swap',
 });
 
@@ -58,7 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable}`}
+      className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable} ${averia.variable}`}
     >
       <body>
         {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (

@@ -61,6 +61,10 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-serif: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
+  /* Editorial display layer: wordmark, pane titles, sender names, subjects,
+     section/date headers. Body copy and controls stay sans. The theme panel
+     swaps this between Fraunces (Editorial), Averia (News), and sans. */
+  --font-display: var(--font-display-choice, var(--font-fraunces)), ui-serif, Georgia, serif;
 
   /* fresh light-mode palette: cool canvas, white working surfaces, and a deep
      forest green primary accent shared with dark mode. */
@@ -131,9 +135,70 @@
   --radius: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+
+  /* motion — Linear-calibrated: fast for hover/color, normal for state
+     changes, moderate for panels/dialogs. Nothing springy; if an animation
+     draws attention to itself it is too slow. */
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-moderate: 300ms;
+  --ease-default: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-enter: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 @layer base {
+  /* Arc-style single-hue theming: the whole accent family derives from one
+     user-chosen hue + chroma pair in OKLCH (hue-stable lightness math). The
+     defaults reproduce the original forest green; the accent picker in the
+     rail writes --accent-hue/--accent-chroma inline on <html>. Surfaces stay
+     neutral — the seed never sits behind body text. */
+  :root {
+    --accent-hue: 156;
+    --accent-chroma: 0.09;
+    /* Background is its OWN axis (Arc separates window color from accent):
+       --bg-hue + --surface-tint drive every surface; accent never bleeds into
+       backgrounds unless the user dials it in themselves. 0 tint reproduces
+       the original neutral palette exactly. */
+    --bg-hue: 156;
+    --surface-tint: 0;
+    /* Film grain overlay opacity (0..~0.3), drawn by body::after. */
+    --grain-opacity: 0;
+
+    /* Surfaces derive from the same hue so a background tint follows the
+       accent (Arc's background/backgroundExtra pattern). */
+    --color-bg: oklch(
+      calc(0.977 - var(--surface-tint) * 0.012) calc(0.005 + var(--surface-tint) * 0.022) var(--bg-hue)
+    );
+    --color-bg-elevated: oklch(
+      calc(0.995 - var(--surface-tint) * 0.008) calc(var(--surface-tint) * 0.014) var(--bg-hue)
+    );
+    --color-bg-subtle: oklch(
+      calc(0.965 - var(--surface-tint) * 0.012) calc(0.006 + var(--surface-tint) * 0.024) var(--bg-hue)
+    );
+    --color-bg-muted: oklch(
+      calc(0.93 - var(--surface-tint) * 0.015) calc(0.008 + var(--surface-tint) * 0.026) var(--bg-hue)
+    );
+    --color-border: oklch(
+      calc(0.905 - var(--surface-tint) * 0.015) calc(0.01 + var(--surface-tint) * 0.026) var(--bg-hue)
+    );
+    --color-border-strong: oklch(
+      calc(0.85 - var(--surface-tint) * 0.02) calc(0.012 + var(--surface-tint) * 0.028) var(--bg-hue)
+    );
+
+    --color-accent: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-accent-hover: oklch(0.39 var(--accent-chroma) var(--accent-hue));
+    --color-accent-soft: oklch(0.55 calc(var(--accent-chroma) * 0.8) var(--accent-hue) / 0.13);
+    --color-accent-shine-1: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-accent-shine-2: oklch(0.62 calc(var(--accent-chroma) * 1.1) var(--accent-hue));
+    --color-accent-shine-3: oklch(0.39 var(--accent-chroma) var(--accent-hue));
+    --color-hover-soft: oklch(0.6 calc(var(--accent-chroma) * 0.5) var(--accent-hue) / 0.07);
+    --color-selected: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-selected-soft: oklch(0.55 calc(var(--accent-chroma) * 0.8) var(--accent-hue) / 0.13);
+    --color-border-beam-from: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-border-beam-to: oklch(0.62 var(--accent-chroma) var(--accent-hue));
+  }
+
   :root {
     --background: var(--color-bg);
     --foreground: var(--color-text);
@@ -177,29 +242,42 @@
     --input: var(--color-bg-elevated);
     --ring: var(--color-accent);
 
-    /* Pure-black base; neutral grey on raised elements (cards, bubbles, inputs)
-       — no brown backgrounds. elevated/muted step lighter for depth. Brown and
-       green live only as accents. */
-    --color-bg: #000000;
-    --color-bg-elevated: #1c1c1c;
-    --color-bg-subtle: #141414;
-    --color-bg-muted: #282828;
-    --color-border: #242424;
-    --color-border-strong: #383838;
+    /* Pure-black base at tint 0 (oklch L=0); raising --surface-tint lifts and
+       tints every surface toward the accent hue, Arc-style. The lightness
+       offsets reproduce the original neutral greys exactly at tint 0. */
+    --color-bg: oklch(calc(var(--surface-tint) * 0.16) calc(var(--surface-tint) * 0.04) var(--bg-hue));
+    --color-bg-elevated: oklch(
+      calc(0.22 + var(--surface-tint) * 0.025) calc(var(--surface-tint) * 0.032) var(--bg-hue)
+    );
+    --color-bg-subtle: oklch(
+      calc(0.178 + var(--surface-tint) * 0.025) calc(var(--surface-tint) * 0.034) var(--bg-hue)
+    );
+    --color-bg-muted: oklch(
+      calc(0.27 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.03) var(--bg-hue)
+    );
+    --color-border: oklch(
+      calc(0.25 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.03) var(--bg-hue)
+    );
+    --color-border-strong: oklch(
+      calc(0.335 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.028) var(--bg-hue)
+    );
     --color-text: #ededed;
     --color-text-muted: #9a9a9a;
     --color-text-faint: #5e5e5e;
-    /* Selected/active pop: lighter green for contrast on dark surfaces. */
-    --color-selected: #73a984;
-    --color-selected-soft: #15291f;
+    /* Selected/active pop: the same user hue, lifted for dark surfaces. */
+    --color-selected: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-selected-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
     --rail-bg: #000000;
-    --color-accent: #73a984;
-    --color-accent-hover: #86bb96;
-    --color-accent-soft: #172d20;
-    --color-accent-foreground: #06130d;
-    --color-accent-shine-1: #73a984;
-    --color-accent-shine-2: #b9cf9f;
-    --color-accent-shine-3: #4f8a62;
+    --color-accent: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-accent-hover: oklch(0.79 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-accent-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
+    --color-accent-foreground: oklch(0.17 calc(var(--accent-chroma) * 0.4) var(--accent-hue));
+    --color-accent-shine-1: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-accent-shine-2: oklch(0.85 calc(var(--accent-chroma) * 0.6) var(--accent-hue));
+    --color-accent-shine-3: oklch(0.6 calc(var(--accent-chroma) * 0.85) var(--accent-hue));
+    --color-hover-soft: oklch(0.73 calc(var(--accent-chroma) * 0.4) var(--accent-hue) / 0.07);
+    --color-border-beam-from: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-border-beam-to: oklch(0.85 calc(var(--accent-chroma) * 0.6) var(--accent-hue));
     --color-success: #5fb289;
     --color-success-foreground: #f0fdf4;
     --color-success-soft: #14532d;
@@ -231,6 +309,39 @@
     height: 100%;
     overscroll-behavior-y: none;
     scroll-behavior: smooth;
+  }
+
+  /* Arc-style theme wash: the rail carries the gradient (Arc anchors its
+     space gradient in the sidebar; content stays neutral). Two corner-anchored
+     radial seeds - accent hue from the top, background hue from the bottom -
+     strength from the panel's Wash slider. Drawn as background-image so it
+     sits over the rail's own background color. */
+  .rail-wash {
+    background-image:
+      radial-gradient(
+        120% 70% at 0% 0%,
+        oklch(0.55 calc(var(--accent-chroma) * 0.9) var(--accent-hue) / calc(var(--wash-opacity, 0) * 0.45)),
+        transparent 70%
+      ),
+      radial-gradient(
+        130% 80% at 100% 100%,
+        oklch(0.5 0.07 var(--bg-hue) / calc(var(--wash-opacity, 0) * 0.35)),
+        transparent 72%
+      );
+  }
+
+  /* Film grain: a fixed fractal-noise wash over the whole app, opacity driven
+     by the theme panel. Zero-cost at opacity 0 (still composited, no paints). */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 2147483646;
+    pointer-events: none;
+    opacity: var(--grain-opacity, 0);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 160px 160px;
+    mix-blend-mode: overlay;
   }
 
   /* GPU acceleration for scrollable areas */
@@ -467,28 +578,36 @@
     color: var(--color-text) !important;
   }
 
-  .dark .email-body [style*="color:#fff" i],
-  .dark .email-body [style*="color: #fff" i],
-  .dark .email-body [style*="color:#ffffff" i],
-  .dark .email-body [style*="color: #ffffff" i],
-  .dark .email-body [style*="color:white" i],
-  .dark .email-body [style*="color: white" i],
-  .dark .email-body [style*="color:rgb(255,255,255)" i],
-  .dark .email-body [style*="color: rgb(255,255,255)" i],
-  .dark .email-body [style*="color:rgb(255, 255, 255)" i],
-  .dark .email-body [style*="color: rgb(255, 255, 255)" i] {
-    color: var(--color-text) !important;
+  /* HTML mail is designed against its own (almost always light) background.
+     In dark mode, render it on a light "paper island" with its ORIGINAL
+     colors instead of forcing dark-mode text over backgrounds we don't
+     control — the old blanket color override produced white-on-white the
+     moment an email carried its own white card. Emails that set white text
+     also set their own dark background inline, which is preserved. */
+  .email-body {
+    color-scheme: light;
   }
-
-  /* Dark mode: arbitrary email HTML ships dark-on-light inline colors that go
-     near-invisible on our dark surface. Force readable text on the common text
-     elements (links are excluded so they keep the accent color, which is light
-     in dark mode). Legibility wins over an email's own faint greys. */
-  .dark .email-body,
-  .dark
-    .email-body
-    :where(p, div, span, td, th, li, h1, h2, h3, h4, h5, h6, strong, em, b, blockquote, label):not(a *) {
-    color: var(--color-text) !important;
+  .dark .email-body {
+    background: #ffffff;
+    color: #1f2937;
+    border-radius: var(--radius);
+    padding: 12px 16px;
+  }
+  /* Descendants resolve dark-theme surface vars otherwise, leaving dark
+     blocks under dark text inside the white island. Pin them to light. */
+  .dark .email-body blockquote {
+    border-left-color: #d1d5db;
+    color: #4b5563;
+  }
+  .dark .email-body code {
+    background: #f3f4f6;
+    color: #111827;
+  }
+  .dark .email-body pre {
+    background: #f8fafc;
+  }
+  .dark .email-body a {
+    color: #1d4ed8;
   }
 }
 
@@ -599,29 +718,15 @@
   }
 }
 
-:root {
-  /* shadcn sidebar tokens mapped onto the lab86 palette. */
-  --color-hover-soft: #edf4f0;
-  --color-selected: #0f5132;
-  --color-selected-soft: #e5f2eb;
-  --rail-bg: #f9fbfe;
-
-  --sidebar: #f9fbfe;
-  --sidebar-foreground: var(--color-text);
-  --sidebar-primary: var(--color-accent);
-  --sidebar-primary-foreground: var(--color-accent-foreground);
-  --sidebar-accent: var(--color-bg-muted);
-  --sidebar-accent-foreground: var(--color-text);
-  --sidebar-border: var(--color-border);
-  --sidebar-ring: var(--color-accent);
-}
-
+/* shadcn sidebar tokens mapped onto the lab86 palette. NOTE: this block is
+   unlayered, so it beats every @layer rule — hover/selected/accent values must
+   NEVER be hardcoded here or the accent picker silently stops applying to
+   selection (that exact bug shipped once). Everything aliases the derived
+   palette. */
+:root,
 :root.dark {
-  --color-hover-soft: #1a1a1a;
-  --color-selected: #73a984;
-  --color-selected-soft: #15291f;
-  --rail-bg: #000000;
-  --sidebar: #000000;
+  --rail-bg: var(--color-bg);
+  --sidebar: var(--color-bg);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
   --sidebar-primary-foreground: var(--color-accent-foreground);
