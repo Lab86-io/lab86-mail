@@ -117,6 +117,16 @@ export async function syncCalendarAccount({
     });
     return { ok: true, accountId, calendars: calendars.length, events: totalEvents };
   } catch (err: any) {
+    if (isGrantGoneError(err)) {
+      // The provider grant no longer exists (e.g. a partially-failed account
+      // removal). Terminal: stop retrying until the account is removed or
+      // reconnected.
+      await markSync(row, {
+        status: 'unauthorized',
+        error: 'This account’s connection no longer exists. Remove the account or reconnect it.',
+      }).catch(() => undefined);
+      return { ok: false, accountId, calendars: 0, events: 0, unauthorized: true };
+    }
     if (isMissingScopeError(err)) {
       await markSync(row, {
         status: 'unauthorized',
@@ -130,6 +140,10 @@ export async function syncCalendarAccount({
     }).catch(() => undefined);
     throw err;
   }
+}
+
+function isGrantGoneError(err: any): boolean {
+  return /no grant found/i.test(String(err?.message || ''));
 }
 
 export async function syncAllCalendarAccounts(userId: string): Promise<CalendarSyncResult[]> {
@@ -230,33 +244,42 @@ async function listAllCalendars(grantId: string): Promise<CalendarInputRow[]> {
   return out;
 }
 
+// iCloud rejects event queries spanning more than one year, so the window is
+// always walked in sub-year chunks (harmless for the other providers). The
+// chunk boundary never splits an event: queries match by overlap, and the
+// upsert path dedupes by providerEventId.
+const EVENT_QUERY_CHUNK_MS = 350 * 86_400_000;
+
 async function listCalendarEventsInWindow(
   grantId: string,
   calendarId: string,
   windowStart: number,
   windowEnd: number,
 ): Promise<EventInputRow[]> {
-  const out: EventInputRow[] = [];
-  let pageToken: string | undefined;
-  do {
-    const page = await requireNylas().events.list({
-      identifier: grantId,
-      queryParams: {
-        calendarId,
-        start: String(Math.floor(windowStart / 1000)),
-        end: String(Math.floor(windowEnd / 1000)),
-        expandRecurring: true,
-        limit: EVENT_PAGE_LIMIT,
-        ...(pageToken ? { pageToken } : {}),
-      } as any,
-    });
-    for (const raw of page.data || []) {
-      const event = toEventInput(raw, calendarId);
-      if (event) out.push(event);
-    }
-    pageToken = (page as any).nextCursor || undefined;
-  } while (pageToken);
-  return out;
+  const byId = new Map<string, EventInputRow>();
+  for (let chunkStart = windowStart; chunkStart < windowEnd; chunkStart += EVENT_QUERY_CHUNK_MS) {
+    const chunkEnd = Math.min(chunkStart + EVENT_QUERY_CHUNK_MS, windowEnd);
+    let pageToken: string | undefined;
+    do {
+      const page = await requireNylas().events.list({
+        identifier: grantId,
+        queryParams: {
+          calendarId,
+          start: String(Math.floor(chunkStart / 1000)),
+          end: String(Math.floor(chunkEnd / 1000)),
+          expandRecurring: true,
+          limit: EVENT_PAGE_LIMIT,
+          ...(pageToken ? { pageToken } : {}),
+        } as any,
+      });
+      for (const raw of page.data || []) {
+        const event = toEventInput(raw, calendarId);
+        if (event) byId.set(event.providerEventId, event);
+      }
+      pageToken = (page as any).nextCursor || undefined;
+    } while (pageToken);
+  }
+  return [...byId.values()];
 }
 
 function toCalendarInput(raw: any): CalendarInputRow {

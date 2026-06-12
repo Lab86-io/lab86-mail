@@ -12,6 +12,8 @@ export interface ToolContext {
   // the UI can present the turn as a single change-set (lib/ai/operations.ts).
   operationBatchId?: string;
   chatId?: string;
+  // IANA timezone for interpreting naive wall-clock timestamps in tool args.
+  userTimezone?: string;
 }
 
 export interface ToolDefinition<
@@ -44,6 +46,7 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
       agent: ctx.agent,
       operationBatchId: ctx.operationBatchId,
       chatId: ctx.chatId,
+      userTimezone: ctx.userTimezone,
     },
     async () => {
       let parsed: unknown;

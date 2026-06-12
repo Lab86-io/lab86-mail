@@ -4,12 +4,15 @@ import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
+  CalendarDays,
   Check,
   CreditCard,
   KeyRound,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Plus,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -34,6 +37,13 @@ import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -199,6 +209,19 @@ function MailboxesSection() {
     },
     onError: (err: any) => toast.error(err?.message || 'Could not save alias'),
   });
+  const resyncMail = useMutation({
+    mutationFn: async (accountId: string) => postJson('/api/mail/resync', { accountId }),
+    onSuccess: () => {
+      toast.success('Re-indexing started — the mailbox stays usable while it rebuilds');
+      qc.invalidateQueries({ queryKey: ['nylas-status'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not start resync'),
+  });
+  const resyncCalendar = useMutation({
+    mutationFn: async (accountId: string) => postJson('/api/calendar/resync', { accountId }),
+    onSuccess: () => toast.success('Calendar resync started'),
+    onError: (err: any) => toast.error(err?.message || 'Could not start calendar resync'),
+  });
 
   const accounts: any[] = nylas?.accounts || [];
   const syncByAccount = new Map<string, SyncState>(
@@ -220,6 +243,8 @@ function MailboxesSection() {
             account={account}
             sync={syncByAccount.get(account.accountId)}
             onSaveAlias={(displayName) => saveAlias.mutate({ accountId: account.accountId, displayName })}
+            onResyncMail={() => resyncMail.mutate(account.accountId)}
+            onResyncCalendar={() => resyncCalendar.mutate(account.accountId)}
             onDisconnect={() => {
               if (
                 window.confirm(
@@ -279,18 +304,26 @@ function MailboxCard({
   account,
   sync,
   onSaveAlias,
+  onResyncMail,
+  onResyncCalendar,
   onDisconnect,
   busy,
 }: {
   account: any;
   sync?: SyncState;
   onSaveAlias: (displayName: string) => void;
+  onResyncMail: () => void;
+  onResyncCalendar: () => void;
   onDisconnect: () => void;
   busy: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [alias, setAlias] = useState(account.displayName || '');
   const connected = account.status === 'connected';
+  // Re-running OAuth on the same address upserts the existing grant with the
+  // connector's current scope list — this is how an account picks up newly
+  // added scopes (e.g. calendar) without being removed first.
+  const reconnectHref = `/api/nylas/connect?provider=${account.provider}&redirectTo=/settings`;
 
   return (
     <div className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]">
@@ -336,17 +369,44 @@ function MailboxCard({
         </div>
         <SyncStatusLine sync={sync} connected={connected} />
       </div>
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="ghost"
-        onClick={onDisconnect}
-        disabled={busy}
-        className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-        title="Disconnect mailbox"
-      >
-        <Trash2 className="size-3.5" />
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            disabled={busy}
+            className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            title="Account actions"
+          >
+            <MoreHorizontal className="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={() => onResyncMail()} className="gap-2 text-[12.5px]">
+            <RefreshCw className="size-3.5" />
+            Re-index mail
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onResyncCalendar()} className="gap-2 text-[12.5px]">
+            <CalendarDays className="size-3.5" />
+            Resync calendar
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild className="gap-2 text-[12.5px]">
+            <a href={reconnectHref}>
+              <KeyRound className="size-3.5" />
+              Reconnect / update permissions
+            </a>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => onDisconnect()}
+            className="gap-2 text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+          >
+            <Trash2 className="size-3.5" />
+            Remove account & data
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

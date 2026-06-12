@@ -86,7 +86,7 @@ const AGENT_TOOL_NAMES = new Set([
   'ui_switch_account',
 ]);
 
-function liftToolsForAgent(operationBatchId?: string): Record<string, any> {
+function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
   const lifted: Record<string, any> = {};
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
@@ -101,6 +101,7 @@ function liftToolsForAgent(operationBatchId?: string): Record<string, any> {
           userEmail: context.userEmail,
           userName: context.userName,
           operationBatchId,
+          userTimezone,
         });
         return result;
       },
@@ -116,9 +117,18 @@ export interface AgentRunOpts {
   userId?: string | null;
   userEmail?: string | null;
   userName?: string | null;
+  /** IANA timezone reported by the client (e.g. America/New_York). */
+  userTimezone?: string;
 }
 
-export async function runAgent({ messages, extraSystem, userId, userEmail, userName }: AgentRunOpts) {
+export async function runAgent({
+  messages,
+  extraSystem,
+  userId,
+  userEmail,
+  userName,
+  userTimezone,
+}: AgentRunOpts) {
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
@@ -133,7 +143,16 @@ export async function runAgent({ messages, extraSystem, userId, userEmail, userN
       ).then((rows) => rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })))
     : [];
   const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
-  const system = extraSystem ? `${base}\n\n${extraSystem}` : base;
+  // Wall-clock grounding: without this the model guesses UTC and "2:30"
+  // lands hours off on the user's real calendar.
+  const timezone = userTimezone || 'UTC';
+  const localNow = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    dateStyle: 'full',
+    timeStyle: 'long',
+  }).format(new Date());
+  const timeContext = `The user's timezone is ${timezone}. The current time there is ${localNow}. When passing ISO timestamps to tools, either include the correct UTC offset for that timezone or pass a naive timestamp (no Z, no offset) — naive timestamps are interpreted in the user's timezone. Never append Z to a local wall-clock time.`;
+  const system = `${base}\n\n${timeContext}${extraSystem ? `\n\n${extraSystem}` : ''}`;
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();
@@ -145,7 +164,7 @@ export async function runAgent({ messages, extraSystem, userId, userEmail, userN
     speed: 'fast',
     system,
     messages,
-    tools: liftToolsForAgent(operationBatchId),
+    tools: liftToolsForAgent(operationBatchId, timezone),
     stopWhen: stepCountIs(6),
     onError: (event: any) => {
       // Best-effort logging; don't crash the stream.

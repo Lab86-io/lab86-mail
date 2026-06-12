@@ -259,7 +259,16 @@ export function AIBarSidebar() {
   const [input, setInput] = useState('');
   const inputWrapRef = useRef<HTMLDivElement>(null);
 
-  const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
+  // The browser's IANA timezone rides along so the agent (and calendar
+  // tools) interpret wall-clock times like "2:30" in the user's zone.
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: '/api/agent',
+        body: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      }),
+    [],
+  );
   const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport });
 
   // --- Persistent sessions: restore the last chat, autosave as you go ---

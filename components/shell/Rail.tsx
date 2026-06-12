@@ -720,6 +720,17 @@ type AccountSync =
     }
   | undefined;
 
+// One line of truth per mailbox: what the index is doing and how far it is.
+function syncCaption(sync: AccountSync, authed: boolean): string {
+  if (!authed) return 'Reconnect needed';
+  if (!sync || sync.status === 'idle') return 'Waiting for first sync';
+  const count =
+    typeof sync.messagesSynced === 'number' ? `${sync.messagesSynced.toLocaleString()} indexed` : '';
+  if (sync.status === 'error') return sync.error ? `Error — ${sync.error}` : 'Sync error — retrying';
+  if (sync.corpusReady) return count ? `${count} · live` : 'Indexed · live';
+  return count ? `${count} · indexing…` : 'Indexing…';
+}
+
 // Green = indexed and searchable locally; pulsing accent = actively indexing;
 // red = sync error or needs reconnect; gray = waiting for its first sync.
 function AccountSyncDot({ sync, authed }: { sync: AccountSync; authed: boolean }) {
@@ -813,7 +824,12 @@ function AccountScopePopover({
             className="gap-2 text-[12.5px]"
           >
             <ProviderLogo provider={mailbox.provider} className="size-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{mailbox.displayName || mailbox.email}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{mailbox.displayName || mailbox.email}</span>
+              <span className="block truncate text-[10.5px] leading-tight text-[var(--color-text-faint)]">
+                {syncCaption(mailbox.sync, mailbox.authed)}
+              </span>
+            </span>
             <AccountSyncDot sync={mailbox.sync} authed={mailbox.authed} />
           </DropdownMenuCheckboxItem>
         ))}

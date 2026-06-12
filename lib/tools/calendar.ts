@@ -8,6 +8,7 @@ import {
 } from '@/lib/calendar/mutate';
 import { maybeKickCalendarSync, syncAllCalendarAccounts, syncCalendarAccount } from '@/lib/calendar/sync';
 import { api, convexQuery } from '@/lib/hosted/convex';
+import { parseIsoInTimezone, wallClockInTimezone } from '@/lib/shared/timezones';
 import { defineTool } from './registry';
 
 const calendarApi = (api as any).calendarData;
@@ -18,10 +19,9 @@ function requireUserId(userId: string | null | undefined): string {
   return userId;
 }
 
-function parseIso(value: string, field: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new Error(`Invalid ISO timestamp for ${field}: ${value}`);
-  return parsed;
+// Naive timestamps (no Z / offset) resolve in the requesting user's timezone.
+function makeParseIso(userTimezone: string | undefined) {
+  return (value: string, field: string) => parseIsoInTimezone(value, userTimezone, field);
 }
 
 const participantSchema = z.object({ email: z.string().email(), name: z.string().optional() });
@@ -91,6 +91,7 @@ export const calendarListEvents = defineTool({
   output: z.object({ events: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
     const rows = await convexQuery<any[]>(calendarApi.listEvents, {
       userId,
       startAt: parseIso(args.fromIso, 'fromIso'),
@@ -139,6 +140,7 @@ export const calendarFreeBusy = defineTool({
   output: z.object({ busy: z.array(z.object({ startIso: z.string(), endIso: z.string() })) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
     const from = parseIso(args.fromIso, 'fromIso');
     const to = parseIso(args.toIso, 'toIso');
     const busy = await busyWindows(userId, from, to, args.accountIds);
@@ -168,6 +170,7 @@ export const calendarSuggestTimes = defineTool({
   output: z.object({ suggestions: z.array(z.object({ startIso: z.string(), endIso: z.string() })) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
     const from = Math.max(parseIso(args.fromIso, 'fromIso'), Date.now());
     const to = parseIso(args.toIso, 'toIso');
     const busy = await busyWindows(userId, from, to, args.accountIds);
@@ -181,12 +184,11 @@ export const calendarSuggestTimes = defineTool({
       const slotEnd = cursor + durationMs;
       cursor += step;
       if (!args.allowOutsideWorkingHours) {
-        const start = new Date(slotStart);
-        const end = new Date(slotEnd);
-        const day = start.getDay();
-        if (day === 0 || day === 6) continue;
-        if (start.getHours() < 9 || end.getHours() > 18 || (end.getHours() === 18 && end.getMinutes() > 0))
-          continue;
+        // Working hours are the USER's wall clock, not the server's (UTC).
+        const start = wallClockInTimezone(slotStart, ctx.userTimezone);
+        const end = wallClockInTimezone(slotEnd, ctx.userTimezone);
+        if (start.weekday === 0 || start.weekday === 6) continue;
+        if (start.hour < 9 || end.hour > 18 || (end.hour === 18 && end.minute > 0)) continue;
       }
       const clash = busy.some(([busyStart, busyEnd]) => slotStart < busyEnd && slotEnd > busyStart);
       if (clash) continue;
@@ -227,6 +229,7 @@ export const calendarCreateEvent = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
     const result = await createCalendarEvent({
       userId,
       accountId: args.account,
@@ -269,6 +272,7 @@ export const calendarUpdateEvent = defineTool({
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
     const result = await updateCalendarEvent({
       userId,
       accountId: args.account,

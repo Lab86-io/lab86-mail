@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
+import { internal } from './_generated/api';
+import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 const providerValidator = v.union(
@@ -221,6 +222,45 @@ export const updateConnectedAccountAlias = mutation({
   },
 });
 
+// Bulk per-account tables are purged in scheduled batches: a whole mailbox
+// corpus cannot be deleted inside one Convex transaction (it exceeds the
+// per-transaction document limits, which is exactly how account removal used
+// to 500 and strand orphan rows).
+const ACCOUNT_BULK_TABLES = [
+  'threads',
+  'messages',
+  'mailCorpusThreads',
+  'mailCorpusMessages',
+  'mailWebhookEvents',
+  'calendarEvents',
+] as const;
+
+const PURGE_BATCH = 250;
+
+export const purgeAccountDataBatch = internalMutation({
+  args: { userId: v.string(), accountId: v.string() },
+  handler: async (ctx, args) => {
+    let deleted = 0;
+    for (const table of ACCOUNT_BULK_TABLES) {
+      if (deleted >= PURGE_BATCH) break;
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_user_account' as any, (q: any) =>
+          q.eq('userId', args.userId).eq('accountId', args.accountId),
+        )
+        .take(PURGE_BATCH - deleted);
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+    if (deleted > 0) {
+      await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, args);
+    }
+    return { deleted };
+  },
+});
+
 export const deleteConnectedAccount = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -229,32 +269,29 @@ export const deleteConnectedAccount = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const tables = [
+    // Small tables go inline so the account vanishes from the UI immediately;
+    // the bulk corpus drains in scheduled batches right after.
+    const smallTables = [
       'connectedAccounts',
       'providerGrants',
-      'threads',
-      'messages',
       'syncJobs',
-      'mailCorpusThreads',
-      'mailCorpusMessages',
       'mailSyncStates',
-      'mailWebhookEvents',
+      'calendars',
+      'calendarSyncStates',
     ] as const;
-    for (const table of tables) {
+    for (const table of smallTables) {
       const rows = await ctx.db
         .query(table)
         .withIndex('by_user_account' as any, (q: any) =>
           q.eq('userId', args.userId).eq('accountId', args.accountId),
         )
-        .collect()
-        .catch(async () =>
-          ctx.db
-            .query(table)
-            .withIndex('by_account' as any, (q: any) => q.eq('accountId', args.accountId))
-            .collect(),
-        );
+        .collect();
       for (const row of rows) await ctx.db.delete(row._id);
     }
+    await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, {
+      userId: args.userId,
+      accountId: args.accountId,
+    });
 
     const reports = await ctx.db
       .query('dailyReports')
