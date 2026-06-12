@@ -122,10 +122,13 @@ Why it wins (only candidate meeting every hard constraint):
   tree, so OKLCH variables and fonts apply with zero CSS overrides.
 - Per-event color coding built in — remap to per-calendar colors.
 
-Known gap: **no recurrence support in the component.** Handle at the data layer:
-expand RRULEs into dated instances server-side in Convex (`rrule` package); the
-display layer renders instances and never knows about recurrence. Edit semantics
-(this / this-and-following / all) live in our event-mutation layer against Nylas.
+Known gap: **no recurrence support in the component.** Resolved at the data
+layer without the `rrule` package: Nylas `expand_recurring=true` returns
+pre-expanded instances inside the sync window (-92d..+366d, sliding via lazy
+resync kicks), each carrying `masterEventId`. The display layer renders
+instances and never knows about recurrence. Edit semantics live in the
+mutation layer: an instance id edits that occurrence, the master id edits the
+series; "this and following" requires a series split and is deferred.
 
 Cherry-pick visual polish from `origin-space/event-calendar` (event chips, agenda
 styling) — it's prettier but self-declared alpha with drag limitations.
