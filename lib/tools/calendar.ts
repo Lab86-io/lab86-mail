@@ -1,56 +1,402 @@
 import { z } from 'zod';
+import {
+  createCalendarEvent,
+  deleteCalendarEvent,
+  getPrimaryCalendarId,
+  rsvpCalendarEvent,
+  updateCalendarEvent,
+} from '@/lib/calendar/mutate';
+import { maybeKickCalendarSync, syncAllCalendarAccounts, syncCalendarAccount } from '@/lib/calendar/sync';
+import { api, convexQuery } from '@/lib/hosted/convex';
 import { defineTool } from './registry';
 
-export const calendarFreeBusy = defineTool({
-  name: 'calendar_free_busy',
-  description: 'Query free/busy windows for an account between two ISO timestamps.',
+const calendarApi = (api as any).calendarData;
+
+function requireUserId(userId: string | null | undefined): string {
+  if (!userId) throw new Error('Not authenticated.');
+  return userId;
+}
+
+function parseIso(value: string, field: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) throw new Error(`Invalid ISO timestamp for ${field}: ${value}`);
+  return parsed;
+}
+
+const participantSchema = z.object({ email: z.string().email(), name: z.string().optional() });
+
+export const calendarListCalendars = defineTool({
+  name: 'calendar_list_calendars',
+  description:
+    'List all synced calendars across every connected account, with per-account sync status. Calendars marked readOnly cannot receive events.',
+  category: 'calendar',
+  mutating: false,
+  input: z.object({}),
+  output: z.object({ calendars: z.array(z.any()), syncStates: z.array(z.any()) }),
+  async handler(_args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const [calendars, syncStates] = await Promise.all([
+      convexQuery<any[]>(calendarApi.listCalendars, { userId }),
+      convexQuery<any[]>(calendarApi.getSyncStates, { userId }),
+    ]);
+    // Lazy freshness: surface loads kick a debounced resync for stale accounts.
+    for (const state of syncStates || []) {
+      const stale = !state.lastSyncedAt || Date.now() - state.lastSyncedAt > 60 * 60_000;
+      if (stale && state.status !== 'unauthorized') {
+        maybeKickCalendarSync({ userId, accountId: state.accountId });
+      }
+    }
+    return {
+      calendars: (calendars || []).map((cal) => ({
+        accountId: cal.accountId,
+        calendarId: cal.providerCalendarId,
+        name: cal.name,
+        timezone: cal.timezone,
+        isPrimary: cal.isPrimary,
+        readOnly: cal.readOnly,
+        hexColor: cal.hexColor,
+        hidden: cal.hidden,
+      })),
+      syncStates: (syncStates || []).map((state) => ({
+        accountId: state.accountId,
+        status: state.status,
+        error: state.error,
+        calendarsSynced: state.calendarsSynced,
+        eventsSynced: state.eventsSynced,
+        lastSyncedAt: state.lastSyncedAt,
+      })),
+    };
+  },
+});
+
+export const calendarListEvents = defineTool({
+  name: 'calendar_list_events',
+  description:
+    'List events across all synced calendars between two ISO timestamps (recurring events appear as expanded instances). Filter with calendarIds/accountIds if needed.',
   category: 'calendar',
   mutating: false,
   input: z.object({
-    account: z.string(),
     fromIso: z.string(),
     toIso: z.string(),
+    accountIds: z.array(z.string()).optional(),
+    calendarIds: z.array(z.string()).optional(),
+    limit: z.number().int().min(1).max(2000).default(500),
   }),
-  output: z.object({ busy: z.array(z.any()) }),
-  async handler() {
-    return { busy: [] };
+  output: z.object({ events: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const rows = await convexQuery<any[]>(calendarApi.listEvents, {
+      userId,
+      startAt: parseIso(args.fromIso, 'fromIso'),
+      endAt: parseIso(args.toIso, 'toIso'),
+      limit: args.limit,
+    });
+    const accountFilter = args.accountIds?.length ? new Set(args.accountIds) : null;
+    const calendarFilter = args.calendarIds?.length ? new Set(args.calendarIds) : null;
+    return {
+      events: (rows || [])
+        .filter((row) => !accountFilter || accountFilter.has(row.accountId))
+        .filter((row) => !calendarFilter || calendarFilter.has(row.providerCalendarId))
+        .map(toToolEvent),
+    };
+  },
+});
+
+export const calendarSyncNow = defineTool({
+  name: 'calendar_sync_now',
+  description:
+    'Force a full calendar resync from the providers, for one account or all of them. Use when events seem stale or after connecting an account.',
+  category: 'calendar',
+  mutating: true,
+  input: z.object({ account: z.string().optional() }),
+  output: z.object({ results: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const results = args.account
+      ? [await syncCalendarAccount({ userId, accountId: args.account })]
+      : await syncAllCalendarAccounts(userId);
+    return { results };
+  },
+});
+
+export const calendarFreeBusy = defineTool({
+  name: 'calendar_free_busy',
+  description:
+    'Compute busy windows between two ISO timestamps from the synced calendars (all accounts merged unless accountIds filters them).',
+  category: 'calendar',
+  mutating: false,
+  input: z.object({
+    fromIso: z.string(),
+    toIso: z.string(),
+    accountIds: z.array(z.string()).optional(),
+  }),
+  output: z.object({ busy: z.array(z.object({ startIso: z.string(), endIso: z.string() })) }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const from = parseIso(args.fromIso, 'fromIso');
+    const to = parseIso(args.toIso, 'toIso');
+    const busy = await busyWindows(userId, from, to, args.accountIds);
+    return {
+      busy: busy.map(([start, end]) => ({
+        startIso: new Date(start).toISOString(),
+        endIso: new Date(end).toISOString(),
+      })),
+    };
   },
 });
 
 export const calendarSuggestTimes = defineTool({
   name: 'calendar_suggest_times',
-  description: 'Suggest meeting times within a date window given a duration.',
+  description:
+    'Suggest open meeting slots within a date window given a duration, avoiding busy time across all synced calendars. Slots respect working hours (09:00–18:00 local) unless allowOutsideWorkingHours.',
   category: 'calendar',
   mutating: false,
   input: z.object({
-    account: z.string(),
     fromIso: z.string(),
     toIso: z.string(),
     durationMinutes: z.number().int().min(15).max(480).default(30),
     count: z.number().int().min(1).max(10).default(3),
+    allowOutsideWorkingHours: z.boolean().default(false),
+    accountIds: z.array(z.string()).optional(),
   }),
   output: z.object({ suggestions: z.array(z.object({ startIso: z.string(), endIso: z.string() })) }),
-  async handler() {
-    return { suggestions: [] };
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const from = Math.max(parseIso(args.fromIso, 'fromIso'), Date.now());
+    const to = parseIso(args.toIso, 'toIso');
+    const busy = await busyWindows(userId, from, to, args.accountIds);
+    const durationMs = args.durationMinutes * 60_000;
+    const suggestions: Array<{ startIso: string; endIso: string }> = [];
+    // Walk half-hour boundaries; take the first N slots that fit.
+    const step = 30 * 60_000;
+    let cursor = Math.ceil(from / step) * step;
+    while (cursor + durationMs <= to && suggestions.length < args.count) {
+      const slotStart = cursor;
+      const slotEnd = cursor + durationMs;
+      cursor += step;
+      if (!args.allowOutsideWorkingHours) {
+        const start = new Date(slotStart);
+        const end = new Date(slotEnd);
+        const day = start.getDay();
+        if (day === 0 || day === 6) continue;
+        if (start.getHours() < 9 || end.getHours() > 18 || (end.getHours() === 18 && end.getMinutes() > 0))
+          continue;
+      }
+      const clash = busy.some(([busyStart, busyEnd]) => slotStart < busyEnd && slotEnd > busyStart);
+      if (clash) continue;
+      suggestions.push({
+        startIso: new Date(slotStart).toISOString(),
+        endIso: new Date(slotEnd).toISOString(),
+      });
+    }
+    return { suggestions };
   },
 });
 
 export const calendarCreateEvent = defineTool({
   name: 'calendar_create_event',
-  description: 'Create a calendar event with optional video conferencing.',
+  description:
+    'Create a calendar event. Times are ISO timestamps; allDay uses date granularity. IMPORTANT: adding attendees emails real invitations — confirm with the user before passing attendees. The operation is recorded and undoable via undo_operation.',
   category: 'calendar',
   mutating: true,
   input: z.object({
     account: z.string(),
-    title: z.string(),
+    calendarId: z.string().optional(),
+    title: z.string().min(1),
     startIso: z.string(),
     endIso: z.string(),
-    attendees: z.array(z.string()).default([]),
+    allDay: z.boolean().default(false),
     description: z.string().optional(),
-    withMeet: z.boolean().default(false),
+    location: z.string().optional(),
+    attendees: z.array(participantSchema).default([]),
+    recurrence: z.array(z.string()).optional(),
+    busy: z.boolean().default(true),
   }),
-  output: z.object({ ok: z.boolean(), eventId: z.string().optional(), htmlLink: z.string().optional() }),
-  async handler() {
-    throw new Error('Calendar creation is not wired to Nylas yet.');
+  output: z.object({
+    ok: z.boolean(),
+    eventId: z.string(),
+    calendarId: z.string(),
+    operationId: z.string(),
+    htmlLink: z.string().optional(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const result = await createCalendarEvent({
+      userId,
+      accountId: args.account,
+      calendarId: args.calendarId,
+      title: args.title,
+      startAt: parseIso(args.startIso, 'startIso'),
+      endAt: parseIso(args.endIso, 'endIso'),
+      allDay: args.allDay,
+      description: args.description,
+      location: args.location,
+      participants: args.attendees,
+      recurrence: args.recurrence,
+      busy: args.busy,
+    });
+    return { ok: true, ...result };
   },
 });
+
+export const calendarUpdateEvent = defineTool({
+  name: 'calendar_update_event',
+  description:
+    'Update fields of an existing event (title, times, location, description, attendees, recurrence). For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
+  category: 'calendar',
+  mutating: true,
+  input: z.object({
+    account: z.string(),
+    calendarId: z.string(),
+    eventId: z.string(),
+    title: z.string().optional(),
+    startIso: z.string().optional(),
+    endIso: z.string().optional(),
+    allDay: z.boolean().optional(),
+    description: z.string().optional(),
+    location: z.string().optional(),
+    attendees: z.array(participantSchema).optional(),
+    recurrence: z.array(z.string()).optional(),
+    busy: z.boolean().optional(),
+    notifyParticipants: z.boolean().default(false),
+  }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const result = await updateCalendarEvent({
+      userId,
+      accountId: args.account,
+      calendarId: args.calendarId,
+      eventId: args.eventId,
+      notifyParticipants: args.notifyParticipants,
+      patch: {
+        title: args.title,
+        startAt: args.startIso ? parseIso(args.startIso, 'startIso') : undefined,
+        endAt: args.endIso ? parseIso(args.endIso, 'endIso') : undefined,
+        allDay: args.allDay,
+        description: args.description,
+        location: args.location,
+        participants: args.attendees,
+        recurrence: args.recurrence,
+        busy: args.busy,
+      },
+    });
+    return { ok: true, operationId: result.operationId };
+  },
+});
+
+export const calendarDeleteEvent = defineTool({
+  name: 'calendar_delete_event',
+  description:
+    'Delete an event (a master event id deletes the whole recurring series). Undoable — undo recreates the event. notifyParticipants emails attendees a cancellation — confirm with the user first.',
+  category: 'calendar',
+  mutating: true,
+  input: z.object({
+    account: z.string(),
+    calendarId: z.string(),
+    eventId: z.string(),
+    notifyParticipants: z.boolean().default(false),
+  }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const result = await deleteCalendarEvent({
+      userId,
+      accountId: args.account,
+      calendarId: args.calendarId,
+      eventId: args.eventId,
+      notifyParticipants: args.notifyParticipants,
+    });
+    return { ok: true, operationId: result.operationId };
+  },
+});
+
+export const calendarRsvpEvent = defineTool({
+  name: 'calendar_rsvp_event',
+  description:
+    'RSVP to an event invitation (yes/no/maybe). This notifies the organizer — confirm with the user before responding on their behalf. Not undoable (the organizer already saw it), but it can be re-sent with a different status.',
+  category: 'calendar',
+  mutating: true,
+  input: z.object({
+    account: z.string(),
+    calendarId: z.string(),
+    eventId: z.string(),
+    status: z.enum(['yes', 'no', 'maybe']),
+  }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const result = await rsvpCalendarEvent({
+      userId,
+      accountId: args.account,
+      calendarId: args.calendarId,
+      eventId: args.eventId,
+      status: args.status,
+    });
+    return { ok: true, operationId: result.operationId };
+  },
+});
+
+export const calendarGetPrimary = defineTool({
+  name: 'calendar_get_primary',
+  description: 'Resolve the primary writable calendar id for an account.',
+  category: 'calendar',
+  mutating: false,
+  input: z.object({ account: z.string() }),
+  output: z.object({ calendarId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    return { calendarId: await getPrimaryCalendarId(userId, args.account) };
+  },
+});
+
+async function busyWindows(
+  userId: string,
+  from: number,
+  to: number,
+  accountIds?: string[],
+): Promise<Array<[number, number]>> {
+  const rows = await convexQuery<any[]>(calendarApi.listEvents, {
+    userId,
+    startAt: from,
+    endAt: to,
+    limit: 2000,
+  });
+  const filter = accountIds?.length ? new Set(accountIds) : null;
+  const windows = (rows || [])
+    .filter((row) => !filter || filter.has(row.accountId))
+    .filter((row) => row.busy !== false && row.status !== 'cancelled')
+    .map((row) => [Math.max(row.startAt, from), Math.min(row.endAt, to)] as [number, number])
+    .filter(([start, end]) => end > start)
+    .sort((a, b) => a[0] - b[0]);
+  // Merge overlaps so callers get disjoint busy spans.
+  const merged: Array<[number, number]> = [];
+  for (const window of windows) {
+    const last = merged[merged.length - 1];
+    if (last && window[0] <= last[1]) last[1] = Math.max(last[1], window[1]);
+    else merged.push([...window] as [number, number]);
+  }
+  return merged;
+}
+
+function toToolEvent(row: any) {
+  return {
+    eventId: row.providerEventId,
+    accountId: row.accountId,
+    calendarId: row.providerCalendarId,
+    title: row.title,
+    description: row.description,
+    location: row.location,
+    status: row.status,
+    busy: row.busy,
+    readOnly: row.readOnly,
+    startIso: new Date(row.startAt).toISOString(),
+    endIso: new Date(row.endAt).toISOString(),
+    allDay: row.allDay,
+    masterEventId: row.masterEventId,
+    recurrence: row.recurrence,
+    participants: row.participants,
+    organizer: row.organizer,
+    conferencing: row.conferencing,
+  };
+}

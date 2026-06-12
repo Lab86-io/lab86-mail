@@ -1,3 +1,4 @@
+import { applyCalendarWebhookDelta, isCalendarWebhookType } from '@/lib/calendar/sync';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
@@ -339,6 +340,19 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
   if (!metadata.grantId || !row) {
     await markWebhookProcessed(metadata, 'error', 'Webhook did not map to a connected grant.');
     return { ok: false, eventId: metadata.eventId, error: 'unknown grant' };
+  }
+
+  // Calendar triggers (event.*, calendar.*) belong to the calendar corpus;
+  // they share the queue/dedup path but never touch mail sync state.
+  if (isCalendarWebhookType(metadata.type)) {
+    try {
+      await applyCalendarWebhookDelta(row, metadata.type, payload);
+      await markWebhookProcessed(metadata, 'processed');
+      return { ok: true, duplicate: false, eventId: metadata.eventId };
+    } catch (err: any) {
+      await markWebhookProcessed(metadata, 'error', err?.message || 'calendar webhook failed');
+      throw err;
+    }
   }
 
   try {

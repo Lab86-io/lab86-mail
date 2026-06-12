@@ -10,7 +10,18 @@ import {
   triageThread,
 } from './ai';
 import { listAuditEntries, logAction } from './audit-tools';
-import { calendarCreateEvent, calendarFreeBusy, calendarSuggestTimes } from './calendar';
+import {
+  calendarCreateEvent,
+  calendarDeleteEvent,
+  calendarFreeBusy,
+  calendarGetPrimary,
+  calendarListCalendars,
+  calendarListEvents,
+  calendarRsvpEvent,
+  calendarSuggestTimes,
+  calendarSyncNow,
+  calendarUpdateEvent,
+} from './calendar';
 import {
   cancelScheduled,
   deleteDraftTool,
@@ -175,6 +186,13 @@ const allTools: AnyTool[] = [
   calendarFreeBusy,
   calendarSuggestTimes,
   calendarCreateEvent,
+  calendarListCalendars,
+  calendarListEvents,
+  calendarSyncNow,
+  calendarUpdateEvent,
+  calendarDeleteEvent,
+  calendarRsvpEvent,
+  calendarGetPrimary,
   contactLookup,
   expandAlias,
   resolvePhotos,

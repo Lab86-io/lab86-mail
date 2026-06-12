@@ -5,6 +5,7 @@ import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { hasPlatformAi, streamTextForUser } from './gateway';
+import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
 const AGENT_TOOL_NAMES = new Set([
@@ -54,6 +55,13 @@ const AGENT_TOOL_NAMES = new Set([
   'calendar_free_busy',
   'calendar_suggest_times',
   'calendar_create_event',
+  'calendar_list_calendars',
+  'calendar_list_events',
+  'calendar_sync_now',
+  'calendar_update_event',
+  'calendar_delete_event',
+  'calendar_rsvp_event',
+  'calendar_get_primary',
   'list_recent_operations',
   'undo_operation',
   'contact_lookup',
@@ -78,7 +86,7 @@ const AGENT_TOOL_NAMES = new Set([
   'ui_switch_account',
 ]);
 
-function liftToolsForAgent(): Record<string, any> {
+function liftToolsForAgent(operationBatchId?: string): Record<string, any> {
   const lifted: Record<string, any> = {};
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
@@ -92,6 +100,7 @@ function liftToolsForAgent(): Record<string, any> {
           userId: context.userId,
           userEmail: context.userEmail,
           userName: context.userName,
+          operationBatchId,
         });
         return result;
       },
@@ -125,6 +134,9 @@ export async function runAgent({ messages, extraSystem, userId, userEmail, userN
     : [];
   const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
   const system = extraSystem ? `${base}\n\n${extraSystem}` : base;
+  // One batch id per agent turn: every mutating tool call inside this run
+  // records its operation under it, forming a single undoable change-set.
+  const operationBatchId = newOperationBatchId();
   const stream = await streamTextForUser({
     userId,
     userEmail,
@@ -133,7 +145,7 @@ export async function runAgent({ messages, extraSystem, userId, userEmail, userN
     speed: 'fast',
     system,
     messages,
-    tools: liftToolsForAgent(),
+    tools: liftToolsForAgent(operationBatchId),
     stopWhen: stepCountIs(6),
     onError: (event: any) => {
       // Best-effort logging; don't crash the stream.

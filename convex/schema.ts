@@ -359,6 +359,99 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_email', ['userId', 'email']),
 
+  // Calendar corpus: two-way Nylas sync mirroring the mail-corpus pattern.
+  // Calendars are listed per grant; events are synced inside a rolling window
+  // with expand_recurring, so recurring instances arrive pre-expanded (each
+  // carries masterEventId back to its series master for edit semantics).
+  calendars: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    providerCalendarId: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    isPrimary: v.optional(v.boolean()),
+    readOnly: v.optional(v.boolean()),
+    // Provider-reported hex color; the UI maps it into the OKLCH family.
+    hexColor: v.optional(v.string()),
+    // User pref: hide this calendar from the merged view (still synced).
+    hidden: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_account_calendar', ['accountId', 'providerCalendarId'])
+    .index('by_grant', ['grantId']),
+
+  calendarEvents: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    providerEventId: v.string(),
+    providerCalendarId: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    location: v.optional(v.string()),
+    status: v.optional(v.string()),
+    busy: v.optional(v.boolean()),
+    readOnly: v.optional(v.boolean()),
+    // Epoch ms. All-day events carry allDay=true with day-granularity bounds.
+    startAt: v.number(),
+    endAt: v.number(),
+    allDay: v.optional(v.boolean()),
+    startTimezone: v.optional(v.string()),
+    endTimezone: v.optional(v.string()),
+    // Series master id when this row is an expanded recurring instance.
+    masterEventId: v.optional(v.string()),
+    // RRULE lines when this row is itself a series master.
+    recurrence: v.optional(v.array(v.string())),
+    participants: v.optional(v.array(v.any())),
+    organizer: v.optional(v.any()),
+    conferencing: v.optional(v.any()),
+    icalUid: v.optional(v.string()),
+    htmlLink: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_start', ['userId', 'startAt'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_account_event', ['accountId', 'providerEventId'])
+    .index('by_account_master', ['accountId', 'masterEventId'])
+    .index('by_grant', ['grantId']),
+
+  calendarSyncStates: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    status: v.union(
+      v.literal('idle'),
+      v.literal('syncing'),
+      v.literal('ready'),
+      v.literal('error'),
+      // The grant lacks calendar scope; clears on a successful sync after
+      // the account is re-connected with calendar access.
+      v.literal('unauthorized'),
+    ),
+    error: v.optional(v.string()),
+    calendarsSynced: v.optional(v.number()),
+    eventsSynced: v.optional(v.number()),
+    // Bounds of the synced event window (epoch ms).
+    windowStart: v.optional(v.number()),
+    windowEnd: v.optional(v.number()),
+    lastSyncedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_grant', ['grantId']),
+
   // Every mutating action the AI (or a user clicking an AI suggestion) applies
   // to mail/calendar/tasks. `inverse` is a declarative undo descriptor executed
   // by lib/ai/operations.ts; rows without one are not undoable. `batchId`

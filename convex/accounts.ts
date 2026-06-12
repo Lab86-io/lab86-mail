@@ -314,6 +314,9 @@ export const deleteUserCascade = mutation({
       'userDocs',
       'aiOperations',
       'suggestions',
+      'calendars',
+      'calendarEvents',
+      'calendarSyncStates',
     ] as const;
 
     for (const table of userTables) {
