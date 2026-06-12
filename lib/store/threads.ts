@@ -137,4 +137,3 @@ export async function setThreadGmailLabelSync(
 ) {
   await patchThread(account, id, { gmailLabelSync });
 }
-

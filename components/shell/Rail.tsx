@@ -60,6 +60,7 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
+import { AccentPicker } from './AccentPicker';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 interface MailboxItem {
@@ -462,6 +463,7 @@ export function Rail() {
             indexingCount={indexingAccounts.length}
           />
           <div className="ml-auto group-data-[collapsible=icon]:ml-0">
+            <AccentPicker />
             <ThemeSwitcher />
           </div>
         </div>

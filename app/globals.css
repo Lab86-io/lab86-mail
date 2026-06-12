@@ -131,9 +131,41 @@
   --radius: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+
+  /* motion — Linear-calibrated: fast for hover/color, normal for state
+     changes, moderate for panels/dialogs. Nothing springy; if an animation
+     draws attention to itself it is too slow. */
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-moderate: 300ms;
+  --ease-default: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-enter: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 @layer base {
+  /* Arc-style single-hue theming: the whole accent family derives from one
+     user-chosen hue + chroma pair in OKLCH (hue-stable lightness math). The
+     defaults reproduce the original forest green; the accent picker in the
+     rail writes --accent-hue/--accent-chroma inline on <html>. Surfaces stay
+     neutral — the seed never sits behind body text. */
+  :root {
+    --accent-hue: 156;
+    --accent-chroma: 0.09;
+
+    --color-accent: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-accent-hover: oklch(0.39 var(--accent-chroma) var(--accent-hue));
+    --color-accent-soft: oklch(0.55 calc(var(--accent-chroma) * 0.8) var(--accent-hue) / 0.13);
+    --color-accent-shine-1: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-accent-shine-2: oklch(0.62 calc(var(--accent-chroma) * 1.1) var(--accent-hue));
+    --color-accent-shine-3: oklch(0.39 var(--accent-chroma) var(--accent-hue));
+    --color-hover-soft: oklch(0.6 calc(var(--accent-chroma) * 0.5) var(--accent-hue) / 0.07);
+    --color-selected: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-selected-soft: oklch(0.55 calc(var(--accent-chroma) * 0.8) var(--accent-hue) / 0.13);
+    --color-border-beam-from: oklch(0.45 var(--accent-chroma) var(--accent-hue));
+    --color-border-beam-to: oklch(0.62 var(--accent-chroma) var(--accent-hue));
+  }
+
   :root {
     --background: var(--color-bg);
     --foreground: var(--color-text);
@@ -189,17 +221,20 @@
     --color-text: #ededed;
     --color-text-muted: #9a9a9a;
     --color-text-faint: #5e5e5e;
-    /* Selected/active pop: lighter green for contrast on dark surfaces. */
-    --color-selected: #73a984;
-    --color-selected-soft: #15291f;
+    /* Selected/active pop: the same user hue, lifted for dark surfaces. */
+    --color-selected: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-selected-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
     --rail-bg: #000000;
-    --color-accent: #73a984;
-    --color-accent-hover: #86bb96;
-    --color-accent-soft: #172d20;
-    --color-accent-foreground: #06130d;
-    --color-accent-shine-1: #73a984;
-    --color-accent-shine-2: #b9cf9f;
-    --color-accent-shine-3: #4f8a62;
+    --color-accent: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-accent-hover: oklch(0.79 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-accent-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
+    --color-accent-foreground: oklch(0.17 calc(var(--accent-chroma) * 0.4) var(--accent-hue));
+    --color-accent-shine-1: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-accent-shine-2: oklch(0.85 calc(var(--accent-chroma) * 0.6) var(--accent-hue));
+    --color-accent-shine-3: oklch(0.6 calc(var(--accent-chroma) * 0.85) var(--accent-hue));
+    --color-hover-soft: oklch(0.73 calc(var(--accent-chroma) * 0.4) var(--accent-hue) / 0.07);
+    --color-border-beam-from: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
+    --color-border-beam-to: oklch(0.85 calc(var(--accent-chroma) * 0.6) var(--accent-hue));
     --color-success: #5fb289;
     --color-success-foreground: #f0fdf4;
     --color-success-soft: #14532d;

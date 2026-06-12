@@ -61,6 +61,10 @@ export interface ClientState {
   // restores the last conversation instead of starting blank.
   lastChatId: string | null;
   pendingReplyBody: string | null;
+  // Arc-style accent theming: one OKLCH hue + chroma pair drives the whole
+  // accent family (see globals.css). null = the default forest green.
+  accentHue: number | null;
+  accentChroma: number | null;
 
   setAccount: (account: string) => void;
   setAccountFilter: (accountIds: string[]) => void;
@@ -98,6 +102,7 @@ export interface ClientState {
   setThreadFullscreen: (full: boolean) => void;
   setLastChatId: (id: string | null) => void;
   setPendingReplyBody: (body: string | null) => void;
+  setAccent: (hue: number | null, chroma: number | null) => void;
 }
 
 const initialCompose: ComposeState = {
@@ -139,6 +144,8 @@ export const useClientStore = create<ClientState>()(
       threadFullscreen: false,
       lastChatId: null,
       pendingReplyBody: null,
+      accentHue: null,
+      accentChroma: null,
 
       setAccount: (account) => set({ account }),
       setAccountFilter: (accountIds) => set({ accountFilter: accountIds }),
@@ -212,6 +219,7 @@ export const useClientStore = create<ClientState>()(
       setThreadFullscreen: (threadFullscreen) => set({ threadFullscreen }),
       setLastChatId: (lastChatId) => set({ lastChatId }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
+      setAccent: (accentHue, accentChroma) => set({ accentHue, accentChroma }),
     }),
     {
       name: PERSIST_KEY,
@@ -238,6 +246,8 @@ export const useClientStore = create<ClientState>()(
         railOpen: s.railOpen,
         railWidth: s.railWidth,
         lastChatId: s.lastChatId,
+        accentHue: s.accentHue,
+        accentChroma: s.accentChroma,
       }),
     },
   ),

@@ -834,6 +834,8 @@ export function Inbox() {
                   item={it}
                   photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
                   showAccount={account === ALL_ACCOUNTS}
+                  accountLabel={accountAliasById[rowAccount] || ''}
+                  activeCategory={smartCategory}
                   selected={selectedIds.includes(key)}
                   active={selectedThreadId === it._id && threadAccount === rowAccount}
                   onToggle={() => toggleSelected(key)}
@@ -890,6 +892,8 @@ function ThreadRowCard({
   onUndoLast,
   customLabels,
   showAccount,
+  accountLabel,
+  activeCategory,
 }: {
   item: ThreadRow;
   photoUrl?: string | null;
@@ -903,6 +907,8 @@ function ThreadRowCard({
   onUndoLast: () => void;
   customLabels: any[];
   showAccount?: boolean;
+  accountLabel?: string;
+  activeCategory?: string | null;
 }) {
   const triage = (item as any).triage;
   const smart = (item as any).smartCategory;
@@ -993,7 +999,10 @@ function ThreadRowCard({
               aria-hidden
             />
           ) : null}
-          {smart?.primary ? (
+          {/* The category chip only earns its place when it says something the
+              view doesn't already — inside a category view every row would
+              repeat the view's own name. */}
+          {smart?.primary && smart.primary !== activeCategory ? (
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -1020,9 +1029,11 @@ function ThreadRowCard({
               </PopoverContent>
             </Popover>
           ) : null}
-          {showAccount && item.account ? (
-            <Badge variant="outline" className="font-mono text-[9px] normal-case">
-              {item.accountAlias || item.account.split('@')[0]}
+          {/* Mailbox chip: human alias only — a raw grant id is never useful
+              in a list row. No alias resolved yet = no chip. */}
+          {showAccount && (accountLabel || item.accountAlias) ? (
+            <Badge variant="outline" className="max-w-28 truncate text-[9px] normal-case">
+              {accountLabel || item.accountAlias}
             </Badge>
           ) : null}
         </div>
@@ -1030,7 +1041,7 @@ function ThreadRowCard({
 
       {/* Hover-only row actions — overlaid so they add no height at rest. */}
       {smart ? (
-        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
+        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none transition-opacity duration-[var(--duration-normal)] ease-[var(--ease-default)] group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
           <Button
             type="button"
             variant="ghost"
