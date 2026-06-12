@@ -11,6 +11,7 @@ import { api, convexQuery } from '@/lib/hosted/convex';
 import { defineTool } from './registry';
 
 const calendarApi = (api as any).calendarData;
+const accountsApi = (api as any).accounts;
 
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');
@@ -35,16 +36,21 @@ export const calendarListCalendars = defineTool({
   output: z.object({ calendars: z.array(z.any()), syncStates: z.array(z.any()) }),
   async handler(_args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const [calendars, syncStates] = await Promise.all([
+    const [calendars, syncStates, accounts] = await Promise.all([
       convexQuery<any[]>(calendarApi.listCalendars, { userId }),
       convexQuery<any[]>(calendarApi.getSyncStates, { userId }),
+      convexQuery<any[]>(accountsApi.listConnectedAccounts, { userId }),
     ]);
-    // Lazy freshness: surface loads kick a debounced resync for stale accounts.
-    for (const state of syncStates || []) {
-      const stale = !state.lastSyncedAt || Date.now() - state.lastSyncedAt > 60 * 60_000;
-      if (stale && state.status !== 'unauthorized') {
-        maybeKickCalendarSync({ userId, accountId: state.accountId });
-      }
+    // Lazy freshness, derived from CONNECTED ACCOUNTS — an account that has
+    // never synced has no sync-state row, and deriving from states alone
+    // meant pre-existing accounts never got their first sync.
+    const stateByAccount = new Map((syncStates || []).map((state) => [state.accountId, state]));
+    for (const account of accounts || []) {
+      if (account.status !== 'connected') continue;
+      const state = stateByAccount.get(account.accountId);
+      if (state?.status === 'unauthorized') continue;
+      const stale = !state?.lastSyncedAt || Date.now() - state.lastSyncedAt > 60 * 60_000;
+      if (stale) maybeKickCalendarSync({ userId, accountId: account.accountId });
     }
     return {
       calendars: (calendars || []).map((cal) => ({
