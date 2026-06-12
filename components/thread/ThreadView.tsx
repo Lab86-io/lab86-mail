@@ -301,7 +301,9 @@ export function ThreadView() {
             !aiBarOpen && 'pr-12',
           )}
         >
-          <h1 className="truncate text-[15px] font-semibold leading-tight">New message</h1>
+          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+            New message
+          </h1>
           <button
             type="button"
             onClick={() => closeCompose()}
@@ -385,7 +387,9 @@ export function ThreadView() {
         )}
       >
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[15px] font-semibold leading-tight">{data.subject}</h1>
+          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+            {data.subject}
+          </h1>
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
             <span className="shrink-0">
               {messages.length} message{messages.length === 1 ? '' : 's'}
@@ -569,12 +573,15 @@ function SummaryCard({
       layout
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3"
+      className="relative overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3 pl-4"
     >
+      {/* Editorial pull-quote rule. */}
+      <span
+        aria-hidden
+        className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-[var(--color-accent)]/70"
+      />
       <header className="mb-1.5 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
-          Summary
-        </span>
+        <span className="font-display text-[11.5px] italic text-[var(--color-text-muted)]">Summary</span>
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-[var(--color-text-faint)]">{model || 'gpt-5.5-mini'}</span>
           <button

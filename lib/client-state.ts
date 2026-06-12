@@ -65,8 +65,12 @@ export interface ClientState {
   // accent family (see globals.css). null = the default forest green.
   accentHue: number | null;
   accentChroma: number | null;
-  // 0..1 how much accent hue bleeds into the background surfaces.
+  // Background hue is its own axis, decoupled from the accent.
+  bgHue: number | null;
+  // 0..1 how much of bgHue bleeds into the background surfaces.
   surfaceTint: number;
+  // 0..1 Arc-style gradient wash on the rail.
+  washOpacity: number;
   // 0..~0.3 film-grain overlay opacity.
   grainOpacity: number;
   // UI font: null/sans = Geist, 'serif' = Fraunces, 'news' = Averia Serif Libre.
@@ -109,7 +113,9 @@ export interface ClientState {
   setLastChatId: (id: string | null) => void;
   setPendingReplyBody: (body: string | null) => void;
   setAccent: (hue: number | null, chroma: number | null) => void;
+  setBgHue: (hue: number | null) => void;
   setSurfaceTint: (tint: number) => void;
+  setWashOpacity: (opacity: number) => void;
   setGrainOpacity: (opacity: number) => void;
   setAppFont: (font: 'sans' | 'serif' | 'news' | null) => void;
 }
@@ -155,7 +161,9 @@ export const useClientStore = create<ClientState>()(
       pendingReplyBody: null,
       accentHue: null,
       accentChroma: null,
+      bgHue: null,
       surfaceTint: 0,
+      washOpacity: 0,
       grainOpacity: 0,
       appFont: null,
 
@@ -232,7 +240,9 @@ export const useClientStore = create<ClientState>()(
       setLastChatId: (lastChatId) => set({ lastChatId }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
       setAccent: (accentHue, accentChroma) => set({ accentHue, accentChroma }),
+      setBgHue: (bgHue) => set({ bgHue }),
       setSurfaceTint: (surfaceTint) => set({ surfaceTint }),
+      setWashOpacity: (washOpacity) => set({ washOpacity }),
       setGrainOpacity: (grainOpacity) => set({ grainOpacity }),
       setAppFont: (appFont) => set({ appFont }),
     }),
@@ -263,7 +273,9 @@ export const useClientStore = create<ClientState>()(
         lastChatId: s.lastChatId,
         accentHue: s.accentHue,
         accentChroma: s.accentChroma,
+        bgHue: s.bgHue,
         surfaceTint: s.surfaceTint,
+        washOpacity: s.washOpacity,
         grainOpacity: s.grainOpacity,
         appFont: s.appFont,
       }),

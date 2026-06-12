@@ -213,7 +213,7 @@ export function Rail() {
   return (
     <Sidebar
       collapsible="icon"
-      className="bg-[var(--rail-bg)]"
+      className="rail-wash bg-[var(--rail-bg)]"
       onClickCapture={(event) => {
         if (!isMobile) return;
         const target = event.target as HTMLElement | null;
@@ -231,7 +231,7 @@ export function Rail() {
             column's center axis. Gap/padding both ease so the trigger glides
             into place instead of snapping. */}
         <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
-          <span className="max-w-40 whitespace-nowrap text-[15px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
+          <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
           <SidebarTrigger
@@ -301,7 +301,7 @@ export function Rail() {
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-1">
+          <SidebarGroupLabel className="flex items-center gap-1 text-[10px] uppercase tracking-[0.09em]">
             Smart
             <button
               type="button"
@@ -360,7 +360,9 @@ export function Rail() {
             </SidebarMenu>
             {customLabels.length ? (
               <>
-                <SidebarGroupLabel className="mt-3">Custom</SidebarGroupLabel>
+                <SidebarGroupLabel className="mt-3 text-[10px] uppercase tracking-[0.09em]">
+                  Custom
+                </SidebarGroupLabel>
                 <SidebarMenu>
                   {customLabels.map((label) => {
                     const id = `custom:${label._id}`;
@@ -407,7 +409,7 @@ export function Rail() {
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel>
+          <SidebarGroupLabel className="text-[10px] uppercase tracking-[0.09em]">
             Mail
             <Badge
               variant="outline"

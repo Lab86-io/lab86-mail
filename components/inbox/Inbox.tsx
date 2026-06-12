@@ -6,7 +6,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import { Ban, CheckCircle2, Inbox as InboxIcon, MoreHorizontal, Search, Tag, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Confirmation,
@@ -105,6 +105,23 @@ interface QuickFixSuppression {
   senderEmail: string;
   action: string;
   category?: string;
+}
+
+// Day bucket for the editorial date headers: Today / Yesterday / weekday for
+// the last week / month (with year once it isn't this year).
+function dateGroupLabel(ts: number): string {
+  if (!ts) return 'Undated';
+  const date = new Date(ts);
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayMs = 86_400_000;
+  const today = startOfDay(now);
+  const that = startOfDay(date);
+  if (that >= today) return 'Today';
+  if (that >= today - dayMs) return 'Yesterday';
+  if (that >= today - 6 * dayMs) return date.toLocaleDateString(undefined, { weekday: 'long' });
+  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: 'long' });
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
 function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) {
@@ -824,43 +841,58 @@ export function Inbox() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
           >
-            {items.map((it) => {
+            {items.map((it, index) => {
               const senderEmail = emailFromHeader(it.from || it.fromAddress);
               const key = rowKey(it);
               const rowAccount = it.account || account;
+              // Editorial datelines: a serif group header whenever the day
+              // bucket changes (the list is already date-sorted).
+              const groupLabel = dateGroupLabel(Number(it.lastDate ?? it.date) || 0);
+              const previous = index > 0 ? items[index - 1] : null;
+              const showHeader =
+                !previous || dateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
               return (
-                <ThreadRowCard
-                  key={key}
-                  item={it}
-                  photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
-                  showAccount={account === ALL_ACCOUNTS}
-                  accountLabel={accountAliasById[rowAccount] || ''}
-                  activeCategory={smartCategory}
-                  selected={selectedIds.includes(key)}
-                  active={selectedThreadId === it._id && threadAccount === rowAccount}
-                  onToggle={() => toggleSelected(key)}
-                  onPrefetch={() => prefetchThread(it)}
-                  onApplyLabels={() => setLabelPreview(it)}
-                  onCorrect={(action, payload = {}) =>
-                    applyCorrection.mutate({
-                      account: rowAccount,
-                      threadId: it._id,
-                      action,
-                      scope: 'sender',
-                      ...payload,
-                    })
-                  }
-                  onUndoLast={() => undoLastRule.mutate()}
-                  customLabels={customLabels}
-                  onClick={() => {
-                    // Unified inbox stays put; just remember which mailbox this
-                    // thread belongs to so the reader can load/reply correctly.
-                    startTransition(() => {
-                      setThreadAccount(rowAccount);
-                      setSelectedThread(it._id);
-                    });
-                  }}
-                />
+                <Fragment key={key}>
+                  {showHeader ? (
+                    <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
+                      <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+                        {groupLabel}
+                      </span>
+                      <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+                    </div>
+                  ) : null}
+                  <ThreadRowCard
+                    item={it}
+                    photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                    showAccount={account === ALL_ACCOUNTS}
+                    accountLabel={accountAliasById[rowAccount] || ''}
+                    activeCategory={smartCategory}
+                    selected={selectedIds.includes(key)}
+                    active={selectedThreadId === it._id && threadAccount === rowAccount}
+                    onToggle={() => toggleSelected(key)}
+                    onPrefetch={() => prefetchThread(it)}
+                    onApplyLabels={() => setLabelPreview(it)}
+                    onCorrect={(action, payload = {}) =>
+                      applyCorrection.mutate({
+                        account: rowAccount,
+                        threadId: it._id,
+                        action,
+                        scope: 'sender',
+                        ...payload,
+                      })
+                    }
+                    onUndoLast={() => undoLastRule.mutate()}
+                    customLabels={customLabels}
+                    onClick={() => {
+                      // Unified inbox stays put; just remember which mailbox this
+                      // thread belongs to so the reader can load/reply correctly.
+                      startTransition(() => {
+                        setThreadAccount(rowAccount);
+                        setSelectedThread(it._id);
+                      });
+                    }}
+                  />
+                </Fragment>
               );
             })}
             <div ref={loadMoreRef} className="min-h-1" aria-hidden />
@@ -954,7 +986,7 @@ function ThreadRowCard({
       role="button"
       tabIndex={0}
       className={cn(
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)] px-3 py-2 text-left transition-colors duration-150 hover:bg-[var(--color-hover-soft)]',
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left transition-colors duration-150 last:border-b-0 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
@@ -971,8 +1003,8 @@ function ThreadRowCard({
         <div className="flex items-center gap-1.5">
           <span
             className={cn(
-              'truncate text-[13px]',
-              item.unread ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text)]',
+              'truncate font-display text-[13.5px]',
+              item.unread ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text)]/90',
             )}
           >
             {displaySenderLabel}
@@ -1185,7 +1217,7 @@ function EmptyState({ account }: { account: string }) {
         <EmptyMedia>
           <InboxIcon className="h-4 w-4 text-[var(--color-text-faint)]" />
         </EmptyMedia>
-        <EmptyTitle>Nothing here yet</EmptyTitle>
+        <EmptyTitle className="font-display italic">Nothing here yet</EmptyTitle>
         <EmptyDescription>
           {account
             ? 'Try a different search, smart category, or mailbox.'
