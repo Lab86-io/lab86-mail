@@ -502,9 +502,25 @@ export default defineSchema({
     description: v.optional(v.string()),
     labels: v.optional(v.array(v.string())),
     priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
+    weight: v.optional(v.number()),
     dueAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     order: v.number(),
+    // Link/file attachments: { name, url }. Files upload elsewhere (e.g.
+    // Convex storage) and land here as URLs.
+    attachments: v.optional(v.array(v.object({ name: v.string(), url: v.string() }))),
+    // Embedded comment thread; boards are small-team, so no separate table.
+    comments: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          authorUserId: v.string(),
+          authorEmail: v.optional(v.string()),
+          body: v.string(),
+          createdAt: v.number(),
+        }),
+      ),
+    ),
     // Provenance chip: where this card came from.
     source: v.optional(v.any()),
     createdAt: v.number(),

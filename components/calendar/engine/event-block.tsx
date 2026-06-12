@@ -11,7 +11,7 @@ import { ResizableEvent } from '@/components/calendar/engine/resizable-event';
 import { cn } from '@/lib/utils';
 
 const calendarWeekEventCardVariants = cva(
-  'flex select-none flex-col gap-0.5 truncate whitespace-nowrap rounded-md border px-2 py-1.5 text-xs focus-visible:outline-offset-2',
+  'flex w-full min-w-0 select-none flex-col gap-0.5 overflow-hidden rounded-md border px-2 py-1.5 text-left text-xs focus-visible:outline-offset-2',
   {
     variants: {
       color: {
@@ -55,12 +55,12 @@ interface IProps
 }
 
 export function EventBlock({ event, className }: IProps) {
-  const { badgeVariant, use24HourFormat } = useCalendar();
+  const { badgeVariant, use24HourFormat, hourHeight } = useCalendar();
 
   const start = parseISO(event.startDate);
   const end = parseISO(event.endDate);
   const durationInMinutes = differenceInMinutes(end, start);
-  const heightInPixels = (durationInMinutes / 60) * 96 - 8;
+  const heightInPixels = (durationInMinutes / 60) * hourHeight - 8;
 
   const color = (badgeVariant === 'dot' ? `${event.color}-dot` : event.color) as VariantProps<
     typeof calendarWeekEventCardVariants

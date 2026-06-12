@@ -21,7 +21,7 @@ export function DraggableEvent({ event, children, className }: DraggableEventPro
 
   return (
     <motion.div
-      className={`${className || ''} ${isCurrentlyDragged ? 'opacity-50 cursor-grabbing' : 'cursor-grab'}`}
+      className={`${className || ''} w-full ${isCurrentlyDragged ? 'opacity-50 cursor-grabbing' : 'cursor-grab'}`}
       draggable
       onClick={(e: React.MouseEvent<HTMLDivElement>) => handleClick(e)}
       onDragStart={(e) => {

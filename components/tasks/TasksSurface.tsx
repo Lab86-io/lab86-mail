@@ -41,9 +41,12 @@ interface BoardCard {
   description?: string;
   labels?: string[];
   priority?: 'low' | 'medium' | 'high';
+  weight?: number;
   dueAt?: number;
   completedAt?: number;
   order: number;
+  attachments?: Array<{ name: string; url: string }>;
+  comments?: Array<{ id: string; authorEmail?: string; body: string; createdAt: number }>;
   source?: { kind: string; accountId?: string; threadId?: string; messageId?: string };
 }
 
@@ -178,6 +181,7 @@ function BoardView({ boardId }: { boardId: string }) {
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [newColumnOpen, setNewColumnOpen] = useState(false);
+  const [createInColumn, setCreateInColumn] = useState<string | null>(null);
 
   const handleDragEnd = (event: DragEndEvent) => {
     if (!board || !canEdit) return;
@@ -275,20 +279,13 @@ function BoardView({ boardId }: { boardId: string }) {
                 }}
               </KanbanCards>
               {canEdit ? (
-                <QuickAddCard
-                  onAdd={async (title) => {
-                    try {
-                      await createCard({
-                        boardId: board.boardId,
-                        columnId: column.id,
-                        title,
-                        source: { kind: 'manual' },
-                      });
-                    } catch (err: any) {
-                      toast.error(err?.message || 'Could not add card');
-                    }
-                  }}
-                />
+                <button
+                  type="button"
+                  onClick={() => setCreateInColumn(column.id)}
+                  className="m-2 rounded-md border border-dashed border-[var(--color-border)] px-2.5 py-1.5 text-left text-[12.5px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                >
+                  Add a card…
+                </button>
               ) : null}
             </KanbanBoard>
           )}
@@ -303,6 +300,25 @@ function BoardView({ boardId }: { boardId: string }) {
         />
       ) : null}
       {shareOpen ? <ShareDialog board={board} onClose={() => setShareOpen(false)} /> : null}
+      {createInColumn ? (
+        <CreateCardDialog
+          columnName={board.columns.find((c) => c.columnId === createInColumn)?.name || ''}
+          onClose={() => setCreateInColumn(null)}
+          onCreate={async (fields) => {
+            try {
+              await createCard({
+                boardId: board.boardId,
+                columnId: createInColumn,
+                source: { kind: 'manual' },
+                ...fields,
+              });
+              setCreateInColumn(null);
+            } catch (err: any) {
+              toast.error(err?.message || 'Could not add card');
+            }
+          }}
+        />
+      ) : null}
       <NameDialog
         open={newColumnOpen}
         title="New column"
@@ -340,7 +356,13 @@ function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: st
       >
         {card?.title || fallbackTitle}
       </p>
-      {card?.labels?.length || card?.dueAt || card?.priority || card?.source?.threadId ? (
+      {card?.labels?.length ||
+      card?.dueAt ||
+      card?.priority ||
+      card?.source?.threadId ||
+      card?.attachments?.length ||
+      card?.comments?.length ||
+      card?.weight !== undefined ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {card?.priority ? (
             <span
@@ -367,38 +389,27 @@ function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: st
           {card?.source?.threadId ? (
             <Mail className="size-3 text-[var(--color-text-faint)]" aria-label="Created from an email" />
           ) : null}
+          {card?.attachments?.length ? (
+            <Link2 className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />
+          ) : null}
+          {card?.comments?.length ? (
+            <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">
+              💬 {card.comments.length}
+            </span>
+          ) : null}
+          {card?.weight !== undefined ? (
+            <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">w{card.weight}</span>
+          ) : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-function QuickAddCard({ onAdd }: { onAdd: (title: string) => void }) {
-  const [value, setValue] = useState('');
-  return (
-    <form
-      className="p-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const title = value.trim();
-        if (!title) return;
-        setValue('');
-        onAdd(title);
-      }}
-    >
-      <Input
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        placeholder="Add a card…"
-        className="h-7 border-dashed bg-transparent text-[12.5px]"
-      />
-    </form>
-  );
-}
-
 function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boolean; onClose: () => void }) {
   const updateCard = useConvexMutation(boardsApi.updateCard);
   const deleteCard = useConvexMutation(boardsApi.deleteCard);
+  const addComment = useConvexMutation(boardsApi.addComment);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -407,7 +418,12 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
   const [description, setDescription] = useState(card.description || '');
   const [labels, setLabels] = useState((card.labels || []).join(', '));
   const [priority, setPriority] = useState<string>(card.priority || '');
+  const [weight, setWeight] = useState(card.weight !== undefined ? String(card.weight) : '');
   const [due, setDue] = useState(card.dueAt ? toLocalInputValue(card.dueAt) : '');
+  const [attachments, setAttachments] = useState(card.attachments || []);
+  const [attachName, setAttachName] = useState('');
+  const [attachUrl, setAttachUrl] = useState('');
+  const [commentDraft, setCommentDraft] = useState('');
   const done = Boolean(card.completedAt);
 
   const save = async () => {
@@ -421,7 +437,9 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
           .map((label) => label.trim())
           .filter(Boolean),
         priority: (priority || undefined) as any,
+        weight: weight === '' ? null : Number(weight),
         dueAt: due ? new Date(due).getTime() : null,
+        attachments,
       });
       onClose();
     } catch (err: any) {
@@ -433,7 +451,7 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogTitle className="sr-only">Card details</DialogTitle>
-        <div className="space-y-3">
+        <div className="max-h-[75vh] space-y-3 overflow-y-auto pr-1">
           <Input
             value={title}
             onChange={(event) => setTitle(event.target.value)}
@@ -447,7 +465,7 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
             placeholder="Notes (markdown)"
             className="min-h-28 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-2 text-[13px] leading-relaxed"
           />
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <label htmlFor="card-due" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
               Due
               <Input
@@ -474,6 +492,18 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
                 <option value="high">High</option>
               </select>
             </label>
+            <label htmlFor="card-weight" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
+              Weight
+              <Input
+                id="card-weight"
+                type="number"
+                min={0}
+                value={weight}
+                onChange={(event) => setWeight(event.target.value)}
+                disabled={!canEdit}
+                className="h-8 text-[12.5px]"
+              />
+            </label>
           </div>
           <label htmlFor="card-labels" className="block space-y-1 text-[11px] text-[var(--color-text-muted)]">
             Labels (comma-separated)
@@ -485,6 +515,121 @@ function CardSheet({ card, canEdit, onClose }: { card: BoardCard; canEdit: boole
               className="h-8 text-[12.5px]"
             />
           </label>
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-[var(--color-text-muted)]">Attachments</p>
+            {attachments.length ? (
+              <ul className="space-y-1">
+                {attachments.map((attachment, index) => (
+                  <li key={attachment.url} className="flex items-center gap-2 text-[12.5px]">
+                    <Link2 className="size-3 shrink-0 text-[var(--color-text-faint)]" />
+                    <a
+                      href={attachment.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="min-w-0 flex-1 truncate text-[var(--color-accent)] underline-offset-2 hover:underline"
+                    >
+                      {attachment.name || attachment.url}
+                    </a>
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
+                        className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
+                        title="Remove attachment"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[11.5px] text-[var(--color-text-faint)]">No links or files attached.</p>
+            )}
+            {canEdit ? (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  value={attachName}
+                  onChange={(event) => setAttachName(event.target.value)}
+                  placeholder="Name"
+                  className="h-7 w-28 text-[12px]"
+                />
+                <Input
+                  value={attachUrl}
+                  onChange={(event) => setAttachUrl(event.target.value)}
+                  placeholder="https://…"
+                  className="h-7 flex-1 text-[12px]"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-[11.5px]"
+                  disabled={!/^https?:\/\//.test(attachUrl)}
+                  onClick={() => {
+                    setAttachments([
+                      ...attachments,
+                      { name: attachName.trim() || attachUrl, url: attachUrl },
+                    ]);
+                    setAttachName('');
+                    setAttachUrl('');
+                  }}
+                >
+                  Attach
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-[var(--color-text-muted)]">
+              Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
+            </p>
+            {(card.comments || []).map((comment) => (
+              <div
+                key={comment.id}
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5"
+              >
+                <p className="text-[12.5px] leading-relaxed">{comment.body}</p>
+                <p className="mt-0.5 text-[10.5px] text-[var(--color-text-faint)]">
+                  {comment.authorEmail || 'someone'} ·{' '}
+                  {new Date(comment.createdAt).toLocaleString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                </p>
+              </div>
+            ))}
+            {canEdit ? (
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const body = commentDraft.trim();
+                  if (!body) return;
+                  try {
+                    await addComment({ cardId: card.cardId, body });
+                    setCommentDraft('');
+                  } catch (err: any) {
+                    toast.error(err?.message || 'Could not comment');
+                  }
+                }}
+              >
+                <Input
+                  value={commentDraft}
+                  onChange={(event) => setCommentDraft(event.target.value)}
+                  placeholder="Add a comment…"
+                  className="h-7 flex-1 text-[12px]"
+                />
+                <Button type="submit" size="sm" variant="outline" className="h-7 px-2 text-[11.5px]">
+                  Post
+                </Button>
+              </form>
+            ) : null}
+          </div>
+
           {card.source?.threadId ? (
             <button
               type="button"
@@ -686,6 +831,137 @@ function ShareDialog({ board, onClose }: { board: BoardPayload; onClose: () => v
             ) : null}
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateCardDialog({
+  columnName,
+  onClose,
+  onCreate,
+}: {
+  columnName: string;
+  onClose: () => void;
+  onCreate: (fields: {
+    title: string;
+    description?: string;
+    labels?: string[];
+    priority?: 'low' | 'medium' | 'high';
+    weight?: number;
+    dueAt?: number;
+  }) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [labels, setLabels] = useState('');
+  const [priority, setPriority] = useState('');
+  const [weight, setWeight] = useState('');
+  const [due, setDue] = useState('');
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogTitle>New card in {columnName}</DialogTitle>
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const trimmed = title.trim();
+            if (!trimmed) return;
+            onCreate({
+              title: trimmed,
+              description: description.trim() || undefined,
+              labels: labels
+                .split(',')
+                .map((label) => label.trim())
+                .filter(Boolean),
+              priority: (priority || undefined) as any,
+              weight: weight ? Number(weight) : undefined,
+              dueAt: due ? new Date(due).getTime() : undefined,
+            });
+          }}
+        >
+          <Input
+            autoFocus
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="What needs doing?"
+            className="h-9 text-[13.5px]"
+          />
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="Notes (markdown)"
+            className="min-h-20 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-2 text-[13px] leading-relaxed"
+          />
+          <div className="grid grid-cols-3 gap-2">
+            <label htmlFor="new-card-due" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
+              Due
+              <Input
+                id="new-card-due"
+                type="datetime-local"
+                value={due}
+                onChange={(event) => setDue(event.target.value)}
+                className="h-8 text-[12px]"
+              />
+            </label>
+            <label
+              htmlFor="new-card-priority"
+              className="space-y-1 text-[11px] text-[var(--color-text-muted)]"
+            >
+              Priority
+              <select
+                id="new-card-priority"
+                value={priority}
+                onChange={(event) => setPriority(event.target.value)}
+                className="h-8 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2 text-[12.5px]"
+              >
+                <option value="">None</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label htmlFor="new-card-weight" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
+              Weight
+              <Input
+                id="new-card-weight"
+                type="number"
+                min={0}
+                value={weight}
+                onChange={(event) => setWeight(event.target.value)}
+                className="h-8 text-[12.5px]"
+              />
+            </label>
+          </div>
+          <label
+            htmlFor="new-card-labels"
+            className="block space-y-1 text-[11px] text-[var(--color-text-muted)]"
+          >
+            Labels (comma-separated)
+            <Input
+              id="new-card-labels"
+              value={labels}
+              onChange={(event) => setLabels(event.target.value)}
+              className="h-8 text-[12.5px]"
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-3 text-[12.5px]"
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" className="h-8 px-3 text-[12.5px]">
+              Add card
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );

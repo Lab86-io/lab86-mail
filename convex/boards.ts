@@ -297,8 +297,10 @@ const cardFields = {
   description: v.optional(v.string()),
   labels: v.optional(v.array(v.string())),
   priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
+  weight: v.optional(v.union(v.number(), v.null())),
   dueAt: v.optional(v.union(v.number(), v.null())),
   completedAt: v.optional(v.union(v.number(), v.null())),
+  attachments: v.optional(v.array(v.object({ name: v.string(), url: v.string() }))),
 };
 
 export const createCard = mutation({
@@ -310,7 +312,9 @@ export const createCard = mutation({
     description: v.optional(v.string()),
     labels: v.optional(v.array(v.string())),
     priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
+    weight: v.optional(v.number()),
     dueAt: v.optional(v.number()),
+    attachments: v.optional(v.array(v.object({ name: v.string(), url: v.string() }))),
     source: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -331,7 +335,9 @@ export const createCard = mutation({
       description: args.description,
       labels: args.labels,
       priority: args.priority,
+      weight: args.weight,
       dueAt: args.dueAt,
+      attachments: args.attachments,
       order: nextOrder(siblings.map((card) => card.order)),
       source: args.source,
       createdAt: ts,
@@ -352,6 +358,8 @@ export const updateCard = mutation({
     if (args.description !== undefined) patch.description = args.description;
     if (args.labels !== undefined) patch.labels = args.labels;
     if (args.priority !== undefined) patch.priority = args.priority;
+    if (args.weight !== undefined) patch.weight = args.weight === null ? undefined : args.weight;
+    if (args.attachments !== undefined) patch.attachments = args.attachments;
     // null clears; undefined leaves untouched.
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt === null ? undefined : args.dueAt;
     if (args.completedAt !== undefined)
@@ -421,6 +429,34 @@ export const deleteCard = mutation({
     await requireBoard(ctx, card.boardId, userId, 'member');
     await ctx.db.delete(args.cardId);
     return { previous: snapshotCard(card) };
+  },
+});
+
+export const addComment = mutation({
+  args: { ...callerArgs, cardId: v.id('cards'), body: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const card = await ctx.db.get(args.cardId);
+    if (!card) throw new Error('Card not found.');
+    await requireBoard(ctx, card.boardId, userId, 'member');
+    const me = await ctx.db
+      .query('users')
+      .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', userId))
+      .first();
+    const body = args.body.trim();
+    if (!body) throw new Error('Comment is empty.');
+    const comment = {
+      id: `c_${now()}_${Math.floor(Math.random() * 1e6)}`,
+      authorUserId: userId,
+      authorEmail: me?.email,
+      body: body.slice(0, 4000),
+      createdAt: now(),
+    };
+    await ctx.db.patch(args.cardId, {
+      comments: [...(card.comments || []), comment],
+      updatedAt: now(),
+    });
+    return comment;
   },
 });
 
@@ -582,9 +618,12 @@ function snapshotCard(card: any) {
     description: card.description,
     labels: card.labels,
     priority: card.priority,
+    weight: card.weight,
     dueAt: card.dueAt,
     completedAt: card.completedAt,
     order: card.order,
+    attachments: card.attachments,
+    comments: card.comments,
     source: card.source,
   };
 }

@@ -24,6 +24,11 @@ export interface IEvent {
   allDay?: boolean;
   location?: string;
   masterEventId?: string;
+  // Rich metadata for the event viewer.
+  participants?: Array<{ email?: string; name?: string; status?: string }>;
+  organizer?: { email?: string; name?: string };
+  conferencing?: any;
+  recurrence?: string[];
 }
 
 export interface ICalendarCell {

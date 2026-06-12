@@ -23,6 +23,8 @@ interface ICalendarContext {
   setAgendaModeGroupBy: (groupBy: 'date' | 'color') => void;
   use24HourFormat: boolean;
   toggleTimeFormat: () => void;
+  hourHeight: number;
+  setHourHeight: (px: number) => void;
   setSelectedDate: (date: Date | undefined) => void;
   selectedUserId: IUser['id'] | 'all';
   setSelectedUserId: (userId: IUser['id'] | 'all') => void;
@@ -59,13 +61,17 @@ interface CalendarSettings {
   view: TCalendarView;
   use24HourFormat: boolean;
   agendaModeGroupBy: 'date' | 'color';
+  hourHeight: number;
 }
 
 const DEFAULT_SETTINGS: CalendarSettings = {
   badgeVariant: 'colored',
-  view: 'day',
-  use24HourFormat: true,
+  view: 'week',
+  // Civilian clock by default; hourHeight is the week/day zoom level
+  // (px per hour) so a work day fits the viewport.
+  use24HourFormat: false,
   agendaModeGroupBy: 'date',
+  hourHeight: 64,
 };
 
 const CalendarContext = createContext({} as ICalendarContext);
@@ -85,7 +91,7 @@ export function CalendarProvider({
   badge?: 'dot' | 'colored';
   persistence?: CalendarPersistence;
 }) {
-  const [settings, setSettings] = useLocalStorage<CalendarSettings>('calendar-settings', {
+  const [settings, setSettings] = useLocalStorage<CalendarSettings>('calendar-settings-v2', {
     ...DEFAULT_SETTINGS,
     badgeVariant: badge,
     view: view,
@@ -97,6 +103,7 @@ export function CalendarProvider({
   const [agendaModeGroupBy, setAgendaModeGroupByState] = useState<'date' | 'color'>(
     settings.agendaModeGroupBy,
   );
+  const [hourHeight, setHourHeightState] = useState<number>(settings.hourHeight || 64);
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedUserId, setSelectedUserId] = useState<IUser['id'] | 'all'>('all');
@@ -131,6 +138,12 @@ export function CalendarProvider({
   const setAgendaModeGroupBy = (groupBy: 'date' | 'color') => {
     setAgendaModeGroupByState(groupBy);
     updateSettings({ agendaModeGroupBy: groupBy });
+  };
+
+  const setHourHeight = (px: number) => {
+    const clamped = Math.min(160, Math.max(40, Math.round(px)));
+    setHourHeightState(clamped);
+    updateSettings({ hourHeight: clamped });
   };
 
   const filterEventsBySelectedColors = (color: TEventColor) => {
@@ -222,6 +235,8 @@ export function CalendarProvider({
     view: currentView,
     use24HourFormat,
     toggleTimeFormat,
+    hourHeight,
+    setHourHeight,
     setView,
     agendaModeGroupBy,
     setAgendaModeGroupBy,

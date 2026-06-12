@@ -32,7 +32,7 @@ export function RenderGroupedEvents({ groupedEvents, day }: RenderGroupedEventsP
       if (!hasOverlap) style = { ...style, width: '100%', left: '0%' };
 
       return (
-        <div key={event.id} className="absolute p-1" style={style}>
+        <div key={event.id} className="absolute min-w-0 overflow-hidden p-1" style={style}>
           <EventBlock event={event} />
         </div>
       );

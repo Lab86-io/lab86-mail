@@ -18,10 +18,15 @@ interface IProps {
 }
 
 export function CalendarDayView({ singleDayEvents, multiDayEvents }: IProps) {
-  const { selectedDate, setSelectedDate, users, use24HourFormat } = useCalendar();
+  const { selectedDate, setSelectedDate, users, use24HourFormat, hourHeight } = useCalendar();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   const hours = Array.from({ length: 24 }, (_, i) => i);
+
+  useEffect(() => {
+    const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]');
+    if (viewport) viewport.scrollTop = 7.5 * hourHeight;
+  }, [hourHeight]);
 
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {
@@ -95,7 +100,7 @@ export function CalendarDayView({ singleDayEvents, multiDayEvents }: IProps) {
             {/* Hours column */}
             <div className="relative w-18">
               {hours.map((hour, index) => (
-                <div key={hour} className="relative" style={{ height: '96px' }}>
+                <div key={hour} className="relative" style={{ height: `${hourHeight}px` }}>
                   <div className="absolute -top-3 right-2 flex h-6 items-center">
                     {index !== 0 && (
                       <span className="text-xs text-t-quaternary">
@@ -111,7 +116,7 @@ export function CalendarDayView({ singleDayEvents, multiDayEvents }: IProps) {
             <div className="relative flex-1 border-l">
               <div className="relative">
                 {hours.map((hour, index) => (
-                  <div key={hour} className="relative" style={{ height: '96px' }}>
+                  <div key={hour} className="relative" style={{ height: `${hourHeight}px` }}>
                     {index !== 0 && (
                       <div className="pointer-events-none absolute inset-x-0 top-0 border-b"></div>
                     )}
@@ -120,7 +125,8 @@ export function CalendarDayView({ singleDayEvents, multiDayEvents }: IProps) {
                       date={selectedDate}
                       hour={hour}
                       minute={0}
-                      className="absolute inset-x-0 top-0 h-[48px]"
+                      className="absolute inset-x-0 top-0"
+                      style={{ height: `${hourHeight / 2}px` }}
                     >
                       <AddEditEventDialog startDate={selectedDate} startTime={{ hour, minute: 0 }}>
                         <div className="absolute inset-0 cursor-pointer transition-colors hover:bg-secondary" />
@@ -133,7 +139,8 @@ export function CalendarDayView({ singleDayEvents, multiDayEvents }: IProps) {
                       date={selectedDate}
                       hour={hour}
                       minute={30}
-                      className="absolute inset-x-0 bottom-0 h-[48px]"
+                      className="absolute inset-x-0 bottom-0"
+                      style={{ height: `${hourHeight / 2}px` }}
                     >
                       <AddEditEventDialog startDate={selectedDate} startTime={{ hour, minute: 30 }}>
                         <div className="absolute inset-0 cursor-pointer transition-colors hover:bg-secondary" />

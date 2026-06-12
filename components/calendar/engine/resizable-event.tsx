@@ -15,11 +15,11 @@ interface ResizableEventBlockProps {
   className?: string;
 }
 
-const PIXELS_PER_HOUR = 96;
-const MINUTES_PER_PIXEL = 60 / PIXELS_PER_HOUR;
 const MIN_DURATION = 15; // in minutes
 
 export function ResizableEvent({ event, children, className }: ResizableEventBlockProps) {
+  const { hourHeight } = useCalendar();
+  const MINUTES_PER_PIXEL = 60 / hourHeight;
   const { updateEvent, use24HourFormat } = useCalendar();
 
   const [isResizing, setIsResizing] = useState(false);
@@ -120,7 +120,7 @@ export function ResizableEvent({ event, children, className }: ResizableEventBlo
       onResizeStart: handleResizeStart,
       onResize: handleResize,
       onResizeStop: handleResizeStop,
-      className: cn('transition-all duration-200', isResizing && 'z-50 shadow-lg'),
+      className: cn('!w-full transition-all duration-200', isResizing && 'z-50 shadow-lg'),
     }),
     [handleResizeStart, handleResize, handleResizeStop, isResizing],
   );
@@ -131,7 +131,7 @@ export function ResizableEvent({ event, children, className }: ResizableEventBlo
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: 0.2 }}
-      className={cn('relative group', className)}
+      className={cn('relative group w-full', className)}
     >
       <Resizable {...resizeConfig}>{children}</Resizable>
 

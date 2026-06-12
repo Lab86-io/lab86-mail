@@ -122,6 +122,7 @@ export const tasksCreateCard = defineTool({
     description: z.string().optional(),
     labels: z.array(z.string()).optional(),
     priority: prioritySchema.optional(),
+    weight: z.number().int().min(0).optional(),
     dueIso: z.string().optional(),
     source: z
       .object({
@@ -144,6 +145,7 @@ export const tasksCreateCard = defineTool({
       description: args.description,
       labels: args.labels,
       priority: args.priority,
+      weight: args.weight,
       dueAt: args.dueIso ? parseIsoInTimezone(args.dueIso, ctx.userTimezone, 'dueIso') : undefined,
       source: args.source ?? { kind: 'chat' },
     });
@@ -171,6 +173,7 @@ export const tasksUpdateCard = defineTool({
     description: z.string().optional(),
     labels: z.array(z.string()).optional(),
     priority: prioritySchema.optional(),
+    weight: z.number().int().min(0).nullable().optional(),
     dueIso: z.string().nullable().optional(),
     completed: z.boolean().optional(),
   }),
@@ -184,6 +187,7 @@ export const tasksUpdateCard = defineTool({
       description: args.description,
       labels: args.labels,
       priority: args.priority,
+      weight: args.weight,
       dueAt:
         args.dueIso === undefined
           ? undefined

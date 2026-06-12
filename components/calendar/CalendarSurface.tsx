@@ -113,6 +113,10 @@ export function CalendarSurface() {
           allDay: row.allDay,
           location: row.location,
           masterEventId: row.masterEventId,
+          participants: row.participants,
+          organizer: row.organizer,
+          conferencing: row.conferencing,
+          recurrence: row.recurrence,
         })),
     );
   }, [eventRows, users, calendars, colorByCalendar, dueCards]);
