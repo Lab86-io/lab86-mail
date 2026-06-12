@@ -578,35 +578,59 @@
     color: var(--color-text) !important;
   }
 
-  /* HTML mail is designed against its own (almost always light) background.
-     In dark mode, render it on a light "paper island" with its ORIGINAL
-     colors instead of forcing dark-mode text over backgrounds we don't
-     control — the old blanket color override produced white-on-white the
-     moment an email carried its own white card. Emails that set white text
-     also set their own dark background inline, which is preserved. */
-  .email-body {
-    color-scheme: light;
+  /* Dark-mode email treatment splits two ways (the renderer tags which via
+     .email-adaptive — see emailDeclaresOwnBackground):
+
+     1) Backgroundless mail (plain-text replies, lightly-marked-up notes) has
+        no card of its own, so it ADAPTS to dark mode: it sits on the dark
+        message surface with light text, like native app content. Their own
+        (usually dark, sometimes unset) text colors are overridden to stay
+        legible; a stray inline background is neutralized so nothing turns
+        into a white slab. Links take the accent. */
+  .dark .email-adaptive,
+  .dark
+    .email-adaptive
+    :where(p, div, span, td, th, li, h1, h2, h3, h4, h5, h6, strong, em, b, blockquote, label):not(a *) {
+    color: var(--color-text) !important;
+    background-color: transparent !important;
   }
-  .dark .email-body {
+  .dark .email-adaptive a {
+    color: var(--color-accent);
+  }
+  .dark .email-adaptive blockquote {
+    border-left-color: var(--color-border-strong);
+    color: var(--color-text-muted);
+  }
+  .dark .email-adaptive code,
+  .dark .email-adaptive pre {
+    background: var(--color-bg-muted) !important;
+    color: var(--color-text);
+  }
+
+  /* 2) Mail that paints its own background is designed against it. Render it
+        on a light "paper island" with its ORIGINAL colors — forcing dark-mode
+        text over a white card it ships would be white-on-white. */
+  .dark .email-body:not(.email-adaptive) {
+    color-scheme: light;
     background: #ffffff;
     color: #1f2937;
     border-radius: var(--radius);
     padding: 12px 16px;
   }
-  /* Descendants resolve dark-theme surface vars otherwise, leaving dark
-     blocks under dark text inside the white island. Pin them to light. */
-  .dark .email-body blockquote {
+  /* Descendants resolve dark-theme surface vars otherwise, leaving dark blocks
+     under dark text inside the white island. Pin them to light. */
+  .dark .email-body:not(.email-adaptive) blockquote {
     border-left-color: #d1d5db;
     color: #4b5563;
   }
-  .dark .email-body code {
+  .dark .email-body:not(.email-adaptive) code {
     background: #f3f4f6;
     color: #111827;
   }
-  .dark .email-body pre {
+  .dark .email-body:not(.email-adaptive) pre {
     background: #f8fafc;
   }
-  .dark .email-body a {
+  .dark .email-body:not(.email-adaptive) a {
     color: #1d4ed8;
   }
 }

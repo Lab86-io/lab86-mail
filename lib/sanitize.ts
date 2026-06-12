@@ -29,6 +29,29 @@ export function sanitizeEmailHtml(html: string): string {
   return cachedRead(html);
 }
 
+// Does this email ship its own (opaque) background? Branded HTML mail paints
+// white/colored cards via bgcolor= or inline background[-color]; plain-text
+// and lightly-marked-up replies declare none and just inherit. We use this to
+// decide dark-mode treatment: emails with their own background render on a
+// light "paper island" (their colors stay correct); backgroundless emails
+// adapt to dark mode (dark surface, light text) so a one-line reply isn't a
+// jarring white slab. Cheap string scan over the already-sanitized HTML.
+const BG_NON_COLOR = new Set(['transparent', 'none', 'inherit', 'initial', 'unset', 'currentcolor', '']);
+
+export function emailDeclaresOwnBackground(html: string): boolean {
+  // Classic table emails use the bgcolor attribute.
+  if (/\sbgcolor\s*=\s*["']?\s*#?[0-9a-z(]/i.test(html)) return true;
+  // Inline background / background-color with a real value (color or image).
+  const re = /background(?:-color)?\s*:\s*([^;"']+)/gi;
+  let match: RegExpExecArray | null = re.exec(html);
+  while (match) {
+    const value = match[1].trim().toLowerCase();
+    if (!BG_NON_COLOR.has(value)) return true;
+    match = re.exec(html);
+  }
+  return false;
+}
+
 // Sanitizer for HTML the user *sends* (i.e. their own composed content,
 // converted from markdown). Slightly broader allowlist than the read path —
 // e.g. we keep <pre>, <code>, blockquote styling, simple inline styles for
