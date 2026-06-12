@@ -91,6 +91,15 @@ import {
   updateSmartLabel,
 } from './smart-labels';
 import {
+  tasksCreateBoard,
+  tasksCreateCard,
+  tasksDeleteCard,
+  tasksGetBoard,
+  tasksListBoards,
+  tasksMoveCard,
+  tasksUpdateCard,
+} from './tasks';
+import {
   getTrackedThreadTool,
   listTrackedThreadsTool,
   resolveTrackedThread,
@@ -202,6 +211,13 @@ const allTools: AnyTool[] = [
   listAuditEntries,
   listRecentOperationsTool,
   undoOperationTool,
+  tasksListBoards,
+  tasksGetBoard,
+  tasksCreateBoard,
+  tasksCreateCard,
+  tasksUpdateCard,
+  tasksMoveCard,
+  tasksDeleteCard,
   // UI tools — server returns ack, client intercepts for the real mutation.
   uiFocusThread,
   uiSetQuery,

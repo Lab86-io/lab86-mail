@@ -22,7 +22,17 @@ export interface ToolDefinition<
 > {
   name: string;
   description: string;
-  category: 'mail' | 'compose' | 'ai' | 'memory' | 'calendar' | 'contacts' | 'web' | 'audit' | 'meta';
+  category:
+    | 'mail'
+    | 'compose'
+    | 'ai'
+    | 'memory'
+    | 'calendar'
+    | 'tasks'
+    | 'contacts'
+    | 'web'
+    | 'audit'
+    | 'meta';
   mutating: boolean;
   input: TArgs;
   output: TOut;

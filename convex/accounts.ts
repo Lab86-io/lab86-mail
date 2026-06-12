@@ -362,6 +362,40 @@ export const deleteUserCascade = mutation({
       for (const row of rows) await ctx.db.delete(row._id);
     }
 
+    // Kanban: boards key on ownerUserId, so they need their own pass. Owned
+    // boards go down with their 'boardColumns', 'cards', and 'boardMembers';
+    // on boards owned by OTHERS the user's memberships and authored cards are
+    // removed while the board itself survives.
+    const ownedBoards = await ctx.db
+      .query('boards')
+      .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
+      .collect();
+    counts.boards = ownedBoards.length;
+    for (const board of ownedBoards) {
+      for (const table of ['boardColumns', 'cards', 'boardMembers'] as const) {
+        const rows = await ctx.db
+          .query(table)
+          .withIndex(table === 'boardColumns' ? 'by_board' : ('by_board' as any), (q: any) =>
+            q.eq('boardId', board._id),
+          )
+          .collect();
+        for (const row of rows) await ctx.db.delete(row._id);
+      }
+      await ctx.db.delete(board._id);
+    }
+    const foreignMemberships = await ctx.db
+      .query('boardMembers')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    counts.boardMembers = foreignMemberships.length;
+    for (const membership of foreignMemberships) await ctx.db.delete(membership._id);
+    const authoredCards = await ctx.db
+      .query('cards')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    counts.cards = authoredCards.length;
+    for (const card of authoredCards) await ctx.db.delete(card._id);
+
     const userRows = await ctx.db
       .query('users')
       .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', args.userId))

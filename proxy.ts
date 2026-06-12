@@ -18,6 +18,8 @@ const isPublicRoute = createRouteMatcher([
   '/terms',
   '/support',
   '/pricing',
+  // Public read-only board links: the token in the path is the credential.
+  '/b(.*)',
 ]);
 
 const passthroughProxy = (_req: NextRequest) => NextResponse.next();

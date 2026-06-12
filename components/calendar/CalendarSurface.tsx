@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery_experimental as useConvexQuery } from 'convex/react';
+import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CalendarBody } from '@/components/calendar/engine/calendar-body';
@@ -14,6 +14,12 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 
 const EVENT_COLORS: TEventColor[] = ['blue', 'green', 'red', 'yellow', 'purple', 'orange'];
+
+// Due-dated Kanban cards appear as a pseudo-calendar lane; their event ids
+// are prefixed so persistence can route them to card mutations instead of
+// Nylas.
+const TASKS_LANE_ID = '__tasks__';
+const TASK_EVENT_PREFIX = 'task_';
 
 // The visible data window mirrors the sync window (lib/calendar/sync.ts).
 const WINDOW_PAST_MS = 92 * 86_400_000;
@@ -34,6 +40,12 @@ export function CalendarSurface() {
     query: (api as any).calendarData.liveEvents,
     args: window,
   });
+  // Cross-surface: due-dated cards ride the calendar as a distinct lane.
+  const liveDueCards = useConvexQuery({
+    query: (api as any).boards.listDueCards,
+    args: window,
+  });
+  const updateCard = useConvexMutation((api as any).boards.updateCard);
 
   // One nudge per mount: kicks a debounced resync for stale/never-synced
   // accounts (the tool no-ops when everything is fresh).
@@ -56,38 +68,54 @@ export function CalendarSurface() {
     return map;
   }, [calendars]);
 
-  const users: IUser[] = useMemo(
-    () =>
-      calendars
-        .filter((cal) => !cal.hidden)
-        .map((cal) => ({ id: cal.providerCalendarId, name: cal.name, picturePath: null })),
-    [calendars],
-  );
+  const dueCards: any[] = liveDueCards.status === 'success' ? liveDueCards.data || [] : [];
+
+  const users: IUser[] = useMemo(() => {
+    const list = calendars
+      .filter((cal) => !cal.hidden)
+      .map((cal) => ({ id: cal.providerCalendarId, name: cal.name, picturePath: null }));
+    if (dueCards.length) list.push({ id: TASKS_LANE_ID, name: 'Tasks', picturePath: null });
+    return list;
+  }, [calendars, dueCards.length]);
 
   const events: IEvent[] = useMemo(() => {
     const visible = new Set(users.map((user) => user.id));
-    return eventRows
-      .filter((row) => visible.has(row.providerCalendarId))
-      .map((row) => ({
-        id: row.providerEventId,
-        startDate: new Date(row.startAt).toISOString(),
-        endDate: new Date(row.endAt).toISOString(),
-        title: row.title,
-        description: row.description || '',
-        color: colorByCalendar.get(row.providerCalendarId) || 'blue',
-        user: {
-          id: row.providerCalendarId,
-          name: calendars.find((cal) => cal.providerCalendarId === row.providerCalendarId)?.name || '',
-          picturePath: null,
-        },
-        accountId: row.accountId,
-        calendarId: row.providerCalendarId,
-        readOnly: row.readOnly,
-        allDay: row.allDay,
-        location: row.location,
-        masterEventId: row.masterEventId,
-      }));
-  }, [eventRows, users, calendars, colorByCalendar]);
+    // Due-dated cards render as 30-minute task blocks; dragging one
+    // reschedules the card's due date (see persistence below).
+    const taskEvents: IEvent[] = dueCards.map((card) => ({
+      id: `${TASK_EVENT_PREFIX}${card.cardId}`,
+      startDate: new Date(card.dueAt).toISOString(),
+      endDate: new Date(card.dueAt + 30 * 60_000).toISOString(),
+      title: card.completedAt ? `✓ ${card.title}` : card.title,
+      description: card.description || '',
+      color: 'yellow',
+      user: { id: TASKS_LANE_ID, name: 'Tasks', picturePath: null },
+      calendarId: TASKS_LANE_ID,
+    }));
+    return taskEvents.concat(
+      eventRows
+        .filter((row) => visible.has(row.providerCalendarId))
+        .map((row) => ({
+          id: row.providerEventId,
+          startDate: new Date(row.startAt).toISOString(),
+          endDate: new Date(row.endAt).toISOString(),
+          title: row.title,
+          description: row.description || '',
+          color: colorByCalendar.get(row.providerCalendarId) || 'blue',
+          user: {
+            id: row.providerCalendarId,
+            name: calendars.find((cal) => cal.providerCalendarId === row.providerCalendarId)?.name || '',
+            picturePath: null,
+          },
+          accountId: row.accountId,
+          calendarId: row.providerCalendarId,
+          readOnly: row.readOnly,
+          allDay: row.allDay,
+          location: row.location,
+          masterEventId: row.masterEventId,
+        })),
+    );
+  }, [eventRows, users, calendars, colorByCalendar, dueCards]);
 
   // New events land on the primary writable calendar; edits route to the
   // event's own calendar. Failures toast and the live resync restores truth.
@@ -119,6 +147,18 @@ export function CalendarSurface() {
       },
       onEventUpdated: async (event) => {
         if (event.id.startsWith('local_')) return;
+        if (event.id.startsWith(TASK_EVENT_PREFIX)) {
+          // Dragging a task block reschedules the card's due date.
+          try {
+            await updateCard({
+              cardId: event.id.slice(TASK_EVENT_PREFIX.length),
+              dueAt: new Date(event.startDate).getTime(),
+            });
+          } catch (err: any) {
+            toast.error(err?.message || 'Could not reschedule the task.');
+          }
+          return;
+        }
         if (!event.accountId || !event.calendarId) return;
         try {
           await callTool('calendar_update_event', {
@@ -136,6 +176,15 @@ export function CalendarSurface() {
       },
       onEventRemoved: async (event) => {
         if (event.id.startsWith('local_')) return;
+        if (event.id.startsWith(TASK_EVENT_PREFIX)) {
+          // Removing a task block clears the due date; the card survives.
+          try {
+            await updateCard({ cardId: event.id.slice(TASK_EVENT_PREFIX.length), dueAt: null });
+          } catch (err: any) {
+            toast.error(err?.message || 'Could not clear the due date.');
+          }
+          return;
+        }
         if (!event.accountId || !event.calendarId) return;
         try {
           await callTool('calendar_delete_event', {
@@ -148,7 +197,7 @@ export function CalendarSurface() {
         }
       },
     }),
-    [defaultCalendar],
+    [defaultCalendar, updateCard],
   );
 
   const unauthorized = syncStates.filter((state) => state.status === 'unauthorized');

@@ -452,6 +452,69 @@ export default defineSchema({
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId']),
 
+  // Kanban (docs/productivity-platform-spec.md M2). Boards are shareable:
+  // memberships carry roles, and a publicToken exposes a read-only view with
+  // no account. Cards keep provenance back to the email/chat that spawned
+  // them. Ordering is fractional (midpoint insertion, renumber on exhaustion)
+  // so a drag writes one row, not a column's worth.
+  boards: defineTable({
+    ownerUserId: v.string(),
+    title: v.string(),
+    publicToken: v.optional(v.string()),
+    isDefault: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_owner', ['ownerUserId'])
+    .index('by_public_token', ['publicToken']),
+
+  boardMembers: defineTable({
+    boardId: v.id('boards'),
+    // Invites are by email and may precede the invitee's first sign-in;
+    // userId links on their first board list after signup.
+    userId: v.optional(v.string()),
+    email: v.string(),
+    role: v.union(v.literal('member'), v.literal('viewer')),
+    invitedBy: v.string(),
+    status: v.union(v.literal('invited'), v.literal('active')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_board', ['boardId'])
+    .index('by_user', ['userId'])
+    .index('by_email', ['email']),
+
+  boardColumns: defineTable({
+    boardId: v.id('boards'),
+    name: v.string(),
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_board', ['boardId']),
+
+  cards: defineTable({
+    boardId: v.id('boards'),
+    columnId: v.id('boardColumns'),
+    // Creator. Cards on shared boards survive their creator's account
+    // deletion only if the board belongs to someone else (see cascade).
+    userId: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    labels: v.optional(v.array(v.string())),
+    priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
+    dueAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    order: v.number(),
+    // Provenance chip: where this card came from.
+    source: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_board', ['boardId'])
+    .index('by_column_order', ['columnId', 'order'])
+    .index('by_user', ['userId'])
+    .index('by_user_due', ['userId', 'dueAt']),
+
   // Every mutating action the AI (or a user clicking an AI suggestion) applies
   // to mail/calendar/tasks. `inverse` is a declarative undo descriptor executed
   // by lib/ai/operations.ts; rows without one are not undoable. `batchId`
