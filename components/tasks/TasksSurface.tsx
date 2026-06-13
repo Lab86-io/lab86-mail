@@ -54,6 +54,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
+import { normalizeUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
 
 const boardsApi = (api as any).boards;
@@ -1071,7 +1072,7 @@ function CardPanel({
               <Input
                 value={attachUrl}
                 onChange={(event) => setAttachUrl(event.target.value)}
-                placeholder="https://…"
+                placeholder="example.com or https://…"
                 className="h-7 flex-1 text-[12px]"
               />
               <Button
@@ -1079,9 +1080,11 @@ function CardPanel({
                 size="sm"
                 variant="outline"
                 className="h-7 px-2 text-[11.5px]"
-                disabled={!/^https?:\/\//.test(attachUrl)}
+                disabled={!normalizeUrl(attachUrl)}
                 onClick={() => {
-                  void addAttachment({ name: attachName.trim() || attachUrl, url: attachUrl });
+                  const url = normalizeUrl(attachUrl);
+                  if (!url) return;
+                  void addAttachment({ name: attachName.trim() || url, url });
                   setAttachName('');
                   setAttachUrl('');
                 }}
@@ -1493,7 +1496,7 @@ function CreateCardDialog({
               <Input
                 value={attachUrl}
                 onChange={(event) => setAttachUrl(event.target.value)}
-                placeholder="https://…"
+                placeholder="example.com or https://…"
                 className="h-7 flex-1 text-[12px]"
               />
               <Button
@@ -1501,9 +1504,11 @@ function CreateCardDialog({
                 size="sm"
                 variant="outline"
                 className="h-7 px-2 text-[11.5px]"
-                disabled={!/^https?:\/\//.test(attachUrl)}
+                disabled={!normalizeUrl(attachUrl)}
                 onClick={() => {
-                  setAttachments([...attachments, { name: attachName.trim() || attachUrl, url: attachUrl }]);
+                  const url = normalizeUrl(attachUrl);
+                  if (!url) return;
+                  setAttachments([...attachments, { name: attachName.trim() || url, url }]);
                   setAttachName('');
                   setAttachUrl('');
                 }}

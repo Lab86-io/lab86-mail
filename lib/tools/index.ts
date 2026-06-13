@@ -92,6 +92,7 @@ import {
 } from './smart-labels';
 import {
   tasksAddComment,
+  tasksAttachFile,
   tasksAttachLink,
   tasksCreateBoard,
   tasksCreateCard,
@@ -232,6 +233,7 @@ const allTools: AnyTool[] = [
   tasksDeleteBoard,
   tasksAddComment,
   tasksAttachLink,
+  tasksAttachFile,
   // UI tools — server returns ack, client intercepts for the real mutation.
   uiFocusThread,
   uiSetQuery,

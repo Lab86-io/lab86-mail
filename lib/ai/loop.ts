@@ -78,6 +78,7 @@ const AGENT_TOOL_NAMES = new Set([
   'tasks_delete_board',
   'tasks_add_comment',
   'tasks_attach_link',
+  'tasks_attach_file',
   'contact_lookup',
   'expand_alias',
   'browserbase_search',
@@ -179,7 +180,9 @@ export async function runAgent({
     system,
     messages,
     tools: liftToolsForAgent(operationBatchId, timezone),
-    stopWhen: stepCountIs(6),
+    // Multi-step flows (fetch a file → store → attach → send) need headroom
+    // beyond the old 6-step cap.
+    stopWhen: stepCountIs(12),
     onError: (event: any) => {
       // Best-effort logging; don't crash the stream.
       console.error('[agent]', event.error);

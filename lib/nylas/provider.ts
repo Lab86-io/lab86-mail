@@ -73,7 +73,52 @@ export async function getNylasAccount(userId: string | null | undefined, account
     userId,
     accountId,
   });
-  return row?.status === 'connected' ? row : null;
+  if (row) return row.status === 'connected' ? row : null;
+  // The AI (and humans) routinely refer to an account by email or grant id
+  // rather than the internal accountId — an exact-id-only lookup is the main
+  // source of "Connected account not found" / "no grant" flakiness. Fall
+  // back to a flexible match across the user's accounts.
+  const resolved = await resolveConnectedAccount(userId, accountId);
+  return resolved?.status === 'connected' ? resolved : null;
+}
+
+// Resolve a loose account reference (accountId | grantId | email,
+// case-insensitive) to a connected-account row, or null. Returns the row
+// even when disconnected so callers can give a precise "reconnect" message.
+export async function resolveConnectedAccount(userId: string, ref: string): Promise<NylasAccountRow | null> {
+  const needle = (ref || '').trim().toLowerCase();
+  if (!needle) return null;
+  const accounts = await convexQuery<NylasAccountRow[]>(api.accounts.listConnectedAccounts, { userId });
+  return (
+    (accounts || []).find(
+      (account) =>
+        account.accountId === ref || account.grantId === ref || account.email?.toLowerCase() === needle,
+    ) || null
+  );
+}
+
+// Connected-or-throw with an actionable message that names the live accounts
+// or tells the user exactly which one to reconnect.
+export async function requireConnectedAccount(userId: string, ref: string): Promise<NylasAccountRow> {
+  const accounts = await convexQuery<NylasAccountRow[]>(api.accounts.listConnectedAccounts, { userId });
+  const list = accounts || [];
+  const needle = (ref || '').trim().toLowerCase();
+  const match = list.find(
+    (account) =>
+      account.accountId === ref || account.grantId === ref || account.email?.toLowerCase() === needle,
+  );
+  if (match && match.status === 'connected') return match;
+  if (match) {
+    throw new Error(
+      `The account ${match.email || ref} is disconnected — reconnect it in Settings to use it again.`,
+    );
+  }
+  const connected = list.filter((a) => a.status === 'connected').map((a) => a.email);
+  throw new Error(
+    connected.length
+      ? `No account matches "${ref}". Connected accounts: ${connected.join(', ')}.`
+      : 'No connected accounts. Connect one in Settings first.',
+  );
 }
 
 export interface SearchNylasThreadsResult {
