@@ -365,7 +365,11 @@ function BoardView({ boardId }: { boardId: string }) {
               className="h-full min-w-fit"
             >
               {(column) => (
-                <KanbanBoard id={column.id} key={column.id} className="w-72 bg-[var(--color-bg-subtle)]">
+                <KanbanBoard
+                  id={column.id}
+                  key={column.id}
+                  className="h-full w-72 shrink-0 bg-[var(--color-bg-subtle)]"
+                >
                   <KanbanHeader className="flex items-center px-3 py-2">
                     <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
                       {column.name}

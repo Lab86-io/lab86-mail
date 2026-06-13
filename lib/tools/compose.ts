@@ -151,9 +151,10 @@ export const replyMessage = defineTool({
     body: z.string(),
     html: z.string().optional(),
     from: z.string().optional(),
+    attachments: z.array(AttachmentSource).optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, html }, ctx) {
+  async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
     const target = await resolveReplyTarget(account, messageId, threadId);
     await sendWithNylas({
       userId: ctx.userId,
@@ -163,6 +164,7 @@ export const replyMessage = defineTool({
       body,
       html,
       replyToMessageId: messageId,
+      attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return { ok: true };
   },
@@ -180,9 +182,10 @@ export const replyAllMessage = defineTool({
     body: z.string(),
     html: z.string().optional(),
     from: z.string().optional(),
+    attachments: z.array(AttachmentSource).optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, html }, ctx) {
+  async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
     const target = await resolveReplyAllTarget(account, messageId, threadId);
     if (!target.to) throw new Error('Cannot reply-all — no recipients are available.');
     await sendWithNylas({
@@ -193,6 +196,7 @@ export const replyAllMessage = defineTool({
       body,
       html,
       replyToMessageId: messageId,
+      attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return { ok: true };
   },
@@ -201,7 +205,7 @@ export const replyAllMessage = defineTool({
 export const forwardMessage = defineTool({
   name: 'forward',
   description:
-    'Forward a message to one or more recipients. Synthesizes a quoted body from the original message; original attachments are not re-carried.',
+    'Forward a message to one or more recipients. Synthesizes a quoted body from the original. To re-carry the original file(s), pass attachments: [{ account, messageId, attachmentId }] (find ids via list_attachments).',
   category: 'compose',
   mutating: true,
   input: z.object({
@@ -213,9 +217,10 @@ export const forwardMessage = defineTool({
     body: z.string().optional(),
     html: z.string().optional(),
     from: z.string().optional(),
+    attachments: z.array(AttachmentSource).optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, to, cc, bcc, body, html }, ctx) {
+  async handler({ account, messageId, to, cc, bcc, body, html, attachments }, ctx) {
     const original = await getMessageRecord(account, messageId);
     if (!original)
       throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
@@ -257,6 +262,7 @@ export const forwardMessage = defineTool({
       subject: fwdSubject,
       body: quotedText,
       html: quotedHtml,
+      attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return { ok: true };
   },

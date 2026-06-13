@@ -282,7 +282,7 @@ export function Rail() {
   return (
     <Sidebar
       collapsible="icon"
-      className="rail-wash bg-[var(--rail-bg)]"
+      className="rail-wash bg-[var(--rail-bg)] font-display"
       onClickCapture={(event) => {
         if (!isMobile) return;
         const target = event.target as HTMLElement | null;

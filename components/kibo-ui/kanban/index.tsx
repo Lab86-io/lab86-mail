@@ -227,7 +227,15 @@ export const KanbanProvider = <
 }: KanbanProviderProps<T, C>) => {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
 
-  const sensors = useSensors(useSensor(MouseSensor), useSensor(TouchSensor), useSensor(KeyboardSensor));
+  // Activation constraints are what let a plain click through: a drag only
+  // begins after real movement (mouse) or a short hold (touch). Without them
+  // MouseSensor grabs the press on mousedown and the click never lands —
+  // which is exactly why cards weren't opening.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
   const handleDragStart = (event: DragStartEvent) => {
     const card = data.find((item) => item.id === event.active.id);
@@ -325,7 +333,9 @@ export const KanbanProvider = <
         sensors={sensors}
         {...props}
       >
-        <div className={cn('grid size-full auto-cols-fr grid-flow-col gap-4', className)}>
+        {/* Flex row (not auto-cols-fr grid): columns keep their fixed width
+            and overflow horizontally instead of stretching to fill. */}
+        <div className={cn('flex size-full gap-4', className)}>
           {columns.map((column) => children(column))}
         </div>
         {typeof window !== 'undefined' &&
