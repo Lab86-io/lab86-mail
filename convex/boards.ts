@@ -321,6 +321,7 @@ const cardFields = {
   labels: v.optional(v.array(v.string())),
   priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
   weight: v.optional(v.union(v.number(), v.null())),
+  assignees: v.optional(v.array(v.string())),
   dueAt: v.optional(v.union(v.number(), v.null())),
   completedAt: v.optional(v.union(v.number(), v.null())),
   attachments: v.optional(
@@ -344,6 +345,7 @@ export const createCard = mutation({
     labels: v.optional(v.array(v.string())),
     priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
     weight: v.optional(v.number()),
+    assignees: v.optional(v.array(v.string())),
     dueAt: v.optional(v.number()),
     attachments: v.optional(
       v.array(
@@ -375,6 +377,7 @@ export const createCard = mutation({
       labels: args.labels,
       priority: args.priority,
       weight: args.weight,
+      assignees: args.assignees,
       dueAt: args.dueAt,
       attachments: args.attachments,
       order: nextOrder(siblings.map((card) => card.order)),
@@ -401,6 +404,7 @@ export const updateCard = mutation({
     if (args.labels !== undefined) patch.labels = args.labels;
     if (args.priority !== undefined) patch.priority = args.priority;
     if (args.weight !== undefined) patch.weight = args.weight === null ? undefined : args.weight;
+    if (args.assignees !== undefined) patch.assignees = args.assignees;
     if (args.attachments !== undefined) patch.attachments = args.attachments;
     // null clears; undefined leaves untouched.
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt === null ? undefined : args.dueAt;
@@ -759,6 +763,7 @@ function snapshotCard(card: any) {
     labels: card.labels,
     priority: card.priority,
     weight: card.weight,
+    assignees: card.assignees,
     dueAt: card.dueAt,
     completedAt: card.completedAt,
     order: card.order,

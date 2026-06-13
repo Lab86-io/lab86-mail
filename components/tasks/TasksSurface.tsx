@@ -73,6 +73,7 @@ interface BoardCard {
   labels?: string[];
   priority?: 'low' | 'medium' | 'high';
   weight?: number;
+  assignees?: string[];
   dueAt?: number;
   completedAt?: number;
   order: number;
@@ -389,14 +390,8 @@ function BoardView({ boardId }: { boardId: string }) {
                     {(item: any) => {
                       const card = cardsById.get(item.id);
                       return (
-                        <KanbanCard key={item.id} {...item}>
-                          <button
-                            type="button"
-                            className="block w-full text-left"
-                            onClick={() => setOpenCardId(item.id)}
-                          >
-                            <CardFace card={card} fallbackTitle={item.name} />
-                          </button>
+                        <KanbanCard key={item.id} {...item} onCardClick={() => setOpenCardId(item.id)}>
+                          <CardFace card={card} fallbackTitle={item.name} />
                         </KanbanCard>
                       );
                     }}
@@ -425,7 +420,13 @@ function BoardView({ boardId }: { boardId: string }) {
       </div>
 
       {openCard ? (
-        <CardPanel card={openCard} canEdit={canEdit} role={board.role} onClose={() => setOpenCardId(null)} />
+        <CardPanel
+          card={openCard}
+          canEdit={canEdit}
+          role={board.role}
+          assignable={board.members.map((member) => member.email)}
+          onClose={() => setOpenCardId(null)}
+        />
       ) : null}
 
       {shareOpen ? <ShareDialog board={board} onClose={() => setShareOpen(false)} /> : null}
@@ -660,10 +661,31 @@ function CardMetaChips({ card }: { card?: BoardCard }) {
         </span>
       ) : null}
       {card.weight !== undefined ? (
-        <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">w{card.weight}</span>
+        <span
+          className="rounded bg-[var(--color-bg-muted)] px-1 text-[10px] font-medium tabular-nums text-[var(--color-text-muted)]"
+          title={`Weight ${card.weight}`}
+        >
+          {card.weight}
+        </span>
       ) : null}
+      {(card.assignees || []).slice(0, 3).map((email) => (
+        <span
+          key={email}
+          title={email}
+          className="grid size-4 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8px] font-semibold uppercase text-[var(--color-accent)]"
+        >
+          {emailInitials(email)}
+        </span>
+      ))}
     </span>
   );
+}
+
+function emailInitials(email: string): string {
+  const name = email.split('@')[0] || email;
+  const parts = name.split(/[.\-_]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
 }
 
 function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: string }) {
@@ -696,11 +718,13 @@ function CardPanel({
   card,
   canEdit,
   role,
+  assignable,
   onClose,
 }: {
   card: BoardCard;
   canEdit: boolean;
   role: 'owner' | 'member' | 'viewer';
+  assignable: string[];
   onClose: () => void;
 }) {
   const updateCard = useConvexMutation(boardsApi.updateCard);
@@ -716,6 +740,7 @@ function CardPanel({
   const [labels, setLabels] = useState((card.labels || []).join(', '));
   const [priority, setPriority] = useState<string>(card.priority || '');
   const [weight, setWeight] = useState(card.weight !== undefined ? String(card.weight) : '');
+  const [assignees, setAssignees] = useState<string[]>(card.assignees || []);
   const [due, setDue] = useState(card.dueAt ? toLocalInputValue(card.dueAt) : '');
   const [attachName, setAttachName] = useState('');
   const [attachUrl, setAttachUrl] = useState('');
@@ -737,6 +762,7 @@ function CardPanel({
           .filter(Boolean),
         priority: (priority || undefined) as any,
         weight: weight === '' ? null : Number(weight),
+        assignees,
         dueAt: due ? new Date(due).getTime() : null,
       });
       toast.success('Saved');
@@ -917,6 +943,42 @@ function CardPanel({
             className="h-8 text-[12.5px]"
           />
         </label>
+
+        <div className="space-y-1.5">
+          <p className="text-[11px] text-[var(--color-text-muted)]">Assigned to</p>
+          {assignable.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {assignable.map((email) => {
+                const on = assignees.includes(email);
+                return (
+                  <button
+                    key={email}
+                    type="button"
+                    disabled={!canEdit}
+                    onClick={() =>
+                      setAssignees(on ? assignees.filter((a) => a !== email) : [...assignees, email])
+                    }
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                      on
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                        : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                    )}
+                  >
+                    <span className="grid size-3.5 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8px] font-semibold uppercase">
+                      {emailInitials(email)}
+                    </span>
+                    {email}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-[11.5px] text-[var(--color-text-faint)]">
+              Share this board to assign collaborators.
+            </p>
+          )}
+        </div>
 
         {card.source?.threadId ? (
           <button

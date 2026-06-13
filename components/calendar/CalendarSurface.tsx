@@ -301,7 +301,9 @@ export function CalendarSurface() {
             .join('  ·  ')}
         </div>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* font-display so the calendar's headings, dates, and event titles
+          follow the user's chosen display font (theme customization). */}
+      <div className="min-h-0 flex-1 overflow-y-auto font-display">
         <CalendarProvider
           users={users}
           events={events}

@@ -112,7 +112,7 @@ export const tasksCreateBoard = defineTool({
 export const tasksCreateCard = defineTool({
   name: 'tasks_create_card',
   description:
-    'Create a card on a board. Omit boardId for the default board; column defaults to the first column (use column:"Today" etc.). dueIso sets a due date (naive timestamps are the user’s timezone). Pass source when the task came from an email so the card carries a provenance link.',
+    'Create a card on a board. Omit boardId for the default board; column defaults to the first column (use column:"Today" etc.). dueIso sets a due date (naive timestamps are the user’s timezone). assignees are board-member emails. Pass source when the task came from an email so the card carries a provenance link.',
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -123,6 +123,7 @@ export const tasksCreateCard = defineTool({
     labels: z.array(z.string()).optional(),
     priority: prioritySchema.optional(),
     weight: z.number().int().min(0).optional(),
+    assignees: z.array(z.string().email()).optional(),
     dueIso: z.string().optional(),
     source: z
       .object({
@@ -146,6 +147,7 @@ export const tasksCreateCard = defineTool({
       labels: args.labels,
       priority: args.priority,
       weight: args.weight,
+      assignees: args.assignees,
       dueAt: args.dueIso ? parseIsoInTimezone(args.dueIso, ctx.userTimezone, 'dueIso') : undefined,
       source: args.source ?? { kind: 'chat' },
     });
@@ -174,6 +176,7 @@ export const tasksUpdateCard = defineTool({
     labels: z.array(z.string()).optional(),
     priority: prioritySchema.optional(),
     weight: z.number().int().min(0).nullable().optional(),
+    assignees: z.array(z.string().email()).optional(),
     dueIso: z.string().nullable().optional(),
     completed: z.boolean().optional(),
   }),
@@ -188,6 +191,7 @@ export const tasksUpdateCard = defineTool({
       labels: args.labels,
       priority: args.priority,
       weight: args.weight,
+      assignees: args.assignees,
       dueAt:
         args.dueIso === undefined
           ? undefined

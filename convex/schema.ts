@@ -505,6 +505,8 @@ export default defineSchema({
     labels: v.optional(v.array(v.string())),
     priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
     weight: v.optional(v.number()),
+    // Assigned board members (by email; resolved against boardMembers/owner).
+    assignees: v.optional(v.array(v.string())),
     dueAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     order: v.number(),
