@@ -8,6 +8,12 @@ export interface ToolContext {
   userId?: string | null;
   userEmail?: string | null;
   userName?: string | null;
+  // One id per agent turn; mutating tools record their operations under it so
+  // the UI can present the turn as a single change-set (lib/ai/operations.ts).
+  operationBatchId?: string;
+  chatId?: string;
+  // IANA timezone for interpreting naive wall-clock timestamps in tool args.
+  userTimezone?: string;
 }
 
 export interface ToolDefinition<
@@ -16,7 +22,17 @@ export interface ToolDefinition<
 > {
   name: string;
   description: string;
-  category: 'mail' | 'compose' | 'ai' | 'memory' | 'calendar' | 'contacts' | 'web' | 'audit' | 'meta';
+  category:
+    | 'mail'
+    | 'compose'
+    | 'ai'
+    | 'memory'
+    | 'calendar'
+    | 'tasks'
+    | 'contacts'
+    | 'web'
+    | 'audit'
+    | 'meta';
   mutating: boolean;
   input: TArgs;
   output: TOut;
@@ -33,7 +49,15 @@ export type AnyTool = ToolDefinition<any, any>;
 
 export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext) {
   return runWithAiRequestContext(
-    { userId: ctx.userId, userEmail: ctx.userEmail, userName: ctx.userName, agent: ctx.agent },
+    {
+      userId: ctx.userId,
+      userEmail: ctx.userEmail,
+      userName: ctx.userName,
+      agent: ctx.agent,
+      operationBatchId: ctx.operationBatchId,
+      chatId: ctx.chatId,
+      userTimezone: ctx.userTimezone,
+    },
     async () => {
       let parsed: unknown;
       try {

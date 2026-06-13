@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { syncCalendarAccount } from '@/lib/calendar/sync';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl, nylasRedirectUri } from '@/lib/hosted/env';
 import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
@@ -44,8 +45,22 @@ export async function GET(req: NextRequest) {
     });
     // Start building the local search corpus immediately; the search path
     // re-issues the same kick if this one is interrupted.
+    // A re-auth that minted a new grant orphans the old one at Nylas;
+    // destroy it so the provider stops syncing/billing a dead grant.
+    if ((upserted as any)?.replacedGrantId) {
+      await requireNylas()
+        .grants.destroy({ grantId: (upserted as any).replacedGrantId })
+        .catch(() => undefined);
+    }
     if (upserted?.accountId) {
-      maybeKickCorpusBackfill({ userId: stored.userId, accountId: upserted.accountId });
+      // Calendar first: it's a few hundred events and finishes in seconds,
+      // so the calendar populates immediately instead of competing with the
+      // mailbox backfill for the grant's rate budget.
+      const kick = { userId: stored.userId, accountId: upserted.accountId };
+      void (async () => {
+        await syncCalendarAccount(kick).catch(() => undefined);
+        maybeKickCorpusBackfill(kick);
+      })();
     }
     return redirectWithStatus(stored.redirectTo || '/', 'nylas_connected', token.email);
   } catch (err: any) {

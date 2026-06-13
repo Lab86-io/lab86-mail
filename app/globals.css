@@ -320,12 +320,12 @@
     background-image:
       radial-gradient(
         120% 70% at 0% 0%,
-        oklch(0.55 calc(var(--accent-chroma) * 0.9) var(--accent-hue) / calc(var(--wash-opacity, 0) * 0.45)),
+        oklch(0.55 calc(var(--accent-chroma) * 1.1) var(--accent-hue) / calc(var(--wash-opacity, 0) * 0.95)),
         transparent 70%
       ),
       radial-gradient(
         130% 80% at 100% 100%,
-        oklch(0.5 0.07 var(--bg-hue) / calc(var(--wash-opacity, 0) * 0.35)),
+        oklch(0.5 0.09 var(--bg-hue) / calc(var(--wash-opacity, 0) * 0.75)),
         transparent 72%
       );
   }
@@ -338,7 +338,7 @@
     inset: 0;
     z-index: 2147483646;
     pointer-events: none;
-    opacity: var(--grain-opacity, 0);
+    opacity: min(1, calc(var(--grain-opacity, 0) * 2.6));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     background-size: 160px 160px;
     mix-blend-mode: overlay;
@@ -607,31 +607,16 @@
     color: var(--color-text);
   }
 
-  /* 2) Mail that paints its own background is designed against it. Render it
-        on a light "paper island" with its ORIGINAL colors — forcing dark-mode
-        text over a white card it ships would be white-on-white. */
-  .dark .email-body:not(.email-adaptive) {
-    color-scheme: light;
-    background: #ffffff;
-    color: #1f2937;
+  /* 2) Mail that paints its own background/colors is rendered in an isolated
+        iframe (components/thread/ThreadView EmailFrame) so its own <style> and
+        colors survive exactly as designed — a light document, like every other
+        mail client. The frame is its own white card here. */
+  .email-frame {
+    display: block;
+    border: 0;
     border-radius: var(--radius);
-    padding: 12px 16px;
-  }
-  /* Descendants resolve dark-theme surface vars otherwise, leaving dark blocks
-     under dark text inside the white island. Pin them to light. */
-  .dark .email-body:not(.email-adaptive) blockquote {
-    border-left-color: #d1d5db;
-    color: #4b5563;
-  }
-  .dark .email-body:not(.email-adaptive) code {
-    background: #f3f4f6;
-    color: #111827;
-  }
-  .dark .email-body:not(.email-adaptive) pre {
-    background: #f8fafc;
-  }
-  .dark .email-body:not(.email-adaptive) a {
-    color: #1d4ed8;
+    background: #ffffff;
+    color-scheme: light;
   }
 }
 
@@ -699,6 +684,31 @@
      reads like the Daily Report's paper; `.report-paper` is an alias kept for the
      report section. In light mode this is now a very quiet cool-paper texture;
      dark mode keeps the slightly stronger dotted grain. */
+  /* Accent-tinted wash over the main background, driven by its own slider
+     (independent of the rail wash). Sits under content via background-image
+     layering on the same surfaces. */
+  .app-paper::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(
+        120% 90% at 15% 0%,
+        oklch(
+          0.62 calc(var(--accent-chroma, 0.1) * 0.9) var(--accent-hue, 150) /
+          calc(var(--bg-wash-opacity, 0) * 0.5)
+        ),
+        transparent 60%
+      ),
+      radial-gradient(
+        100% 80% at 90% 100%,
+        oklch(0.6 0.07 var(--bg-hue, 95) / calc(var(--bg-wash-opacity, 0) * 0.4)),
+        transparent 65%
+      );
+  }
+
   .app-paper,
   .report-paper {
     background-color: var(--color-bg);

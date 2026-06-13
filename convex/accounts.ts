@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
+import { internal } from './_generated/api';
+import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 const providerValidator = v.union(
@@ -110,12 +111,28 @@ export const upsertConnectedAccount = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const email = args.email.toLowerCase();
-    const id = args.grantId;
     const ts = now();
-    const existing = await ctx.db
+    let existing = await ctx.db
       .query('connectedAccounts')
-      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', id))
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.grantId))
       .unique();
+    // Re-auth detection: a fresh OAuth/app-password flow for a mailbox we
+    // already track mints a NEW grant id. Match on (email, provider) and
+    // reuse the existing accountId so every synced row stays attached —
+    // otherwise the same mailbox lands twice and everything shows doubled.
+    let replacedGrantId: string | undefined;
+    if (!existing) {
+      const sameMailbox = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .collect();
+      const match = sameMailbox.find((row) => row.email === email && row.provider === args.provider);
+      if (match) {
+        existing = match;
+        if (match.grantId !== args.grantId) replacedGrantId = match.grantId;
+      }
+    }
+    const id = existing?.accountId ?? args.grantId;
     const accountPatch = {
       accountId: id,
       email,
@@ -194,7 +211,7 @@ export const upsertConnectedAccount = mutation({
       // already-synced corpus or restart backfill.
       await ctx.db.patch(syncState._id, { provider: args.provider, updatedAt: ts });
     }
-    return { accountId: id };
+    return { accountId: id, replacedGrantId };
   },
 });
 
@@ -221,6 +238,76 @@ export const updateConnectedAccountAlias = mutation({
   },
 });
 
+// Bulk per-account tables are purged in scheduled batches: a whole mailbox
+// corpus cannot be deleted inside one Convex transaction (it exceeds the
+// per-transaction document limits, which is exactly how account removal used
+// to 500 and strand orphan rows).
+const ACCOUNT_BULK_TABLES = [
+  'threads',
+  'messages',
+  'mailCorpusThreads',
+  'mailCorpusMessages',
+  'mailWebhookEvents',
+  'calendarEvents',
+] as const;
+
+const PURGE_BATCH = 250;
+
+// Whole-user purge twin of purgeAccountDataBatch: account deletion already
+// batches, and user deletion must too — a populated mailbox exceeds Convex's
+// per-transaction limits if swept inline.
+export const purgeUserDataBatch = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    let deleted = 0;
+    for (const table of ACCOUNT_BULK_TABLES) {
+      if (deleted >= PURGE_BATCH) break;
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_user' as any, (q: any) => q.eq('userId', args.userId))
+        .take(PURGE_BATCH - deleted)
+        .catch(async () =>
+          ctx.db
+            .query(table)
+            .withIndex('by_user_account' as any, (q: any) => q.eq('userId', args.userId))
+            .take(PURGE_BATCH - deleted),
+        );
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+    if (deleted > 0) {
+      await ctx.scheduler.runAfter(0, internal.accounts.purgeUserDataBatch, args);
+    }
+    return { deleted };
+  },
+});
+
+export const purgeAccountDataBatch = internalMutation({
+  args: { userId: v.string(), accountId: v.string() },
+  handler: async (ctx, args) => {
+    let deleted = 0;
+    for (const table of ACCOUNT_BULK_TABLES) {
+      if (deleted >= PURGE_BATCH) break;
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_user_account' as any, (q: any) =>
+          q.eq('userId', args.userId).eq('accountId', args.accountId),
+        )
+        .take(PURGE_BATCH - deleted);
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+    if (deleted > 0) {
+      await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, args);
+    }
+    return { deleted };
+  },
+});
+
 export const deleteConnectedAccount = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -229,32 +316,40 @@ export const deleteConnectedAccount = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const tables = [
-      'connectedAccounts',
-      'providerGrants',
-      'threads',
-      'messages',
-      'syncJobs',
-      'mailCorpusThreads',
-      'mailCorpusMessages',
-      'mailSyncStates',
-      'mailWebhookEvents',
-    ] as const;
-    for (const table of tables) {
-      const rows = await ctx.db
-        .query(table)
-        .withIndex('by_user_account' as any, (q: any) =>
-          q.eq('userId', args.userId).eq('accountId', args.accountId),
-        )
-        .collect()
-        .catch(async () =>
-          ctx.db
-            .query(table)
-            .withIndex('by_account' as any, (q: any) => q.eq('accountId', args.accountId))
-            .collect(),
-        );
-      for (const row of rows) await ctx.db.delete(row._id);
+    // Small tables go inline so the account vanishes from the UI immediately;
+    // the bulk corpus drains in scheduled batches right after.
+    // Index per table — syncJobs only has by_account; assuming
+    // by_user_account everywhere is exactly how this mutation Server-Errored.
+    const smallTables: Array<[string, 'by_user_account' | 'by_account']> = [
+      ['connectedAccounts', 'by_user_account'],
+      ['providerGrants', 'by_user_account'],
+      ['syncJobs', 'by_account'],
+      ['mailSyncStates', 'by_user_account'],
+      ['calendars', 'by_user_account'],
+      ['calendarSyncStates', 'by_user_account'],
+    ];
+    for (const [table, index] of smallTables) {
+      const rows =
+        index === 'by_account'
+          ? await ctx.db
+              .query(table as any)
+              .withIndex('by_account' as any, (q: any) => q.eq('accountId', args.accountId))
+              .collect()
+          : await ctx.db
+              .query(table as any)
+              .withIndex('by_user_account' as any, (q: any) =>
+                q.eq('userId', args.userId).eq('accountId', args.accountId),
+              )
+              .collect();
+      for (const row of rows) {
+        if (row.userId && row.userId !== args.userId) continue;
+        await ctx.db.delete(row._id);
+      }
     }
+    await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, {
+      userId: args.userId,
+      accountId: args.accountId,
+    });
 
     const reports = await ctx.db
       .query('dailyReports')
@@ -291,6 +386,10 @@ export const deleteUserCascade = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const counts: Record<string, number> = {};
+    // Small tables sweep inline. Bulk tables ('threads', 'messages',
+    // 'mailCorpusThreads', 'mailCorpusMessages', 'mailWebhookEvents',
+    // 'calendarEvents') would blow Convex's per-transaction limits on a real
+    // mailbox, so they drain through the scheduled purge instead.
     const userTables = [
       'connectedAccounts',
       'providerGrants',
@@ -300,18 +399,17 @@ export const deleteUserCascade = mutation({
       'aiEntitlements',
       'aiUsagePeriods',
       'aiUsageEvents',
-      'threads',
-      'messages',
       'dailyReports',
       'memories',
       'auditEvents',
       'syncJobs',
-      'mailCorpusThreads',
-      'mailCorpusMessages',
       'mailSyncStates',
-      'mailWebhookEvents',
       'rateLimits',
       'userDocs',
+      'aiOperations',
+      'suggestions',
+      'calendars',
+      'calendarSyncStates',
     ] as const;
 
     for (const table of userTables) {
@@ -319,6 +417,41 @@ export const deleteUserCascade = mutation({
       counts[table] = rows.length;
       for (const row of rows) await ctx.db.delete(row._id);
     }
+    await ctx.scheduler.runAfter(0, internal.accounts.purgeUserDataBatch, { userId: args.userId });
+
+    // Kanban: boards key on ownerUserId, so they need their own pass. Owned
+    // boards go down with their 'boardColumns', 'cards', and 'boardMembers';
+    // on boards owned by OTHERS the user's memberships and authored cards are
+    // removed while the board itself survives.
+    const ownedBoards = await ctx.db
+      .query('boards')
+      .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
+      .collect();
+    counts.boards = ownedBoards.length;
+    for (const board of ownedBoards) {
+      for (const table of ['boardColumns', 'cards', 'boardMembers'] as const) {
+        const rows = await ctx.db
+          .query(table)
+          .withIndex(table === 'boardColumns' ? 'by_board' : ('by_board' as any), (q: any) =>
+            q.eq('boardId', board._id),
+          )
+          .collect();
+        for (const row of rows) await ctx.db.delete(row._id);
+      }
+      await ctx.db.delete(board._id);
+    }
+    const foreignMemberships = await ctx.db
+      .query('boardMembers')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    counts.boardMembers = foreignMemberships.length;
+    for (const membership of foreignMemberships) await ctx.db.delete(membership._id);
+    const authoredCards = await ctx.db
+      .query('cards')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    counts.cards = authoredCards.length;
+    for (const card of authoredCards) await ctx.db.delete(card._id);
 
     const userRows = await ctx.db
       .query('users')
@@ -332,14 +465,18 @@ export const deleteUserCascade = mutation({
 });
 
 async function rowsByUser(ctx: any, table: string, userId: string) {
-  return await ctx.db
-    .query(table)
-    .withIndex('by_user' as any, (q: any) => q.eq('userId', userId))
-    .collect()
-    .catch(async () =>
-      ctx.db
+  // Tables expose one of these userId-prefixed indexes; try each in turn.
+  const indexes = ['by_user', 'by_user_account', 'by_user_created'];
+  let lastErr: unknown;
+  for (const index of indexes) {
+    try {
+      return await ctx.db
         .query(table)
-        .withIndex('by_user_account' as any, (q: any) => q.eq('userId', userId))
-        .collect(),
-    );
+        .withIndex(index as any, (q: any) => q.eq('userId', userId))
+        .collect();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }

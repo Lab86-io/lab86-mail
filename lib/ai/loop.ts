@@ -5,6 +5,7 @@ import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { hasPlatformAi, streamTextForUser } from './gateway';
+import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
 const AGENT_TOOL_NAMES = new Set([
@@ -54,6 +55,29 @@ const AGENT_TOOL_NAMES = new Set([
   'calendar_free_busy',
   'calendar_suggest_times',
   'calendar_create_event',
+  'calendar_list_calendars',
+  'calendar_list_events',
+  'calendar_sync_now',
+  'calendar_update_event',
+  'calendar_delete_event',
+  'calendar_rsvp_event',
+  'calendar_get_primary',
+  'list_recent_operations',
+  'undo_operation',
+  'tasks_list_boards',
+  'tasks_get_board',
+  'tasks_create_board',
+  'tasks_create_card',
+  'tasks_update_card',
+  'tasks_move_card',
+  'tasks_delete_card',
+  'tasks_create_column',
+  'tasks_rename_column',
+  'tasks_delete_column',
+  'tasks_rename_board',
+  'tasks_delete_board',
+  'tasks_add_comment',
+  'tasks_attach_link',
   'contact_lookup',
   'expand_alias',
   'browserbase_search',
@@ -76,7 +100,7 @@ const AGENT_TOOL_NAMES = new Set([
   'ui_switch_account',
 ]);
 
-function liftToolsForAgent(): Record<string, any> {
+function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
   const lifted: Record<string, any> = {};
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
@@ -90,6 +114,8 @@ function liftToolsForAgent(): Record<string, any> {
           userId: context.userId,
           userEmail: context.userEmail,
           userName: context.userName,
+          operationBatchId,
+          userTimezone,
         });
         return result;
       },
@@ -105,9 +131,18 @@ export interface AgentRunOpts {
   userId?: string | null;
   userEmail?: string | null;
   userName?: string | null;
+  /** IANA timezone reported by the client (e.g. America/New_York). */
+  userTimezone?: string;
 }
 
-export async function runAgent({ messages, extraSystem, userId, userEmail, userName }: AgentRunOpts) {
+export async function runAgent({
+  messages,
+  extraSystem,
+  userId,
+  userEmail,
+  userName,
+  userTimezone,
+}: AgentRunOpts) {
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
@@ -122,7 +157,19 @@ export async function runAgent({ messages, extraSystem, userId, userEmail, userN
       ).then((rows) => rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })))
     : [];
   const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
-  const system = extraSystem ? `${base}\n\n${extraSystem}` : base;
+  // Wall-clock grounding: without this the model guesses UTC and "2:30"
+  // lands hours off on the user's real calendar.
+  const timezone = userTimezone || 'UTC';
+  const localNow = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    dateStyle: 'full',
+    timeStyle: 'long',
+  }).format(new Date());
+  const timeContext = `The user's timezone is ${timezone}. The current time there is ${localNow}. When passing ISO timestamps to tools, either include the correct UTC offset for that timezone or pass a naive timestamp (no Z, no offset) — naive timestamps are interpreted in the user's timezone. Never append Z to a local wall-clock time.`;
+  const system = `${base}\n\n${timeContext}${extraSystem ? `\n\n${extraSystem}` : ''}`;
+  // One batch id per agent turn: every mutating tool call inside this run
+  // records its operation under it, forming a single undoable change-set.
+  const operationBatchId = newOperationBatchId();
   const stream = await streamTextForUser({
     userId,
     userEmail,
@@ -131,7 +178,7 @@ export async function runAgent({ messages, extraSystem, userId, userEmail, userN
     speed: 'fast',
     system,
     messages,
-    tools: liftToolsForAgent(),
+    tools: liftToolsForAgent(operationBatchId, timezone),
     stopWhen: stepCountIs(6),
     onError: (event: any) => {
       // Best-effort logging; don't crash the stream.

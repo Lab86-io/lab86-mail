@@ -11,6 +11,7 @@ export const maxDuration = 180;
 interface AgentRequestBody {
   messages: UIMessage[];
   extraSystem?: string;
+  timezone?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
       userId: user.userId,
       userEmail: user.email,
       userName: user.name,
+      userTimezone: typeof body.timezone === 'string' ? body.timezone : undefined,
     });
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {

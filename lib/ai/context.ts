@@ -5,6 +5,12 @@ export interface AiRequestContext {
   userEmail?: string | null;
   userName?: string | null;
   agent?: 'user' | 'ai' | 'codex';
+  // Groups every operation recorded during one agent turn into a single
+  // reviewable change-set (see lib/ai/operations.ts).
+  operationBatchId?: string;
+  chatId?: string;
+  // IANA timezone reported by the client; tools interpret naive timestamps in it.
+  userTimezone?: string;
 }
 
 const aiContext = new AsyncLocalStorage<AiRequestContext>();

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { generateTextForCurrentUser } from '../ai/gateway';
 import { DEVOPS_LABEL_ID } from '../mail/smart-categories';
 import type { SmartLabelDefinition } from '../shared/types';
 import { kvCreateIfAbsent, kvDelete, kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
@@ -82,6 +83,8 @@ export async function ensureSeedSmartLabels() {
   if (seededUsers.has(userId)) return;
   const existing = await kvGet<SmartLabelDefinition>('smartLabel', DEVOPS_LABEL_ID);
   const ts = now();
+  // Dev/Ops is no longer seeded by default — labels are the user's own.
+  // Users who already have it keep it (normalized); deleting it sticks.
   if (existing) {
     const seeded: SmartLabelDefinition = {
       ...DEVOPS_LABEL,
@@ -96,15 +99,7 @@ export async function ensureSeedSmartLabels() {
     );
     if (changed) await kvUpsert('smartLabel', DEVOPS_LABEL_ID, seeded);
     await writeSlugIndex(DEVOPS_LABEL.slug, DEVOPS_LABEL_ID);
-    seededUsers.add(userId);
-    return;
   }
-  await kvUpsert('smartLabel', DEVOPS_LABEL_ID, {
-    ...DEVOPS_LABEL,
-    createdAt: ts,
-    updatedAt: ts,
-  });
-  await writeSlugIndex(DEVOPS_LABEL.slug, DEVOPS_LABEL_ID);
   seededUsers.add(userId);
 }
 
@@ -127,6 +122,50 @@ async function findBySlug(slug: string) {
   return labels.find((label) => label.slug === slug) || null;
 }
 
+// Animated lucide icons vendored under components/ui — the model picks the
+// best fit for a new label; anything unrecognized falls back to bookmark.
+export const SMART_LABEL_ICONS = [
+  'bell',
+  'bookmark',
+  'flame',
+  'layers',
+  'calendar-days',
+  'send',
+  'square-pen',
+  'archive',
+  'alarm-clock',
+  'key',
+  'receipt',
+  'credit-card',
+  'user',
+  'users',
+  'file-text',
+  'message-circle',
+  'gauge',
+  'history',
+  'layout-grid',
+  'mail-check',
+  'terminal',
+] as const;
+
+async function pickLabelIcon(name: string, description: string): Promise<string> {
+  try {
+    const result = await generateTextForCurrentUser({
+      feature: 'smart_label_icon',
+      speed: 'fast',
+      prompt: `Pick the single best icon name for an email label called "${name}" (${description.slice(0, 200)}). Answer with EXACTLY one name from this list and nothing else: ${SMART_LABEL_ICONS.join(', ')}`,
+    });
+    const picked = (result.text || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z-]/g, '');
+    if ((SMART_LABEL_ICONS as readonly string[]).includes(picked)) return picked;
+  } catch {
+    // No AI available (or it rambled) — fall through to the default.
+  }
+  return 'bookmark';
+}
+
 export async function createSmartLabel(input: {
   name: string;
   description: string;
@@ -146,11 +185,13 @@ export async function createSmartLabel(input: {
   if (!negativeExamples.length) throw new Error('At least one negative example is required');
   const labelId = randomUUID();
   await reserveSlug(slug, labelId);
+  const icon = await pickLabelIcon(name, input.description);
   const label: SmartLabelDefinition = {
     _id: labelId,
     name,
     slug,
     description: input.description.trim(),
+    icon,
     enabled: true,
     sidebarVisible: input.sidebarVisible ?? true,
     gmailLabelName: `MailOS/${name}`,

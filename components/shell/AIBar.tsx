@@ -17,6 +17,7 @@ import {
   ListChecks,
   Mail,
   MailOpen,
+  Paperclip,
   Pencil,
   Plus,
   ScrollText,
@@ -71,6 +72,13 @@ interface ChatSessionSummary {
   title: string;
   messageCount: number;
   updatedAt: number;
+}
+
+// DataTransfer is the only sanctioned way to construct a FileList.
+function createFileList(files: File[]): FileList {
+  const dt = new DataTransfer();
+  for (const file of files) dt.items.add(file);
+  return dt.files;
 }
 
 function newChatId() {
@@ -257,13 +265,26 @@ export function AIBarSidebar() {
   const qc = useQueryClient();
 
   const [input, setInput] = useState('');
+  // Files attached to the next message (images/PDFs the model can read).
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const inputWrapRef = useRef<HTMLDivElement>(null);
 
-  const transport = useMemo(() => new DefaultChatTransport({ api: '/api/agent' }), []);
+  // The browser's IANA timezone rides along so the agent (and calendar
+  // tools) interpret wall-clock times like "2:30" in the user's zone.
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: '/api/agent',
+        body: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      }),
+    [],
+  );
   const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport });
 
   // --- Persistent sessions: restore the last chat, autosave as you go ---
   const lastChatId = useClientStore((s) => s.lastChatId);
+  const lastChatAt = useClientStore((s) => s.lastChatAt);
   const setLastChatId = useClientStore((s) => s.setLastChatId);
   const sessionIdRef = useRef<string | null>(null);
   const restoredRef = useRef(false);
@@ -288,15 +309,19 @@ export function AIBarSidebar() {
     [setLastChatId, setMessages],
   );
 
-  // First open: pick up where the user left off.
+  // First open: pick up where the user left off — but only if that
+  // conversation is RECENT. Restoring an hours-old thread on cmd+k reads as
+  // a bug, not a continuation; stale sessions stay in history instead.
+  const CHAT_RESTORE_WINDOW_MS = 30 * 60_000;
   useEffect(() => {
     if (!aiBarOpen || restoredRef.current) return;
     restoredRef.current = true;
-    if (lastChatId && messages.length === 0) {
+    const fresh = lastChatAt && Date.now() - lastChatAt < CHAT_RESTORE_WINDOW_MS;
+    if (lastChatId && fresh && messages.length === 0) {
       sessionIdRef.current = lastChatId;
       void loadSession(lastChatId);
     }
-  }, [aiBarOpen, lastChatId, messages.length, loadSession]);
+  }, [aiBarOpen, lastChatId, lastChatAt, messages.length, loadSession]);
 
   // Autosave once the stream settles (debounced so multi-step turns save once).
   useEffect(() => {
@@ -475,7 +500,12 @@ export function AIBarSidebar() {
     ]
       .filter(Boolean)
       .join('\n');
-    sendMessage({ text: trimmed }, { body: { extraSystem: contextLines || undefined } } as any);
+    const files = pendingFiles.length ? createFileList(pendingFiles) : undefined;
+    setPendingFiles([]);
+    sendMessage(
+      { text: trimmed, ...(files ? { files } : {}) } as any,
+      { body: { extraSystem: contextLines || undefined } } as any,
+    );
   };
 
   const submit = () => {
@@ -631,7 +661,49 @@ export function AIBarSidebar() {
             placeholder="Find, draft, schedule, label, anything…"
             className="text-[13px] leading-relaxed text-[var(--color-text)]"
           />
+          {pendingFiles.length ? (
+            <div className="flex flex-wrap gap-1 px-1 pb-1">
+              {pendingFiles.map((file, index) => (
+                <span
+                  key={`${file.name}-${file.size}-${file.lastModified}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+                >
+                  {file.name}
+                  <button
+                    type="button"
+                    onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
+                    className="hover:text-[var(--color-danger)]"
+                  >
+                    <X className="size-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
           <PromptInputActions className="justify-end pt-1">
+            <PromptInputAction tooltip="Attach a file for the assistant">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+              >
+                <Paperclip className="size-3.5" />
+                <span className="sr-only">Attach file</span>
+              </Button>
+            </PromptInputAction>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,application/pdf,text/plain,text/csv"
+              className="hidden"
+              onChange={(event) => {
+                const picked = Array.from(event.target.files || []);
+                if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
+                event.target.value = '';
+              }}
+            />
             <PromptInputAction tooltip={busy ? 'Stop' : 'Send'}>
               <Button
                 type="button"

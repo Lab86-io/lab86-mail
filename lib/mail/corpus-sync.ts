@@ -1,9 +1,11 @@
+import { applyCalendarWebhookDelta, isCalendarWebhookType } from '@/lib/calendar/sync';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
+import { detectMailSuggestions } from './suggestion-detectors';
 
 const mailCorpusApi = (api as any).mailCorpus;
 const accountsApi = (api as any).accounts;
@@ -188,6 +190,12 @@ function isInvalidCursorError(err: any) {
 // Runs the page loop for one account until the corpus is ready or the page
 // budget for this run is spent. Resumes from the stored cursor, so repeated
 // kicks make monotonic progress through the mailbox history.
+//
+// The loop is pipelined: while page N's rows are being written to Convex,
+// page N+1 is already in flight to Nylas. Fetch and persist latencies are
+// comparable, so overlapping them roughly halves wall-clock backfill time
+// (the per-page limit of 20 is a hard Nylas rate constraint — see
+// backfillMailCorpusAccount — so fewer, bigger pages aren't an option).
 export async function runCorpusBackfill({
   userId,
   accountId,
@@ -199,6 +207,7 @@ export async function runCorpusBackfill({
   maxPages?: number;
   pageLimit?: number;
 }): Promise<CorpusSyncResult> {
+  const row = await getConnectedAccount(userId, accountId);
   const syncState = await convexQuery<any | null>(mailCorpusApi.getSyncState, { userId, accountId }).catch(
     () => null,
   );
@@ -210,11 +219,88 @@ export async function runCorpusBackfill({
     cursorFresh && !syncState.corpusReady && typeof syncState.cursor === 'string' && syncState.cursor
       ? syncState.cursor
       : undefined;
+
+  const batchLimit = clampLimit(pageLimit, 20, 20);
+  const fetchPage = (token: string | undefined) =>
+    withRateLimitRetry(() =>
+      requireNylas().messages.list({
+        identifier: row.grantId,
+        queryParams: { limit: batchLimit, ...(token ? { page_token: token } : {}) } as any,
+      }),
+    );
+
+  await markSync(row, {
+    status: 'backfilling',
+    cursor: pageToken,
+    corpusReady: false,
+    progress: { stage: 'fetching', pageToken: pageToken || null, limit: batchLimit },
+  });
+
   let result: CorpusSyncResult | null = null;
+  let cursorResets = 0;
+  let inFlight = fetchPage(pageToken);
   for (let page = 0; page < Math.max(1, maxPages); page += 1) {
-    result = await backfillMailCorpusAccount({ userId, accountId, pageToken, limit: pageLimit });
-    if (result.corpusReady || !result.nextPageToken) return result;
-    pageToken = result.nextPageToken;
+    let pageData: Awaited<ReturnType<typeof fetchPage>>;
+    try {
+      pageData = await inFlight;
+    } catch (err: any) {
+      // Stored cursors expire across deploys; discard once and restart from
+      // the top rather than replaying a dead token forever.
+      if (pageToken && isInvalidCursorError(err) && cursorResets === 0) {
+        cursorResets += 1;
+        await markSync(row, {
+          status: 'backfilling',
+          corpusReady: false,
+          clearCursor: true,
+          progress: { stage: 'cursor_reset', discardedPageToken: pageToken },
+        }).catch(() => undefined);
+        pageToken = undefined;
+        inFlight = fetchPage(undefined);
+        page -= 1;
+        continue;
+      }
+      await markSync(row, {
+        status: 'error',
+        cursor: pageToken,
+        corpusReady: false,
+        error: err?.message || 'corpus backfill failed',
+        progress: { stage: 'backfill_error', pageToken: pageToken || null },
+      }).catch(() => undefined);
+      throw err;
+    }
+
+    const messages = pageData.data.map((message) => corpusMessageFromNylas(row, message));
+    const nextPageToken = pageData.nextCursor || undefined;
+    // The pipelining win: the next fetch departs before this page persists.
+    if (nextPageToken && page + 1 < maxPages) inFlight = fetchPage(nextPageToken);
+    const corpusReady = !nextPageToken;
+    await upsertCorpus(row, {
+      threads: corpusThreadsFromMessages(messages),
+      messages,
+      cursor: nextPageToken,
+      corpusReady,
+      progress: {
+        stage: corpusReady ? 'ready' : 'backfilling',
+        pageToken: nextPageToken || null,
+        lastBatchMessages: messages.length,
+      },
+    });
+    void import('./llm-classify')
+      .then(({ kickLlmClassification }) => kickLlmClassification(userId))
+      .catch(() => undefined);
+    detectMailSuggestions(row, messages);
+    result = {
+      ok: true,
+      accountId: row.accountId,
+      grantId: row.grantId,
+      provider: row.provider,
+      messages: messages.length,
+      threads: messages.length,
+      nextPageToken,
+      corpusReady,
+    };
+    if (corpusReady) return result;
+    pageToken = nextPageToken;
   }
   return result as CorpusSyncResult;
 }
@@ -341,6 +427,19 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
     return { ok: false, eventId: metadata.eventId, error: 'unknown grant' };
   }
 
+  // Calendar triggers (event.*, calendar.*) belong to the calendar corpus;
+  // they share the queue/dedup path but never touch mail sync state.
+  if (isCalendarWebhookType(metadata.type)) {
+    try {
+      await applyCalendarWebhookDelta(row, metadata.type, payload);
+      await markWebhookProcessed(metadata, 'processed');
+      return { ok: true, duplicate: false, eventId: metadata.eventId };
+    } catch (err: any) {
+      await markWebhookProcessed(metadata, 'error', err?.message || 'calendar webhook failed');
+      throw err;
+    }
+  }
+
   try {
     await applyWebhookDelta(row, metadata, payload);
     await markWebhookProcessed(metadata, 'processed');
@@ -388,6 +487,7 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
     messageId: metadata.providerMessageId,
   });
   const messages = [corpusMessageFromNylas(row, raw.data || payload)];
+  detectMailSuggestions(row, messages);
   await upsertCorpus(row, {
     messages,
     threads: corpusThreadsFromMessages(messages),

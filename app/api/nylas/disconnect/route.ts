@@ -26,11 +26,15 @@ export async function POST(req: NextRequest) {
     if (!row) return NextResponse.json({ ok: false, error: 'connected account not found' }, { status: 404 });
     await deleteNylasAccount(user.userId, row.accountId, row.grantId);
     return NextResponse.json({ ok: true });
-  } catch (err) {
+  } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitJson(err);
     if (err instanceof AuthRequiredError) {
       return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
     }
-    throw err;
+    console.error('[nylas-disconnect] failed:', err?.message || err);
+    return NextResponse.json(
+      { ok: false, error: err?.message || 'Account removal failed.' },
+      { status: 500 },
+    );
   }
 }

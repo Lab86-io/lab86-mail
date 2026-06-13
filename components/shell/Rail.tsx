@@ -3,7 +3,7 @@
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { Terminal } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -13,6 +13,8 @@ import { Badge } from '@/components/ui/badge';
 import { BellIcon } from '@/components/ui/bell';
 import { BookmarkIcon } from '@/components/ui/bookmark';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
+import { CircleCheckIcon } from '@/components/ui/circle-check';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { CreditCardIcon } from '@/components/ui/credit-card';
 import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -27,8 +29,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { FileTextIcon } from '@/components/ui/file-text';
 import { FlameIcon } from '@/components/ui/flame';
+import { GaugeIcon } from '@/components/ui/gauge';
+import { HistoryIcon } from '@/components/ui/history';
 import { KeyIcon } from '@/components/ui/key';
 import { LayersIcon } from '@/components/ui/layers';
+import { LayoutGridIcon } from '@/components/ui/layout-grid';
 import { MailCheckIcon } from '@/components/ui/mail-check';
 import { MessageCircleIcon } from '@/components/ui/message-circle';
 import { PlusIcon } from '@/components/ui/plus';
@@ -60,6 +65,7 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
+import { SuggestionsTray } from './SuggestionsTray';
 import { ThemePanel } from './ThemePanel';
 
 interface MailboxItem {
@@ -84,6 +90,39 @@ const MAILBOXES: MailboxItem[] = [
 ];
 
 export const ALL_ACCOUNTS = '__all__';
+
+// AI-assigned smart-label icons resolve here; unknown names get a bookmark.
+const SMART_LABEL_ICON_MAP: Record<string, any> = {
+  bell: rowIcon(BellIcon),
+  bookmark: rowIcon(BookmarkIcon),
+  flame: rowIcon(FlameIcon),
+  layers: rowIcon(LayersIcon),
+  'calendar-days': rowIcon(CalendarDaysIcon),
+  send: rowIcon(SendIcon),
+  'square-pen': rowIcon(SquarePenIcon),
+  archive: rowIcon(ArchiveIcon),
+  'alarm-clock': rowIcon(AlarmClockIcon),
+  key: rowIcon(KeyIcon),
+  receipt: rowIcon(ReceiptIcon),
+  'credit-card': rowIcon(CreditCardIcon),
+  user: rowIcon(UserIcon),
+  users: rowIcon(UsersIcon),
+  'file-text': rowIcon(FileTextIcon),
+  'message-circle': rowIcon(MessageCircleIcon),
+  gauge: rowIcon(GaugeIcon),
+  history: rowIcon(HistoryIcon),
+  'layout-grid': rowIcon(LayoutGridIcon),
+  'mail-check': rowIcon(MailCheckIcon),
+  terminal: rowIcon(SettingsIcon),
+};
+
+// Top-level surfaces of the workspace. Mail itself is reached through the
+// Smart/Mailboxes groups below (those force primaryView back to 'mail').
+const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: string; Icon: any }> = [
+  { view: 'daily_report', label: 'Daily Report', Icon: rowIcon(FileTextIcon) },
+  { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
+  { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
+];
 
 const SMART_CATEGORIES = [
   {
@@ -141,6 +180,27 @@ export function Rail() {
   const { isMobile, setOpenMobile } = useSidebar();
   const queryClient = useQueryClient();
   const [smartSettingsOpen, setSmartSettingsOpen] = useState(false);
+  // Collapsible rail sections, persisted. Mailboxes start collapsed — the
+  // smart categories are the primary navigation; the raw folders are backup.
+  const [groupsOpen, setGroupsOpen] = useState<{ smart: boolean; mail: boolean }>(() => {
+    if (typeof window === 'undefined') return { smart: true, mail: false };
+    try {
+      return (
+        JSON.parse(window.localStorage.getItem('rail-groups-open') || '') || { smart: true, mail: false }
+      );
+    } catch {
+      return { smart: true, mail: false };
+    }
+  });
+  const setGroupOpen = (key: 'smart' | 'mail', open: boolean) => {
+    setGroupsOpen((prev) => {
+      const next = { ...prev, [key]: open };
+      try {
+        window.localStorage.setItem('rail-groups-open', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
   };
@@ -243,6 +303,7 @@ export function Rail() {
           <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
+          <SuggestionsTray />
           <SidebarTrigger
             title="Toggle navigation rail"
             className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
@@ -280,166 +341,28 @@ export function Rail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={primaryView === 'daily_report'}
-                  tooltip="Daily Report"
-                  onClick={() => {
-                    setPrimaryView('daily_report');
-                    closeMobileSidebar();
-                  }}
-                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
-                >
-                  {primaryView === 'daily_report' ? (
-                    <ShineBorder
-                      borderWidth={1}
-                      duration={10}
-                      shineColor={[
-                        'var(--color-accent-shine-1)',
-                        'var(--color-accent-shine-2)',
-                        'var(--color-accent-shine-3)',
-                      ]}
-                    />
-                  ) : null}
-                  <RowIcon icon={FileTextIcon} size={16} />
-                  <span>Daily Report</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-1 text-[10px] uppercase tracking-[0.09em]">
-            Smart
-            <button
-              type="button"
-              onClick={() => setSmartSettingsOpen(true)}
-              className="ml-auto grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:hidden"
-              title="Smart label settings"
-            >
-              <SettingsIcon size={12} />
-            </button>
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {SMART_CATEGORIES.map(({ id, label, Icon, help }) => (
-                <SidebarMenuItem key={id}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <SidebarMenuButton
-                        isActive={primaryView === 'mail' && smartCategory === id}
-                        tooltip={label}
-                        onClick={() => {
-                          setSmartCategory(id);
-                          closeMobileSidebar();
-                        }}
-                        className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
-                      >
-                        {primaryView === 'mail' && smartCategory === id ? (
-                          <ShineBorder
-                            borderWidth={1}
-                            duration={10}
-                            shineColor={[
-                              'var(--color-accent-shine-1)',
-                              'var(--color-accent-shine-2)',
-                              'var(--color-accent-shine-3)',
-                            ]}
-                          />
-                        ) : null}
-                        <Icon />
-                        <span>{label}</span>
-                        <SmartCountBadge stat={smartCounts?.[id]} />
-                      </SidebarMenuButton>
-                    </TooltipTrigger>
-                    <TooltipContent side="right" className="max-w-[240px] text-[11.5px]">
-                      <div className="space-y-1">
-                        <div>{help}</div>
-                        {smartCounts?.[id]?.unread ? (
-                          <div className="text-[10.5px] text-[var(--color-text-faint)]">
-                            {smartCounts[id].unread >= 100 ? '99+' : smartCounts[id].unread} unread
-                            {smartCounts[id].attention ? ' · needs attention' : ''}
-                          </div>
-                        ) : null}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-            {customLabels.length ? (
-              <>
-                <SidebarGroupLabel className="mt-3 text-[10px] uppercase tracking-[0.09em]">
-                  Custom
-                </SidebarGroupLabel>
-                <SidebarMenu>
-                  {customLabels.map((label) => {
-                    const id = `custom:${label._id}`;
-                    return (
-                      <SidebarMenuItem key={id}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <SidebarMenuButton
-                              isActive={primaryView === 'mail' && smartCategory === id}
-                              tooltip={label.name}
-                              onClick={() => {
-                                setSmartCategory(id);
-                                closeMobileSidebar();
-                              }}
-                              className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
-                            >
-                              {primaryView === 'mail' && smartCategory === id ? (
-                                <ShineBorder
-                                  borderWidth={1}
-                                  duration={10}
-                                  shineColor={[
-                                    'var(--color-accent-shine-1)',
-                                    'var(--color-accent-shine-2)',
-                                    'var(--color-accent-shine-3)',
-                                  ]}
-                                />
-                              ) : null}
-                              <Terminal />
-                              <span>{label.name}</span>
-                              <SmartCountBadge stat={smartCounts?.[id]} />
-                            </SidebarMenuButton>
-                          </TooltipTrigger>
-                          <TooltipContent side="right" className="max-w-[260px] text-[11.5px]">
-                            {label.description}
-                          </TooltipContent>
-                        </Tooltip>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </>
-            ) : null}
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-[10px] uppercase tracking-[0.09em]">
-            Mail
-            <Badge
-              variant="outline"
-              className="ml-2 px-1.5 py-0 text-[9px] group-data-[collapsible=icon]:hidden"
-            >
-              Providers
-            </Badge>
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {MAILBOXES.map(({ query: q, label, Icon }) => (
-                <SidebarMenuItem key={q}>
+              {SURFACES.map(({ view, label, Icon }) => (
+                <SidebarMenuItem key={view}>
                   <SidebarMenuButton
-                    isActive={primaryView === 'mail' && q === query}
+                    isActive={primaryView === view}
                     tooltip={label}
                     onClick={() => {
-                      setQuery(q);
+                      setPrimaryView(view);
                       closeMobileSidebar();
                     }}
-                    className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                    className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                   >
+                    {primaryView === view ? (
+                      <ShineBorder
+                        borderWidth={1}
+                        duration={10}
+                        shineColor={[
+                          'var(--color-accent-shine-1)',
+                          'var(--color-accent-shine-2)',
+                          'var(--color-accent-shine-3)',
+                        ]}
+                      />
+                    ) : null}
                     <Icon />
                     <span>{label}</span>
                   </SidebarMenuButton>
@@ -448,6 +371,162 @@ export function Rail() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        <Collapsible open={groupsOpen.smart} onOpenChange={(open) => setGroupOpen('smart', open)}>
+          <SidebarGroup>
+            <SidebarGroupLabel className="flex items-center gap-1 text-[10px] uppercase tracking-[0.09em]">
+              <CollapsibleTrigger className="flex flex-1 items-center gap-1 text-left uppercase tracking-[0.09em]">
+                Smart
+                <ChevronDown
+                  className={`size-3 transition-transform ${groupsOpen.smart ? '' : '-rotate-90'}`}
+                />
+              </CollapsibleTrigger>
+              <button
+                type="button"
+                onClick={() => setSmartSettingsOpen(true)}
+                className="ml-auto grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:hidden"
+                title="Smart label settings"
+              >
+                <SettingsIcon size={12} />
+              </button>
+            </SidebarGroupLabel>
+            <CollapsibleContent>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {SMART_CATEGORIES.map(({ id, label, Icon, help }) => (
+                    <SidebarMenuItem key={id}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <SidebarMenuButton
+                            isActive={primaryView === 'mail' && smartCategory === id}
+                            tooltip={label}
+                            onClick={() => {
+                              setSmartCategory(id);
+                              closeMobileSidebar();
+                            }}
+                            className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                          >
+                            {primaryView === 'mail' && smartCategory === id ? (
+                              <ShineBorder
+                                borderWidth={1}
+                                duration={10}
+                                shineColor={[
+                                  'var(--color-accent-shine-1)',
+                                  'var(--color-accent-shine-2)',
+                                  'var(--color-accent-shine-3)',
+                                ]}
+                              />
+                            ) : null}
+                            <Icon />
+                            <span>{label}</span>
+                            <SmartCountBadge stat={smartCounts?.[id]} />
+                          </SidebarMenuButton>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="max-w-[240px] text-[11.5px]">
+                          <div className="space-y-1">
+                            <div>{help}</div>
+                            {smartCounts?.[id]?.unread ? (
+                              <div className="text-[10.5px] text-[var(--color-text-faint)]">
+                                {smartCounts[id].unread >= 100 ? '99+' : smartCounts[id].unread} unread
+                                {smartCounts[id].attention ? ' · needs attention' : ''}
+                              </div>
+                            ) : null}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+                {customLabels.length ? (
+                  <>
+                    <SidebarGroupLabel className="mt-3 text-[10px] uppercase tracking-[0.09em]">
+                      Custom
+                    </SidebarGroupLabel>
+                    <SidebarMenu>
+                      {customLabels.map((label) => {
+                        const id = `custom:${label._id}`;
+                        return (
+                          <SidebarMenuItem key={id}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <SidebarMenuButton
+                                  isActive={primaryView === 'mail' && smartCategory === id}
+                                  tooltip={label.name}
+                                  onClick={() => {
+                                    setSmartCategory(id);
+                                    closeMobileSidebar();
+                                  }}
+                                  className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                                >
+                                  {primaryView === 'mail' && smartCategory === id ? (
+                                    <ShineBorder
+                                      borderWidth={1}
+                                      duration={10}
+                                      shineColor={[
+                                        'var(--color-accent-shine-1)',
+                                        'var(--color-accent-shine-2)',
+                                        'var(--color-accent-shine-3)',
+                                      ]}
+                                    />
+                                  ) : null}
+                                  {(() => {
+                                    const LabelIcon =
+                                      SMART_LABEL_ICON_MAP[label.icon || ''] || SMART_LABEL_ICON_MAP.bookmark;
+                                    return <LabelIcon />;
+                                  })()}
+                                  <span>{label.name}</span>
+                                  <SmartCountBadge stat={smartCounts?.[id]} />
+                                </SidebarMenuButton>
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-[260px] text-[11.5px]">
+                                {label.description}
+                              </TooltipContent>
+                            </Tooltip>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  </>
+                ) : null}
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </SidebarGroup>
+        </Collapsible>
+
+        <Collapsible open={groupsOpen.mail} onOpenChange={(open) => setGroupOpen('mail', open)}>
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-[10px] uppercase tracking-[0.09em]">
+              <CollapsibleTrigger className="flex flex-1 items-center gap-1 text-left uppercase tracking-[0.09em]">
+                Mail
+                <ChevronDown
+                  className={`size-3 transition-transform ${groupsOpen.mail ? '' : '-rotate-90'}`}
+                />
+              </CollapsibleTrigger>
+            </SidebarGroupLabel>
+            <CollapsibleContent>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {MAILBOXES.map(({ query: q, label, Icon }) => (
+                    <SidebarMenuItem key={q}>
+                      <SidebarMenuButton
+                        isActive={primaryView === 'mail' && q === query}
+                        tooltip={label}
+                        onClick={() => {
+                          setQuery(q);
+                          closeMobileSidebar();
+                        }}
+                        className="data-[active=true]:bg-[var(--color-bg-elevated)] data-[active=true]:text-[var(--color-text)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </SidebarGroup>
+        </Collapsible>
       </SidebarContent>
 
       <SidebarFooter>
@@ -566,12 +645,16 @@ function SmartLabelsSettings({
     mutationFn: async (id: string) => callTool('set_smart_rule_enabled', { id, enabled: false }),
     onSuccess: onChanged,
   });
+  const deleteLabel = useMutation({
+    mutationFn: async (id: string) => callTool('delete_smart_label', { id }),
+    onSuccess: onChanged,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[84vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[84vh] !max-w-5xl overflow-y-auto">
         <DialogTitle>Smart Labels</DialogTitle>
-        <div className="space-y-5">
+        <div className="grid gap-6 md:grid-cols-2">
           <section className="space-y-2">
             <h3 className="text-[13px] font-semibold">Create custom label</h3>
             <div className="grid gap-2">
@@ -651,50 +734,59 @@ function SmartLabelsSettings({
             </div>
           </section>
 
-          <section className="space-y-2">
-            <h3 className="text-[13px] font-semibold">Custom labels</h3>
-            <div className="space-y-2">
-              {labels.map((label) => (
-                <div key={label._id} className="rounded-md border p-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-[13px]">{label.name}</span>
-                    <Badge variant="outline">{label.enabled ? 'enabled' : 'disabled'}</Badge>
+          <div className="space-y-5">
+            <section className="space-y-2">
+              <h3 className="text-[13px] font-semibold">Custom labels</h3>
+              <div className="space-y-2">
+                {labels.map((label) => (
+                  <div key={label._id} className="rounded-md border p-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-[13px]">{label.name}</span>
+                      <Badge variant="outline">{label.enabled ? 'enabled' : 'disabled'}</Badge>
+                      <button
+                        type="button"
+                        onClick={() => toggleLabel.mutate({ id: label._id, enabled: !label.enabled })}
+                        className="ml-auto rounded border px-2 py-1 text-[11px]"
+                      >
+                        {label.enabled ? 'Disable' : 'Enable'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteLabel.mutate(label._id)}
+                        className="rounded border px-2 py-1 text-[11px] text-[var(--color-danger)]"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-[12px] text-[var(--color-text-muted)]">
+                      {label.description}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="text-[13px] font-semibold">Recent rules</h3>
+              <div className="space-y-2">
+                {(rulesData?.rules || []).slice(0, 12).map((rule) => (
+                  <div key={rule._id} className="flex items-center gap-2 rounded-md border p-2 text-[12px]">
+                    <span className="font-medium">{rule.name}</span>
+                    <span className="text-[var(--color-text-muted)]">
+                      {rule.scope}: {rule.match}
+                    </span>
                     <button
                       type="button"
-                      onClick={() => toggleLabel.mutate({ id: label._id, enabled: !label.enabled })}
+                      onClick={() => disableRule.mutate(rule._id)}
                       className="ml-auto rounded border px-2 py-1 text-[11px]"
                     >
-                      {label.enabled ? 'Disable' : 'Enable'}
+                      Disable
                     </button>
                   </div>
-                  <p className="mt-1 line-clamp-2 text-[12px] text-[var(--color-text-muted)]">
-                    {label.description}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="space-y-2">
-            <h3 className="text-[13px] font-semibold">Recent rules</h3>
-            <div className="space-y-2">
-              {(rulesData?.rules || []).slice(0, 12).map((rule) => (
-                <div key={rule._id} className="flex items-center gap-2 rounded-md border p-2 text-[12px]">
-                  <span className="font-medium">{rule.name}</span>
-                  <span className="text-[var(--color-text-muted)]">
-                    {rule.scope}: {rule.match}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => disableRule.mutate(rule._id)}
-                    className="ml-auto rounded border px-2 py-1 text-[11px]"
-                  >
-                    Disable
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
+                ))}
+              </div>
+            </section>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -709,6 +801,17 @@ type AccountSync =
       error?: string;
     }
   | undefined;
+
+// One line of truth per mailbox: what the index is doing and how far it is.
+function syncCaption(sync: AccountSync, authed: boolean): string {
+  if (!authed) return 'Reconnect needed';
+  if (!sync || sync.status === 'idle') return 'Waiting for first sync';
+  const count =
+    typeof sync.messagesSynced === 'number' ? `${sync.messagesSynced.toLocaleString()} indexed` : '';
+  if (sync.status === 'error') return sync.error ? `Error — ${sync.error}` : 'Sync error — retrying';
+  if (sync.corpusReady) return count ? `${count} · live` : 'Indexed · live';
+  return count ? `${count} · indexing…` : 'Indexing…';
+}
 
 // Green = indexed and searchable locally; pulsing accent = actively indexing;
 // red = sync error or needs reconnect; gray = waiting for its first sync.
@@ -803,7 +906,12 @@ function AccountScopePopover({
             className="gap-2 text-[12.5px]"
           >
             <ProviderLogo provider={mailbox.provider} className="size-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{mailbox.displayName || mailbox.email}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{mailbox.displayName || mailbox.email}</span>
+              <span className="block truncate text-[10.5px] leading-tight text-[var(--color-text-faint)]">
+                {syncCaption(mailbox.sync, mailbox.authed)}
+              </span>
+            </span>
             <AccountSyncDot sync={mailbox.sync} authed={mailbox.authed} />
           </DropdownMenuCheckboxItem>
         ))}

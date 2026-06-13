@@ -10,7 +10,18 @@ import {
   triageThread,
 } from './ai';
 import { listAuditEntries, logAction } from './audit-tools';
-import { calendarCreateEvent, calendarFreeBusy, calendarSuggestTimes } from './calendar';
+import {
+  calendarCreateEvent,
+  calendarDeleteEvent,
+  calendarFreeBusy,
+  calendarGetPrimary,
+  calendarListCalendars,
+  calendarListEvents,
+  calendarRsvpEvent,
+  calendarSuggestTimes,
+  calendarSyncNow,
+  calendarUpdateEvent,
+} from './calendar';
 import {
   cancelScheduled,
   deleteDraftTool,
@@ -64,6 +75,7 @@ import {
   unstarMessage,
 } from './mail-mutate';
 import { forget, listMemories, recall, remember } from './memories';
+import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
 import type { AnyTool } from './registry';
 import {
@@ -78,6 +90,22 @@ import {
   setSmartRuleEnabledTool,
   updateSmartLabel,
 } from './smart-labels';
+import {
+  tasksAddComment,
+  tasksAttachLink,
+  tasksCreateBoard,
+  tasksCreateCard,
+  tasksCreateColumn,
+  tasksDeleteBoard,
+  tasksDeleteCard,
+  tasksDeleteColumn,
+  tasksGetBoard,
+  tasksListBoards,
+  tasksMoveCard,
+  tasksRenameBoard,
+  tasksRenameColumn,
+  tasksUpdateCard,
+} from './tasks';
 import {
   getTrackedThreadTool,
   listTrackedThreadsTool,
@@ -174,6 +202,13 @@ const allTools: AnyTool[] = [
   calendarFreeBusy,
   calendarSuggestTimes,
   calendarCreateEvent,
+  calendarListCalendars,
+  calendarListEvents,
+  calendarSyncNow,
+  calendarUpdateEvent,
+  calendarDeleteEvent,
+  calendarRsvpEvent,
+  calendarGetPrimary,
   contactLookup,
   expandAlias,
   resolvePhotos,
@@ -181,6 +216,22 @@ const allTools: AnyTool[] = [
   browserbaseFetch,
   logAction,
   listAuditEntries,
+  listRecentOperationsTool,
+  undoOperationTool,
+  tasksListBoards,
+  tasksGetBoard,
+  tasksCreateBoard,
+  tasksCreateCard,
+  tasksUpdateCard,
+  tasksMoveCard,
+  tasksDeleteCard,
+  tasksCreateColumn,
+  tasksRenameColumn,
+  tasksDeleteColumn,
+  tasksRenameBoard,
+  tasksDeleteBoard,
+  tasksAddComment,
+  tasksAttachLink,
   // UI tools — server returns ack, client intercepts for the real mutation.
   uiFocusThread,
   uiSetQuery,

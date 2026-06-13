@@ -67,6 +67,19 @@ export const listAccounts = defineTool({
         }).catch(() => [])
       : [];
     const syncByAccount = new Map(syncStates.map((state) => [state.accountId, state]));
+    // Self-healing backfill: the Rail polls this tool, so any authed account
+    // that isn't corpus-ready gets re-kicked here (errored runs included —
+    // the atomic Convex claim dedupes across instances, and the local
+    // debounce keeps this from spamming). Without this, an account whose
+    // backfill died only resumed on a fresh search or reconnect.
+    if (ctx.userId) {
+      for (const account of accounts) {
+        if (!account.authed) continue;
+        const state = syncByAccount.get(account.accountId);
+        if (state?.corpusReady) continue;
+        maybeKickCorpusBackfill({ userId: ctx.userId, accountId: account.accountId });
+      }
+    }
     return {
       accounts: accounts.map((account) => {
         const state = syncByAccount.get(account.accountId);
