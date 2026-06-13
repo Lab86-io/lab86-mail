@@ -88,6 +88,7 @@ interface BoardPayload {
   title: string;
   role: 'owner' | 'member' | 'viewer';
   publicToken: string | null;
+  ownerEmail?: string;
   columns: Array<{ columnId: string; name: string; order: number }>;
   cards: BoardCard[];
   members: Array<{ memberId: string; email: string; role: string; status: string }>;
@@ -391,7 +392,18 @@ function BoardView({ boardId }: { boardId: string }) {
                       const card = cardsById.get(item.id);
                       return (
                         <KanbanCard key={item.id} {...item} onCardClick={() => setOpenCardId(item.id)}>
-                          <CardFace card={card} fallbackTitle={item.name} />
+                          {/* Native button = keyboard activation for free.
+                              Pointer taps still route through the wrapper's
+                              onCardClick (drag-aware); both just set the same
+                              open state, so double-firing is harmless. */}
+                          <button
+                            type="button"
+                            aria-label={`Open card: ${card?.title || item.name}`}
+                            onClick={() => setOpenCardId(item.id)}
+                            className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                          >
+                            <CardFace card={card} fallbackTitle={item.name} />
+                          </button>
                         </KanbanCard>
                       );
                     }}
@@ -424,7 +436,11 @@ function BoardView({ boardId }: { boardId: string }) {
           card={openCard}
           canEdit={canEdit}
           role={board.role}
-          assignable={board.members.map((member) => member.email)}
+          assignable={[
+            ...new Set(
+              [board.ownerEmail, ...board.members.map((member) => member.email)].filter(Boolean) as string[],
+            ),
+          ]}
           onClose={() => setOpenCardId(null)}
         />
       ) : null}

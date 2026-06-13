@@ -444,6 +444,7 @@ registerUndoExecutor('tasks.recreate_card', async (payload, ctx) => {
     description: fields.description,
     labels: fields.labels,
     priority: fields.priority,
+    assignees: fields.assignees,
     dueAt: fields.dueAt,
     source: fields.source,
   });
@@ -458,6 +459,7 @@ registerUndoExecutor('tasks.restore_card', async (payload, ctx) => {
     description: fields.description ?? '',
     labels: fields.labels ?? [],
     priority: fields.priority,
+    assignees: fields.assignees ?? [],
     dueAt: fields.dueAt ?? null,
     completedAt: fields.completedAt ?? null,
   });
