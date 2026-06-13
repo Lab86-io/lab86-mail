@@ -4,20 +4,9 @@ import { type ReactNode, useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
-import { COLORS } from '@/components/calendar/engine/constants';
 import { useDisclosure } from '@/components/calendar/engine/hooks';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { eventSchema, type TEventFormData } from '@/components/calendar/engine/schemas';
-
-// Tailwind JIT can't see template-built class names; spell them out.
-const COLOR_SWATCH_CLASS: Record<string, string> = {
-  blue: 'bg-blue-600 dark:bg-blue-700',
-  green: 'bg-green-600 dark:bg-green-700',
-  red: 'bg-red-600 dark:bg-red-700',
-  yellow: 'bg-yellow-600 dark:bg-yellow-700',
-  purple: 'bg-purple-600 dark:bg-purple-700',
-  orange: 'bg-orange-600 dark:bg-orange-700',
-};
 
 import { Button } from '@/components/ui/button';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
@@ -45,7 +34,7 @@ interface IProps {
 
 export function AddEditEventDialog({ children, startDate, startTime, event }: IProps) {
   const { isOpen, onClose, onToggle } = useDisclosure();
-  const { addEvent, updateEvent } = useCalendar();
+  const { addEvent, updateEvent, writableCalendars } = useCalendar();
   const isEditing = !!event;
 
   const initialDates = useMemo(() => {
@@ -78,7 +67,9 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
       description: event?.description ?? '',
       startDate: initialDates.startDate,
       endDate: initialDates.endDate,
-      color: event?.color ?? 'blue',
+      calendarId: event?.calendarId ?? writableCalendars[0]?.id ?? '',
+      repeat: 'none' as const,
+      attendees: '',
     },
   });
 
@@ -88,19 +79,39 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
       description: event?.description ?? '',
       startDate: initialDates.startDate,
       endDate: initialDates.endDate,
-      color: event?.color ?? 'blue',
+      calendarId: event?.calendarId ?? writableCalendars[0]?.id ?? '',
+      repeat: 'none' as const,
+      attendees: '',
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event, initialDates, form]);
 
   const onSubmit = (values: TEventFormData) => {
     try {
+      const chosen = writableCalendars.find((cal) => cal.id === values.calendarId);
+      const attendees = (values.attendees || '')
+        .split(/[,;\s]+/)
+        .map((email) => email.trim())
+        .filter((email) => email.includes('@'));
+      const repeatRule =
+        values.repeat && values.repeat !== 'none' ? [`RRULE:FREQ=${values.repeat.toUpperCase()}`] : undefined;
       const formattedEvent: IEvent = {
-        ...values,
+        title: values.title,
+        description: values.description || '',
         startDate: format(values.startDate, "yyyy-MM-dd'T'HH:mm:ss"),
         endDate: format(values.endDate, "yyyy-MM-dd'T'HH:mm:ss"),
         id: isEditing ? event.id : `local_${Date.now()}_${Math.floor(Math.random() * 1e6)}`,
-        user: isEditing ? event.user : { id: '', name: '', picturePath: null },
-        color: values.color,
+        user: isEditing ? event.user : { id: chosen?.id || '', name: chosen?.name || '', picturePath: null },
+        color: 'blue',
+        colorHex: isEditing ? event.colorHex : chosen?.colorHex,
+        calendarId: isEditing ? event.calendarId : chosen?.id,
+        accountId: isEditing ? event.accountId : chosen?.accountId,
+        recurrence: repeatRule ?? (isEditing ? event.recurrence : undefined),
+        participants: attendees.length
+          ? attendees.map((email) => ({ email }))
+          : isEditing
+            ? event.participants
+            : undefined,
       };
 
       if (isEditing) {
@@ -162,41 +173,80 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
               name="endDate"
               render={({ field }) => <DateTimePicker form={form} field={field} />}
             />
-            <FormField
-              control={form.control}
-              name="color"
-              render={({ field, fieldState }) => (
-                <FormItem>
-                  <FormLabel className="required">Variant</FormLabel>
-                  <FormControl>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger className={`w-full ${fieldState.invalid ? 'border-red-500' : ''}`}>
-                        <SelectValue placeholder="Select a variant" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {COLORS.map((color) => (
-                          <SelectItem value={color} key={color}>
-                            <div className="flex items-center gap-2">
-                              <div
-                                className={`size-3.5 rounded-full ${COLOR_SWATCH_CLASS[color] || COLOR_SWATCH_CLASS.blue}`}
-                              />
-                              {color}
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isEditing ? (
+              <FormField
+                control={form.control}
+                name="calendarId"
+                render={({ field, fieldState }) => (
+                  <FormItem>
+                    <FormLabel className="required">Calendar</FormLabel>
+                    <FormControl>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <SelectTrigger className={`w-full ${fieldState.invalid ? 'border-red-500' : ''}`}>
+                          <SelectValue placeholder="Choose a calendar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {writableCalendars.map((cal) => (
+                            <SelectItem value={cal.id} key={cal.id}>
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="size-3.5 rounded-full"
+                                  style={{ backgroundColor: cal.colorHex }}
+                                />
+                                {cal.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ) : null}
+            <div className="grid grid-cols-2 gap-3">
+              <FormField
+                control={form.control}
+                name="repeat"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Repeats</FormLabel>
+                    <FormControl>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Never</SelectItem>
+                          <SelectItem value="daily">Daily</SelectItem>
+                          <SelectItem value="weekly">Weekly</SelectItem>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="attendees"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Invite (emails)</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="a@x.com, b@y.com" />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </div>
             <FormField
               control={form.control}
               name="description"
               render={({ field, fieldState }) => (
                 <FormItem>
-                  <FormLabel className="required">Description</FormLabel>
+                  <FormLabel>Description</FormLabel>
                   <FormControl>
                     <Textarea
                       {...field}

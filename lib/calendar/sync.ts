@@ -78,7 +78,15 @@ export async function syncCalendarAccount({
     });
 
     let totalEvents = 0;
+    let calendarIndex = 0;
     for (const calendar of calendars) {
+      calendarIndex += 1;
+      // Progress heartbeat: the surface shows "syncing · N events" live.
+      await markSync(row, {
+        status: 'syncing',
+        calendarsSynced: calendarIndex,
+        eventsSynced: totalEvents,
+      }).catch(() => undefined);
       const events = await listCalendarEventsInWindow(
         row.grantId,
         calendar.providerCalendarId,
@@ -105,6 +113,7 @@ export async function syncCalendarAccount({
         keepProviderEventIds: events.map((event) => event.providerEventId),
       });
       totalEvents += events.length;
+      await markSync(row, { eventsSynced: totalEvents }).catch(() => undefined);
     }
 
     await markSync(row, {

@@ -90,7 +90,9 @@ export const summarizeThread = defineTool({
     try {
       const { text } = await generateTextForCurrentUser({
         feature: 'summarize_thread',
-        speed: 'fast',
+        // Summaries are bulk single-shot work: nano tier (always the cheap
+        // model, ignores the user's fast-model override).
+        speed: 'nano',
         system:
           "You are lab86-mail, the user's email assistant. Be concrete. Never claim an action was performed; you can only reason.",
         prompt,

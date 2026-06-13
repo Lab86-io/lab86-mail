@@ -91,12 +91,19 @@ import {
   updateSmartLabel,
 } from './smart-labels';
 import {
+  tasksAddComment,
+  tasksAttachLink,
   tasksCreateBoard,
   tasksCreateCard,
+  tasksCreateColumn,
+  tasksDeleteBoard,
   tasksDeleteCard,
+  tasksDeleteColumn,
   tasksGetBoard,
   tasksListBoards,
   tasksMoveCard,
+  tasksRenameBoard,
+  tasksRenameColumn,
   tasksUpdateCard,
 } from './tasks';
 import {
@@ -218,6 +225,13 @@ const allTools: AnyTool[] = [
   tasksUpdateCard,
   tasksMoveCard,
   tasksDeleteCard,
+  tasksCreateColumn,
+  tasksRenameColumn,
+  tasksDeleteColumn,
+  tasksRenameBoard,
+  tasksDeleteBoard,
+  tasksAddComment,
+  tasksAttachLink,
   // UI tools — server returns ack, client intercepts for the real mutation.
   uiFocusThread,
   uiSetQuery,

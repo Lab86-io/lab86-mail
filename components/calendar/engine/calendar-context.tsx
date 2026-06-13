@@ -9,6 +9,13 @@ import type { TCalendarView, TEventColor } from '@/components/calendar/engine/ty
 // Persistence hooks supplied by the host surface: the context updates its
 // local state optimistically, then hands the event to these to write through
 // (Nylas via tools in our case). Live-query props resync corrects any drift.
+export interface WritableCalendarOption {
+  id: string;
+  name: string;
+  colorHex: string;
+  accountId: string;
+}
+
 export interface CalendarPersistence {
   onEventAdded?: (event: IEvent) => void | Promise<void>;
   onEventUpdated?: (event: IEvent, previous?: IEvent) => void | Promise<void>;
@@ -35,6 +42,7 @@ interface ICalendarContext {
   filterEventsBySelectedUser: (userId: IUser['id'] | 'all') => void;
   users: IUser[];
   events: IEvent[];
+  writableCalendars: WritableCalendarOption[];
   addEvent: (event: IEvent) => void;
   updateEvent: (event: IEvent) => void;
   removeEvent: (eventId: string) => void;
@@ -83,6 +91,7 @@ export function CalendarProvider({
   badge = 'colored',
   view = 'day',
   persistence,
+  writableCalendars = [],
 }: {
   children: React.ReactNode;
   users: IUser[];
@@ -90,6 +99,7 @@ export function CalendarProvider({
   view?: TCalendarView;
   badge?: 'dot' | 'colored';
   persistence?: CalendarPersistence;
+  writableCalendars?: WritableCalendarOption[];
 }) {
   const [settings, setSettings] = useLocalStorage<CalendarSettings>('calendar-settings-v2', {
     ...DEFAULT_SETTINGS,
@@ -220,6 +230,7 @@ export function CalendarProvider({
     badgeVariant,
     setBadgeVariant,
     users,
+    writableCalendars,
     selectedColors,
     filterEventsBySelectedColors,
     filterEventsBySelectedUser,

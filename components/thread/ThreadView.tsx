@@ -2,7 +2,17 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown, ChevronRight, Download, ExternalLink, Mail, Search, UserRound, X } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  Mail,
+  Search,
+  UserRound,
+  X,
+} from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -390,6 +400,7 @@ export function ThreadView() {
           <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
             {data.subject}
           </h1>
+          <LinkedTaskChips threadId={data._id || ''} />
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
             <span className="shrink-0">
               {messages.length} message{messages.length === 1 ? '' : 's'}
@@ -1140,5 +1151,35 @@ function IconBtn({
     >
       {children}
     </Button>
+  );
+}
+
+// Provenance, mail → tasks: cards the AI (or you) filed from this thread.
+function LinkedTaskChips({ threadId }: { threadId: string }) {
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const live = useConvexQuery({
+    query: (api as any).boards.liveCardsForThread,
+    args: { threadId },
+  });
+  const cards: Array<{ cardId: string; title: string; completedAt?: number }> =
+    live.status === 'success' ? live.data || [] : [];
+  if (!cards.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+      {cards.slice(0, 4).map((card) => (
+        <button
+          key={card.cardId}
+          type="button"
+          onClick={() => setPrimaryView('tasks')}
+          className="inline-flex max-w-56 items-center gap-1 truncate rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          title="Open the Tasks board"
+        >
+          <CheckCircle2 className={card.completedAt ? 'size-3 text-emerald-500' : 'size-3'} />
+          <span className={card.completedAt ? 'truncate line-through opacity-70' : 'truncate'}>
+            {card.title}
+          </span>
+        </button>
+      ))}
+    </div>
   );
 }

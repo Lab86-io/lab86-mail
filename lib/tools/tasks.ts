@@ -269,6 +269,161 @@ export const tasksDeleteCard = defineTool({
   },
 });
 
+export const tasksCreateColumn = defineTool({
+  name: 'tasks_create_column',
+  description: 'Add a column to a board (omit boardId for the default board).',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string().optional(), name: z.string().min(1) }),
+  output: z.object({ ok: z.boolean(), columnId: z.string(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const { board } = await resolveBoardAndColumn(userId, args.boardId, undefined);
+    const columnId = await convexMutation<string>(boardsApi.createColumn, {
+      userId,
+      boardId: board.boardId,
+      name: args.name,
+    });
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_create_column',
+      surface: 'tasks',
+      summary: `Added column "${args.name}" to "${board.title}"`,
+      target: { kind: 'column', id: columnId, boardId: board.boardId },
+      inverse: { kind: 'tasks.delete_column', payload: { columnId } },
+    });
+    return { ok: true, columnId, operationId };
+  },
+});
+
+export const tasksRenameColumn = defineTool({
+  name: 'tasks_rename_column',
+  description: 'Rename a column (find it by current name; omit boardId for the default board).',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string().optional(), column: z.string().min(1), name: z.string().min(1) }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const { board, column } = await resolveBoardAndColumn(userId, args.boardId, args.column);
+    await convexMutation(boardsApi.updateColumn, { userId, columnId: column.columnId, name: args.name });
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_rename_column',
+      surface: 'tasks',
+      summary: `Renamed column "${column.name}" to "${args.name}" on "${board.title}"`,
+      target: { kind: 'column', id: column.columnId, boardId: board.boardId },
+      inverse: {
+        kind: 'tasks.rename_column',
+        payload: { columnId: column.columnId, name: column.name },
+      },
+    });
+    return { ok: true, operationId };
+  },
+});
+
+export const tasksDeleteColumn = defineTool({
+  name: 'tasks_delete_column',
+  description:
+    'Delete a column AND its cards (find it by name; omit boardId for the default board). Not undoable — confirm with the user when cards would be lost.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string().optional(), column: z.string().min(1) }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const { board, column } = await resolveBoardAndColumn(userId, args.boardId, args.column);
+    await convexMutation(boardsApi.deleteColumn, { userId, columnId: column.columnId });
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_delete_column',
+      surface: 'tasks',
+      summary: `Deleted column "${column.name}" from "${board.title}"`,
+      target: { kind: 'column', id: column.columnId, boardId: board.boardId },
+    });
+    return { ok: true, operationId };
+  },
+});
+
+export const tasksRenameBoard = defineTool({
+  name: 'tasks_rename_board',
+  description: 'Rename a board.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string(), title: z.string().min(1) }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const board = await getBoardForUser(userId, args.boardId);
+    await convexMutation(boardsApi.renameBoard, { userId, boardId: args.boardId, title: args.title });
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_rename_board',
+      surface: 'tasks',
+      summary: `Renamed board "${board.title}" to "${args.title}"`,
+      target: { kind: 'board', id: args.boardId },
+      inverse: { kind: 'tasks.rename_board', payload: { boardId: args.boardId, title: board.title } },
+    });
+    return { ok: true, operationId };
+  },
+});
+
+export const tasksDeleteBoard = defineTool({
+  name: 'tasks_delete_board',
+  description:
+    'Delete a whole board with its columns and cards. Not undoable — always confirm with the user first.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string() }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const board = await getBoardForUser(userId, args.boardId);
+    await convexMutation(boardsApi.deleteBoard, { userId, boardId: args.boardId });
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_delete_board',
+      surface: 'tasks',
+      summary: `Deleted board "${board.title}"`,
+      target: { kind: 'board', id: args.boardId },
+    });
+    return { ok: true, operationId };
+  },
+});
+
+export const tasksAddComment = defineTool({
+  name: 'tasks_add_comment',
+  description: 'Add a comment to a card on the user’s behalf.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ cardId: z.string(), body: z.string().min(1) }),
+  output: z.object({ ok: z.boolean() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    await convexMutation(boardsApi.addComment, { userId, cardId: args.cardId, body: args.body });
+    return { ok: true };
+  },
+});
+
+export const tasksAttachLink = defineTool({
+  name: 'tasks_attach_link',
+  description: 'Attach a URL to a card (name + link).',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ cardId: z.string(), name: z.string().min(1), url: z.string().url() }),
+  output: z.object({ ok: z.boolean() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    await convexMutation(boardsApi.attachToCard, {
+      userId,
+      cardId: args.cardId,
+      name: args.name,
+      url: args.url,
+    });
+    return { ok: true };
+  },
+});
+
 // ---- undo executors ---------------------------------------------------------
 
 registerUndoExecutor('tasks.delete_card', async (payload, ctx) => {
@@ -316,4 +471,24 @@ registerUndoExecutor('tasks.move_card', async (payload, ctx) => {
 
 registerUndoExecutor('tasks.delete_board', async (payload, ctx) => {
   await convexMutation(boardsApi.deleteBoard, { userId: ctx.userId, boardId: payload.boardId });
+});
+
+registerUndoExecutor('tasks.delete_column', async (payload, ctx) => {
+  await convexMutation(boardsApi.deleteColumn, { userId: ctx.userId, columnId: payload.columnId });
+});
+
+registerUndoExecutor('tasks.rename_column', async (payload, ctx) => {
+  await convexMutation(boardsApi.updateColumn, {
+    userId: ctx.userId,
+    columnId: payload.columnId,
+    name: payload.name,
+  });
+});
+
+registerUndoExecutor('tasks.rename_board', async (payload, ctx) => {
+  await convexMutation(boardsApi.renameBoard, {
+    userId: ctx.userId,
+    boardId: payload.boardId,
+    title: payload.title,
+  });
 });

@@ -180,7 +180,16 @@ export function AppShell() {
               {readerVisible ? (
                 <Panel id="reader" defaultSize="40%" minSize="360px">
                   <ReflowPanel>
-                    <ThreadView />
+                    {/* Slide-in masks the thread's hydration moment. */}
+                    <motion.div
+                      key={selectedThreadId || 'compose'}
+                      initial={{ x: 28, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                      className="h-full min-w-0"
+                    >
+                      <ThreadView />
+                    </motion.div>
                   </ReflowPanel>
                 </Panel>
               ) : null}

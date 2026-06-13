@@ -18,7 +18,7 @@ interface IProps {
 }
 
 export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
-  const { selectedDate, use24HourFormat, hourHeight, setHourHeight } = useCalendar();
+  const { selectedDate, setSelectedDate, use24HourFormat, hourHeight, setHourHeight } = useCalendar();
 
   const weekStart = startOfWeek(selectedDate);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -32,19 +32,35 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
     if (viewport) viewport.scrollTop = 7.5 * hourHeight;
   }, [hourHeight]);
 
-  // Trackpad pinch arrives as ctrl+wheel; map it onto the hour-height zoom.
+  // Trackpad gestures: pinch (ctrl+wheel) zooms the hour height; a clear
+  // horizontal swipe pages to the previous/next week.
+  const swipeAccum = useRef(0);
+  const swipeLock = useRef(0);
   useEffect(() => {
     const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]');
     if (!viewport) return;
     const onWheel = (event: Event) => {
       const wheel = event as WheelEvent;
-      if (!wheel.ctrlKey) return;
+      if (wheel.ctrlKey) {
+        wheel.preventDefault();
+        setHourHeight(hourHeight - Math.sign(wheel.deltaY) * 8);
+        return;
+      }
+      if (Math.abs(wheel.deltaX) <= Math.abs(wheel.deltaY)) return;
       wheel.preventDefault();
-      setHourHeight(hourHeight - Math.sign(wheel.deltaY) * 8);
+      const nowTs = Date.now();
+      if (nowTs - swipeLock.current < 450) return;
+      swipeAccum.current += wheel.deltaX;
+      if (Math.abs(swipeAccum.current) > 110) {
+        const direction = Math.sign(swipeAccum.current);
+        swipeAccum.current = 0;
+        swipeLock.current = nowTs;
+        setSelectedDate(addDays(selectedDate, direction * 7));
+      }
     };
     viewport.addEventListener('wheel', onWheel, { passive: false });
     return () => viewport.removeEventListener('wheel', onWheel);
-  }, [hourHeight, setHourHeight]);
+  }, [hourHeight, setHourHeight, selectedDate, setSelectedDate]);
 
   return (
     <motion.div initial="initial" animate="animate" exit="exit" variants={fadeIn} transition={transition}>

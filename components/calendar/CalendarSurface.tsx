@@ -145,22 +145,43 @@ export function CalendarSurface() {
     return writable.find((cal) => cal.isPrimary) || writable[0] || null;
   }, [calendars]);
 
+  // Options for the add-event dialog: every writable calendar with its
+  // categorical color; the account decides the color, not a "variant".
+  const writableCalendars = useMemo(
+    () =>
+      calendars
+        .filter((cal) => !cal.readOnly && !cal.hidden)
+        .map((cal) => ({
+          id: cal.providerCalendarId,
+          name: cal.name,
+          colorHex: colorByCalendar.get(cal.providerCalendarId) || TABLEAU10[0],
+          accountId: cal.accountId,
+        })),
+    [calendars, colorByCalendar],
+  );
+
   const persistence: CalendarPersistence = useMemo(
     () => ({
       onEventAdded: async (event) => {
-        if (!defaultCalendar) {
+        const account = event.accountId || defaultCalendar?.accountId;
+        const calendarId = event.calendarId || defaultCalendar?.providerCalendarId;
+        if (!account || !calendarId) {
           toast.error('No writable calendar is synced yet.');
           return;
         }
         try {
           await callTool('calendar_create_event', {
-            account: defaultCalendar.accountId,
-            calendarId: defaultCalendar.providerCalendarId,
+            account,
+            calendarId,
             title: event.title,
             startIso: event.startDate,
             endIso: event.endDate,
             allDay: Boolean(event.allDay),
             description: event.description || undefined,
+            attendees: (event.participants || [])
+              .filter((p) => p.email)
+              .map((p) => ({ email: p.email as string, name: p.name })),
+            recurrence: event.recurrence,
           });
         } catch (err: any) {
           toast.error(err?.message || 'Could not create the event.');
@@ -222,6 +243,7 @@ export function CalendarSurface() {
   );
 
   const unauthorized = syncStates.filter((state) => state.status === 'unauthorized');
+  const syncing = syncStates.filter((state) => state.status === 'syncing');
   const loading = liveCalendars.status !== 'success' || liveEvents.status !== 'success';
   const nothingSynced = !loading && calendars.length === 0;
 
@@ -251,13 +273,42 @@ export function CalendarSurface() {
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
       {unauthorized.length ? (
-        <div className="border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[12.5px] text-[var(--color-text-muted)]">
-          {unauthorized.length === 1 ? 'One account needs' : `${unauthorized.length} accounts need`} a
-          reconnect to grant calendar access. Their events are missing from this view.
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[12.5px] text-[var(--color-text-muted)]">
+          <span>Missing calendar access:</span>
+          {unauthorized.map((state) => (
+            <a
+              key={state.accountId}
+              href={`/api/nylas/connect?provider=${state.provider}&redirectTo=/`}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-0.5 text-[11.5px] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              title={state.error || 'Reconnect to grant calendar access'}
+            >
+              {state.email || state.accountId.slice(0, 8)}
+              <span className="text-[var(--color-accent)]">· reconnect</span>
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {syncing.length ? (
+        <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5 text-[12px] text-[var(--color-text-muted)]">
+          <span className="size-1.5 animate-pulse rounded-full bg-[var(--color-accent)]" />
+          {syncing
+            .map(
+              (state) =>
+                `${state.email || 'calendar'} syncing · ${state.eventsSynced ?? 0} events${
+                  state.calendarsSynced ? ` · calendar ${state.calendarsSynced}` : ''
+                }`,
+            )
+            .join('  ·  ')}
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <CalendarProvider users={users} events={events} view="week" persistence={persistence}>
+        <CalendarProvider
+          users={users}
+          events={events}
+          view="week"
+          persistence={persistence}
+          writableCalendars={writableCalendars}
+        >
           <DndProvider>
             <CalendarHeader />
             <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} />

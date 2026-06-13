@@ -60,6 +60,8 @@ export interface ClientState {
   // Persisted id of the most recent AI chat session, so reopening the app
   // restores the last conversation instead of starting blank.
   lastChatId: string | null;
+  // When the last chat had activity; stale sessions aren't auto-restored.
+  lastChatAt: number | null;
   pendingReplyBody: string | null;
   // Arc-style accent theming: one OKLCH hue + chroma pair drives the whole
   // accent family (see globals.css). null = the default forest green.
@@ -71,6 +73,8 @@ export interface ClientState {
   surfaceTint: number;
   // 0..1 Arc-style gradient wash on the rail.
   washOpacity: number;
+  // 0..1 accent-tinted wash over the main background, independent of the rail.
+  bgWashOpacity: number;
   // 0..~0.3 film-grain overlay opacity.
   grainOpacity: number;
   // UI font: null/sans = Geist, 'serif' = Fraunces, 'news' = Averia Serif Libre.
@@ -116,6 +120,7 @@ export interface ClientState {
   setBgHue: (hue: number | null) => void;
   setSurfaceTint: (tint: number) => void;
   setWashOpacity: (opacity: number) => void;
+  setBgWashOpacity: (opacity: number) => void;
   setGrainOpacity: (opacity: number) => void;
   setAppFont: (font: 'sans' | 'serif' | 'news' | null) => void;
 }
@@ -158,12 +163,14 @@ export const useClientStore = create<ClientState>()(
       aiBarOpen: false,
       threadFullscreen: false,
       lastChatId: null,
+      lastChatAt: null,
       pendingReplyBody: null,
       accentHue: null,
       accentChroma: null,
       bgHue: null,
       surfaceTint: 0,
       washOpacity: 0,
+      bgWashOpacity: 0,
       grainOpacity: 0,
       appFont: null,
 
@@ -237,12 +244,13 @@ export const useClientStore = create<ClientState>()(
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
       setThreadFullscreen: (threadFullscreen) => set({ threadFullscreen }),
-      setLastChatId: (lastChatId) => set({ lastChatId }),
+      setLastChatId: (lastChatId) => set({ lastChatId, lastChatAt: lastChatId ? Date.now() : null }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
       setAccent: (accentHue, accentChroma) => set({ accentHue, accentChroma }),
       setBgHue: (bgHue) => set({ bgHue }),
       setSurfaceTint: (surfaceTint) => set({ surfaceTint }),
       setWashOpacity: (washOpacity) => set({ washOpacity }),
+      setBgWashOpacity: (bgWashOpacity) => set({ bgWashOpacity }),
       setGrainOpacity: (grainOpacity) => set({ grainOpacity }),
       setAppFont: (appFont) => set({ appFont }),
     }),
@@ -271,11 +279,13 @@ export const useClientStore = create<ClientState>()(
         railOpen: s.railOpen,
         railWidth: s.railWidth,
         lastChatId: s.lastChatId,
+        lastChatAt: s.lastChatAt,
         accentHue: s.accentHue,
         accentChroma: s.accentChroma,
         bgHue: s.bgHue,
         surfaceTint: s.surfaceTint,
         washOpacity: s.washOpacity,
+        bgWashOpacity: s.bgWashOpacity,
         grainOpacity: s.grainOpacity,
         appFont: s.appFont,
       }),

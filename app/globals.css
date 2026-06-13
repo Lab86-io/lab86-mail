@@ -684,6 +684,31 @@
      reads like the Daily Report's paper; `.report-paper` is an alias kept for the
      report section. In light mode this is now a very quiet cool-paper texture;
      dark mode keeps the slightly stronger dotted grain. */
+  /* Accent-tinted wash over the main background, driven by its own slider
+     (independent of the rail wash). Sits under content via background-image
+     layering on the same surfaces. */
+  .app-paper::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(
+        120% 90% at 15% 0%,
+        oklch(
+          0.62 calc(var(--accent-chroma, 0.1) * 0.9) var(--accent-hue, 150) /
+          calc(var(--bg-wash-opacity, 0) * 0.5)
+        ),
+        transparent 60%
+      ),
+      radial-gradient(
+        100% 80% at 90% 100%,
+        oklch(0.6 0.07 var(--bg-hue, 95) / calc(var(--bg-wash-opacity, 0) * 0.4)),
+        transparent 65%
+      );
+  }
+
   .app-paper,
   .report-paper {
     background-color: var(--color-bg);

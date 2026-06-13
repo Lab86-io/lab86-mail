@@ -515,15 +515,51 @@ export const addComment = mutation({
   },
 });
 
-// File uploads go straight from the browser to Convex storage; the returned
-// storage id lands in the card's attachments.
-export const generateAttachmentUploadUrl = mutation({
-  args: { ...callerArgs, cardId: v.id('cards') },
+export const attachToCard = mutation({
+  args: {
+    ...callerArgs,
+    cardId: v.id('cards'),
+    name: v.string(),
+    url: v.optional(v.string()),
+    storageId: v.optional(v.id('_storage')),
+  },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const card = await ctx.db.get(args.cardId);
     if (!card) throw new Error('Card not found.');
     await requireBoard(ctx, card.boardId, userId, 'member');
+    if (!args.url && !args.storageId) throw new Error('url or storageId required.');
+    await ctx.db.patch(args.cardId, {
+      attachments: [
+        ...(card.attachments || []),
+        { name: args.name.trim() || args.url || 'attachment', url: args.url, storageId: args.storageId },
+      ],
+      updatedAt: now(),
+    });
+    await appendActivity(ctx, { ...card, _id: args.cardId }, userId, 'attached', args.name);
+    return { ok: true };
+  },
+});
+
+// File uploads go straight from the browser to Convex storage; the returned
+// storage id lands in the card's attachments.
+export const generateAttachmentUploadUrl = mutation({
+  args: {
+    ...callerArgs,
+    cardId: v.optional(v.id('cards')),
+    // Pre-create uploads (the new-card dialog) authorize against the board.
+    boardId: v.optional(v.id('boards')),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    let boardId = args.boardId;
+    if (!boardId && args.cardId) {
+      const card = await ctx.db.get(args.cardId);
+      if (!card) throw new Error('Card not found.');
+      boardId = card.boardId;
+    }
+    if (!boardId) throw new Error('cardId or boardId required.');
+    await requireBoard(ctx, boardId, userId, 'member');
     return await ctx.storage.generateUploadUrl();
   },
 });
@@ -624,6 +660,23 @@ export const getPublicBoard = query({
       .unique();
     if (!board) return null;
     return boardPayload(ctx, board, 'viewer');
+  },
+});
+
+// Cards spawned from a given email thread — the provenance chip in the
+// thread reader (mail → tasks direction).
+export const liveCardsForThread = query({
+  args: { threadId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) throw new Error('Not authenticated');
+    const rows = await ctx.db
+      .query('cards')
+      .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+      .collect();
+    return rows
+      .filter((card) => card.source?.threadId === args.threadId)
+      .map((card) => ({ cardId: card._id, title: card.title, completedAt: card.completedAt }));
   },
 });
 

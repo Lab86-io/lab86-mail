@@ -1,4 +1,4 @@
-import { format, isWithinInterval, parseISO } from 'date-fns';
+import { addDays, format, isWithinInterval, parseISO } from 'date-fns';
 import { Calendar, Clock, User } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
@@ -28,19 +28,34 @@ export function CalendarDayView({ singleDayEvents, multiDayEvents }: IProps) {
     if (viewport) viewport.scrollTop = 7.5 * hourHeight;
   }, [hourHeight]);
 
-  // Trackpad pinch arrives as ctrl+wheel; map it onto the hour-height zoom.
+  // Trackpad gestures: pinch (ctrl+wheel) zooms; horizontal swipe pages days.
+  const swipeAccum = useRef(0);
+  const swipeLock = useRef(0);
   useEffect(() => {
     const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]');
     if (!viewport) return;
     const onWheel = (event: Event) => {
       const wheel = event as WheelEvent;
-      if (!wheel.ctrlKey) return;
+      if (wheel.ctrlKey) {
+        wheel.preventDefault();
+        setHourHeight(hourHeight - Math.sign(wheel.deltaY) * 8);
+        return;
+      }
+      if (Math.abs(wheel.deltaX) <= Math.abs(wheel.deltaY)) return;
       wheel.preventDefault();
-      setHourHeight(hourHeight - Math.sign(wheel.deltaY) * 8);
+      const nowTs = Date.now();
+      if (nowTs - swipeLock.current < 450) return;
+      swipeAccum.current += wheel.deltaX;
+      if (Math.abs(swipeAccum.current) > 110) {
+        const direction = Math.sign(swipeAccum.current);
+        swipeAccum.current = 0;
+        swipeLock.current = nowTs;
+        setSelectedDate(addDays(selectedDate, direction));
+      }
     };
     viewport.addEventListener('wheel', onWheel, { passive: false });
     return () => viewport.removeEventListener('wheel', onWheel);
-  }, [hourHeight, setHourHeight]);
+  }, [hourHeight, setHourHeight, selectedDate, setSelectedDate]);
 
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {

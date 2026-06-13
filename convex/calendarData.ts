@@ -344,7 +344,7 @@ export const liveCalendars = query({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    const [calendars, syncStates] = await Promise.all([
+    const [calendars, syncStates, accounts] = await Promise.all([
       ctx.db
         .query('calendars')
         .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -353,8 +353,20 @@ export const liveCalendars = query({
         .query('calendarSyncStates')
         .withIndex('by_user', (q) => q.eq('userId', userId))
         .collect(),
+      ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
     ]);
-    return { calendars, syncStates };
+    const accountById = new Map(accounts.map((account) => [account.accountId, account]));
+    return {
+      calendars,
+      syncStates: syncStates.map((state) => ({
+        ...state,
+        email: accountById.get(state.accountId)?.email,
+        provider: accountById.get(state.accountId)?.provider ?? state.provider,
+      })),
+    };
   },
 });
 

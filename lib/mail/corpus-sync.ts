@@ -5,6 +5,7 @@ import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
+import { detectMailSuggestions } from './suggestion-detectors';
 
 const mailCorpusApi = (api as any).mailCorpus;
 const accountsApi = (api as any).accounts;
@@ -287,6 +288,7 @@ export async function runCorpusBackfill({
     void import('./llm-classify')
       .then(({ kickLlmClassification }) => kickLlmClassification(userId))
       .catch(() => undefined);
+    detectMailSuggestions(row, messages);
     result = {
       ok: true,
       accountId: row.accountId,
@@ -485,6 +487,7 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
     messageId: metadata.providerMessageId,
   });
   const messages = [corpusMessageFromNylas(row, raw.data || payload)];
+  detectMailSuggestions(row, messages);
   await upsertCorpus(row, {
     messages,
     threads: corpusThreadsFromMessages(messages),

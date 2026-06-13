@@ -431,6 +431,7 @@ function BoardView({ boardId }: { boardId: string }) {
       {shareOpen ? <ShareDialog board={board} onClose={() => setShareOpen(false)} /> : null}
       {createInColumn ? (
         <CreateCardDialog
+          boardId={board.boardId}
           columnName={board.columns.find((c) => c.columnId === createInColumn)?.name || ''}
           onClose={() => setCreateInColumn(null)}
           onCreate={async (fields) => {
@@ -1239,10 +1240,12 @@ function ShareDialog({ board, onClose }: { board: BoardPayload; onClose: () => v
 }
 
 function CreateCardDialog({
+  boardId,
   columnName,
   onClose,
   onCreate,
 }: {
+  boardId: string;
   columnName: string;
   onClose: () => void;
   onCreate: (fields: {
@@ -1252,14 +1255,40 @@ function CreateCardDialog({
     priority?: 'low' | 'medium' | 'high';
     weight?: number;
     dueAt?: number;
+    attachments?: CardAttachment[];
   }) => void;
 }) {
+  const generateUploadUrl = useConvexMutation(boardsApi.generateAttachmentUploadUrl);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [labels, setLabels] = useState('');
   const [priority, setPriority] = useState('');
   const [weight, setWeight] = useState('');
   const [due, setDue] = useState('');
+  const [attachments, setAttachments] = useState<CardAttachment[]>([]);
+  const [attachName, setAttachName] = useState('');
+  const [attachUrl, setAttachUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const uploadUrl = await generateUploadUrl({ boardId });
+      const response = await fetch(uploadUrl as string, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+      const { storageId } = (await response.json()) as { storageId: string };
+      setAttachments((prev) => [...prev, { name: file.name, storageId }]);
+    } catch (err: any) {
+      toast.error(err?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -1281,6 +1310,7 @@ function CreateCardDialog({
               priority: (priority || undefined) as any,
               weight: weight ? Number(weight) : undefined,
               dueAt: due ? new Date(due).getTime() : undefined,
+              attachments: attachments.length ? attachments : undefined,
             });
           }}
         >
@@ -1349,6 +1379,82 @@ function CreateCardDialog({
               className="h-8 text-[12.5px]"
             />
           </label>
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-[var(--color-text-muted)]">Attachments</p>
+            {attachments.length ? (
+              <ul className="space-y-1">
+                {attachments.map((attachment, index) => (
+                  <li
+                    key={attachment.storageId || attachment.url}
+                    className="flex items-center gap-2 text-[12px]"
+                  >
+                    {attachment.storageId ? (
+                      <Paperclip className="size-3 shrink-0 text-[var(--color-text-faint)]" />
+                    ) : (
+                      <Link2 className="size-3 shrink-0 text-[var(--color-text-faint)]" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
+                      className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="flex items-center gap-1.5">
+              <Input
+                value={attachName}
+                onChange={(event) => setAttachName(event.target.value)}
+                placeholder="Name"
+                className="h-7 w-24 text-[12px]"
+              />
+              <Input
+                value={attachUrl}
+                onChange={(event) => setAttachUrl(event.target.value)}
+                placeholder="https://…"
+                className="h-7 flex-1 text-[12px]"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-[11.5px]"
+                disabled={!/^https?:\/\//.test(attachUrl)}
+                onClick={() => {
+                  setAttachments([...attachments, { name: attachName.trim() || attachUrl, url: attachUrl }]);
+                  setAttachName('');
+                  setAttachUrl('');
+                }}
+              >
+                Link
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-[11.5px]"
+                disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="size-3" />
+                {uploading ? 'Uploading…' : 'File'}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadFile(file);
+                  event.target.value = '';
+                }}
+              />
+            </div>
+          </div>
           <div className="flex justify-end gap-2">
             <Button
               type="button"

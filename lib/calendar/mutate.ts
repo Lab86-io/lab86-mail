@@ -44,7 +44,19 @@ export interface UpdateEventPatch {
 
 export async function createCalendarEvent(input: CreateEventInput) {
   const account = await getAccount(input.userId, input.accountId);
-  const calendarId = input.calendarId || (await getPrimaryCalendarId(input.userId, input.accountId));
+  let calendarId = input.calendarId || (await getPrimaryCalendarId(input.userId, input.accountId));
+  // Agents sometimes pair one account with another account's calendar id —
+  // the provider answers with an opaque Bad Request. Verify ownership and
+  // fall back to the account's own primary calendar instead.
+  if (input.calendarId) {
+    const calendars = await convexQuery<any[]>(calendarApi.listCalendars, { userId: input.userId });
+    const owned = (calendars || []).some(
+      (cal) => cal.accountId === input.accountId && cal.providerCalendarId === input.calendarId,
+    );
+    if (!owned) {
+      calendarId = await getPrimaryCalendarId(input.userId, input.accountId);
+    }
+  }
   const response = await requireNylas().events.create({
     identifier: account.grantId,
     requestBody: {

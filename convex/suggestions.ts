@@ -51,6 +51,19 @@ export const upsert = mutation({
   },
 });
 
+export const get = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    suggestionId: v.id('suggestions'),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.suggestionId);
+    return row && row.userId === args.userId ? row : null;
+  },
+});
+
 export const resolve = mutation({
   args: {
     internalSecret: v.optional(v.string()),

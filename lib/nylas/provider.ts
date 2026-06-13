@@ -783,12 +783,15 @@ export async function downloadNylasAttachment({
 }
 
 export async function deleteNylasAccount(userId: string, accountId: string, grantId?: string) {
+  // Convex first: if this throws, the account survives WITH a live grant.
+  // (Destroying the grant first is how failed deletes used to strand
+  // connected-looking accounts whose provider grant was already burned.)
+  await convexMutation(api.accounts.deleteConnectedAccount, { userId, accountId });
   if (grantId) {
     await requireNylas()
       .grants.destroy({ grantId })
       .catch(() => undefined);
   }
-  await convexMutation(api.accounts.deleteConnectedAccount, { userId, accountId });
   return { ok: true };
 }
 

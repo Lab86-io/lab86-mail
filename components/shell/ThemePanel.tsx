@@ -46,6 +46,7 @@ export function useApplyThemeExtras() {
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
   const washOpacity = useClientStore((s) => s.washOpacity);
+  const bgWashOpacity = useClientStore((s) => s.bgWashOpacity);
   const grainOpacity = useClientStore((s) => s.grainOpacity);
   const appFont = useClientStore((s) => s.appFont);
   useEffect(() => {
@@ -59,10 +60,11 @@ export function useApplyThemeExtras() {
     setOrClear('--bg-hue', bgHue == null ? null : String(bgHue));
     setOrClear('--surface-tint', surfaceTint > 0 ? String(surfaceTint) : null);
     setOrClear('--wash-opacity', washOpacity > 0 ? String(washOpacity) : null);
+    setOrClear('--bg-wash-opacity', bgWashOpacity > 0 ? String(bgWashOpacity) : null);
     setOrClear('--grain-opacity', grainOpacity > 0 ? String(grainOpacity) : null);
     const font = FONTS.find((f) => f.id === appFont);
     setOrClear('--font-display-choice', font?.stack ?? null);
-  }, [accentHue, accentChroma, bgHue, surfaceTint, washOpacity, grainOpacity, appFont]);
+  }, [accentHue, accentChroma, bgHue, surfaceTint, washOpacity, bgWashOpacity, grainOpacity, appFont]);
 }
 
 const HUE_TRACK =
@@ -130,6 +132,8 @@ export function ThemePanel({ className }: { className?: string }) {
   const setSurfaceTint = useClientStore((s) => s.setSurfaceTint);
   const washOpacity = useClientStore((s) => s.washOpacity);
   const setWashOpacity = useClientStore((s) => s.setWashOpacity);
+  const bgWashOpacity = useClientStore((s) => s.bgWashOpacity);
+  const setBgWashOpacity = useClientStore((s) => s.setBgWashOpacity);
   const grainOpacity = useClientStore((s) => s.grainOpacity);
   const setGrainOpacity = useClientStore((s) => s.setGrainOpacity);
   const appFont = useClientStore((s) => s.appFont);
@@ -276,7 +280,22 @@ export function ThemePanel({ className }: { className?: string }) {
 
         <Section title="Effects">
           <div className="space-y-2">
-            <Slider label="Wash" min={0} max={1} step={0.05} value={washOpacity} onChange={setWashOpacity} />
+            <Slider
+              label="Rail wash"
+              min={0}
+              max={1}
+              step={0.05}
+              value={washOpacity}
+              onChange={setWashOpacity}
+            />
+            <Slider
+              label="Background wash"
+              min={0}
+              max={1}
+              step={0.05}
+              value={bgWashOpacity}
+              onChange={setBgWashOpacity}
+            />
             <Slider
               label="Grain"
               min={0}

@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { BellIcon } from '@/components/ui/bell';
 import { BookmarkIcon } from '@/components/ui/bookmark';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
+import { CircleCheckIcon } from '@/components/ui/circle-check';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { CreditCardIcon } from '@/components/ui/credit-card';
 import { DeleteIcon } from '@/components/ui/delete';
@@ -64,6 +65,7 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
+import { SuggestionsTray } from './SuggestionsTray';
 import { ThemePanel } from './ThemePanel';
 
 interface MailboxItem {
@@ -119,7 +121,7 @@ const SMART_LABEL_ICON_MAP: Record<string, any> = {
 const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: string; Icon: any }> = [
   { view: 'daily_report', label: 'Daily Report', Icon: rowIcon(FileTextIcon) },
   { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
-  { view: 'tasks', label: 'Tasks', Icon: rowIcon(LayoutGridIcon) },
+  { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
 ];
 
 const SMART_CATEGORIES = [
@@ -301,6 +303,7 @@ export function Rail() {
           <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
+          <SuggestionsTray />
           <SidebarTrigger
             title="Toggle navigation rail"
             className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
