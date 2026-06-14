@@ -261,11 +261,20 @@ export const readThread = defineTool({
     account: z.string(),
     threadId: z.string(),
     maxCharsPerMessage: z.number().int().min(200).max(20000).default(6000),
+    maxMessages: z
+      .number()
+      .int()
+      .min(1)
+      .max(30)
+      .default(12)
+      .describe('Cap on messages returned (newest first) so long threads stay bounded.'),
   }),
   output: z.object({
     account: z.string(),
     threadId: z.string(),
     subject: z.string(),
+    messageCount: z.number().optional(),
+    truncated: z.boolean().optional(),
     messages: z.array(
       z.object({
         from: z.string(),
@@ -276,9 +285,14 @@ export const readThread = defineTool({
       }),
     ),
   }),
-  async handler({ account, threadId, maxCharsPerMessage }, ctx) {
+  async handler({ account, threadId, maxCharsPerMessage, maxMessages }, ctx) {
     const thread = await getThread.handler({ account, threadId }, ctx);
-    const messages = ((thread as any).messages || []).map((message: any) => {
+    // Newest-first, capped: a 200-message thread otherwise dumps megabytes into
+    // a single tool result and blows the downstream prompt/latency budget.
+    const ordered = [...((thread as any).messages || [])].sort(
+      (a: any, b: any) => (b.date || 0) - (a.date || 0),
+    );
+    const messages = ordered.slice(0, maxMessages).map((message: any) => {
       const text = bodyToPlainText(message);
       return {
         from: message.from || '',
@@ -292,7 +306,14 @@ export const readThread = defineTool({
         })),
       };
     });
-    return { account, threadId, subject: (thread as any).subject || '(no subject)', messages };
+    return {
+      account,
+      threadId,
+      subject: (thread as any).subject || '(no subject)',
+      messageCount: ordered.length,
+      truncated: ordered.length > messages.length,
+      messages,
+    };
   },
 });
 
@@ -302,6 +323,9 @@ function bodyToPlainText(message: any): string {
     ? message.textBody
     : message.htmlBody
       ? message.htmlBody
+          // Keep the link target — otherwise meeting/reset/shared-doc links
+          // collapse to bare anchor text and the agent can't act on them.
+          .replace(/<a\b[^>]*href=(['"])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, '$3 ($2)')
           .replace(/<style[\s\S]*?<\/style>/gi, ' ')
           .replace(/<script[\s\S]*?<\/script>/gi, ' ')
           .replace(/<br\s*\/?>/gi, '\n')

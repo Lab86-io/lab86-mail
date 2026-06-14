@@ -150,12 +150,23 @@ export function TasksSurface() {
             key={board.boardId}
             type="button"
             onClick={() => setSelectedBoardId(board.boardId)}
-            // Double-click the active, owned board's name to rename it — no
-            // separate edit button.
+            // Rename the active, owned board — no separate edit button. Mouse:
+            // double-click. Keyboard: F2, or Enter when it's already active
+            // (so keyboard/AT users still have a rename path).
             onDoubleClick={() => {
               if (board.boardId === activeBoardId && board.owned) setRenameBoardOpen(true);
             }}
-            title={board.owned ? 'Double-click to rename' : undefined}
+            onKeyDown={(event) => {
+              if (!board.owned) return;
+              const renameKey =
+                event.key === 'F2' || (event.key === 'Enter' && board.boardId === activeBoardId);
+              if (renameKey) {
+                event.preventDefault();
+                setSelectedBoardId(board.boardId);
+                setRenameBoardOpen(true);
+              }
+            }}
+            title={board.owned ? 'Double-click or press F2 to rename' : undefined}
             className={cn(
               'shrink-0 rounded-full border px-3 py-1 text-[12.5px] transition-colors',
               board.boardId === activeBoardId

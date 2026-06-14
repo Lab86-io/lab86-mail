@@ -14,14 +14,33 @@ import { getMessage as getMessageRecord, getThreadMessages } from '../store/mess
 import { defineTool } from './registry';
 
 // Attachment sources the agent can pull and send: a web url, or a file off
-// an existing email. Both resolve to bytes server-side at send time.
-const AttachmentSource = z.object({
-  name: z.string().optional(),
-  url: z.string().optional(),
-  account: z.string().optional(),
-  messageId: z.string().optional(),
-  attachmentId: z.string().optional(),
-});
+// an existing email. Both resolve to bytes server-side at send time. Kept flat
+// (rather than a discriminated union) so the model doesn't need a type tag, but
+// refined to reject empty/ambiguous shapes up front.
+const AttachmentSource = z
+  .object({
+    name: z.string().optional(),
+    url: z.string().optional(),
+    account: z.string().optional(),
+    messageId: z.string().optional(),
+    attachmentId: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const isWeb = Boolean(value.url);
+    const isEmail = Boolean(value.account && value.messageId && value.attachmentId);
+    if (isWeb && isEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide either url OR account+messageId+attachmentId, not both.',
+      });
+    }
+    if (!isWeb && !isEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Each attachment needs a url, or account + messageId + attachmentId.',
+      });
+    }
+  });
 type AttachmentSourceInput = z.infer<typeof AttachmentSource>;
 
 const SendBase = z.object({
