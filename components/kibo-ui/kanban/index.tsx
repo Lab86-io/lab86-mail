@@ -2,17 +2,19 @@
 
 import type {
   Announcements,
+  CollisionDetection,
   DndContextProps,
   DragEndEvent,
   DragOverEvent,
   DragStartEvent,
 } from '@dnd-kit/core';
 import {
-  closestCenter,
   DndContext,
   DragOverlay,
   KeyboardSensor,
   MouseSensor,
+  pointerWithin,
+  rectIntersection,
   TouchSensor,
   useDroppable,
   useSensor,
@@ -38,6 +40,20 @@ import { cn } from '@/lib/utils';
 const t = tunnel();
 
 export type { DragEndEvent } from '@dnd-kit/core';
+
+// closestCenter ranks droppables by distance to their CENTER, so a large empty
+// column's far-off center loses to the nearby cards of adjacent columns — making
+// it nearly impossible to drop a card into an empty column. Prefer whatever
+// droppable sits under the pointer (the column itself when empty, the hovered
+// card otherwise), falling back to rectangle intersection when the pointer is
+// outside every droppable (e.g. keyboard dragging).
+const collisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) {
+    return pointerCollisions;
+  }
+  return rectIntersection(args);
+};
 
 type KanbanItemProps = {
   id: string;
@@ -239,29 +255,15 @@ export const KanbanCards = <T extends KanbanItemProps = KanbanItemProps>({
   className,
   ...props
 }: KanbanCardsProps<T>) => {
-  const { activeCardId, data } = useContext(KanbanContext) as KanbanContextProps<T>;
+  const { data } = useContext(KanbanContext) as KanbanContextProps<T>;
   const filteredData = data.filter((item) => item.column === props.id);
   const items = filteredData.map((item) => item.id);
-  const showDropHint = Boolean(activeCardId && !filteredData.length);
 
   return (
     <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <SortableContext items={items}>
-        <div
-          className={cn(
-            'flex min-h-full flex-grow flex-col gap-2 p-2',
-            showDropHint &&
-              'rounded-md border border-dashed border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60',
-            className,
-          )}
-          {...props}
-        >
+        <div className={cn('flex min-h-full flex-grow flex-col gap-2 p-2', className)} {...props}>
           {filteredData.map(children)}
-          {showDropHint ? (
-            <div className="grid min-h-28 flex-1 place-items-center rounded-md text-[12px] font-medium text-[var(--color-accent)]">
-              Drop card here
-            </div>
-          ) : null}
         </div>
       </SortableContext>
       <ScrollBar orientation="vertical" />
@@ -489,7 +491,7 @@ export const KanbanProvider = <
     <KanbanContext.Provider value={{ columns, data, activeCardId, activeColumnId, columnsReorderable }}>
       <DndContext
         accessibility={{ announcements }}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
         onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
         onDragStart={handleDragStart}
