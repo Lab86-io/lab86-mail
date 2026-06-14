@@ -17,6 +17,7 @@ const AGENT_TOOL_NAMES = new Set([
   'thread_timeline',
   'list_smart_category',
   'get_thread',
+  'read_thread',
   'get_message',
   'list_labels',
   'list_attachments',

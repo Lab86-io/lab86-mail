@@ -36,6 +36,9 @@ const TASKS_COLOR = '#EDC948';
 const TASKS_LANE_ID = '__tasks__';
 const TASK_EVENT_PREFIX = 'task_';
 
+// Shared stable empty array — see the loop note where it's consumed.
+const EMPTY_ARRAY: any[] = [];
+
 // The visible data window mirrors the sync window (lib/calendar/sync.ts).
 const WINDOW_PAST_MS = 92 * 86_400_000;
 const WINDOW_FUTURE_MS = 366 * 86_400_000;
@@ -71,9 +74,15 @@ export function CalendarSurface() {
     void callTool('calendar_list_calendars', {}).catch(() => undefined);
   }, []);
 
-  const calendars: any[] = liveCalendars.status === 'success' ? liveCalendars.data?.calendars || [] : [];
-  const syncStates: any[] = liveCalendars.status === 'success' ? liveCalendars.data?.syncStates || [] : [];
-  const eventRows: any[] = liveEvents.status === 'success' ? liveEvents.data || [] : [];
+  // Stable empty fallbacks: `data || []` minting a fresh [] every render
+  // cascades through the memos below into the calendar context's
+  // useEffect([events]) → setState → re-render → infinite loop (React #185).
+  // Reusing one EMPTY ref keeps identities stable until the data truly changes.
+  const calendars: any[] =
+    liveCalendars.status === 'success' ? liveCalendars.data?.calendars || EMPTY_ARRAY : EMPTY_ARRAY;
+  const syncStates: any[] =
+    liveCalendars.status === 'success' ? liveCalendars.data?.syncStates || EMPTY_ARRAY : EMPTY_ARRAY;
+  const eventRows: any[] = liveEvents.status === 'success' ? liveEvents.data || EMPTY_ARRAY : EMPTY_ARRAY;
 
   const colorByCalendar = useMemo(() => {
     const map = new Map<string, string>();
@@ -83,7 +92,7 @@ export function CalendarSurface() {
     return map;
   }, [calendars]);
 
-  const dueCards: any[] = liveDueCards.status === 'success' ? liveDueCards.data || [] : [];
+  const dueCards: any[] = liveDueCards.status === 'success' ? liveDueCards.data || EMPTY_ARRAY : EMPTY_ARRAY;
 
   const users: IUser[] = useMemo(() => {
     const list = calendars

@@ -43,7 +43,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -133,31 +133,26 @@ export function TasksSurface() {
           Tasks
         </h1>
         {boards.map((board) => (
-          <span key={board.boardId} className="flex shrink-0 items-center">
-            <button
-              type="button"
-              onClick={() => setSelectedBoardId(board.boardId)}
-              className={cn(
-                'rounded-full border px-3 py-1 text-[12.5px] transition-colors',
-                board.boardId === activeBoardId
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
-              )}
-            >
-              {board.title}
-              {!board.owned ? <Users className="ml-1 inline size-3 opacity-60" /> : null}
-            </button>
-            {board.boardId === activeBoardId && board.owned ? (
-              <button
-                type="button"
-                onClick={() => setRenameBoardOpen(true)}
-                className="ml-0.5 grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)]"
-                title="Rename board"
-              >
-                <Pencil className="size-3" />
-              </button>
-            ) : null}
-          </span>
+          <button
+            key={board.boardId}
+            type="button"
+            onClick={() => setSelectedBoardId(board.boardId)}
+            // Double-click the active, owned board's name to rename it — no
+            // separate edit button.
+            onDoubleClick={() => {
+              if (board.boardId === activeBoardId && board.owned) setRenameBoardOpen(true);
+            }}
+            title={board.owned ? 'Double-click to rename' : undefined}
+            className={cn(
+              'shrink-0 rounded-full border px-3 py-1 text-[12.5px] transition-colors',
+              board.boardId === activeBoardId
+                ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+            )}
+          >
+            {board.title}
+            {!board.owned ? <Users className="ml-1 inline size-3 opacity-60" /> : null}
+          </button>
         ))}
         <button
           type="button"
@@ -371,9 +366,17 @@ function BoardView({ boardId }: { boardId: string }) {
                   className="h-full w-72 shrink-0 bg-[var(--color-bg-subtle)]"
                 >
                   <KanbanHeader className="flex items-center px-3 py-2">
-                    <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                    <button
+                      type="button"
+                      disabled={!canEdit}
+                      onDoubleClick={() =>
+                        setRenameColumn({ columnId: column.id, name: String(column.name) })
+                      }
+                      title={canEdit ? 'Double-click to rename' : undefined}
+                      className="text-left text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]"
+                    >
                       {column.name}
-                    </span>
+                    </button>
                     <span className="ml-auto mr-1 text-[11px] tabular-nums text-[var(--color-text-faint)]">
                       {items.filter((item) => item.column === column.id).length}
                     </span>
@@ -1213,6 +1216,9 @@ function ShareDialog({ board, onClose }: { board: BoardPayload; onClose: () => v
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-md">
         <DialogTitle>Share “{board.title}”</DialogTitle>
+        <DialogDescription className="sr-only">
+          Invite collaborators or manage the public link.
+        </DialogDescription>
         <div className="space-y-4">
           <form
             className="flex items-center gap-2"
@@ -1379,6 +1385,7 @@ function CreateCardDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogTitle>New card in {columnName}</DialogTitle>
+        <DialogDescription className="sr-only">Fill in the card details.</DialogDescription>
         <form
           className="space-y-3"
           onSubmit={(event) => {
@@ -1587,6 +1594,7 @@ function NameDialog({
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogTitle>{title}</DialogTitle>
+        <DialogDescription className="sr-only">{placeholder}</DialogDescription>
         <form
           className="space-y-3"
           onSubmit={(event) => {

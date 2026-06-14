@@ -247,6 +247,78 @@ async function accountHasCorpusRows(userId: string, accountId: string) {
   return Boolean(state && (state.messagesSynced || state.corpusReady));
 }
 
+// Plaintext reader the agent reaches for when it needs the actual CONTENT of
+// an email (not just subjects/snippets). Returns each message's sender, date,
+// and a clean, capped plaintext body — HTML stripped — so the model can read
+// and reason over what the email says.
+export const readThread = defineTool({
+  name: 'read_thread',
+  description:
+    'Read the full plaintext bodies of an email thread (every message: from, date, and clean body text). Use this whenever you need what an email actually SAYS — answering questions about its content, extracting details, drafting an informed reply.',
+  category: 'mail',
+  mutating: false,
+  input: z.object({
+    account: z.string(),
+    threadId: z.string(),
+    maxCharsPerMessage: z.number().int().min(200).max(20000).default(6000),
+  }),
+  output: z.object({
+    account: z.string(),
+    threadId: z.string(),
+    subject: z.string(),
+    messages: z.array(
+      z.object({
+        from: z.string(),
+        to: z.string().optional(),
+        date: z.number().optional(),
+        body: z.string(),
+        attachments: z.array(z.any()).optional(),
+      }),
+    ),
+  }),
+  async handler({ account, threadId, maxCharsPerMessage }, ctx) {
+    const thread = await getThread.handler({ account, threadId }, ctx);
+    const messages = ((thread as any).messages || []).map((message: any) => {
+      const text = bodyToPlainText(message);
+      return {
+        from: message.from || '',
+        to: message.to || undefined,
+        date: message.date,
+        body: text.length > maxCharsPerMessage ? `${text.slice(0, maxCharsPerMessage)}…` : text,
+        attachments: (message.attachments || []).map((a: any) => ({
+          id: a.id || a.attachmentId,
+          name: a.filename || a.name,
+          contentType: a.contentType || a.content_type,
+        })),
+      };
+    });
+    return { account, threadId, subject: (thread as any).subject || '(no subject)', messages };
+  },
+});
+
+// Prefer textBody; fall back to a tag-stripped htmlBody, then the snippet.
+function bodyToPlainText(message: any): string {
+  const raw = message.textBody?.trim()
+    ? message.textBody
+    : message.htmlBody
+      ? message.htmlBody
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+      : message.snippet || '';
+  return raw
+    .replace(/\r/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export const getThread = defineTool({
   name: 'get_thread',
   description:

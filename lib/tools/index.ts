@@ -53,6 +53,7 @@ import {
   listAttachments,
   listLabels,
   listSmartCategory,
+  readThread,
   recentThreadsCached,
   searchThreads,
 } from './mail';
@@ -135,6 +136,7 @@ const allTools: AnyTool[] = [
   listSmartCategory,
   getSmartCategoryStats,
   getThread,
+  readThread,
   getMessage,
   listLabels,
   listAttachments,
