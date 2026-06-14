@@ -14,14 +14,12 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import {
-  LAB86_MODEL_FAMILIES,
-  type Lab86ModelFamily,
+  type ModelOption,
   normalizeOpenRouterFastModel,
   normalizeOpenRouterPrimaryModel,
   OPENROUTER_FAST_MODEL_OPTIONS,
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
   type Provider,
-  resolveLab86Family,
   setProviderForByok,
 } from './ai-options';
 
@@ -78,7 +76,6 @@ export function WelcomeFlow() {
   const router = useRouter();
   const [dismissed, setDismissed] = useState<boolean | null>(null);
   const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('byok');
-  const [lab86Family, setLab86Family] = useState<Lab86ModelFamily>('openai');
   const [provider, setProvider] = useState<Provider>('openrouter');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
@@ -104,10 +101,10 @@ export function WelcomeFlow() {
       if (aiFormSeeded.current) return data;
       aiFormSeeded.current = true;
       const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
-      const nextProvider = requireOpenRouter
-        ? 'openrouter'
-        : data.settings?.provider || data.key?.provider || 'openrouter';
-      setAiMode(requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86');
+      const nextMode = requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86';
+      const nextProvider =
+        nextMode === 'lab86' ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter';
+      setAiMode(nextMode);
       setProvider(nextProvider);
       setModel(
         nextProvider === 'openrouter'
@@ -119,7 +116,6 @@ export function WelcomeFlow() {
           ? normalizeOpenRouterFastModel(data.settings?.fastModel)
           : data.settings?.fastModel || '',
       );
-      setLab86Family(resolveLab86Family(data.settings?.model, data.settings?.fastModel));
       return data;
     },
     retry: false,
@@ -153,22 +149,17 @@ export function WelcomeFlow() {
 
   const saveAi = useMutation({
     mutationFn: async () => {
-      const selected = LAB86_MODEL_FAMILIES[lab86Family];
       return postJson('/api/ai/settings', {
         mode: aiMode,
         provider: aiMode === 'lab86' ? 'openrouter' : provider,
         model:
-          aiMode === 'lab86'
-            ? selected.primary
-            : provider === 'openrouter'
-              ? normalizeOpenRouterPrimaryModel(model)
-              : undefined,
+          aiMode === 'lab86' || provider === 'openrouter'
+            ? normalizeOpenRouterPrimaryModel(model)
+            : undefined,
         fastModel:
-          aiMode === 'lab86'
-            ? selected.fast
-            : provider === 'openrouter'
-              ? normalizeOpenRouterFastModel(fastModel)
-              : undefined,
+          aiMode === 'lab86' || provider === 'openrouter'
+            ? normalizeOpenRouterFastModel(fastModel)
+            : undefined,
         apiKey: aiMode === 'byok' ? apiKey || undefined : undefined,
       });
     },
@@ -187,10 +178,13 @@ export function WelcomeFlow() {
     router.replace('/');
   };
 
-  const selected = LAB86_MODEL_FAMILIES[lab86Family];
   const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
-  const primaryModelDetail = OPENROUTER_PRIMARY_MODEL_OPTIONS.find((option) => option.id === model)?.detail;
-  const fastModelDetail = OPENROUTER_FAST_MODEL_OPTIONS.find((option) => option.id === fastModel)?.detail;
+  const primaryOptions = (ai?.modelOptions?.openrouter?.primary ||
+    OPENROUTER_PRIMARY_MODEL_OPTIONS) as ModelOption[];
+  const fastOptions = (ai?.modelOptions?.openrouter?.fast || OPENROUTER_FAST_MODEL_OPTIONS) as ModelOption[];
+  const primaryModelDetail = primaryOptions.find((option) => option.id === model)?.detail;
+  const fastModelDetail = fastOptions.find((option) => option.id === fastModel)?.detail;
+  const showOpenRouterModels = aiMode === 'lab86' || provider === 'openrouter';
 
   return (
     <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft,0_8px_40px_rgb(0_0_0/0.08))]">
@@ -324,29 +318,13 @@ export function WelcomeFlow() {
           </div>
 
           <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
-            {aiMode === 'lab86' ? (
-              <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {aiMode === 'lab86' ? (
                 <div className="space-y-1.5">
-                  <Label>Model family</Label>
-                  <Select
-                    value={lab86Family}
-                    onValueChange={(value) => setLab86Family(value as Lab86ModelFamily)}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="claude">Claude</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label>Provider</Label>
+                  <Input value="OpenRouter (Lab86 managed)" readOnly />
                 </div>
-                <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                  {selected.detail}
-                </div>
-              </div>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
+              ) : (
                 <div className="space-y-1.5">
                   <Label>Provider</Label>
                   <Select
@@ -366,6 +344,8 @@ export function WelcomeFlow() {
                     </SelectContent>
                   </Select>
                 </div>
+              )}
+              {aiMode === 'byok' ? (
                 <div className="space-y-1.5">
                   <Label>API key</Label>
                   <Input
@@ -377,52 +357,56 @@ export function WelcomeFlow() {
                     spellCheck={false}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Primary model</Label>
-                  {provider === 'openrouter' ? (
-                    <Select value={model} onValueChange={setModel}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => (
-                          <SelectItem key={option.id} value={option.id}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input value="Provider default" readOnly />
-                  )}
-                  {provider === 'openrouter' && primaryModelDetail ? (
-                    <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
-                  ) : null}
+              ) : (
+                <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
+                  Lab86 routes through OpenRouter with your selected normal and fast models.
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Fast model</Label>
-                  {provider === 'openrouter' ? (
-                    <Select value={fastModel} onValueChange={setFastModel}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {OPENROUTER_FAST_MODEL_OPTIONS.map((option) => (
-                          <SelectItem key={option.id} value={option.id}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input value="Provider default" readOnly />
-                  )}
-                  {provider === 'openrouter' && fastModelDetail ? (
-                    <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
-                  ) : null}
-                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label>Primary model</Label>
+                {showOpenRouterModels ? (
+                  <Select value={model} onValueChange={setModel}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {primaryOptions.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input value="Provider default" readOnly />
+                )}
+                {showOpenRouterModels && primaryModelDetail ? (
+                  <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
+                ) : null}
               </div>
-            )}
+              <div className="space-y-1.5">
+                <Label>Fast model</Label>
+                {showOpenRouterModels ? (
+                  <Select value={fastModel} onValueChange={setFastModel}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {fastOptions.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input value="Provider default" readOnly />
+                )}
+                {showOpenRouterModels && fastModelDetail ? (
+                  <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
+                ) : null}
+              </div>
+            </div>
           </div>
         </section>
       </div>

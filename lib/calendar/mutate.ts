@@ -41,19 +41,27 @@ export interface UpdateEventPatch {
   recurrence?: string[];
 }
 
+export interface UnsubscribeCalendarInput {
+  userId: string;
+  accountId: string;
+  calendarId: string;
+  fallbackToHide?: boolean;
+}
+
 export async function createCalendarEvent(input: CreateEventInput) {
   const account = await getAccount(input.userId, input.accountId);
-  let calendarId = input.calendarId || (await getPrimaryCalendarId(input.userId, input.accountId));
+  const accountId = account.accountId;
+  let calendarId = input.calendarId || (await getPrimaryCalendarId(input.userId, accountId));
   // Agents sometimes pair one account with another account's calendar id —
   // the provider answers with an opaque Bad Request. Verify ownership and
   // fall back to the account's own primary calendar instead.
   if (input.calendarId) {
     const calendars = await convexQuery<any[]>(calendarApi.listCalendars, { userId: input.userId });
     const owned = (calendars || []).some(
-      (cal) => cal.accountId === input.accountId && cal.providerCalendarId === input.calendarId,
+      (cal) => cal.accountId === accountId && cal.providerCalendarId === input.calendarId,
     );
     if (!owned) {
-      calendarId = await getPrimaryCalendarId(input.userId, input.accountId);
+      calendarId = await getPrimaryCalendarId(input.userId, accountId);
     }
   }
   const response = await requireNylas().events.create({
@@ -81,10 +89,10 @@ export async function createCalendarEvent(input: CreateEventInput) {
     tool: 'calendar_create_event',
     surface: 'calendar',
     summary: `Created "${input.title}" on ${new Date(input.startAt).toLocaleString()}`,
-    target: { kind: 'calendarEvent', id: created.id, accountId: input.accountId, calendarId },
+    target: { kind: 'calendarEvent', id: created.id, accountId, calendarId },
     inverse: {
       kind: 'calendar.delete_event',
-      payload: { accountId: input.accountId, calendarId, eventId: created.id },
+      payload: { accountId, calendarId, eventId: created.id },
     },
   });
   return { eventId: created.id as string, calendarId, operationId, htmlLink: row?.htmlLink };
@@ -99,7 +107,8 @@ export async function updateCalendarEvent(input: {
   notifyParticipants?: boolean;
 }) {
   const account = await getAccount(input.userId, input.accountId);
-  const previous = await getMirrorEvent(input.userId, input.accountId, input.eventId);
+  const accountId = account.accountId;
+  const previous = await getMirrorEvent(input.userId, accountId, input.eventId);
   const requestBody: Record<string, unknown> = {};
   if (input.patch.title !== undefined) requestBody.title = input.patch.title;
   if (input.patch.description !== undefined) requestBody.description = input.patch.description;
@@ -136,14 +145,14 @@ export async function updateCalendarEvent(input: {
     target: {
       kind: 'calendarEvent',
       id: input.eventId,
-      accountId: input.accountId,
+      accountId,
       calendarId: input.calendarId,
     },
     inverse: previous
       ? {
           kind: 'calendar.restore_event',
           payload: {
-            accountId: input.accountId,
+            accountId,
             calendarId: input.calendarId,
             eventId: input.eventId,
             fields: {
@@ -170,12 +179,17 @@ export async function deleteCalendarEvent(input: {
   calendarId: string;
   eventId: string;
   notifyParticipants?: boolean;
+  deleteSeries?: boolean;
 }) {
   const account = await getAccount(input.userId, input.accountId);
-  const previous = await getMirrorEvent(input.userId, input.accountId, input.eventId);
+  const accountId = account.accountId;
+  const previous = await getMirrorEvent(input.userId, accountId, input.eventId);
+  const eventId = input.deleteSeries && previous?.masterEventId ? previous.masterEventId : input.eventId;
+  const previousTarget =
+    eventId === input.eventId ? previous : await getMirrorEvent(input.userId, accountId, eventId);
   await requireNylas().events.destroy({
     identifier: account.grantId,
-    eventId: input.eventId,
+    eventId,
     queryParams: {
       calendarId: input.calendarId,
       notifyParticipants: input.notifyParticipants ?? false,
@@ -183,45 +197,87 @@ export async function deleteCalendarEvent(input: {
   });
   await convexMutation(calendarApi.deleteEvent, {
     userId: input.userId,
-    accountId: input.accountId,
-    providerEventId: input.eventId,
+    accountId,
+    providerEventId: eventId,
     includeInstances: true,
   });
+  const inverseSource = previousTarget || previous;
 
   const operationId = await recordOperation({
     userId: input.userId,
     tool: 'calendar_delete_event',
     surface: 'calendar',
-    summary: `Deleted "${previous?.title || input.eventId}"`,
+    summary: `Deleted "${previousTarget?.title || previous?.title || eventId}"`,
     target: {
       kind: 'calendarEvent',
-      id: input.eventId,
-      accountId: input.accountId,
+      id: eventId,
+      accountId,
       calendarId: input.calendarId,
     },
     // Recreation mints a new provider id, but restores the substance.
-    inverse: previous
+    inverse: inverseSource
       ? {
           kind: 'calendar.recreate_event',
           payload: {
-            accountId: input.accountId,
+            accountId,
             calendarId: input.calendarId,
             fields: {
-              title: previous.title,
-              description: previous.description,
-              location: previous.location,
-              busy: previous.busy,
-              startAt: previous.startAt,
-              endAt: previous.endAt,
-              allDay: previous.allDay,
-              participants: previous.participants,
-              recurrence: previous.recurrence,
+              title: inverseSource.title,
+              description: inverseSource.description,
+              location: inverseSource.location,
+              busy: inverseSource.busy,
+              startAt: inverseSource.startAt,
+              endAt: inverseSource.endAt,
+              allDay: inverseSource.allDay,
+              participants: inverseSource.participants,
+              recurrence: inverseSource.recurrence,
             },
           },
         }
       : undefined,
   });
   return { ok: true, operationId };
+}
+
+export async function unsubscribeCalendar(input: UnsubscribeCalendarInput) {
+  const account = await getAccount(input.userId, input.accountId);
+  const accountId = account.accountId;
+  let providerUnsubscribed = false;
+  let providerError: string | undefined;
+  try {
+    await requireNylas().calendars.destroy({
+      identifier: account.grantId,
+      calendarId: input.calendarId,
+    });
+    providerUnsubscribed = true;
+  } catch (err: any) {
+    providerError = err?.message || 'Provider calendar delete/unsubscribe failed.';
+    if (!input.fallbackToHide) throw err;
+  }
+
+  if (providerUnsubscribed) {
+    await convexMutation(calendarApi.removeCalendar, {
+      userId: input.userId,
+      accountId,
+      providerCalendarId: input.calendarId,
+    });
+  } else {
+    await convexMutation(calendarApi.setCalendarHiddenInternal, {
+      userId: input.userId,
+      accountId,
+      providerCalendarId: input.calendarId,
+      hidden: true,
+    });
+  }
+
+  return {
+    ok: true,
+    accountId,
+    calendarId: input.calendarId,
+    providerUnsubscribed,
+    hiddenLocally: !providerUnsubscribed,
+    providerError,
+  };
 }
 
 export async function rsvpCalendarEvent(input: {
@@ -232,13 +288,14 @@ export async function rsvpCalendarEvent(input: {
   status: 'yes' | 'no' | 'maybe';
 }) {
   const account = await getAccount(input.userId, input.accountId);
+  const accountId = account.accountId;
   await requireNylas().events.sendRsvp({
     identifier: account.grantId,
     eventId: input.eventId,
     requestBody: { status: input.status },
     queryParams: { calendarId: input.calendarId } as any,
   });
-  const previous = await getMirrorEvent(input.userId, input.accountId, input.eventId);
+  const previous = await getMirrorEvent(input.userId, accountId, input.eventId);
   const operationId = await recordOperation({
     userId: input.userId,
     tool: 'calendar_rsvp_event',
@@ -247,7 +304,7 @@ export async function rsvpCalendarEvent(input: {
     target: {
       kind: 'calendarEvent',
       id: input.eventId,
-      accountId: input.accountId,
+      accountId,
       calendarId: input.calendarId,
     },
     // No reliable previous-RSVP source; an RSVP change is re-doable but the
@@ -315,6 +372,7 @@ async function deleteWithoutRecording(
   eventId: string,
 ) {
   const account = await getAccount(userId, accountId);
+  const resolvedAccountId = account.accountId;
   await requireNylas().events.destroy({
     identifier: account.grantId,
     eventId,
@@ -322,7 +380,7 @@ async function deleteWithoutRecording(
   });
   await convexMutation(calendarApi.deleteEvent, {
     userId,
-    accountId,
+    accountId: resolvedAccountId,
     providerEventId: eventId,
     includeInstances: true,
   });

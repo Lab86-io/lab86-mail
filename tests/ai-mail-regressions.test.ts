@@ -587,7 +587,7 @@ describe('B2C AI budget accounting', () => {
 });
 
 describe('hosted OpenRouter model options', () => {
-  test('normalizes arbitrary OpenRouter model slugs to approved choices', async () => {
+  test('normalizes OpenRouter model slugs while preserving live catalog choices', async () => {
     const {
       OPENROUTER_DEFAULT_FAST_MODEL,
       OPENROUTER_DEFAULT_PRIMARY_MODEL,
@@ -595,19 +595,20 @@ describe('hosted OpenRouter model options', () => {
       isOpenRouterPrimaryModel,
       normalizeOpenRouterFastModel,
       normalizeOpenRouterPrimaryModel,
-      resolveLab86Family,
     } = await import('../lib/ai/model-options');
 
     expect(isOpenRouterPrimaryModel('openai/gpt-5.5')).toBe(true);
+    expect(OPENROUTER_DEFAULT_FAST_MODEL).toBe('openai/gpt-5.4-nano');
+    expect(isOpenRouterFastModel('openai/gpt-5.4-nano')).toBe(true);
     expect(isOpenRouterFastModel('openai/gpt-5.4-mini')).toBe(true);
     expect(normalizeOpenRouterPrimaryModel('some-provider/unreviewed-model')).toBe(
-      OPENROUTER_DEFAULT_PRIMARY_MODEL,
+      'some-provider/unreviewed-model',
     );
     expect(normalizeOpenRouterFastModel('some-provider/unreviewed-fast-model')).toBe(
-      OPENROUTER_DEFAULT_FAST_MODEL,
+      'some-provider/unreviewed-fast-model',
     );
-    expect(resolveLab86Family('openai/gpt-5.5', 'anthropic/claude-haiku-4.5')).toBe('openai');
-    expect(resolveLab86Family(undefined, 'anthropic/claude-haiku-4.5')).toBe('claude');
+    expect(normalizeOpenRouterPrimaryModel('not-a-model')).toBe(OPENROUTER_DEFAULT_PRIMARY_MODEL);
+    expect(normalizeOpenRouterFastModel('not-a-model')).toBe(OPENROUTER_DEFAULT_FAST_MODEL);
   });
 });
 

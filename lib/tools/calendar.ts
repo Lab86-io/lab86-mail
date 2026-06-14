@@ -4,10 +4,12 @@ import {
   deleteCalendarEvent,
   getPrimaryCalendarId,
   rsvpCalendarEvent,
+  unsubscribeCalendar,
   updateCalendarEvent,
 } from '@/lib/calendar/mutate';
 import { maybeKickCalendarSync, syncAllCalendarAccounts, syncCalendarAccount } from '@/lib/calendar/sync';
 import { api, convexQuery } from '@/lib/hosted/convex';
+import { requireConnectedAccount } from '@/lib/nylas/provider';
 import { parseIsoInTimezone, wallClockInTimezone } from '@/lib/shared/timezones';
 import { defineTool } from './registry';
 
@@ -25,6 +27,7 @@ function makeParseIso(userTimezone: string | undefined) {
 }
 
 const participantSchema = z.object({ email: z.string().email(), name: z.string().optional() });
+const DAY_MS = 86_400_000;
 
 export const calendarListCalendars = defineTool({
   name: 'calendar_list_calendars',
@@ -298,7 +301,7 @@ export const calendarUpdateEvent = defineTool({
 export const calendarDeleteEvent = defineTool({
   name: 'calendar_delete_event',
   description:
-    'Delete an event (a master event id deletes the whole recurring series). Undoable — undo recreates the event. notifyParticipants emails attendees a cancellation — confirm with the user first.',
+    'Delete an event. If deleteSeries is true and eventId is a recurring instance, the tool resolves and deletes the whole series. Undoable — undo recreates the event. notifyParticipants emails attendees a cancellation — confirm with the user first.',
   category: 'calendar',
   mutating: true,
   input: z.object({
@@ -306,6 +309,7 @@ export const calendarDeleteEvent = defineTool({
     calendarId: z.string(),
     eventId: z.string(),
     notifyParticipants: z.boolean().default(false),
+    deleteSeries: z.boolean().default(false),
   }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
   async handler(args, ctx) {
@@ -316,8 +320,159 @@ export const calendarDeleteEvent = defineTool({
       calendarId: args.calendarId,
       eventId: args.eventId,
       notifyParticipants: args.notifyParticipants,
+      deleteSeries: args.deleteSeries,
     });
     return { ok: true, operationId: result.operationId };
+  },
+});
+
+export const calendarDeleteRecurringSeries = defineTool({
+  name: 'calendar_delete_recurring_series',
+  description:
+    'Delete one or more recurring calendar series. Use eventId when available; otherwise pass a title and optional account/calendar/window filters. This resolves expanded recurring instances to their master series id before deleting.',
+  category: 'calendar',
+  mutating: true,
+  input: z.object({
+    account: z.string().optional(),
+    calendarId: z.string().optional(),
+    eventId: z.string().optional(),
+    title: z.string().optional(),
+    titleMatch: z.enum(['exact', 'contains']).default('exact'),
+    fromIso: z.string().optional(),
+    toIso: z.string().optional(),
+    notifyParticipants: z.boolean().default(false),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    deleted: z.number(),
+    targets: z.array(z.any()),
+    errors: z.array(z.string()),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
+    const targets = new Map<
+      string,
+      { accountId: string; calendarId: string; eventId: string; title?: string }
+    >();
+
+    if (args.eventId) {
+      if (!args.account || !args.calendarId) {
+        throw new Error('account and calendarId are required when deleting a series by eventId.');
+      }
+      const account = await requireConnectedAccount(userId, args.account);
+      targets.set(`${account.accountId}:${args.calendarId}:${args.eventId}`, {
+        accountId: account.accountId,
+        calendarId: args.calendarId,
+        eventId: args.eventId,
+      });
+    } else {
+      const titleNeedle = args.title?.trim().toLowerCase();
+      if (!titleNeedle) throw new Error('Provide eventId or title.');
+      const from = args.fromIso ? parseIso(args.fromIso, 'fromIso') : Date.now() - 370 * DAY_MS;
+      const to = args.toIso ? parseIso(args.toIso, 'toIso') : Date.now() + 730 * DAY_MS;
+      const rows = await convexQuery<any[]>(calendarApi.listEvents, {
+        userId,
+        startAt: from,
+        endAt: to,
+        limit: 2000,
+      });
+      const account = args.account ? await requireConnectedAccount(userId, args.account) : null;
+      for (const row of rows || []) {
+        if (account && row.accountId !== account.accountId) continue;
+        if (args.calendarId && row.providerCalendarId !== args.calendarId) continue;
+        const rowTitle = String(row.title || '')
+          .trim()
+          .toLowerCase();
+        const matches =
+          args.titleMatch === 'contains' ? rowTitle.includes(titleNeedle) : rowTitle === titleNeedle;
+        if (!matches) continue;
+        const eventId = row.masterEventId || row.providerEventId;
+        targets.set(`${row.accountId}:${row.providerCalendarId}:${eventId}`, {
+          accountId: row.accountId,
+          calendarId: row.providerCalendarId,
+          eventId,
+          title: row.title,
+        });
+      }
+    }
+
+    const deletedTargets: any[] = [];
+    const errors: string[] = [];
+    for (const target of targets.values()) {
+      try {
+        const result = await deleteCalendarEvent({
+          userId,
+          accountId: target.accountId,
+          calendarId: target.calendarId,
+          eventId: target.eventId,
+          deleteSeries: true,
+          notifyParticipants: args.notifyParticipants,
+        });
+        deletedTargets.push({ ...target, operationId: result.operationId });
+      } catch (err: any) {
+        errors.push(`${target.title || target.eventId}: ${err?.message || 'delete failed'}`);
+      }
+    }
+
+    return { ok: errors.length === 0, deleted: deletedTargets.length, targets: deletedTargets, errors };
+  },
+});
+
+export const calendarUnsubscribeCalendar = defineTool({
+  name: 'calendar_unsubscribe_calendar',
+  description:
+    'Unsubscribe from or remove a synced provider calendar. Pass either calendarId or an exact calendar name. If the provider refuses deletion, fallbackToHide hides it locally and stops it from appearing in the merged calendar view.',
+  category: 'calendar',
+  mutating: true,
+  input: z.object({
+    account: z.string(),
+    calendarId: z.string().optional(),
+    name: z.string().optional(),
+    fallbackToHide: z.boolean().default(true),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    accountId: z.string(),
+    calendarId: z.string(),
+    name: z.string().optional(),
+    providerUnsubscribed: z.boolean(),
+    hiddenLocally: z.boolean(),
+    providerError: z.string().optional(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const account = await requireConnectedAccount(userId, args.account);
+    const calendars = await convexQuery<any[]>(calendarApi.listCalendars, { userId });
+    const nameNeedle = args.name?.trim().toLowerCase();
+    const matches = (calendars || []).filter((cal) => {
+      if (cal.accountId !== account.accountId) return false;
+      if (args.calendarId) return cal.providerCalendarId === args.calendarId;
+      return nameNeedle
+        ? String(cal.name || '')
+            .trim()
+            .toLowerCase() === nameNeedle
+        : false;
+    });
+    if (!args.calendarId && !nameNeedle) throw new Error('Provide calendarId or name.');
+    if (!matches.length) {
+      throw new Error(
+        `Calendar not found under ${account.email}. Use calendar_list_calendars to inspect available calendars.`,
+      );
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `Multiple calendars matched "${args.name || args.calendarId}". Pass calendarId to disambiguate.`,
+      );
+    }
+    const calendar = matches[0];
+    const result = await unsubscribeCalendar({
+      userId,
+      accountId: account.accountId,
+      calendarId: calendar.providerCalendarId,
+      fallbackToHide: args.fallbackToHide,
+    });
+    return { ...result, name: calendar.name };
   },
 });
 

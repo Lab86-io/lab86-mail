@@ -74,6 +74,17 @@ export function emailDeclaresOwnBackground(html: string): boolean {
   return false;
 }
 
+// Anything resembling a full HTML email document should keep its native CSS
+// and table layout. The inline renderer is only for simple fragments/replies.
+export function emailNeedsIsolatedFrame(html: string): boolean {
+  if (emailDeclaresOwnBackground(html)) return true;
+  if (/<(?:!doctype|html|head|body|style|table|tbody|thead|tfoot|tr|td|th|colgroup|meta)\b/i.test(html))
+    return true;
+  if (/<!--\s*\[if\s*(?:mso|gte\s+mso|lt\s+mso|ie)\b/i.test(html)) return true;
+  if (/@media\b|@font-face\b|mso-|xmlns:|class=["'][^"']{20,}/i.test(html)) return true;
+  return false;
+}
+
 // Sanitizer for HTML the user *sends* (i.e. their own composed content,
 // converted from markdown). Slightly broader allowlist than the read path —
 // e.g. we keep <pre>, <code>, blockquote styling, simple inline styles for

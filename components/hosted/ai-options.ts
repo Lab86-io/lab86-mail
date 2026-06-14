@@ -1,6 +1,5 @@
 export {
-  LAB86_MODEL_FAMILIES,
-  type Lab86ModelFamily,
+  loadOpenRouterModelOptions,
   type ModelOption,
   normalizeOpenRouterFastModel,
   normalizeOpenRouterPrimaryModel,
@@ -9,6 +8,5 @@ export {
   OPENROUTER_FAST_MODEL_OPTIONS,
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
   type Provider,
-  resolveLab86Family,
   setProviderForByok,
 } from '@/lib/ai/model-options';

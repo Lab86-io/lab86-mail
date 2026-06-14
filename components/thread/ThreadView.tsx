@@ -35,7 +35,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { emailDeclaresOwnBackground, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
+import { emailNeedsIsolatedFrame, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
@@ -793,12 +793,9 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
       setRendered(null);
       return;
     }
-    // Emails that paint their own background/colors (marketing HTML, which
-    // often defines text color in a <style> block) render in an isolated
-    // iframe so they look exactly as designed. Backgroundless mail (plain-text
-    // replies, light notes) adapts to dark mode inline — see EmailFrame and
-    // the .email-adaptive rules in globals.css.
-    if (emailDeclaresOwnBackground(html)) {
+    // Full/styled email documents render in an isolated iframe so CSS, table
+    // layout, and brand colors survive. Simple fragments/replies adapt inline.
+    if (emailNeedsIsolatedFrame(html)) {
       setRendered({ mode: 'frame', html: sanitizeEmailFrameHtml(html) });
     } else {
       setRendered({ mode: 'adaptive', html: sanitizeEmailHtml(html) });

@@ -13,6 +13,7 @@ import {
   FileSpreadsheet,
   FileText,
   Flag,
+  GripVertical,
   History,
   LayoutList,
   Link2,
@@ -31,12 +32,14 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import type { DragEndEvent } from '@/components/kibo-ui/kanban';
 import {
   KanbanBoard,
   KanbanCard,
   KanbanCards,
+  KanbanColumnHandle,
   KanbanHeader,
   KanbanProvider,
 } from '@/components/kibo-ui/kanban';
@@ -63,6 +66,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
 import { normalizeUrl } from '@/lib/shared/url';
@@ -109,6 +113,7 @@ interface BoardPayload {
 }
 
 type BoardViewMode = 'kanban' | 'list';
+type BoardColumnItem = { id: string; name: string; order: number };
 
 export function TasksSurface() {
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
@@ -268,6 +273,7 @@ function BoardView({ boardId }: { boardId: string }) {
   // kibo's controlled data: local mirror for fluid drag, server resyncs on
   // every Convex push (which also covers collaborators' edits in real time).
   const [items, setItems] = useState<Array<{ id: string; name: string; column: string }>>([]);
+  const [columns, setColumns] = useState<BoardColumnItem[]>([]);
   const cardsById = useMemo(
     () => new Map((board?.cards || []).map((card) => [card.cardId, card])),
     [board?.cards],
@@ -275,6 +281,13 @@ function BoardView({ boardId }: { boardId: string }) {
   useEffect(() => {
     if (!board) return;
     setItems(board.cards.map((card) => ({ id: card.cardId, name: card.title, column: card.columnId })));
+    setColumns(
+      board.columns.map((column) => ({
+        id: column.columnId,
+        name: column.name,
+        order: column.order,
+      })),
+    );
   }, [board]);
 
   const [openCardId, setOpenCardId] = useState<string | null>(null);
@@ -302,6 +315,21 @@ function BoardView({ boardId }: { boardId: string }) {
     void moveCard({ cardId, columnId: targetColumn, beforeOrder, afterOrder }).catch((err: any) =>
       toast.error(err?.message || 'Could not move card'),
     );
+  };
+
+  const persistColumnOrder = (nextColumns: BoardColumnItem[]) => {
+    if (!canEdit) return;
+    const previousIndexById = new Map(columns.map((column, index) => [column.id, index]));
+    const changedColumns = nextColumns.filter((column, index) => previousIndexById.get(column.id) !== index);
+    if (!changedColumns.length) return;
+    void Promise.all(
+      changedColumns.map((column) =>
+        updateColumn({
+          columnId: column.id,
+          order: (nextColumns.findIndex((item) => item.id === column.id) + 1) * 1024,
+        }),
+      ),
+    ).catch((err: any) => toast.error(err?.message || 'Could not reorder columns'));
   };
 
   if (!board) {
@@ -377,9 +405,11 @@ function BoardView({ boardId }: { boardId: string }) {
         {viewMode === 'kanban' ? (
           <div className="min-h-0 flex-1 overflow-x-auto px-5 pb-5">
             <KanbanProvider
-              columns={board.columns.map((column) => ({ id: column.columnId, name: column.name }))}
+              columns={columns}
               data={items}
               onDataChange={setItems}
+              onColumnsChange={canEdit ? setColumns : undefined}
+              onColumnDragEnd={canEdit ? (_event, nextColumns) => persistColumnOrder(nextColumns) : undefined}
               onDragEnd={handleDragEnd}
               className="h-full min-w-fit"
             >
@@ -390,6 +420,14 @@ function BoardView({ boardId }: { boardId: string }) {
                   className="h-full w-72 shrink-0 bg-[var(--color-bg-subtle)]"
                 >
                   <KanbanHeader className="flex items-center px-3 py-2">
+                    {canEdit ? (
+                      <KanbanColumnHandle
+                        className="mr-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text-muted)]"
+                        title="Drag column"
+                      >
+                        <GripVertical className="size-3.5" />
+                      </KanbanColumnHandle>
+                    ) : null}
                     <button
                       type="button"
                       disabled={!canEdit}
@@ -444,9 +482,9 @@ function BoardView({ boardId }: { boardId: string }) {
                     <button
                       type="button"
                       onClick={() => setCreateInColumn(column.id)}
-                      className="m-2 rounded-md border border-dashed border-[var(--color-border)] px-2.5 py-1.5 text-left text-[12.5px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                      className="mx-2 mb-2 mt-auto inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 text-[12.5px] font-medium text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
                     >
-                      Add a card…
+                      <Plus className="size-3.5" /> Add card
                     </button>
                   ) : null}
                 </KanbanBoard>
@@ -481,7 +519,7 @@ function BoardView({ boardId }: { boardId: string }) {
       {createInColumn ? (
         <CreateCardDialog
           boardId={board.boardId}
-          columnName={board.columns.find((c) => c.columnId === createInColumn)?.name || ''}
+          columnName={columns.find((c) => c.id === createInColumn)?.name || ''}
           onClose={() => setCreateInColumn(null)}
           onCreate={async (fields) => {
             try {
@@ -977,35 +1015,42 @@ function CardAttachments({
             />
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="grid gap-1.5 sm:grid-cols-[minmax(8rem,0.35fr)_minmax(0,1fr)]">
             <Input
               value={attachName}
               onChange={(event) => setAttachName(event.target.value)}
               placeholder="Label (optional)"
-              className="h-8 w-32 text-[12px]"
+              className="h-9 text-[12px]"
             />
-            <Input
-              value={attachUrl}
-              onChange={(event) => setAttachUrl(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  submitLink();
-                }
-              }}
-              placeholder="Paste a link — example.com or https://…"
-              className="h-8 flex-1 text-[12px]"
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1 px-2.5 text-[11.5px]"
-              disabled={!normalizeUrl(attachUrl)}
-              onClick={submitLink}
-            >
-              <Link2 className="size-3" /> Add link
-            </Button>
+            <InputGroup className="h-9 bg-[var(--color-bg-elevated)]">
+              <InputGroupAddon>
+                <Link2 className="size-3.5" />
+              </InputGroupAddon>
+              <InputGroupInput
+                value={attachUrl}
+                onChange={(event) => setAttachUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    submitLink();
+                  }
+                }}
+                placeholder="example.com or https://"
+                className="text-[12px]"
+              />
+              <InputGroupAddon align="inline-end">
+                <InputGroupButton
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="text-[11.5px]"
+                  disabled={!normalizeUrl(attachUrl)}
+                  onClick={submitLink}
+                >
+                  Add link
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
           </div>
         </>
       ) : !attachments.length ? (
@@ -1046,7 +1091,11 @@ function CardPanel({
   const [commentDraft, setCommentDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
+  const onCloseRef = useRef(onClose);
   const done = Boolean(card.completedAt);
+
+  onCloseRef.current = onClose;
 
   // Strip the read-time-resolved URL off stored files so we never persist a
   // serving URL next to its storage id (it's re-resolved on every read).
@@ -1125,28 +1174,36 @@ function CardPanel({
     }
   };
 
-  // Escape closes the modal — expected of any full-screen overlay.
+  // Escape closes the panel, and body scroll stays locked while it is open.
   useEffect(() => {
+    setPortalReady(true);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
 
-  return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click-to-close; dialog content stops propagation
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-6"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
+  if (!portalReady) return null;
+
+  return createPortal(
+    <>
+      <button
+        type="button"
+        aria-label="Close card"
+        className="fixed inset-0 z-[70] cursor-default bg-black/50 backdrop-blur-[2px]"
+        onClick={onClose}
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={card.title}
-        className="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl"
+        className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
       >
         <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-5 py-3">
           <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">
@@ -1495,7 +1552,8 @@ function CardPanel({
           </aside>
         </div>
       </div>
-    </div>
+    </>,
+    document.body,
   );
 }
 

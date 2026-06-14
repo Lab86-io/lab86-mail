@@ -13,6 +13,7 @@ import { listAuditEntries, logAction } from './audit-tools';
 import {
   calendarCreateEvent,
   calendarDeleteEvent,
+  calendarDeleteRecurringSeries,
   calendarFreeBusy,
   calendarGetPrimary,
   calendarListCalendars,
@@ -20,6 +21,7 @@ import {
   calendarRsvpEvent,
   calendarSuggestTimes,
   calendarSyncNow,
+  calendarUnsubscribeCalendar,
   calendarUpdateEvent,
 } from './calendar';
 import {
@@ -210,8 +212,10 @@ const allTools: AnyTool[] = [
   calendarSyncNow,
   calendarUpdateEvent,
   calendarDeleteEvent,
+  calendarDeleteRecurringSeries,
   calendarRsvpEvent,
   calendarGetPrimary,
+  calendarUnsubscribeCalendar,
   contactLookup,
   expandAlias,
   resolvePhotos,

@@ -7,8 +7,11 @@ import {
   resolveAiBudgetPolicy,
 } from '@/lib/ai/budget';
 import {
+  loadOpenRouterModelOptions,
   normalizeOpenRouterFastModel,
   normalizeOpenRouterPrimaryModel,
+  OPENROUTER_DEFAULT_FAST_MODEL,
+  OPENROUTER_DEFAULT_PRIMARY_MODEL,
   OPENROUTER_FAST_MODEL_OPTIONS,
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
 } from '@/lib/ai/model-options';
@@ -41,6 +44,14 @@ export async function GET() {
   const requireOpenRouter = isUserOpenRouterKeyRequired();
   const monthlyCredits = requireOpenRouter ? 0 : entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
+  const openrouterModelOptions = await loadOpenRouterModelOptions().catch((err) => {
+    console.error('[ai-settings] failed to load OpenRouter model options', err);
+    return {
+      primary: OPENROUTER_PRIMARY_MODEL_OPTIONS,
+      fast: OPENROUTER_FAST_MODEL_OPTIONS,
+      live: false,
+    };
+  });
   const budget = resolveAiBudgetPolicy({
     monthlyCredits,
     creditsUsed,
@@ -52,6 +63,8 @@ export async function GET() {
     settings: state.settings || {
       mode: requireOpenRouter ? 'byok' : 'lab86',
       provider: 'openrouter',
+      model: OPENROUTER_DEFAULT_PRIMARY_MODEL,
+      fastModel: OPENROUTER_DEFAULT_FAST_MODEL,
       enabled: true,
     },
     key: state.key
@@ -71,8 +84,9 @@ export async function GET() {
     subscriptionsDisabled: isSubscriptionServiceDisabled(),
     modelOptions: {
       openrouter: {
-        primary: OPENROUTER_PRIMARY_MODEL_OPTIONS,
-        fast: OPENROUTER_FAST_MODEL_OPTIONS,
+        primary: openrouterModelOptions.primary,
+        fast: openrouterModelOptions.fast,
+        live: openrouterModelOptions.live,
       },
     },
     usage: {
