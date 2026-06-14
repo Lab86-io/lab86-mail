@@ -1,11 +1,10 @@
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
-import type { NylasAccountRow } from '@/lib/nylas/provider';
+import { type NylasAccountRow, requireConnectedAccount } from '@/lib/nylas/provider';
 import { type EventInputRow, toEventInput } from './sync';
 
 const calendarApi = (api as any).calendarData;
-const accountsApi = (api as any).accounts;
 
 // Calendar writes go provider-first (Nylas), then mirror into Convex so the
 // surface updates without waiting for the webhook echo. Every mutation
@@ -368,12 +367,10 @@ async function getMirrorEvent(userId: string, accountId: string, eventId: string
 }
 
 async function getAccount(userId: string, accountId: string): Promise<NylasAccountRow> {
-  const row = await convexQuery<NylasAccountRow | null>(accountsApi.getConnectedAccount, {
-    userId,
-    accountId,
-  });
-  if (!row || row.status !== 'connected') throw new Error('Connected account not found.');
-  return row;
+  // Flexible resolution (accountId | grantId | email) with an actionable
+  // error — the exact-id-only lookup was the main "no grant"/"not found"
+  // source when the AI passed an email or a stale id.
+  return requireConnectedAccount(userId, accountId);
 }
 
 function toNylasWhen(startAt: number, endAt: number, allDay?: boolean) {

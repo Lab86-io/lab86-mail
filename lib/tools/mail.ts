@@ -247,6 +247,102 @@ async function accountHasCorpusRows(userId: string, accountId: string) {
   return Boolean(state && (state.messagesSynced || state.corpusReady));
 }
 
+// Plaintext reader the agent reaches for when it needs the actual CONTENT of
+// an email (not just subjects/snippets). Returns each message's sender, date,
+// and a clean, capped plaintext body — HTML stripped — so the model can read
+// and reason over what the email says.
+export const readThread = defineTool({
+  name: 'read_thread',
+  description:
+    'Read the full plaintext bodies of an email thread (every message: from, date, and clean body text). Use this whenever you need what an email actually SAYS — answering questions about its content, extracting details, drafting an informed reply.',
+  category: 'mail',
+  mutating: false,
+  input: z.object({
+    account: z.string(),
+    threadId: z.string(),
+    maxCharsPerMessage: z.number().int().min(200).max(20000).default(6000),
+    maxMessages: z
+      .number()
+      .int()
+      .min(1)
+      .max(30)
+      .default(12)
+      .describe('Cap on messages returned (newest first) so long threads stay bounded.'),
+  }),
+  output: z.object({
+    account: z.string(),
+    threadId: z.string(),
+    subject: z.string(),
+    messageCount: z.number().optional(),
+    truncated: z.boolean().optional(),
+    messages: z.array(
+      z.object({
+        from: z.string(),
+        to: z.string().optional(),
+        date: z.number().optional(),
+        body: z.string(),
+        attachments: z.array(z.any()).optional(),
+      }),
+    ),
+  }),
+  async handler({ account, threadId, maxCharsPerMessage, maxMessages }, ctx) {
+    const thread = await getThread.handler({ account, threadId }, ctx);
+    // Newest-first, capped: a 200-message thread otherwise dumps megabytes into
+    // a single tool result and blows the downstream prompt/latency budget.
+    const ordered = [...((thread as any).messages || [])].sort(
+      (a: any, b: any) => (b.date || 0) - (a.date || 0),
+    );
+    const messages = ordered.slice(0, maxMessages).map((message: any) => {
+      const text = bodyToPlainText(message);
+      return {
+        from: message.from || '',
+        to: message.to || undefined,
+        date: message.date,
+        body: text.length > maxCharsPerMessage ? `${text.slice(0, maxCharsPerMessage)}…` : text,
+        attachments: (message.attachments || []).map((a: any) => ({
+          id: a.id || a.attachmentId,
+          name: a.filename || a.name,
+          contentType: a.contentType || a.content_type,
+        })),
+      };
+    });
+    return {
+      account,
+      threadId,
+      subject: (thread as any).subject || '(no subject)',
+      messageCount: ordered.length,
+      truncated: ordered.length > messages.length,
+      messages,
+    };
+  },
+});
+
+// Prefer textBody; fall back to a tag-stripped htmlBody, then the snippet.
+function bodyToPlainText(message: any): string {
+  const raw = message.textBody?.trim()
+    ? message.textBody
+    : message.htmlBody
+      ? message.htmlBody
+          // Keep the link target — otherwise meeting/reset/shared-doc links
+          // collapse to bare anchor text and the agent can't act on them.
+          .replace(/<a\b[^>]*href=(['"])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, '$3 ($2)')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+      : message.snippet || '';
+  return raw
+    .replace(/\r/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export const getThread = defineTool({
   name: 'get_thread',
   description:

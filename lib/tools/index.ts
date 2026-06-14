@@ -53,6 +53,7 @@ import {
   listAttachments,
   listLabels,
   listSmartCategory,
+  readThread,
   recentThreadsCached,
   searchThreads,
 } from './mail';
@@ -92,6 +93,7 @@ import {
 } from './smart-labels';
 import {
   tasksAddComment,
+  tasksAttachFile,
   tasksAttachLink,
   tasksCreateBoard,
   tasksCreateCard,
@@ -134,6 +136,7 @@ const allTools: AnyTool[] = [
   listSmartCategory,
   getSmartCategoryStats,
   getThread,
+  readThread,
   getMessage,
   listLabels,
   listAttachments,
@@ -232,6 +235,7 @@ const allTools: AnyTool[] = [
   tasksDeleteBoard,
   tasksAddComment,
   tasksAttachLink,
+  tasksAttachFile,
   // UI tools — server returns ack, client intercepts for the real mutation.
   uiFocusThread,
   uiSetQuery,

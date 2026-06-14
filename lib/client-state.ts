@@ -77,6 +77,8 @@ export interface ClientState {
   bgWashOpacity: number;
   // 0..~0.3 film-grain overlay opacity.
   grainOpacity: number;
+  // Grain tile size in px (60 fine … 240 coarse); smaller = higher resolution.
+  grainScale: number;
   // UI font: null/sans = Geist, 'serif' = Fraunces, 'news' = Averia Serif Libre.
   appFont: 'sans' | 'serif' | 'news' | null;
 
@@ -122,6 +124,7 @@ export interface ClientState {
   setWashOpacity: (opacity: number) => void;
   setBgWashOpacity: (opacity: number) => void;
   setGrainOpacity: (opacity: number) => void;
+  setGrainScale: (px: number) => void;
   setAppFont: (font: 'sans' | 'serif' | 'news' | null) => void;
 }
 
@@ -172,6 +175,7 @@ export const useClientStore = create<ClientState>()(
       washOpacity: 0,
       bgWashOpacity: 0,
       grainOpacity: 0,
+      grainScale: 140,
       appFont: null,
 
       setAccount: (account) => set({ account }),
@@ -252,6 +256,7 @@ export const useClientStore = create<ClientState>()(
       setWashOpacity: (washOpacity) => set({ washOpacity }),
       setBgWashOpacity: (bgWashOpacity) => set({ bgWashOpacity }),
       setGrainOpacity: (grainOpacity) => set({ grainOpacity }),
+      setGrainScale: (grainScale) => set({ grainScale }),
       setAppFont: (appFont) => set({ appFont }),
     }),
     {
@@ -287,6 +292,7 @@ export const useClientStore = create<ClientState>()(
         washOpacity: s.washOpacity,
         bgWashOpacity: s.bgWashOpacity,
         grainOpacity: s.grainOpacity,
+        grainScale: s.grainScale,
         appFont: s.appFont,
       }),
     },

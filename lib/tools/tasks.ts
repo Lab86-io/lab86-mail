@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
+import { fetchEmailAttachment, fetchWebFile, storeForCard } from '@/lib/attachments/fetch-store';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { parseIsoInTimezone } from '@/lib/shared/timezones';
+import { normalizeUrl } from '@/lib/shared/url';
 import { defineTool } from './registry';
 
 const boardsApi = (api as any).boards;
@@ -112,7 +114,7 @@ export const tasksCreateBoard = defineTool({
 export const tasksCreateCard = defineTool({
   name: 'tasks_create_card',
   description:
-    'Create a card on a board. Omit boardId for the default board; column defaults to the first column (use column:"Today" etc.). dueIso sets a due date (naive timestamps are the user’s timezone). Pass source when the task came from an email so the card carries a provenance link.',
+    'Create a card on a board. Omit boardId for the default board; column defaults to the first column (use column:"Today" etc.). dueIso sets a due date (naive timestamps are the user’s timezone). assignees are board-member emails. Pass source when the task came from an email so the card carries a provenance link.',
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -123,6 +125,7 @@ export const tasksCreateCard = defineTool({
     labels: z.array(z.string()).optional(),
     priority: prioritySchema.optional(),
     weight: z.number().int().min(0).optional(),
+    assignees: z.array(z.string().email()).optional(),
     dueIso: z.string().optional(),
     source: z
       .object({
@@ -146,6 +149,7 @@ export const tasksCreateCard = defineTool({
       labels: args.labels,
       priority: args.priority,
       weight: args.weight,
+      assignees: args.assignees,
       dueAt: args.dueIso ? parseIsoInTimezone(args.dueIso, ctx.userTimezone, 'dueIso') : undefined,
       source: args.source ?? { kind: 'chat' },
     });
@@ -174,6 +178,7 @@ export const tasksUpdateCard = defineTool({
     labels: z.array(z.string()).optional(),
     priority: prioritySchema.optional(),
     weight: z.number().int().min(0).nullable().optional(),
+    assignees: z.array(z.string().email()).optional(),
     dueIso: z.string().nullable().optional(),
     completed: z.boolean().optional(),
   }),
@@ -188,6 +193,7 @@ export const tasksUpdateCard = defineTool({
       labels: args.labels,
       priority: args.priority,
       weight: args.weight,
+      assignees: args.assignees,
       dueAt:
         args.dueIso === undefined
           ? undefined
@@ -407,20 +413,59 @@ export const tasksAddComment = defineTool({
 
 export const tasksAttachLink = defineTool({
   name: 'tasks_attach_link',
-  description: 'Attach a URL to a card (name + link).',
+  description:
+    'Attach a link to a card. The url is forgiving — "example.com" or "https://example.com" both work.',
   category: 'tasks',
   mutating: true,
-  input: z.object({ cardId: z.string(), name: z.string().min(1), url: z.string().url() }),
-  output: z.object({ ok: z.boolean() }),
+  input: z.object({ cardId: z.string(), name: z.string().optional(), url: z.string().min(1) }),
+  output: z.object({ ok: z.boolean(), url: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const url = normalizeUrl(args.url);
+    if (!url) throw new Error(`Not a usable URL: ${args.url}`);
     await convexMutation(boardsApi.attachToCard, {
       userId,
       cardId: args.cardId,
-      name: args.name,
-      url: args.url,
+      name: args.name?.trim() || url,
+      url,
     });
-    return { ok: true };
+    return { ok: true, url };
+  },
+});
+
+export const tasksAttachFile = defineTool({
+  name: 'tasks_attach_file',
+  description:
+    'Download a file and attach it to a card as an uploaded file (not just a link). Provide a web url, OR an email attachment (account + messageId + attachmentId). Use this when the user says "save/attach this file to the card".',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    cardId: z.string(),
+    name: z.string().optional(),
+    url: z.string().optional(),
+    account: z.string().optional(),
+    messageId: z.string().optional(),
+    attachmentId: z.string().optional(),
+  }),
+  output: z.object({ ok: z.boolean(), name: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const blob = args.url
+      ? await fetchWebFile(args.url, args.name)
+      : args.account && args.messageId && args.attachmentId
+        ? await fetchEmailAttachment(userId, args.account, args.attachmentId, args.messageId, args.name)
+        : null;
+    if (!blob) throw new Error('Provide a url, or account + messageId + attachmentId.');
+    const stored = await storeForCard(userId, args.cardId, blob);
+    await convexMutation(boardsApi.attachToCard, {
+      userId,
+      cardId: args.cardId,
+      name: args.name?.trim() || stored.name,
+      storageId: stored.storageId,
+      contentType: stored.contentType,
+      size: stored.size,
+    });
+    return { ok: true, name: stored.name };
   },
 });
 
@@ -440,6 +485,7 @@ registerUndoExecutor('tasks.recreate_card', async (payload, ctx) => {
     description: fields.description,
     labels: fields.labels,
     priority: fields.priority,
+    assignees: fields.assignees,
     dueAt: fields.dueAt,
     source: fields.source,
   });
@@ -454,6 +500,7 @@ registerUndoExecutor('tasks.restore_card', async (payload, ctx) => {
     description: fields.description ?? '',
     labels: fields.labels ?? [],
     priority: fields.priority,
+    assignees: fields.assignees ?? [],
     dueAt: fields.dueAt ?? null,
     completedAt: fields.completedAt ?? null,
   });

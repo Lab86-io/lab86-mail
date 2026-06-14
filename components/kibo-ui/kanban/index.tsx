@@ -20,7 +20,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { createContext, type HTMLAttributes, type ReactNode, useContext, useState } from 'react';
+import { createContext, type HTMLAttributes, type ReactNode, useContext, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import tunnel from 'tunnel-rat';
 import { Card } from '@/components/ui/card';
@@ -85,27 +85,56 @@ export const KanbanBoard = ({ id, children, className }: KanbanBoardProps) => {
 export type KanbanCardProps<T extends KanbanItemProps = KanbanItemProps> = T & {
   children?: ReactNode;
   className?: string;
+  // Fires on a tap (pointer down→up with negligible travel) — distinct from
+  // a drag. dnd-kit's listeners sit on the same node and swallow nested
+  // onClick, so the host can't rely on a child button; this is the reliable
+  // open-detail hook.
+  onCardClick?: () => void;
 };
+
+const TAP_MOVE_THRESHOLD = 6;
 
 export const KanbanCard = <T extends KanbanItemProps = KanbanItemProps>({
   id,
   name,
   children,
   className,
+  onCardClick,
 }: KanbanCardProps<T>) => {
   const { attributes, listeners, setNodeRef, transition, transform, isDragging } = useSortable({
     id,
   });
   const { activeCardId } = useContext(KanbanContext) as KanbanContextProps;
+  const tapStart = useRef<{ x: number; y: number } | null>(null);
 
   const style = {
     transition,
     transform: CSS.Transform.toString(transform),
   };
 
+  // Observe pointer coordinates ourselves rather than fighting the sensor:
+  // a press that lifts within the move threshold is a tap → open the card.
+  const handlePointerDown = (event: React.PointerEvent) => {
+    tapStart.current = { x: event.clientX, y: event.clientY };
+  };
+  const handlePointerUp = (event: React.PointerEvent) => {
+    const start = tapStart.current;
+    tapStart.current = null;
+    if (!start || !onCardClick) return;
+    const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (moved <= TAP_MOVE_THRESHOLD) onCardClick();
+  };
+
   return (
     <>
-      <div style={style} {...listeners} {...attributes} ref={setNodeRef}>
+      <div
+        style={style}
+        {...listeners}
+        {...attributes}
+        ref={setNodeRef}
+        onPointerDownCapture={handlePointerDown}
+        onPointerUp={handlePointerUp}
+      >
         <Card
           className={cn(
             'cursor-grab gap-4 rounded-md p-3 shadow-sm',
@@ -198,7 +227,15 @@ export const KanbanProvider = <
 }: KanbanProviderProps<T, C>) => {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
 
-  const sensors = useSensors(useSensor(MouseSensor), useSensor(TouchSensor), useSensor(KeyboardSensor));
+  // Activation constraints are what let a plain click through: a drag only
+  // begins after real movement (mouse) or a short hold (touch). Without them
+  // MouseSensor grabs the press on mousedown and the click never lands —
+  // which is exactly why cards weren't opening.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
   const handleDragStart = (event: DragStartEvent) => {
     const card = data.find((item) => item.id === event.active.id);
@@ -296,7 +333,9 @@ export const KanbanProvider = <
         sensors={sensors}
         {...props}
       >
-        <div className={cn('grid size-full auto-cols-fr grid-flow-col gap-4', className)}>
+        {/* Flex row (not auto-cols-fr grid): columns keep their fixed width
+            and overflow horizontally instead of stretching to fill. */}
+        <div className={cn('flex size-full gap-4', className)}>
           {columns.map((column) => children(column))}
         </div>
         {typeof window !== 'undefined' &&

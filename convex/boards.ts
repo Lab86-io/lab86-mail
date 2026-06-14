@@ -69,6 +69,31 @@ function nextOrder(existing: number[]): number {
   return existing.length ? Math.max(...existing) + ORDER_STEP : ORDER_STEP;
 }
 
+// Assignees must be board members (owner included); normalize casing and
+// reject anything off-board so a direct client call can't write arbitrary
+// strings into the assignee contract.
+async function normalizeAssignees(
+  ctx: QueryCtx | MutationCtx,
+  boardId: Id<'boards'>,
+  assignees: string[] | undefined,
+): Promise<string[] | undefined> {
+  if (assignees === undefined) return undefined;
+  if (!assignees.length) return [];
+  const board = await ctx.db.get(boardId);
+  const members = await ctx.db
+    .query('boardMembers')
+    .withIndex('by_board', (q) => q.eq('boardId', boardId))
+    .collect();
+  const ownerEmail = board ? await actorEmail(ctx, board.ownerUserId) : undefined;
+  const allowed = new Set(
+    [...members.map((m) => m.email), ...(ownerEmail ? [ownerEmail] : [])].map((e) => e.toLowerCase()),
+  );
+  const normalized = [...new Set(assignees.map((e) => e.trim().toLowerCase()))].filter(Boolean);
+  const invalid = normalized.find((e) => !allowed.has(e));
+  if (invalid) throw new Error(`Assignee "${invalid}" is not a member of this board.`);
+  return normalized;
+}
+
 const callerArgs = {
   internalSecret: v.optional(v.string()),
   userId: v.optional(v.string()),
@@ -321,6 +346,7 @@ const cardFields = {
   labels: v.optional(v.array(v.string())),
   priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
   weight: v.optional(v.union(v.number(), v.null())),
+  assignees: v.optional(v.array(v.string())),
   dueAt: v.optional(v.union(v.number(), v.null())),
   completedAt: v.optional(v.union(v.number(), v.null())),
   attachments: v.optional(
@@ -329,6 +355,8 @@ const cardFields = {
         name: v.string(),
         url: v.optional(v.string()),
         storageId: v.optional(v.id('_storage')),
+        contentType: v.optional(v.string()),
+        size: v.optional(v.number()),
       }),
     ),
   ),
@@ -344,6 +372,7 @@ export const createCard = mutation({
     labels: v.optional(v.array(v.string())),
     priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
     weight: v.optional(v.number()),
+    assignees: v.optional(v.array(v.string())),
     dueAt: v.optional(v.number()),
     attachments: v.optional(
       v.array(
@@ -351,6 +380,8 @@ export const createCard = mutation({
           name: v.string(),
           url: v.optional(v.string()),
           storageId: v.optional(v.id('_storage')),
+          contentType: v.optional(v.string()),
+          size: v.optional(v.number()),
         }),
       ),
     ),
@@ -361,6 +392,7 @@ export const createCard = mutation({
     await requireBoard(ctx, args.boardId, userId, 'member');
     const column = await ctx.db.get(args.columnId);
     if (!column || column.boardId !== args.boardId) throw new Error('Column not found on board.');
+    const assignees = await normalizeAssignees(ctx, args.boardId, args.assignees);
     const siblings = await ctx.db
       .query('cards')
       .withIndex('by_column_order', (q) => q.eq('columnId', args.columnId))
@@ -375,6 +407,7 @@ export const createCard = mutation({
       labels: args.labels,
       priority: args.priority,
       weight: args.weight,
+      assignees,
       dueAt: args.dueAt,
       attachments: args.attachments,
       order: nextOrder(siblings.map((card) => card.order)),
@@ -401,6 +434,8 @@ export const updateCard = mutation({
     if (args.labels !== undefined) patch.labels = args.labels;
     if (args.priority !== undefined) patch.priority = args.priority;
     if (args.weight !== undefined) patch.weight = args.weight === null ? undefined : args.weight;
+    if (args.assignees !== undefined)
+      patch.assignees = await normalizeAssignees(ctx, card.boardId, args.assignees);
     if (args.attachments !== undefined) patch.attachments = args.attachments;
     // null clears; undefined leaves untouched.
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt === null ? undefined : args.dueAt;
@@ -522,6 +557,8 @@ export const attachToCard = mutation({
     name: v.string(),
     url: v.optional(v.string()),
     storageId: v.optional(v.id('_storage')),
+    contentType: v.optional(v.string()),
+    size: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -532,7 +569,13 @@ export const attachToCard = mutation({
     await ctx.db.patch(args.cardId, {
       attachments: [
         ...(card.attachments || []),
-        { name: args.name.trim() || args.url || 'attachment', url: args.url, storageId: args.storageId },
+        {
+          name: args.name.trim() || args.url || 'attachment',
+          url: args.url,
+          storageId: args.storageId,
+          contentType: args.contentType,
+          size: args.size,
+        },
       ],
       updatedAt: now(),
     });
@@ -712,6 +755,7 @@ async function boardPayload(ctx: QueryCtx | MutationCtx, board: any, role: Role)
   ]);
   columns.sort((a, b) => a.order - b.order);
   cards.sort((a, b) => a.order - b.order);
+  const ownerEmail = await actorEmail(ctx, board.ownerUserId);
   const cardPayloads = await Promise.all(
     cards.map(async (card) => ({
       cardId: card._id,
@@ -724,17 +768,20 @@ async function boardPayload(ctx: QueryCtx | MutationCtx, board: any, role: Role)
     title: board.title,
     role,
     publicToken: role === 'owner' ? board.publicToken || null : null,
+    ownerEmail,
     columns: columns.map((column) => ({ columnId: column._id, name: column.name, order: column.order })),
     cards: cardPayloads,
+    // Member management stays owner-only, but everyone who can edit needs the
+    // roster to pick assignees, so expose the lightweight list to non-viewers.
     members:
-      role === 'owner'
-        ? members.map((member) => ({
+      role === 'viewer'
+        ? []
+        : members.map((member) => ({
             memberId: member._id,
             email: member.email,
             role: member.role,
             status: member.status,
-          }))
-        : [],
+          })),
   };
 }
 
@@ -759,6 +806,7 @@ function snapshotCard(card: any) {
     labels: card.labels,
     priority: card.priority,
     weight: card.weight,
+    assignees: card.assignees,
     dueAt: card.dueAt,
     completedAt: card.completedAt,
     order: card.order,

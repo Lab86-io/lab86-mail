@@ -1,4 +1,6 @@
+import type { CreateAttachmentRequest } from 'nylas';
 import { z } from 'zod';
+import { fetchEmailAttachment, fetchWebFile } from '../attachments/fetch-store';
 import { listNylasScheduledMessages, sendNylasMessage, stopNylasScheduledMessage } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
 import type { Draft } from '../shared/types';
@@ -11,6 +13,36 @@ import {
 import { getMessage as getMessageRecord, getThreadMessages } from '../store/messages';
 import { defineTool } from './registry';
 
+// Attachment sources the agent can pull and send: a web url, or a file off
+// an existing email. Both resolve to bytes server-side at send time. Kept flat
+// (rather than a discriminated union) so the model doesn't need a type tag, but
+// refined to reject empty/ambiguous shapes up front.
+const AttachmentSource = z
+  .object({
+    name: z.string().optional(),
+    url: z.string().optional(),
+    account: z.string().optional(),
+    messageId: z.string().optional(),
+    attachmentId: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const isWeb = Boolean(value.url);
+    const isEmail = Boolean(value.account && value.messageId && value.attachmentId);
+    if (isWeb && isEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide either url OR account+messageId+attachmentId, not both.',
+      });
+    }
+    if (!isWeb && !isEmail) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Each attachment needs a url, or account + messageId + attachmentId.',
+      });
+    }
+  });
+type AttachmentSourceInput = z.infer<typeof AttachmentSource>;
+
 const SendBase = z.object({
   account: z.string(),
   to: z.string(),
@@ -20,7 +52,40 @@ const SendBase = z.object({
   body: z.string(),
   html: z.string().optional(),
   from: z.string().optional(),
+  attachments: z.array(AttachmentSource).optional(),
 });
+
+// Resolve attachment descriptors to Nylas CreateAttachmentRequest payloads
+// (filename + contentType + base64 content). Used by every send path so the
+// AI can "pull this file from the web / that email and attach it."
+async function resolveSendAttachments(
+  userId: string | null | undefined,
+  sources: AttachmentSourceInput[] | undefined,
+): Promise<CreateAttachmentRequest[] | undefined> {
+  if (!sources?.length) return undefined;
+  if (!userId) throw new Error('Sign in required to attach files.');
+  const resolved: CreateAttachmentRequest[] = [];
+  for (const source of sources) {
+    const blob = source.url
+      ? await fetchWebFile(source.url, source.name)
+      : source.account && source.messageId && source.attachmentId
+        ? await fetchEmailAttachment(
+            userId,
+            source.account,
+            source.attachmentId,
+            source.messageId,
+            source.name,
+          )
+        : null;
+    if (!blob) throw new Error('Each attachment needs a url, or account + messageId + attachmentId.');
+    resolved.push({
+      filename: source.name?.trim() || blob.name,
+      contentType: blob.contentType,
+      content: Buffer.from(blob.bytes),
+    });
+  }
+  return resolved;
+}
 
 async function sendWithNylas(args: Parameters<typeof sendNylasMessage>[0]) {
   const sent = await sendNylasMessage(args);
@@ -76,8 +141,19 @@ export const sendMessage = defineTool({
   mutating: true,
   input: SendBase,
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, to, cc, bcc, subject, body, html }, ctx) {
-    await sendWithNylas({ userId: ctx.userId, account, to, cc, bcc, subject, body, html });
+  async handler({ account, to, cc, bcc, subject, body, html, attachments }, ctx) {
+    const resolved = await resolveSendAttachments(ctx.userId, attachments);
+    await sendWithNylas({
+      userId: ctx.userId,
+      account,
+      to,
+      cc,
+      bcc,
+      subject,
+      body,
+      html,
+      attachments: resolved,
+    });
     return { ok: true };
   },
 });
@@ -94,9 +170,10 @@ export const replyMessage = defineTool({
     body: z.string(),
     html: z.string().optional(),
     from: z.string().optional(),
+    attachments: z.array(AttachmentSource).optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, html }, ctx) {
+  async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
     const target = await resolveReplyTarget(account, messageId, threadId);
     await sendWithNylas({
       userId: ctx.userId,
@@ -106,6 +183,7 @@ export const replyMessage = defineTool({
       body,
       html,
       replyToMessageId: messageId,
+      attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return { ok: true };
   },
@@ -123,9 +201,10 @@ export const replyAllMessage = defineTool({
     body: z.string(),
     html: z.string().optional(),
     from: z.string().optional(),
+    attachments: z.array(AttachmentSource).optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, threadId, body, html }, ctx) {
+  async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
     const target = await resolveReplyAllTarget(account, messageId, threadId);
     if (!target.to) throw new Error('Cannot reply-all — no recipients are available.');
     await sendWithNylas({
@@ -136,6 +215,7 @@ export const replyAllMessage = defineTool({
       body,
       html,
       replyToMessageId: messageId,
+      attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return { ok: true };
   },
@@ -144,7 +224,7 @@ export const replyAllMessage = defineTool({
 export const forwardMessage = defineTool({
   name: 'forward',
   description:
-    'Forward a message to one or more recipients. Synthesizes a quoted body from the original message; original attachments are not re-carried.',
+    'Forward a message to one or more recipients. Synthesizes a quoted body from the original. To re-carry the original file(s), pass attachments: [{ account, messageId, attachmentId }] (find ids via list_attachments).',
   category: 'compose',
   mutating: true,
   input: z.object({
@@ -156,9 +236,10 @@ export const forwardMessage = defineTool({
     body: z.string().optional(),
     html: z.string().optional(),
     from: z.string().optional(),
+    attachments: z.array(AttachmentSource).optional(),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, to, cc, bcc, body, html }, ctx) {
+  async handler({ account, messageId, to, cc, bcc, body, html, attachments }, ctx) {
     const original = await getMessageRecord(account, messageId);
     if (!original)
       throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
@@ -200,6 +281,7 @@ export const forwardMessage = defineTool({
       subject: fwdSubject,
       body: quotedText,
       html: quotedHtml,
+      attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return { ok: true };
   },

@@ -48,6 +48,7 @@ export function useApplyThemeExtras() {
   const washOpacity = useClientStore((s) => s.washOpacity);
   const bgWashOpacity = useClientStore((s) => s.bgWashOpacity);
   const grainOpacity = useClientStore((s) => s.grainOpacity);
+  const grainScale = useClientStore((s) => s.grainScale);
   const appFont = useClientStore((s) => s.appFont);
   useEffect(() => {
     const root = document.documentElement;
@@ -62,9 +63,20 @@ export function useApplyThemeExtras() {
     setOrClear('--wash-opacity', washOpacity > 0 ? String(washOpacity) : null);
     setOrClear('--bg-wash-opacity', bgWashOpacity > 0 ? String(bgWashOpacity) : null);
     setOrClear('--grain-opacity', grainOpacity > 0 ? String(grainOpacity) : null);
+    setOrClear('--grain-scale', grainScale ? `${grainScale}px` : null);
     const font = FONTS.find((f) => f.id === appFont);
     setOrClear('--font-display-choice', font?.stack ?? null);
-  }, [accentHue, accentChroma, bgHue, surfaceTint, washOpacity, bgWashOpacity, grainOpacity, appFont]);
+  }, [
+    accentHue,
+    accentChroma,
+    bgHue,
+    surfaceTint,
+    washOpacity,
+    bgWashOpacity,
+    grainOpacity,
+    grainScale,
+    appFont,
+  ]);
 }
 
 const HUE_TRACK =
@@ -89,6 +101,7 @@ function Slider({
   value,
   onChange,
   trackStyle,
+  readout,
 }: {
   label: string;
   min: number;
@@ -97,11 +110,13 @@ function Slider({
   value: number;
   onChange: (value: number) => void;
   trackStyle?: React.CSSProperties;
+  readout?: string;
 }) {
   return (
     <label className="block">
       <span className="mb-1 flex items-center justify-between text-[10.5px] text-[var(--color-text-muted)]">
-        {label}
+        <span>{label}</span>
+        {readout ? <span className="tabular-nums text-[var(--color-text-faint)]">{readout}</span> : null}
       </span>
       <input
         type="range"
@@ -136,6 +151,8 @@ export function ThemePanel({ className }: { className?: string }) {
   const setBgWashOpacity = useClientStore((s) => s.setBgWashOpacity);
   const grainOpacity = useClientStore((s) => s.grainOpacity);
   const setGrainOpacity = useClientStore((s) => s.setGrainOpacity);
+  const grainScale = useClientStore((s) => s.grainScale);
+  const setGrainScale = useClientStore((s) => s.setGrainScale);
   const appFont = useClientStore((s) => s.appFont);
   const setAppFont = useClientStore((s) => s.setAppFont);
 
@@ -236,6 +253,7 @@ export function ThemePanel({ className }: { className?: string }) {
               max={359}
               step={1}
               value={hue}
+              readout={`${Math.round(hue)}°`}
               onChange={(value) => setAccent(value, Math.max(chroma, 0.08))}
               trackStyle={{ background: HUE_TRACK }}
             />
@@ -245,6 +263,7 @@ export function ThemePanel({ className }: { className?: string }) {
               max={0.16}
               step={0.005}
               value={chroma}
+              readout={`${Math.round(((chroma - 0.01) / 0.15) * 100)}%`}
               onChange={(value) => setAccent(hue, value)}
               trackStyle={{
                 background: `linear-gradient(to right, oklch(0.62 0.01 ${hue}), oklch(0.62 0.16 ${hue}))`,
@@ -261,6 +280,7 @@ export function ThemePanel({ className }: { className?: string }) {
               max={359}
               step={1}
               value={backgroundHue}
+              readout={`${Math.round(backgroundHue)}°`}
               onChange={(value) => setBgHue(value)}
               trackStyle={{ background: HUE_TRACK }}
             />
@@ -270,6 +290,7 @@ export function ThemePanel({ className }: { className?: string }) {
               max={1}
               step={0.05}
               value={surfaceTint}
+              readout={`${Math.round(surfaceTint * 100)}%`}
               onChange={setSurfaceTint}
               trackStyle={{
                 background: `linear-gradient(to right, var(--color-bg-muted), oklch(0.45 0.06 ${backgroundHue}))`,
@@ -286,6 +307,7 @@ export function ThemePanel({ className }: { className?: string }) {
               max={1}
               step={0.05}
               value={washOpacity}
+              readout={washOpacity ? `${Math.round(washOpacity * 100)}%` : 'Off'}
               onChange={setWashOpacity}
             />
             <Slider
@@ -294,6 +316,7 @@ export function ThemePanel({ className }: { className?: string }) {
               max={1}
               step={0.05}
               value={bgWashOpacity}
+              readout={bgWashOpacity ? `${Math.round(bgWashOpacity * 100)}%` : 'Off'}
               onChange={setBgWashOpacity}
             />
             <Slider
@@ -302,8 +325,20 @@ export function ThemePanel({ className }: { className?: string }) {
               max={0.3}
               step={0.02}
               value={grainOpacity}
+              readout={grainOpacity ? `${Math.round((grainOpacity / 0.3) * 100)}%` : 'Off'}
               onChange={setGrainOpacity}
             />
+            {grainOpacity > 0 ? (
+              <Slider
+                label="Grain size"
+                min={60}
+                max={240}
+                step={10}
+                value={grainScale}
+                readout={grainScale <= 100 ? 'Fine' : grainScale >= 200 ? 'Coarse' : 'Medium'}
+                onChange={setGrainScale}
+              />
+            ) : null}
           </div>
         </Section>
 
