@@ -563,5 +563,6 @@ function toToolEvent(row: any) {
     participants: row.participants,
     organizer: row.organizer,
     conferencing: row.conferencing,
+    htmlLink: row.htmlLink,
   };
 }

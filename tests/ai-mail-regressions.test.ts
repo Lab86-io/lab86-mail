@@ -598,7 +598,7 @@ describe('hosted OpenRouter model options', () => {
     } = await import('../lib/ai/model-options');
 
     expect(isOpenRouterPrimaryModel('openai/gpt-5.5')).toBe(true);
-    expect(OPENROUTER_DEFAULT_FAST_MODEL).toBe('openai/gpt-5.4-nano');
+    expect(OPENROUTER_DEFAULT_FAST_MODEL).toBe('openai/gpt-5-nano');
     expect(isOpenRouterFastModel('openai/gpt-5.4-nano')).toBe(true);
     expect(isOpenRouterFastModel('openai/gpt-5.4-mini')).toBe(true);
     expect(normalizeOpenRouterPrimaryModel('some-provider/unreviewed-model')).toBe(

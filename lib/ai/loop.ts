@@ -82,6 +82,7 @@ const AGENT_TOOL_NAMES = new Set([
   'tasks_add_comment',
   'tasks_attach_link',
   'tasks_attach_file',
+  'tasks_attach_calendar_event_link',
   'contact_lookup',
   'expand_alias',
   'browserbase_search',

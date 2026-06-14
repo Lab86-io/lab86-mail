@@ -4,6 +4,7 @@ import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
+  Brain,
   CalendarDays,
   Check,
   CreditCard,
@@ -14,7 +15,6 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -572,7 +572,7 @@ function AiSection() {
               disabled={requireOpenRouter}
               title="Lab86 AI"
               description="Included with Pro. Curated models, zero setup, budgeted for you."
-              icon={<Sparkles className="size-4" />}
+              icon={<Brain className="size-4" />}
               onClick={() => setAiMode('lab86')}
             />
             <ModeCard
@@ -609,7 +609,7 @@ function AiSection() {
               )}
             </div>
             <div className="space-y-1.5">
-              <Label>Primary model</Label>
+              <Label>Normal model</Label>
               {showOpenRouterModels ? (
                 <Select value={model} onValueChange={setModel}>
                   <SelectTrigger className="w-full">
@@ -654,8 +654,7 @@ function AiSection() {
             </div>
             {aiMode === 'lab86' ? (
               <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                Lab86 routes through OpenRouter. Normal work uses the primary model; summaries, quick drafts,
-                and labels use the fast model.
+                Lab86 AI runs through OpenRouter. Normal handles deep work; fast uses nano by default.
               </div>
             ) : (
               <div className="space-y-1.5">

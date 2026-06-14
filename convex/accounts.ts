@@ -417,6 +417,15 @@ export const deleteUserCascade = mutation({
       counts[table] = rows.length;
       for (const row of rows) await ctx.db.delete(row._id);
     }
+    const agentUploads = await ctx.db
+      .query('agentUploads')
+      .withIndex('by_user_created', (q) => q.eq('userId', args.userId))
+      .collect();
+    counts.agentUploads = agentUploads.length;
+    for (const upload of agentUploads) {
+      await ctx.storage.delete(upload.storageId).catch(() => undefined);
+      await ctx.db.delete(upload._id);
+    }
     await ctx.scheduler.runAfter(0, internal.accounts.purgeUserDataBatch, { userId: args.userId });
 
     // Kanban: boards key on ownerUserId, so they need their own pass. Owned

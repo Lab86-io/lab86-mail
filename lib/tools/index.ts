@@ -95,6 +95,7 @@ import {
 } from './smart-labels';
 import {
   tasksAddComment,
+  tasksAttachCalendarEventLink,
   tasksAttachFile,
   tasksAttachLink,
   tasksCreateBoard,
@@ -238,6 +239,7 @@ const allTools: AnyTool[] = [
   tasksRenameBoard,
   tasksDeleteBoard,
   tasksAddComment,
+  tasksAttachCalendarEventLink,
   tasksAttachLink,
   tasksAttachFile,
   // UI tools — server returns ack, client intercepts for the real mutation.

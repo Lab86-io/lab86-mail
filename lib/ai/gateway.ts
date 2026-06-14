@@ -29,22 +29,21 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 // always resolves to the platform default — user model preferences only steer
 // the fast/primary tiers.
 // The fast tier (which drives the agent and summaries) defaults to the
-// newest nano model — gpt-5.4-nano — per the operator's directive: fast
-// should be nano-cheap everywhere unless an env override or BYOK setting
-// raises it.
+// nano model — gpt-5-nano on OpenRouter — per the operator's directive: fast
+// should be nano-cheap everywhere unless an env override or BYOK setting raises it.
 const DEFAULT_MODELS: Record<AiProvider, { primary: string; fast: string; nano: string }> = {
   openrouter: {
     primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'openai/gpt-5.5',
     fast:
       process.env.LAB86_MAIL_OPENAI_FAST_MODEL ||
       process.env.MAIL_OS_OPENAI_FAST_MODEL ||
-      'openai/gpt-5.4-nano',
-    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'openai/gpt-5.4-nano',
+      'openai/gpt-5-nano',
+    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'openai/gpt-5-nano',
   },
   openai: {
     primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'gpt-5.5',
-    fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || 'gpt-5.4-nano',
-    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'gpt-5.4-nano',
+    fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || 'gpt-5-nano',
+    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'gpt-5-nano',
   },
   anthropic: {
     primary: process.env.LAB86_MAIL_ANTHROPIC_MODEL || 'claude-sonnet-4-6',

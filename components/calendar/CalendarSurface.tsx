@@ -143,6 +143,7 @@ export function CalendarSurface() {
           organizer: row.organizer,
           conferencing: row.conferencing,
           recurrence: row.recurrence,
+          htmlLink: row.htmlLink,
         })),
     );
   }, [eventRows, users, calendars, colorByCalendar, dueCards]);

@@ -32,6 +32,7 @@ export interface IEvent {
   organizer?: { email?: string; name?: string };
   conferencing?: any;
   recurrence?: string[];
+  htmlLink?: string;
 }
 
 export interface ICalendarCell {

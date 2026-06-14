@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, Check, KeyRound, Plus, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Brain, Check, KeyRound, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -303,7 +303,7 @@ export function WelcomeFlow() {
             <ModeCard
               active={aiMode === 'lab86'}
               disabled={requireOpenRouter}
-              icon={<Sparkles className="size-4" />}
+              icon={<Brain className="size-4" />}
               title="Lab86 AI"
               description="Included with Pro. Curated models, zero setup, budgeted automatically."
               onClick={() => setAiMode('lab86')}
@@ -359,11 +359,11 @@ export function WelcomeFlow() {
                 </div>
               ) : (
                 <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                  Lab86 routes through OpenRouter with your selected normal and fast models.
+                  Lab86 AI runs through OpenRouter. Normal handles deep work; fast uses nano by default.
                 </div>
               )}
               <div className="space-y-1.5">
-                <Label>Primary model</Label>
+                <Label>Normal model</Label>
                 {showOpenRouterModels ? (
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger className="w-full">

@@ -7,7 +7,7 @@ export type ModelOption = {
 };
 
 export const OPENROUTER_DEFAULT_PRIMARY_MODEL = 'openai/gpt-5.5';
-export const OPENROUTER_DEFAULT_FAST_MODEL = 'openai/gpt-5.4-nano';
+export const OPENROUTER_DEFAULT_FAST_MODEL = 'openai/gpt-5-nano';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_MODEL_FETCH_TIMEOUT_MS = 3500;
@@ -57,9 +57,14 @@ export const OPENROUTER_PRIMARY_MODEL_OPTIONS: ModelOption[] = [
 
 export const OPENROUTER_FAST_MODEL_OPTIONS: ModelOption[] = [
   {
+    id: 'openai/gpt-5-nano',
+    label: 'GPT-5 Nano',
+    detail: 'Default fast model for summaries, labels, and quick drafts.',
+  },
+  {
     id: 'openai/gpt-5.4-nano',
     label: 'GPT-5.4 Nano',
-    detail: 'Default fast model for summaries, labels, and quick drafts.',
+    detail: 'Nano-family OpenAI model when available for your OpenRouter account.',
   },
   {
     id: 'openai/gpt-5.4-mini',
@@ -85,11 +90,6 @@ export const OPENROUTER_FAST_MODEL_OPTIONS: ModelOption[] = [
     id: 'qwen/qwen3.6-flash',
     label: 'Qwen3.6 Flash',
     detail: 'Fast Qwen model with a large context window.',
-  },
-  {
-    id: 'openai/gpt-5-nano',
-    label: 'GPT-5 Nano',
-    detail: 'Lowest-latency OpenAI option for small tasks.',
   },
 ];
 

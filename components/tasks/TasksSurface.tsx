@@ -3,8 +3,6 @@
 import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   CalendarClock,
-  Check,
-  CheckCircle2,
   Download,
   ExternalLink,
   FileArchive,
@@ -12,9 +10,7 @@ import {
   FileImage,
   FileSpreadsheet,
   FileText,
-  Flag,
   GripVertical,
-  History,
   LayoutList,
   Link2,
   Mail,
@@ -22,16 +18,15 @@ import {
   Paperclip,
   Pencil,
   Plus,
-  Scale,
   Share2,
   SquareKanban,
-  Tag,
   Trash2,
   UploadCloud,
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import type { DragEndEvent } from '@/components/kibo-ui/kanban';
@@ -66,7 +61,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
+import { Markdown } from '@/components/ui/markdown';
 import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
 import { normalizeUrl } from '@/lib/shared/url';
@@ -98,7 +93,20 @@ interface BoardCard {
   attachments?: CardAttachment[];
   comments?: Array<{ id: string; authorEmail?: string; body: string; createdAt: number }>;
   activity?: Array<{ id: string; actorEmail?: string; action: string; detail?: string; createdAt: number }>;
-  source?: { kind: string; accountId?: string; threadId?: string; messageId?: string };
+  source?: {
+    kind: string;
+    accountId?: string;
+    threadId?: string;
+    messageId?: string;
+    calendarId?: string;
+    eventId?: string;
+    url?: string;
+    htmlLink?: string;
+    title?: string;
+  };
+  sourceThreadId?: string;
+  sourceCalendarEventId?: string;
+  sourceAccountId?: string;
 }
 
 interface BoardPayload {
@@ -298,14 +306,17 @@ function BoardView({ boardId }: { boardId: string }) {
 
   const openCard = openCardId ? cardsById.get(openCardId) : null;
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleItemDragEnd = (
+    event: DragEndEvent,
+    nextItems: Array<{ id: string; name: string; column: string }>,
+  ) => {
     if (!board || !canEdit) return;
     const cardId = String(event.active.id);
     const previous = cardsById.get(cardId);
-    const local = items.find((item) => item.id === cardId);
+    const local = nextItems.find((item) => item.id === cardId);
     if (!previous || !local) return;
     const targetColumn = local.column;
-    const columnItems = items.filter((item) => item.column === targetColumn);
+    const columnItems = nextItems.filter((item) => item.column === targetColumn);
     const index = columnItems.findIndex((item) => item.id === cardId);
     const beforeId = index > 0 ? columnItems[index - 1].id : undefined;
     const afterId = index < columnItems.length - 1 ? columnItems[index + 1].id : undefined;
@@ -410,7 +421,7 @@ function BoardView({ boardId }: { boardId: string }) {
               onDataChange={setItems}
               onColumnsChange={canEdit ? setColumns : undefined}
               onColumnDragEnd={canEdit ? (_event, nextColumns) => persistColumnOrder(nextColumns) : undefined}
-              onDragEnd={handleDragEnd}
+              onItemDragEnd={handleItemDragEnd}
               className="h-full min-w-fit"
             >
               {(column) => (
@@ -501,19 +512,24 @@ function BoardView({ boardId }: { boardId: string }) {
         )}
       </div>
 
-      {openCard ? (
-        <CardPanel
-          card={openCard}
-          canEdit={canEdit}
-          role={board.role}
-          assignable={[
-            ...new Set(
-              [board.ownerEmail, ...board.members.map((member) => member.email)].filter(Boolean) as string[],
-            ),
-          ]}
-          onClose={() => setOpenCardId(null)}
-        />
-      ) : null}
+      <AnimatePresence>
+        {openCard ? (
+          <CardPanel
+            key={openCard.cardId}
+            card={openCard}
+            canEdit={canEdit}
+            role={board.role}
+            assignable={[
+              ...new Set(
+                [board.ownerEmail, ...board.members.map((member) => member.email)].filter(
+                  Boolean,
+                ) as string[],
+              ),
+            ]}
+            onClose={() => setOpenCardId(null)}
+          />
+        ) : null}
+      </AnimatePresence>
 
       {shareOpen ? <ShareDialog board={board} onClose={() => setShareOpen(false)} /> : null}
       {createInColumn ? (
@@ -738,12 +754,15 @@ function CardMetaChips({ card }: { card?: BoardCard }) {
       {card.source?.threadId ? (
         <Mail className="size-3 text-[var(--color-text-faint)]" aria-label="From an email" />
       ) : null}
+      {card.source?.eventId || card.sourceCalendarEventId ? (
+        <CalendarClock className="size-3 text-[var(--color-text-faint)]" aria-label="From a calendar event" />
+      ) : null}
       {card.attachments?.length ? (
         <Paperclip className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />
       ) : null}
       {card.comments?.length ? (
         <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">
-          💬 {card.comments.length}
+          {card.comments.length} comment{card.comments.length === 1 ? '' : 's'}
         </span>
       ) : null}
       {card.weight !== undefined ? (
@@ -866,6 +885,8 @@ function CardAttachments({
   const [attachUrl, setAttachUrl] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const linkLabelId = useId();
+  const linkUrlId = useId();
 
   const submitLink = () => {
     const url = normalizeUrl(attachUrl);
@@ -878,7 +899,6 @@ function CardAttachments({
   return (
     <section className="space-y-2.5">
       <div className="flex items-center gap-2">
-        <Paperclip className="size-3.5 text-[var(--color-text-faint)]" />
         <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Attachments</h3>
         {attachments.length ? (
           <span className="rounded-full bg-[var(--color-bg-muted)] px-1.5 text-[10px] text-[var(--color-text-faint)]">
@@ -1015,48 +1035,125 @@ function CardAttachments({
             />
           </div>
 
-          <div className="grid gap-1.5 sm:grid-cols-[minmax(8rem,0.35fr)_minmax(0,1fr)]">
-            <Input
-              value={attachName}
-              onChange={(event) => setAttachName(event.target.value)}
-              placeholder="Label (optional)"
-              className="h-9 text-[12px]"
-            />
-            <InputGroup className="h-9 bg-[var(--color-bg-elevated)]">
-              <InputGroupAddon>
-                <Link2 className="size-3.5" />
-              </InputGroupAddon>
-              <InputGroupInput
-                value={attachUrl}
-                onChange={(event) => setAttachUrl(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    submitLink();
-                  }
-                }}
-                placeholder="example.com or https://"
-                className="text-[12px]"
-              />
-              <InputGroupAddon align="inline-end">
-                <InputGroupButton
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="text-[11.5px]"
-                  disabled={!normalizeUrl(attachUrl)}
-                  onClick={submitLink}
-                >
-                  Add link
-                </InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/45 p-2.5">
+            <div className="mb-2 flex items-center justify-between">
+              <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                Add link
+              </h4>
+              <span className="text-[10.5px] text-[var(--color-text-faint)]">URL attachment</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[minmax(8rem,0.35fr)_minmax(0,1fr)_auto]">
+              <label htmlFor={linkLabelId} className="space-y-1">
+                <span className="text-[10.5px] font-medium text-[var(--color-text-muted)]">Link label</span>
+                <Input
+                  id={linkLabelId}
+                  value={attachName}
+                  onChange={(event) => setAttachName(event.target.value)}
+                  placeholder="Optional"
+                  className="h-9 bg-[var(--color-bg-elevated)] text-[12px]"
+                />
+              </label>
+              <label htmlFor={linkUrlId} className="space-y-1">
+                <span className="text-[10.5px] font-medium text-[var(--color-text-muted)]">Link URL</span>
+                <Input
+                  id={linkUrlId}
+                  value={attachUrl}
+                  onChange={(event) => setAttachUrl(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      submitLink();
+                    }
+                  }}
+                  placeholder="https://example.com/page"
+                  className="h-9 bg-[var(--color-bg-elevated)] text-[12px]"
+                />
+              </label>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-9 self-end px-3 text-[12px]"
+                disabled={!normalizeUrl(attachUrl)}
+                onClick={submitLink}
+              >
+                Add link
+              </Button>
+            </div>
           </div>
         </>
       ) : !attachments.length ? (
         <p className="text-[11.5px] text-[var(--color-text-faint)]">Nothing attached.</p>
       ) : null}
     </section>
+  );
+}
+
+type MarkdownMode = 'write' | 'preview';
+
+const markdownClass =
+  'space-y-2 text-[13.5px] leading-relaxed text-[var(--color-text)] [&_a]:text-[var(--color-accent)] [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--color-text-muted)] [&_code]:rounded [&_code]:bg-[var(--color-bg-muted)] [&_code]:px-1 [&_code]:py-0.5 [&_h1]:font-display [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:font-display [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:font-semibold [&_ol]:ml-5 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-[var(--color-bg-muted)] [&_pre]:p-3 [&_ul]:ml-5 [&_ul]:list-disc';
+
+function MarkdownEditor({
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  minHeight = 'min-h-40',
+  mode,
+  onModeChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  placeholder: string;
+  minHeight?: string;
+  mode: MarkdownMode;
+  onModeChange: (mode: MarkdownMode) => void;
+}) {
+  const showWrite = !disabled && mode === 'write';
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40">
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-2 py-1.5">
+        <div className="flex rounded-md bg-[var(--color-bg-muted)] p-0.5">
+          {(['write', 'preview'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => onModeChange(tab)}
+              className={cn(
+                'h-6 rounded px-2 text-[11px] font-medium capitalize transition-colors',
+                mode === tab
+                  ? 'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]'
+                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+        <span className="text-[10.5px] text-[var(--color-text-faint)]">Markdown</span>
+      </div>
+      {showWrite ? (
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          className={cn(
+            minHeight,
+            'w-full resize-y border-0 bg-transparent px-3.5 py-3 text-[13.5px] leading-relaxed outline-none placeholder:text-[var(--color-text-faint)]',
+          )}
+        />
+      ) : (
+        <div className={cn(minHeight, 'px-3.5 py-3')}>
+          {value.trim() ? (
+            <Markdown className={markdownClass}>{value}</Markdown>
+          ) : (
+            <p className="text-[13px] text-[var(--color-text-faint)]">{placeholder}</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1089,6 +1186,8 @@ function CardPanel({
   const [assignees, setAssignees] = useState<string[]>(card.assignees || []);
   const [due, setDue] = useState(card.dueAt ? toLocalInputValue(card.dueAt) : '');
   const [commentDraft, setCommentDraft] = useState('');
+  const [descriptionMode, setDescriptionMode] = useState<MarkdownMode>('write');
+  const [commentMode, setCommentMode] = useState<MarkdownMode>('write');
   const [uploading, setUploading] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const [portalReady, setPortalReady] = useState(false);
@@ -1193,31 +1292,39 @@ function CardPanel({
 
   return createPortal(
     <>
-      <button
+      <motion.button
         type="button"
         aria-label="Close card"
         className="fixed inset-0 z-[70] cursor-default bg-black/50 backdrop-blur-[2px]"
         onClick={onClose}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18 }}
       />
-      <div
+      <motion.div
         role="dialog"
         aria-modal="true"
         aria-label={card.title}
         className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
+        initial={{ opacity: 0.3, x: 72 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 56 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       >
         <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-5 py-3">
           <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">
-            <SquareKanban className="size-3.5" /> Card
+            Card
           </span>
           {done ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-accent)]">
-              <CheckCircle2 className="size-3" /> Done
+              Done
             </span>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
             {canEdit ? (
               <Button type="button" size="sm" className="h-8 px-3 text-[12px]" onClick={save}>
-                <Check className="mr-1 size-3.5" /> Save
+                Save
               </Button>
             ) : null}
             {canEdit ? (
@@ -1297,12 +1404,13 @@ function CardPanel({
 
             <div className="space-y-2">
               <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Notes</h3>
-              <textarea
+              <MarkdownEditor
                 value={description}
-                onChange={(event) => setDescription(event.target.value)}
+                onChange={setDescription}
                 disabled={!canEdit}
                 placeholder="Add details, context, or a checklist (markdown supported)…"
-                className="min-h-40 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-3.5 py-3 text-[13.5px] leading-relaxed outline-none focus-visible:border-[var(--color-accent)]"
+                mode={descriptionMode}
+                onModeChange={setDescriptionMode}
               />
             </div>
 
@@ -1317,36 +1425,40 @@ function CardPanel({
 
             <section className="space-y-2.5">
               <div className="flex items-center gap-2">
-                <Mail className="size-3.5 text-[var(--color-text-faint)]" />
                 <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">
                   Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
                 </h3>
               </div>
-              {(card.comments || []).map((comment) => (
-                <div
-                  key={comment.id}
-                  className="flex gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 px-3 py-2.5"
-                >
-                  <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[9px] font-semibold uppercase text-[var(--color-text-muted)]">
-                    {emailInitials(comment.authorEmail || '?')}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13px] leading-relaxed text-[var(--color-text)]">{comment.body}</p>
-                    <p className="mt-1 text-[10.5px] text-[var(--color-text-faint)]">
-                      {comment.authorEmail || 'someone'} ·{' '}
-                      {new Date(comment.createdAt).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </p>
-                  </div>
+              {card.comments?.length ? (
+                <div className="relative space-y-3 pl-4 before:absolute before:bottom-2 before:left-[0.72rem] before:top-2 before:w-px before:bg-[var(--color-border)]">
+                  {card.comments.map((comment) => (
+                    <article key={comment.id} className="relative flex gap-3">
+                      <span className="relative z-10 mt-2 grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[9px] font-semibold uppercase text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]">
+                        {emailInitials(comment.authorEmail || '?')}
+                      </span>
+                      <div className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 px-3 py-2.5">
+                        <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px]">
+                          <span className="font-medium text-[var(--color-text-muted)]">
+                            {comment.authorEmail || 'someone'}
+                          </span>
+                          <span className="text-[var(--color-text-faint)]">
+                            {new Date(comment.createdAt).toLocaleString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                        <Markdown className={markdownClass}>{comment.body}</Markdown>
+                      </div>
+                    </article>
+                  ))}
                 </div>
-              ))}
+              ) : null}
               {/* Everyone with access can comment — viewers included. */}
               <form
-                className="flex items-center gap-1.5"
+                className="space-y-2"
                 onSubmit={async (event) => {
                   event.preventDefault();
                   const body = commentDraft.trim();
@@ -1359,15 +1471,19 @@ function CardPanel({
                   }
                 }}
               >
-                <Input
+                <MarkdownEditor
                   value={commentDraft}
-                  onChange={(event) => setCommentDraft(event.target.value)}
+                  onChange={setCommentDraft}
                   placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
-                  className="h-9 flex-1 text-[12.5px]"
+                  minHeight="min-h-24"
+                  mode={commentMode}
+                  onModeChange={setCommentMode}
                 />
-                <Button type="submit" size="sm" variant="outline" className="h-9 px-3 text-[12px]">
-                  Post
-                </Button>
+                <div className="flex justify-end">
+                  <Button type="submit" size="sm" variant="outline" className="h-9 px-3 text-[12px]">
+                    Post
+                  </Button>
+                </div>
               </form>
             </section>
 
@@ -1375,9 +1491,8 @@ function CardPanel({
               <button
                 type="button"
                 onClick={() => setShowActivity(!showActivity)}
-                className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                className="inline-flex text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
               >
-                <History className="size-3.5" />
                 Activity{card.activity?.length ? ` · ${card.activity.length}` : ''}
               </button>
               {showActivity ? (
@@ -1403,11 +1518,8 @@ function CardPanel({
           {/* Metadata rail. */}
           <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-5 py-5 md:border-l md:border-t-0">
             <div className="space-y-1.5">
-              <label
-                htmlFor="card-due"
-                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
-              >
-                <CalendarClock className="size-3.5" /> Due date
+              <label htmlFor="card-due" className="text-[11px] font-medium text-[var(--color-text-muted)]">
+                Due date
               </label>
               <Input
                 id="card-due"
@@ -1422,9 +1534,9 @@ function CardPanel({
             <div className="space-y-1.5">
               <label
                 htmlFor="card-priority"
-                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
+                className="text-[11px] font-medium text-[var(--color-text-muted)]"
               >
-                <Flag className="size-3.5" /> Priority
+                Priority
               </label>
               <select
                 id="card-priority"
@@ -1441,11 +1553,8 @@ function CardPanel({
             </div>
 
             <div className="space-y-1.5">
-              <label
-                htmlFor="card-weight"
-                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
-              >
-                <Scale className="size-3.5" /> Weight
+              <label htmlFor="card-weight" className="text-[11px] font-medium text-[var(--color-text-muted)]">
+                Weight
               </label>
               <Input
                 id="card-weight"
@@ -1460,11 +1569,8 @@ function CardPanel({
             </div>
 
             <div className="space-y-1.5">
-              <label
-                htmlFor="card-labels"
-                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
-              >
-                <Tag className="size-3.5" /> Labels
+              <label htmlFor="card-labels" className="text-[11px] font-medium text-[var(--color-text-muted)]">
+                Labels
               </label>
               <Input
                 id="card-labels"
@@ -1493,9 +1599,7 @@ function CardPanel({
             </div>
 
             <div className="space-y-1.5">
-              <p className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]">
-                <Users className="size-3.5" /> Assigned
-              </p>
+              <p className="text-[11px] font-medium text-[var(--color-text-muted)]">Assigned</p>
               {assignable.length ? (
                 <div className="flex flex-wrap gap-1.5">
                   {assignable.map((email) => {
@@ -1532,9 +1636,7 @@ function CardPanel({
 
             {card.source?.threadId ? (
               <div className="space-y-1.5">
-                <p className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]">
-                  <Mail className="size-3.5" /> Source
-                </p>
+                <p className="text-[11px] font-medium text-[var(--color-text-muted)]">Source</p>
                 <button
                   type="button"
                   onClick={() => {
@@ -1549,9 +1651,38 @@ function CardPanel({
                 </button>
               </div>
             ) : null}
+
+            {card.source?.eventId || card.sourceCalendarEventId ? (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-[var(--color-text-muted)]">Source</p>
+                <div className="space-y-1.5">
+                  {card.source?.url || card.source?.htmlLink ? (
+                    <a
+                      href={card.source.url || card.source.htmlLink}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                    >
+                      <ExternalLink className="size-3.5 shrink-0" />
+                      {card.source?.title || 'Open calendar event'}
+                    </a>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrimaryView('calendar');
+                      onClose();
+                    }}
+                    className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                  >
+                    <CalendarClock className="size-3.5 shrink-0" /> Show calendar
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </aside>
         </div>
-      </div>
+      </motion.div>
     </>,
     document.body,
   );

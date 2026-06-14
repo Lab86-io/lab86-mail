@@ -375,10 +375,10 @@ export function ThreadView() {
   const reader = (
     <motion.div
       key={`${account}:${threadId}:${threadFullscreen ? 'popout' : 'pane'}`}
-      initial={threadFullscreen ? { opacity: 0.3, x: 56 } : { opacity: 0, y: 6 }}
+      initial={threadFullscreen ? { opacity: 0.3, x: 72 } : { opacity: 0, y: 6 }}
       animate={threadFullscreen ? { opacity: 1, x: 0 } : { opacity: 1, y: 0 }}
-      exit={threadFullscreen ? { opacity: 0, x: 40 } : undefined}
-      transition={{ duration: threadFullscreen ? 0.24 : 0.18, ease: [0.16, 1, 0.3, 1] }}
+      exit={threadFullscreen ? { opacity: 0, x: 56 } : undefined}
+      transition={{ duration: threadFullscreen ? 0.22 : 0.18, ease: [0.16, 1, 0.3, 1] }}
       role={threadFullscreen ? 'dialog' : undefined}
       aria-modal={threadFullscreen ? true : undefined}
       aria-label={threadFullscreen ? data.subject : undefined}
@@ -553,7 +553,7 @@ export function ThreadView() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
+          transition={{ duration: 0.18 }}
           onClick={() => setThreadFullscreen(false)}
           className="fixed inset-0 z-[70] cursor-default bg-black/50 backdrop-blur-[2px]"
         />

@@ -1,12 +1,19 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
-import { fetchEmailAttachment, fetchWebFile, storeForCard } from '@/lib/attachments/fetch-store';
+import {
+  fetchEmailAttachment,
+  fetchWebFile,
+  getStagedAgentUpload,
+  storeForCard,
+} from '@/lib/attachments/fetch-store';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { requireConnectedAccount } from '@/lib/nylas/provider';
 import { parseIsoInTimezone } from '@/lib/shared/timezones';
 import { normalizeUrl } from '@/lib/shared/url';
 import { defineTool } from './registry';
 
 const boardsApi = (api as any).boards;
+const calendarApi = (api as any).calendarData;
 
 // AI control over the Kanban (spec M2). Every mutation records an inverse so
 // "filed 10 tasks" is one reviewable, undoable change-set.
@@ -52,6 +59,16 @@ async function resolveBoardAndColumn(
 }
 
 const prioritySchema = z.enum(['low', 'medium', 'high']);
+const sourceSchema = z.object({
+  kind: z.enum(['email', 'calendar', 'chat', 'suggestion', 'manual']),
+  accountId: z.string().optional(),
+  threadId: z.string().optional(),
+  messageId: z.string().optional(),
+  calendarId: z.string().optional(),
+  eventId: z.string().optional(),
+  url: z.string().optional(),
+  title: z.string().optional(),
+});
 
 export const tasksListBoards = defineTool({
   name: 'tasks_list_boards',
@@ -114,7 +131,7 @@ export const tasksCreateBoard = defineTool({
 export const tasksCreateCard = defineTool({
   name: 'tasks_create_card',
   description:
-    'Create a card on a board. Omit boardId for the default board; column defaults to the first column (use column:"Today" etc.). dueIso sets a due date (naive timestamps are the user’s timezone). assignees are board-member emails. Pass source when the task came from an email so the card carries a provenance link.',
+    'Create a card on a board. Omit boardId for the default board; column defaults to the first column (use column:"Today" etc.). dueIso sets a due date (naive timestamps are the user’s timezone). assignees are board-member emails. Pass source when the task came from an email or calendar event so the card carries a provenance link.',
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -127,14 +144,7 @@ export const tasksCreateCard = defineTool({
     weight: z.number().int().min(0).optional(),
     assignees: z.array(z.string().email()).optional(),
     dueIso: z.string().optional(),
-    source: z
-      .object({
-        kind: z.enum(['email', 'chat', 'suggestion']),
-        accountId: z.string().optional(),
-        threadId: z.string().optional(),
-        messageId: z.string().optional(),
-      })
-      .optional(),
+    source: sourceSchema.optional(),
   }),
   output: z.object({ ok: z.boolean(), cardId: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
@@ -168,7 +178,7 @@ export const tasksCreateCard = defineTool({
 export const tasksUpdateCard = defineTool({
   name: 'tasks_update_card',
   description:
-    'Update a card’s fields (title, description, labels, priority, due date, completed). Pass dueIso:null to clear the due date. completed:true marks done.',
+    'Update a card’s fields (title, description, labels, priority, due date, completed, source provenance). Pass dueIso:null to clear the due date. completed:true marks done.',
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -181,6 +191,7 @@ export const tasksUpdateCard = defineTool({
     assignees: z.array(z.string().email()).optional(),
     dueIso: z.string().nullable().optional(),
     completed: z.boolean().optional(),
+    source: sourceSchema.optional(),
   }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
   async handler(args, ctx) {
@@ -201,6 +212,7 @@ export const tasksUpdateCard = defineTool({
             ? null
             : parseIsoInTimezone(args.dueIso, ctx.userTimezone, 'dueIso'),
       completedAt: args.completed === undefined ? undefined : args.completed ? Date.now() : null,
+      source: args.source,
     });
     const operationId = await recordOperation({
       userId,
@@ -418,38 +430,77 @@ export const tasksAttachLink = defineTool({
   category: 'tasks',
   mutating: true,
   input: z.object({ cardId: z.string(), name: z.string().optional(), url: z.string().min(1) }),
-  output: z.object({ ok: z.boolean(), url: z.string() }),
+  output: z.object({ ok: z.boolean(), url: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const url = normalizeUrl(args.url);
     if (!url) throw new Error(`Not a usable URL: ${args.url}`);
-    await convexMutation(boardsApi.attachToCard, {
+    const result = await convexMutation<{ previous: any }>(boardsApi.attachToCard, {
       userId,
       cardId: args.cardId,
       name: args.name?.trim() || url,
       url,
     });
-    return { ok: true, url };
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_attach_link',
+      surface: 'tasks',
+      summary: `Attached link to "${result.previous.title}"`,
+      target: { kind: 'card', id: args.cardId, boardId: result.previous.boardId },
+      inverse: { kind: 'tasks.restore_card', payload: { cardId: args.cardId, fields: result.previous } },
+    });
+    return { ok: true, url, operationId };
   },
 });
 
 export const tasksAttachFile = defineTool({
   name: 'tasks_attach_file',
   description:
-    'Download a file and attach it to a card as an uploaded file (not just a link). Provide a web url, OR an email attachment (account + messageId + attachmentId). Use this when the user says "save/attach this file to the card".',
+    'Attach a file to a card as an uploaded file (not just a link). Provide a chatUploadId from the current assistant turn, OR a web url, OR an email attachment (account + messageId + attachmentId). Use this when the user says "save/attach this file to the card".',
   category: 'tasks',
   mutating: true,
   input: z.object({
     cardId: z.string(),
     name: z.string().optional(),
+    chatUploadId: z.string().optional(),
     url: z.string().optional(),
     account: z.string().optional(),
     messageId: z.string().optional(),
     attachmentId: z.string().optional(),
   }),
-  output: z.object({ ok: z.boolean(), name: z.string() }),
+  output: z.object({ ok: z.boolean(), name: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const sources = [args.chatUploadId, args.url, args.account && args.messageId && args.attachmentId].filter(
+      Boolean,
+    );
+    if (sources.length !== 1) {
+      throw new Error(
+        'Provide exactly one file source: chatUploadId, url, or account + messageId + attachmentId.',
+      );
+    }
+    if (args.chatUploadId) {
+      const staged = await getStagedAgentUpload(userId, args.chatUploadId);
+      if (!staged) throw new Error('Chat upload not found or not owned by this user.');
+      const name = args.name?.trim() || staged.name;
+      const result = await convexMutation<{ previous: any }>(boardsApi.attachToCard, {
+        userId,
+        cardId: args.cardId,
+        name,
+        storageId: staged.storageId,
+        contentType: staged.contentType,
+        size: staged.size,
+      });
+      const operationId = await recordOperation({
+        userId,
+        tool: 'tasks_attach_file',
+        surface: 'tasks',
+        summary: `Attached "${name}" to "${result.previous.title}"`,
+        target: { kind: 'card', id: args.cardId, boardId: result.previous.boardId },
+        inverse: { kind: 'tasks.restore_card', payload: { cardId: args.cardId, fields: result.previous } },
+      });
+      return { ok: true, name, operationId };
+    }
     const blob = args.url
       ? await fetchWebFile(args.url, args.name)
       : args.account && args.messageId && args.attachmentId
@@ -457,7 +508,7 @@ export const tasksAttachFile = defineTool({
         : null;
     if (!blob) throw new Error('Provide a url, or account + messageId + attachmentId.');
     const stored = await storeForCard(userId, args.cardId, blob);
-    await convexMutation(boardsApi.attachToCard, {
+    const result = await convexMutation<{ previous: any }>(boardsApi.attachToCard, {
       userId,
       cardId: args.cardId,
       name: args.name?.trim() || stored.name,
@@ -465,7 +516,75 @@ export const tasksAttachFile = defineTool({
       contentType: stored.contentType,
       size: stored.size,
     });
-    return { ok: true, name: stored.name };
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_attach_file',
+      surface: 'tasks',
+      summary: `Attached "${stored.name}" to "${result.previous.title}"`,
+      target: { kind: 'card', id: args.cardId, boardId: result.previous.boardId },
+      inverse: { kind: 'tasks.restore_card', payload: { cardId: args.cardId, fields: result.previous } },
+    });
+    return { ok: true, name: stored.name, operationId };
+  },
+});
+
+export const tasksAttachCalendarEventLink = defineTool({
+  name: 'tasks_attach_calendar_event_link',
+  description:
+    'Attach a provider link for a calendar event to a task card and, by default, set that event as the card provenance source. Use this when the user wants a task to reference a calendar event and you have the eventId/account, or after calendar_list_events finds the event.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    cardId: z.string(),
+    account: z.string(),
+    eventId: z.string(),
+    name: z.string().optional(),
+    setAsSource: z.boolean().default(true),
+  }),
+  output: z.object({ ok: z.boolean(), url: z.string(), name: z.string(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const account = await requireConnectedAccount(userId, args.account);
+    const event = await convexQuery<any | null>(calendarApi.getEventByProviderId, {
+      userId,
+      accountId: account.accountId,
+      providerEventId: args.eventId,
+    });
+    if (!event) throw new Error('Calendar event not found. Run calendar_list_events to find the eventId.');
+    const url = event.htmlLink;
+    if (!url) {
+      throw new Error('This synced calendar event does not expose a provider link.');
+    }
+    const name = args.name?.trim() || event.title || 'Calendar event';
+    const result = await convexMutation<{ previous: any }>(boardsApi.attachToCard, {
+      userId,
+      cardId: args.cardId,
+      name,
+      url,
+    });
+    if (args.setAsSource) {
+      await convexMutation(boardsApi.updateCard, {
+        userId,
+        cardId: args.cardId,
+        source: {
+          kind: 'calendar',
+          accountId: event.accountId,
+          calendarId: event.providerCalendarId,
+          eventId: event.providerEventId,
+          url,
+          title: event.title,
+        },
+      });
+    }
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_attach_calendar_event_link',
+      surface: 'tasks',
+      summary: `Attached calendar event "${name}" to "${result.previous.title}"`,
+      target: { kind: 'card', id: args.cardId, boardId: result.previous.boardId },
+      inverse: { kind: 'tasks.restore_card', payload: { cardId: args.cardId, fields: result.previous } },
+    });
+    return { ok: true, url, name, operationId };
   },
 });
 
@@ -503,6 +622,8 @@ registerUndoExecutor('tasks.restore_card', async (payload, ctx) => {
     assignees: fields.assignees ?? [],
     dueAt: fields.dueAt ?? null,
     completedAt: fields.completedAt ?? null,
+    attachments: fields.attachments ?? [],
+    source: fields.source,
   });
 });
 

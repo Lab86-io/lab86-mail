@@ -120,7 +120,7 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
           <WeekViewMultiDayEventsRow selectedDate={selectedDate} multiDayEvents={multiDayEvents} />
         </div>
 
-        <ScrollArea className="min-h-0 flex-1" type="always" ref={scrollRef}>
+        <ScrollArea className="min-h-0 flex-1 overscroll-contain" type="always" ref={scrollRef}>
           <div className="flex">
             {/* Hours column */}
             <motion.div className="relative w-18" variants={staggerContainer}>

@@ -239,15 +239,29 @@ export const KanbanCards = <T extends KanbanItemProps = KanbanItemProps>({
   className,
   ...props
 }: KanbanCardsProps<T>) => {
-  const { data } = useContext(KanbanContext) as KanbanContextProps<T>;
+  const { activeCardId, data } = useContext(KanbanContext) as KanbanContextProps<T>;
   const filteredData = data.filter((item) => item.column === props.id);
   const items = filteredData.map((item) => item.id);
+  const showDropHint = Boolean(activeCardId && !filteredData.length);
 
   return (
     <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <SortableContext items={items}>
-        <div className={cn('flex min-h-full flex-grow flex-col gap-2 p-2', className)} {...props}>
+        <div
+          className={cn(
+            'flex min-h-full flex-grow flex-col gap-2 p-2',
+            showDropHint &&
+              'rounded-md border border-dashed border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60',
+            className,
+          )}
+          {...props}
+        >
           {filteredData.map(children)}
+          {showDropHint ? (
+            <div className="grid min-h-28 flex-1 place-items-center rounded-md text-[12px] font-medium text-[var(--color-accent)]">
+              Drop card here
+            </div>
+          ) : null}
         </div>
       </SortableContext>
       <ScrollBar orientation="vertical" />
@@ -272,6 +286,7 @@ export type KanbanProviderProps<
   onDataChange?: (data: T[]) => void;
   onColumnsChange?: (columns: C[]) => void;
   onColumnDragEnd?: (event: DragEndEvent, columns: C[]) => void;
+  onItemDragEnd?: (event: DragEndEvent, data: T[]) => void;
   onDragStart?: (event: DragStartEvent) => void;
   onDragEnd?: (event: DragEndEvent) => void;
   onDragOver?: (event: DragOverEvent) => void;
@@ -291,6 +306,7 @@ export const KanbanProvider = <
   onDataChange,
   onColumnsChange,
   onColumnDragEnd,
+  onItemDragEnd,
   ...props
 }: KanbanProviderProps<T, C>) => {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
@@ -344,14 +360,25 @@ export const KanbanProvider = <
     const overColumn = overItem?.column || columns.find((col) => col.id === over.id)?.id || columns[0]?.id;
 
     if (activeColumn !== overColumn) {
-      let newData = [...data];
+      const newData = [...data];
       const activeIndex = newData.findIndex((item) => item.id === active.id);
       const overIndex = newData.findIndex((item) => item.id === over.id);
+      if (activeIndex === -1) return;
 
-      newData[activeIndex].column = overColumn;
-      newData = arrayMove(newData, activeIndex, overIndex);
-
-      onDataChange?.(newData);
+      const nextActive = { ...newData[activeIndex], column: overColumn };
+      const withoutActive = newData.filter((item) => item.id !== active.id);
+      if (overIndex === -1) {
+        const lastTargetIndex = withoutActive.findLastIndex((item) => item.column === overColumn);
+        withoutActive.splice(
+          lastTargetIndex === -1 ? withoutActive.length : lastTargetIndex + 1,
+          0,
+          nextActive,
+        );
+        onDataChange?.(withoutActive);
+      } else {
+        newData[activeIndex] = nextActive;
+        onDataChange?.(arrayMove(newData, activeIndex, overIndex));
+      }
     }
 
     onDragOver?.(event);
@@ -361,11 +388,10 @@ export const KanbanProvider = <
     setActiveCardId(null);
     setActiveColumnId(null);
 
-    onDragEnd?.(event);
-
     const { active, over } = event;
 
     if (!over || active.id === over.id) {
+      onDragEnd?.(event);
       return;
     }
 
@@ -380,18 +406,44 @@ export const KanbanProvider = <
       const nextColumns = arrayMove(columns, oldIndex, newIndex);
       onColumnsChange?.(nextColumns);
       onColumnDragEnd?.(event, nextColumns);
+      onDragEnd?.(event);
+      return;
+    }
+
+    const activeItem = data.find((item) => item.id === active.id);
+    const overItem = data.find((item) => item.id === over.id);
+    const targetColumn = overItem?.column || columns.find((column) => column.id === over.id)?.id;
+    if (!activeItem || !targetColumn) {
+      onDragEnd?.(event);
       return;
     }
 
     let newData = [...data];
-
     const oldIndex = newData.findIndex((item) => item.id === active.id);
     const newIndex = newData.findIndex((item) => item.id === over.id);
 
-    if (oldIndex === -1 || newIndex === -1) return;
-    newData = arrayMove(newData, oldIndex, newIndex);
+    if (oldIndex === -1) {
+      onDragEnd?.(event);
+      return;
+    }
+    const nextActive = { ...newData[oldIndex], column: targetColumn };
+    if (newIndex === -1) {
+      const withoutActive = newData.filter((item) => item.id !== active.id);
+      const lastTargetIndex = withoutActive.findLastIndex((item) => item.column === targetColumn);
+      withoutActive.splice(
+        lastTargetIndex === -1 ? withoutActive.length : lastTargetIndex + 1,
+        0,
+        nextActive,
+      );
+      newData = withoutActive;
+    } else {
+      newData[oldIndex] = nextActive;
+      newData = arrayMove(newData, oldIndex, newIndex);
+    }
 
     onDataChange?.(newData);
+    onItemDragEnd?.(event, newData);
+    onDragEnd?.(event);
   };
 
   const announcements: Announcements = {

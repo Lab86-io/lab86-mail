@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { api, convexQuery } from '../hosted/convex';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
 import type {
   DailyReport,
+  DailyReportCalendarItem,
   DailyReportItem,
+  DailyReportTaskItem,
   Message,
   ReportLane,
   SmartCategory,
@@ -62,6 +65,9 @@ const REPORT_LANE_LIMITS: Record<Exclude<ReportLane, 'bulk'>, number> = {
   fyi: 3,
 };
 const BULK_TAIL_LIMIT = 8;
+const WEEK_CONTEXT_WINDOW = 7 * 86400_000;
+const MONTH_CONTEXT_WINDOW = 30 * 86400_000;
+const FUTURE_CONTEXT_WINDOW = 14 * 86400_000;
 
 // Lane priority for the clamp: the floor decides a minimum lane and the LLM may
 // only raise it, never demote below the floor.
@@ -163,8 +169,9 @@ export async function generateDailyReport(input: {
     }
   }
 
-  const [calendarContext, memoryContext] = await Promise.all([
-    input.includeCalendar !== false ? loadCalendarContext(accounts, now) : Promise.resolve([]),
+  const [calendarContext, taskContext, memoryContext] = await Promise.all([
+    input.includeCalendar !== false ? loadCalendarContext(input.userId, now) : Promise.resolve([]),
+    loadTaskContext(input.userId, now),
     loadMemoryContext(),
   ]);
 
@@ -288,6 +295,7 @@ export async function generateDailyReport(input: {
         tracked,
         lastDateByKey,
         calendarContext,
+        taskContext,
         memoryContext,
         errors,
         reportId,
@@ -300,7 +308,8 @@ export async function generateDailyReport(input: {
       // Partial saves are progress UX only — never let them sink the report.
     }
   };
-  await savePartial('Scanning mailboxes', 0, bounded.length, []);
+  await savePartial('Scanning last week', 1, bounded.length + 4, []);
+  await savePartial('Adding relevant month context', 2, bounded.length + 4, []);
 
   const insights: ThreadInsight[] = [];
   let lastPartialSaveAt = Date.now();
@@ -311,7 +320,7 @@ export async function generateDailyReport(input: {
     const floor = floors.get(key)!;
     const trackedItem = trackedByKey.get(key);
     const insight = await buildThreadInsight(thread, messages, smart, floor, Boolean(trackedItem), now, {
-      calendarContext,
+      calendarContext: calendarContext.map(calendarContextLine),
       memoryContext,
       enrich: enrichKeys.has(key),
       self,
@@ -321,7 +330,7 @@ export async function generateDailyReport(input: {
     // threads are still being analyzed.
     if (Date.now() - lastPartialSaveAt > 1_500 || insights.length === bounded.length) {
       lastPartialSaveAt = Date.now();
-      await savePartial('Analyzing conversations', insights.length, bounded.length, insights);
+      await savePartial('Analyzing conversations', insights.length + 2, bounded.length + 4, insights);
     }
     await upsertThread(thread.account, { ...thread, smartCategory: smart }).catch(() => undefined);
     await upsertThreadInsight(insight).catch(() => undefined);
@@ -360,7 +369,7 @@ export async function generateDailyReport(input: {
   }
 
   const refreshedTracked = await listTrackedThreads({ limit: 500 });
-  await savePartial('Writing the narrative', bounded.length, bounded.length, insights);
+  await savePartial('Writing the narrative', bounded.length + 3, bounded.length + 4, insights);
   const report = await composeReport({
     kind: input.kind,
     now,
@@ -369,6 +378,7 @@ export async function generateDailyReport(input: {
     tracked: refreshedTracked.filter((item) => accounts.includes(item.account)),
     lastDateByKey,
     calendarContext,
+    taskContext,
     memoryContext,
     errors,
     reportId,
@@ -778,7 +788,8 @@ async function composeReport(input: {
   insights: ThreadInsight[];
   tracked: Awaited<ReturnType<typeof listTrackedThreads>>;
   lastDateByKey: Map<string, number>;
-  calendarContext: string[];
+  calendarContext: DailyReportCalendarItem[];
+  taskContext: DailyReportTaskItem[];
   memoryContext: string[];
   errors: string[];
   reportId?: string;
@@ -788,6 +799,8 @@ async function composeReport(input: {
   skipNarrative?: boolean;
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
+  const reportTasks = input.taskContext.slice(0, 24);
+  const reportCalendar = input.calendarContext.slice(0, 24);
   const toItem = (insight: ThreadInsight): DailyReportItem => {
     const tracked = trackedKeys.get(`${insight.account}:${insight.threadId}`);
     return {
@@ -859,7 +872,15 @@ async function composeReport(input: {
       lane: 'tracked' as ReportLane,
     }));
 
-  let narrative = localNarrative(input.kind, replyOwed, followUpOwed, newPeople, trackedItems);
+  let narrative = localNarrative(
+    input.kind,
+    replyOwed,
+    followUpOwed,
+    newPeople,
+    trackedItems,
+    reportTasks,
+    reportCalendar,
+  );
   let model = 'local';
 
   if (!input.skipNarrative && (await hasAiForCurrentUser())) {
@@ -867,11 +888,12 @@ async function composeReport(input: {
       const { text } = await generateTextForCurrentUser({
         feature: 'daily_report_narrative',
         speed: 'primary',
-        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from their email, calendar, memories, and tracked threads — like a sharp chief-of-staff briefing them over coffee. Tell the story of where things stand: open it with the through-line of the day, then walk through the replies they owe and conversations awaiting their follow-up (name the people and what's at stake), then new people and anything time-sensitive, and close with a clear nudge on what to do first. Use flowing prose in 2-3 short paragraphs, concrete and investigative, naming names. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 140-180 words.`,
+        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from their email, tasks, calendar, memories, and tracked threads — like a sharp chief-of-staff briefing them over coffee. Tell the story of where things stand: open with the through-line of the day, then walk through replies owed, follow-ups, active tasks, and calendar commitments. Use the last week first, then fold in relevant month context. Name people, task titles, and event titles when useful. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 160-210 words.`,
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
-          `Calendar context: ${input.calendarContext.join(' | ') || 'none'}`,
+          `Calendar context: ${reportCalendar.map(calendarContextLine).join(' | ') || 'none'}`,
+          `Task context: ${reportTasks.map(taskContextLine).join(' | ') || 'none'}`,
           `Memory context: ${input.memoryContext.join(' | ') || 'none'}`,
           `Reply owed: ${replyOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
           `Follow-up owed: ${followUpOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
@@ -902,6 +924,8 @@ async function composeReport(input: {
       tracked: trackedItems,
       fyi,
       bulkTail,
+      tasks: reportTasks,
+      calendar: reportCalendar,
       noiseSummary:
         'Bulk, subscribed, platform, and promo mail is collapsed into the tail below. Real people are never hidden there.',
     },
@@ -913,6 +937,9 @@ async function composeReport(input: {
       dueSoon: timeSensitive.length,
       bulkTailCount: bulkTail.length,
       unread: 0,
+      openTasks: reportTasks.filter((task) => !task.completedAt).length,
+      completedTasks: reportTasks.filter((task) => task.completedAt).length,
+      calendarEvents: reportCalendar.length,
     },
     model,
     errors: input.errors,
@@ -925,6 +952,8 @@ function localNarrative(
   followUpOwed: DailyReportItem[],
   newPeople: DailyReportItem[],
   tracked: DailyReportItem[],
+  tasks: DailyReportTaskItem[] = [],
+  calendar: DailyReportCalendarItem[] = [],
 ) {
   const opener =
     kind === 'evening'
@@ -988,11 +1017,131 @@ function localNarrative(
     const names = nameList(tracked);
     if (names.length) parts.push(`And you're keeping an eye on ${joinNames(names)}.`);
   }
+  const openTasks = tasks.filter((task) => !task.completedAt);
+  if (openTasks.length) {
+    const first = openTasks[0];
+    parts.push(
+      `On the task board, ${first.title}${openTasks.length > 1 ? ` leads ${openTasks.length - 1} other open task${openTasks.length - 1 === 1 ? '' : 's'}` : ' is the active item'}.`,
+    );
+  }
+  const nextEvent = calendar.find((event) => event.endAt >= Date.now());
+  if (nextEvent) {
+    parts.push(`Calendar-wise, ${nextEvent.title} is the next visible commitment.`);
+  }
   return parts.join(' ');
 }
 
-async function loadCalendarContext(_accounts: string[], _now: number) {
-  return [];
+function contextScope(ts: number, now: number): 'week' | 'month' {
+  return ts >= now - WEEK_CONTEXT_WINDOW && ts <= now + WEEK_CONTEXT_WINDOW ? 'week' : 'month';
+}
+
+function taskContextLine(task: DailyReportTaskItem) {
+  const parts = [
+    task.completedAt ? 'done' : 'open',
+    task.dueAt ? `due ${new Date(task.dueAt).toLocaleDateString()}` : '',
+    task.columnName ? `in ${task.columnName}` : '',
+    task.priority ? `${task.priority} priority` : '',
+  ].filter(Boolean);
+  return `${task.title}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+}
+
+function calendarContextLine(event: DailyReportCalendarItem) {
+  const start = new Date(event.startAt).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: event.allDay ? undefined : 'numeric',
+    minute: event.allDay ? undefined : '2-digit',
+  });
+  return `${event.title} at ${start}${event.location ? `, ${event.location}` : ''}`;
+}
+
+async function loadTaskContext(
+  userId: string | null | undefined,
+  now: number,
+): Promise<DailyReportTaskItem[]> {
+  if (!userId) return [];
+  try {
+    const rows = await convexQuery<any[]>((api as any).boards.listReportCards, {
+      userId,
+      since: now - MONTH_CONTEXT_WINDOW,
+      endAt: now + FUTURE_CONTEXT_WINDOW,
+      limit: 500,
+    });
+    return rows
+      .map((card) => {
+        const source = card.source || {};
+        const sourceUrl = source.url || source.htmlLink;
+        const sourceTitle =
+          source.title || (source.threadId ? 'Email thread' : source.eventId ? 'Calendar event' : undefined);
+        return {
+          cardId: String(card.cardId),
+          boardId: String(card.boardId),
+          columnId: String(card.columnId),
+          boardTitle: card.boardTitle,
+          columnName: card.columnName,
+          title: stripEmoji(String(card.title || 'Untitled task')),
+          description: card.description ? stripEmoji(String(card.description)).slice(0, 500) : undefined,
+          dueAt: card.dueAt ?? null,
+          completedAt: card.completedAt ?? null,
+          priority: card.priority,
+          labels: card.labels || [],
+          assignees: card.assignees || [],
+          sourceTitle,
+          sourceUrl,
+          scope: contextScope(card.dueAt || card.updatedAt || card.createdAt || now, now),
+        } satisfies DailyReportTaskItem;
+      })
+      .sort((a, b) => {
+        const aDone = a.completedAt ? 1 : 0;
+        const bDone = b.completedAt ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        if (a.scope !== b.scope) return a.scope === 'week' ? -1 : 1;
+        const aDue = a.dueAt ?? Number.POSITIVE_INFINITY;
+        const bDue = b.dueAt ?? Number.POSITIVE_INFINITY;
+        if (aDue !== bDue) return aDue - bDue;
+        return a.title.localeCompare(b.title);
+      });
+  } catch (err) {
+    console.warn('Daily report task context failed:', err);
+    return [];
+  }
+}
+
+async function loadCalendarContext(
+  userId: string | null | undefined,
+  now: number,
+): Promise<DailyReportCalendarItem[]> {
+  if (!userId) return [];
+  try {
+    const rows = await convexQuery<any[]>((api as any).calendarData.listEvents, {
+      userId,
+      startAt: now - MONTH_CONTEXT_WINDOW,
+      endAt: now + FUTURE_CONTEXT_WINDOW,
+      limit: 500,
+    });
+    return rows
+      .map((event) => ({
+        account: event.accountId,
+        eventId: event.providerEventId,
+        calendarId: event.providerCalendarId,
+        calendarName: event.calendarName,
+        title: stripEmoji(String(event.title || 'Untitled event')),
+        startAt: Number(event.startAt),
+        endAt: Number(event.endAt),
+        allDay: Boolean(event.allDay),
+        location: event.location ? stripEmoji(String(event.location)) : undefined,
+        htmlLink: event.htmlLink,
+        description: event.description ? stripEmoji(String(event.description)).slice(0, 500) : undefined,
+        scope: contextScope(Number(event.startAt), now),
+      }))
+      .sort((a, b) => {
+        if (a.scope !== b.scope) return a.scope === 'week' ? -1 : 1;
+        return a.startAt - b.startAt;
+      });
+  } catch (err) {
+    console.warn('Daily report calendar context failed:', err);
+    return [];
+  }
 }
 
 async function loadMemoryContext() {

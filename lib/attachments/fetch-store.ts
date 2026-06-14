@@ -1,10 +1,11 @@
 import { lookup } from 'node:dns/promises';
 import net from 'node:net';
-import { api, convexMutation } from '@/lib/hosted/convex';
+import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { downloadNylasAttachment } from '@/lib/nylas/provider';
 import { normalizeUrl } from '@/lib/shared/url';
 
 const boardsApi = (api as any).boards;
+const agentUploadsApi = (api as any).agentUploads;
 
 // Cap fetched/uploaded attachment size so a runaway URL can't exhaust memory
 // or Convex storage. 25 MB matches typical mail-provider attachment limits.
@@ -193,6 +194,22 @@ export async function storeForCard(
   if (!response.ok) throw new Error(`Storage upload failed (${response.status}).`);
   const { storageId } = (await response.json()) as { storageId: string };
   return { name: blob.name, storageId, contentType: blob.contentType, size: blob.bytes.byteLength };
+}
+
+// Retrieve a file uploaded in the current assistant turn so tools can attach
+// chat-submitted files without refetching or asking the user to upload again.
+export async function getStagedAgentUpload(
+  userId: string,
+  uploadId: string,
+): Promise<StoredAttachment | null> {
+  const row = await convexQuery<any | null>(agentUploadsApi.getUpload, { userId, uploadId });
+  if (!row) return null;
+  return {
+    name: row.name,
+    storageId: row.storageId,
+    contentType: row.contentType,
+    size: row.size,
+  };
 }
 
 function nameFromUrl(url: string): string | undefined {

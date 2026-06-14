@@ -1,7 +1,18 @@
 'use client';
 
+import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import { format, parseISO } from 'date-fns';
-import { CalendarDays, Clock, MapPin, Repeat, Text, Users, Video } from 'lucide-react';
+import {
+  CalendarDays,
+  Clock,
+  ExternalLink,
+  ListChecks,
+  MapPin,
+  Repeat,
+  Text,
+  Users,
+  Video,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
@@ -18,6 +29,8 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { api } from '@/convex/_generated/api';
+import { useClientStore } from '@/lib/client-state';
 
 interface IProps {
   event: IEvent;
@@ -38,6 +51,13 @@ export function EventDetailsDialog({ event, children }: IProps) {
   const startDate = parseISO(event.startDate);
   const endDate = parseISO(event.endDate);
   const { use24HourFormat, removeEvent } = useCalendar();
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const linkedCardsQuery = useConvexQuery({
+    query: (api as any).boards.liveCardsForCalendarEvent,
+    args: { eventId: event.id, masterEventId: event.masterEventId },
+  });
+  const linkedCards: Array<{ cardId: string; title: string; completedAt?: number }> =
+    linkedCardsQuery.status === 'success' ? linkedCardsQuery.data || [] : [];
 
   const conferencingUrl = extractConferencingUrl(event.conferencing);
   const participants = event.participants || [];
@@ -85,6 +105,45 @@ export function EventDetailsDialog({ event, children }: IProps) {
               <CalendarDays className="size-4 shrink-0 text-[var(--color-text-faint)]" />
               <span className="text-[13px] text-[var(--color-text-muted)]">{event.user.name}</span>
             </div>
+
+            {event.htmlLink ? (
+              <div className="flex items-center gap-2.5">
+                <ExternalLink className="size-4 shrink-0 text-[var(--color-text-faint)]" />
+                <a
+                  href={event.htmlLink}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="truncate text-[13px] text-[var(--color-accent)] underline-offset-2 hover:underline"
+                >
+                  Open in calendar
+                </a>
+              </div>
+            ) : null}
+
+            {linkedCards.length ? (
+              <div className="flex items-start gap-2.5">
+                <ListChecks className="mt-0.5 size-4 shrink-0 text-[var(--color-text-faint)]" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-[12px] font-medium text-[var(--color-text-muted)]">Linked tasks</p>
+                  {linkedCards.slice(0, 5).map((card) => (
+                    <button
+                      key={card.cardId}
+                      type="button"
+                      onClick={() => setPrimaryView('tasks')}
+                      className="block max-w-full truncate rounded-md border border-[var(--color-border)] px-2 py-1 text-left text-[12px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                    >
+                      {card.completedAt ? '✓ ' : ''}
+                      {card.title}
+                    </button>
+                  ))}
+                  {linkedCards.length > 5 ? (
+                    <p className="text-[11px] text-[var(--color-text-faint)]">
+                      + {linkedCards.length - 5} more linked task{linkedCards.length - 5 === 1 ? '' : 's'}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             {/* Conferencing */}
             {conferencingUrl ? (
