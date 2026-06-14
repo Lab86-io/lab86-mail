@@ -462,6 +462,8 @@ export const tasksAttachFile = defineTool({
       cardId: args.cardId,
       name: args.name?.trim() || stored.name,
       storageId: stored.storageId,
+      contentType: stored.contentType,
+      size: stored.size,
     });
     return { ok: true, name: stored.name };
   },

@@ -355,6 +355,8 @@ const cardFields = {
         name: v.string(),
         url: v.optional(v.string()),
         storageId: v.optional(v.id('_storage')),
+        contentType: v.optional(v.string()),
+        size: v.optional(v.number()),
       }),
     ),
   ),
@@ -378,6 +380,8 @@ export const createCard = mutation({
           name: v.string(),
           url: v.optional(v.string()),
           storageId: v.optional(v.id('_storage')),
+          contentType: v.optional(v.string()),
+          size: v.optional(v.number()),
         }),
       ),
     ),
@@ -553,6 +557,8 @@ export const attachToCard = mutation({
     name: v.string(),
     url: v.optional(v.string()),
     storageId: v.optional(v.id('_storage')),
+    contentType: v.optional(v.string()),
+    size: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -563,7 +569,13 @@ export const attachToCard = mutation({
     await ctx.db.patch(args.cardId, {
       attachments: [
         ...(card.attachments || []),
-        { name: args.name.trim() || args.url || 'attachment', url: args.url, storageId: args.storageId },
+        {
+          name: args.name.trim() || args.url || 'attachment',
+          url: args.url,
+          storageId: args.storageId,
+          contentType: args.contentType,
+          size: args.size,
+        },
       ],
       updatedAt: now(),
     });

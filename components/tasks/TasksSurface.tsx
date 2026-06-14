@@ -4,6 +4,15 @@ import { useMutation as useConvexMutation, useQuery_experimental as useConvexQue
 import {
   CalendarClock,
   Check,
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  FileArchive,
+  File as FileIcon,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  Flag,
   History,
   LayoutList,
   Link2,
@@ -12,10 +21,12 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Scale,
   Share2,
   SquareKanban,
+  Tag,
   Trash2,
-  Upload,
+  UploadCloud,
   Users,
   X,
 } from 'lucide-react';
@@ -63,6 +74,8 @@ interface CardAttachment {
   name: string;
   url?: string;
   storageId?: string;
+  contentType?: string;
+  size?: number;
 }
 
 interface BoardCard {
@@ -738,6 +751,259 @@ function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: st
 
 // Full-height detail panel, in the same spirit as the email reader pane:
 // the card opens beside the board, not over it.
+function formatBytes(bytes?: number): string | null {
+  if (!bytes || bytes <= 0) return null;
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value >= 10 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+}
+
+// Pick an icon + human kind for an attachment from its mime type / extension.
+function attachmentVisual(att: CardAttachment): {
+  Icon: typeof FileIcon;
+  kind: string;
+  isImage: boolean;
+} {
+  const ct = (att.contentType || '').toLowerCase();
+  const name = att.name || att.url || '';
+  const ext = name.includes('.') ? name.split('.').pop()?.toLowerCase() || '' : '';
+  const isImage =
+    ct.startsWith('image/') ||
+    ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'heic', 'bmp'].includes(ext);
+  if (isImage) return { Icon: FileImage, kind: 'Image', isImage: true };
+  if (ct === 'application/pdf' || ext === 'pdf') return { Icon: FileText, kind: 'PDF', isImage: false };
+  if (ct.includes('spreadsheet') || ['xls', 'xlsx', 'csv', 'numbers'].includes(ext))
+    return { Icon: FileSpreadsheet, kind: 'Sheet', isImage: false };
+  if (['zip', 'tar', 'gz', 'tgz', 'rar', '7z'].includes(ext))
+    return { Icon: FileArchive, kind: 'Archive', isImage: false };
+  if (ct.startsWith('text/') || ['doc', 'docx', 'txt', 'md', 'rtf', 'pages'].includes(ext))
+    return { Icon: FileText, kind: 'Document', isImage: false };
+  if (!att.storageId && att.url) {
+    let host = '';
+    try {
+      host = new URL(att.url).hostname.replace(/^www\./, '');
+    } catch {
+      host = 'Link';
+    }
+    return { Icon: Link2, kind: host || 'Link', isImage: false };
+  }
+  return { Icon: FileIcon, kind: ext ? ext.toUpperCase() : 'File', isImage: false };
+}
+
+// Shared attachment surface: drag-and-drop dropzone, link adder, and a grid of
+// rich attachment tiles (image previews, type icons, sizes). Used by both the
+// open-card panel and the create-card dialog so they stay visually identical.
+function CardAttachments({
+  attachments,
+  canEdit,
+  uploading,
+  onUploadFiles,
+  onAddLink,
+  onRemove,
+}: {
+  attachments: CardAttachment[];
+  canEdit: boolean;
+  uploading: boolean;
+  onUploadFiles: (files: File[]) => void;
+  onAddLink: (att: CardAttachment) => void;
+  onRemove: (index: number) => void;
+}) {
+  const [attachName, setAttachName] = useState('');
+  const [attachUrl, setAttachUrl] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const submitLink = () => {
+    const url = normalizeUrl(attachUrl);
+    if (!url) return;
+    onAddLink({ name: attachName.trim() || url, url });
+    setAttachName('');
+    setAttachUrl('');
+  };
+
+  return (
+    <section className="space-y-2.5">
+      <div className="flex items-center gap-2">
+        <Paperclip className="size-3.5 text-[var(--color-text-faint)]" />
+        <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Attachments</h3>
+        {attachments.length ? (
+          <span className="rounded-full bg-[var(--color-bg-muted)] px-1.5 text-[10px] text-[var(--color-text-faint)]">
+            {attachments.length}
+          </span>
+        ) : null}
+      </div>
+
+      {attachments.length ? (
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {attachments.map((attachment, index) => {
+            const { Icon, kind, isImage } = attachmentVisual(attachment);
+            const meta = [kind, formatBytes(attachment.size)].filter(Boolean).join(' · ');
+            return (
+              <li
+                key={attachment.storageId || attachment.url || `${attachment.name}-${index}`}
+                className="group relative flex items-center gap-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2 transition-colors hover:border-[var(--color-accent)]/60"
+              >
+                {isImage && attachment.url ? (
+                  // biome-ignore lint/performance/noImgElement: storage/remote thumbnail, not a static asset
+                  <img
+                    src={attachment.url}
+                    alt={attachment.name}
+                    className="size-11 shrink-0 rounded-lg object-cover"
+                  />
+                ) : (
+                  <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+                    <Icon className="size-5" />
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  {attachment.url ? (
+                    <a
+                      href={attachment.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="block truncate text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
+                      title={attachment.name}
+                    >
+                      {attachment.name || attachment.url}
+                    </a>
+                  ) : (
+                    <span className="block truncate text-[12.5px] font-medium text-[var(--color-text)]">
+                      {attachment.name}
+                    </span>
+                  )}
+                  <span className="text-[10.5px] uppercase tracking-wide text-[var(--color-text-faint)]">
+                    {meta}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  {attachment.url ? (
+                    <a
+                      href={attachment.url}
+                      {...(attachment.storageId
+                        ? { download: attachment.name }
+                        : { target: '_blank', rel: 'noreferrer noopener' })}
+                      className="grid size-6 place-items-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+                      title={attachment.storageId ? 'Download' : 'Open'}
+                    >
+                      {attachment.storageId ? (
+                        <Download className="size-3.5" />
+                      ) : (
+                        <ExternalLink className="size-3.5" />
+                      )}
+                    </a>
+                  ) : null}
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => onRemove(index)}
+                      className="grid size-6 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-danger)] group-hover:opacity-100"
+                      title="Remove attachment"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+
+      {canEdit ? (
+        <>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop dropzone, click delegates to the file input button */}
+          <div
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragOver(false);
+              const files = Array.from(event.dataTransfer.files || []);
+              if (files.length) onUploadFiles(files);
+            }}
+            className={cn(
+              'flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed px-3 py-4 text-center transition-colors',
+              dragOver
+                ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                : 'border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40',
+            )}
+          >
+            <UploadCloud
+              className={cn(
+                'size-5',
+                dragOver ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
+              )}
+            />
+            <p className="text-[12px] text-[var(--color-text-muted)]">
+              Drop files here, or{' '}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="font-medium text-[var(--color-accent)] hover:underline disabled:opacity-60"
+              >
+                {uploading ? 'uploading…' : 'browse'}
+              </button>
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                const files = Array.from(event.target.files || []);
+                if (files.length) onUploadFiles(files);
+                event.target.value = '';
+              }}
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <Input
+              value={attachName}
+              onChange={(event) => setAttachName(event.target.value)}
+              placeholder="Label (optional)"
+              className="h-8 w-32 text-[12px]"
+            />
+            <Input
+              value={attachUrl}
+              onChange={(event) => setAttachUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  submitLink();
+                }
+              }}
+              placeholder="Paste a link — example.com or https://…"
+              className="h-8 flex-1 text-[12px]"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 px-2.5 text-[11.5px]"
+              disabled={!normalizeUrl(attachUrl)}
+              onClick={submitLink}
+            >
+              <Link2 className="size-3" /> Add link
+            </Button>
+          </div>
+        </>
+      ) : !attachments.length ? (
+        <p className="text-[11.5px] text-[var(--color-text-faint)]">Nothing attached.</p>
+      ) : null}
+    </section>
+  );
+}
+
 function CardPanel({
   card,
   canEdit,
@@ -766,13 +1032,21 @@ function CardPanel({
   const [weight, setWeight] = useState(card.weight !== undefined ? String(card.weight) : '');
   const [assignees, setAssignees] = useState<string[]>(card.assignees || []);
   const [due, setDue] = useState(card.dueAt ? toLocalInputValue(card.dueAt) : '');
-  const [attachName, setAttachName] = useState('');
-  const [attachUrl, setAttachUrl] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const done = Boolean(card.completedAt);
+
+  // Strip the read-time-resolved URL off stored files so we never persist a
+  // serving URL next to its storage id (it's re-resolved on every read).
+  const persistable = (list: CardAttachment[]) =>
+    list.map(({ name, url, storageId, contentType, size }) => ({
+      name,
+      url: storageId ? undefined : url,
+      storageId,
+      contentType,
+      size,
+    }));
 
   const save = async () => {
     try {
@@ -799,29 +1073,40 @@ function CardPanel({
     try {
       await updateCard({
         cardId: card.cardId,
-        attachments: [
-          ...(card.attachments || []).map(({ name, url, storageId }) => ({ name, url, storageId })),
-          attachment,
-        ],
+        attachments: [...persistable(card.attachments || []), attachment],
       });
     } catch (err: any) {
       toast.error(err?.message || 'Could not attach');
     }
   };
 
-  const uploadFile = async (file: File) => {
+  const removeAttachment = (index: number) => {
+    void updateCard({
+      cardId: card.cardId,
+      attachments: persistable((card.attachments || []).filter((_, i) => i !== index)),
+    }).catch((err: any) => toast.error(err?.message || 'Could not remove'));
+  };
+
+  const uploadFiles = async (files: File[]) => {
     setUploading(true);
     try {
-      const uploadUrl = await generateUploadUrl({ cardId: card.cardId });
-      const response = await fetch(uploadUrl as string, {
-        method: 'POST',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
-      });
-      if (!response.ok) throw new Error(`Upload failed (${response.status})`);
-      const { storageId } = (await response.json()) as { storageId: string };
-      await addAttachment({ name: file.name, storageId });
-      toast.success(`Uploaded ${file.name}`);
+      for (const file of files) {
+        const uploadUrl = await generateUploadUrl({ cardId: card.cardId });
+        const response = await fetch(uploadUrl as string, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        });
+        if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+        const { storageId } = (await response.json()) as { storageId: string };
+        await addAttachment({
+          name: file.name,
+          storageId,
+          contentType: file.type || undefined,
+          size: file.size || undefined,
+        });
+      }
+      toast.success(files.length > 1 ? `Uploaded ${files.length} files` : `Uploaded ${files[0]?.name}`);
     } catch (err: any) {
       toast.error(err?.message || 'Upload failed');
     } finally {
@@ -829,377 +1114,377 @@ function CardPanel({
     }
   };
 
+  // Escape closes the modal — expected of any full-screen overlay.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <aside className="flex w-[440px] shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-2.5">
-        <span className="text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">Card</span>
-        {canEdit ? (
-          <Button type="button" size="sm" className="ml-auto h-7 px-2.5 text-[12px]" onClick={save}>
-            <Check className="mr-1 size-3" /> Save
-          </Button>
-        ) : (
-          <span className="ml-auto" />
-        )}
-        {canEdit ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 px-2.5 text-[12px]"
-            onClick={async () => {
-              try {
-                await updateCard({ cardId: card.cardId, completedAt: done ? null : Date.now() });
-              } catch (err: any) {
-                toast.error(err?.message || 'Could not update card');
-              }
-            }}
-          >
-            {done ? 'Reopen' : 'Mark done'}
-          </Button>
-        ) : null}
-        {canEdit ? (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click-to-close; dialog content stops propagation
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={card.title}
+        className="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl"
+      >
+        <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-5 py-3">
+          <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">
+            <SquareKanban className="size-3.5" /> Card
+          </span>
+          {done ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-accent)]">
+              <CheckCircle2 className="size-3" /> Done
+            </span>
+          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            {canEdit ? (
+              <Button type="button" size="sm" className="h-8 px-3 text-[12px]" onClick={save}>
+                <Check className="mr-1 size-3.5" /> Save
+              </Button>
+            ) : null}
+            {canEdit ? (
               <Button
                 type="button"
-                size="icon-sm"
-                variant="ghost"
-                className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                title="Delete card"
+                size="sm"
+                variant="outline"
+                className="h-8 px-3 text-[12px]"
+                onClick={async () => {
+                  try {
+                    await updateCard({ cardId: card.cardId, completedAt: done ? null : Date.now() });
+                  } catch (err: any) {
+                    toast.error(err?.message || 'Could not update card');
+                  }
+                }}
               >
-                <Trash2 className="size-3.5" />
+                {done ? 'Reopen' : 'Mark done'}
               </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete this card?</AlertDialogTitle>
-                <AlertDialogDescription>“{card.title}” will be removed.</AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={async () => {
-                    try {
-                      await deleteCard({ cardId: card.cardId });
-                      onClose();
-                    } catch (err: any) {
-                      toast.error(err?.message || 'Could not delete card');
-                    }
-                  }}
-                >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        ) : null}
-        <button
-          type="button"
-          onClick={onClose}
-          className="grid size-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-          title="Close"
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
-
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
-        <Input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          disabled={!canEdit}
-          className="border-none px-0 font-display text-[17px] font-semibold shadow-none focus-visible:ring-0"
-        />
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          disabled={!canEdit}
-          placeholder="Notes (markdown)"
-          className="min-h-28 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-2 text-[13px] leading-relaxed"
-        />
-        <div className="grid grid-cols-3 gap-2">
-          <label htmlFor="card-due" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
-            Due
-            <Input
-              id="card-due"
-              type="datetime-local"
-              value={due}
-              onChange={(event) => setDue(event.target.value)}
-              disabled={!canEdit}
-              className="h-8 text-[12px]"
-            />
-          </label>
-          <label htmlFor="card-priority" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
-            Priority
-            <select
-              id="card-priority"
-              value={priority}
-              onChange={(event) => setPriority(event.target.value)}
-              disabled={!canEdit}
-              className="h-8 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2 text-[12.5px]"
-            >
-              <option value="">None</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-          <label htmlFor="card-weight" className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
-            Weight
-            <Input
-              id="card-weight"
-              type="number"
-              min={0}
-              value={weight}
-              onChange={(event) => setWeight(event.target.value)}
-              disabled={!canEdit}
-              className="h-8 text-[12.5px]"
-            />
-          </label>
-        </div>
-        <label htmlFor="card-labels" className="block space-y-1 text-[11px] text-[var(--color-text-muted)]">
-          Labels (comma-separated)
-          <Input
-            id="card-labels"
-            value={labels}
-            onChange={(event) => setLabels(event.target.value)}
-            disabled={!canEdit}
-            className="h-8 text-[12.5px]"
-          />
-        </label>
-
-        <div className="space-y-1.5">
-          <p className="text-[11px] text-[var(--color-text-muted)]">Assigned to</p>
-          {assignable.length ? (
-            <div className="flex flex-wrap gap-1.5">
-              {assignable.map((email) => {
-                const on = assignees.includes(email);
-                return (
-                  <button
-                    key={email}
+            ) : null}
+            {canEdit ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
                     type="button"
-                    disabled={!canEdit}
-                    onClick={() =>
-                      setAssignees(on ? assignees.filter((a) => a !== email) : [...assignees, email])
-                    }
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
-                      on
-                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                        : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                    )}
+                    size="icon-sm"
+                    variant="ghost"
+                    className="size-8 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                    title="Delete card"
                   >
-                    <span className="grid size-3.5 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8px] font-semibold uppercase">
-                      {emailInitials(email)}
-                    </span>
-                    {email}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-[11.5px] text-[var(--color-text-faint)]">
-              Share this board to assign collaborators.
-            </p>
-          )}
-        </div>
-
-        {card.source?.threadId ? (
-          <button
-            type="button"
-            onClick={() => {
-              if (card.source?.accountId) setThreadAccount(card.source.accountId);
-              setSelectedThread(card.source?.threadId || null);
-              setPrimaryView('mail');
-              onClose();
-            }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-          >
-            <Mail className="size-3" /> From this email — open thread
-          </button>
-        ) : null}
-
-        <div className="space-y-1.5">
-          <p className="text-[11px] text-[var(--color-text-muted)]">Attachments</p>
-          {card.attachments?.length ? (
-            <ul className="space-y-1">
-              {card.attachments.map((attachment, index) => (
-                <li
-                  key={attachment.storageId || attachment.url || index}
-                  className="flex items-center gap-2 text-[12.5px]"
-                >
-                  {attachment.storageId ? (
-                    <Paperclip className="size-3 shrink-0 text-[var(--color-text-faint)]" />
-                  ) : (
-                    <Link2 className="size-3 shrink-0 text-[var(--color-text-faint)]" />
-                  )}
-                  {attachment.url ? (
-                    <a
-                      href={attachment.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="min-w-0 flex-1 truncate text-[var(--color-accent)] underline-offset-2 hover:underline"
-                    >
-                      {attachment.name || attachment.url}
-                    </a>
-                  ) : (
-                    <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-                  )}
-                  {canEdit ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void updateCard({
-                          cardId: card.cardId,
-                          attachments: (card.attachments || [])
-                            .filter((_, i) => i !== index)
-                            .map(({ name, url, storageId }) => ({ name, url, storageId })),
-                        }).catch((err: any) => toast.error(err?.message || 'Could not remove'));
+                    <Trash2 className="size-4" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this card?</AlertDialogTitle>
+                    <AlertDialogDescription>“{card.title}” will be removed.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async () => {
+                        try {
+                          await deleteCard({ cardId: card.cardId });
+                          onClose();
+                        } catch (err: any) {
+                          toast.error(err?.message || 'Could not delete card');
+                        }
                       }}
-                      className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
-                      title="Remove attachment"
                     >
-                      <X className="size-3" />
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[11.5px] text-[var(--color-text-faint)]">Nothing attached.</p>
-          )}
-          {canEdit ? (
-            <div className="flex items-center gap-1.5">
-              <Input
-                value={attachName}
-                onChange={(event) => setAttachName(event.target.value)}
-                placeholder="Name"
-                className="h-7 w-24 text-[12px]"
-              />
-              <Input
-                value={attachUrl}
-                onChange={(event) => setAttachUrl(event.target.value)}
-                placeholder="example.com or https://…"
-                className="h-7 flex-1 text-[12px]"
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-[11.5px]"
-                disabled={!normalizeUrl(attachUrl)}
-                onClick={() => {
-                  const url = normalizeUrl(attachUrl);
-                  if (!url) return;
-                  void addAttachment({ name: attachName.trim() || url, url });
-                  setAttachName('');
-                  setAttachUrl('');
-                }}
-              >
-                Link
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1 px-2 text-[11.5px]"
-                disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload className="size-3" />
-                {uploading ? 'Uploading…' : 'File'}
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void uploadFile(file);
-                  event.target.value = '';
-                }}
-              />
-            </div>
-          ) : null}
-        </div>
-
-        <div className="space-y-1.5">
-          <p className="text-[11px] text-[var(--color-text-muted)]">
-            Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
-          </p>
-          {(card.comments || []).map((comment) => (
-            <div
-              key={comment.id}
-              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5"
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid size-8 place-items-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+              title="Close (Esc)"
             >
-              <p className="text-[12.5px] leading-relaxed">{comment.body}</p>
-              <p className="mt-0.5 text-[10.5px] text-[var(--color-text-faint)]">
-                {comment.authorEmail || 'someone'} ·{' '}
-                {new Date(comment.createdAt).toLocaleString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
-              </p>
-            </div>
-          ))}
-          {/* Everyone with access can comment — viewers included. */}
-          <form
-            className="flex items-center gap-1.5"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              const body = commentDraft.trim();
-              if (!body) return;
-              try {
-                await addComment({ cardId: card.cardId, body });
-                setCommentDraft('');
-              } catch (err: any) {
-                toast.error(err?.message || 'Could not comment');
-              }
-            }}
-          >
-            <Input
-              value={commentDraft}
-              onChange={(event) => setCommentDraft(event.target.value)}
-              placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
-              className="h-7 flex-1 text-[12px]"
-            />
-            <Button type="submit" size="sm" variant="outline" className="h-7 px-2 text-[11.5px]">
-              Post
-            </Button>
-          </form>
-        </div>
+              <X className="size-4" />
+            </button>
+          </div>
+        </header>
 
-        <div className="space-y-1.5 pb-3">
-          <button
-            type="button"
-            onClick={() => setShowActivity(!showActivity)}
-            className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-          >
-            <History className="size-3" />
-            Activity{card.activity?.length ? ` · ${card.activity.length}` : ''}
-          </button>
-          {showActivity ? (
-            <ul className="space-y-1">
-              {[...(card.activity || [])].reverse().map((entry) => (
-                <li key={entry.id} className="text-[11px] text-[var(--color-text-faint)]">
-                  <span className="text-[var(--color-text-muted)]">{entry.actorEmail || 'someone'}</span>{' '}
-                  {entry.action}
-                  {entry.detail ? ` — ${entry.detail}` : ''} ·{' '}
-                  {new Date(entry.createdAt).toLocaleString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })}
-                </li>
+        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_310px]">
+          {/* Main column — title, notes, attachments, discussion. */}
+          <div className="min-h-0 space-y-6 overflow-y-auto px-6 py-5">
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              disabled={!canEdit}
+              placeholder="Card title"
+              className="w-full border-none bg-transparent font-display text-[22px] font-semibold leading-snug text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] disabled:opacity-100"
+            />
+
+            <div className="space-y-2">
+              <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Notes</h3>
+              <textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                disabled={!canEdit}
+                placeholder="Add details, context, or a checklist (markdown supported)…"
+                className="min-h-40 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-3.5 py-3 text-[13.5px] leading-relaxed outline-none focus-visible:border-[var(--color-accent)]"
+              />
+            </div>
+
+            <CardAttachments
+              attachments={card.attachments || []}
+              canEdit={canEdit}
+              uploading={uploading}
+              onUploadFiles={uploadFiles}
+              onAddLink={addAttachment}
+              onRemove={removeAttachment}
+            />
+
+            <section className="space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Mail className="size-3.5 text-[var(--color-text-faint)]" />
+                <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">
+                  Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
+                </h3>
+              </div>
+              {(card.comments || []).map((comment) => (
+                <div
+                  key={comment.id}
+                  className="flex gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 px-3 py-2.5"
+                >
+                  <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[9px] font-semibold uppercase text-[var(--color-text-muted)]">
+                    {emailInitials(comment.authorEmail || '?')}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] leading-relaxed text-[var(--color-text)]">{comment.body}</p>
+                    <p className="mt-1 text-[10.5px] text-[var(--color-text-faint)]">
+                      {comment.authorEmail || 'someone'} ·{' '}
+                      {new Date(comment.createdAt).toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                </div>
               ))}
-            </ul>
-          ) : null}
+              {/* Everyone with access can comment — viewers included. */}
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const body = commentDraft.trim();
+                  if (!body) return;
+                  try {
+                    await addComment({ cardId: card.cardId, body });
+                    setCommentDraft('');
+                  } catch (err: any) {
+                    toast.error(err?.message || 'Could not comment');
+                  }
+                }}
+              >
+                <Input
+                  value={commentDraft}
+                  onChange={(event) => setCommentDraft(event.target.value)}
+                  placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
+                  className="h-9 flex-1 text-[12.5px]"
+                />
+                <Button type="submit" size="sm" variant="outline" className="h-9 px-3 text-[12px]">
+                  Post
+                </Button>
+              </form>
+            </section>
+
+            <section className="space-y-2 pb-2">
+              <button
+                type="button"
+                onClick={() => setShowActivity(!showActivity)}
+                className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >
+                <History className="size-3.5" />
+                Activity{card.activity?.length ? ` · ${card.activity.length}` : ''}
+              </button>
+              {showActivity ? (
+                <ul className="space-y-1 border-l border-[var(--color-border)] pl-3">
+                  {[...(card.activity || [])].reverse().map((entry) => (
+                    <li key={entry.id} className="text-[11px] text-[var(--color-text-faint)]">
+                      <span className="text-[var(--color-text-muted)]">{entry.actorEmail || 'someone'}</span>{' '}
+                      {entry.action}
+                      {entry.detail ? ` — ${entry.detail}` : ''} ·{' '}
+                      {new Date(entry.createdAt).toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          </div>
+
+          {/* Metadata rail. */}
+          <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-5 py-5 md:border-l md:border-t-0">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="card-due"
+                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
+              >
+                <CalendarClock className="size-3.5" /> Due date
+              </label>
+              <Input
+                id="card-due"
+                type="datetime-local"
+                value={due}
+                onChange={(event) => setDue(event.target.value)}
+                disabled={!canEdit}
+                className="h-9 text-[12.5px]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="card-priority"
+                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
+              >
+                <Flag className="size-3.5" /> Priority
+              </label>
+              <select
+                id="card-priority"
+                value={priority}
+                onChange={(event) => setPriority(event.target.value)}
+                disabled={!canEdit}
+                className="h-9 w-full rounded-md border border-[var(--color-border)] bg-transparent px-2.5 text-[12.5px]"
+              >
+                <option value="">None</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="card-weight"
+                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
+              >
+                <Scale className="size-3.5" /> Weight
+              </label>
+              <Input
+                id="card-weight"
+                type="number"
+                min={0}
+                value={weight}
+                onChange={(event) => setWeight(event.target.value)}
+                disabled={!canEdit}
+                placeholder="—"
+                className="h-9 text-[12.5px]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="card-labels"
+                className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]"
+              >
+                <Tag className="size-3.5" /> Labels
+              </label>
+              <Input
+                id="card-labels"
+                value={labels}
+                onChange={(event) => setLabels(event.target.value)}
+                disabled={!canEdit}
+                placeholder="comma, separated"
+                className="h-9 text-[12.5px]"
+              />
+              {labels.trim() ? (
+                <div className="flex flex-wrap gap-1">
+                  {labels
+                    .split(',')
+                    .map((label) => label.trim())
+                    .filter(Boolean)
+                    .map((label) => (
+                      <span
+                        key={label}
+                        className="rounded-full bg-[var(--color-bg-muted)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]">
+                <Users className="size-3.5" /> Assigned
+              </p>
+              {assignable.length ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {assignable.map((email) => {
+                    const on = assignees.includes(email);
+                    return (
+                      <button
+                        key={email}
+                        type="button"
+                        disabled={!canEdit}
+                        onClick={() =>
+                          setAssignees(on ? assignees.filter((a) => a !== email) : [...assignees, email])
+                        }
+                        className={cn(
+                          'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                          on
+                            ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                            : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                        )}
+                      >
+                        <span className="grid size-3.5 shrink-0 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8px] font-semibold uppercase">
+                          {emailInitials(email)}
+                        </span>
+                        <span className="truncate">{email}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-[11.5px] text-[var(--color-text-faint)]">
+                  Share this board to assign collaborators.
+                </p>
+              )}
+            </div>
+
+            {card.source?.threadId ? (
+              <div className="space-y-1.5">
+                <p className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)]">
+                  <Mail className="size-3.5" /> Source
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (card.source?.accountId) setThreadAccount(card.source.accountId);
+                    setSelectedThread(card.source?.threadId || null);
+                    setPrimaryView('mail');
+                    onClose();
+                  }}
+                  className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                >
+                  <Mail className="size-3.5 shrink-0" /> From this email — open thread
+                </button>
+              </div>
+            ) : null}
+          </aside>
         </div>
       </div>
-    </aside>
+    </div>
   );
 }
 
@@ -1357,23 +1642,30 @@ function CreateCardDialog({
   const [weight, setWeight] = useState('');
   const [due, setDue] = useState('');
   const [attachments, setAttachments] = useState<CardAttachment[]>([]);
-  const [attachName, setAttachName] = useState('');
-  const [attachUrl, setAttachUrl] = useState('');
   const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const uploadFile = async (file: File) => {
+  const uploadFiles = async (files: File[]) => {
     setUploading(true);
     try {
-      const uploadUrl = await generateUploadUrl({ boardId });
-      const response = await fetch(uploadUrl as string, {
-        method: 'POST',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
-      });
-      if (!response.ok) throw new Error(`Upload failed (${response.status})`);
-      const { storageId } = (await response.json()) as { storageId: string };
-      setAttachments((prev) => [...prev, { name: file.name, storageId }]);
+      for (const file of files) {
+        const uploadUrl = await generateUploadUrl({ boardId });
+        const response = await fetch(uploadUrl as string, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        });
+        if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+        const { storageId } = (await response.json()) as { storageId: string };
+        setAttachments((prev) => [
+          ...prev,
+          {
+            name: file.name,
+            storageId,
+            contentType: file.type || undefined,
+            size: file.size || undefined,
+          },
+        ]);
+      }
     } catch (err: any) {
       toast.error(err?.message || 'Upload failed');
     } finally {
@@ -1471,84 +1763,14 @@ function CreateCardDialog({
               className="h-8 text-[12.5px]"
             />
           </label>
-          <div className="space-y-1.5">
-            <p className="text-[11px] text-[var(--color-text-muted)]">Attachments</p>
-            {attachments.length ? (
-              <ul className="space-y-1">
-                {attachments.map((attachment, index) => (
-                  <li
-                    key={attachment.storageId || attachment.url}
-                    className="flex items-center gap-2 text-[12px]"
-                  >
-                    {attachment.storageId ? (
-                      <Paperclip className="size-3 shrink-0 text-[var(--color-text-faint)]" />
-                    ) : (
-                      <Link2 className="size-3 shrink-0 text-[var(--color-text-faint)]" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
-                      className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="flex items-center gap-1.5">
-              <Input
-                value={attachName}
-                onChange={(event) => setAttachName(event.target.value)}
-                placeholder="Name"
-                className="h-7 w-24 text-[12px]"
-              />
-              <Input
-                value={attachUrl}
-                onChange={(event) => setAttachUrl(event.target.value)}
-                placeholder="example.com or https://…"
-                className="h-7 flex-1 text-[12px]"
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-[11.5px]"
-                disabled={!normalizeUrl(attachUrl)}
-                onClick={() => {
-                  const url = normalizeUrl(attachUrl);
-                  if (!url) return;
-                  setAttachments([...attachments, { name: attachName.trim() || url, url }]);
-                  setAttachName('');
-                  setAttachUrl('');
-                }}
-              >
-                Link
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1 px-2 text-[11.5px]"
-                disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload className="size-3" />
-                {uploading ? 'Uploading…' : 'File'}
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void uploadFile(file);
-                  event.target.value = '';
-                }}
-              />
-            </div>
-          </div>
+          <CardAttachments
+            attachments={attachments}
+            canEdit
+            uploading={uploading}
+            onUploadFiles={uploadFiles}
+            onAddLink={(att) => setAttachments((prev) => [...prev, att])}
+            onRemove={(index) => setAttachments((prev) => prev.filter((_, i) => i !== index))}
+          />
           <div className="flex justify-end gap-2">
             <Button
               type="button"
