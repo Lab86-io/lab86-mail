@@ -246,6 +246,7 @@ export const calendarCreateEvent = defineTool({
       participants: args.attendees,
       recurrence: args.recurrence,
       busy: args.busy,
+      timezone: ctx.userTimezone,
     });
     return { ok: true, ...result };
   },

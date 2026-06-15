@@ -39,6 +39,7 @@ async function doUpsertThread(account: string, partial: Partial<Thread> & { _id:
     starred: partial.starred ?? existing?.starred ?? false,
     summary: partial.summary ?? existing?.summary ?? null,
     summaryAt: partial.summaryAt ?? existing?.summaryAt ?? null,
+    summaryModel: partial.summaryModel ?? existing?.summaryModel ?? null,
     triage: partial.triage ?? existing?.triage ?? null,
     smartCategory: partial.smartCategory ?? existing?.smartCategory ?? null,
     readState: partial.readState ?? existing?.readState ?? null,
@@ -87,6 +88,7 @@ export async function resolveThread(account: string, id: string): Promise<Thread
     starred: Boolean(corpus.starred),
     summary: kv?.summary ?? null,
     summaryAt: kv?.summaryAt ?? null,
+    summaryModel: kv?.summaryModel ?? null,
     triage: kv?.triage ?? null,
     smartCategory: corpus.smartCategory ?? kv?.smartCategory ?? null,
     readState: kv?.readState ?? null,
@@ -113,8 +115,8 @@ async function patchThread(account: string, id: string, patch: Partial<Thread>) 
   await upsertThread(account, { _id: id, ...patch });
 }
 
-export async function setThreadSummary(account: string, id: string, summary: string) {
-  await patchThread(account, id, { summary, summaryAt: Date.now() });
+export async function setThreadSummary(account: string, id: string, summary: string, model?: string) {
+  await patchThread(account, id, { summary, summaryAt: Date.now(), summaryModel: model ?? null });
 }
 
 export async function setThreadTriage(account: string, id: string, triage: Thread['triage']) {

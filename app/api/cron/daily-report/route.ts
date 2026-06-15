@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { isInternalCronRequest } from '@/lib/cron-auth';
 import { generateAgentReport } from '@/lib/mail/agent-report';
 
 export const runtime = 'nodejs';
@@ -11,18 +12,8 @@ export const maxDuration = 300;
 // Called by the Convex hourly cron (convex/dailyReports.ts) for one user when
 // their local clock hits the morning/evening hour. AI + Nylas live in the app,
 // not in Convex, so the schedule fans out to this internal-secret-gated route.
-function authorized(req: NextRequest): boolean {
-  const expected = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-  if (!expected) return false;
-  const provided =
-    req.headers.get('x-lab86-internal-secret') ||
-    req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ||
-    '';
-  return provided === expected;
-}
-
 export async function POST(req: NextRequest) {
-  if (!authorized(req)) {
+  if (!isInternalCronRequest(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
   }
   let body: any = {};

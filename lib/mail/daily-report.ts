@@ -92,6 +92,30 @@ function parseLane(value: unknown): ReportLane | null {
   return (LANE_PRIORITY as Record<string, number>)[v] !== undefined ? (v as ReportLane) : null;
 }
 
+// How wide to cast the candidate net. 'week' is the fast first pass (just the
+// last several days, fewer candidates, less enrichment) so a brief appears
+// quickly; 'full' is the broader month sweep run afterward in the background.
+function scopeProfile(scope: 'week' | 'full' = 'full') {
+  if (scope === 'week') {
+    return {
+      queries: [
+        {
+          q: 'in:inbox (category:primary OR is:important) newer_than:7d -in:trash -in:spam',
+          max: 120,
+          human: true,
+        },
+        { q: 'is:starred newer_than:14d -in:trash -in:spam', max: 60, human: true },
+        { q: 'in:inbox is:unread newer_than:7d -in:trash -in:spam', max: 80, human: true },
+        { q: 'in:inbox newer_than:7d -category:promotions -category:social -category:forums', max: 60 },
+      ] as typeof RECENT_QUERIES,
+      sentMax: 100,
+      candidateLimit: 90,
+      enrichCap: 15,
+    };
+  }
+  return { queries: RECENT_QUERIES, sentMax: SENT_QUERY.max, candidateLimit: CANDIDATE_LIMIT, enrichCap: 30 };
+}
+
 export async function generateDailyReport(input: {
   kind: DailyReport['kind'];
   accounts?: string[];
@@ -99,8 +123,16 @@ export async function generateDailyReport(input: {
   now?: number;
   maxRecentPerAccount?: number;
   includeCalendar?: boolean;
+  // 'week' = fast first pass; 'full' = broad month sweep (default).
+  scope?: 'week' | 'full';
+  // Reuse an edition id so a later pass overwrites the same report in place.
+  reportId?: string;
+  // Skip the progressive partial saves (used by the silent background pass so
+  // it doesn't churn an already-rendered edition back to a "generating" state).
+  silent?: boolean;
 }) {
   const now = input.now || Date.now();
+  const profile = scopeProfile(input.scope);
   const connected = await listNylasAccounts(input.userId).catch(() => []);
   const authed = connected.filter((account) => account.authed);
   const accounts = input.accounts?.length ? input.accounts : authed.map((account) => account.accountId);
@@ -135,7 +167,7 @@ export async function generateDailyReport(input: {
   // list is bounded, so old unanswered humans outrank fresh automated mail.
   const humanKeys = new Set<string>();
   for (const account of accounts) {
-    for (const { q, max, human } of RECENT_QUERIES) {
+    for (const { q, max, human } of profile.queries) {
       try {
         const cap = Math.min(max, input.maxRecentPerAccount ?? max);
         for (const thread of await searchAccountThreads(account, q, cap, input.userId)) {
@@ -148,7 +180,7 @@ export async function generateDailyReport(input: {
       }
     }
     try {
-      for (const thread of await searchAccountThreads(account, SENT_QUERY.q, SENT_QUERY.max, input.userId)) {
+      for (const thread of await searchAccountThreads(account, SENT_QUERY.q, profile.sentMax, input.userId)) {
         candidates.set(`${thread.account}:${thread._id}`, thread);
         collectSentRecipientsFromRaw(thread, self, sentAllowlist);
       }
@@ -184,7 +216,7 @@ export async function generateDailyReport(input: {
     ...all.filter((t) => humanKeys.has(`${t.account}:${t._id}`)).sort(byDateDesc),
     ...all.filter((t) => !humanKeys.has(`${t.account}:${t._id}`)).sort(byDateDesc),
   ];
-  const bounded = dedupeCandidates(prioritized, trackedByKey).slice(0, CANDIDATE_LIMIT);
+  const bounded = dedupeCandidates(prioritized, trackedByKey).slice(0, profile.candidateLimit);
 
   // ---- Load messages + harvest prior correspondents ------------------------
   const messagesByKey = new Map<string, Message[]>();
@@ -244,7 +276,7 @@ export async function generateDailyReport(input: {
   }
 
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
-  const enrichCap = Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || 30);
+  const enrichCap = Math.min(Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || 30), profile.enrichCap);
   const aiAvailable = await hasAiForCurrentUser();
   const enrichKeys = new Set<string>(
     bounded
@@ -272,7 +304,7 @@ export async function generateDailyReport(input: {
   // ---- Build insights ------------------------------------------------------
   // The edition gets a fixed id up front so partial saves update one document
   // the UI can poll, instead of a new report appearing only at the very end.
-  const reportId = randomUUID();
+  const reportId = input.reportId ?? randomUUID();
   const lastDateByKey = new Map<string, number>();
   for (const thread of bounded) {
     const key = `${thread.account}:${thread._id}`;
@@ -286,6 +318,9 @@ export async function generateDailyReport(input: {
     total: number,
     partialInsights: ThreadInsight[],
   ) => {
+    // The background month pass runs silent so it never reverts an already-
+    // rendered edition to a "generating" state.
+    if (input.silent) return;
     try {
       const partial = await composeReport({
         kind: input.kind,
@@ -383,7 +418,10 @@ export async function generateDailyReport(input: {
     errors,
     reportId,
   });
-  await saveDailyReport(report);
+  // Silent callers (the background month pass) persist the composed artifact
+  // themselves; saving the bare structured doc here would wipe the rendered
+  // edition mid-pass.
+  if (!input.silent) await saveDailyReport(report);
   return report;
 }
 

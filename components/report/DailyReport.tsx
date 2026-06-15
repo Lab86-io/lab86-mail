@@ -11,7 +11,7 @@ import {
   RefreshCw,
   User,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
@@ -100,7 +100,7 @@ interface DailyReportPayload {
   progress?: { stage: string; done: number; total: number };
   // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
   html?: string;
-  artifactStatus?: 'composing' | 'rendered';
+  artifactStatus?: 'composing' | 'enriching' | 'rendered';
 }
 
 interface ReportSummary {
@@ -195,11 +195,55 @@ function elapsedFraming(item: DailyReportItem): string {
 // access (it cannot read cookies, storage, or the Convex client) — every
 // mutation flows through this allowlisted postMessage handler, which validates
 // the message source and the action before touching app state.
+const FONT_FAMILIES: Record<string, string> = {
+  sans: "'Geist', system-ui, sans-serif",
+  serif: "'Fraunces', Georgia, serif",
+  news: "'Averia Serif Libre', Georgia, serif",
+};
+
 function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => void }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  // The brief is theme-agnostic HTML (CSS vars with fallbacks); the host injects
+  // the user's actual theme so it matches the app and restyles live on change.
+  // Subscribing to these slices re-runs the effect whenever customization moves.
+  const appFont = useClientStore((s) => s.appFont);
+  const accentHue = useClientStore((s) => s.accentHue);
+  const accentChroma = useClientStore((s) => s.accentChroma);
+  const bgHue = useClientStore((s) => s.bgHue);
+  const surfaceTint = useClientStore((s) => s.surfaceTint);
+
+  // Mirror the app's resolved CSS variables (already reflect the live accent,
+  // background, and light/dark) into the brief's --brief-* tokens. Posted on
+  // iframe load and again whenever any customization slice changes.
+  const postTheme = useCallback(() => {
+    const win = frameRef.current?.contentWindow;
+    if (!win) return;
+    const css = getComputedStyle(document.documentElement);
+    const v = (name: string) => css.getPropertyValue(name).trim();
+    const theme: Record<string, string> = {
+      '--brief-bg': v('--color-bg') || '#faf9f6',
+      '--brief-ink': v('--color-text') || '#1a1a1a',
+      '--brief-muted': v('--color-text-muted') || '#6b6b6b',
+      '--brief-hairline': v('--color-border') || '#e6e3dc',
+      '--brief-accent': v('--color-accent') || '#c2683c',
+      '--brief-accent-soft': v('--color-accent-soft') || 'rgba(194,104,60,0.14)',
+      '--brief-font-body': FONT_FAMILIES[appFont || 'sans'] || FONT_FAMILIES.sans,
+      // Keep the masthead serif unless the user picked the news face.
+      '--brief-font-display': appFont === 'news' ? FONT_FAMILIES.news : FONT_FAMILIES.serif,
+    };
+    win.postMessage({ source: 'lab86-host', type: 'theme', theme }, '*');
+  }, [appFont]);
+
+  // Re-post on any customization change. The accent/background slices aren't
+  // referenced directly (their resolved colors are read from computed CSS), but
+  // they must still re-trigger the post, so they belong in the dependency list.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: theme slices intentionally trigger a re-post; resolved values come from computed CSS.
+  useEffect(() => {
+    postTheme();
+  }, [postTheme, accentHue, accentChroma, bgHue, surfaceTint, html]);
 
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
@@ -264,12 +308,89 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
       ref={frameRef}
       title="The Daily Brief"
       srcDoc={html}
+      onLoad={postTheme}
       // allow-scripts (for interactivity) WITHOUT allow-same-origin keeps the
       // artifact sandboxed from the app origin; allow-popups lets external
       // links open in a new tab.
       sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       className="h-full w-full border-0 bg-[var(--color-bg)]"
     />
+  );
+}
+
+const GENERATING_PHRASES = [
+  'Reading the last week of mail…',
+  'Sorting who actually needs a reply…',
+  'Folding in your tasks and calendar…',
+  "Choosing today's painting…",
+  'Composing the narrative…',
+  'Laying out the charts and to-dos…',
+];
+
+// The "we're working on it" state: a shimmering masthead, a typewriter cycling
+// reassuring lines (token-by-token feel), and a stage-aware progress bar driven
+// by the report's live progress when available.
+function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
+  const [phraseIdx, setPhraseIdx] = useState(0);
+  const [typed, setTyped] = useState('');
+
+  useEffect(() => {
+    const phrase = GENERATING_PHRASES[phraseIdx % GENERATING_PHRASES.length];
+    if (typed.length < phrase.length) {
+      const t = setTimeout(() => setTyped(phrase.slice(0, typed.length + 1)), 34);
+      return () => clearTimeout(t);
+    }
+    const hold = setTimeout(() => {
+      setTyped('');
+      setPhraseIdx((i) => (i + 1) % GENERATING_PHRASES.length);
+    }, 1300);
+    return () => clearTimeout(hold);
+  }, [typed, phraseIdx]);
+
+  const stage =
+    report?.artifactStatus === 'composing'
+      ? 'Designing the layout'
+      : report?.progress?.stage || 'Gathering the last week';
+  const pct = report?.progress?.total
+    ? Math.max(8, Math.min(100, (report.progress.done / report.progress.total) * 100))
+    : null;
+
+  return (
+    <div className="grid h-full place-items-center px-6">
+      <div className="w-full max-w-md text-center">
+        <div className="relative mx-auto mb-6 h-40 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
+          <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-[var(--color-accent-soft)] via-transparent to-[var(--color-accent-soft)]" />
+          <div className="absolute inset-0 grid place-items-center">
+            <Newspaper className="size-8 text-[var(--color-text-faint)]" />
+          </div>
+        </div>
+        <h1 className="font-serif text-[26px] font-semibold italic leading-none text-[var(--color-text)]">
+          The Daily Brief
+        </h1>
+        <p className="mt-3 min-h-[1.5em] font-serif text-[15px] italic text-[var(--color-accent)]">
+          {typed}
+          <span className="ml-0.5 inline-block animate-pulse">▍</span>
+        </p>
+        <div className="mt-5">
+          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+            {pct != null ? (
+              <div
+                className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{ width: `${pct}%` }}
+              />
+            ) : (
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--color-accent)]" />
+            )}
+          </div>
+          <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            {stripEmoji(stage)}
+            {report?.progress?.total
+              ? ` · ${Math.min(report.progress.done, report.progress.total)}/${report.progress.total}`
+              : ''}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -281,6 +402,11 @@ export function DailyReport() {
 
   // Browse history; the freshest edition shows by default (selectedId = null).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Timestamp of the last manual Generate. We keep polling until an edition
+  // newer than this appears — otherwise the post-click refetch lands on the OLD
+  // report (the new one isn't saved yet), polling stops, and the fresh brief
+  // never shows.
+  const [generatingSince, setGeneratingSince] = useState<number | null>(null);
 
   const historyQuery = useQuery({
     queryKey: ['daily-report', 'history'],
@@ -296,15 +422,36 @@ export function DailyReport() {
         ? callTool<{ report: DailyReportPayload | null }>('get_daily_report', { id: selectedId })
         : callTool<{ report: DailyReportPayload | null }>('get_latest_daily_report', {}),
     staleTime: 30_000,
-    // Keep polling while an edition streams in (status: partial) or while the
-    // agent is still composing its HTML artifact, so the page upgrades live.
+    // Keep polling while an edition streams in (status: partial), while the
+    // agent is composing its HTML artifact, OR while we're waiting for a
+    // freshly-triggered edition to land — so the page upgrades live.
     refetchInterval: (query) => {
       const r = query.state.data?.report;
-      return r?.status === 'partial' || r?.artifactStatus === 'composing' ? 2_000 : false;
+      if (r?.status === 'partial' || r?.artifactStatus === 'composing') return 2_000;
+      // The month pass enriches an already-shown edition in the background.
+      if (r?.artifactStatus === 'enriching') return 3_000;
+      if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
+      return false;
     },
   });
   const report = reportQuery.data?.report || null;
-  const generating = report?.status === 'partial' || report?.artifactStatus === 'composing';
+  // True between clicking Generate and the new edition actually appearing.
+  const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
+  const generating = report?.status === 'partial' || report?.artifactStatus === 'composing' || waitingForNew;
+  // The artifact is already shown; the broader month pass is filling in behind it.
+  const enriching = report?.artifactStatus === 'enriching';
+
+  // Stop the "generating" state once an edition newer than the click has settled.
+  useEffect(() => {
+    if (!generatingSince || !report) return;
+    if (
+      (report.generatedAt || 0) >= generatingSince &&
+      report.status !== 'partial' &&
+      report.artifactStatus !== 'composing'
+    ) {
+      setGeneratingSince(null);
+    }
+  }, [report, generatingSince]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['daily-report'] });
@@ -316,11 +463,13 @@ export function DailyReport() {
       callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
       }),
-    // Jump back to the freshest edition so the new brief streams in as it builds.
-    onSuccess: () => {
+    // Mark the moment so polling waits for the NEW edition, and jump to latest.
+    onMutate: () => {
       setSelectedId(null);
-      invalidate();
+      setGeneratingSince(Date.now());
     },
+    onSuccess: invalidate,
+    onError: () => setGeneratingSince(null),
   });
 
   const resolveTracked = useMutation({
@@ -374,93 +523,155 @@ export function DailyReport() {
   };
 
   return (
-    <section className="report-paper flex h-full flex-col">
-      <header className="@container border-b border-[var(--color-border)] px-5 py-4">
-        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-          <div className="min-w-0">
-            <h1 className="font-serif text-[clamp(22px,6cqi,30px)] font-semibold italic leading-none tracking-tight text-[var(--color-text)]">
-              The Daily Brief
-            </h1>
-            <p className="mt-2 font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              {report ? formatDateline(report) : 'From your mail & calendar'}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {history.length > 1 ? (
-              <select
-                value={selectedId ?? ''}
-                onChange={(event) => setSelectedId(event.target.value || null)}
-                aria-label="Browse past editions"
-                title="Browse past editions"
-                className="h-8 max-w-[170px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+    <section className="report-paper relative flex h-full flex-col">
+      {/* The agent-authored brief carries its own art masthead, so the app
+          header is hidden for it and the controls move to a floating toolbar. */}
+      {!report?.html ? (
+        <header className="@container border-b border-[var(--color-border)] px-5 py-4">
+          <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+            <div className="min-w-0">
+              <h1 className="font-serif text-[clamp(22px,6cqi,30px)] font-semibold italic leading-none tracking-tight text-[var(--color-text)]">
+                The Daily Brief
+              </h1>
+              <p className="mt-2 font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                {report ? formatDateline(report) : 'From your mail & calendar'}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {history.length > 1 ? (
+                <select
+                  value={selectedId ?? ''}
+                  onChange={(event) => setSelectedId(event.target.value || null)}
+                  aria-label="Browse past editions"
+                  title="Browse past editions"
+                  className="h-8 max-w-[170px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >
+                  <option value="">Latest edition</option>
+                  {history.map((item) => (
+                    <option key={item._id} value={item._id}>
+                      {editionLabel(item)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPrimaryView('mail')}
+                aria-label="Open inbox"
+                title="Inbox"
+                className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               >
-                <option value="">Latest edition</option>
-                {history.map((item) => (
-                  <option key={item._id} value={item._id}>
-                    {editionLabel(item)}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setPrimaryView('mail')}
-              aria-label="Open inbox"
-              title="Inbox"
-              className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-            >
-              <Inbox className="size-3.5" />
-              <span className="hidden @[360px]:inline">Inbox</span>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={generate.isPending || generating}
-              onClick={() => generate.mutate()}
-              aria-label="Generate a fresh report"
-              title="Generate"
-            >
-              {generate.isPending || generating ? (
-                <Ring className="size-3" />
-              ) : (
-                <RefreshCw className="size-3" />
-              )}
-              <span className="hidden @[360px]:inline">Generate</span>
-            </Button>
-          </div>
-        </div>
-        {generate.isPending || generating ? (
-          <div className="mt-3 space-y-2">
-            <TextShimmer className="text-[12px] text-[var(--color-accent)]">
-              {report?.artifactStatus === 'composing'
-                ? 'Designing your brief — laying out the narrative, charts, and to-dos…'
-                : generating && report?.progress
-                  ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
-                  : 'Reading your mail, tasks, and calendar to write today’s brief…'}
-            </TextShimmer>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
-              <div
-                className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                style={{
-                  width: `${
-                    report?.progress?.total
-                      ? Math.max(6, Math.min(100, (report.progress.done / report.progress.total) * 100))
-                      : 12
-                  }%`,
-                }}
-              />
+                <Inbox className="size-3.5" />
+                <span className="hidden @[360px]:inline">Inbox</span>
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={generate.isPending || generating}
+                onClick={() => generate.mutate()}
+                aria-label="Generate a fresh report"
+                title="Generate"
+              >
+                {generate.isPending || generating ? (
+                  <Ring className="size-3" />
+                ) : (
+                  <RefreshCw className="size-3" />
+                )}
+                <span className="hidden @[360px]:inline">Generate</span>
+              </Button>
             </div>
           </div>
-        ) : null}
-      </header>
+          {generate.isPending || generating ? (
+            <div className="mt-3 space-y-2">
+              <TextShimmer className="text-[12px] text-[var(--color-accent)]">
+                {report?.artifactStatus === 'composing'
+                  ? 'Designing your brief — laying out the narrative, charts, and to-dos…'
+                  : generating && report?.progress
+                    ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
+                    : 'Reading your mail, tasks, and calendar to write today’s brief…'}
+              </TextShimmer>
+              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+                <div
+                  className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  style={{
+                    width: `${
+                      report?.progress?.total
+                        ? Math.max(6, Math.min(100, (report.progress.done / report.progress.total) * 100))
+                        : 12
+                    }%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+        </header>
+      ) : null}
+
+      {/* Floating toolbar for the artifact view — fades until hovered. */}
+      {report?.html ? (
+        <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
+          {enriching ? (
+            <span className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]">
+              <Ring className="size-2.5" />
+              <span className="hidden @[420px]:inline">Adding the past month…</span>
+            </span>
+          ) : null}
+          {history.length > 1 ? (
+            <select
+              value={selectedId ?? ''}
+              onChange={(event) => setSelectedId(event.target.value || null)}
+              aria-label="Browse past editions"
+              title="Browse past editions"
+              className="h-7 max-w-[140px] rounded-full bg-transparent px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >
+              <option value="">Latest</option>
+              {history.map((item) => (
+                <option key={item._id} value={item._id}>
+                  {editionLabel(item)}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setPrimaryView('mail')}
+            aria-label="Open inbox"
+            title="Inbox"
+            className="grid size-7 place-items-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          >
+            <Inbox className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            disabled={generate.isPending || generating || enriching}
+            onClick={() => generate.mutate()}
+            aria-label="Generate a fresh report"
+            title="Generate a fresh brief"
+            className="grid size-7 place-items-center rounded-full bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-60"
+          >
+            {generate.isPending || generating ? (
+              <Ring className="size-3" />
+            ) : (
+              <RefreshCw className="size-3" />
+            )}
+          </button>
+        </div>
+      ) : null}
 
       <div
-        className={cn('min-h-0 flex-1', report?.html ? 'overflow-hidden' : 'scrollable @container px-5 py-5')}
+        className={cn(
+          'min-h-0 flex-1',
+          report?.html || (generating && (!report?.html || waitingForNew))
+            ? 'overflow-hidden'
+            : 'scrollable @container px-5 py-5',
+        )}
       >
-        {reportQuery.isLoading ? (
+        {reportQuery.isLoading && !report ? (
           <ReportSkeleton />
+        ) : generating && (!report?.html || waitingForNew) ? (
+          <ReportGenerating report={report} />
         ) : !report ? (
           <Empty className="grid h-full place-items-center px-6 py-12 text-center">
             <EmptyHeader>

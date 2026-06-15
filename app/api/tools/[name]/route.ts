@@ -30,12 +30,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ name: stri
       limit: tool.mutating ? 60 : 180,
       windowMs: 60_000,
     });
+    const timezone = req.headers.get('x-user-timezone') || undefined;
     const result = await invokeTool(tool, body, {
       agent,
       account: body?.account,
       userId: user.userId,
       userEmail: user.email,
       userName: user.name,
+      userTimezone: timezone,
     });
     return NextResponse.json({ ok: true, result });
   } catch (err: any) {

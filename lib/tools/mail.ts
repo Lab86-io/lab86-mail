@@ -361,6 +361,7 @@ export const getThread = defineTool({
     messages: z.array(z.any()),
     summary: z.string().nullable().optional(),
     summaryAt: z.number().nullable().optional(),
+    summaryModel: z.string().nullable().optional(),
   }),
   async handler({ account, threadId, refresh }, ctx) {
     // Fast path: the corpus already holds every message body — pure local
@@ -380,6 +381,7 @@ export const getThread = defineTool({
           messages: bundle.messages,
           summary: cachedThread?.summary ?? null,
           summaryAt: cachedThread?.summaryAt ?? null,
+          summaryModel: cachedThread?.summaryModel ?? null,
         };
       }
     }
@@ -417,6 +419,7 @@ export const getThread = defineTool({
       ...nylas,
       summary: cachedThread?.summary ?? null,
       summaryAt: cachedThread?.summaryAt ?? null,
+      summaryModel: cachedThread?.summaryModel ?? null,
     };
   },
 });

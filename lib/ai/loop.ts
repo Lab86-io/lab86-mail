@@ -145,6 +145,22 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
       },
     });
   }
+  // Human-in-the-loop question. Deliberately has NO execute: the stream pauses
+  // on this tool call until the client renders the choices and supplies the
+  // answer via addToolResult, after which the agent continues with it.
+  lifted.ask_user = aiTool({
+    description:
+      'Ask the user a short multiple-choice question and WAIT for their answer before continuing. Reach for this whenever you are unsure what they want, must choose between approaches, or want to offer to dive deeper — prefer a quick question over guessing. Provide 2–4 concrete, mutually-distinct options.',
+    inputSchema: z.object({
+      question: z.string().describe('The question to ask the user.'),
+      options: z
+        .array(z.object({ label: z.string(), description: z.string().optional() }))
+        .min(2)
+        .max(4)
+        .describe('The choices to offer.'),
+      multiSelect: z.boolean().optional().describe('Allow choosing more than one option.'),
+    }),
+  });
   return lifted;
 }
 

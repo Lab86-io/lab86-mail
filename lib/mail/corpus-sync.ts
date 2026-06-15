@@ -3,6 +3,7 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
+import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 import { detectMailSuggestions } from './suggestion-detectors';
@@ -482,10 +483,22 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
   }
   if (!metadata.providerMessageId || !/message/i.test(metadata.type)) return;
 
-  const raw = await requireNylas().messages.find({
-    identifier: row.grantId,
-    messageId: metadata.providerMessageId,
-  });
+  let raw: { data?: unknown };
+  try {
+    raw = await withNylasRetry(() =>
+      requireNylas().messages.find({
+        identifier: row.grantId,
+        messageId: metadata.providerMessageId as string,
+      }),
+    );
+  } catch (err: any) {
+    // A redelivered backlog references resources that may be gone; treat
+    // not-found as nothing to ingest rather than a hard failure. Transient 5xx
+    // were already retried; let those bubble so the reconciler picks them up.
+    const status = nylasErrorStatus(err);
+    if (status === 404 || status === 410) return;
+    throw err;
+  }
   const messages = [corpusMessageFromNylas(row, raw.data || payload)];
   detectMailSuggestions(row, messages);
   await upsertCorpus(row, {
