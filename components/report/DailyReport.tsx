@@ -100,7 +100,7 @@ interface DailyReportPayload {
   progress?: { stage: string; done: number; total: number };
   // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
   html?: string;
-  artifactStatus?: 'composing' | 'rendered';
+  artifactStatus?: 'composing' | 'enriching' | 'rendered';
 }
 
 interface ReportSummary {
@@ -318,6 +318,82 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
   );
 }
 
+const GENERATING_PHRASES = [
+  'Reading the last week of mail…',
+  'Sorting who actually needs a reply…',
+  'Folding in your tasks and calendar…',
+  "Choosing today's painting…",
+  'Composing the narrative…',
+  'Laying out the charts and to-dos…',
+];
+
+// The "we're working on it" state: a shimmering masthead, a typewriter cycling
+// reassuring lines (token-by-token feel), and a stage-aware progress bar driven
+// by the report's live progress when available.
+function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
+  const [phraseIdx, setPhraseIdx] = useState(0);
+  const [typed, setTyped] = useState('');
+
+  useEffect(() => {
+    const phrase = GENERATING_PHRASES[phraseIdx % GENERATING_PHRASES.length];
+    if (typed.length < phrase.length) {
+      const t = setTimeout(() => setTyped(phrase.slice(0, typed.length + 1)), 34);
+      return () => clearTimeout(t);
+    }
+    const hold = setTimeout(() => {
+      setTyped('');
+      setPhraseIdx((i) => (i + 1) % GENERATING_PHRASES.length);
+    }, 1300);
+    return () => clearTimeout(hold);
+  }, [typed, phraseIdx]);
+
+  const stage =
+    report?.artifactStatus === 'composing'
+      ? 'Designing the layout'
+      : report?.progress?.stage || 'Gathering the last week';
+  const pct = report?.progress?.total
+    ? Math.max(8, Math.min(100, (report.progress.done / report.progress.total) * 100))
+    : null;
+
+  return (
+    <div className="grid h-full place-items-center px-6">
+      <div className="w-full max-w-md text-center">
+        <div className="relative mx-auto mb-6 h-40 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
+          <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-[var(--color-accent-soft)] via-transparent to-[var(--color-accent-soft)]" />
+          <div className="absolute inset-0 grid place-items-center">
+            <Newspaper className="size-8 text-[var(--color-text-faint)]" />
+          </div>
+        </div>
+        <h1 className="font-serif text-[26px] font-semibold italic leading-none text-[var(--color-text)]">
+          The Daily Brief
+        </h1>
+        <p className="mt-3 min-h-[1.5em] font-serif text-[15px] italic text-[var(--color-accent)]">
+          {typed}
+          <span className="ml-0.5 inline-block animate-pulse">▍</span>
+        </p>
+        <div className="mt-5">
+          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+            {pct != null ? (
+              <div
+                className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{ width: `${pct}%` }}
+              />
+            ) : (
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--color-accent)]" />
+            )}
+          </div>
+          <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            {stripEmoji(stage)}
+            {report?.progress?.total
+              ? ` · ${Math.min(report.progress.done, report.progress.total)}/${report.progress.total}`
+              : ''}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DailyReport() {
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -326,6 +402,11 @@ export function DailyReport() {
 
   // Browse history; the freshest edition shows by default (selectedId = null).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Timestamp of the last manual Generate. We keep polling until an edition
+  // newer than this appears — otherwise the post-click refetch lands on the OLD
+  // report (the new one isn't saved yet), polling stops, and the fresh brief
+  // never shows.
+  const [generatingSince, setGeneratingSince] = useState<number | null>(null);
 
   const historyQuery = useQuery({
     queryKey: ['daily-report', 'history'],
@@ -341,15 +422,36 @@ export function DailyReport() {
         ? callTool<{ report: DailyReportPayload | null }>('get_daily_report', { id: selectedId })
         : callTool<{ report: DailyReportPayload | null }>('get_latest_daily_report', {}),
     staleTime: 30_000,
-    // Keep polling while an edition streams in (status: partial) or while the
-    // agent is still composing its HTML artifact, so the page upgrades live.
+    // Keep polling while an edition streams in (status: partial), while the
+    // agent is composing its HTML artifact, OR while we're waiting for a
+    // freshly-triggered edition to land — so the page upgrades live.
     refetchInterval: (query) => {
       const r = query.state.data?.report;
-      return r?.status === 'partial' || r?.artifactStatus === 'composing' ? 2_000 : false;
+      if (r?.status === 'partial' || r?.artifactStatus === 'composing') return 2_000;
+      // The month pass enriches an already-shown edition in the background.
+      if (r?.artifactStatus === 'enriching') return 3_000;
+      if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
+      return false;
     },
   });
   const report = reportQuery.data?.report || null;
-  const generating = report?.status === 'partial' || report?.artifactStatus === 'composing';
+  // True between clicking Generate and the new edition actually appearing.
+  const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
+  const generating = report?.status === 'partial' || report?.artifactStatus === 'composing' || waitingForNew;
+  // The artifact is already shown; the broader month pass is filling in behind it.
+  const enriching = report?.artifactStatus === 'enriching';
+
+  // Stop the "generating" state once an edition newer than the click has settled.
+  useEffect(() => {
+    if (!generatingSince || !report) return;
+    if (
+      (report.generatedAt || 0) >= generatingSince &&
+      report.status !== 'partial' &&
+      report.artifactStatus !== 'composing'
+    ) {
+      setGeneratingSince(null);
+    }
+  }, [report, generatingSince]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['daily-report'] });
@@ -361,11 +463,13 @@ export function DailyReport() {
       callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
       }),
-    // Jump back to the freshest edition so the new brief streams in as it builds.
-    onSuccess: () => {
+    // Mark the moment so polling waits for the NEW edition, and jump to latest.
+    onMutate: () => {
       setSelectedId(null);
-      invalidate();
+      setGeneratingSince(Date.now());
     },
+    onSuccess: invalidate,
+    onError: () => setGeneratingSince(null),
   });
 
   const resolveTracked = useMutation({
@@ -508,6 +612,12 @@ export function DailyReport() {
       {/* Floating toolbar for the artifact view — fades until hovered. */}
       {report?.html ? (
         <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
+          {enriching ? (
+            <span className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]">
+              <Ring className="size-2.5" />
+              <span className="hidden @[420px]:inline">Adding the past month…</span>
+            </span>
+          ) : null}
           {history.length > 1 ? (
             <select
               value={selectedId ?? ''}
@@ -535,7 +645,7 @@ export function DailyReport() {
           </button>
           <button
             type="button"
-            disabled={generate.isPending || generating}
+            disabled={generate.isPending || generating || enriching}
             onClick={() => generate.mutate()}
             aria-label="Generate a fresh report"
             title="Generate a fresh brief"
@@ -551,10 +661,17 @@ export function DailyReport() {
       ) : null}
 
       <div
-        className={cn('min-h-0 flex-1', report?.html ? 'overflow-hidden' : 'scrollable @container px-5 py-5')}
+        className={cn(
+          'min-h-0 flex-1',
+          report?.html || (generating && (!report?.html || waitingForNew))
+            ? 'overflow-hidden'
+            : 'scrollable @container px-5 py-5',
+        )}
       >
-        {reportQuery.isLoading ? (
+        {reportQuery.isLoading && !report ? (
           <ReportSkeleton />
+        ) : generating && (!report?.html || waitingForNew) ? (
+          <ReportGenerating report={report} />
         ) : !report ? (
           <Empty className="grid h-full place-items-center px-6 py-12 text-center">
             <EmptyHeader>

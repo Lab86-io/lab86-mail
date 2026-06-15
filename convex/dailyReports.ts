@@ -1,5 +1,6 @@
 import { internal } from './_generated/api';
 import { internalAction, internalQuery } from './_generated/server';
+import { fanOutInternalPost } from './lib';
 
 // Local times at which scheduled editions fire (24h clock, in each user's tz).
 const MORNING_HOUR = 7;
@@ -65,23 +66,19 @@ export const tick = internalAction({
 
     const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
     const at = new Date();
-    let fired = 0;
+    // Only the users whose local clock is at the morning/evening hour right now.
+    const due: Array<{ userId: string; kind: 'morning' | 'evening' }> = [];
     for (const target of targets) {
       const hour = localHour(target.timezone, at);
       const kind = hour === MORNING_HOUR ? 'morning' : hour === EVENING_HOUR ? 'evening' : null;
-      if (!kind) continue;
-      try {
-        const res = await fetch(`${appUrl}/api/cron/daily-report`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-lab86-internal-secret': secret },
-          body: JSON.stringify({ userId: target.userId, kind }),
-        });
-        if (res.ok) fired += 1;
-        else console.error('[daily-report cron] app returned', res.status, 'for', target.userId);
-      } catch (err) {
-        console.error('[daily-report cron] fetch failed for', target.userId, err);
-      }
+      if (kind) due.push({ userId: target.userId, kind });
     }
-    console.log(`[daily-report cron] tick fired ${fired}/${targets.length} editions`);
+    const fired = await fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
+      label: 'daily-report cron',
+      // Generation is fire-and-forget on the app side (202), so calls return
+      // fast; a small timeout just guards against a hung connection.
+      timeoutMs: 15_000,
+    });
+    console.log(`[daily-report cron] tick fired ${fired}/${due.length} editions`);
   },
 });

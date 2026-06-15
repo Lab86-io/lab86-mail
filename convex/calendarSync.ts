@@ -1,5 +1,6 @@
 import { internal } from './_generated/api';
 import { internalAction } from './_generated/server';
+import { fanOutInternalPost } from './lib';
 
 // Periodic calendar poll. Webhooks (event.created/updated/deleted) are the
 // primary path, but a short-interval poll catches anything the webhook missed
@@ -17,20 +18,12 @@ export const tick = internalAction({
       return;
     }
     const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
-    let ok = 0;
-    for (const target of targets) {
-      try {
-        const res = await fetch(`${appUrl}/api/cron/calendar-sync`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-lab86-internal-secret': secret },
-          body: JSON.stringify({ userId: target.userId }),
-        });
-        if (res.ok) ok += 1;
-        else console.error('[calendar-sync cron] app returned', res.status, 'for', target.userId);
-      } catch (err) {
-        console.error('[calendar-sync cron] fetch failed for', target.userId, err);
-      }
-    }
+    const ok = await fanOutInternalPost(
+      `${appUrl}/api/cron/calendar-sync`,
+      secret,
+      targets.map((target) => ({ userId: target.userId })),
+      { label: 'calendar-sync cron' },
+    );
     console.log(`[calendar-sync cron] polled ${ok}/${targets.length} users`);
   },
 });

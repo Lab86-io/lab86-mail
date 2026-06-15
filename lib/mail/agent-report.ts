@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
@@ -35,43 +36,69 @@ export async function generateAgentReport(input: {
   userId?: string | null;
   now?: number;
 }): Promise<DailyReport> {
-  // Step 1 — build the structured edition (also persists it so the page has
-  // something rich to show while the artifact is being composed).
-  const structured = await generateDailyReport({
+  // Both passes share one edition id so the month pass overwrites the week one.
+  const reportId = randomUUID();
+
+  // Phase 1 — fast week pass. Streams progress and persists the structured
+  // week edition so the page has something rich to show almost immediately.
+  const week = await generateDailyReport({
     kind: input.kind,
     includeCalendar: true,
     userId: input.userId,
     now: input.now,
+    scope: 'week',
+    reportId,
   });
 
-  // No model available → the structured edition is the report. The page falls
-  // back to its native renderer when `html` is absent.
-  if (!(await hasAiForCurrentUser())) return structured;
+  // No model → the structured week edition is the report (native renderer).
+  if (!(await hasAiForCurrentUser())) return week;
 
-  // Mark the structured edition as "composing" so the page shows a subtle
-  // "designing your brief" hint over the fallback while the agent writes.
-  await saveDailyReport({ ...structured, artifactStatus: 'composing' }).catch(() => undefined);
+  await saveDailyReport({ ...week, artifactStatus: 'composing' }).catch(() => undefined);
 
+  let phase1: DailyReport;
   try {
-    const html = await composeArtifact(structured);
-    if (html) {
-      const withArtifact: DailyReport = {
-        ...structured,
-        html,
-        artifactStatus: 'rendered',
-        model: describeProvider().primary || structured.model,
-      };
-      await saveDailyReport(withArtifact);
-      return withArtifact;
-    }
+    const html = await composeArtifact(week);
+    // 'enriching' (not 'rendered') keeps the page polling for the month pass.
+    phase1 = html
+      ? { ...week, html, artifactStatus: 'enriching', model: describeProvider().primary || week.model }
+      : { ...week, artifactStatus: undefined };
   } catch (err) {
-    console.error('[agent-report] artifact composition failed:', err);
+    console.error('[agent-report] week artifact failed:', err);
+    phase1 = { ...week, artifactStatus: undefined };
   }
-  // Composition failed — leave the structured edition in place (clear the
-  // composing flag so the page stops hinting at an artifact that won't arrive).
-  const fallback: DailyReport = { ...structured, artifactStatus: undefined };
-  await saveDailyReport(fallback).catch(() => undefined);
-  return fallback;
+  await saveDailyReport(phase1).catch(() => undefined);
+
+  // If the fast artifact didn't render, don't spend a second AI call.
+  if (!phase1.html) return phase1;
+
+  // Phase 2 — broaden to the full month silently, then replace the edition in
+  // place. Best-effort: if it fails (e.g. out of credits), keep the week brief.
+  try {
+    const full = await generateDailyReport({
+      kind: input.kind,
+      includeCalendar: true,
+      userId: input.userId,
+      now: input.now,
+      scope: 'full',
+      reportId,
+      silent: true,
+    });
+    const html = await composeArtifact(full);
+    const finalReport: DailyReport = {
+      ...full,
+      html: html || phase1.html,
+      artifactStatus: 'rendered',
+      model: describeProvider().primary || full.model,
+    };
+    await saveDailyReport(finalReport);
+    return finalReport;
+  } catch (err) {
+    console.error('[agent-report] month enrichment failed:', err);
+    // Settle on the week edition so the page stops polling.
+    const settled: DailyReport = { ...phase1, artifactStatus: 'rendered' };
+    await saveDailyReport(settled).catch(() => undefined);
+    return settled;
+  }
 }
 
 // ---- Artifact composition --------------------------------------------------
@@ -189,7 +216,11 @@ function buildDataPrompt(report: DailyReport): string {
     location: e.location ?? null,
   }));
 
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(report.generatedAt));
+  // UTC to match getDailyArt's UTC date key, so the masthead day-of-week and
+  // the selected artwork never disagree across a day boundary.
+  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(
+    new Date(report.generatedAt),
+  );
   const art = getDailyArt(report.generatedAt);
 
   const data = {

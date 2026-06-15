@@ -356,9 +356,10 @@ export interface DailyReport {
   // `sections`/`stats` below remain as grounding data, history metadata, and
   // the fallback renderer for legacy editions that predate the artifact.
   html?: string;
-  // Generation phase for the artifact: 'composing' while the agent is writing
-  // the HTML (structured data already shown), 'rendered' once html is attached.
-  artifactStatus?: 'composing' | 'rendered';
+  // Generation phase for the artifact: 'composing' while the agent writes the
+  // first (week) HTML, 'enriching' while the broader month pass runs in the
+  // background over an already-rendered edition, 'rendered' once final.
+  artifactStatus?: 'composing' | 'enriching' | 'rendered';
   sections: {
     replyOwed: DailyReportItem[];
     followUpOwed: DailyReportItem[];
