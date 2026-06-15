@@ -65,6 +65,8 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
+    html: typeof raw.html === 'string' ? raw.html : undefined,
+    artifactStatus: raw.artifactStatus,
     sections: {
       replyOwed,
       followUpOwed,

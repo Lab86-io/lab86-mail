@@ -9,4 +9,9 @@ const crons = cronJobs();
 // is a single cheap indexed read per run.
 crons.interval('classify unclassified corpus threads', { minutes: 10 }, internal.smart.classifyBacklog, {});
 
+// File morning/evening Daily Brief editions. Runs at the top of every hour and
+// fires per-user when their local clock hits 07:00 / 18:00 — the action reads
+// each user's calendar timezone and calls back into the app to generate.
+crons.hourly('daily report editions', { minuteUTC: 0 }, internal.dailyReports.tick, {});
+
 export default crons;
