@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
-import { contextFirstName } from '../ai/context';
+import { contextFirstName, getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { listNylasAccounts } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
@@ -257,7 +257,7 @@ DO NOT:
 
 MASTHEAD (signature element — replaces any app header):
 - Full-bleed landscape banner using data.art.imageUrl (object-fit: cover, ~38–46vh, never distorted). Overlay "The {data.weekday} Brief" in the display face, centered, with a legibility scrim.
-- Date (e.g. "15 JUN 2026") and time set vertically along the left/right edges, like a newspaper's spine.
+- Use data.localDate (e.g. "15 JUN 2026") and data.localTime (e.g. "9:54 AM") VERBATIM — they are already in the user's timezone; do not recompute or reformat times yourself. Set them vertically along the left/right edges, like a newspaper's spine.
 - Small monospace caption beneath the image: data.art.credit + " · " + data.art.source.
 
 THEME — TWO fonts, honoring the user's app theme (host injects live):
@@ -309,17 +309,23 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
     location: e.location ?? null,
   }));
 
-  // UTC to match getDailyArt's UTC date key, so the masthead day-of-week and
-  // the selected artwork never disagree across a day boundary.
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(
-    new Date(report.generatedAt),
-  );
+  // Format the dateline in the USER's timezone (set on the request context) so
+  // the masthead shows their local day/time, not the server's UTC clock.
+  const timeZone = getAiRequestContext().userTimezone || 'UTC';
+  const at = new Date(report.generatedAt);
+  const fmt = (opts: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat('en-US', { timeZone, ...opts }).format(at);
+  const weekday = fmt({ weekday: 'long' });
+  const localDate = fmt({ day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+  const localTime = fmt({ hour: 'numeric', minute: '2-digit' });
   const art = getDailyArt(report.generatedAt);
 
   const data = {
-    today: new Date(report.generatedAt).toString(),
-    kind: report.kind,
     weekday,
+    localDate,
+    localTime,
+    timezone: timeZone,
+    kind: report.kind,
     art,
     firstName: contextFirstName() || null,
     services: extras.services,
@@ -332,8 +338,8 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
   };
 
   return [
-    `Today is ${new Date(report.generatedAt).toString()}.`,
-    `This is the "${report.kind}" edition for ${data.firstName || 'the user'}.`,
+    `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
+    `This is the "${report.kind}" edition.`,
     'Read data.threads (real email bodies), the calendar, and the tasks; do your own analysis and compose the Daily Brief HTML. Every id/account is real — use them verbatim in the interaction protocol; never fabricate ids.',
     '',
     '```json',

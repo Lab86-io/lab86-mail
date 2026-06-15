@@ -67,10 +67,10 @@ export const tick = internalAction({
     const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
     const at = new Date();
     // Only the users whose local clock is at the morning/evening hour right now.
-    const due: Array<{ userId: string; kind: 'morning' }> = [];
+    const due: Array<{ userId: string; kind: 'morning'; timezone: string }> = [];
     for (const target of targets) {
       if (localHour(target.timezone, at) === MORNING_HOUR) {
-        due.push({ userId: target.userId, kind: 'morning' });
+        due.push({ userId: target.userId, kind: 'morning', timezone: target.timezone });
       }
     }
     const fired = await fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {

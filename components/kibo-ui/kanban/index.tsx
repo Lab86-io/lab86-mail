@@ -48,11 +48,13 @@ export type { DragEndEvent } from '@dnd-kit/core';
 // card otherwise), falling back to rectangle intersection when the pointer is
 // outside every droppable (e.g. keyboard dragging).
 const collisionDetection: CollisionDetection = (args) => {
-  const pointerCollisions = pointerWithin(args);
-  if (pointerCollisions.length > 0) {
-    return pointerCollisions;
-  }
-  return rectIntersection(args);
+  const hits = pointerWithin(args);
+  const collisions = hits.length > 0 ? hits : rectIntersection(args);
+  // Prefer a card or column over a column's empty-drop zone so within-column
+  // sorting stays precise; the dropzone is only the fallback that makes an
+  // empty column droppable at all.
+  const precise = collisions.filter((c) => !String(c.id).startsWith('dropzone:'));
+  return precise.length > 0 ? precise : collisions;
 };
 
 type KanbanItemProps = {
@@ -258,11 +260,24 @@ export const KanbanCards = <T extends KanbanItemProps = KanbanItemProps>({
   const { data } = useContext(KanbanContext) as KanbanContextProps<T>;
   const filteredData = data.filter((item) => item.column === props.id);
   const items = filteredData.map((item) => item.id);
+  // An explicit droppable over the cards area so EVERY column — including empty
+  // ones — is a real drop target. When columns are reorderable the column node
+  // is only a sortable, which doesn't reliably register a droppable rect for an
+  // empty column, so dnd-kit "couldn't see" empty columns. Distinct id (the
+  // column's own id belongs to the board node); handlers map it back via data.
+  const { setNodeRef } = useDroppable({
+    id: `dropzone:${props.id}`,
+    data: { type: 'column-dropzone', column: props.id },
+  });
 
   return (
     <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <SortableContext items={items}>
-        <div className={cn('flex min-h-full flex-grow flex-col gap-2 p-2', className)} {...props}>
+        <div
+          ref={setNodeRef}
+          className={cn('flex min-h-full flex-grow flex-col gap-2 p-2', className)}
+          {...props}
+        >
           {filteredData.map(children)}
         </div>
       </SortableContext>
@@ -339,6 +354,18 @@ export const KanbanProvider = <
     onDragStart?.(event);
   };
 
+  // Resolve which column a drop landed on, from any of the three droppable
+  // shapes: a card (use its column), a column's empty dropzone (data.column),
+  // or the column node itself (its id).
+  const columnIdFromOver = (over: DragOverEvent['over']): string | undefined => {
+    if (!over) return undefined;
+    const dropzoneColumn = (over.data?.current as { column?: string } | undefined)?.column;
+    if (dropzoneColumn) return dropzoneColumn;
+    const overItem = data.find((item) => item.id === over.id);
+    if (overItem) return overItem.column;
+    return columns.find((column) => column.id === over.id)?.id;
+  };
+
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
 
@@ -352,14 +379,13 @@ export const KanbanProvider = <
     }
 
     const activeItem = data.find((item) => item.id === active.id);
-    const overItem = data.find((item) => item.id === over.id);
 
     if (!activeItem) {
       return;
     }
 
     const activeColumn = activeItem.column;
-    const overColumn = overItem?.column || columns.find((col) => col.id === over.id)?.id || columns[0]?.id;
+    const overColumn = columnIdFromOver(over) || columns[0]?.id;
 
     if (activeColumn !== overColumn) {
       const newData = [...data];
@@ -399,9 +425,7 @@ export const KanbanProvider = <
 
     const activeColumn = columns.find((column) => column.id === active.id);
     if (activeColumn) {
-      const overColumnId =
-        columns.find((column) => column.id === over.id)?.id ||
-        data.find((item) => item.id === over.id)?.column;
+      const overColumnId = columnIdFromOver(over);
       const oldIndex = columns.findIndex((column) => column.id === active.id);
       const newIndex = columns.findIndex((column) => column.id === overColumnId);
       if (oldIndex === -1 || newIndex === -1) return;
@@ -413,8 +437,7 @@ export const KanbanProvider = <
     }
 
     const activeItem = data.find((item) => item.id === active.id);
-    const overItem = data.find((item) => item.id === over.id);
-    const targetColumn = overItem?.column || columns.find((column) => column.id === over.id)?.id;
+    const targetColumn = columnIdFromOver(over);
     if (!activeItem || !targetColumn) {
       onDragEnd?.(event);
       return;
