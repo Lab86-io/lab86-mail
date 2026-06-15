@@ -191,6 +191,11 @@ export async function generateTextForCurrentUser(
   const runtime = await resolveAiRuntime({ userId, speed, feature });
   try {
     const result = await generateText({
+      // Bound the output. Without this the provider assumes the model's max
+      // (e.g. 65536 for gpt-5.5), and OpenRouter reserves credits for that
+      // worst case — 402-ing the request even with a healthy balance. Callers
+      // that need more (e.g. the report artifact) pass their own value.
+      maxOutputTokens: 8000,
       ...rest,
       model: runtime.model,
     });
@@ -226,6 +231,9 @@ export async function streamTextForUser(
   const runtime = await resolveAiRuntime({ userId, speed, feature });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, () =>
     streamText({
+      // Cap per-step output so the provider doesn't reserve the model's full max
+      // (65536), which OpenRouter 402s on; leaves room for reasoning + a reply.
+      maxOutputTokens: 16000,
       ...rest,
       model: runtime.model,
       onFinish: async (event) => {
