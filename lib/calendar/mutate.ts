@@ -24,6 +24,9 @@ export interface CreateEventInput {
   participants?: Array<{ email: string; name?: string }>;
   recurrence?: string[];
   busy?: boolean;
+  // IANA timezone the naive start/end were interpreted in. Google rejects /
+  // mis-places timed events without it, so it's stamped on the Nylas `when`.
+  timezone?: string;
   // Whether the provider emails participants. Callers must confirm with the
   // user before passing participants at all (spec: outward-facing confirms).
   notifyParticipants?: boolean;
@@ -71,7 +74,7 @@ export async function createCalendarEvent(input: CreateEventInput) {
       description: input.description,
       location: input.location,
       busy: input.busy ?? true,
-      when: toNylasWhen(input.startAt, input.endAt, input.allDay),
+      when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone),
       participants: input.participants?.map((p) => ({ email: p.email, name: p.name })),
       recurrence: input.recurrence,
     } as any,
@@ -431,7 +434,7 @@ async function getAccount(userId: string, accountId: string): Promise<NylasAccou
   return requireConnectedAccount(userId, accountId);
 }
 
-function toNylasWhen(startAt: number, endAt: number, allDay?: boolean) {
+function toNylasWhen(startAt: number, endAt: number, allDay?: boolean, timezone?: string) {
   if (allDay) {
     const startDate = new Date(startAt).toISOString().slice(0, 10);
     const endDate = new Date(endAt).toISOString().slice(0, 10);
@@ -440,8 +443,13 @@ function toNylasWhen(startAt: number, endAt: number, allDay?: boolean) {
     }
     return { startDate, endDate };
   }
+  // Google (via Nylas) needs the timezone alongside the unix seconds to place a
+  // timed event correctly; without it events land in UTC / get rejected.
+  const tz = timezone || 'UTC';
   return {
     startTime: Math.floor(startAt / 1000),
     endTime: Math.floor(endAt / 1000),
+    startTimezone: tz,
+    endTimezone: tz,
   };
 }

@@ -14,4 +14,8 @@ crons.interval('classify unclassified corpus threads', { minutes: 10 }, internal
 // each user's calendar timezone and calls back into the app to generate.
 crons.hourly('daily report editions', { minuteUTC: 0 }, internal.dailyReports.tick, {});
 
+// Poll each connected user's calendars for changes every 15 minutes — a
+// safety net over the webhook-driven event deltas.
+crons.interval('calendar resync', { minutes: 15 }, internal.calendarSync.tick, {});
+
 export default crons;

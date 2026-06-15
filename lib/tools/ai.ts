@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { describeProvider } from '../ai/client';
 import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { api, convexQuery } from '../hosted/convex';
@@ -69,14 +70,15 @@ export const summarizeThread = defineTool({
       cachedThread.summaryAt &&
       Date.now() - cachedThread.summaryAt < 6 * 60 * 60_000
     ) {
-      return { summary: cachedThread.summary, model: 'cached' };
+      // Surface the real model that produced the cached summary, not 'cached'.
+      return { summary: cachedThread.summary, model: cachedThread.summaryModel || 'cached' };
     }
     const messages = await loadThread(account, threadId, ctx.userId);
     if (!messages.length) return { summary: '(empty thread)', model: 'none' };
     if (!(await hasAiForCurrentUser())) {
       const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
       const summary = `${messages[0].subject} — ${messages.length} message(s) with ${senders}.`;
-      await setThreadSummary(account, threadId, summary).catch(() => undefined);
+      await setThreadSummary(account, threadId, summary, 'local').catch(() => undefined);
       return { summary, model: 'local' };
     }
     const prompt = [
@@ -88,7 +90,7 @@ export const summarizeThread = defineTool({
       concatThread(messages),
     ].join('\n');
     try {
-      const { text } = await generateTextForCurrentUser({
+      const result = await generateTextForCurrentUser({
         feature: 'summarize_thread',
         // Summaries are bulk single-shot work: nano tier (always the cheap
         // model, ignores the user's fast-model override).
@@ -97,16 +99,18 @@ export const summarizeThread = defineTool({
           "You are lab86-mail, the user's email assistant. Be concrete. Never claim an action was performed; you can only reason.",
         prompt,
       });
-      const summary = text.trim();
-      await setThreadSummary(account, threadId, summary).catch(() => undefined);
-      return { summary, model: 'fast' };
+      const summary = result.text.trim();
+      // The provider's response carries the concrete model id it served.
+      const model = (result as any)?.response?.modelId || describeProvider().fast || 'ai';
+      await setThreadSummary(account, threadId, summary, model).catch(() => undefined);
+      return { summary, model };
     } catch (err: any) {
       // Cloud model failed — most often insufficient_quota / rate limit / network.
       // Fall back to a deterministic local summary so the UI never gets stuck.
       const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
       const last = messages[messages.length - 1];
       const summary = `${last.subject} — ${messages.length} message(s) with ${senders}; latest from ${last.from}.\n\n(AI summary unavailable: ${err?.message || 'model error'}.)`;
-      await setThreadSummary(account, threadId, summary).catch(() => undefined);
+      await setThreadSummary(account, threadId, summary, 'local-fallback').catch(() => undefined);
       return { summary, model: 'local-fallback' };
     }
   },

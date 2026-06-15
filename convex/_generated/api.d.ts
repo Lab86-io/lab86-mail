@@ -13,6 +13,7 @@ import type * as agentUploads from "../agentUploads.js";
 import type * as ai from "../ai.js";
 import type * as boards from "../boards.js";
 import type * as calendarData from "../calendarData.js";
+import type * as calendarSync from "../calendarSync.js";
 import type * as crons from "../crons.js";
 import type * as dailyReports from "../dailyReports.js";
 import type * as lib from "../lib.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   boards: typeof boards;
   calendarData: typeof calendarData;
+  calendarSync: typeof calendarSync;
   crons: typeof crons;
   dailyReports: typeof dailyReports;
   lib: typeof lib;

@@ -5,9 +5,22 @@
  * via TanStack Query. The same registry that the AI agent and Codex see.
  */
 export async function callTool<T = any>(name: string, args: any = {}, headers: HeadersInit = {}): Promise<T> {
+  // Tools that parse naive date/times (e.g. calendar_create_event) need the
+  // user's timezone. The agent passes it explicitly, but direct UI calls didn't
+  // carry one, so created events landed in the wrong zone. Send the browser tz.
+  let timezone: string | undefined;
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    timezone = undefined;
+  }
   const res = await fetch(`/api/tools/${name}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: {
+      'content-type': 'application/json',
+      ...(timezone ? { 'x-user-timezone': timezone } : {}),
+      ...headers,
+    },
     body: JSON.stringify(args),
   });
   let data: any = null;

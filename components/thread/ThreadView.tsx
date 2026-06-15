@@ -84,6 +84,7 @@ export function ThreadView() {
         messages: any[];
         summary?: string | null;
         summaryAt?: number | null;
+        summaryModel?: string | null;
       }>('get_thread', {
         account,
         threadId,
@@ -494,7 +495,7 @@ export function ThreadView() {
       <div className="scrollable flex-1 px-5 py-4">
         <SummaryCard
           data={summary.data?.summary || cachedSummary}
-          model={summary.data?.model || (cachedSummary ? 'cached' : '')}
+          model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
           loading={!cachedSummary && summaryEnabled && summary.isLoading}
           error={summary.error ? (summary.error as Error).message : null}
           onRetry={() => {
@@ -594,7 +595,12 @@ function SummaryCard({
       <header className="mb-1.5 flex items-center justify-between">
         <span className="font-display text-[11.5px] italic text-[var(--color-text-muted)]">Summary</span>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[var(--color-text-faint)]">{model || 'gpt-5.5-mini'}</span>
+          <span
+            className="text-[10px] text-[var(--color-text-faint)]"
+            title="Model that generated this summary"
+          >
+            {model || 'AI'}
+          </span>
           <button
             type="button"
             onClick={onRetry}

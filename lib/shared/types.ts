@@ -23,6 +23,9 @@ export interface Thread {
   starred?: boolean;
   summary?: string | null;
   summaryAt?: number | null;
+  // The model that produced `summary` (e.g. 'claude-haiku-4-5-20251001'), so a
+  // cached summary still shows what generated it rather than a generic label.
+  summaryModel?: string | null;
   triage?: {
     priority: 1 | 2 | 3;
     action: string;
