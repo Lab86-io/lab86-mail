@@ -40,13 +40,49 @@ interface DailyReportItem {
   receivedAt?: number | null;
 }
 
+interface DailyReportTaskItem {
+  cardId: string;
+  boardId: string;
+  columnId: string;
+  boardTitle?: string;
+  columnName?: string;
+  title: string;
+  description?: string;
+  dueAt?: number | null;
+  completedAt?: number | null;
+  priority?: 'low' | 'medium' | 'high';
+  labels?: string[];
+  assignees?: string[];
+  sourceTitle?: string;
+  sourceUrl?: string;
+  scope: 'week' | 'month';
+}
+
+interface DailyReportCalendarItem {
+  account: string;
+  eventId: string;
+  calendarId?: string;
+  calendarName?: string;
+  title: string;
+  startAt: number;
+  endAt: number;
+  allDay?: boolean;
+  location?: string;
+  htmlLink?: string;
+  description?: string;
+  scope: 'week' | 'month';
+}
+
 interface DailyReportPayload {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
   generatedAt: number;
   title: string;
   narrative: string;
-  sections: Record<string, DailyReportItem[] | string | undefined>;
+  sections: Record<
+    string,
+    DailyReportItem[] | DailyReportTaskItem[] | DailyReportCalendarItem[] | string | undefined
+  >;
   stats: {
     scannedThreads: number;
     trackedThreads: number;
@@ -54,6 +90,9 @@ interface DailyReportPayload {
     replyOwed?: number;
     dueSoon: number;
     bulkTailCount?: number;
+    openTasks?: number;
+    completedTasks?: number;
+    calendarEvents?: number;
   };
   model?: string;
   errors?: string[];
@@ -109,7 +148,15 @@ function formatDateline(report: DailyReportPayload): string {
 }
 
 function asItems(value: DailyReportPayload['sections'][string]): DailyReportItem[] {
-  return Array.isArray(value) ? value : [];
+  return Array.isArray(value) ? (value as DailyReportItem[]) : [];
+}
+
+function asTasks(value: DailyReportPayload['sections'][string]): DailyReportTaskItem[] {
+  return Array.isArray(value) ? (value as DailyReportTaskItem[]) : [];
+}
+
+function asEvents(value: DailyReportPayload['sections'][string]): DailyReportCalendarItem[] {
+  return Array.isArray(value) ? (value as DailyReportCalendarItem[]) : [];
 }
 
 // Gmail-Nudge-style framing: "Received 4 days ago — reply?".
@@ -187,7 +234,8 @@ export function DailyReport() {
         [report.stats.scannedThreads, 'Scanned'],
         [report.stats.replyOwed ?? report.stats.needsReply ?? 0, 'Reply owed'],
         [report.stats.trackedThreads, 'Tracked'],
-        [report.stats.bulkTailCount ?? 0, 'Bulk'],
+        [report.stats.openTasks ?? 0, 'Open tasks'],
+        [report.stats.calendarEvents ?? 0, 'Events'],
       ]
     : [];
 
@@ -244,11 +292,25 @@ export function DailyReport() {
           </div>
         </div>
         {generate.isPending || generating ? (
-          <TextShimmer className="mt-3 text-[12px] text-[var(--color-accent)]">
-            {generating && report?.progress
-              ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total} threads` : ''}…`
-              : 'Reading your mail, tracked threads, and calendar to write today’s brief…'}
-          </TextShimmer>
+          <div className="mt-3 space-y-2">
+            <TextShimmer className="text-[12px] text-[var(--color-accent)]">
+              {generating && report?.progress
+                ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
+                : 'Reading your mail, tasks, and calendar to write today’s brief…'}
+            </TextShimmer>
+            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+              <div
+                className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{
+                  width: `${
+                    report?.progress?.total
+                      ? Math.max(6, Math.min(100, (report.progress.done / report.progress.total) * 100))
+                      : 12
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
         ) : null}
       </header>
 
@@ -272,7 +334,7 @@ export function DailyReport() {
           <div className="mx-auto flex max-w-3xl flex-col gap-7">
             {/* Stat strip — serif numerals over tiny labels, hairline-divided when wide. */}
             <dl
-              className="blur-in grid grid-cols-2 gap-y-3 divide-[var(--color-border)] @[420px]:grid-cols-4 @[420px]:divide-x"
+              className="blur-in grid grid-cols-2 gap-y-3 divide-[var(--color-border)] @[420px]:grid-cols-3 @[640px]:grid-cols-5 @[420px]:divide-x"
               style={{ animationDelay: '0ms' }}
             >
               {stats.map(([value, label], i) => (
@@ -332,6 +394,14 @@ export function DailyReport() {
               })}
             </div>
 
+            <TaskCalendarBrief
+              tasks={asTasks(report.sections.tasks)}
+              events={asEvents(report.sections.calendar)}
+              delay={170}
+              onOpenTasks={() => setPrimaryView('tasks')}
+              onOpenCalendar={() => setPrimaryView('calendar')}
+            />
+
             {/* Sections. */}
             {SECTION_LABELS.map(([key, label, limit, roomy], i) => (
               <ReportSection
@@ -340,7 +410,7 @@ export function DailyReport() {
                 items={asItems(report.sections[key])}
                 limit={limit}
                 roomy={roomy}
-                delay={180 + i * 60}
+                delay={240 + i * 60}
                 {...rowHandlers}
               />
             ))}
@@ -348,7 +418,7 @@ export function DailyReport() {
             {/* Bulk & automated tail — collapsed by default, humans never here. */}
             <BulkTail
               items={asItems(report.sections.bulkTail)}
-              delay={180 + SECTION_LABELS.length * 60}
+              delay={240 + SECTION_LABELS.length * 60}
               onOpen={openThread}
             />
 
@@ -381,6 +451,183 @@ interface RowHandlers {
   onMarkPerson: (item: DailyReportItem) => void;
   dismissingId?: string;
   markingId?: string;
+}
+
+// Report links come from synced provider data (task sources, calendar
+// htmlLinks). Allow only http(s) into an href so a stored javascript:/data:
+// scheme can't execute when the link is clicked.
+function safeExternalHref(value?: string): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatEventWindow(event: DailyReportCalendarItem): string {
+  const start = new Date(event.startAt);
+  if (event.allDay) {
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(start);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(start);
+}
+
+function TaskCalendarBrief({
+  tasks,
+  events,
+  delay,
+  onOpenTasks,
+  onOpenCalendar,
+}: {
+  tasks: DailyReportTaskItem[];
+  events: DailyReportCalendarItem[];
+  delay: number;
+  onOpenTasks: () => void;
+  onOpenCalendar: () => void;
+}) {
+  if (!tasks.length && !events.length) return null;
+  const visibleTasks = tasks.slice(0, 8);
+  const visibleEvents = events.slice(0, 8);
+  return (
+    <section className="blur-in grid gap-3 @[700px]:grid-cols-2" style={{ animationDelay: `${delay}ms` }}>
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
+            Task Board
+          </h2>
+          <button
+            type="button"
+            onClick={onOpenTasks}
+            className="text-[11px] font-medium text-[var(--color-accent)] hover:underline"
+          >
+            Open tasks
+          </button>
+        </div>
+        {visibleTasks.length ? (
+          <ul className="space-y-2">
+            {visibleTasks.map((task) => (
+              <li key={task.cardId} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2">
+                <span
+                  className={cn(
+                    'mt-1 grid size-3.5 place-items-center rounded-sm border',
+                    task.completedAt
+                      ? 'border-[var(--color-success)] bg-[var(--color-success)]'
+                      : 'border-[var(--color-border-strong)]',
+                  )}
+                  aria-hidden
+                />
+                <div className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={onOpenTasks}
+                    className={cn(
+                      'block max-w-full truncate text-left text-[13px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]',
+                      task.completedAt && 'text-[var(--color-text-faint)] line-through',
+                    )}
+                  >
+                    {stripEmoji(task.title)}
+                  </button>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px] text-[var(--color-text-faint)]">
+                    <span>{task.scope === 'week' ? 'Last week' : 'Last month'}</span>
+                    {task.columnName ? <span>{task.columnName}</span> : null}
+                    {task.dueAt ? <span>Due {formatDate(task.dueAt)}</span> : null}
+                    {task.priority ? <span>{task.priority}</span> : null}
+                    {safeExternalHref(task.sourceUrl) ? (
+                      <a
+                        href={safeExternalHref(task.sourceUrl) as string}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-[var(--color-accent)] hover:underline"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {task.sourceTitle || 'Source'}
+                      </a>
+                    ) : null}
+                  </div>
+                  {task.description ? (
+                    <p className="mt-1 line-clamp-2 text-[11.5px] leading-5 text-[var(--color-text-muted)]">
+                      {stripEmoji(task.description)}
+                    </p>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[12px] text-[var(--color-text-faint)]">
+            No active task context in the last month.
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
+            Calendar
+          </h2>
+          <button
+            type="button"
+            onClick={onOpenCalendar}
+            className="text-[11px] font-medium text-[var(--color-accent)] hover:underline"
+          >
+            Open calendar
+          </button>
+        </div>
+        {visibleEvents.length ? (
+          <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
+            <table className="w-full table-fixed border-collapse text-left">
+              <tbody>
+                {visibleEvents.map((event) => (
+                  <tr
+                    key={`${event.account}:${event.eventId}:${event.startAt}`}
+                    className="border-b border-[var(--color-border)] last:border-b-0"
+                  >
+                    <td className="w-24 px-2.5 py-2 align-top text-[10.5px] font-medium tabular-nums text-[var(--color-text-faint)]">
+                      {formatEventWindow(event)}
+                    </td>
+                    <td className="px-2.5 py-2 align-top">
+                      {safeExternalHref(event.htmlLink) ? (
+                        <a
+                          href={safeExternalHref(event.htmlLink) as string}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="line-clamp-1 text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
+                        >
+                          {stripEmoji(event.title)}
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={onOpenCalendar}
+                          className="line-clamp-1 text-left text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
+                        >
+                          {stripEmoji(event.title)}
+                        </button>
+                      )}
+                      {event.location ? (
+                        <p className="mt-0.5 line-clamp-1 text-[10.5px] text-[var(--color-text-faint)]">
+                          {stripEmoji(event.location)}
+                        </p>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-[12px] text-[var(--color-text-faint)]">No calendar context in the last month.</p>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function ReportSection({

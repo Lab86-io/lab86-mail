@@ -61,8 +61,10 @@ const AGENT_TOOL_NAMES = new Set([
   'calendar_sync_now',
   'calendar_update_event',
   'calendar_delete_event',
+  'calendar_delete_recurring_series',
   'calendar_rsvp_event',
   'calendar_get_primary',
+  'calendar_unsubscribe_calendar',
   'list_recent_operations',
   'undo_operation',
   'tasks_list_boards',
@@ -80,6 +82,7 @@ const AGENT_TOOL_NAMES = new Set([
   'tasks_add_comment',
   'tasks_attach_link',
   'tasks_attach_file',
+  'tasks_attach_calendar_event_link',
   'contact_lookup',
   'expand_alias',
   'browserbase_search',
@@ -102,6 +105,22 @@ const AGENT_TOOL_NAMES = new Set([
   'ui_switch_account',
 ]);
 
+const AGENT_TOOL_TIMEOUT_MS = 75_000;
+
+async function withToolTimeout<T>(promise: Promise<T>, toolName: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${toolName} timed out after ${Math.round(AGENT_TOOL_TIMEOUT_MS / 1000)}s`));
+    }, AGENT_TOOL_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
   const lifted: Record<string, any> = {};
   for (const [name, t] of Object.entries(TOOLS)) {
@@ -111,14 +130,17 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
       inputSchema: ((t.input as unknown) ?? z.object({})) as any,
       execute: async (args: unknown) => {
         const context = getAiRequestContext();
-        const result = await invokeTool(t, args ?? {}, {
-          agent: 'ai',
-          userId: context.userId,
-          userEmail: context.userEmail,
-          userName: context.userName,
-          operationBatchId,
-          userTimezone,
-        });
+        const result = await withToolTimeout(
+          invokeTool(t, args ?? {}, {
+            agent: 'ai',
+            userId: context.userId,
+            userEmail: context.userEmail,
+            userName: context.userName,
+            operationBatchId,
+            userTimezone,
+          }),
+          name,
+        );
         return result;
       },
     });
@@ -183,7 +205,7 @@ export async function runAgent({
     tools: liftToolsForAgent(operationBatchId, timezone),
     // Multi-step flows (fetch a file → store → attach → send) need headroom
     // beyond the old 6-step cap.
-    stopWhen: stepCountIs(12),
+    stopWhen: stepCountIs(20),
     onError: (event: any) => {
       // Best-effort logging; don't crash the stream.
       console.error('[agent]', event.error);

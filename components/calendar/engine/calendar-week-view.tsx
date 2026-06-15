@@ -63,7 +63,14 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
   }, [hourHeight, setHourHeight, selectedDate, setSelectedDate]);
 
   return (
-    <motion.div initial="initial" animate="animate" exit="exit" variants={fadeIn} transition={transition}>
+    <motion.div
+      className="flex h-full min-h-0 flex-col"
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      variants={fadeIn}
+      transition={transition}
+    >
       <motion.div
         className="flex flex-col items-center justify-center border-b p-4 text-sm sm:hidden"
         initial={{ opacity: 0, y: -20 }}
@@ -74,7 +81,7 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
         <p>Please switch to a desktop device or use the daily view instead.</p>
       </motion.div>
 
-      <motion.div className="flex-col sm:flex" variants={staggerContainer}>
+      <motion.div className="hidden min-h-0 flex-1 flex-col sm:flex" variants={staggerContainer}>
         <div>
           {/* Week header */}
           <motion.div
@@ -113,7 +120,7 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
           <WeekViewMultiDayEventsRow selectedDate={selectedDate} multiDayEvents={multiDayEvents} />
         </div>
 
-        <ScrollArea className="h-[736px]" type="always" ref={scrollRef}>
+        <ScrollArea className="min-h-0 flex-1 overscroll-contain" type="always" ref={scrollRef}>
           <div className="flex">
             {/* Hours column */}
             <motion.div className="relative w-18" variants={staggerContainer}>

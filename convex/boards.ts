@@ -124,6 +124,22 @@ async function appendActivity(ctx: MutationCtx, card: any, userId: string, actio
   await ctx.db.patch(card._id, { activity });
 }
 
+function sourceIndexFields(source: any) {
+  const threadId = typeof source?.threadId === 'string' ? source.threadId : undefined;
+  const eventId =
+    typeof source?.eventId === 'string'
+      ? source.eventId
+      : typeof source?.providerEventId === 'string'
+        ? source.providerEventId
+        : undefined;
+  const accountId = typeof source?.accountId === 'string' ? source.accountId : undefined;
+  return {
+    sourceThreadId: threadId,
+    sourceCalendarEventId: eventId,
+    sourceAccountId: accountId,
+  };
+}
+
 export const ensureDefaultBoard = mutation({
   args: { ...callerArgs },
   handler: async (ctx, args) => {
@@ -360,6 +376,7 @@ const cardFields = {
       }),
     ),
   ),
+  source: v.optional(v.any()),
 };
 
 export const createCard = mutation({
@@ -412,6 +429,7 @@ export const createCard = mutation({
       attachments: args.attachments,
       order: nextOrder(siblings.map((card) => card.order)),
       source: args.source,
+      ...sourceIndexFields(args.source),
       createdAt: ts,
       updatedAt: ts,
     });
@@ -437,6 +455,10 @@ export const updateCard = mutation({
     if (args.assignees !== undefined)
       patch.assignees = await normalizeAssignees(ctx, card.boardId, args.assignees);
     if (args.attachments !== undefined) patch.attachments = args.attachments;
+    if (args.source !== undefined) {
+      patch.source = args.source;
+      Object.assign(patch, sourceIndexFields(args.source));
+    }
     // null clears; undefined leaves untouched.
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt === null ? undefined : args.dueAt;
     if (args.completedAt !== undefined)
@@ -580,7 +602,7 @@ export const attachToCard = mutation({
       updatedAt: now(),
     });
     await appendActivity(ctx, { ...card, _id: args.cardId }, userId, 'attached', args.name);
-    return { ok: true };
+    return { ok: true, previous: snapshotCard(card) };
   },
 });
 
@@ -713,12 +735,61 @@ export const liveCardsForThread = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity?.subject) throw new Error('Not authenticated');
-    const rows = await ctx.db
+    const indexed = await ctx.db
       .query('cards')
-      .withIndex('by_user', (q) => q.eq('userId', identity.subject))
-      .collect();
+      .withIndex('by_user_source_thread', (q) =>
+        q.eq('userId', identity.subject).eq('sourceThreadId', args.threadId),
+      )
+      .take(50);
+    const rows = indexed.length
+      ? indexed
+      : await ctx.db
+          .query('cards')
+          .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+          .take(1000);
     return rows
-      .filter((card) => card.source?.threadId === args.threadId)
+      .filter((card) => card.sourceThreadId === args.threadId || card.source?.threadId === args.threadId)
+      .map((card) => ({ cardId: card._id, title: card.title, completedAt: card.completedAt }));
+  },
+});
+
+// Cards spawned from a given calendar event — the provenance chip in the
+// event viewer (calendar → tasks direction).
+export const liveCardsForCalendarEvent = query({
+  args: { eventId: v.string(), masterEventId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) throw new Error('Not authenticated');
+    const wanted = new Set([args.eventId, args.masterEventId].filter(Boolean) as string[]);
+    const byEvent = await Promise.all(
+      [...wanted].map((eventId) =>
+        ctx.db
+          .query('cards')
+          .withIndex('by_user_source_calendar_event', (q) =>
+            q.eq('userId', identity.subject).eq('sourceCalendarEventId', eventId),
+          )
+          .take(50),
+      ),
+    );
+    const indexed = byEvent.flat();
+    const rows = indexed.length
+      ? indexed
+      : await ctx.db
+          .query('cards')
+          .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+          .take(1000);
+    const seen = new Set<string>();
+    return rows
+      .filter((card) => {
+        const sourceEventId =
+          card.sourceCalendarEventId || card.source?.eventId || card.source?.providerEventId;
+        return sourceEventId && wanted.has(sourceEventId);
+      })
+      .filter((card) => {
+        if (seen.has(card._id)) return false;
+        seen.add(card._id);
+        return true;
+      })
       .map((card) => ({ cardId: card._id, title: card.title, completedAt: card.completedAt }));
   },
 });
@@ -735,6 +806,57 @@ export const listDueCards = query({
       )
       .take(1000);
     return rows.map((card) => ({ ...snapshotCard(card), cardId: card._id }));
+  },
+});
+
+// Daily report context: open cards plus recently-touched/due cards within the
+// report horizon, enriched with board and column labels for the renderer.
+export const listReportCards = query({
+  args: {
+    ...callerArgs,
+    since: v.number(),
+    endAt: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const cap = Math.min(Math.max(args.limit ?? 400, 1), 1000);
+    const rows = await ctx.db
+      .query('cards')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .take(cap);
+    const filtered = rows
+      .filter((card) => {
+        const dueRelevant = card.dueAt !== undefined && card.dueAt >= args.since && card.dueAt < args.endAt;
+        const touchedRecently = card.updatedAt >= args.since || card.createdAt >= args.since;
+        return !card.completedAt || dueRelevant || touchedRecently;
+      })
+      .sort((a, b) => {
+        const aDone = a.completedAt ? 1 : 0;
+        const bDone = b.completedAt ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        const aDue = a.dueAt ?? Number.POSITIVE_INFINITY;
+        const bDue = b.dueAt ?? Number.POSITIVE_INFINITY;
+        if (aDue !== bDue) return aDue - bDue;
+        return b.updatedAt - a.updatedAt;
+      })
+      .slice(0, cap);
+
+    const boardIds = [...new Set(filtered.map((card) => card.boardId))];
+    const columnIds = [...new Set(filtered.map((card) => card.columnId))];
+    const [boards, columns] = await Promise.all([
+      Promise.all(boardIds.map((id) => ctx.db.get(id))),
+      Promise.all(columnIds.map((id) => ctx.db.get(id))),
+    ]);
+    const boardsById = new Map(boards.filter(Boolean).map((board: any) => [board._id, board]));
+    const columnsById = new Map(columns.filter(Boolean).map((column: any) => [column._id, column]));
+
+    return filtered.map((card) => ({
+      ...snapshotCard(card),
+      cardId: card._id,
+      boardTitle: boardsById.get(card.boardId)?.title,
+      columnName: columnsById.get(card.columnId)?.name,
+    }));
   },
 });
 
@@ -814,5 +936,8 @@ function snapshotCard(card: any) {
     comments: card.comments,
     activity: card.activity,
     source: card.source,
+    sourceThreadId: card.sourceThreadId,
+    sourceCalendarEventId: card.sourceCalendarEventId,
+    sourceAccountId: card.sourceAccountId,
   };
 }

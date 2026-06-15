@@ -2,17 +2,19 @@
 
 import type {
   Announcements,
+  CollisionDetection,
   DndContextProps,
   DragEndEvent,
   DragOverEvent,
   DragStartEvent,
 } from '@dnd-kit/core';
 import {
-  closestCenter,
   DndContext,
   DragOverlay,
   KeyboardSensor,
   MouseSensor,
+  pointerWithin,
+  rectIntersection,
   TouchSensor,
   useDroppable,
   useSensor,
@@ -20,7 +22,15 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { createContext, type HTMLAttributes, type ReactNode, useContext, useRef, useState } from 'react';
+import {
+  type ButtonHTMLAttributes,
+  createContext,
+  type HTMLAttributes,
+  type ReactNode,
+  useContext,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import tunnel from 'tunnel-rat';
 import { Card } from '@/components/ui/card';
@@ -30,6 +40,20 @@ import { cn } from '@/lib/utils';
 const t = tunnel();
 
 export type { DragEndEvent } from '@dnd-kit/core';
+
+// closestCenter ranks droppables by distance to their CENTER, so a large empty
+// column's far-off center loses to the nearby cards of adjacent columns — making
+// it nearly impossible to drop a card into an empty column. Prefer whatever
+// droppable sits under the pointer (the column itself when empty, the hovered
+// card otherwise), falling back to rectangle intersection when the pointer is
+// outside every droppable (e.g. keyboard dragging).
+const collisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) {
+    return pointerCollisions;
+  }
+  return rectIntersection(args);
+};
 
 type KanbanItemProps = {
   id: string;
@@ -49,13 +73,24 @@ type KanbanContextProps<
   columns: C[];
   data: T[];
   activeCardId: string | null;
+  activeColumnId: string | null;
+  columnsReorderable: boolean;
 };
 
 const KanbanContext = createContext<KanbanContextProps>({
   columns: [],
   data: [],
   activeCardId: null,
+  activeColumnId: null,
+  columnsReorderable: false,
 });
+
+type KanbanColumnHandleContextProps = Pick<
+  ReturnType<typeof useSortable>,
+  'attributes' | 'listeners' | 'setActivatorNodeRef'
+>;
+
+const KanbanColumnHandleContext = createContext<KanbanColumnHandleContextProps | null>(null);
 
 export type KanbanBoardProps = {
   id: string;
@@ -64,21 +99,66 @@ export type KanbanBoardProps = {
 };
 
 export const KanbanBoard = ({ id, children, className }: KanbanBoardProps) => {
-  const { isOver, setNodeRef } = useDroppable({
+  const { columnsReorderable } = useContext(KanbanContext);
+  const sortable = useSortable({
     id,
+    data: { type: 'column' },
+    disabled: !columnsReorderable,
   });
+  const droppable = useDroppable({
+    id,
+    disabled: columnsReorderable,
+  });
+  const isOver = columnsReorderable ? sortable.isOver : droppable.isOver;
+  const setNodeRef = columnsReorderable ? sortable.setNodeRef : droppable.setNodeRef;
+  const style = columnsReorderable
+    ? {
+        transform: CSS.Transform.toString(sortable.transform),
+        transition: sortable.transition,
+      }
+    : undefined;
 
   return (
-    <div
+    <KanbanColumnHandleContext.Provider
+      value={{
+        attributes: sortable.attributes,
+        listeners: sortable.listeners,
+        setActivatorNodeRef: sortable.setActivatorNodeRef,
+      }}
+    >
+      <div
+        className={cn(
+          'flex size-full min-h-40 flex-col divide-y overflow-hidden rounded-md border bg-secondary text-xs shadow-sm ring-2 transition-all',
+          isOver ? 'ring-primary' : 'ring-transparent',
+          sortable.isDragging && 'opacity-70',
+          className,
+        )}
+        ref={setNodeRef}
+        style={style}
+      >
+        {children}
+      </div>
+    </KanbanColumnHandleContext.Provider>
+  );
+};
+
+export type KanbanColumnHandleProps = ButtonHTMLAttributes<HTMLButtonElement>;
+
+export const KanbanColumnHandle = ({ className, ...props }: KanbanColumnHandleProps) => {
+  const handle = useContext(KanbanColumnHandleContext);
+
+  return (
+    <button
+      type="button"
+      ref={handle?.setActivatorNodeRef}
+      {...(handle?.attributes ?? {})}
+      {...(handle?.listeners ?? {})}
       className={cn(
-        'flex size-full min-h-40 flex-col divide-y overflow-hidden rounded-md border bg-secondary text-xs shadow-sm ring-2 transition-all',
-        isOver ? 'ring-primary' : 'ring-transparent',
+        'grid size-5 shrink-0 cursor-grab place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:cursor-grabbing',
         className,
       )}
-      ref={setNodeRef}
-    >
-      {children}
-    </div>
+      {...props}
+    />
   );
 };
 
@@ -180,9 +260,9 @@ export const KanbanCards = <T extends KanbanItemProps = KanbanItemProps>({
   const items = filteredData.map((item) => item.id);
 
   return (
-    <ScrollArea className="overflow-hidden">
+    <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <SortableContext items={items}>
-        <div className={cn('flex flex-grow flex-col gap-2 p-2', className)} {...props}>
+        <div className={cn('flex min-h-full flex-grow flex-col gap-2 p-2', className)} {...props}>
           {filteredData.map(children)}
         </div>
       </SortableContext>
@@ -206,6 +286,9 @@ export type KanbanProviderProps<
   columns: C[];
   data: T[];
   onDataChange?: (data: T[]) => void;
+  onColumnsChange?: (columns: C[]) => void;
+  onColumnDragEnd?: (event: DragEndEvent, columns: C[]) => void;
+  onItemDragEnd?: (event: DragEndEvent, data: T[]) => void;
   onDragStart?: (event: DragStartEvent) => void;
   onDragEnd?: (event: DragEndEvent) => void;
   onDragOver?: (event: DragOverEvent) => void;
@@ -223,9 +306,14 @@ export const KanbanProvider = <
   columns,
   data,
   onDataChange,
+  onColumnsChange,
+  onColumnDragEnd,
+  onItemDragEnd,
   ...props
 }: KanbanProviderProps<T, C>) => {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
+  const columnsReorderable = Boolean(onColumnsChange || onColumnDragEnd);
 
   // Activation constraints are what let a plain click through: a drag only
   // begins after real movement (mouse) or a short hold (touch). Without them
@@ -238,6 +326,12 @@ export const KanbanProvider = <
   );
 
   const handleDragStart = (event: DragStartEvent) => {
+    const column = columns.find((item) => item.id === event.active.id);
+    if (column) {
+      setActiveColumnId(event.active.id as string);
+      onDragStart?.(event);
+      return;
+    }
     const card = data.find((item) => item.id === event.active.id);
     if (card) {
       setActiveCardId(event.active.id as string);
@@ -252,6 +346,11 @@ export const KanbanProvider = <
       return;
     }
 
+    if (activeColumnId || columns.some((column) => column.id === active.id)) {
+      onDragOver?.(event);
+      return;
+    }
+
     const activeItem = data.find((item) => item.id === active.id);
     const overItem = data.find((item) => item.id === over.id);
 
@@ -263,14 +362,25 @@ export const KanbanProvider = <
     const overColumn = overItem?.column || columns.find((col) => col.id === over.id)?.id || columns[0]?.id;
 
     if (activeColumn !== overColumn) {
-      let newData = [...data];
+      const newData = [...data];
       const activeIndex = newData.findIndex((item) => item.id === active.id);
       const overIndex = newData.findIndex((item) => item.id === over.id);
+      if (activeIndex === -1) return;
 
-      newData[activeIndex].column = overColumn;
-      newData = arrayMove(newData, activeIndex, overIndex);
-
-      onDataChange?.(newData);
+      const nextActive = { ...newData[activeIndex], column: overColumn };
+      const withoutActive = newData.filter((item) => item.id !== active.id);
+      if (overIndex === -1) {
+        const lastTargetIndex = withoutActive.findLastIndex((item) => item.column === overColumn);
+        withoutActive.splice(
+          lastTargetIndex === -1 ? withoutActive.length : lastTargetIndex + 1,
+          0,
+          nextActive,
+        );
+        onDataChange?.(withoutActive);
+      } else {
+        newData[activeIndex] = nextActive;
+        onDataChange?.(arrayMove(newData, activeIndex, overIndex));
+      }
     }
 
     onDragOver?.(event);
@@ -278,44 +388,99 @@ export const KanbanProvider = <
 
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveCardId(null);
-
-    onDragEnd?.(event);
+    setActiveColumnId(null);
 
     const { active, over } = event;
 
     if (!over || active.id === over.id) {
+      onDragEnd?.(event);
+      return;
+    }
+
+    const activeColumn = columns.find((column) => column.id === active.id);
+    if (activeColumn) {
+      const overColumnId =
+        columns.find((column) => column.id === over.id)?.id ||
+        data.find((item) => item.id === over.id)?.column;
+      const oldIndex = columns.findIndex((column) => column.id === active.id);
+      const newIndex = columns.findIndex((column) => column.id === overColumnId);
+      if (oldIndex === -1 || newIndex === -1) return;
+      const nextColumns = arrayMove(columns, oldIndex, newIndex);
+      onColumnsChange?.(nextColumns);
+      onColumnDragEnd?.(event, nextColumns);
+      onDragEnd?.(event);
+      return;
+    }
+
+    const activeItem = data.find((item) => item.id === active.id);
+    const overItem = data.find((item) => item.id === over.id);
+    const targetColumn = overItem?.column || columns.find((column) => column.id === over.id)?.id;
+    if (!activeItem || !targetColumn) {
+      onDragEnd?.(event);
       return;
     }
 
     let newData = [...data];
-
     const oldIndex = newData.findIndex((item) => item.id === active.id);
     const newIndex = newData.findIndex((item) => item.id === over.id);
 
-    newData = arrayMove(newData, oldIndex, newIndex);
+    if (oldIndex === -1) {
+      onDragEnd?.(event);
+      return;
+    }
+    const nextActive = { ...newData[oldIndex], column: targetColumn };
+    if (newIndex === -1) {
+      const withoutActive = newData.filter((item) => item.id !== active.id);
+      const lastTargetIndex = withoutActive.findLastIndex((item) => item.column === targetColumn);
+      withoutActive.splice(
+        lastTargetIndex === -1 ? withoutActive.length : lastTargetIndex + 1,
+        0,
+        nextActive,
+      );
+      newData = withoutActive;
+    } else {
+      newData[oldIndex] = nextActive;
+      newData = arrayMove(newData, oldIndex, newIndex);
+    }
 
     onDataChange?.(newData);
+    onItemDragEnd?.(event, newData);
+    onDragEnd?.(event);
   };
 
   const announcements: Announcements = {
     onDragStart({ active }) {
+      const activeColumn = columns.find((column) => column.id === active.id);
+      if (activeColumn) return `Picked up the column "${activeColumn.name}"`;
       const { name, column } = data.find((item) => item.id === active.id) ?? {};
 
       return `Picked up the card "${name}" from the "${column}" column`;
     },
     onDragOver({ active, over }) {
+      const activeColumn = columns.find((column) => column.id === active.id);
+      if (activeColumn) {
+        const overColumn = columns.find((column) => column.id === over?.id)?.name;
+        return `Dragged the column "${activeColumn.name}" over "${overColumn}"`;
+      }
       const { name } = data.find((item) => item.id === active.id) ?? {};
       const newColumn = columns.find((column) => column.id === over?.id)?.name;
 
       return `Dragged the card "${name}" over the "${newColumn}" column`;
     },
     onDragEnd({ active, over }) {
+      const activeColumn = columns.find((column) => column.id === active.id);
+      if (activeColumn) {
+        const overColumn = columns.find((column) => column.id === over?.id)?.name;
+        return `Dropped the column "${activeColumn.name}" near "${overColumn}"`;
+      }
       const { name } = data.find((item) => item.id === active.id) ?? {};
       const newColumn = columns.find((column) => column.id === over?.id)?.name;
 
       return `Dropped the card "${name}" into the "${newColumn}" column`;
     },
     onDragCancel({ active }) {
+      const activeColumn = columns.find((column) => column.id === active.id);
+      if (activeColumn) return `Cancelled dragging the column "${activeColumn.name}"`;
       const { name } = data.find((item) => item.id === active.id) ?? {};
 
       return `Cancelled dragging the card "${name}"`;
@@ -323,10 +488,10 @@ export const KanbanProvider = <
   };
 
   return (
-    <KanbanContext.Provider value={{ columns, data, activeCardId }}>
+    <KanbanContext.Provider value={{ columns, data, activeCardId, activeColumnId, columnsReorderable }}>
       <DndContext
         accessibility={{ announcements }}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
         onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
         onDragStart={handleDragStart}
@@ -335,9 +500,11 @@ export const KanbanProvider = <
       >
         {/* Flex row (not auto-cols-fr grid): columns keep their fixed width
             and overflow horizontally instead of stretching to fill. */}
-        <div className={cn('flex size-full gap-4', className)}>
-          {columns.map((column) => children(column))}
-        </div>
+        <SortableContext items={columns.map((column) => column.id)}>
+          <div className={cn('flex size-full gap-4', className)}>
+            {columns.map((column) => children(column))}
+          </div>
+        </SortableContext>
         {typeof window !== 'undefined' &&
           createPortal(
             <DragOverlay>

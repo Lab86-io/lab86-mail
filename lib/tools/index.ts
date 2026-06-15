@@ -13,6 +13,7 @@ import { listAuditEntries, logAction } from './audit-tools';
 import {
   calendarCreateEvent,
   calendarDeleteEvent,
+  calendarDeleteRecurringSeries,
   calendarFreeBusy,
   calendarGetPrimary,
   calendarListCalendars,
@@ -20,6 +21,7 @@ import {
   calendarRsvpEvent,
   calendarSuggestTimes,
   calendarSyncNow,
+  calendarUnsubscribeCalendar,
   calendarUpdateEvent,
 } from './calendar';
 import {
@@ -93,6 +95,7 @@ import {
 } from './smart-labels';
 import {
   tasksAddComment,
+  tasksAttachCalendarEventLink,
   tasksAttachFile,
   tasksAttachLink,
   tasksCreateBoard,
@@ -210,8 +213,10 @@ const allTools: AnyTool[] = [
   calendarSyncNow,
   calendarUpdateEvent,
   calendarDeleteEvent,
+  calendarDeleteRecurringSeries,
   calendarRsvpEvent,
   calendarGetPrimary,
+  calendarUnsubscribeCalendar,
   contactLookup,
   expandAlias,
   resolvePhotos,
@@ -234,6 +239,7 @@ const allTools: AnyTool[] = [
   tasksRenameBoard,
   tasksDeleteBoard,
   tasksAddComment,
+  tasksAttachCalendarEventLink,
   tasksAttachLink,
   tasksAttachFile,
   // UI tools — server returns ack, client intercepts for the real mutation.

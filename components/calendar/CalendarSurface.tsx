@@ -143,6 +143,7 @@ export function CalendarSurface() {
           organizer: row.organizer,
           conferencing: row.conferencing,
           recurrence: row.recurrence,
+          htmlLink: row.htmlLink,
         })),
     );
   }, [eventRows, users, calendars, colorByCalendar, dueCards]);
@@ -312,7 +313,7 @@ export function CalendarSurface() {
       ) : null}
       {/* font-display so the calendar's headings, dates, and event titles
           follow the user's chosen display font (theme customization). */}
-      <div className="min-h-0 flex-1 overflow-y-auto font-display">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden font-display">
         <CalendarProvider
           users={users}
           events={events}

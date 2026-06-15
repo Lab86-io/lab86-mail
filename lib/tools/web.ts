@@ -1,63 +1,78 @@
-import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { defineTool } from './registry';
 
-// Hosted deploys don't ship the Browserbase CLIs; without the env vars these
-// tools degrade to empty results instead of spawning a nonexistent binary.
-const BROWSERBASE_SEARCH =
-  process.env.LAB86_MAIL_BROWSERBASE_SEARCH || process.env.MAIL_OS_BROWSERBASE_SEARCH || '';
-const BROWSERBASE_FETCH =
-  process.env.LAB86_MAIL_BROWSERBASE_FETCH || process.env.MAIL_OS_BROWSERBASE_FETCH || '';
+const BROWSERBASE_API_BASE = 'https://api.browserbase.com/v1';
+const BROWSERBASE_TIMEOUT_MS = 45_000;
 
-function runCli(bin: string, args: string[], timeoutMs = 45_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { env: process.env, timeout: timeoutMs });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (c) => (stdout += c.toString('utf8')));
-    child.stderr.on('data', (c) => (stderr += c.toString('utf8')));
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) resolve(stdout);
-      else reject(new Error(stderr.trim() || stdout.trim() || `${bin} exited ${code}`));
+function browserbaseApiKey() {
+  return (
+    process.env.BROWSERBASE_API_KEY || process.env.LAB86_BROWSERBASE_API_KEY || process.env.BB_API_KEY || ''
+  );
+}
+
+async function postBrowserbase<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const apiKey = browserbaseApiKey();
+  if (!apiKey) throw new Error('BROWSERBASE_API_KEY is not configured.');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BROWSERBASE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${BROWSERBASE_API_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-bb-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
     });
-  });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Browserbase ${path} failed (${response.status}): ${text.slice(0, 240)}`);
+    }
+    return (await response.json()) as T;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Browserbase ${path} timed out after ${BROWSERBASE_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export const browserbaseSearch = defineTool({
   name: 'browserbase_search',
-  description: 'Web search via Browserbase (returns titles, URLs, and snippets).',
+  description: 'Web search via Browserbase Search. Returns titles, URLs, snippets, authors, and dates.',
   category: 'web',
   mutating: false,
-  input: z.object({ query: z.string(), limit: z.number().int().min(1).max(20).default(10) }),
+  input: z.object({ query: z.string(), limit: z.number().int().min(1).max(25).default(10) }),
   output: z.object({ results: z.array(z.any()) }),
   async handler({ query, limit }) {
-    if (!BROWSERBASE_SEARCH) return { results: [] };
-    const out = await runCli(BROWSERBASE_SEARCH, [query]).catch(() => '');
-    try {
-      const parsed = JSON.parse(out);
-      return { results: (parsed.results || []).slice(0, limit) };
-    } catch {
-      return { results: [] };
-    }
+    const json = await postBrowserbase<{ results?: any[]; data?: any[] }>('/search', {
+      query,
+      numResults: limit,
+    });
+    const results = Array.isArray(json.results) ? json.results : Array.isArray(json.data) ? json.data : [];
+    return { results: results.slice(0, limit) };
   },
 });
 
 export const browserbaseFetch = defineTool({
   name: 'browserbase_fetch',
-  description: 'Fetch and return the markdown of a web page via Browserbase.',
+  description: 'Fetch and return markdown page content via Browserbase Fetch.',
   category: 'web',
   mutating: false,
   input: z.object({ url: z.string().url() }),
   output: z.object({ content: z.string() }),
   async handler({ url }) {
-    if (!BROWSERBASE_FETCH) return { content: '' };
-    const out = await runCli(BROWSERBASE_FETCH, ['--redirects', url]).catch(() => '');
-    try {
-      const parsed = JSON.parse(out);
-      return { content: parsed.content || parsed.markdown || parsed.text || '' };
-    } catch {
-      return { content: out };
-    }
+    const json = await postBrowserbase<any>('/fetch', {
+      url,
+      allowRedirects: true,
+      format: 'markdown',
+    });
+    return {
+      content: String(json?.content || json?.markdown || json?.text || json?.data?.content || ''),
+    };
   },
 });

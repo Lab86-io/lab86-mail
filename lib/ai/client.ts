@@ -9,10 +9,10 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
 // Model ids on OpenRouter use a vendor prefix (e.g. "openai/gpt-5.5").
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_DEFAULT_PRIMARY = 'openai/gpt-5.5';
-const OPENROUTER_DEFAULT_FAST = 'openai/gpt-5.4-mini';
+const OPENROUTER_DEFAULT_FAST = 'openai/gpt-5-nano';
 
 const OPENAI_DEFAULT_PRIMARY = 'gpt-5.5';
-const OPENAI_DEFAULT_FAST = 'gpt-5.4-mini';
+const OPENAI_DEFAULT_FAST = 'gpt-5-nano';
 
 export const openrouter = OPENROUTER_KEY
   ? createOpenAI({

@@ -304,6 +304,39 @@ export interface DailyReportItem {
   receivedAt?: number | null;
 }
 
+export interface DailyReportTaskItem {
+  cardId: string;
+  boardId: string;
+  columnId: string;
+  boardTitle?: string;
+  columnName?: string;
+  title: string;
+  description?: string;
+  dueAt?: number | null;
+  completedAt?: number | null;
+  priority?: 'low' | 'medium' | 'high';
+  labels?: string[];
+  assignees?: string[];
+  sourceTitle?: string;
+  sourceUrl?: string;
+  scope: 'week' | 'month';
+}
+
+export interface DailyReportCalendarItem {
+  account: AccountEmail;
+  eventId: string;
+  calendarId?: string;
+  calendarName?: string;
+  title: string;
+  startAt: number;
+  endAt: number;
+  allDay?: boolean;
+  location?: string;
+  htmlLink?: string;
+  description?: string;
+  scope: 'week' | 'month';
+}
+
 export interface DailyReport {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
@@ -323,6 +356,8 @@ export interface DailyReport {
     tracked: DailyReportItem[];
     fyi: DailyReportItem[];
     bulkTail: DailyReportItem[];
+    tasks?: DailyReportTaskItem[];
+    calendar?: DailyReportCalendarItem[];
     noiseSummary?: string;
   };
   stats: {
@@ -333,6 +368,9 @@ export interface DailyReport {
     dueSoon: number;
     bulkTailCount: number;
     unread: number;
+    openTasks?: number;
+    completedTasks?: number;
+    calendarEvents?: number;
   };
   model?: string;
   errors?: string[];

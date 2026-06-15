@@ -172,6 +172,55 @@ export const deleteEvent = mutation({
   },
 });
 
+export const removeCalendar = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerCalendarId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('calendars')
+      .withIndex('by_account_calendar', (q) =>
+        q.eq('accountId', args.accountId).eq('providerCalendarId', args.providerCalendarId),
+      )
+      .unique();
+    if (row && row.userId === args.userId) await ctx.db.delete(row._id);
+    const events = await ctx.db
+      .query('calendarEvents')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .collect();
+    for (const event of events) {
+      if (event.providerCalendarId === args.providerCalendarId) await ctx.db.delete(event._id);
+    }
+    return { ok: true };
+  },
+});
+
+export const setCalendarHiddenInternal = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerCalendarId: v.string(),
+    hidden: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('calendars')
+      .withIndex('by_account_calendar', (q) =>
+        q.eq('accountId', args.accountId).eq('providerCalendarId', args.providerCalendarId),
+      )
+      .unique();
+    if (!row || row.userId !== args.userId) return { ok: true };
+    await ctx.db.patch(row._id, { hidden: args.hidden, updatedAt: now() });
+    return { ok: true };
+  },
+});
+
 // Replace the synced window for one calendar: delete rows inside the bounds
 // that the fresh listing no longer contains, upsert the rest. Run per page is
 // wrong — callers invoke this once with the full window's event ids.

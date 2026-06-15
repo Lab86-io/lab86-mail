@@ -454,6 +454,17 @@ export default defineSchema({
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId']),
 
+  agentUploads: defineTable({
+    userId: v.string(),
+    storageId: v.id('_storage'),
+    name: v.string(),
+    contentType: v.optional(v.string()),
+    size: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_storage', ['storageId']),
+
   // Kanban (docs/productivity-platform-spec.md M2). Boards are shareable:
   // memberships carry roles, and a publicToken exposes a read-only view with
   // no account. Cards keep provenance back to the email/chat that spawned
@@ -537,6 +548,9 @@ export default defineSchema({
     ),
     // Provenance chip: where this card came from.
     source: v.optional(v.any()),
+    sourceThreadId: v.optional(v.string()),
+    sourceCalendarEventId: v.optional(v.string()),
+    sourceAccountId: v.optional(v.string()),
     // Per-card audit trail (sse-era parity): every mutation appends.
     activity: v.optional(
       v.array(
@@ -556,6 +570,8 @@ export default defineSchema({
     .index('by_board', ['boardId'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
+    .index('by_user_source_thread', ['userId', 'sourceThreadId'])
+    .index('by_user_source_calendar_event', ['userId', 'sourceCalendarEventId'])
     .index('by_user_due', ['userId', 'dueAt']),
 
   // Every mutating action the AI (or a user clicking an AI suggestion) applies

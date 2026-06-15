@@ -25,6 +25,7 @@ import {
   Send,
   ShieldCheck,
   Square,
+  SquareKanban,
   Star,
   Tag,
   Trash2,
@@ -74,11 +75,27 @@ interface ChatSessionSummary {
   updatedAt: number;
 }
 
+interface StagedChatUpload {
+  uploadId: string;
+  name: string;
+  contentType?: string;
+  size: number;
+}
+
 // DataTransfer is the only sanctioned way to construct a FileList.
 function createFileList(files: File[]): FileList {
   const dt = new DataTransfer();
   for (const file of files) dt.items.add(file);
   return dt.files;
+}
+
+async function stageChatFiles(files: File[]): Promise<StagedChatUpload[]> {
+  const form = new FormData();
+  for (const file of files) form.append('files', file, file.name);
+  const response = await fetch('/api/agent/uploads', { method: 'POST', body: form });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.ok) throw new Error(data?.error || 'Could not upload files for the assistant.');
+  return data.uploads || [];
 }
 
 function newChatId() {
@@ -136,6 +153,21 @@ const TOOL_ICONS: Record<string, any> = {
   calendar_free_busy: Calendar,
   calendar_suggest_times: Calendar,
   calendar_create_event: Calendar,
+  calendar_list_events: Calendar,
+  calendar_update_event: Calendar,
+  calendar_delete_event: Calendar,
+  calendar_delete_recurring_series: Calendar,
+  calendar_unsubscribe_calendar: Calendar,
+  tasks_list_boards: SquareKanban,
+  tasks_get_board: SquareKanban,
+  tasks_create_board: SquareKanban,
+  tasks_create_card: SquareKanban,
+  tasks_update_card: SquareKanban,
+  tasks_move_card: SquareKanban,
+  tasks_delete_card: SquareKanban,
+  tasks_attach_link: Paperclip,
+  tasks_attach_file: Paperclip,
+  tasks_attach_calendar_event_link: Calendar,
   contact_lookup: User,
   expand_alias: User,
   browserbase_search: Globe,
@@ -182,6 +214,17 @@ const TOOL_VERBS: Record<string, string> = {
   recall: 'Recalling',
   calendar_suggest_times: 'Suggesting times',
   calendar_create_event: 'Creating event',
+  calendar_list_events: 'Listing events',
+  calendar_update_event: 'Updating event',
+  calendar_delete_event: 'Deleting event',
+  calendar_delete_recurring_series: 'Deleting recurring events',
+  calendar_unsubscribe_calendar: 'Unsubscribing calendar',
+  tasks_get_board: 'Loading board',
+  tasks_create_card: 'Creating task',
+  tasks_update_card: 'Updating task',
+  tasks_attach_link: 'Attaching link',
+  tasks_attach_file: 'Attaching file',
+  tasks_attach_calendar_event_link: 'Attaching calendar link',
   contact_lookup: 'Looking up contact',
   browserbase_search: 'Searching the web',
   browserbase_fetch: 'Fetching page',
@@ -267,6 +310,7 @@ export function AIBarSidebar() {
   const [input, setInput] = useState('');
   // Files attached to the next message (images/PDFs the model can read).
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputWrapRef = useRef<HTMLDivElement>(null);
 
@@ -474,12 +518,27 @@ export function AIBarSidebar() {
     }
   }, [messages, qc]);
 
-  const busy = status === 'streaming' || status === 'submitted';
+  const streaming = status === 'streaming' || status === 'submitted';
+  const busy = streaming || uploadingFiles;
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
-    setInput('');
+    const filesForTurn = pendingFiles;
+    if ((!trimmed && !filesForTurn.length) || busy) return;
+
+    let stagedUploads: StagedChatUpload[] = [];
+    if (filesForTurn.length) {
+      setUploadingFiles(true);
+      try {
+        stagedUploads = await stageChatFiles(filesForTurn);
+      } catch (err: any) {
+        toast.error(err?.message || 'Could not upload files for the assistant');
+        setUploadingFiles(false);
+        return;
+      }
+      setUploadingFiles(false);
+    }
+
     // Lazily mint a session id on the first message so autosave has a home
     // and the conversation shows up in history.
     if (!sessionIdRef.current) {
@@ -500,20 +559,35 @@ export function AIBarSidebar() {
     ]
       .filter(Boolean)
       .join('\n');
-    const files = pendingFiles.length ? createFileList(pendingFiles) : undefined;
+    const uploadContext = stagedUploads.length
+      ? [
+          'Files uploaded in this user turn. To attach one of these files to a task card, call tasks_attach_file with the matching chatUploadId:',
+          ...stagedUploads.map(
+            (file) =>
+              `- ${file.name} (${file.contentType || 'application/octet-stream'}, ${file.size} bytes): chatUploadId=${file.uploadId}`,
+          ),
+        ].join('\n')
+      : '';
+    const files = filesForTurn.length ? createFileList(filesForTurn) : undefined;
+    setInput('');
     setPendingFiles([]);
     sendMessage(
-      { text: trimmed, ...(files ? { files } : {}) } as any,
-      { body: { extraSystem: contextLines || undefined } } as any,
+      { text: trimmed || 'Use the attached file(s).', ...(files ? { files } : {}) } as any,
+      {
+        body: {
+          extraSystem: [contextLines, uploadContext].filter(Boolean).join('\n\n') || undefined,
+        },
+      } as any,
     );
   };
 
   const submit = () => {
-    if (busy) {
+    if (streaming) {
       stop();
       return;
     }
-    send(input);
+    if (uploadingFiles) return;
+    void send(input);
   };
 
   // The sidebar is always mounted but width is controlled by the grid; we
@@ -617,7 +691,7 @@ export function AIBarSidebar() {
               <PromptSuggestion
                 key={s}
                 variant="outline"
-                onClick={() => send(s)}
+                onClick={() => void send(s)}
                 className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
               >
                 {s}
@@ -686,6 +760,7 @@ export function AIBarSidebar() {
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
                 className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
               >
                 <Paperclip className="size-3.5" />
@@ -709,7 +784,7 @@ export function AIBarSidebar() {
                 type="button"
                 size="icon-sm"
                 onClick={submit}
-                disabled={!busy && !input.trim()}
+                disabled={!busy && !input.trim() && !pendingFiles.length}
                 className="rounded-full"
                 aria-label={busy ? 'Stop' : 'Send'}
               >
@@ -939,6 +1014,22 @@ function humanizeTool(name: string, args: any, out: any): string {
         return 'Suggested some meeting times.';
       case 'calendar_create_event':
         return 'Created a calendar event.';
+      case 'calendar_list_events': {
+        const n = out?.events?.length ?? null;
+        return n != null ? `Found ${n} calendar event${n === 1 ? '' : 's'}.` : 'Listed calendar events.';
+      }
+      case 'tasks_create_card':
+        return a.title ? `Created task “${a.title}”.` : 'Created a task.';
+      case 'tasks_update_card':
+        return 'Updated the task.';
+      case 'tasks_attach_link':
+        return a.url ? `Attached ${a.url} to the task.` : 'Attached a link to the task.';
+      case 'tasks_attach_file':
+        return out?.name ? `Attached ${out.name} to the task.` : 'Attached a file to the task.';
+      case 'tasks_attach_calendar_event_link':
+        return out?.name
+          ? `Attached calendar link “${out.name}” to the task.`
+          : 'Attached a calendar link to the task.';
       case 'contact_lookup':
         return 'Looked up the contact.';
       case 'browserbase_search':

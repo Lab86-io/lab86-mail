@@ -35,7 +35,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { emailDeclaresOwnBackground, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
+import { emailNeedsIsolatedFrame, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
@@ -375,10 +375,10 @@ export function ThreadView() {
   const reader = (
     <motion.div
       key={`${account}:${threadId}:${threadFullscreen ? 'popout' : 'pane'}`}
-      initial={threadFullscreen ? { opacity: 0.3, x: 56 } : { opacity: 0, y: 6 }}
+      initial={threadFullscreen ? { opacity: 0.3, x: 72 } : { opacity: 0, y: 6 }}
       animate={threadFullscreen ? { opacity: 1, x: 0 } : { opacity: 1, y: 0 }}
-      exit={threadFullscreen ? { opacity: 0, x: 40 } : undefined}
-      transition={{ duration: threadFullscreen ? 0.24 : 0.18, ease: [0.16, 1, 0.3, 1] }}
+      exit={threadFullscreen ? { opacity: 0, x: 56 } : undefined}
+      transition={{ duration: threadFullscreen ? 0.22 : 0.18, ease: [0.16, 1, 0.3, 1] }}
       role={threadFullscreen ? 'dialog' : undefined}
       aria-modal={threadFullscreen ? true : undefined}
       aria-label={threadFullscreen ? data.subject : undefined}
@@ -553,7 +553,7 @@ export function ThreadView() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
+          transition={{ duration: 0.18 }}
           onClick={() => setThreadFullscreen(false)}
           className="fixed inset-0 z-[70] cursor-default bg-black/50 backdrop-blur-[2px]"
         />
@@ -793,12 +793,9 @@ function MessageBody({ html, text }: { html?: string; text?: string }) {
       setRendered(null);
       return;
     }
-    // Emails that paint their own background/colors (marketing HTML, which
-    // often defines text color in a <style> block) render in an isolated
-    // iframe so they look exactly as designed. Backgroundless mail (plain-text
-    // replies, light notes) adapts to dark mode inline — see EmailFrame and
-    // the .email-adaptive rules in globals.css.
-    if (emailDeclaresOwnBackground(html)) {
+    // Full/styled email documents render in an isolated iframe so CSS, table
+    // layout, and brand colors survive. Simple fragments/replies adapt inline.
+    if (emailNeedsIsolatedFrame(html)) {
       setRendered({ mode: 'frame', html: sanitizeEmailFrameHtml(html) });
     } else {
       setRendered({ mode: 'adaptive', html: sanitizeEmailHtml(html) });

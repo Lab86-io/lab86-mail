@@ -61,6 +61,7 @@ export function EventBlock({ event, className }: IProps) {
   const end = parseISO(event.endDate);
   const durationInMinutes = differenceInMinutes(end, start);
   const heightInPixels = (durationInMinutes / 60) * hourHeight - 8;
+  const showTime = durationInMinutes >= 75 && heightInPixels >= 58;
 
   const color = (badgeVariant === 'dot' ? `${event.color}-dot` : event.color) as VariantProps<
     typeof calendarWeekEventCardVariants
@@ -68,7 +69,7 @@ export function EventBlock({ event, className }: IProps) {
 
   const calendarWeekEventCardClasses = cn(
     calendarWeekEventCardVariants({ color, className }),
-    durationInMinutes < 35 && 'py-0 justify-center',
+    !showTime && 'py-0 justify-center',
   );
 
   return (
@@ -106,8 +107,8 @@ export function EventBlock({ event, className }: IProps) {
               <p className="truncate font-semibold">{event.title}</p>
             </div>
 
-            {durationInMinutes > 25 && (
-              <p>
+            {showTime && (
+              <p className="truncate">
                 {formatTime(start, use24HourFormat)} - {formatTime(end, use24HourFormat)}
               </p>
             )}

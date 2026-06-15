@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { CalendarPlus, Check, Sparkles, X } from 'lucide-react';
+import { CalendarPlus, Check, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -44,7 +44,7 @@ export function SuggestionsTray() {
           className="relative grid size-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           title={`${pending.length} suggestion${pending.length === 1 ? '' : 's'} from your mail`}
         >
-          <Sparkles className="size-4" />
+          <ProvenancePulseIcon />
           <span className="absolute -right-0.5 -top-0.5 grid size-3.5 place-items-center rounded-full bg-[var(--color-accent)] text-[8px] font-semibold leading-none text-[var(--color-accent-foreground)]">
             {pending.length > 9 ? '9+' : pending.length}
           </span>
@@ -97,5 +97,15 @@ export function SuggestionsTray() {
         </ul>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function ProvenancePulseIcon() {
+  return (
+    <span className="relative grid size-4 place-items-center" aria-hidden>
+      <span className="absolute size-3 rounded-full border border-current opacity-40 [animation:provenance-pulse_1.9s_ease-out_infinite]" />
+      <span className="absolute size-2 rounded-full border border-current opacity-60 [animation:provenance-pulse_1.9s_ease-out_infinite_0.28s]" />
+      <span className="size-1.5 rounded-full bg-current shadow-[0_0_10px_currentColor]" />
+    </span>
   );
 }

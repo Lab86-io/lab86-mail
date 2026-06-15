@@ -4,6 +4,7 @@ import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
+  Brain,
   CalendarDays,
   Check,
   CreditCard,
@@ -14,21 +15,18 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import {
-  LAB86_MODEL_FAMILIES,
-  type Lab86ModelFamily,
+  type ModelOption,
   normalizeOpenRouterFastModel,
   normalizeOpenRouterPrimaryModel,
   OPENROUTER_FAST_MODEL_OPTIONS,
   OPENROUTER_PRIMARY_MODEL_OPTIONS,
   type Provider,
-  resolveLab86Family,
   setProviderForByok,
 } from '@/components/hosted/ai-options';
 import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
@@ -449,7 +447,6 @@ function SyncStatusLine({ sync, connected }: { sync?: SyncState; connected: bool
 function AiSection() {
   const qc = useQueryClient();
   const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('byok');
-  const [lab86Family, setLab86Family] = useState<Lab86ModelFamily>('openai');
   const [provider, setProvider] = useState<Provider>('openrouter');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
@@ -460,10 +457,11 @@ function AiSection() {
     queryFn: async () => {
       const data = await fetchJson('/api/ai/settings');
       const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
+      const nextMode = requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86';
       const computedProvider = (
-        requireOpenRouter ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter'
+        nextMode === 'lab86' ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter'
       ) as Provider;
-      setAiMode(requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86');
+      setAiMode(nextMode);
       setProvider(computedProvider);
       setModel(
         computedProvider === 'openrouter'
@@ -475,7 +473,6 @@ function AiSection() {
           ? normalizeOpenRouterFastModel(data.settings?.fastModel)
           : data.settings?.fastModel || '',
       );
-      setLab86Family(resolveLab86Family(data.settings?.model, data.settings?.fastModel));
       return data;
     },
   });
@@ -485,22 +482,17 @@ function AiSection() {
 
   const saveAi = useMutation({
     mutationFn: async () => {
-      const selected = LAB86_MODEL_FAMILIES[lab86Family];
       return postJson('/api/ai/settings', {
         mode: aiMode,
         provider: aiMode === 'lab86' ? 'openrouter' : provider,
         model:
-          aiMode === 'lab86'
-            ? selected.primary
-            : provider === 'openrouter'
-              ? normalizeOpenRouterPrimaryModel(model)
-              : undefined,
+          aiMode === 'lab86' || provider === 'openrouter'
+            ? normalizeOpenRouterPrimaryModel(model)
+            : undefined,
         fastModel:
-          aiMode === 'lab86'
-            ? selected.fast
-            : provider === 'openrouter'
-              ? normalizeOpenRouterFastModel(fastModel)
-              : undefined,
+          aiMode === 'lab86' || provider === 'openrouter'
+            ? normalizeOpenRouterFastModel(fastModel)
+            : undefined,
         apiKey: aiMode === 'byok' ? apiKey || undefined : undefined,
       });
     },
@@ -555,8 +547,12 @@ function AiSection() {
   const priceLine = pricesPresent
     ? `Pro (hosted AI) is $${paidPlan.monthlyUsd}/mo or $${paidPlan.annualUsd}/yr · bring-your-own-key is $${paidPlan.byokMonthlyUsd}/mo or $${paidPlan.byokAnnualUsd}/yr.`
     : 'Two plans: hosted AI, or bring your own key for less.';
-  const primaryModelDetail = OPENROUTER_PRIMARY_MODEL_OPTIONS.find((option) => option.id === model)?.detail;
-  const fastModelDetail = OPENROUTER_FAST_MODEL_OPTIONS.find((option) => option.id === fastModel)?.detail;
+  const primaryOptions = (ai?.modelOptions?.openrouter?.primary ||
+    OPENROUTER_PRIMARY_MODEL_OPTIONS) as ModelOption[];
+  const fastOptions = (ai?.modelOptions?.openrouter?.fast || OPENROUTER_FAST_MODEL_OPTIONS) as ModelOption[];
+  const primaryModelDetail = primaryOptions.find((option) => option.id === model)?.detail;
+  const fastModelDetail = fastOptions.find((option) => option.id === fastModel)?.detail;
+  const showOpenRouterModels = aiMode === 'lab86' || provider === 'openrouter';
 
   return (
     <section>
@@ -576,7 +572,7 @@ function AiSection() {
               disabled={requireOpenRouter}
               title="Lab86 AI"
               description="Included with Pro. Curated models, zero setup, budgeted for you."
-              icon={<Sparkles className="size-4" />}
+              icon={<Brain className="size-4" />}
               onClick={() => setAiMode('lab86')}
             />
             <ModeCard
@@ -590,46 +586,37 @@ function AiSection() {
 
           <div className="grid gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)] sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>{aiMode === 'lab86' ? 'Model family' : 'Provider'}</Label>
-              <Select
-                value={aiMode === 'lab86' ? lab86Family : provider}
-                onValueChange={(value) =>
-                  aiMode === 'lab86'
-                    ? setLab86Family(value as Lab86ModelFamily)
-                    : setProviderForByok(value as Provider, setProvider, setModel, setFastModel)
-                }
-                disabled={requireOpenRouter && aiMode === 'byok'}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {aiMode === 'lab86' ? (
-                    <>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="claude">Claude</SelectItem>
-                    </>
-                  ) : (
-                    <>
-                      <SelectItem value="openrouter">OpenRouter</SelectItem>
-                      {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
-                      {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
+              <Label>Provider</Label>
+              {aiMode === 'lab86' ? (
+                <Input value="OpenRouter (Lab86 managed)" readOnly />
+              ) : (
+                <Select
+                  value={provider}
+                  onValueChange={(value) =>
+                    setProviderForByok(value as Provider, setProvider, setModel, setFastModel)
+                  }
+                  disabled={requireOpenRouter}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openrouter">OpenRouter</SelectItem>
+                    {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
+                    {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-1.5">
-              <Label>Primary model</Label>
-              {aiMode === 'lab86' ? (
-                <Input value={LAB86_MODEL_FAMILIES[lab86Family].primary} readOnly />
-              ) : provider === 'openrouter' ? (
+              <Label>Normal model</Label>
+              {showOpenRouterModels ? (
                 <Select value={model} onValueChange={setModel}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => (
+                    {primaryOptions.map((option) => (
                       <SelectItem key={option.id} value={option.id}>
                         {option.label}
                       </SelectItem>
@@ -639,21 +626,19 @@ function AiSection() {
               ) : (
                 <Input value="Provider default" readOnly />
               )}
-              {aiMode === 'byok' && primaryModelDetail ? (
+              {showOpenRouterModels && primaryModelDetail ? (
                 <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
               ) : null}
             </div>
             <div className="space-y-1.5">
               <Label>Fast model</Label>
-              {aiMode === 'lab86' ? (
-                <Input value={LAB86_MODEL_FAMILIES[lab86Family].fast} readOnly />
-              ) : provider === 'openrouter' ? (
+              {showOpenRouterModels ? (
                 <Select value={fastModel} onValueChange={setFastModel}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {OPENROUTER_FAST_MODEL_OPTIONS.map((option) => (
+                    {fastOptions.map((option) => (
                       <SelectItem key={option.id} value={option.id}>
                         {option.label}
                       </SelectItem>
@@ -663,13 +648,13 @@ function AiSection() {
               ) : (
                 <Input value="Provider default" readOnly />
               )}
-              {aiMode === 'byok' && fastModelDetail ? (
+              {showOpenRouterModels && fastModelDetail ? (
                 <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
               ) : null}
             </div>
             {aiMode === 'lab86' ? (
               <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                {LAB86_MODEL_FAMILIES[lab86Family].detail}
+                Lab86 AI runs through OpenRouter. Normal handles deep work; fast uses nano by default.
               </div>
             ) : (
               <div className="space-y-1.5">
