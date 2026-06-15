@@ -2,7 +2,7 @@
 
 import { useChat } from '@ai-sdk/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { DefaultChatTransport } from 'ai';
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 import {
   AlarmClock,
   Archive,
@@ -34,8 +34,9 @@ import {
   X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { ChoicePrompt } from '@/components/ai-elements/choice-prompt';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
@@ -324,7 +325,21 @@ export function AIBarSidebar() {
       }),
     [],
   );
-  const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport });
+  const { messages, sendMessage, status, stop, error, setMessages, addToolResult } = useChat({
+    transport,
+    // When the client answers a human-in-the-loop tool (ask_user), auto-continue
+    // the agent with that answer instead of waiting for a manual send.
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+  });
+
+  // Hand the ask_user answer back into the stream. Memoized so the context
+  // value is stable across renders.
+  const answerAskUser = useCallback(
+    (toolCallId: string, selected: string[]) => {
+      void addToolResult({ tool: 'ask_user', toolCallId, output: { selected } });
+    },
+    [addToolResult],
+  );
 
   // --- Persistent sessions: restore the last chat, autosave as you go ---
   const lastChatId = useClientStore((s) => s.lastChatId);
@@ -702,9 +717,11 @@ export function AIBarSidebar() {
       ) : (
         <ChatContainerRoot className="relative flex-1">
           <ChatContainerContent className="gap-4 px-3 py-4">
-            {messages.map((m) => (
-              <MessageView key={m.id} message={m} />
-            ))}
+            <AskUserContext.Provider value={answerAskUser}>
+              {messages.map((m) => (
+                <MessageView key={m.id} message={m} />
+              ))}
+            </AskUserContext.Provider>
             {showLoader ? (
               <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
                 <Loader variant="typing" />
@@ -882,6 +899,32 @@ function userTextFromMessage(message: any): string {
     .join('');
 }
 
+// Lets the deeply-nested Part renderer hand an ask_user answer back to useChat.
+const AskUserContext = createContext<(toolCallId: string, selected: string[]) => void>(() => {});
+
+// Renders the agent's multiple-choice question (the ask_user HITL tool). The
+// chosen labels are sent back via addToolResult, which auto-continues the agent.
+function AskUserPart({ part }: { part: any }) {
+  const answer = useContext(AskUserContext);
+  const input = part.input || {};
+  const options = Array.isArray(input.options) ? input.options : [];
+  const state = part.state;
+  if (state === 'input-streaming') return null;
+  if (!input.question || !options.length) return null;
+  const answered = state === 'output-available';
+  const selected = Array.isArray(part.output?.selected) ? part.output.selected : [];
+  return (
+    <ChoicePrompt
+      question={input.question}
+      options={options}
+      multiSelect={Boolean(input.multiSelect)}
+      answered={answered}
+      selected={selected}
+      onSubmit={(labels) => answer(part.toolCallId, labels)}
+    />
+  );
+}
+
 function Part({ part }: { part: any }) {
   const type = part.type;
   if (type === 'text') {
@@ -909,6 +952,8 @@ function Part({ part }: { part: any }) {
     );
   }
   if (type === 'dynamic-tool' || (typeof type === 'string' && type.startsWith('tool-'))) {
+    const toolName = type === 'dynamic-tool' ? part.toolName : type.replace(/^tool-/, '');
+    if (toolName === 'ask_user') return <AskUserPart part={part} />;
     return <ToolCard part={part} />;
   }
   return null;
