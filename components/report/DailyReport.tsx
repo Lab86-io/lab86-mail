@@ -11,7 +11,7 @@ import {
   RefreshCw,
   User,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
@@ -98,6 +98,16 @@ interface DailyReportPayload {
   errors?: string[];
   status?: 'partial' | 'ready';
   progress?: { stage: string; done: number; total: number };
+  // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
+  html?: string;
+  artifactStatus?: 'composing' | 'rendered';
+}
+
+interface ReportSummary {
+  _id: string;
+  kind: 'morning' | 'evening' | 'manual';
+  generatedAt: number;
+  title?: string;
 }
 
 // Sections, in reading order. The report leads with what the user owes other
@@ -147,6 +157,17 @@ function formatDateline(report: DailyReportPayload): string {
   return `${day} · ${EDITION[report.kind]}`;
 }
 
+// Compact label for the history dropdown: "May 26, 7:02 AM · Morning Edition".
+function editionLabel(item: ReportSummary): string {
+  const when = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(item.generatedAt));
+  return `${when} · ${EDITION[item.kind]}`;
+}
+
 function asItems(value: DailyReportPayload['sections'][string]): DailyReportItem[] {
   return Array.isArray(value) ? (value as DailyReportItem[]) : [];
 }
@@ -169,22 +190,121 @@ function elapsedFraming(item: DailyReportItem): string {
   return '';
 }
 
+// Renders the agent-authored HTML artifact in a sandboxed iframe and bridges
+// its interactions back to the app. The artifact runs WITHOUT same-origin
+// access (it cannot read cookies, storage, or the Convex client) — every
+// mutation flows through this allowlisted postMessage handler, which validates
+// the message source and the action before touching app state.
+function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => void }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+
+  useEffect(() => {
+    const onMessage = async (event: MessageEvent) => {
+      const data = event.data as { source?: string; action?: string; payload?: any } | null;
+      if (!data || data.source !== 'lab86-daily-report') return;
+      // Only trust messages from our own iframe document.
+      if (frameRef.current && event.source !== frameRef.current.contentWindow) return;
+      const payload = data.payload || {};
+      const ack = (ok: boolean, error?: string) =>
+        frameRef.current?.contentWindow?.postMessage(
+          { source: 'lab86-host', action: data.action, ok, error },
+          '*',
+        );
+      try {
+        switch (data.action) {
+          case 'open_thread':
+            if (!payload.threadId) return ack(false, 'missing threadId');
+            if (payload.account) setThreadAccount(String(payload.account));
+            setSelectedThread(String(payload.threadId));
+            setPrimaryView('mail');
+            return ack(true);
+          case 'open_event':
+            setPrimaryView('calendar');
+            return ack(true);
+          case 'open_view':
+            if (['mail', 'tasks', 'calendar'].includes(payload.view)) {
+              setPrimaryView(payload.view);
+              return ack(true);
+            }
+            return ack(false, 'unknown view');
+          case 'toggle_task':
+            if (!payload.cardId) return ack(false, 'missing cardId');
+            await callTool('tasks_update_card', {
+              cardId: String(payload.cardId),
+              completed: Boolean(payload.completed),
+            });
+            onChanged?.();
+            return ack(true);
+          case 'create_task': {
+            const title = String(payload.title || '').trim();
+            if (!title) return ack(false, 'missing title');
+            await callTool('tasks_create_card', {
+              title: title.slice(0, 500),
+              dueIso: typeof payload.dueAt === 'number' ? new Date(payload.dueAt).toISOString() : undefined,
+            });
+            onChanged?.();
+            return ack(true);
+          }
+          default:
+            return ack(false, 'unknown action');
+        }
+      } catch (err: any) {
+        ack(false, err?.message || 'action failed');
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [setSelectedThread, setThreadAccount, setPrimaryView, onChanged]);
+
+  return (
+    <iframe
+      ref={frameRef}
+      title="The Daily Brief"
+      srcDoc={html}
+      // allow-scripts (for interactivity) WITHOUT allow-same-origin keeps the
+      // artifact sandboxed from the app origin; allow-popups lets external
+      // links open in a new tab.
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+      className="h-full w-full border-0 bg-[var(--color-bg)]"
+    />
+  );
+}
+
 export function DailyReport() {
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
 
-  const reportQuery = useQuery({
-    queryKey: ['daily-report', 'latest'],
-    queryFn: async () => callTool<{ report: DailyReportPayload | null }>('get_latest_daily_report', {}),
+  // Browse history; the freshest edition shows by default (selectedId = null).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const historyQuery = useQuery({
+    queryKey: ['daily-report', 'history'],
+    queryFn: async () => callTool<{ reports: ReportSummary[] }>('list_daily_reports', { limit: 30 }),
     staleTime: 30_000,
-    // While an edition is streaming in (status: partial), poll so lanes fill
-    // in live instead of the report appearing all at once at the end.
-    refetchInterval: (query) => (query.state.data?.report?.status === 'partial' ? 2_000 : false),
+  });
+  const history = historyQuery.data?.reports || [];
+
+  const reportQuery = useQuery({
+    queryKey: ['daily-report', selectedId ?? 'latest'],
+    queryFn: async () =>
+      selectedId
+        ? callTool<{ report: DailyReportPayload | null }>('get_daily_report', { id: selectedId })
+        : callTool<{ report: DailyReportPayload | null }>('get_latest_daily_report', {}),
+    staleTime: 30_000,
+    // Keep polling while an edition streams in (status: partial) or while the
+    // agent is still composing its HTML artifact, so the page upgrades live.
+    refetchInterval: (query) => {
+      const r = query.state.data?.report;
+      return r?.status === 'partial' || r?.artifactStatus === 'composing' ? 2_000 : false;
+    },
   });
   const report = reportQuery.data?.report || null;
-  const generating = report?.status === 'partial';
+  const generating = report?.status === 'partial' || report?.artifactStatus === 'composing';
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['daily-report'] });
@@ -196,7 +316,11 @@ export function DailyReport() {
       callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
       }),
-    onSuccess: invalidate,
+    // Jump back to the freshest edition so the new brief streams in as it builds.
+    onSuccess: () => {
+      setSelectedId(null);
+      invalidate();
+    },
   });
 
   const resolveTracked = useMutation({
@@ -262,6 +386,22 @@ export function DailyReport() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            {history.length > 1 ? (
+              <select
+                value={selectedId ?? ''}
+                onChange={(event) => setSelectedId(event.target.value || null)}
+                aria-label="Browse past editions"
+                title="Browse past editions"
+                className="h-8 max-w-[170px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >
+                <option value="">Latest edition</option>
+                {history.map((item) => (
+                  <option key={item._id} value={item._id}>
+                    {editionLabel(item)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -294,9 +434,11 @@ export function DailyReport() {
         {generate.isPending || generating ? (
           <div className="mt-3 space-y-2">
             <TextShimmer className="text-[12px] text-[var(--color-accent)]">
-              {generating && report?.progress
-                ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
-                : 'Reading your mail, tasks, and calendar to write today’s brief…'}
+              {report?.artifactStatus === 'composing'
+                ? 'Designing your brief — laying out the narrative, charts, and to-dos…'
+                : generating && report?.progress
+                  ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
+                  : 'Reading your mail, tasks, and calendar to write today’s brief…'}
             </TextShimmer>
             <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
               <div
@@ -314,7 +456,9 @@ export function DailyReport() {
         ) : null}
       </header>
 
-      <div className="scrollable @container min-h-0 flex-1 px-5 py-5">
+      <div
+        className={cn('min-h-0 flex-1', report?.html ? 'overflow-hidden' : 'scrollable @container px-5 py-5')}
+      >
         {reportQuery.isLoading ? (
           <ReportSkeleton />
         ) : !report ? (
@@ -330,6 +474,8 @@ export function DailyReport() {
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
+        ) : report.html ? (
+          <ReportArtifact html={report.html} onChanged={invalidate} />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-7">
             {/* Stat strip — serif numerals over tiny labels, hairline-divided when wide. */}

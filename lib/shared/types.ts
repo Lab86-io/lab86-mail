@@ -348,6 +348,14 @@ export interface DailyReport {
   accounts: AccountEmail[];
   title: string;
   narrative: string;
+  // The agent-authored, self-contained HTML artifact for this edition. When
+  // present the report page serves it in a sandboxed iframe; the structured
+  // `sections`/`stats` below remain as grounding data, history metadata, and
+  // the fallback renderer for legacy editions that predate the artifact.
+  html?: string;
+  // Generation phase for the artifact: 'composing' while the agent is writing
+  // the HTML (structured data already shown), 'rendered' once html is attached.
+  artifactStatus?: 'composing' | 'rendered';
   sections: {
     replyOwed: DailyReportItem[];
     followUpOwed: DailyReportItem[];

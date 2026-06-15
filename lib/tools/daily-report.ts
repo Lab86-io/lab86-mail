@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { generateDailyReport } from '../mail/daily-report';
+import { generateAgentReport } from '../mail/agent-report';
 import {
   getDailyReport as getDailyReportStore,
   getLatestDailyReport,
@@ -24,9 +24,9 @@ export const generateDailyReportTool = defineTool({
   output: z.object({ report: z.any().nullable(), started: z.boolean().optional() }),
   async handler({ kind, wait }, ctx) {
     if (wait) {
-      return { report: await generateDailyReport({ kind, includeCalendar: true, userId: ctx.userId }) };
+      return { report: await generateAgentReport({ kind, userId: ctx.userId }) };
     }
-    void generateDailyReport({ kind, includeCalendar: true, userId: ctx.userId }).catch((err) => {
+    void generateAgentReport({ kind, userId: ctx.userId }).catch((err) => {
       console.error('[daily-report] background generation failed:', err);
     });
     return { report: null, started: true };

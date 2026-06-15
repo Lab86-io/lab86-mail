@@ -9,10 +9,12 @@
  */
 
 import type * as accounts from "../accounts.js";
+import type * as agentUploads from "../agentUploads.js";
 import type * as ai from "../ai.js";
 import type * as boards from "../boards.js";
 import type * as calendarData from "../calendarData.js";
 import type * as crons from "../crons.js";
+import type * as dailyReports from "../dailyReports.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
 import type * as mailCorpus from "../mailCorpus.js";
@@ -31,10 +33,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
+  agentUploads: typeof agentUploads;
   ai: typeof ai;
   boards: typeof boards;
   calendarData: typeof calendarData;
   crons: typeof crons;
+  dailyReports: typeof dailyReports;
   lib: typeof lib;
   liveMail: typeof liveMail;
   mailCorpus: typeof mailCorpus;
