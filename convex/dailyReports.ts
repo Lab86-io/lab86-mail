@@ -2,9 +2,9 @@ import { internal } from './_generated/api';
 import { internalAction, internalQuery } from './_generated/server';
 import { fanOutInternalPost } from './lib';
 
-// Local times at which scheduled editions fire (24h clock, in each user's tz).
+// Local hour the scheduled morning edition fires (24h clock, in each user's tz).
+// Evening editions were dropped — mornings + manual generation only.
 const MORNING_HOUR = 7;
-const EVENING_HOUR = 18;
 // Users without a synced calendar timezone fall back to this.
 const DEFAULT_TZ = 'America/New_York';
 
@@ -67,11 +67,11 @@ export const tick = internalAction({
     const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
     const at = new Date();
     // Only the users whose local clock is at the morning/evening hour right now.
-    const due: Array<{ userId: string; kind: 'morning' | 'evening' }> = [];
+    const due: Array<{ userId: string; kind: 'morning' }> = [];
     for (const target of targets) {
-      const hour = localHour(target.timezone, at);
-      const kind = hour === MORNING_HOUR ? 'morning' : hour === EVENING_HOUR ? 'evening' : null;
-      if (kind) due.push({ userId: target.userId, kind });
+      if (localHour(target.timezone, at) === MORNING_HOUR) {
+        due.push({ userId: target.userId, kind: 'morning' });
+      }
     }
     const fired = await fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
       label: 'daily-report cron',

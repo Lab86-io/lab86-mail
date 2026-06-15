@@ -2,13 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { listNylasAccounts } from '../nylas/provider';
+import { emailFromHeader } from '../shared/format';
 import type {
   DailyReport,
   DailyReportCalendarItem,
   DailyReportItem,
   DailyReportTaskItem,
+  Message,
 } from '../shared/types';
 import { saveDailyReport } from '../store/daily-reports';
+import { getThreadMessages } from '../store/messages';
 import { getDailyArt } from './daily-art';
 import { generateDailyReport } from './daily-report';
 
@@ -27,9 +31,112 @@ import { generateDailyReport } from './daily-report';
 //   2. the agent composes the HTML; we re-save the same _id with html attached
 //      (artifactStatus: 'rendered').
 
-const MAX_LANE = 8;
-const MAX_TASKS = 20;
-const MAX_EVENTS = 20;
+const MAX_TASKS = 24;
+const MAX_EVENTS = 24;
+const MAX_DIGEST_THREADS = 16;
+const MAX_MSGS_PER_THREAD = 4;
+const MAX_BODY_CHARS = 800;
+const MAX_VOICE_SAMPLES = 4;
+const MAX_VOICE_CHARS = 600;
+
+const PROVIDER_LABEL: Record<string, string> = {
+  google: 'Gmail',
+  microsoft: 'Outlook',
+  icloud: 'iCloud Mail',
+  imap: 'Mail',
+};
+
+interface ThreadDigest {
+  account: string;
+  threadId: string;
+  subject: string;
+  people: string[];
+  unread: boolean;
+  lastReceivedAt: number | null;
+  messages: Array<{ from: string; date: number | null; body: string }>;
+}
+
+interface BriefExtras {
+  digests: ThreadDigest[];
+  voiceSamples: string[];
+  services: string[];
+}
+
+function cleanBody(message: Message): string {
+  const raw = message.textBody || message.snippet || '';
+  return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_BODY_CHARS);
+}
+
+// Pulls the ACTUAL message bodies for the action-worthy threads (plus the
+// user's own outbound prose as a voice sample) so the agent analyzes real
+// content rather than pre-canned one-liners. Bounded for token cost.
+async function gatherBriefExtras(report: DailyReport, userId?: string | null): Promise<BriefExtras> {
+  const accounts = userId ? await listNylasAccounts(userId).catch(() => []) : [];
+  const self = new Set(
+    accounts
+      .filter((a) => a.authed)
+      .map((a) => String(a.email || '').toLowerCase())
+      .filter(Boolean),
+  );
+
+  const s = report.sections;
+  const candidates: DailyReportItem[] = [
+    ...(s.replyOwed ?? []),
+    ...(s.followUpOwed ?? []),
+    ...(s.timeSensitive ?? []),
+    ...(s.newPeople ?? []),
+    ...(s.tracked ?? []),
+  ];
+  const seen = new Set<string>();
+  const digests: ThreadDigest[] = [];
+  const voiceSamples: string[] = [];
+
+  for (const item of candidates) {
+    if (digests.length >= MAX_DIGEST_THREADS) break;
+    const key = `${item.account}:${item.threadId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let messages: Message[] = [];
+    try {
+      messages = await getThreadMessages(item.account, item.threadId);
+    } catch {
+      messages = [];
+    }
+    const recent = messages.slice(-MAX_MSGS_PER_THREAD);
+    const digestMessages = recent
+      .map((m) => ({ from: m.from, date: m.date ?? null, body: cleanBody(m) }))
+      .filter((m) => m.body.length > 0);
+    if (!digestMessages.length) continue;
+    digests.push({
+      account: item.account,
+      threadId: item.threadId,
+      subject: item.subject,
+      people: item.people,
+      unread: item.unread,
+      lastReceivedAt: item.receivedAt ?? null,
+      messages: digestMessages,
+    });
+    // The user's own replies, as voice samples for matching tone in drafts.
+    for (const m of recent) {
+      if (voiceSamples.length >= MAX_VOICE_SAMPLES) break;
+      const from = emailFromHeader(m.from) || '';
+      if (from && self.has(from.toLowerCase())) {
+        const body = (m.textBody || m.snippet || '').replace(/\s+/g, ' ').trim().slice(0, MAX_VOICE_CHARS);
+        if (body.length > 40) voiceSamples.push(body);
+      }
+    }
+  }
+
+  const mailLabels = [
+    ...new Set(accounts.filter((a) => a.authed).map((a) => PROVIDER_LABEL[a.provider] || 'Mail')),
+  ];
+  const services = [...mailLabels];
+  if ((s.calendar ?? []).length) services.push('Calendar');
+  if ((s.tasks ?? []).length) services.push('Tasks');
+  if (!services.length) services.push('mail');
+
+  return { digests, voiceSamples, services };
+}
 
 export async function generateAgentReport(input: {
   kind: DailyReport['kind'];
@@ -57,7 +164,7 @@ export async function generateAgentReport(input: {
 
   let phase1: DailyReport;
   try {
-    const html = await composeArtifact(week);
+    const html = await composeArtifact(week, input.userId);
     // 'enriching' (not 'rendered') keeps the page polling for the month pass.
     phase1 = html
       ? { ...week, html, artifactStatus: 'enriching', model: describeProvider().primary || week.model }
@@ -83,7 +190,7 @@ export async function generateAgentReport(input: {
       reportId,
       silent: true,
     });
-    const html = await composeArtifact(full);
+    const html = await composeArtifact(full, input.userId);
     const finalReport: DailyReport = {
       ...full,
       html: html || phase1.html,
@@ -103,14 +210,13 @@ export async function generateAgentReport(input: {
 
 // ---- Artifact composition --------------------------------------------------
 
-async function composeArtifact(report: DailyReport): Promise<string | null> {
+async function composeArtifact(report: DailyReport, userId?: string | null): Promise<string | null> {
+  const extras = await gatherBriefExtras(report, userId);
   const { text } = await generateTextForCurrentUser({
-    feature: 'daily_report_artifact',
+    feature: 'daily_report_artifact', // tiered cap → 32k output
     speed: 'primary',
-    // Rich single-page documents need headroom; cap generously.
-    maxOutputTokens: 16000,
     system: DESIGN_BRIEF,
-    prompt: buildDataPrompt(report),
+    prompt: buildDataPrompt(report, extras),
   });
   return extractHtml(text);
 }
@@ -133,68 +239,55 @@ function extractHtml(raw: string): string | null {
 
 // ---- Prompts ---------------------------------------------------------------
 
-const DESIGN_BRIEF = `You are a world-class editorial designer AND front-end engineer composing a personal "Daily Brief" — a single, self-contained, beautiful HTML document from the data you are given. Think of the polish of a Claude Artifact crossed with a finely-typeset broadsheet newspaper and a modern analytics dashboard.
+const DESIGN_BRIEF = `You are the user's chief of staff AND a world-class editorial designer/front-end engineer. You are handed the RAW material — the actual email bodies, the week's calendar, and the task board — and you do your OWN analysis: read the threads, judge what genuinely needs the user, connect the dots across mail/calendar/tasks, and compose a single, self-contained, beautiful HTML "Daily Brief". Polish of a Claude Artifact × a finely-typeset broadsheet.
+
+ANALYZE, DON'T TRANSCRIBE:
+- Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view.
+- Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task").
+- Be PROACTIVE: propose to-dos, meeting prep, and ready-to-send reply drafts. Nothing executes without a tap.
+- Adaptive density: short and calm on a light day, fuller when it's busy. Never pad.
 
 OUTPUT RULES (critical):
-- Output ONLY a complete HTML document, starting with <!doctype html>. No markdown fences, no commentary before or after.
-- All CSS in a single <style> tag, all JS in a single <script> tag. The ONLY permitted external resources are: (1) the daily artwork image at the exact data.art.imageUrl, and (2) a Google Fonts <link> for the three fonts named below. Everything else inline; draw charts as inline SVG. No other network requests.
-- It must render correctly with no console errors and degrade gracefully if a data section is empty.
+- Output ONLY a complete HTML document, starting with <!doctype html>. No markdown fences, no commentary.
+- All CSS in one <style>, all JS in one <script>. The ONLY external resources allowed: (1) the artwork at the exact data.art.imageUrl, (2) ONE Google Fonts <link> for the families below. Everything else inline. Render with no console errors; degrade gracefully when a section is empty.
 
-MASTHEAD (the signature element — replaces any app header):
-- Open with a full-bleed landscape banner using data.art.imageUrl as the image (object-fit: cover, ~38–46vh tall, never distorted). Overlay the title in a large serif display face: "The {data.weekday} Brief" (e.g. "The Monday Brief"), centered, with a soft scrim/legibility gradient so the text reads over any painting.
-- Flank the masthead with the full date (e.g. "15 JUN 2026") and the time of day, set vertically along the left and right edges (rotated), tabular and understated — like a newspaper's spine.
-- Directly beneath the image, a small monospace attribution caption: data.art.credit + " · " + data.art.source.
+DO NOT:
+- Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
+- The ONLY reference to data sources is a single small footer line at the very bottom: "Built for you using your <services> with care." — where <services> is data.services joined with commas and a final "and" (e.g. "Gmail, Calendar, and Tasks"). No other "sources/scanned/powered by" mentions anywhere.
 
-THEME (must honor the user's app theme, set live by the host):
-- Define these CSS custom properties on :root WITH the given fallbacks, and use them everywhere instead of hardcoded colors/fonts:
-  --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc),
-  --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)),
-  --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif).
-- Load the app fonts via ONE Google Fonts link so live font switches resolve instantly:
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&display=swap">
-- Include this listener so the host can restyle live: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } }); — apply on load via the same path.
-- Headlines/masthead use var(--brief-font-display); body/UI use var(--brief-font-body). Accent elements use var(--brief-accent).
+MASTHEAD (signature element — replaces any app header):
+- Full-bleed landscape banner using data.art.imageUrl (object-fit: cover, ~38–46vh, never distorted). Overlay "The {data.weekday} Brief" in the display face, centered, with a legibility scrim.
+- Date (e.g. "15 JUN 2026") and time set vertically along the left/right edges, like a newspaper's spine.
+- Small monospace caption beneath the image: data.art.credit + " · " + data.art.source.
 
-DESIGN:
-- Editorial, confident, generous whitespace. Clear typographic hierarchy. Fully responsive (looks great 360px → 1100px). Use CSS grid/flex. Subtle, tasteful load animations.
-- Rich data viz where it helps, drawn as INLINE SVG from the numbers: e.g. a small bar chart of lane volumes, a donut of task open/done, a horizontal timeline of today's calendar. Always pair a chart with the literal numbers.
+THEME — TWO fonts, honoring the user's app theme (host injects live):
+- Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif).
+- Headings/masthead use var(--brief-font-display); ALL body copy/UI uses var(--brief-font-body) — two clearly distinct typefaces, like the app.
+- ONE Google Fonts link covering every option so live font swaps resolve instantly:
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
+- Live restyle listener: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
 
-CONTENT (use what the data supports; omit empty sections gracefully):
-- A stylized narrative lede (2–3 short paragraphs) — expand the provided narrative seed into warm, sharp chief-of-staff prose. No emoji.
-- A stat strip (scanned, reply owed, tracked, open tasks, events) with a small chart.
-- "Needs you" — reply-owed and follow-up-owed conversations as rich rows: person, subject, why it matters, elapsed framing, and an action button to open the thread.
-- "New people" and "Tracked conversations" sections.
-- An interactive TO-DO list from the tasks data: a checkbox per task (toggling calls the host — see PROTOCOL), title, due date, priority, and a link to its source if present. Include a "+ add task" affordance.
-- A calendar section: today/upcoming events as a clean table or timeline with time, title, location; clicking opens the event.
-- A collapsed "noise / bulk" tail.
+DESIGN: editorial, generous whitespace, clear hierarchy, responsive 360→1100px, tasteful load animations. Use inline SVG only where a visual genuinely adds insight (e.g. a slim timeline of the week's meetings) — never decorative number-counters.
 
-INTERACTION PROTOCOL (wire every interactive element to this):
-- To act, post a message to the host: window.parent.postMessage({ source: 'lab86-daily-report', action, payload }, '*').
-- Supported actions and payloads:
-  - 'open_thread'  { account, threadId }            // open an email conversation
-  - 'open_view'    { view: 'mail'|'tasks'|'calendar' } // jump to an app surface
-  - 'toggle_task'  { cardId, completed }            // check/uncheck a to-do
-  - 'create_task'  { title, dueAt? }                // add a to-do (dueAt = epoch ms)
-  - 'open_event'   { account, eventId }             // open a calendar event
-- The host may post an acknowledgement back to you (same listener as the theme message): if (e.data?.source === 'lab86-host' && e.data.action) { /* e.data.ok, e.data.error */ }. Use it to confirm optimistic UI; never block on it.
-- Optimistically update the UI on click (e.g. strike a checked task) and reconcile if the host reports an error.
-- Use the exact ids/accounts from the data. Never invent ids. If an item lacks an id needed for an action, render it without that action.`;
+CONTENT (compose from your analysis; omit empty parts):
+- An integrated narrative lede (2–3 short paragraphs, the user's voice/tone from data.voiceSamples) — the through-line of the day connecting mail, calendar, and tasks. No emoji.
+- "Needs you": the threads YOU judged as needing action — person, your one-line read of why (from the body), how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via the draft_reply action.
+- "The week ahead": today → +7 days of calendar as a clean timeline/table; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
+- Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from the mail/meetings (create_task). Tasks are first-class, not a footnote.
 
-function buildDataPrompt(report: DailyReport): string {
+INTERACTION PROTOCOL (wire every interactive element):
+- window.parent.postMessage({ source: 'lab86-daily-report', action, payload }, '*'). Actions:
+  - 'open_thread'  { account, threadId }
+  - 'open_view'    { view: 'mail'|'tasks'|'calendar' }
+  - 'open_event'   { account, eventId }
+  - 'toggle_task'  { cardId, completed }
+  - 'create_task'  { title, dueAt? }                 // dueAt = epoch ms
+  - 'draft_reply'  { account, threadId, body }       // opens the thread with your draft seeded
+- Host may ack on the same listener (e.data.source==='lab86-host' && e.data.action → e.data.ok/error). Update optimistically; reconcile on error.
+- Use the exact ids/accounts from the data; never invent ids. If an item lacks an id an action needs, render it without that action.`;
+
+function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
   const s = report.sections;
-  const lane = (items: DailyReportItem[] = []) =>
-    items.slice(0, MAX_LANE).map((i) => ({
-      account: i.account,
-      threadId: i.threadId,
-      people: i.people,
-      subject: i.subject,
-      whyItMatters: i.whyItMatters,
-      nextAction: i.nextAction,
-      dueAt: i.dueAt ?? null,
-      receivedAt: i.receivedAt ?? null,
-      lane: i.lane,
-      isNewSender: i.isNewSender ?? false,
-    }));
   const tasks = (s.tasks ?? []).slice(0, MAX_TASKS).map((t: DailyReportTaskItem) => ({
     cardId: t.cardId,
     boardTitle: t.boardTitle,
@@ -224,31 +317,24 @@ function buildDataPrompt(report: DailyReport): string {
   const art = getDailyArt(report.generatedAt);
 
   const data = {
+    today: new Date(report.generatedAt).toString(),
     kind: report.kind,
-    generatedAt: report.generatedAt,
     weekday,
     art,
     firstName: contextFirstName() || null,
-    narrativeSeed: report.narrative,
-    stats: report.stats,
-    sections: {
-      replyOwed: lane(s.replyOwed),
-      followUpOwed: lane(s.followUpOwed),
-      newPeople: lane(s.newPeople),
-      timeSensitive: lane(s.timeSensitive),
-      tracked: lane(s.tracked),
-      fyi: lane(s.fyi),
-      bulkTailCount: (s.bulkTail ?? []).length,
-      noiseSummary: s.noiseSummary ?? null,
-    },
+    services: extras.services,
+    // The user's own recent outbound prose — match this voice in any draft.
+    voiceSamples: extras.voiceSamples,
+    // RAW material to analyze yourself: real thread bodies (most recent last).
+    threads: extras.digests,
     tasks,
     calendar,
   };
 
   return [
     `Today is ${new Date(report.generatedAt).toString()}.`,
-    `This is the "${report.kind}" edition.`,
-    'Compose the Daily Brief HTML document from the following data. Every id/account is real — use them verbatim in the interaction protocol; never fabricate.',
+    `This is the "${report.kind}" edition for ${data.firstName || 'the user'}.`,
+    'Read data.threads (real email bodies), the calendar, and the tasks; do your own analysis and compose the Daily Brief HTML. Every id/account is real — use them verbatim in the interaction protocol; never fabricate ids.',
     '',
     '```json',
     JSON.stringify(data, null, 2),

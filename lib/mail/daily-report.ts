@@ -1153,10 +1153,13 @@ async function loadCalendarContext(
 ): Promise<DailyReportCalendarItem[]> {
   if (!userId) return [];
   try {
+    // The brief is forward-looking: calendar matters for what's AHEAD, not the
+    // past. Window = start of today → +7 days (today plus the next week).
+    const startOfToday = now - (now % 86_400_000);
     const rows = await convexQuery<any[]>((api as any).calendarData.listEvents, {
       userId,
-      startAt: now - MONTH_CONTEXT_WINDOW,
-      endAt: now + FUTURE_CONTEXT_WINDOW,
+      startAt: startOfToday,
+      endAt: startOfToday + 8 * 86_400_000,
       limit: 500,
     });
     return rows

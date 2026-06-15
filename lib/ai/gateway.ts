@@ -18,6 +18,26 @@ import { getAiRequestContext, runWithAiRequestContext } from './context';
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
 type AiSpeed = 'fast' | 'primary' | 'nano';
+
+// Progressive output ceilings, sized to the job. An UNSET cap makes the
+// provider assume the model's max (65536) and OpenRouter reserves credits for
+// that worst case — 402-ing valid requests. These keep each feature bounded
+// (cheaper, faster) while leaving room for reasoning. Callers may still pass an
+// explicit maxOutputTokens to override.
+const FEATURE_MAX_TOKENS: Record<string, number> = {
+  summarize_thread: 1500,
+  triage_thread: 1500,
+  daily_report_insight: 3000,
+  daily_report_narrative: 4000,
+  daily_report_artifact: 32000,
+  agent: 24000,
+};
+const DEFAULT_GENERATE_MAX_TOKENS = 4000;
+const DEFAULT_STREAM_MAX_TOKENS = 24000;
+
+function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
+  return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
+}
 type PlatformPreference = {
   provider?: AiProvider;
   modelName?: string;
@@ -187,16 +207,20 @@ export async function generateTextForCurrentUser(
     userId?: string | null;
   },
 ) {
-  const { feature = 'generate_text', speed = 'fast', userId, model: _ignored, ...rest } = options as any;
+  const {
+    feature = 'generate_text',
+    speed = 'fast',
+    userId,
+    model: _ignored,
+    maxOutputTokens,
+    ...rest
+  } = options as any;
   const runtime = await resolveAiRuntime({ userId, speed, feature });
   try {
     const result = await generateText({
-      // Bound the output. Without this the provider assumes the model's max
-      // (e.g. 65536 for gpt-5.5), and OpenRouter reserves credits for that
-      // worst case — 402-ing the request even with a healthy balance. Callers
-      // that need more (e.g. the report artifact) pass their own value.
-      maxOutputTokens: 8000,
       ...rest,
+      // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
+      maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
       model: runtime.model,
     });
     await recordUsage(runtime, feature, result.usage, true);
@@ -224,6 +248,7 @@ export async function streamTextForUser(
     userEmail,
     userName,
     model: _ignored,
+    maxOutputTokens,
     onFinish,
     onError,
     ...rest
@@ -231,10 +256,10 @@ export async function streamTextForUser(
   const runtime = await resolveAiRuntime({ userId, speed, feature });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, () =>
     streamText({
-      // Cap per-step output so the provider doesn't reserve the model's full max
-      // (65536), which OpenRouter 402s on; leaves room for reasoning + a reply.
-      maxOutputTokens: 16000,
       ...rest,
+      // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
+      // that OpenRouter 402s on); leaves room for reasoning + a reply.
+      maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_STREAM_MAX_TOKENS),
       model: runtime.model,
       onFinish: async (event) => {
         await recordUsage(runtime, feature, event.usage, true);

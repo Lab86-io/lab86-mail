@@ -80,7 +80,7 @@ export interface ClientState {
   // Grain tile size in px (60 fine … 240 coarse); smaller = higher resolution.
   grainScale: number;
   // UI font: null/sans = Geist, 'serif' = Fraunces, 'news' = Averia Serif Libre.
-  appFont: 'sans' | 'serif' | 'news' | null;
+  appFont: 'sans' | 'serif' | 'news' | 'instrument' | 'grotesk' | null;
 
   setAccount: (account: string) => void;
   setAccountFilter: (accountIds: string[]) => void;
@@ -125,7 +125,7 @@ export interface ClientState {
   setBgWashOpacity: (opacity: number) => void;
   setGrainOpacity: (opacity: number) => void;
   setGrainScale: (px: number) => void;
-  setAppFont: (font: 'sans' | 'serif' | 'news' | null) => void;
+  setAppFont: (font: 'sans' | 'serif' | 'news' | 'instrument' | 'grotesk' | null) => void;
 }
 
 const initialCompose: ComposeState = {

@@ -197,7 +197,9 @@ function elapsedFraming(item: DailyReportItem): string {
 // the message source and the action before touching app state.
 const FONT_FAMILIES: Record<string, string> = {
   sans: "'Geist', system-ui, sans-serif",
+  grotesk: "'Hanken Grotesk', system-ui, sans-serif",
   serif: "'Fraunces', Georgia, serif",
+  instrument: "'Instrument Serif', Georgia, serif",
   news: "'Averia Serif Libre', Georgia, serif",
 };
 
@@ -206,6 +208,7 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   // The brief is theme-agnostic HTML (CSS vars with fallbacks); the host injects
   // the user's actual theme so it matches the app and restyles live on change.
   // Subscribing to these slices re-runs the effect whenever customization moves.
@@ -230,9 +233,10 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
       '--brief-hairline': v('--color-border') || '#e6e3dc',
       '--brief-accent': v('--color-accent') || '#c2683c',
       '--brief-accent-soft': v('--color-accent-soft') || 'rgba(194,104,60,0.14)',
-      '--brief-font-body': FONT_FAMILIES[appFont || 'sans'] || FONT_FAMILIES.sans,
-      // Keep the masthead serif unless the user picked the news face.
-      '--brief-font-display': appFont === 'news' ? FONT_FAMILIES.news : FONT_FAMILIES.serif,
+      // Two fonts, like the rest of the app: the picked face drives the display
+      // layer (headings/masthead); body copy stays sans.
+      '--brief-font-display': FONT_FAMILIES[appFont ?? 'serif'] ?? FONT_FAMILIES.serif,
+      '--brief-font-body': FONT_FAMILIES.sans,
     };
     win.postMessage({ source: 'lab86-host', type: 'theme', theme }, '*');
   }, [appFont]);
@@ -268,6 +272,13 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
           case 'open_event':
             setPrimaryView('calendar');
             return ack(true);
+          case 'draft_reply':
+            if (!payload.threadId) return ack(false, 'missing threadId');
+            if (payload.account) setThreadAccount(String(payload.account));
+            setSelectedThread(String(payload.threadId));
+            setPendingReplyBody(typeof payload.body === 'string' ? payload.body : '');
+            setPrimaryView('mail');
+            return ack(true);
           case 'open_view':
             if (['mail', 'tasks', 'calendar'].includes(payload.view)) {
               setPrimaryView(payload.view);
@@ -301,7 +312,7 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [setSelectedThread, setThreadAccount, setPrimaryView, onChanged]);
+  }, [setSelectedThread, setThreadAccount, setPrimaryView, setPendingReplyBody, onChanged]);
 
   return (
     <iframe
@@ -502,16 +513,6 @@ export function DailyReport() {
     setSelectedThread(item.threadId);
   };
 
-  const stats = report
-    ? [
-        [report.stats.scannedThreads, 'Scanned'],
-        [report.stats.replyOwed ?? report.stats.needsReply ?? 0, 'Reply owed'],
-        [report.stats.trackedThreads, 'Tracked'],
-        [report.stats.openTasks ?? 0, 'Open tasks'],
-        [report.stats.calendarEvents ?? 0, 'Events'],
-      ]
-    : [];
-
   const rowHandlers = {
     onOpen: openThread,
     onResolve: (id: string) => resolveTracked.mutate(id),
@@ -689,23 +690,6 @@ export function DailyReport() {
           <ReportArtifact html={report.html} onChanged={invalidate} />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-7">
-            {/* Stat strip — serif numerals over tiny labels, hairline-divided when wide. */}
-            <dl
-              className="blur-in grid grid-cols-2 gap-y-3 divide-[var(--color-border)] @[420px]:grid-cols-3 @[640px]:grid-cols-5 @[420px]:divide-x"
-              style={{ animationDelay: '0ms' }}
-            >
-              {stats.map(([value, label], i) => (
-                <div key={String(label)} className={cn('px-4', i === 0 && '@[420px]:pl-0')}>
-                  <dd className="font-serif text-[clamp(20px,5cqi,28px)] leading-none text-[var(--color-text)]">
-                    {value}
-                  </dd>
-                  <dt className="mt-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-                    {label}
-                  </dt>
-                </div>
-              ))}
-            </dl>
-
             {/* Lede — the narrative as an editorial pull-quote. */}
             {report.narrative ? (
               <blockquote
