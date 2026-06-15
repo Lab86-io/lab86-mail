@@ -14,6 +14,9 @@ const isPublicRoute = createRouteMatcher([
   '/api/nylas/callback',
   '/api/nylas/webhook',
   '/api/billing/webhook',
+  // Convex scheduled actions call these; they authenticate with the internal
+  // secret in-handler, so they must bypass Clerk (which would 302 → sign-in).
+  '/api/cron(.*)',
   '/privacy',
   '/terms',
   '/support',
@@ -109,6 +112,8 @@ function shouldRequireBasicAuth(req: Request, pathname: string) {
   // never satisfy staging basic auth.
   if (pathname === '/api/nylas/webhook') return false;
   if (pathname === '/api/billing/webhook') return false;
+  // Internal cron callbacks authenticate via the internal secret, not basic auth.
+  if (pathname.startsWith('/api/cron')) return false;
   return true;
 }
 
