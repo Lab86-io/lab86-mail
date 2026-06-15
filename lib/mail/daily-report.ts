@@ -880,6 +880,7 @@ async function composeReport(input: {
     trackedItems,
     reportTasks,
     reportCalendar,
+    input.now,
   );
   let model = 'local';
 
@@ -954,6 +955,7 @@ function localNarrative(
   tracked: DailyReportItem[],
   tasks: DailyReportTaskItem[] = [],
   calendar: DailyReportCalendarItem[] = [],
+  now: number = Date.now(),
 ) {
   const opener =
     kind === 'evening'
@@ -1024,7 +1026,7 @@ function localNarrative(
       `On the task board, ${first.title}${openTasks.length > 1 ? ` leads ${openTasks.length - 1} other open task${openTasks.length - 1 === 1 ? '' : 's'}` : ' is the active item'}.`,
     );
   }
-  const nextEvent = calendar.find((event) => event.endAt >= Date.now());
+  const nextEvent = calendar.find((event) => event.endAt >= now);
   if (nextEvent) {
     parts.push(`Calendar-wise, ${nextEvent.title} is the next visible commitment.`);
   }

@@ -501,12 +501,11 @@ export const tasksAttachFile = defineTool({
       });
       return { ok: true, name, operationId };
     }
+    // The source validation above guarantees exactly one source and the
+    // chatUploadId case returned already, so here it is url or email attachment.
     const blob = args.url
       ? await fetchWebFile(args.url, args.name)
-      : args.account && args.messageId && args.attachmentId
-        ? await fetchEmailAttachment(userId, args.account, args.attachmentId, args.messageId, args.name)
-        : null;
-    if (!blob) throw new Error('Provide a url, or account + messageId + attachmentId.');
+      : await fetchEmailAttachment(userId, args.account!, args.attachmentId!, args.messageId!, args.name);
     const stored = await storeForCard(userId, args.cardId, blob);
     const result = await convexMutation<{ previous: any }>(boardsApi.attachToCard, {
       userId,
@@ -562,6 +561,16 @@ export const tasksAttachCalendarEventLink = defineTool({
       name,
       url,
     });
+    // Record the undo operation right after the attach succeeds so a later
+    // setAsSource failure still leaves the attachment revertible.
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_attach_calendar_event_link',
+      surface: 'tasks',
+      summary: `Attached calendar event "${name}" to "${result.previous.title}"`,
+      target: { kind: 'card', id: args.cardId, boardId: result.previous.boardId },
+      inverse: { kind: 'tasks.restore_card', payload: { cardId: args.cardId, fields: result.previous } },
+    });
     if (args.setAsSource) {
       await convexMutation(boardsApi.updateCard, {
         userId,
@@ -576,14 +585,6 @@ export const tasksAttachCalendarEventLink = defineTool({
         },
       });
     }
-    const operationId = await recordOperation({
-      userId,
-      tool: 'tasks_attach_calendar_event_link',
-      surface: 'tasks',
-      summary: `Attached calendar event "${name}" to "${result.previous.title}"`,
-      target: { kind: 'card', id: args.cardId, boardId: result.previous.boardId },
-      inverse: { kind: 'tasks.restore_card', payload: { cardId: args.cardId, fields: result.previous } },
-    });
     return { ok: true, url, name, operationId };
   },
 });

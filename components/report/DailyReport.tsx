@@ -453,6 +453,19 @@ interface RowHandlers {
   markingId?: string;
 }
 
+// Report links come from synced provider data (task sources, calendar
+// htmlLinks). Allow only http(s) into an href so a stored javascript:/data:
+// scheme can't execute when the link is clicked.
+function safeExternalHref(value?: string): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function formatEventWindow(event: DailyReportCalendarItem): string {
   const start = new Date(event.startAt);
   if (event.allDay) {
@@ -526,9 +539,9 @@ function TaskCalendarBrief({
                     {task.columnName ? <span>{task.columnName}</span> : null}
                     {task.dueAt ? <span>Due {formatDate(task.dueAt)}</span> : null}
                     {task.priority ? <span>{task.priority}</span> : null}
-                    {task.sourceUrl ? (
+                    {safeExternalHref(task.sourceUrl) ? (
                       <a
-                        href={task.sourceUrl}
+                        href={safeExternalHref(task.sourceUrl) as string}
                         target="_blank"
                         rel="noreferrer noopener"
                         className="text-[var(--color-accent)] hover:underline"
@@ -580,9 +593,9 @@ function TaskCalendarBrief({
                       {formatEventWindow(event)}
                     </td>
                     <td className="px-2.5 py-2 align-top">
-                      {event.htmlLink ? (
+                      {safeExternalHref(event.htmlLink) ? (
                         <a
-                          href={event.htmlLink}
+                          href={safeExternalHref(event.htmlLink) as string}
                           target="_blank"
                           rel="noreferrer noopener"
                           className="line-clamp-1 text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"

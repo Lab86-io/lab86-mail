@@ -31,6 +31,11 @@ async function postBrowserbase<T>(path: string, body: Record<string, unknown>): 
       throw new Error(`Browserbase ${path} failed (${response.status}): ${text.slice(0, 240)}`);
     }
     return (await response.json()) as T;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Browserbase ${path} timed out after ${BROWSERBASE_TIMEOUT_MS}ms`);
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

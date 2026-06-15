@@ -13,7 +13,7 @@ import {
   Users,
   Video,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { formatTime } from '@/components/calendar/engine/helpers';
@@ -52,9 +52,12 @@ export function EventDetailsDialog({ event, children }: IProps) {
   const endDate = parseISO(event.endDate);
   const { use24HourFormat, removeEvent } = useCalendar();
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const [open, setOpen] = useState(false);
+  // Only subscribe to linked cards while the dialog is open — otherwise every
+  // rendered event card on a dense calendar holds a live Convex subscription.
   const linkedCardsQuery = useConvexQuery({
     query: (api as any).boards.liveCardsForCalendarEvent,
-    args: { eventId: event.id, masterEventId: event.masterEventId },
+    args: open ? { eventId: event.id, masterEventId: event.masterEventId } : 'skip',
   });
   const linkedCards: Array<{ cardId: string; title: string; completedAt?: number }> =
     linkedCardsQuery.status === 'success' ? linkedCardsQuery.data || [] : [];
@@ -64,7 +67,7 @@ export function EventDetailsDialog({ event, children }: IProps) {
   const sameDay = format(startDate, 'yyyy-MM-dd') === format(endDate, 'yyyy-MM-dd');
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader>
