@@ -8,6 +8,7 @@ import type {
   DailyReportTaskItem,
 } from '../shared/types';
 import { saveDailyReport } from '../store/daily-reports';
+import { getDailyArt } from './daily-art';
 import { generateDailyReport } from './daily-report';
 
 // The agent-authored Daily Report.
@@ -109,14 +110,27 @@ const DESIGN_BRIEF = `You are a world-class editorial designer AND front-end eng
 
 OUTPUT RULES (critical):
 - Output ONLY a complete HTML document, starting with <!doctype html>. No markdown fences, no commentary before or after.
-- The document MUST be fully self-contained: all CSS in a single <style> tag, all JS in a single <script> tag. NO external resources of any kind — no <link>, no <script src>, no web fonts, no network images. Use only system font stacks and inline SVG. (The document runs in a sandboxed iframe with no network access.)
+- All CSS in a single <style> tag, all JS in a single <script> tag. The ONLY permitted external resources are: (1) the daily artwork image at the exact data.art.imageUrl, and (2) a Google Fonts <link> for the three fonts named below. Everything else inline; draw charts as inline SVG. No other network requests.
 - It must render correctly with no console errors and degrade gracefully if a data section is empty.
 
+MASTHEAD (the signature element — replaces any app header):
+- Open with a full-bleed landscape banner using data.art.imageUrl as the image (object-fit: cover, ~38–46vh tall, never distorted). Overlay the title in a large serif display face: "The {data.weekday} Brief" (e.g. "The Monday Brief"), centered, with a soft scrim/legibility gradient so the text reads over any painting.
+- Flank the masthead with the full date (e.g. "15 JUN 2026") and the time of day, set vertically along the left and right edges (rotated), tabular and understated — like a newspaper's spine.
+- Directly beneath the image, a small monospace attribution caption: data.art.credit + " · " + data.art.source.
+
+THEME (must honor the user's app theme, set live by the host):
+- Define these CSS custom properties on :root WITH the given fallbacks, and use them everywhere instead of hardcoded colors/fonts:
+  --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc),
+  --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)),
+  --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif).
+- Load the app fonts via ONE Google Fonts link so live font switches resolve instantly:
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&display=swap">
+- Include this listener so the host can restyle live: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } }); — apply on load via the same path.
+- Headlines/masthead use var(--brief-font-display); body/UI use var(--brief-font-body). Accent elements use var(--brief-accent).
+
 DESIGN:
-- Editorial, confident, generous whitespace. A strong masthead ("The Daily Brief") with a dateline. Clear typographic hierarchy using a serif display face for headlines (e.g. Georgia/"Times New Roman" stack) and a clean system sans for body/UI.
-- Respect both light and dark via prefers-color-scheme. Palette — light: paper #faf9f6, ink #1a1a1a, muted #6b6b6b, hairline #e6e3dc; dark: bg #14130f, ink #f3f1ea, muted #9b988e, hairline #2a2823. Accent: a warm amber/ember #c2683c (use sparingly for emphasis, links, active states).
-- Fully responsive (looks great 360px → 1100px). Use CSS grid/flex. Smooth, tasteful micro-animations (fade/slide on load) are welcome but must be subtle.
-- Rich data viz where it helps, drawn as INLINE SVG you generate from the numbers: e.g. a small bar chart of lane volumes, a donut of task open/done, a horizontal timeline of today's calendar. Always pair a chart with the literal numbers.
+- Editorial, confident, generous whitespace. Clear typographic hierarchy. Fully responsive (looks great 360px → 1100px). Use CSS grid/flex. Subtle, tasteful load animations.
+- Rich data viz where it helps, drawn as INLINE SVG from the numbers: e.g. a small bar chart of lane volumes, a donut of task open/done, a horizontal timeline of today's calendar. Always pair a chart with the literal numbers.
 
 CONTENT (use what the data supports; omit empty sections gracefully):
 - A stylized narrative lede (2–3 short paragraphs) — expand the provided narrative seed into warm, sharp chief-of-staff prose. No emoji.
@@ -135,7 +149,7 @@ INTERACTION PROTOCOL (wire every interactive element to this):
   - 'toggle_task'  { cardId, completed }            // check/uncheck a to-do
   - 'create_task'  { title, dueAt? }                // add a to-do (dueAt = epoch ms)
   - 'open_event'   { account, eventId }             // open a calendar event
-- The host may post an acknowledgement back to you: window.addEventListener('message', e => { if (e.data?.source === 'lab86-host') { /* e.data.action, e.data.ok, e.data.error */ } }). Use it to confirm optimistic UI; never block on it.
+- The host may post an acknowledgement back to you (same listener as the theme message): if (e.data?.source === 'lab86-host' && e.data.action) { /* e.data.ok, e.data.error */ }. Use it to confirm optimistic UI; never block on it.
 - Optimistically update the UI on click (e.g. strike a checked task) and reconcile if the host reports an error.
 - Use the exact ids/accounts from the data. Never invent ids. If an item lacks an id needed for an action, render it without that action.`;
 
@@ -175,9 +189,14 @@ function buildDataPrompt(report: DailyReport): string {
     location: e.location ?? null,
   }));
 
+  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(report.generatedAt));
+  const art = getDailyArt(report.generatedAt);
+
   const data = {
     kind: report.kind,
     generatedAt: report.generatedAt,
+    weekday,
+    art,
     firstName: contextFirstName() || null,
     narrativeSeed: report.narrative,
     stats: report.stats,

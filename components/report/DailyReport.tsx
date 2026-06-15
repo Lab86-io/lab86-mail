@@ -11,7 +11,7 @@ import {
   RefreshCw,
   User,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
@@ -195,11 +195,55 @@ function elapsedFraming(item: DailyReportItem): string {
 // access (it cannot read cookies, storage, or the Convex client) — every
 // mutation flows through this allowlisted postMessage handler, which validates
 // the message source and the action before touching app state.
+const FONT_FAMILIES: Record<string, string> = {
+  sans: "'Geist', system-ui, sans-serif",
+  serif: "'Fraunces', Georgia, serif",
+  news: "'Averia Serif Libre', Georgia, serif",
+};
+
 function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => void }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  // The brief is theme-agnostic HTML (CSS vars with fallbacks); the host injects
+  // the user's actual theme so it matches the app and restyles live on change.
+  // Subscribing to these slices re-runs the effect whenever customization moves.
+  const appFont = useClientStore((s) => s.appFont);
+  const accentHue = useClientStore((s) => s.accentHue);
+  const accentChroma = useClientStore((s) => s.accentChroma);
+  const bgHue = useClientStore((s) => s.bgHue);
+  const surfaceTint = useClientStore((s) => s.surfaceTint);
+
+  // Mirror the app's resolved CSS variables (already reflect the live accent,
+  // background, and light/dark) into the brief's --brief-* tokens. Posted on
+  // iframe load and again whenever any customization slice changes.
+  const postTheme = useCallback(() => {
+    const win = frameRef.current?.contentWindow;
+    if (!win) return;
+    const css = getComputedStyle(document.documentElement);
+    const v = (name: string) => css.getPropertyValue(name).trim();
+    const theme: Record<string, string> = {
+      '--brief-bg': v('--color-bg') || '#faf9f6',
+      '--brief-ink': v('--color-text') || '#1a1a1a',
+      '--brief-muted': v('--color-text-muted') || '#6b6b6b',
+      '--brief-hairline': v('--color-border') || '#e6e3dc',
+      '--brief-accent': v('--color-accent') || '#c2683c',
+      '--brief-accent-soft': v('--color-accent-soft') || 'rgba(194,104,60,0.14)',
+      '--brief-font-body': FONT_FAMILIES[appFont || 'sans'] || FONT_FAMILIES.sans,
+      // Keep the masthead serif unless the user picked the news face.
+      '--brief-font-display': appFont === 'news' ? FONT_FAMILIES.news : FONT_FAMILIES.serif,
+    };
+    win.postMessage({ source: 'lab86-host', type: 'theme', theme }, '*');
+  }, [appFont]);
+
+  // Re-post on any customization change. The accent/background slices aren't
+  // referenced directly (their resolved colors are read from computed CSS), but
+  // they must still re-trigger the post, so they belong in the dependency list.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: theme slices intentionally trigger a re-post; resolved values come from computed CSS.
+  useEffect(() => {
+    postTheme();
+  }, [postTheme, accentHue, accentChroma, bgHue, surfaceTint, html]);
 
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
@@ -264,6 +308,7 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
       ref={frameRef}
       title="The Daily Brief"
       srcDoc={html}
+      onLoad={postTheme}
       // allow-scripts (for interactivity) WITHOUT allow-same-origin keeps the
       // artifact sandboxed from the app origin; allow-popups lets external
       // links open in a new tab.
@@ -374,87 +419,136 @@ export function DailyReport() {
   };
 
   return (
-    <section className="report-paper flex h-full flex-col">
-      <header className="@container border-b border-[var(--color-border)] px-5 py-4">
-        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-          <div className="min-w-0">
-            <h1 className="font-serif text-[clamp(22px,6cqi,30px)] font-semibold italic leading-none tracking-tight text-[var(--color-text)]">
-              The Daily Brief
-            </h1>
-            <p className="mt-2 font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              {report ? formatDateline(report) : 'From your mail & calendar'}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {history.length > 1 ? (
-              <select
-                value={selectedId ?? ''}
-                onChange={(event) => setSelectedId(event.target.value || null)}
-                aria-label="Browse past editions"
-                title="Browse past editions"
-                className="h-8 max-w-[170px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+    <section className="report-paper relative flex h-full flex-col">
+      {/* The agent-authored brief carries its own art masthead, so the app
+          header is hidden for it and the controls move to a floating toolbar. */}
+      {!report?.html ? (
+        <header className="@container border-b border-[var(--color-border)] px-5 py-4">
+          <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+            <div className="min-w-0">
+              <h1 className="font-serif text-[clamp(22px,6cqi,30px)] font-semibold italic leading-none tracking-tight text-[var(--color-text)]">
+                The Daily Brief
+              </h1>
+              <p className="mt-2 font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                {report ? formatDateline(report) : 'From your mail & calendar'}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {history.length > 1 ? (
+                <select
+                  value={selectedId ?? ''}
+                  onChange={(event) => setSelectedId(event.target.value || null)}
+                  aria-label="Browse past editions"
+                  title="Browse past editions"
+                  className="h-8 max-w-[170px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >
+                  <option value="">Latest edition</option>
+                  {history.map((item) => (
+                    <option key={item._id} value={item._id}>
+                      {editionLabel(item)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPrimaryView('mail')}
+                aria-label="Open inbox"
+                title="Inbox"
+                className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               >
-                <option value="">Latest edition</option>
-                {history.map((item) => (
-                  <option key={item._id} value={item._id}>
-                    {editionLabel(item)}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setPrimaryView('mail')}
-              aria-label="Open inbox"
-              title="Inbox"
-              className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-            >
-              <Inbox className="size-3.5" />
-              <span className="hidden @[360px]:inline">Inbox</span>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={generate.isPending || generating}
-              onClick={() => generate.mutate()}
-              aria-label="Generate a fresh report"
-              title="Generate"
-            >
-              {generate.isPending || generating ? (
-                <Ring className="size-3" />
-              ) : (
-                <RefreshCw className="size-3" />
-              )}
-              <span className="hidden @[360px]:inline">Generate</span>
-            </Button>
-          </div>
-        </div>
-        {generate.isPending || generating ? (
-          <div className="mt-3 space-y-2">
-            <TextShimmer className="text-[12px] text-[var(--color-accent)]">
-              {report?.artifactStatus === 'composing'
-                ? 'Designing your brief — laying out the narrative, charts, and to-dos…'
-                : generating && report?.progress
-                  ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
-                  : 'Reading your mail, tasks, and calendar to write today’s brief…'}
-            </TextShimmer>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
-              <div
-                className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                style={{
-                  width: `${
-                    report?.progress?.total
-                      ? Math.max(6, Math.min(100, (report.progress.done / report.progress.total) * 100))
-                      : 12
-                  }%`,
-                }}
-              />
+                <Inbox className="size-3.5" />
+                <span className="hidden @[360px]:inline">Inbox</span>
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={generate.isPending || generating}
+                onClick={() => generate.mutate()}
+                aria-label="Generate a fresh report"
+                title="Generate"
+              >
+                {generate.isPending || generating ? (
+                  <Ring className="size-3" />
+                ) : (
+                  <RefreshCw className="size-3" />
+                )}
+                <span className="hidden @[360px]:inline">Generate</span>
+              </Button>
             </div>
           </div>
-        ) : null}
-      </header>
+          {generate.isPending || generating ? (
+            <div className="mt-3 space-y-2">
+              <TextShimmer className="text-[12px] text-[var(--color-accent)]">
+                {report?.artifactStatus === 'composing'
+                  ? 'Designing your brief — laying out the narrative, charts, and to-dos…'
+                  : generating && report?.progress
+                    ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
+                    : 'Reading your mail, tasks, and calendar to write today’s brief…'}
+              </TextShimmer>
+              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+                <div
+                  className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  style={{
+                    width: `${
+                      report?.progress?.total
+                        ? Math.max(6, Math.min(100, (report.progress.done / report.progress.total) * 100))
+                        : 12
+                    }%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+        </header>
+      ) : null}
+
+      {/* Floating toolbar for the artifact view — fades until hovered. */}
+      {report?.html ? (
+        <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
+          {history.length > 1 ? (
+            <select
+              value={selectedId ?? ''}
+              onChange={(event) => setSelectedId(event.target.value || null)}
+              aria-label="Browse past editions"
+              title="Browse past editions"
+              className="h-7 max-w-[140px] rounded-full bg-transparent px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >
+              <option value="">Latest</option>
+              {history.map((item) => (
+                <option key={item._id} value={item._id}>
+                  {editionLabel(item)}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setPrimaryView('mail')}
+            aria-label="Open inbox"
+            title="Inbox"
+            className="grid size-7 place-items-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          >
+            <Inbox className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            disabled={generate.isPending || generating}
+            onClick={() => generate.mutate()}
+            aria-label="Generate a fresh report"
+            title="Generate a fresh brief"
+            className="grid size-7 place-items-center rounded-full bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-60"
+          >
+            {generate.isPending || generating ? (
+              <Ring className="size-3" />
+            ) : (
+              <RefreshCw className="size-3" />
+            )}
+          </button>
+        </div>
+      ) : null}
 
       <div
         className={cn('min-h-0 flex-1', report?.html ? 'overflow-hidden' : 'scrollable @container px-5 py-5')}
