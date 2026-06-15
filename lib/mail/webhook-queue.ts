@@ -12,6 +12,9 @@ const MAX_QUEUE = 5_000;
 const queue: unknown[] = [];
 let active = 0;
 let dropped = 0;
+// A redelivered backlog can fail in bursts (Nylas 5xx on stale/deleted
+// resources); logging every one floods Railway. Sample the failures instead.
+let ingestFailures = 0;
 
 // Returns false when the buffer is full so the caller can reject the delivery
 // with a non-2xx — that tells Nylas to retry it later instead of the event
@@ -39,7 +42,12 @@ function pump() {
     active += 1;
     void ingestNylasWebhookPayload(payload)
       .catch((err: any) => {
-        console.error('[nylas-webhook] ingest failed:', err?.message || err);
+        ingestFailures += 1;
+        // Sample: log the first, then every 50th, with a running total so a
+        // backlog burst is visible without drowning the logs.
+        if (ingestFailures === 1 || ingestFailures % 50 === 0) {
+          console.error(`[nylas-webhook] ingest failed (${ingestFailures} total): ${err?.message || err}`);
+        }
       })
       .finally(() => {
         active -= 1;
