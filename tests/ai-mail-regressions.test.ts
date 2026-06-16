@@ -238,6 +238,56 @@ describe('Convex mail corpus helpers', () => {
   });
 });
 
+describe('Calendar corpus helpers', () => {
+  test('builds searchable provider-neutral event text', async () => {
+    const { buildCalendarEventSearchText, calendarYearMonthFromTimestamp } = await import(
+      '../lib/calendar/corpus'
+    );
+    const text = buildCalendarEventSearchText({
+      title: 'Design review',
+      description: 'Discuss launch checklist',
+      location: 'Room 4B',
+      calendarName: 'Work',
+      participants: [{ name: 'Alex Rivera', email: 'alex@example.test' }],
+      organizer: { name: 'Jakob', email: 'jakob@example.test' },
+      conferencing: { url: 'https://meet.example.test/abc' },
+      recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'],
+    });
+
+    expect(text).toContain('Design review');
+    expect(text).toContain('alex@example.test');
+    expect(text).toContain('RRULE:FREQ=WEEKLY');
+    expect(calendarYearMonthFromTimestamp(Date.parse('2026-06-10T13:00:00.000Z'))).toBe('2026-06');
+  });
+
+  test('normalizes Nylas events into local calendar corpus rows', async () => {
+    const { toEventInput } = await import('../lib/calendar/sync');
+    const event = toEventInput(
+      {
+        id: 'evt_123',
+        title: 'Coffee with Alex',
+        description: 'Talk about the roadmap',
+        location: 'Cafe',
+        when: { object: 'timespan', startTime: 1781100000, endTime: 1781103600 },
+        participants: [{ email: 'alex@example.test', name: 'Alex' }],
+        updated_at: '2026-06-10T13:00:00.000Z',
+      },
+      'primary',
+      'Personal',
+    );
+
+    expect(event).toMatchObject({
+      providerEventId: 'evt_123',
+      providerCalendarId: 'primary',
+      title: 'Coffee with Alex',
+      yearMonth: '2026-06',
+      providerUpdatedAt: Date.parse('2026-06-10T13:00:00.000Z'),
+    });
+    expect(event?.searchText).toContain('alex@example.test');
+    expect(event?.searchText).toContain('Personal');
+  });
+});
+
 describe('local-first mail search routing', () => {
   test('local corpus is tier 1 for every provider with per-provider fallbacks', async () => {
     const previousProviders = process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;

@@ -129,7 +129,7 @@ export async function updateCalendarEvent(input: {
 }) {
   const account = await getAccount(input.userId, input.accountId);
   const accountId = account.accountId;
-  const previous = await getMirrorEvent(input.userId, accountId, input.eventId);
+  const previous = await getMirrorEvent(input.userId, accountId, input.eventId, input.calendarId);
   const requestBody: Record<string, unknown> = {};
   if (input.patch.title !== undefined) requestBody.title = input.patch.title;
   if (input.patch.description !== undefined) requestBody.description = input.patch.description;
@@ -204,10 +204,12 @@ export async function deleteCalendarEvent(input: {
 }) {
   const account = await getAccount(input.userId, input.accountId);
   const accountId = account.accountId;
-  const previous = await getMirrorEvent(input.userId, accountId, input.eventId);
+  const previous = await getMirrorEvent(input.userId, accountId, input.eventId, input.calendarId);
   const eventId = input.deleteSeries && previous?.masterEventId ? previous.masterEventId : input.eventId;
   const previousTarget =
-    eventId === input.eventId ? previous : await getMirrorEvent(input.userId, accountId, eventId);
+    eventId === input.eventId
+      ? previous
+      : await getMirrorEvent(input.userId, accountId, eventId, input.calendarId);
   await requireNylas().events.destroy({
     identifier: account.grantId,
     eventId,
@@ -219,6 +221,7 @@ export async function deleteCalendarEvent(input: {
   await convexMutation(calendarApi.deleteEvent, {
     userId: input.userId,
     accountId,
+    providerCalendarId: input.calendarId,
     providerEventId: eventId,
     includeInstances: true,
   });
@@ -316,7 +319,7 @@ export async function rsvpCalendarEvent(input: {
     requestBody: { status: input.status },
     queryParams: { calendarId: input.calendarId } as any,
   });
-  const previous = await getMirrorEvent(input.userId, accountId, input.eventId);
+  const previous = await getMirrorEvent(input.userId, accountId, input.eventId, input.calendarId);
   const operationId = await recordOperation({
     userId: input.userId,
     tool: 'calendar_rsvp_event',
@@ -402,6 +405,7 @@ async function deleteWithoutRecording(
   await convexMutation(calendarApi.deleteEvent, {
     userId,
     accountId: resolvedAccountId,
+    providerCalendarId: calendarId,
     providerEventId: eventId,
     includeInstances: true,
   });
@@ -437,10 +441,16 @@ export async function getPrimaryCalendarId(userId: string, accountId: string): P
   return primary.providerCalendarId;
 }
 
-async function getMirrorEvent(userId: string, accountId: string, eventId: string) {
+async function getMirrorEvent(
+  userId: string,
+  accountId: string,
+  eventId: string,
+  providerCalendarId?: string,
+) {
   return convexQuery<any | null>(calendarApi.getEventByProviderId, {
     userId,
     accountId,
+    providerCalendarId,
     providerEventId: eventId,
   }).catch(() => null);
 }

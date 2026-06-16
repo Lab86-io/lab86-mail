@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   }
   // Persistent server: the sync outlives the response, so we ACK immediately.
   void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
-    syncAllCalendarAccounts(userId).catch((err) => {
+    syncAllCalendarAccounts(userId, { reason: 'cron' }).catch((err) => {
       console.error('[cron/calendar-sync] sync failed', userId, err);
     }),
   );

@@ -249,6 +249,7 @@ const ACCOUNT_BULK_TABLES = [
   'mailCorpusMessages',
   'mailWebhookEvents',
   'calendarEvents',
+  'calendarEventCorpus',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -388,7 +389,7 @@ export const deleteUserCascade = mutation({
     const counts: Record<string, number> = {};
     // Small tables sweep inline. Bulk tables ('threads', 'messages',
     // 'mailCorpusThreads', 'mailCorpusMessages', 'mailWebhookEvents',
-    // 'calendarEvents') would blow Convex's per-transaction limits on a real
+    // 'calendarEvents', 'calendarEventCorpus') would blow Convex's per-transaction limits on a real
     // mailbox, so they drain through the scheduled purge instead.
     const userTables = [
       'connectedAccounts',

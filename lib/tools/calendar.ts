@@ -112,6 +112,96 @@ export const calendarListEvents = defineTool({
   },
 });
 
+export const calendarSearchEvents = defineTool({
+  name: 'calendar_search_events',
+  description:
+    'Search the local calendar corpus across synced events by title, description, location, attendees, organizer, conferencing, calendar name, and recurrence text. Use this for named/topic calendar lookup instead of broad date-window scans.',
+  category: 'calendar',
+  mutating: false,
+  input: z.object({
+    query: z.string().default(''),
+    fromIso: z.string().optional(),
+    toIso: z.string().optional(),
+    accountIds: z.array(z.string()).optional(),
+    calendarIds: z.array(z.string()).optional(),
+    includeCancelled: z.boolean().default(false),
+    limit: z.number().int().min(1).max(100).default(25),
+  }),
+  output: z.object({ events: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
+    const rows = await convexQuery<any[]>(calendarApi.searchEvents, {
+      userId,
+      query: args.query,
+      startAt: args.fromIso ? parseIso(args.fromIso, 'fromIso') : undefined,
+      endAt: args.toIso ? parseIso(args.toIso, 'toIso') : undefined,
+      accountIds: args.accountIds,
+      calendarIds: args.calendarIds,
+      includeCancelled: args.includeCancelled,
+      limit: args.limit,
+    });
+    return { events: (rows || []).map(toToolEvent) };
+  },
+});
+
+export const calendarCountEvents = defineTool({
+  name: 'calendar_count_events',
+  description:
+    'Count locally indexed calendar events matching optional text/date/account/calendar filters. Counts are capped at 1000 and may be approximate.',
+  category: 'calendar',
+  mutating: false,
+  input: z.object({
+    query: z.string().optional(),
+    fromIso: z.string().optional(),
+    toIso: z.string().optional(),
+    accountIds: z.array(z.string()).optional(),
+    calendarIds: z.array(z.string()).optional(),
+    includeCancelled: z.boolean().default(false),
+  }),
+  output: z.object({ total: z.number(), approximate: z.boolean() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
+    const result = await convexQuery<{ count: number; approximate: boolean }>(calendarApi.countEvents, {
+      userId,
+      query: args.query,
+      startAt: args.fromIso ? parseIso(args.fromIso, 'fromIso') : undefined,
+      endAt: args.toIso ? parseIso(args.toIso, 'toIso') : undefined,
+      accountIds: args.accountIds,
+      calendarIds: args.calendarIds,
+      includeCancelled: args.includeCancelled,
+    });
+    return { total: result.count, approximate: result.approximate };
+  },
+});
+
+export const calendarEventDetail = defineTool({
+  name: 'calendar_event_detail',
+  description:
+    'Fetch one event from the local calendar corpus by account, calendar id, and provider event id. Use after calendar_search_events or calendar_list_events when details/provenance are needed.',
+  category: 'calendar',
+  mutating: false,
+  input: z.object({
+    account: z.string(),
+    eventId: z.string(),
+    calendarId: z.string(),
+  }),
+  output: z.object({ event: z.any() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const account = await requireConnectedAccount(userId, args.account);
+    const event = await convexQuery<any | null>(calendarApi.getEventByProviderId, {
+      userId,
+      accountId: account.accountId,
+      providerCalendarId: args.calendarId,
+      providerEventId: args.eventId,
+    });
+    if (!event) throw new Error('Calendar event not found in the local corpus. Run calendar_sync_now.');
+    return { event: toToolEvent(event) };
+  },
+});
+
 export const calendarSyncNow = defineTool({
   name: 'calendar_sync_now',
   description:
@@ -123,8 +213,8 @@ export const calendarSyncNow = defineTool({
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const results = args.account
-      ? [await syncCalendarAccount({ userId, accountId: args.account })]
-      : await syncAllCalendarAccounts(userId);
+      ? [await syncCalendarAccount({ userId, accountId: args.account, force: true, reason: 'manual_tool' })]
+      : await syncAllCalendarAccounts(userId, { force: true, reason: 'manual_tool' });
     return { results };
   },
 });

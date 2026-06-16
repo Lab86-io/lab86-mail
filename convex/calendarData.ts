@@ -44,6 +44,9 @@ const eventInput = v.object({
   conferencing: v.optional(v.any()),
   icalUid: v.optional(v.string()),
   htmlLink: v.optional(v.string()),
+  searchText: v.optional(v.string()),
+  yearMonth: v.optional(v.string()),
+  providerUpdatedAt: v.optional(v.number()),
 });
 
 const accountScope = {
@@ -98,7 +101,15 @@ export const upsertCalendarBatch = mutation({
         const removedIds = new Set(removed.map((row) => row.providerCalendarId));
         for (const row of removed) await ctx.db.delete(row._id);
         for (const event of events) {
-          if (removedIds.has(event.providerCalendarId)) await ctx.db.delete(event._id);
+          if (removedIds.has(event.providerCalendarId)) {
+            await ctx.db.delete(event._id);
+            await deleteCorpusEvent(ctx, {
+              userId: args.userId,
+              accountId: args.accountId,
+              providerCalendarId: event.providerCalendarId,
+              providerEventId: event.providerEventId,
+            });
+          }
         }
       }
     }
@@ -115,25 +126,42 @@ export const upsertEventBatch = mutation({
     requireInternalSecret(args.internalSecret);
     const ts = now();
     for (const event of args.events) {
-      const row = await ctx.db
+      const patch = {
+        ...event,
+        searchText: normalizeCalendarCorpusText(event.searchText || buildEventSearchText(event)),
+        yearMonth: event.yearMonth || yearMonth(event.startAt),
+        updatedAt: ts,
+      };
+      let row = await ctx.db
+        .query('calendarEvents')
+        .withIndex('by_account_calendar_event', (q) =>
+          q
+            .eq('accountId', args.accountId)
+            .eq('providerCalendarId', event.providerCalendarId)
+            .eq('providerEventId', event.providerEventId),
+        )
+        .unique();
+      // Rows written before the calendar-qualified identity existed are still
+      // addressable by account+event id. Upgrade them in place.
+      row ??= await ctx.db
         .query('calendarEvents')
         .withIndex('by_account_event', (q) =>
           q.eq('accountId', args.accountId).eq('providerEventId', event.providerEventId),
         )
         .unique();
       if (row) {
-        await ctx.db.patch(row._id, { ...event, updatedAt: ts });
+        await ctx.db.patch(row._id, patch);
       } else {
         await ctx.db.insert('calendarEvents', {
-          ...event,
+          ...patch,
           userId: args.userId,
           accountId: args.accountId,
           grantId: args.grantId,
           provider: args.provider,
           createdAt: ts,
-          updatedAt: ts,
         });
       }
+      await upsertCorpusEvent(ctx, args, patch, ts);
     }
     return { ok: true, count: args.events.length };
   },
@@ -144,19 +172,16 @@ export const deleteEvent = mutation({
     internalSecret: v.optional(v.string()),
     userId: v.string(),
     accountId: v.string(),
+    providerCalendarId: v.optional(v.string()),
     providerEventId: v.string(),
     // Recurring deletes take the expanded instances with the master.
     includeInstances: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
-      .query('calendarEvents')
-      .withIndex('by_account_event', (q) =>
-        q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
-      )
-      .unique();
+    const row = await findEventByProviderId(ctx, args);
     if (row && row.userId === args.userId) await ctx.db.delete(row._id);
+    await deleteCorpusEvent(ctx, args);
     if (args.includeInstances) {
       const instances = await ctx.db
         .query('calendarEvents')
@@ -165,7 +190,16 @@ export const deleteEvent = mutation({
         )
         .collect();
       for (const instance of instances) {
-        if (instance.userId === args.userId) await ctx.db.delete(instance._id);
+        if (args.providerCalendarId && instance.providerCalendarId !== args.providerCalendarId) continue;
+        if (instance.userId === args.userId) {
+          await ctx.db.delete(instance._id);
+          await deleteCorpusEvent(ctx, {
+            userId: args.userId,
+            accountId: args.accountId,
+            providerCalendarId: instance.providerCalendarId,
+            providerEventId: instance.providerEventId,
+          });
+        }
       }
     }
     return { ok: true };
@@ -193,7 +227,15 @@ export const removeCalendar = mutation({
       .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
       .collect();
     for (const event of events) {
-      if (event.providerCalendarId === args.providerCalendarId) await ctx.db.delete(event._id);
+      if (event.providerCalendarId === args.providerCalendarId) {
+        await ctx.db.delete(event._id);
+        await deleteCorpusEvent(ctx, {
+          userId: args.userId,
+          accountId: args.accountId,
+          providerCalendarId: event.providerCalendarId,
+          providerEventId: event.providerEventId,
+        });
+      }
     }
     return { ok: true };
   },
@@ -237,14 +279,25 @@ export const reconcileWindow = mutation({
     const keep = new Set(args.keepProviderEventIds);
     const rows = await ctx.db
       .query('calendarEvents')
-      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .withIndex('by_user_account_calendar_start', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('accountId', args.accountId)
+          .eq('providerCalendarId', args.providerCalendarId)
+          .lt('startAt', args.windowEnd),
+      )
       .collect();
     let pruned = 0;
     for (const row of rows) {
-      if (row.providerCalendarId !== args.providerCalendarId) continue;
-      if (row.startAt < args.windowStart || row.startAt > args.windowEnd) continue;
+      if (row.endAt <= args.windowStart) continue;
       if (keep.has(row.providerEventId)) continue;
       await ctx.db.delete(row._id);
+      await deleteCorpusEvent(ctx, {
+        userId: args.userId,
+        accountId: args.accountId,
+        providerCalendarId: row.providerCalendarId,
+        providerEventId: row.providerEventId,
+      });
       pruned += 1;
     }
     return { ok: true, pruned };
@@ -269,6 +322,13 @@ export const markSyncState = mutation({
     windowStart: v.optional(v.number()),
     windowEnd: v.optional(v.number()),
     lastSyncedAt: v.optional(v.number()),
+    lastIncrementalSyncAt: v.optional(v.number()),
+    lastWebhookAt: v.optional(v.number()),
+    lastHistoryBackfillAt: v.optional(v.number()),
+    historyCursorEnd: v.optional(v.number()),
+    historyWindowStart: v.optional(v.number()),
+    historyBackfillReady: v.optional(v.boolean()),
+    progress: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -285,6 +345,13 @@ export const markSyncState = mutation({
       'windowStart',
       'windowEnd',
       'lastSyncedAt',
+      'lastIncrementalSyncAt',
+      'lastWebhookAt',
+      'lastHistoryBackfillAt',
+      'historyCursorEnd',
+      'historyWindowStart',
+      'historyBackfillReady',
+      'progress',
     ] as const) {
       if (args[key] !== undefined) patch[key] = args[key];
     }
@@ -308,9 +375,74 @@ export const markSyncState = mutation({
       windowStart: args.windowStart,
       windowEnd: args.windowEnd,
       lastSyncedAt: args.lastSyncedAt,
+      lastIncrementalSyncAt: args.lastIncrementalSyncAt,
+      lastWebhookAt: args.lastWebhookAt,
+      lastHistoryBackfillAt: args.lastHistoryBackfillAt,
+      historyCursorEnd: args.historyCursorEnd,
+      historyWindowStart: args.historyWindowStart,
+      historyBackfillReady: args.historyBackfillReady,
+      progress: args.progress,
       createdAt: ts,
       updatedAt: ts,
     });
+  },
+});
+
+export const claimCalendarSync = mutation({
+  args: {
+    ...accountScope,
+    activeWindowMs: v.optional(v.number()),
+    force: v.optional(v.boolean()),
+    progress: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    const activeWindowMs = Math.max(60_000, Number(args.activeWindowMs) || 10 * 60_000);
+    const existing = await ctx.db
+      .query('calendarSyncStates')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
+    if (!args.force && existing?.status === 'unauthorized') {
+      return { claimed: false, reason: 'unauthorized', state: existing };
+    }
+    if (!args.force && existing?.status === 'syncing' && ts - existing.updatedAt < activeWindowMs) {
+      return { claimed: false, reason: 'active', state: existing };
+    }
+    const patch = {
+      userId: args.userId,
+      accountId: args.accountId,
+      grantId: args.grantId,
+      provider: args.provider,
+      status: 'syncing' as const,
+      error: undefined,
+      progress: args.progress || { stage: 'claimed' },
+      updatedAt: ts,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return { claimed: true, state: { ...existing, ...patch } };
+    }
+    const id = await ctx.db.insert('calendarSyncStates', {
+      ...patch,
+      createdAt: ts,
+    });
+    return { claimed: true, state: { _id: id, ...patch } };
+  },
+});
+
+export const getSyncState = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return ctx.db
+      .query('calendarSyncStates')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
   },
 });
 
@@ -347,16 +479,12 @@ export const getEventByProviderId = query({
     internalSecret: v.optional(v.string()),
     userId: v.string(),
     accountId: v.string(),
+    providerCalendarId: v.optional(v.string()),
     providerEventId: v.string(),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
-      .query('calendarEvents')
-      .withIndex('by_account_event', (q) =>
-        q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
-      )
-      .unique();
+    const row = await findEventByProviderId(ctx, args);
     return row && row.userId === args.userId ? row : null;
   },
 });
@@ -372,6 +500,91 @@ export const listEvents = query({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     return queryEventsInWindow(ctx, args.userId, args.startAt, args.endAt, args.limit);
+  },
+});
+
+export const searchEvents = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    query: v.optional(v.string()),
+    startAt: v.optional(v.number()),
+    endAt: v.optional(v.number()),
+    accountIds: v.optional(v.array(v.string())),
+    calendarIds: v.optional(v.array(v.string())),
+    includeCancelled: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 25, 100);
+    const text = (args.query || '').trim();
+    let rows: any[];
+    if (text) {
+      rows = await ctx.db
+        .query('calendarEventCorpus')
+        .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
+        .take(limit * 4);
+    } else if (typeof args.startAt === 'number' && typeof args.endAt === 'number') {
+      rows = await queryEventsInWindow(
+        ctx,
+        args.userId,
+        args.startAt,
+        args.endAt,
+        limit * 4,
+        Boolean(args.includeCancelled),
+      );
+    } else {
+      rows = await ctx.db
+        .query('calendarEvents')
+        .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
+        .order('desc')
+        .take(limit * 4);
+    }
+    return filterCalendarRows(rows, args)
+      .sort((a, b) => a.startAt - b.startAt)
+      .slice(0, limit);
+  },
+});
+
+export const countEvents = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    query: v.optional(v.string()),
+    startAt: v.optional(v.number()),
+    endAt: v.optional(v.number()),
+    accountIds: v.optional(v.array(v.string())),
+    calendarIds: v.optional(v.array(v.string())),
+    includeCancelled: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const CAP = 1000;
+    const text = (args.query || '').trim();
+    let rows: any[];
+    if (text) {
+      rows = await ctx.db
+        .query('calendarEventCorpus')
+        .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
+        .take(CAP);
+    } else if (typeof args.startAt === 'number' && typeof args.endAt === 'number') {
+      rows = await queryEventsInWindow(
+        ctx,
+        args.userId,
+        args.startAt,
+        args.endAt,
+        CAP,
+        Boolean(args.includeCancelled),
+      );
+    } else {
+      rows = await ctx.db
+        .query('calendarEvents')
+        .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
+        .take(CAP);
+    }
+    const matched = filterCalendarRows(rows, args);
+    return { count: matched.length, approximate: rows.length >= CAP && matched.length >= CAP };
   },
 });
 
@@ -437,6 +650,7 @@ async function queryEventsInWindow(
   startAt: number,
   endAt: number,
   limit?: number,
+  includeCancelled = false,
 ) {
   const cap = Math.min(Math.max(limit ?? 2000, 1), 5000);
   // Events overlapping [startAt, endAt): rows starting inside the window plus
@@ -452,5 +666,166 @@ async function queryEventsInWindow(
         .lt('startAt', endAt),
     )
     .take(cap);
-  return rows.filter((row) => row.endAt > startAt && row.status !== 'cancelled');
+  return rows.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled'));
+}
+
+async function upsertCorpusEvent(ctx: any, args: any, event: any, ts: number) {
+  const patch = {
+    ...event,
+    userId: args.userId,
+    accountId: args.accountId,
+    grantId: args.grantId,
+    provider: args.provider,
+    searchText: normalizeCalendarCorpusText(event.searchText || buildEventSearchText(event)),
+    yearMonth: event.yearMonth || yearMonth(event.startAt),
+    updatedAt: ts,
+  };
+  let row = await ctx.db
+    .query('calendarEventCorpus')
+    .withIndex('by_account_calendar_event', (q: any) =>
+      q
+        .eq('accountId', args.accountId)
+        .eq('providerCalendarId', event.providerCalendarId)
+        .eq('providerEventId', event.providerEventId),
+    )
+    .unique();
+  row ??= await ctx.db
+    .query('calendarEventCorpus')
+    .withIndex('by_account_event', (q: any) =>
+      q.eq('accountId', args.accountId).eq('providerEventId', event.providerEventId),
+    )
+    .unique();
+  if (row) await ctx.db.patch(row._id, patch);
+  else await ctx.db.insert('calendarEventCorpus', { ...patch, createdAt: ts });
+}
+
+async function deleteCorpusEvent(
+  ctx: any,
+  args: { userId: string; accountId: string; providerEventId: string; providerCalendarId?: string },
+) {
+  const row = await findCorpusEventByProviderId(ctx, args);
+  if (row && row.userId === args.userId) await ctx.db.delete(row._id);
+}
+
+async function findCorpusEventByProviderId(
+  ctx: any,
+  args: { accountId: string; providerEventId: string; providerCalendarId?: string },
+) {
+  if (args.providerCalendarId) {
+    const row = await ctx.db
+      .query('calendarEventCorpus')
+      .withIndex('by_account_calendar_event', (q: any) =>
+        q
+          .eq('accountId', args.accountId)
+          .eq('providerCalendarId', args.providerCalendarId as string)
+          .eq('providerEventId', args.providerEventId),
+      )
+      .unique();
+    if (row) return row;
+  }
+  return ctx.db
+    .query('calendarEventCorpus')
+    .withIndex('by_account_event', (q: any) =>
+      q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
+    )
+    .unique();
+}
+
+async function findEventByProviderId(
+  ctx: any,
+  args: { accountId: string; providerEventId: string; providerCalendarId?: string },
+) {
+  if (args.providerCalendarId) {
+    const row = await ctx.db
+      .query('calendarEvents')
+      .withIndex('by_account_calendar_event', (q: any) =>
+        q
+          .eq('accountId', args.accountId)
+          .eq('providerCalendarId', args.providerCalendarId as string)
+          .eq('providerEventId', args.providerEventId),
+      )
+      .unique();
+    if (row) return row;
+  }
+  return ctx.db
+    .query('calendarEvents')
+    .withIndex('by_account_event', (q: any) =>
+      q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
+    )
+    .unique();
+}
+
+function filterCalendarRows(rows: any[], args: any) {
+  const accounts = args.accountIds?.length ? new Set(args.accountIds) : null;
+  const calendars = args.calendarIds?.length ? new Set(args.calendarIds) : null;
+  return rows.filter((row) => {
+    if (accounts && !accounts.has(row.accountId)) return false;
+    if (calendars && !calendars.has(row.providerCalendarId)) return false;
+    if (!args.includeCancelled && row.status === 'cancelled') return false;
+    if (typeof args.startAt === 'number' && row.endAt <= args.startAt) return false;
+    if (typeof args.endAt === 'number' && row.startAt >= args.endAt) return false;
+    return true;
+  });
+}
+
+function buildEventSearchText(event: any) {
+  const parts = [
+    event.title,
+    event.description,
+    event.location,
+    event.status,
+    event.htmlLink,
+    event.icalUid,
+    ...(event.recurrence || []),
+    ...textFromUnknown(event.organizer),
+    ...textFromUnknown(event.conferencing),
+    ...(event.participants || []).flatMap(textFromUnknown),
+  ];
+  return normalizeCalendarCorpusText(parts.filter(Boolean).join('\n'));
+}
+
+function normalizeCalendarCorpusText(value: unknown, maxChars = 16_000) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxChars);
+}
+
+function yearMonth(ts: unknown) {
+  const value = Number(ts);
+  const date = new Date(Number.isFinite(value) && value > 0 ? value : now());
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// Keep this extractor in sync with lib/calendar/corpus.ts. Convex functions are
+// bundled separately, so query helpers keep a pure local copy rather than
+// importing from app/runtime modules.
+function textFromUnknown(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) return value.flatMap(textFromUnknown);
+  if (typeof value !== 'object') return [];
+  const record = value as Record<string, unknown>;
+  return [
+    record.name,
+    record.email,
+    record.title,
+    record.phone,
+    record.url,
+    record.link,
+    record.status,
+    record.comment,
+  ]
+    .filter((item): item is string | number | boolean =>
+      ['string', 'number', 'boolean'].includes(typeof item),
+    )
+    .map(String);
+}
+
+function clampLimit(value: unknown, fallback: number, max: number) {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
 }

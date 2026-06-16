@@ -265,12 +265,16 @@ MASTHEAD (signature element — replaces any app header):
 
 THEME — TWO fonts, honoring the user's app theme (host injects live):
 - Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif).
+- Also define --brief-display-tracking: 0em; the host may override it. Apply letter-spacing: var(--brief-display-tracking) to masthead text and section headers, especially when the display face is Instrument/Instrument Sans.
 - Headings/masthead use var(--brief-font-display); ALL body copy/UI uses var(--brief-font-body) — two clearly distinct typefaces, like the app.
 - ONE Google Fonts link covering every option so live font swaps resolve instantly:
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
 - Live restyle listener: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
 
 DESIGN: editorial, generous whitespace, clear hierarchy, responsive 360→1100px, tasteful load animations. Use inline SVG only where a visual genuinely adds insight (e.g. a slim timeline of the week's meetings) — never decorative number-counters.
+- The calendar/"The week ahead" section must span the full content width. If the page uses CSS grid, set that section to grid-column: 1 / -1; never place it in a half-width column or narrow card.
+- Calendar rows must never overlap or clip. Use non-absolute layout with width:100%, min-width:0, and a resilient grid such as grid-template-columns: minmax(7rem,max-content) minmax(0,1fr) auto; titles/locations use overflow-wrap:anywhere and can wrap to 2 lines. On narrow screens, stack time, title, and actions.
+- Avoid fixed pixel widths for the agenda/table beyond sensible min/max columns. No table-fixed calendar layouts.
 
 CONTENT (compose from your analysis; omit empty parts):
 - An integrated narrative lede (2–3 short paragraphs, the user's voice/tone from data.voiceSamples) — the through-line of the day connecting mail, calendar, and tasks. No emoji.

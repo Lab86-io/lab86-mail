@@ -205,30 +205,36 @@ export async function generateTextForCurrentUser(
     feature?: string;
     speed?: AiSpeed;
     userId?: string | null;
+    userEmail?: string | null;
+    userName?: string | null;
   },
 ) {
   const {
     feature = 'generate_text',
     speed = 'fast',
     userId,
+    userEmail,
+    userName,
     model: _ignored,
     maxOutputTokens,
     ...rest
   } = options as any;
   const runtime = await resolveAiRuntime({ userId, speed, feature });
-  try {
-    const result = await generateText({
-      ...rest,
-      // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
-      maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
-      model: runtime.model,
-    });
-    await recordUsage(runtime, feature, result.usage, true);
-    return result;
-  } catch (err: any) {
-    await recordUsage(runtime, feature, undefined, false, err?.message);
-    throw err;
-  }
+  return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, async () => {
+    try {
+      const result = await generateText({
+        ...rest,
+        // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
+        maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
+        model: runtime.model,
+      });
+      await recordUsage(runtime, feature, result.totalUsage ?? result.usage, true);
+      return result;
+    } catch (err: any) {
+      await recordUsage(runtime, feature, undefined, false, err?.message);
+      throw err;
+    }
+  });
 }
 
 export async function streamTextForUser(

@@ -1,6 +1,8 @@
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
+import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
+import { buildCalendarEventSearchText, calendarYearMonthFromTimestamp } from './corpus';
 
 const calendarApi = (api as any).calendarData;
 const accountsApi = (api as any).accounts;
@@ -12,6 +14,10 @@ const WINDOW_PAST_DAYS = 92;
 const WINDOW_FUTURE_DAYS = 366;
 const EVENT_PAGE_LIMIT = 50;
 const MUTATION_BATCH = 50;
+const ACTIVE_SYNC_CLAIM_MS = 10 * 60_000;
+const HISTORY_PAST_DAYS = 5 * 366;
+const HISTORY_CHUNK_DAYS = 350;
+const HISTORY_BACKFILL_KICK_DEBOUNCE_MS = 6 * 60 * 60_000;
 
 export interface CalendarSyncResult {
   ok: boolean;
@@ -19,6 +25,8 @@ export interface CalendarSyncResult {
   calendars: number;
   events: number;
   unauthorized?: boolean;
+  skipped?: boolean;
+  reason?: string;
   error?: string;
 }
 
@@ -53,19 +61,47 @@ export interface EventInputRow {
   conferencing?: unknown;
   icalUid?: string;
   htmlLink?: string;
+  searchText?: string;
+  yearMonth?: string;
+  providerUpdatedAt?: number;
 }
 
 export async function syncCalendarAccount({
   userId,
   accountId,
+  force = false,
+  reason = 'active_window',
 }: {
   userId: string;
   accountId: string;
+  force?: boolean;
+  reason?: string;
 }): Promise<CalendarSyncResult> {
   const row = await getConnectedAccount(userId, accountId);
   const windowStart = Date.now() - WINDOW_PAST_DAYS * 86_400_000;
   const windowEnd = Date.now() + WINDOW_FUTURE_DAYS * 86_400_000;
-  await markSync(row, { status: 'syncing' });
+  const claim = await convexMutation<{ claimed: boolean; reason?: string; state?: any }>(
+    calendarApi.claimCalendarSync,
+    {
+      userId,
+      accountId,
+      grantId: row.grantId,
+      provider: row.provider,
+      activeWindowMs: ACTIVE_SYNC_CLAIM_MS,
+      force,
+      progress: { stage: 'claimed', reason },
+    },
+  );
+  if (!claim.claimed) {
+    return {
+      ok: true,
+      accountId,
+      calendars: Number(claim.state?.calendarsSynced) || 0,
+      events: Number(claim.state?.eventsSynced) || 0,
+      skipped: true,
+      reason: claim.reason || 'not_claimed',
+    };
+  }
   try {
     const calendars = await listAllCalendars(row.grantId);
     await convexMutation(calendarApi.upsertCalendarBatch, {
@@ -86,12 +122,19 @@ export async function syncCalendarAccount({
         status: 'syncing',
         calendarsSynced: calendarIndex,
         eventsSynced: totalEvents,
+        progress: {
+          stage: 'calendar_window',
+          calendarId: calendar.providerCalendarId,
+          calendarIndex,
+          calendars: calendars.length,
+        },
       }).catch(() => undefined);
       const events = await listCalendarEventsInWindow(
         row.grantId,
         calendar.providerCalendarId,
         windowStart,
         windowEnd,
+        calendar.name,
       );
       for (let i = 0; i < events.length; i += MUTATION_BATCH) {
         await convexMutation(calendarApi.upsertEventBatch, {
@@ -123,7 +166,9 @@ export async function syncCalendarAccount({
       windowStart,
       windowEnd,
       lastSyncedAt: Date.now(),
+      progress: { stage: 'ready', reason },
     });
+    maybeKickCalendarHistoryBackfill(row);
     return { ok: true, accountId, calendars: calendars.length, events: totalEvents };
   } catch (err: any) {
     if (isGrantGoneError(err)) {
@@ -155,13 +200,23 @@ function isGrantGoneError(err: any): boolean {
   return /no grant found/i.test(String(err?.message || ''));
 }
 
-export async function syncAllCalendarAccounts(userId: string): Promise<CalendarSyncResult[]> {
+export async function syncAllCalendarAccounts(
+  userId: string,
+  options: { force?: boolean; reason?: string } = {},
+): Promise<CalendarSyncResult[]> {
   const accounts = await convexQuery<NylasAccountRow[]>(accountsApi.listConnectedAccounts, { userId });
   const results: CalendarSyncResult[] = [];
   for (const account of accounts || []) {
     if (account.status !== 'connected') continue;
     try {
-      results.push(await syncCalendarAccount({ userId, accountId: account.accountId }));
+      results.push(
+        await syncCalendarAccount({
+          userId,
+          accountId: account.accountId,
+          force: options.force,
+          reason: options.reason,
+        }),
+      );
     } catch (err: any) {
       results.push({
         ok: false,
@@ -185,10 +240,150 @@ export function maybeKickCalendarSync(row: Pick<NylasAccountRow, 'userId' | 'acc
   const last = syncKickAt.get(key) || 0;
   if (Date.now() - last < SYNC_KICK_DEBOUNCE_MS) return;
   syncKickAt.set(key, Date.now());
-  void syncCalendarAccount({ userId: row.userId, accountId: row.accountId }).catch((err) => {
-    syncKickAt.delete(key);
-    console.error(`[calendar] background sync failed for ${row.accountId}:`, err?.message || err);
+  void syncCalendarAccount({ userId: row.userId, accountId: row.accountId, reason: 'lazy_kick' }).catch(
+    (err) => {
+      syncKickAt.delete(key);
+      console.error(`[calendar] background sync failed for ${row.accountId}:`, err?.message || err);
+    },
+  );
+}
+
+const historyBackfillKickAt = new Map<string, number>();
+
+function maybeKickCalendarHistoryBackfill(row: Pick<NylasAccountRow, 'userId' | 'accountId'>) {
+  const key = `${row.userId}:${row.accountId}`;
+  const last = historyBackfillKickAt.get(key) || 0;
+  if (Date.now() - last < HISTORY_BACKFILL_KICK_DEBOUNCE_MS) return;
+  historyBackfillKickAt.set(key, Date.now());
+  void backfillCalendarHistoryChunk({ userId: row.userId, accountId: row.accountId }).catch((err) => {
+    historyBackfillKickAt.delete(key);
+    console.error(`[calendar] history backfill failed for ${row.accountId}:`, err?.message || err);
   });
+}
+
+export async function backfillCalendarHistoryChunk({
+  userId,
+  accountId,
+  pastDays = HISTORY_PAST_DAYS,
+  chunkDays = HISTORY_CHUNK_DAYS,
+}: {
+  userId: string;
+  accountId: string;
+  pastDays?: number;
+  chunkDays?: number;
+}): Promise<CalendarSyncResult> {
+  const row = await getConnectedAccount(userId, accountId);
+  const state = await convexQuery<any | null>(calendarApi.getSyncState, { userId, accountId }).catch(
+    () => null,
+  );
+  if (state?.historyBackfillReady) {
+    return { ok: true, accountId, calendars: 0, events: 0, skipped: true, reason: 'history_ready' };
+  }
+
+  const nowMs = Date.now();
+  const activeWindowStart = nowMs - WINDOW_PAST_DAYS * 86_400_000;
+  const historyFloor = nowMs - Math.max(WINDOW_PAST_DAYS, pastDays) * 86_400_000;
+  const cursorEnd = Math.min(
+    Number.isFinite(Number(state?.historyCursorEnd)) ? Number(state?.historyCursorEnd) : activeWindowStart,
+    activeWindowStart,
+  );
+  if (cursorEnd <= historyFloor) {
+    await markSync(row, {
+      status: 'ready',
+      historyBackfillReady: true,
+      historyWindowStart: historyFloor,
+      progress: { stage: 'history_ready' },
+    }).catch(() => undefined);
+    return { ok: true, accountId, calendars: 0, events: 0, skipped: true, reason: 'history_ready' };
+  }
+
+  const windowEnd = cursorEnd;
+  const windowStart = Math.max(historyFloor, cursorEnd - Math.max(30, chunkDays) * 86_400_000);
+  const claim = await convexMutation<{ claimed: boolean; reason?: string; state?: any }>(
+    calendarApi.claimCalendarSync,
+    {
+      userId,
+      accountId,
+      grantId: row.grantId,
+      provider: row.provider,
+      activeWindowMs: ACTIVE_SYNC_CLAIM_MS,
+      progress: { stage: 'history_claimed', windowStart, windowEnd },
+    },
+  );
+  if (!claim.claimed) {
+    return {
+      ok: true,
+      accountId,
+      calendars: Number(claim.state?.calendarsSynced) || 0,
+      events: Number(claim.state?.eventsSynced) || 0,
+      skipped: true,
+      reason: claim.reason || 'not_claimed',
+    };
+  }
+
+  try {
+    const calendars = await listAllCalendars(row.grantId);
+    await convexMutation(calendarApi.upsertCalendarBatch, {
+      userId,
+      accountId,
+      grantId: row.grantId,
+      provider: row.provider,
+      calendars,
+      pruneMissing: false,
+    });
+    let totalEvents = 0;
+    for (const calendar of calendars) {
+      const events = await listCalendarEventsInWindow(
+        row.grantId,
+        calendar.providerCalendarId,
+        windowStart,
+        windowEnd,
+        calendar.name,
+      );
+      for (let i = 0; i < events.length; i += MUTATION_BATCH) {
+        await convexMutation(calendarApi.upsertEventBatch, {
+          userId,
+          accountId,
+          grantId: row.grantId,
+          provider: row.provider,
+          events: events.slice(i, i + MUTATION_BATCH),
+        });
+      }
+      await convexMutation(calendarApi.reconcileWindow, {
+        userId,
+        accountId,
+        grantId: row.grantId,
+        provider: row.provider,
+        providerCalendarId: calendar.providerCalendarId,
+        windowStart,
+        windowEnd,
+        keepProviderEventIds: events.map((event) => event.providerEventId),
+      });
+      totalEvents += events.length;
+    }
+    const historyBackfillReady = windowStart <= historyFloor;
+    await markSync(row, {
+      status: 'ready',
+      lastHistoryBackfillAt: Date.now(),
+      historyCursorEnd: windowStart,
+      historyWindowStart: historyFloor,
+      historyBackfillReady,
+      progress: {
+        stage: historyBackfillReady ? 'history_ready' : 'history_chunk_ready',
+        windowStart,
+        windowEnd,
+        events: totalEvents,
+      },
+    });
+    return { ok: true, accountId, calendars: calendars.length, events: totalEvents };
+  } catch (err: any) {
+    await markSync(row, {
+      status: 'error',
+      error: err?.message || 'calendar history backfill failed',
+      progress: { stage: 'history_error', windowStart, windowEnd },
+    }).catch(() => undefined);
+    throw err;
+  }
 }
 
 // Webhook delta: plain events apply as point upserts/deletes; anything in a
@@ -196,32 +391,61 @@ export function maybeKickCalendarSync(row: Pick<NylasAccountRow, 'userId' | 'acc
 // can imply many expanded instances changing.
 export async function applyCalendarWebhookDelta(row: NylasAccountRow, type: string, payload: unknown) {
   const object = extractWebhookObject(payload);
+  if (/^calendar\./.test(type)) {
+    maybeKickCalendarSync(row);
+    await markSync(row, {
+      progress: { stage: 'calendar_webhook', type, calendarId: str(object.id) },
+      lastWebhookAt: Date.now(),
+      lastIncrementalSyncAt: Date.now(),
+    }).catch(() => undefined);
+    return;
+  }
   const providerEventId = str(object.id);
-  if (!providerEventId) return;
+  const providerCalendarId = str(object.calendarId ?? object.calendar_id);
+  if (!providerEventId) {
+    await markSync(row, {
+      progress: { stage: 'event_webhook_ignored', type, reason: 'missing_event_id' },
+      lastWebhookAt: Date.now(),
+    }).catch(() => undefined);
+    return;
+  }
   if (/deleted/i.test(type)) {
     await convexMutation(calendarApi.deleteEvent, {
       userId: row.userId,
       accountId: row.accountId,
+      providerCalendarId,
       providerEventId,
       includeInstances: true,
     });
+    await markCalendarWebhookApplied(row, type, providerEventId);
     return;
   }
   const isRecurring =
     Array.isArray(object.recurrence) || str(object.master_event_id) || str(object.masterEventId);
   if (isRecurring) {
     maybeKickCalendarSync(row);
+    await markCalendarWebhookApplied(row, type, providerEventId, { recurring: true });
     return;
   }
-  const event = toEventInput(object);
-  if (!event) return;
+  const event = toEventInput(object) || (await fetchWebhookEvent(row, providerEventId, providerCalendarId));
+  if (!event) {
+    maybeKickCalendarSync(row);
+    await markSync(row, {
+      progress: { stage: 'event_webhook_resync', type, eventId: providerEventId },
+      lastWebhookAt: Date.now(),
+      lastIncrementalSyncAt: Date.now(),
+    }).catch(() => undefined);
+    return;
+  }
   if (event.status === 'cancelled') {
     await convexMutation(calendarApi.deleteEvent, {
       userId: row.userId,
       accountId: row.accountId,
+      providerCalendarId: event.providerCalendarId,
       providerEventId,
       includeInstances: true,
     });
+    await markCalendarWebhookApplied(row, type, providerEventId, { cancelled: true });
     return;
   }
   await convexMutation(calendarApi.upsertEventBatch, {
@@ -231,20 +455,58 @@ export async function applyCalendarWebhookDelta(row: NylasAccountRow, type: stri
     provider: row.provider,
     events: [event],
   });
+  await markCalendarWebhookApplied(row, type, providerEventId);
 }
 
 export function isCalendarWebhookType(type: string) {
   return /^event\.|^calendar\./.test(type);
 }
 
+async function fetchWebhookEvent(
+  row: NylasAccountRow,
+  eventId: string,
+  calendarId?: string,
+): Promise<EventInputRow | null> {
+  if (!calendarId) return null;
+  try {
+    const response = await withNylasRetry(() =>
+      requireNylas().events.find({
+        identifier: row.grantId,
+        eventId,
+        queryParams: { calendarId } as any,
+      }),
+    );
+    return toEventInput(response.data as any, calendarId);
+  } catch (err: any) {
+    const status = nylasErrorStatus(err);
+    if (status === 404 || status === 410) return null;
+    throw err;
+  }
+}
+
+async function markCalendarWebhookApplied(
+  row: NylasAccountRow,
+  type: string,
+  eventId: string,
+  detail: Record<string, unknown> = {},
+) {
+  await markSync(row, {
+    progress: { stage: 'event_webhook', type, eventId, ...detail },
+    lastWebhookAt: Date.now(),
+    lastIncrementalSyncAt: Date.now(),
+  }).catch(() => undefined);
+}
+
 async function listAllCalendars(grantId: string): Promise<CalendarInputRow[]> {
   const out: CalendarInputRow[] = [];
   let pageToken: string | undefined;
   do {
-    const page = await requireNylas().calendars.list({
-      identifier: grantId,
-      queryParams: { limit: 50, ...(pageToken ? { pageToken } : {}) } as any,
-    });
+    const page = await withNylasRetry(() =>
+      requireNylas().calendars.list({
+        identifier: grantId,
+        queryParams: { limit: 50, ...(pageToken ? { pageToken } : {}) } as any,
+      }),
+    );
     for (const cal of page.data || []) {
       out.push(toCalendarInput(cal));
     }
@@ -264,25 +526,28 @@ async function listCalendarEventsInWindow(
   calendarId: string,
   windowStart: number,
   windowEnd: number,
+  calendarName?: string,
 ): Promise<EventInputRow[]> {
   const byId = new Map<string, EventInputRow>();
   for (let chunkStart = windowStart; chunkStart < windowEnd; chunkStart += EVENT_QUERY_CHUNK_MS) {
     const chunkEnd = Math.min(chunkStart + EVENT_QUERY_CHUNK_MS, windowEnd);
     let pageToken: string | undefined;
     do {
-      const page = await requireNylas().events.list({
-        identifier: grantId,
-        queryParams: {
-          calendarId,
-          start: String(Math.floor(chunkStart / 1000)),
-          end: String(Math.floor(chunkEnd / 1000)),
-          expandRecurring: true,
-          limit: EVENT_PAGE_LIMIT,
-          ...(pageToken ? { pageToken } : {}),
-        } as any,
-      });
+      const page = await withNylasRetry(() =>
+        requireNylas().events.list({
+          identifier: grantId,
+          queryParams: {
+            calendarId,
+            start: String(Math.floor(chunkStart / 1000)),
+            end: String(Math.floor(chunkEnd / 1000)),
+            expandRecurring: true,
+            limit: EVENT_PAGE_LIMIT,
+            ...(pageToken ? { pageToken } : {}),
+          } as any,
+        }),
+      );
       for (const raw of page.data || []) {
-        const event = toEventInput(raw, calendarId);
+        const event = toEventInput(raw, calendarId, calendarName);
         if (event) byId.set(event.providerEventId, event);
       }
       pageToken = (page as any).nextCursor || undefined;
@@ -304,30 +569,59 @@ function toCalendarInput(raw: any): CalendarInputRow {
 }
 
 // Accepts both SDK responses (camelCase) and raw webhook objects (snake_case).
-export function toEventInput(raw: any, fallbackCalendarId?: string): EventInputRow | null {
+export function toEventInput(
+  raw: any,
+  fallbackCalendarId?: string,
+  calendarName?: string,
+): EventInputRow | null {
   const providerEventId = str(raw.id);
   const providerCalendarId = str(raw.calendarId ?? raw.calendar_id) || fallbackCalendarId;
   const when = raw.when || {};
   if (!providerEventId || !providerCalendarId) return null;
   const times = whenToTimes(when);
   if (!times) return null;
+  const recurrence = Array.isArray(raw.recurrence) ? raw.recurrence.map(String) : undefined;
+  const participants = Array.isArray(raw.participants) ? raw.participants : undefined;
+  const organizer = raw.organizer ?? undefined;
+  const conferencing = raw.conferencing ?? undefined;
+  const title = str(raw.title) || '(no title)';
+  const description = str(raw.description);
+  const location = str(raw.location);
+  const status = str(raw.status);
+  const icalUid = str(raw.icalUid ?? raw.ical_uid);
+  const htmlLink = str(raw.htmlLink ?? raw.html_link);
   return {
     providerEventId,
     providerCalendarId,
-    title: str(raw.title) || '(no title)',
-    description: str(raw.description),
-    location: str(raw.location),
-    status: str(raw.status),
+    title,
+    description,
+    location,
+    status,
     busy: bool(raw.busy),
     readOnly: bool(raw.readOnly ?? raw.read_only),
     ...times,
     masterEventId: str(raw.masterEventId ?? raw.master_event_id),
-    recurrence: Array.isArray(raw.recurrence) ? raw.recurrence.map(String) : undefined,
-    participants: Array.isArray(raw.participants) ? raw.participants : undefined,
-    organizer: raw.organizer ?? undefined,
-    conferencing: raw.conferencing ?? undefined,
-    icalUid: str(raw.icalUid ?? raw.ical_uid),
-    htmlLink: str(raw.htmlLink ?? raw.html_link),
+    recurrence,
+    participants,
+    organizer,
+    conferencing,
+    icalUid,
+    htmlLink,
+    providerUpdatedAt: timestampMs(raw.updatedAt ?? raw.updated_at),
+    yearMonth: calendarYearMonthFromTimestamp(times.startAt),
+    searchText: buildCalendarEventSearchText({
+      title,
+      description,
+      location,
+      status,
+      calendarName,
+      recurrence,
+      participants,
+      organizer,
+      conferencing,
+      icalUid,
+      htmlLink,
+    }),
   };
 }
 
@@ -401,6 +695,13 @@ async function markSync(
     windowStart?: number;
     windowEnd?: number;
     lastSyncedAt?: number;
+    lastIncrementalSyncAt?: number;
+    lastWebhookAt?: number;
+    lastHistoryBackfillAt?: number;
+    historyCursorEnd?: number;
+    historyWindowStart?: number;
+    historyBackfillReady?: boolean;
+    progress?: unknown;
   },
 ) {
   await convexMutation(calendarApi.markSyncState, {
@@ -425,6 +726,16 @@ function str(value: unknown): string | undefined {
 function num(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed < 10_000_000_000 ? parsed * 1000 : parsed;
 }
 
 function bool(value: unknown): boolean | undefined {
