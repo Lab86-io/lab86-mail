@@ -702,8 +702,8 @@ export function DailyReport() {
               </EmptyMedia>
               <EmptyTitle className="font-serif text-[18px] italic">No edition yet</EmptyTitle>
               <EmptyDescription>
-                Press Generate to print today&apos;s brief. Scheduled morning and evening runs will file here
-                once installed.
+                Press Generate to print today&apos;s brief. Scheduled morning runs will file here once
+                installed.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -1260,23 +1260,74 @@ function BulkTail({
 
 function ReportSkeleton() {
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-7">
-      <div className="grid grid-cols-2 gap-3 @[420px]:grid-cols-4">
-        <div className="h-12 rounded-md shimmer" />
-        <div className="h-12 rounded-md shimmer" />
-        <div className="h-12 rounded-md shimmer" />
-        <div className="h-12 rounded-md shimmer" />
+    <div className="h-full overflow-hidden bg-[var(--color-bg)]">
+      <div className="relative h-[min(46vh,460px)] min-h-[280px] overflow-hidden bg-[var(--color-bg-subtle)]">
+        <div className="absolute inset-0 shimmer" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/45 via-black/10 to-black/25" />
+        <div className="absolute left-4 top-6 bottom-6 hidden w-3 rounded-full bg-white/25 @[520px]:block" />
+        <div className="absolute right-4 top-6 bottom-6 hidden w-3 rounded-full bg-white/20 @[520px]:block" />
+        <div className="absolute inset-0 grid place-items-center px-8 text-center">
+          <div className="space-y-3">
+            <div className="mx-auto h-14 w-[min(70vw,520px)] rounded-md bg-white/28" />
+            <div className="mx-auto h-14 w-[min(58vw,420px)] rounded-md bg-white/22" />
+          </div>
+        </div>
       </div>
-      <div className="h-16 rounded-md shimmer" />
-      <div className="grid grid-cols-1 gap-3 @[480px]:grid-cols-3">
-        <div className="h-24 rounded-lg shimmer" />
-        <div className="h-24 rounded-lg shimmer" />
-        <div className="h-24 rounded-lg shimmer" />
-      </div>
-      <div className="space-y-2">
-        <div className="h-4 w-32 rounded shimmer" />
-        <div className="h-10 rounded-md shimmer" />
-        <div className="h-10 rounded-md shimmer" />
+      <div className="mx-auto mt-2 h-3 w-[min(70vw,460px)] rounded shimmer" />
+      <div className="mx-auto w-full max-w-5xl px-5 py-10">
+        <div className="mb-10 space-y-3">
+          <div className="h-8 w-[min(88vw,780px)] rounded shimmer" />
+          <div className="h-8 w-[min(76vw,620px)] rounded shimmer" />
+        </div>
+        <div className="grid gap-8 @[860px]:grid-cols-[minmax(0,1fr)_minmax(18rem,0.48fr)]">
+          <section className="min-w-0">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="h-4 w-28 rounded shimmer" />
+              <div className="h-px flex-1 bg-[var(--color-border)]" />
+            </div>
+            <div className="space-y-4">
+              <div className="border-t border-[var(--color-border)] pt-4">
+                <div className="mb-2 h-3 w-20 rounded shimmer" />
+                <div className="mb-2 h-6 w-3/4 rounded shimmer" />
+                <div className="h-4 w-full rounded shimmer" />
+              </div>
+              <div className="border-t border-[var(--color-border)] pt-4">
+                <div className="mb-2 h-3 w-24 rounded shimmer" />
+                <div className="mb-2 h-6 w-2/3 rounded shimmer" />
+                <div className="h-4 w-5/6 rounded shimmer" />
+              </div>
+            </div>
+          </section>
+          <aside className="min-w-0">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="h-4 w-20 rounded shimmer" />
+              <div className="h-px flex-1 bg-[var(--color-border)]" />
+            </div>
+            <div className="space-y-3">
+              <div className="h-12 rounded shimmer" />
+              <div className="h-12 rounded shimmer" />
+              <div className="h-12 rounded shimmer" />
+            </div>
+          </aside>
+          <section className="min-w-0 @[860px]:col-span-2">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="h-4 w-32 rounded shimmer" />
+              <div className="h-px flex-1 bg-[var(--color-border)]" />
+            </div>
+            <div className="space-y-3 border-t border-[var(--color-border)] pt-3">
+              <div className="grid gap-3 @[520px]:grid-cols-[8rem_minmax(0,1fr)_4rem]">
+                <div className="h-4 rounded shimmer" />
+                <div className="h-4 rounded shimmer" />
+                <div className="h-4 rounded shimmer" />
+              </div>
+              <div className="grid gap-3 @[520px]:grid-cols-[8rem_minmax(0,1fr)_4rem]">
+                <div className="h-4 rounded shimmer" />
+                <div className="h-4 rounded shimmer" />
+                <div className="h-4 rounded shimmer" />
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   );
