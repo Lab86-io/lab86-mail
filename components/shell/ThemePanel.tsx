@@ -34,10 +34,16 @@ const PRESETS: {
 
 // Display-layer font: wordmark, sender names, subjects, section headers.
 // Body copy and controls always stay sans.
-const FONTS: { id: 'sans' | 'serif' | 'news'; label: string; stack: string | null }[] = [
+const FONTS: {
+  id: 'sans' | 'serif' | 'news' | 'instrument' | 'grotesk';
+  label: string;
+  stack: string | null;
+}[] = [
   { id: 'serif', label: 'Editorial', stack: null }, // Fraunces — the default
+  { id: 'instrument', label: 'Instrument', stack: 'var(--font-instrument)' },
   { id: 'news', label: 'News', stack: 'var(--font-averia)' },
   { id: 'sans', label: 'Sans', stack: 'var(--font-geist-sans)' },
+  { id: 'grotesk', label: 'Grotesk', stack: 'var(--font-hanken)' },
 ];
 
 export function useApplyThemeExtras() {
@@ -136,7 +142,20 @@ export function ThemePanel({ className }: { className?: string }) {
   useApplyThemeExtras();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [open, setOpen] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // Radix closes on normal outside clicks, but a click into the daily-brief
+  // iframe never reaches the parent document — so also close when focus moves
+  // into an iframe (window blur with an iframe active element).
+  useEffect(() => {
+    if (!open) return;
+    const onBlur = () => {
+      if (document.activeElement?.tagName === 'IFRAME') setOpen(false);
+    };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, [open]);
 
   const accentHue = useClientStore((s) => s.accentHue);
   const accentChroma = useClientStore((s) => s.accentChroma);
@@ -163,7 +182,7 @@ export function ThemePanel({ className }: { className?: string }) {
   const mode = theme === 'light' || theme === 'dark' ? theme : 'system';
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"

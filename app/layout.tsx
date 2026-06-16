@@ -2,7 +2,7 @@ import { ClerkProvider } from '@clerk/nextjs';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { Metadata, Viewport } from 'next';
-import { Averia_Serif_Libre, Fraunces } from 'next/font/google';
+import { Averia_Serif_Libre, Fraunces, Hanken_Grotesk, Instrument_Serif } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
@@ -26,6 +26,24 @@ const averia = Averia_Serif_Libre({
   weight: ['300', '400', '700'],
   style: ['normal', 'italic'],
   variable: '--font-averia',
+  display: 'swap',
+});
+
+// High-contrast literary display serif — elegant, airy headlines ("Editorial+").
+const instrument = Instrument_Serif({
+  subsets: ['latin'],
+  weight: ['400'],
+  style: ['normal', 'italic'],
+  variable: '--font-instrument',
+  display: 'swap',
+});
+
+// Warm modern grotesque — a friendlier sans option than Geist for the display
+// layer (and the brief body).
+const hanken = Hanken_Grotesk({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-hanken',
   display: 'swap',
 });
 
@@ -68,7 +86,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable} ${averia.variable}`}
+      className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable} ${averia.variable} ${instrument.variable} ${hanken.variable}`}
     >
       <body>
         {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (

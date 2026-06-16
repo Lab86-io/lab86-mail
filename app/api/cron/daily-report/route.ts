@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
   }
   const userId = String(body?.userId || '').trim();
   const kind = body?.kind === 'morning' || body?.kind === 'evening' ? body.kind : 'manual';
+  // The cron passes each user's calendar timezone so the brief's dateline is local.
+  const userTimezone = typeof body?.timezone === 'string' ? body.timezone : undefined;
   if (!userId) {
     return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
   }
@@ -31,7 +33,7 @@ export async function POST(req: NextRequest) {
   // Railway runs a persistent Node server, so this background promise outlives
   // the response — we ACK immediately rather than holding the cron's request
   // open for the full multi-second generation.
-  void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
+  void runWithAiRequestContext({ userId, agent: 'ai', userTimezone }, () =>
     generateAgentReport({ kind, userId }).catch((err) => {
       console.error('[cron/daily-report] generation failed', userId, kind, err);
     }),

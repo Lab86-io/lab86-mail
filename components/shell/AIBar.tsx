@@ -36,7 +36,7 @@ import {
 import { motion } from 'motion/react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { ChoicePrompt } from '@/components/ai-elements/choice-prompt';
+import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
@@ -325,18 +325,18 @@ export function AIBarSidebar() {
       }),
     [],
   );
-  const { messages, sendMessage, status, stop, error, setMessages, addToolResult } = useChat({
+  const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
     // When the client answers a human-in-the-loop tool (ask_user), auto-continue
     // the agent with that answer instead of waiting for a manual send.
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   });
 
-  // Hand the ask_user answer back into the stream. Memoized so the context
+  // Hand the ask_user answers back into the stream. Memoized so the context
   // value is stable across renders.
   const answerAskUser = useCallback(
-    (toolCallId: string, selected: string[]) => {
-      void addToolResult({ tool: 'ask_user', toolCallId, output: { selected } });
+    (toolCallId: string, answers: AskAnswer[]) => {
+      void addToolResult({ tool: 'ask_user', toolCallId, output: { answers } });
     },
     [addToolResult],
   );
@@ -728,8 +728,18 @@ export function AIBarSidebar() {
               </div>
             ) : null}
             {error ? (
-              <div className="rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
-                {error.message}
+              <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
+                <div>{error.message}</div>
+                {/* Long conversations can hit a limit mid-turn; let the user
+                    pick up where it stopped (the server windows the transcript,
+                    so the retry fits). */}
+                <button
+                  type="button"
+                  onClick={() => regenerate()}
+                  className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
+                >
+                  Continue
+                </button>
               </div>
             ) : null}
           </ChatContainerContent>
@@ -899,28 +909,27 @@ function userTextFromMessage(message: any): string {
     .join('');
 }
 
-// Lets the deeply-nested Part renderer hand an ask_user answer back to useChat.
-const AskUserContext = createContext<(toolCallId: string, selected: string[]) => void>(() => {});
+// Lets the deeply-nested Part renderer hand ask_user answers back to useChat.
+const AskUserContext = createContext<(toolCallId: string, answers: AskAnswer[]) => void>(() => {});
 
-// Renders the agent's multiple-choice question (the ask_user HITL tool). The
-// chosen labels are sent back via addToolResult, which auto-continues the agent.
+// Renders the agent's questionnaire (the ask_user HITL tool) — up to four
+// questions, each choice-based or free-text. Answers go back via addToolResult,
+// which auto-continues the agent.
 function AskUserPart({ part }: { part: any }) {
   const answer = useContext(AskUserContext);
   const input = part.input || {};
-  const options = Array.isArray(input.options) ? input.options : [];
+  const questions = Array.isArray(input.questions) ? input.questions : [];
   const state = part.state;
   if (state === 'input-streaming') return null;
-  if (!input.question || !options.length) return null;
+  if (!questions.length) return null;
   const answered = state === 'output-available';
-  const selected = Array.isArray(part.output?.selected) ? part.output.selected : [];
+  const answers = Array.isArray(part.output?.answers) ? part.output.answers : [];
   return (
-    <ChoicePrompt
-      question={input.question}
-      options={options}
-      multiSelect={Boolean(input.multiSelect)}
+    <AskUserForm
+      questions={questions}
       answered={answered}
-      selected={selected}
-      onSubmit={(labels) => answer(part.toolCallId, labels)}
+      answers={answers}
+      onSubmit={(a) => answer(part.toolCallId, a)}
     />
   );
 }
