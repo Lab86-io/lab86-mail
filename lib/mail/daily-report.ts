@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
-import { contextFirstName } from '../ai/context';
+import { contextFirstName, getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { api, convexQuery } from '../hosted/convex';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
@@ -1147,6 +1147,37 @@ async function loadTaskContext(
   }
 }
 
+// The UTC instant of the most recent local midnight in `tz`. Uses the tz offset
+// at `at` (accurate except across a DST flip mid-day, which is acceptable here).
+function startOfLocalDay(at: number, tz: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(new Date(at));
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+    const asIfUtc = Date.UTC(
+      get('year'),
+      get('month') - 1,
+      get('day'),
+      get('hour') === 24 ? 0 : get('hour'),
+      get('minute'),
+      get('second'),
+    );
+    const offset = asIfUtc - at; // local wall-clock minus real UTC
+    const localMidnight = asIfUtc - (asIfUtc % 86_400_000);
+    return localMidnight - offset;
+  } catch {
+    return at - (at % 86_400_000);
+  }
+}
+
 async function loadCalendarContext(
   userId: string | null | undefined,
   now: number,
@@ -1154,8 +1185,10 @@ async function loadCalendarContext(
   if (!userId) return [];
   try {
     // The brief is forward-looking: calendar matters for what's AHEAD, not the
-    // past. Window = start of today → +7 days (today plus the next week).
-    const startOfToday = now - (now % 86_400_000);
+    // past. Window = start of today → +7 days, anchored to the USER's local
+    // midnight (not UTC) so the window isn't shifted for non-UTC users.
+    const tz = getAiRequestContext().userTimezone || 'UTC';
+    const startOfToday = startOfLocalDay(now, tz);
     const rows = await convexQuery<any[]>((api as any).calendarData.listEvents, {
       userId,
       startAt: startOfToday,

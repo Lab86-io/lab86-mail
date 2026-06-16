@@ -274,9 +274,11 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
             return ack(true);
           case 'draft_reply':
             if (!payload.threadId) return ack(false, 'missing threadId');
-            if (payload.account) setThreadAccount(String(payload.account));
+            if (!payload.account) return ack(false, 'missing account');
+            if (typeof payload.body !== 'string') return ack(false, 'missing body');
+            setThreadAccount(String(payload.account));
             setSelectedThread(String(payload.threadId));
-            setPendingReplyBody(typeof payload.body === 'string' ? payload.body : '');
+            setPendingReplyBody(payload.body);
             setPrimaryView('mail');
             return ack(true);
           case 'open_view':

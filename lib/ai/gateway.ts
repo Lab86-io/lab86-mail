@@ -27,7 +27,7 @@ type AiSpeed = 'fast' | 'primary' | 'nano';
 const FEATURE_MAX_TOKENS: Record<string, number> = {
   summarize_thread: 1500,
   triage_thread: 1500,
-  daily_report_insight: 3000,
+  daily_report_insight: 1500,
   daily_report_narrative: 4000,
   daily_report_artifact: 32000,
   agent: 24000,

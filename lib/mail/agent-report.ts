@@ -102,6 +102,9 @@ async function gatherBriefExtras(report: DailyReport, userId?: string | null): P
     } catch {
       messages = [];
     }
+    // getThreadMessages isn't guaranteed ordered — sort oldest→newest so the
+    // "recent" slice is actually the latest messages.
+    messages.sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
     const recent = messages.slice(-MAX_MSGS_PER_THREAD);
     const digestMessages = recent
       .map((m) => ({ from: m.from, date: m.date ?? null, body: cleanBody(m) }))
