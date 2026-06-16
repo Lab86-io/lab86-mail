@@ -351,10 +351,10 @@ export interface DailyReport {
   accounts: AccountEmail[];
   title: string;
   narrative: string;
-  // The agent-authored, self-contained HTML artifact for this edition. When
-  // present the report page serves it in a sandboxed iframe; the structured
-  // `sections`/`stats` below remain as grounding data, history metadata, and
-  // the fallback renderer for legacy editions that predate the artifact.
+  // The self-contained HTML artifact for this edition. AI-authored artifacts
+  // are preferred; deterministic native artifacts are synthesized for legacy
+  // or fallback editions. The structured `sections`/`stats` below remain as
+  // grounding data and history metadata.
   html?: string;
   // Generation phase for the artifact: 'composing' while the agent writes the
   // first (week) HTML, 'enriching' while the broader month pass runs in the

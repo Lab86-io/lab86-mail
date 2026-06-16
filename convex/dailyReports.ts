@@ -50,10 +50,11 @@ function localHour(timezone: string, at: Date): number | null {
   }
 }
 
-// Hourly tick: file a morning or evening Daily Brief for each user whose local
-// clock has reached the target hour. Generation itself runs in the Next.js app
-// (AI + Nylas live there), reached over an internal-secret-protected route; the
-// route ACKs immediately and generates in the background, so this stays fast.
+// Hourly tick: file a morning Daily Brief for each user whose local clock has
+// reached the target hour. Generation itself runs in the Next.js app
+// (AI + Nylas live there), reached over an internal-secret-protected route. The
+// route waits until the edition is written so a scheduled morning brief cannot
+// stop at the interim structured layout.
 export const tick = internalAction({
   args: {},
   handler: async (ctx) => {
@@ -75,9 +76,8 @@ export const tick = internalAction({
     }
     const fired = await fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
       label: 'daily-report cron',
-      // Generation is fire-and-forget on the app side (202), so calls return
-      // fast; a small timeout just guards against a hung connection.
-      timeoutMs: 15_000,
+      concurrency: 2,
+      timeoutMs: 285_000,
     });
     console.log(`[daily-report cron] tick fired ${fired}/${due.length} editions`);
   },

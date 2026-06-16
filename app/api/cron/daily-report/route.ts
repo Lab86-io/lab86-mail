@@ -5,8 +5,8 @@ import { generateAgentReport } from '@/lib/mail/agent-report';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Artifact generation runs for several seconds; allow a long ceiling even
-// though we return early (the work continues on the persistent server).
+// Artifact generation runs for several seconds; allow a long ceiling so the
+// scheduled edition is fully written before the cron call is acknowledged.
 export const maxDuration = 300;
 
 // Called by the Convex hourly cron (convex/dailyReports.ts) for one user when
@@ -30,13 +30,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
   }
 
-  // Railway runs a persistent Node server, so this background promise outlives
-  // the response — we ACK immediately rather than holding the cron's request
-  // open for the full multi-second generation.
-  void runWithAiRequestContext({ userId, agent: 'ai', userTimezone }, () =>
-    generateAgentReport({ kind, userId }).catch((err) => {
-      console.error('[cron/daily-report] generation failed', userId, kind, err);
-    }),
-  );
-  return NextResponse.json({ ok: true, started: true, userId, kind }, { status: 202 });
+  try {
+    const report = await runWithAiRequestContext({ userId, agent: 'ai', userTimezone }, () =>
+      generateAgentReport({ kind, userId }),
+    );
+    return NextResponse.json(
+      { ok: true, started: false, userId, kind, reportId: report._id, artifactStatus: report.artifactStatus },
+      { status: 200 },
+    );
+  } catch (err: any) {
+    console.error('[cron/daily-report] generation failed', userId, kind, err);
+    return NextResponse.json(
+      { ok: false, error: err?.message || 'daily report generation failed', userId, kind },
+      { status: 500 },
+    );
+  }
 }

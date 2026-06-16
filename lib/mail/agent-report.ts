@@ -15,6 +15,7 @@ import { saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
 import { getDailyArt } from './daily-art';
 import { generateDailyReport } from './daily-report';
+import { buildNativeDailyReportArtifact } from './report-artifact';
 
 // The agent-authored Daily Report.
 //
@@ -26,10 +27,10 @@ import { generateDailyReport } from './daily-report';
 // grounding data, the history metadata, and the legacy fallback renderer.
 //
 // Two phases so the page never sits blank:
-//   1. generateDailyReport() produces+saves the structured edition (the page
-//      shows the rich fallback immediately, artifactStatus: 'composing').
-//   2. the agent composes the HTML; we re-save the same _id with html attached
-//      (artifactStatus: 'rendered').
+//   1. generateDailyReport() produces the structured edition, then we attach a
+//      deterministic new-style HTML artifact immediately.
+//   2. the agent tries to replace that native artifact with a richer designed
+//      artifact, then the month pass updates the same _id in place.
 
 const MAX_TASKS = 24;
 const MAX_EVENTS = 24;
@@ -160,10 +161,19 @@ export async function generateAgentReport(input: {
     reportId,
   });
 
-  // No model → the structured week edition is the report (native renderer).
-  if (!(await hasAiForCurrentUser())) return week;
+  const nativeWeekHtml = buildNativeDailyReportArtifact(week);
 
-  await saveDailyReport({ ...week, artifactStatus: 'composing' }).catch(() => undefined);
+  // No model -> still save the new-style HTML artifact. The legacy structured
+  // renderer is no longer the scheduled-edition fallback.
+  if (!(await hasAiForCurrentUser())) {
+    const nativeOnly: DailyReport = { ...week, html: nativeWeekHtml, artifactStatus: 'rendered' };
+    await saveDailyReport(nativeOnly).catch(() => undefined);
+    return nativeOnly;
+  }
+
+  await saveDailyReport({ ...week, html: nativeWeekHtml, artifactStatus: 'composing' }).catch(
+    () => undefined,
+  );
 
   let phase1: DailyReport;
   try {
@@ -171,15 +181,12 @@ export async function generateAgentReport(input: {
     // 'enriching' (not 'rendered') keeps the page polling for the month pass.
     phase1 = html
       ? { ...week, html, artifactStatus: 'enriching', model: describeProvider().primary || week.model }
-      : { ...week, artifactStatus: undefined };
+      : { ...week, html: nativeWeekHtml, artifactStatus: 'enriching' };
   } catch (err) {
     console.error('[agent-report] week artifact failed:', err);
-    phase1 = { ...week, artifactStatus: undefined };
+    phase1 = { ...week, html: nativeWeekHtml, artifactStatus: 'enriching' };
   }
   await saveDailyReport(phase1).catch(() => undefined);
-
-  // If the fast artifact didn't render, don't spend a second AI call.
-  if (!phase1.html) return phase1;
 
   // Phase 2 — broaden to the full month silently, then replace the edition in
   // place. Best-effort: if it fails (e.g. out of credits), keep the week brief.
@@ -193,12 +200,18 @@ export async function generateAgentReport(input: {
       reportId,
       silent: true,
     });
-    const html = await composeArtifact(full, input.userId);
+    const nativeFullHtml = buildNativeDailyReportArtifact(full);
+    let html: string | null = null;
+    try {
+      html = await composeArtifact(full, input.userId);
+    } catch (err) {
+      console.error('[agent-report] month artifact failed:', err);
+    }
     const finalReport: DailyReport = {
       ...full,
-      html: html || phase1.html,
+      html: html || nativeFullHtml || phase1.html,
       artifactStatus: 'rendered',
-      model: describeProvider().primary || full.model,
+      model: html ? describeProvider().primary || full.model : full.model,
     };
     await saveDailyReport(finalReport);
     return finalReport;

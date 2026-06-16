@@ -1,3 +1,4 @@
+import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import type {
   DailyReport,
   DailyReportCalendarItem,
@@ -56,7 +57,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   const openTasks = stats.openTasks ?? tasks.filter((task) => !task.completedAt).length;
   const completedTasks = stats.completedTasks ?? tasks.filter((task) => task.completedAt).length;
 
-  return {
+  const migrated: DailyReport = {
     _id: raw._id,
     kind: raw.kind ?? 'manual',
     generatedAt: raw.generatedAt ?? 0,
@@ -94,4 +95,11 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     model: raw.model,
     errors: Array.isArray(raw.errors) ? raw.errors : undefined,
   };
+
+  if (!migrated.html && migrated.status !== 'partial') {
+    migrated.html = buildNativeDailyReportArtifact(migrated);
+    migrated.artifactStatus = migrated.artifactStatus ?? 'rendered';
+  }
+
+  return migrated;
 }
