@@ -203,6 +203,24 @@ const FONT_FAMILIES: Record<string, string> = {
   news: "'Averia Serif Libre', Georgia, serif",
 };
 
+const REPORT_ARTIFACT_SAFETY_CSS = `<style id="lab86-report-safety-css">
+*,*::before,*::after{box-sizing:border-box}
+:root{--brief-display-tracking:0em}
+h1,h2,h3,.masthead,.brief-masthead,[class*="masthead" i],[class*="headline" i],[class*="header" i]{letter-spacing:var(--brief-display-tracking,0em)}
+[style*="Instrument Sans" i] h1,[style*="Instrument Sans" i] h2,[style*="Instrument Sans" i] h3,[style*="Instrument Sans" i] .masthead,h1[style*="Instrument Sans" i],h2[style*="Instrument Sans" i],h3[style*="Instrument Sans" i]{letter-spacing:max(var(--brief-display-tracking,0em),0.045em)}
+[class*="week" i],[id*="week" i],[class*="calendar" i],[id*="calendar" i],[class*="agenda" i],[id*="agenda" i],[class*="timeline" i],[id*="timeline" i]{grid-column:1/-1;width:100%;max-width:100%;min-width:0}
+[class*="week" i] *,[id*="week" i] *,[class*="calendar" i] *,[id*="calendar" i] *,[class*="agenda" i] *,[id*="agenda" i] *,[class*="timeline" i] *,[id*="timeline" i] *{min-width:0;overflow-wrap:anywhere}
+table{width:100%;max-width:100%;border-collapse:collapse}
+th,td{min-width:0;overflow-wrap:anywhere}
+@media (max-width:640px){[class*="week" i] table,[id*="week" i] table,[class*="calendar" i] table,[id*="calendar" i] table,[class*="agenda" i] table,[id*="agenda" i] table{table-layout:auto}}
+</style>`;
+
+function withReportArtifactSafetyCss(html: string): string {
+  if (!html || html.includes('id="lab86-report-safety-css"')) return html;
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${REPORT_ARTIFACT_SAFETY_CSS}</head>`);
+  return `${REPORT_ARTIFACT_SAFETY_CSS}${html}`;
+}
+
 function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => void }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -237,6 +255,7 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
       // layer (headings/masthead); body copy stays sans.
       '--brief-font-display': FONT_FAMILIES[appFont ?? 'serif'] ?? FONT_FAMILIES.serif,
       '--brief-font-body': FONT_FAMILIES.sans,
+      '--brief-display-tracking': appFont === 'instrument' ? '0.045em' : '0em',
     };
     win.postMessage({ source: 'lab86-host', type: 'theme', theme }, '*');
   }, [appFont]);
@@ -320,7 +339,7 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
     <iframe
       ref={frameRef}
       title="The Daily Brief"
-      srcDoc={html}
+      srcDoc={withReportArtifactSafetyCss(html)}
       onLoad={postTheme}
       // allow-scripts (for interactivity) WITHOUT allow-same-origin keeps the
       // artifact sandboxed from the app origin; allow-popups lets external
@@ -691,7 +710,7 @@ export function DailyReport() {
         ) : report.html ? (
           <ReportArtifact html={report.html} onChanged={invalidate} />
         ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-7">
+          <div className="mx-auto flex max-w-5xl flex-col gap-7">
             {/* Lede — the narrative as an editorial pull-quote. */}
             {report.narrative ? (
               <blockquote
@@ -910,7 +929,7 @@ function TaskCalendarBrief({
         )}
       </div>
 
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]">
+      <div className="@container rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)] @[700px]:col-span-2">
         <div className="mb-2 flex items-center justify-between gap-3">
           <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
             Calendar
@@ -925,45 +944,43 @@ function TaskCalendarBrief({
         </div>
         {visibleEvents.length ? (
           <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
-            <table className="w-full table-fixed border-collapse text-left">
-              <tbody>
-                {visibleEvents.map((event) => (
-                  <tr
-                    key={`${event.account}:${event.eventId}:${event.startAt}`}
-                    className="border-b border-[var(--color-border)] last:border-b-0"
-                  >
-                    <td className="w-24 px-2.5 py-2 align-top text-[10.5px] font-medium tabular-nums text-[var(--color-text-faint)]">
-                      {formatEventWindow(event)}
-                    </td>
-                    <td className="px-2.5 py-2 align-top">
-                      {safeExternalHref(event.htmlLink) ? (
-                        <a
-                          href={safeExternalHref(event.htmlLink) as string}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="line-clamp-1 text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
-                        >
-                          {stripEmoji(event.title)}
-                        </a>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={onOpenCalendar}
-                          className="line-clamp-1 text-left text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
-                        >
-                          {stripEmoji(event.title)}
-                        </button>
-                      )}
-                      {event.location ? (
-                        <p className="mt-0.5 line-clamp-1 text-[10.5px] text-[var(--color-text-faint)]">
-                          {stripEmoji(event.location)}
-                        </p>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {visibleEvents.map((event) => (
+                <li
+                  key={`${event.account}:${event.eventId}:${event.startAt}`}
+                  className="grid gap-1.5 px-2.5 py-2 @[520px]:grid-cols-[10.5rem_minmax(0,1fr)]"
+                >
+                  <div className="whitespace-nowrap text-[10.5px] font-medium tabular-nums text-[var(--color-text-faint)]">
+                    {formatEventWindow(event)}
+                  </div>
+                  <div className="min-w-0">
+                    {safeExternalHref(event.htmlLink) ? (
+                      <a
+                        href={safeExternalHref(event.htmlLink) as string}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="line-clamp-2 break-words text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
+                      >
+                        {stripEmoji(event.title)}
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={onOpenCalendar}
+                        className="line-clamp-2 max-w-full break-words text-left text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
+                      >
+                        {stripEmoji(event.title)}
+                      </button>
+                    )}
+                    {event.location ? (
+                      <p className="mt-0.5 line-clamp-2 break-words text-[10.5px] text-[var(--color-text-faint)]">
+                        {stripEmoji(event.location)}
+                      </p>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : (
           <p className="text-[12px] text-[var(--color-text-faint)]">No calendar context in the last month.</p>

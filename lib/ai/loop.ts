@@ -1,10 +1,16 @@
-import { tool as aiTool, type ModelMessage, stepCountIs } from 'ai';
+import {
+  tool as aiTool,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type ModelMessage,
+  stepCountIs,
+} from 'ai';
 import { z } from 'zod';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
-import { hasPlatformAi, streamTextForUser } from './gateway';
+import { generateTextForCurrentUser, hasPlatformAi } from './gateway';
 import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
@@ -110,6 +116,8 @@ const AGENT_TOOL_NAMES = new Set([
 
 const AGENT_TOOL_TIMEOUT_MS = 75_000;
 
+type UiStreamWriter = Parameters<Parameters<typeof createUIMessageStream>[0]['execute']>[0]['writer'];
+
 async function withToolTimeout<T>(promise: Promise<T>, toolName: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -176,6 +184,139 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
   return lifted;
 }
 
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Tool call failed';
+  }
+}
+
+function writeTextPart(writer: UiStreamWriter, id: string, text: string, providerMetadata?: any) {
+  if (!text) return;
+  writer.write({ type: 'text-start', id, providerMetadata });
+  writer.write({ type: 'text-delta', id, delta: text, providerMetadata });
+  writer.write({ type: 'text-end', id, providerMetadata });
+}
+
+function writeToolCallPart(writer: UiStreamWriter, part: any) {
+  const base = {
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    input: part.input,
+    providerExecuted: part.providerExecuted,
+    providerMetadata: part.providerMetadata,
+    toolMetadata: part.toolMetadata,
+    dynamic: part.dynamic,
+    title: part.title,
+  };
+  if (part.invalid || part.error) {
+    writer.write({
+      type: 'tool-input-error',
+      ...base,
+      errorText: errorText(part.error || 'Invalid tool call'),
+    });
+    return;
+  }
+  writer.write({ type: 'tool-input-available', ...base });
+}
+
+function writeToolResultPart(writer: UiStreamWriter, part: any) {
+  writer.write({
+    type: 'tool-output-available',
+    toolCallId: part.toolCallId,
+    output: part.output,
+    providerExecuted: part.providerExecuted,
+    providerMetadata: part.providerMetadata,
+    toolMetadata: part.toolMetadata,
+    dynamic: part.dynamic,
+    preliminary: part.preliminary,
+  });
+}
+
+function writeDelayedAgentResult(writer: UiStreamWriter, result: any) {
+  writer.write({ type: 'start' });
+  const steps = Array.isArray(result.steps) && result.steps.length ? result.steps : [result];
+  let emittedText = false;
+
+  for (const step of steps) {
+    writer.write({ type: 'start-step' });
+    const content = Array.isArray(step.content) ? step.content : [];
+
+    content.forEach((part: any, index: number) => {
+      if (part?.type === 'text') {
+        emittedText = emittedText || Boolean(part.text);
+        writeTextPart(
+          writer,
+          `text-${step.stepNumber ?? 0}-${index}`,
+          part.text || '',
+          part.providerMetadata,
+        );
+        return;
+      }
+      if (part?.type === 'tool-call') {
+        writeToolCallPart(writer, part);
+        return;
+      }
+      if (part?.type === 'tool-result') {
+        writeToolResultPart(writer, part);
+        return;
+      }
+      if (part?.type === 'tool-error') {
+        writer.write({
+          type: 'tool-output-error',
+          toolCallId: part.toolCallId,
+          errorText: errorText(part.error),
+          providerExecuted: part.providerExecuted,
+          providerMetadata: part.providerMetadata,
+          toolMetadata: part.toolMetadata,
+          dynamic: part.dynamic,
+        });
+        return;
+      }
+      if (part?.type === 'tool-approval-request') {
+        if (part.toolCall) writeToolCallPart(writer, part.toolCall);
+        writer.write({
+          type: 'tool-approval-request',
+          approvalId: part.approvalId,
+          toolCallId: part.toolCall?.toolCallId,
+        });
+        return;
+      }
+      if (part?.type === 'source' && part.sourceType === 'url') {
+        writer.write({
+          type: 'source-url',
+          sourceId: part.id,
+          url: part.url,
+          title: part.title,
+          providerMetadata: part.providerMetadata,
+        });
+        return;
+      }
+      if (part?.type === 'file' && part.file?.url && part.file?.mediaType) {
+        writer.write({
+          type: 'file',
+          url: part.file.url,
+          mediaType: part.file.mediaType,
+          providerMetadata: part.providerMetadata,
+        });
+      }
+    });
+
+    writer.write({ type: 'finish-step' });
+  }
+
+  if (!emittedText && result.text) {
+    writer.write({ type: 'start-step' });
+    writeTextPart(writer, 'text-final', result.text);
+    writer.write({ type: 'finish-step' });
+  }
+
+  writer.write({ type: 'finish', finishReason: result.finishReason });
+}
+
 export interface AgentRunOpts {
   messages: ModelMessage[];
   /** Bias the system prompt with extra context (selected thread, focused account). */
@@ -222,7 +363,7 @@ export async function runAgent({
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();
-  const stream = await streamTextForUser({
+  const result = await generateTextForCurrentUser({
     userId,
     userEmail,
     userName,
@@ -237,10 +378,18 @@ export async function runAgent({
     // Multi-step flows (fetch a file → store → attach → send) need headroom
     // beyond the old 6-step cap.
     stopWhen: stepCountIs(20),
-    onError: (event: any) => {
-      // Best-effort logging; don't crash the stream.
-      console.error('[agent]', event.error);
-    },
   });
-  return stream;
+  return {
+    toUIMessageStreamResponse() {
+      return createUIMessageStreamResponse({
+        stream: createUIMessageStream({
+          execute: ({ writer }) => writeDelayedAgentResult(writer, result),
+          onError: (error) => {
+            console.error('[agent]', error);
+            return errorText(error);
+          },
+        }),
+      });
+    },
+  };
 }
