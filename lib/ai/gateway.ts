@@ -35,6 +35,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;
 const DEFAULT_STREAM_MAX_TOKENS = 24000;
 const TRANSIENT_GENERATE_RETRY_DELAY_MS = 450;
+const DEFAULT_OPENROUTER_AGENT_FALLBACKS = ['openai/gpt-5.1-chat', 'openai/gpt-5.4-mini'];
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
@@ -223,22 +224,47 @@ export async function generateTextForCurrentUser(
   const runtime = await resolveAiRuntime({ userId, speed, feature });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, async () => {
     let lastErr: any;
-    const maxAttempts = feature === 'agent' ? 2 : 1;
+    const runtimes = [runtime, ...agentFallbackRuntimes(runtime, feature)];
     try {
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        try {
-          const result = await generateText({
-            ...rest,
-            // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
-            maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
-            model: runtime.model,
-          });
-          await recordUsage(runtime, feature, result.totalUsage ?? result.usage, true);
-          return result;
-        } catch (err: any) {
-          lastErr = err;
-          if (attempt >= maxAttempts || !isTransientGenerateParseError(err)) throw err;
-          await sleep(TRANSIENT_GENERATE_RETRY_DELAY_MS * attempt);
+      for (let runtimeIndex = 0; runtimeIndex < runtimes.length; runtimeIndex += 1) {
+        const activeRuntime = runtimes[runtimeIndex];
+        const maxAttempts = feature === 'agent' && runtimeIndex === 0 ? 2 : 1;
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          try {
+            const result = await generateText({
+              ...rest,
+              // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
+              maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
+              model: activeRuntime.model,
+            });
+            await recordUsage(activeRuntime, feature, result.totalUsage ?? result.usage, true);
+            return result;
+          } catch (err: any) {
+            lastErr = err;
+            const canRetrySameModel = attempt < maxAttempts && isTransientGenerateParseError(err);
+            const canTryFallback =
+              runtimeIndex < runtimes.length - 1 && isAgentFallbackEligible(err, feature, activeRuntime);
+            if (canRetrySameModel) {
+              console.warn('[ai-gateway] agent model failed; retrying', {
+                provider: activeRuntime.provider,
+                model: activeRuntime.modelName,
+                attempt,
+                error: summarizeAiError(err),
+              });
+              await sleep(TRANSIENT_GENERATE_RETRY_DELAY_MS * attempt);
+              continue;
+            }
+            if (canTryFallback) {
+              console.warn('[ai-gateway] agent model failed; trying fallback', {
+                provider: activeRuntime.provider,
+                model: activeRuntime.modelName,
+                fallback: runtimes[runtimeIndex + 1]?.modelName,
+                error: summarizeAiError(err),
+              });
+              break;
+            }
+            throw err;
+          }
         }
       }
       throw lastErr;
@@ -249,11 +275,62 @@ export async function generateTextForCurrentUser(
   });
 }
 
+function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): ResolvedAiRuntime[] {
+  const router = openrouter;
+  if (feature !== 'agent' || runtime.source !== 'lab86' || runtime.provider !== 'openrouter' || !router) {
+    return [];
+  }
+  const configured = [
+    process.env.LAB86_MAIL_AGENT_FALLBACK_MODEL,
+    process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL,
+    ...DEFAULT_OPENROUTER_AGENT_FALLBACKS,
+  ];
+  return uniqueModels(configured)
+    .filter((modelName) => modelName !== runtime.modelName)
+    .map((modelName) => ({
+      ...runtime,
+      provider: 'openrouter' as const,
+      modelName,
+      model: router.chat(modelName),
+    }));
+}
+
+function uniqueModels(values: Array<string | undefined>) {
+  const out: string[] = [];
+  for (const value of values) {
+    const model = value?.trim();
+    if (!model || out.includes(model)) continue;
+    out.push(model);
+  }
+  return out;
+}
+
 function isTransientGenerateParseError(err: any) {
   return (
     err?.message === 'Invalid JSON response' &&
     (err?.statusCode == null || err.statusCode === 200 || err.statusCode >= 500)
   );
+}
+
+function isAgentFallbackEligible(err: any, feature: string, runtime: ResolvedAiRuntime) {
+  if (feature !== 'agent' || runtime.source !== 'lab86' || runtime.provider !== 'openrouter') return false;
+  if (isTransientGenerateParseError(err)) return true;
+  const statusCode = Number(err?.statusCode);
+  if (Number.isFinite(statusCode) && (statusCode === 429 || statusCode >= 500)) return true;
+  const body = typeof err?.responseBody === 'string' ? err.responseBody : '';
+  return /Provider returned error|server had an error|temporarily unavailable|rate.?limit|code"?\s*:\s*502/i.test(
+    body,
+  );
+}
+
+function summarizeAiError(err: any) {
+  return {
+    name: err?.name,
+    message: err?.message,
+    statusCode: err?.statusCode,
+    isRetryable: err?.isRetryable,
+    responseBody: typeof err?.responseBody === 'string' ? err.responseBody.slice(0, 240) : undefined,
+  };
 }
 
 function sleep(ms: number) {
