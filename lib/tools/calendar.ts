@@ -89,7 +89,15 @@ export const calendarListEvents = defineTool({
     toIso: z.string(),
     accountIds: z.array(z.string()).optional(),
     calendarIds: z.array(z.string()).optional(),
-    limit: z.number().int().min(1).max(2000).default(500),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(500)
+      .default(100)
+      .describe(
+        'Maximum event summaries to return. Use calendar_event_detail for full descriptions/attendees.',
+      ),
   }),
   output: z.object({ events: z.array(z.any()) }),
   async handler(args, ctx) {
@@ -107,7 +115,7 @@ export const calendarListEvents = defineTool({
       events: (rows || [])
         .filter((row) => !accountFilter || accountFilter.has(row.accountId))
         .filter((row) => !calendarFilter || calendarFilter.has(row.providerCalendarId))
-        .map(toToolEvent),
+        .map((row) => toToolEvent(row)),
     };
   },
 });
@@ -141,7 +149,7 @@ export const calendarSearchEvents = defineTool({
       includeCancelled: args.includeCancelled,
       limit: args.limit,
     });
-    return { events: (rows || []).map(toToolEvent) };
+    return { events: (rows || []).map((row) => toToolEvent(row)) };
   },
 });
 
@@ -198,7 +206,7 @@ export const calendarEventDetail = defineTool({
       providerEventId: args.eventId,
     });
     if (!event) throw new Error('Calendar event not found in the local corpus. Run calendar_sync_now.');
-    return { event: toToolEvent(event) };
+    return { event: toToolEvent(event, { detail: true }) };
   },
 });
 
@@ -635,13 +643,16 @@ async function busyWindows(
   return merged;
 }
 
-function toToolEvent(row: any) {
+function toToolEvent(row: any, options?: { detail?: boolean }) {
+  const detail = Boolean(options?.detail);
+  const participants = Array.isArray(row.participants) ? row.participants : [];
+  const conference = row.conferencing;
   return {
     eventId: row.providerEventId,
     accountId: row.accountId,
     calendarId: row.providerCalendarId,
     title: row.title,
-    description: row.description,
+    description: detail ? row.description : truncateText(row.description, 500),
     location: row.location,
     status: row.status,
     busy: row.busy,
@@ -651,9 +662,16 @@ function toToolEvent(row: any) {
     allDay: row.allDay,
     masterEventId: row.masterEventId,
     recurrence: row.recurrence,
-    participants: row.participants,
+    participants: detail ? participants : participants.slice(0, 8),
+    participantCount: participants.length || undefined,
     organizer: row.organizer,
-    conferencing: row.conferencing,
+    conferencing: detail || !conference ? conference : { available: true },
     htmlLink: row.htmlLink,
   };
+}
+
+function truncateText(value: unknown, max: number) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length <= max) return text || undefined;
+  return `${text.slice(0, max)}...`;
 }
