@@ -10,106 +10,148 @@ export interface ChoiceOption {
   description?: string;
 }
 
-// The agent's in-chat multiple-choice question (rendered for the `ask_user`
-// human-in-the-loop tool). Single-select submits on click; multi-select
-// accumulates and confirms. Once answered it collapses to a compact summary.
-export function ChoicePrompt({
-  question,
-  options,
-  multiSelect = false,
+export interface AskQuestion {
+  question: string;
+  options?: ChoiceOption[];
+  multiSelect?: boolean;
+}
+
+export interface AskAnswer {
+  question: string;
+  response: string;
+}
+
+// The agent's in-chat questionnaire (the `ask_user` human-in-the-loop tool).
+// Renders up to four questions at once; each can offer quick choices AND always
+// accepts a free-text answer. One Confirm submits them all. Once answered it
+// collapses to a compact summary.
+export function AskUserForm({
+  questions,
   answered = false,
-  selected = [],
+  answers = [],
   onSubmit,
 }: {
-  question: string;
-  options: ChoiceOption[];
-  multiSelect?: boolean;
+  questions: AskQuestion[];
   answered?: boolean;
-  selected?: string[];
-  onSubmit: (labels: string[]) => void;
+  answers?: AskAnswer[];
+  onSubmit: (answers: AskAnswer[]) => void;
 }) {
-  const [picked, setPicked] = useState<string[]>([]);
+  // Per-question state: chosen option labels + a free-text entry.
+  const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []));
+  const [typed, setTyped] = useState<string[]>(() => questions.map(() => ''));
 
   if (answered) {
     return (
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12px]">
-        <div className="text-[var(--color-text-muted)]">{question}</div>
-        <div className="mt-1 flex flex-wrap gap-1.5">
-          {(selected.length ? selected : ['(no answer)']).map((label) => (
-            <span
-              key={label}
-              className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[var(--color-accent)]"
-            >
-              <Check className="size-3" />
-              {label}
-            </span>
-          ))}
-        </div>
+      <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 text-[12px]">
+        {(answers.length ? answers : questions.map((q) => ({ question: q.question, response: '—' }))).map(
+          (a) => (
+            <div key={a.question}>
+              <div className="text-[var(--color-text-muted)]">{a.question}</div>
+              <div className="mt-0.5 flex items-center gap-1 font-medium text-[var(--color-accent)]">
+                <Check className="size-3 shrink-0" />
+                <span>{a.response || '—'}</span>
+              </div>
+            </div>
+          ),
+        )}
       </div>
     );
   }
 
-  const toggle = (label: string) => {
-    if (!multiSelect) {
-      onSubmit([label]);
-      return;
-    }
-    setPicked((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
+  const responseFor = (i: number): string => {
+    const labels = picked[i] ?? [];
+    const text = (typed[i] ?? '').trim();
+    if (labels.length && text) return `${labels.join(', ')} — ${text}`;
+    if (labels.length) return labels.join(', ');
+    return text;
+  };
+  const allAnswered = questions.every((_, i) => responseFor(i).length > 0);
+
+  const toggle = (qi: number, label: string, multi: boolean) => {
+    setPicked((prev) => {
+      const next = prev.map((arr) => [...arr]);
+      const arr = next[qi];
+      if (multi) {
+        next[qi] = arr.includes(label) ? arr.filter((x) => x !== label) : [...arr, label];
+      } else {
+        next[qi] = arr.includes(label) ? [] : [label];
+      }
+      return next;
+    });
   };
 
   return (
-    <div className="rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] px-3 py-2.5">
-      <div className="mb-2 text-[12.5px] font-medium text-[var(--color-text)]">{question}</div>
-      <div className="grid gap-1.5">
-        {options.map((option) => {
-          const isPicked = picked.includes(option.label);
-          return (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => toggle(option.label)}
-              className={cn(
-                'flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors',
-                isPicked
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                  : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-hover-soft)]',
-              )}
-            >
-              <span
-                className={cn(
-                  'mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border',
-                  isPicked
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
-                    : 'border-[var(--color-border-strong)]',
-                )}
-              >
-                {isPicked ? <Check className="size-3" /> : null}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[12.5px] font-medium text-[var(--color-text)]">
-                  {option.label}
-                </span>
-                {option.description ? (
-                  <span className="block text-[11.5px] leading-snug text-[var(--color-text-muted)]">
-                    {option.description}
-                  </span>
-                ) : null}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      {multiSelect ? (
-        <Button
-          type="button"
-          size="sm"
-          className="mt-2 h-7 px-3 text-[12px]"
-          disabled={!picked.length}
-          onClick={() => onSubmit(picked)}
-        >
-          Confirm{picked.length ? ` (${picked.length})` : ''}
-        </Button>
-      ) : null}
+    <div className="space-y-3 rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] px-3 py-3">
+      {questions.map((q, qi) => (
+        <div key={q.question} className="space-y-1.5">
+          <div className="text-[12.5px] font-medium text-[var(--color-text)]">{q.question}</div>
+          {q.options?.length ? (
+            <div className="grid gap-1.5">
+              {q.options.map((option) => {
+                const isPicked = (picked[qi] ?? []).includes(option.label);
+                return (
+                  <button
+                    key={option.label}
+                    type="button"
+                    onClick={() => toggle(qi, option.label, Boolean(q.multiSelect))}
+                    className={cn(
+                      'flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors',
+                      isPicked
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                        : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-hover-soft)]',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border',
+                        isPicked
+                          ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
+                          : 'border-[var(--color-border-strong)]',
+                      )}
+                    >
+                      {isPicked ? <Check className="size-3" /> : null}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[12.5px] font-medium text-[var(--color-text)]">
+                        {option.label}
+                      </span>
+                      {option.description ? (
+                        <span className="block text-[11.5px] leading-snug text-[var(--color-text-muted)]">
+                          {option.description}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          <input
+            type="text"
+            value={typed[qi] ?? ''}
+            onChange={(event) =>
+              setTyped((prev) => {
+                const next = [...prev];
+                next[qi] = event.target.value;
+                return next;
+              })
+            }
+            placeholder={q.options?.length ? 'Or type your own answer…' : 'Type your answer…'}
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
+          />
+        </div>
+      ))}
+      <Button
+        type="button"
+        size="sm"
+        className="h-7 px-3 text-[12px]"
+        disabled={!allAnswered}
+        onClick={() =>
+          onSubmit(questions.map((q, i) => ({ question: q.question, response: responseFor(i) })))
+        }
+      >
+        Confirm
+      </Button>
     </div>
   );
 }

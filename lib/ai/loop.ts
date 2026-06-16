@@ -150,15 +150,23 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
   // answer via addToolResult, after which the agent continues with it.
   lifted.ask_user = aiTool({
     description:
-      'Ask the user a short multiple-choice question and WAIT for their answer before continuing. Reach for this whenever you are unsure what they want, must choose between approaches, or want to offer to dive deeper — prefer a quick question over guessing. Provide 2–4 concrete, mutually-distinct options.',
+      "Ask the user up to 4 questions at once and WAIT for their answers before continuing. Each question MAY offer 2–4 quick options, but the user can ALWAYS also type a free-text answer — so include options only when there is a clear, finite set of choices, and OMIT options for open-ended questions (times, names, amounts). Never pack several distinct questions into one question's options — give each its own entry in `questions`. Reach for this whenever you are unsure, must choose between approaches, or want to offer to dive deeper.",
     inputSchema: z.object({
-      question: z.string().describe('The question to ask the user.'),
-      options: z
-        .array(z.object({ label: z.string(), description: z.string().optional() }))
-        .min(2)
+      questions: z
+        .array(
+          z.object({
+            question: z.string().describe('The question to ask.'),
+            options: z
+              .array(z.object({ label: z.string(), description: z.string().optional() }))
+              .max(4)
+              .optional()
+              .describe('Optional 2–4 quick choices. Omit entirely for a free-text question.'),
+            multiSelect: z.boolean().optional().describe('Allow choosing more than one option.'),
+          }),
+        )
+        .min(1)
         .max(4)
-        .describe('The choices to offer.'),
-      multiSelect: z.boolean().optional().describe('Allow choosing more than one option.'),
+        .describe('1–4 distinct questions, asked together. Each can be choice-based or free-text.'),
     }),
   });
   return lifted;
