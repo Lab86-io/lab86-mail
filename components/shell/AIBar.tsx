@@ -2,7 +2,7 @@
 
 import { useChat } from '@ai-sdk/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
+import { DefaultChatTransport } from 'ai';
 import {
   AlarmClock,
   Archive,
@@ -327,9 +327,23 @@ export function AIBarSidebar() {
   );
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
-    // When the client answers a human-in-the-loop tool (ask_user), auto-continue
-    // the agent with that answer instead of waiting for a manual send.
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // Auto-continue ONLY after the user answers an ask_user question (its result
+    // becomes available). The built-in lastAssistantMessageIsCompleteWithToolCalls
+    // also fires after ordinary server-tool turns, which can resubmit in a loop —
+    // our server already runs server tools to completion in one response.
+    sendAutomaticallyWhen: ({ messages: msgs }) => {
+      const last = msgs[msgs.length - 1] as any;
+      if (!last || last.role !== 'assistant') return false;
+      return (last.parts || []).some((p: any) => {
+        const name =
+          p?.type === 'dynamic-tool'
+            ? p.toolName
+            : typeof p?.type === 'string' && p.type.startsWith('tool-')
+              ? p.type.slice(5)
+              : '';
+        return name === 'ask_user' && p.state === 'output-available';
+      });
+    },
   });
 
   // Hand the ask_user answers back into the stream. Memoized so the context
@@ -340,6 +354,24 @@ export function AIBarSidebar() {
     },
     [addToolResult],
   );
+
+  // The model (esp. gpt-5.x via OpenRouter) intermittently returns an EMPTY
+  // completion — finishReason 'other', zero tokens — which lands as a blank
+  // assistant turn ("loads, then nothing"). Transparently retry an empty turn a
+  // couple times so the chat recovers instead of silently dropping.
+  const emptyRetryCount = useRef(0);
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const last = messages[messages.length - 1] as any;
+    if (!last || last.role !== 'assistant') return;
+    if (hasVisibleContent(last)) {
+      emptyRetryCount.current = 0;
+      return;
+    }
+    if (emptyRetryCount.current >= 2) return; // cap retries; Continue button remains
+    emptyRetryCount.current += 1;
+    void regenerate();
+  }, [status, messages, regenerate]);
 
   // --- Persistent sessions: restore the last chat, autosave as you go ---
   const lastChatId = useClientStore((s) => s.lastChatId);
@@ -540,6 +572,7 @@ export function AIBarSidebar() {
     const trimmed = text.trim();
     const filesForTurn = pendingFiles;
     if ((!trimmed && !filesForTurn.length) || busy) return;
+    emptyRetryCount.current = 0; // fresh turn — reset empty-completion retries
 
     let stagedUploads: StagedChatUpload[] = [];
     if (filesForTurn.length) {
