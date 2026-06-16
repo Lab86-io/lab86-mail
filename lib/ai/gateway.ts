@@ -34,6 +34,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;
 const DEFAULT_STREAM_MAX_TOKENS = 24000;
+const TRANSIENT_GENERATE_RETRY_DELAY_MS = 450;
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
@@ -221,20 +222,42 @@ export async function generateTextForCurrentUser(
   } = options as any;
   const runtime = await resolveAiRuntime({ userId, speed, feature });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, async () => {
+    let lastErr: any;
+    const maxAttempts = feature === 'agent' ? 2 : 1;
     try {
-      const result = await generateText({
-        ...rest,
-        // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
-        maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
-        model: runtime.model,
-      });
-      await recordUsage(runtime, feature, result.totalUsage ?? result.usage, true);
-      return result;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const result = await generateText({
+            ...rest,
+            // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
+            maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
+            model: runtime.model,
+          });
+          await recordUsage(runtime, feature, result.totalUsage ?? result.usage, true);
+          return result;
+        } catch (err: any) {
+          lastErr = err;
+          if (attempt >= maxAttempts || !isTransientGenerateParseError(err)) throw err;
+          await sleep(TRANSIENT_GENERATE_RETRY_DELAY_MS * attempt);
+        }
+      }
+      throw lastErr;
     } catch (err: any) {
       await recordUsage(runtime, feature, undefined, false, err?.message);
       throw err;
     }
   });
+}
+
+function isTransientGenerateParseError(err: any) {
+  return (
+    err?.message === 'Invalid JSON response' &&
+    (err?.statusCode == null || err.statusCode === 200 || err.statusCode >= 500)
+  );
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function streamTextForUser(

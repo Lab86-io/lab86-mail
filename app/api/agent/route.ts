@@ -1,4 +1,9 @@
-import { convertToModelMessages, type UIMessage } from 'ai';
+import {
+  convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+} from 'ai';
 import type { NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
@@ -71,11 +76,38 @@ function prepareAgentMessages(input: UIMessage[]): {
   return { messages: prepared, omitted, compacted };
 }
 
+function errorForLog(err: any) {
+  return {
+    name: err?.name,
+    message: err?.message,
+    statusCode: err?.statusCode,
+    isRetryable: err?.isRetryable,
+    responseBody: typeof err?.responseBody === 'string' ? err.responseBody.slice(0, 500) : undefined,
+  };
+}
+
+function agentErrorStreamResponse(message: string) {
+  return createUIMessageStreamResponse({
+    stream: createUIMessageStream({
+      execute: ({ writer }) => {
+        writer.write({ type: 'start' });
+        writer.write({ type: 'error', errorText: message });
+        writer.write({ type: 'finish', finishReason: 'error' });
+      },
+    }),
+  });
+}
+
 export async function POST(req: NextRequest) {
   let body: AgentRequestBody;
   try {
     body = (await req.json()) as AgentRequestBody;
-  } catch {
+  } catch (err: any) {
+    console.warn('[agent-route] invalid request json', {
+      message: err?.message,
+      contentType: req.headers.get('content-type'),
+      contentLength: req.headers.get('content-length'),
+    });
     return new Response(JSON.stringify({ ok: false, error: 'invalid json' }), {
       status: 400,
       headers: { 'content-type': 'application/json' },
@@ -113,6 +145,10 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitResponse(err);
     const status = err instanceof AuthRequiredError ? 401 : 500;
+    console.error('[agent-route]', errorForLog(err));
+    if (status === 500) {
+      return agentErrorStreamResponse(err?.message || 'agent failed');
+    }
     return new Response(JSON.stringify({ ok: false, error: err?.message || 'agent failed' }), {
       status,
       headers: { 'content-type': 'application/json' },
