@@ -9,12 +9,12 @@ import type {
   DragStartEvent,
 } from '@dnd-kit/core';
 import {
+  closestCorners,
   DndContext,
   DragOverlay,
   KeyboardSensor,
   MouseSensor,
   pointerWithin,
-  rectIntersection,
   TouchSensor,
   useDroppable,
   useSensor,
@@ -48,11 +48,15 @@ export type { DragEndEvent } from '@dnd-kit/core';
 // card otherwise), falling back to rectangle intersection when the pointer is
 // outside every droppable (e.g. keyboard dragging).
 const collisionDetection: CollisionDetection = (args) => {
-  const hits = pointerWithin(args);
-  const collisions = hits.length > 0 ? hits : rectIntersection(args);
-  // Prefer a card or column over a column's empty-drop zone so within-column
-  // sorting stays precise; the dropzone is only the fallback that makes an
-  // empty column droppable at all.
+  // pointerWithin is precise when the cursor is inside a real rect (populated
+  // columns), but an EMPTY column's drop area can measure as a thin/zero rect,
+  // so pointerWithin/rectIntersection never match it. Fall back to
+  // closestCorners — distance-based, no intersection required — so empty columns
+  // are always reachable.
+  const pointer = pointerWithin(args);
+  const collisions = pointer.length > 0 ? pointer : closestCorners(args);
+  // Prefer a card or column node over a column's empty-drop zone so within-column
+  // sorting stays precise; the dropzone is the fallback that resolves the column.
   const precise = collisions.filter((c) => !String(c.id).startsWith('dropzone:'));
   return precise.length > 0 ? precise : collisions;
 };

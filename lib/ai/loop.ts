@@ -224,7 +224,10 @@ export async function runAgent({
     userEmail,
     userName,
     feature: 'agent',
-    speed: 'fast',
+    // The interactive agent uses the PRIMARY (big) model — it reasons over many
+    // tools and multi-step plans; the fast model was both weaker and the source
+    // of intermittent empty completions.
+    speed: 'primary',
     system,
     messages,
     tools: liftToolsForAgent(operationBatchId, timezone),
