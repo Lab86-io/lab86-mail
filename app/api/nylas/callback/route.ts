@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
       // mailbox backfill for the grant's rate budget.
       const kick = { userId: stored.userId, accountId: upserted.accountId };
       void (async () => {
-        await syncCalendarAccount(kick).catch(() => undefined);
+        await syncCalendarAccount({ ...kick, force: true, reason: 'oauth_callback' }).catch(() => undefined);
         maybeKickCorpusBackfill(kick);
       })();
     }

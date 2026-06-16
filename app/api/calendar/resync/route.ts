@@ -22,9 +22,11 @@ export async function POST(req: NextRequest) {
     if (!accountId) {
       return NextResponse.json({ ok: false, error: 'accountId is required' }, { status: 400 });
     }
-    void syncCalendarAccount({ userId: user.userId, accountId }).catch((err) => {
-      console.error(`[resync] calendar sync failed for ${accountId}:`, err?.message || err);
-    });
+    void syncCalendarAccount({ userId: user.userId, accountId, force: true, reason: 'manual_http' }).catch(
+      (err) => {
+        console.error(`[resync] calendar sync failed for ${accountId}:`, err?.message || err);
+      },
+    );
     return NextResponse.json({ ok: true, started: true });
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitJson(err);

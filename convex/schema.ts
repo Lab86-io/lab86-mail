@@ -416,6 +416,11 @@ export default defineSchema({
     conferencing: v.optional(v.any()),
     icalUid: v.optional(v.string()),
     htmlLink: v.optional(v.string()),
+    // Corpus fields: new/updated rows get normalized text for local search.
+    // Optional so existing mirrored rows remain valid until their next sync.
+    searchText: v.optional(v.string()),
+    yearMonth: v.optional(v.string()),
+    providerUpdatedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -423,8 +428,53 @@ export default defineSchema({
     .index('by_user_start', ['userId', 'startAt'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_account_event', ['accountId', 'providerEventId'])
+    .index('by_account_calendar_event', ['accountId', 'providerCalendarId', 'providerEventId'])
     .index('by_account_master', ['accountId', 'masterEventId'])
+    .index('by_user_account_calendar_start', ['userId', 'accountId', 'providerCalendarId', 'startAt'])
     .index('by_grant', ['grantId']),
+
+  calendarEventCorpus: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    providerEventId: v.string(),
+    providerCalendarId: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    location: v.optional(v.string()),
+    status: v.optional(v.string()),
+    busy: v.optional(v.boolean()),
+    readOnly: v.optional(v.boolean()),
+    startAt: v.number(),
+    endAt: v.number(),
+    allDay: v.optional(v.boolean()),
+    startTimezone: v.optional(v.string()),
+    endTimezone: v.optional(v.string()),
+    masterEventId: v.optional(v.string()),
+    recurrence: v.optional(v.array(v.string())),
+    participants: v.optional(v.array(v.any())),
+    organizer: v.optional(v.any()),
+    conferencing: v.optional(v.any()),
+    icalUid: v.optional(v.string()),
+    htmlLink: v.optional(v.string()),
+    searchText: v.string(),
+    yearMonth: v.string(),
+    providerUpdatedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_start', ['userId', 'startAt'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_account_event', ['accountId', 'providerEventId'])
+    .index('by_account_calendar_event', ['accountId', 'providerCalendarId', 'providerEventId'])
+    .index('by_user_account_calendar_start', ['userId', 'accountId', 'providerCalendarId', 'startAt'])
+    .index('by_grant', ['grantId'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
+    }),
 
   calendarSyncStates: defineTable({
     userId: v.string(),
@@ -447,6 +497,13 @@ export default defineSchema({
     windowStart: v.optional(v.number()),
     windowEnd: v.optional(v.number()),
     lastSyncedAt: v.optional(v.number()),
+    lastIncrementalSyncAt: v.optional(v.number()),
+    lastWebhookAt: v.optional(v.number()),
+    lastHistoryBackfillAt: v.optional(v.number()),
+    historyCursorEnd: v.optional(v.number()),
+    historyWindowStart: v.optional(v.number()),
+    historyBackfillReady: v.optional(v.boolean()),
+    progress: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
