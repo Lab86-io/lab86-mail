@@ -48,6 +48,10 @@ export function calendarYearMonthFromTimestamp(ts: unknown, fallback = Date.now(
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+// Keep this extractor in sync with the Convex-local copy in
+// convex/calendarData.ts. Convex functions are bundled separately, so the
+// database-side query helpers keep a pure local copy instead of importing from
+// app/runtime modules.
 function textFromUnknown(value: unknown): string[] {
   if (!value) return [];
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {

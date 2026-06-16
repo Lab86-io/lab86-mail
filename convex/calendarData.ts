@@ -797,6 +797,9 @@ function yearMonth(ts: unknown) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+// Keep this extractor in sync with lib/calendar/corpus.ts. Convex functions are
+// bundled separately, so query helpers keep a pure local copy rather than
+// importing from app/runtime modules.
 function textFromUnknown(value: unknown): string[] {
   if (!value) return [];
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -805,7 +808,16 @@ function textFromUnknown(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(textFromUnknown);
   if (typeof value !== 'object') return [];
   const record = value as Record<string, unknown>;
-  return [record.name, record.email, record.title, record.phone, record.url, record.link, record.status]
+  return [
+    record.name,
+    record.email,
+    record.title,
+    record.phone,
+    record.url,
+    record.link,
+    record.status,
+    record.comment,
+  ]
     .filter((item): item is string | number | boolean =>
       ['string', 'number', 'boolean'].includes(typeof item),
     )

@@ -179,13 +179,13 @@ export const calendarCountEvents = defineTool({
 export const calendarEventDetail = defineTool({
   name: 'calendar_event_detail',
   description:
-    'Fetch one event from the local calendar corpus by account and provider event id. Use after calendar_search_events or calendar_list_events when details/provenance are needed.',
+    'Fetch one event from the local calendar corpus by account, calendar id, and provider event id. Use after calendar_search_events or calendar_list_events when details/provenance are needed.',
   category: 'calendar',
   mutating: false,
   input: z.object({
     account: z.string(),
     eventId: z.string(),
-    calendarId: z.string().optional(),
+    calendarId: z.string(),
   }),
   output: z.object({ event: z.any() }),
   async handler(args, ctx) {
