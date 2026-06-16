@@ -158,6 +158,7 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
             question: z.string().describe('The question to ask.'),
             options: z
               .array(z.object({ label: z.string(), description: z.string().optional() }))
+              .min(2)
               .max(4)
               .optional()
               .describe('Optional 2–4 quick choices. Omit entirely for a free-text question.'),

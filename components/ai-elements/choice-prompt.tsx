@@ -36,16 +36,17 @@ export function AskUserForm({
   answers?: AskAnswer[];
   onSubmit: (answers: AskAnswer[]) => void;
 }) {
-  // Per-question state: chosen option labels + a free-text entry.
-  const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []));
-  const [typed, setTyped] = useState<string[]>(() => questions.map(() => ''));
+  // Per-question state keyed by index, so it stays correct even if `questions`
+  // changes after mount (missing entries just default to empty).
+  const [picked, setPicked] = useState<Record<number, string[]>>({});
+  const [typed, setTyped] = useState<Record<number, string>>({});
 
   if (answered) {
     return (
       <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 text-[12px]">
         {(answers.length ? answers : questions.map((q) => ({ question: q.question, response: '—' }))).map(
-          (a) => (
-            <div key={a.question}>
+          (a, idx) => (
+            <div key={idx}>
               <div className="text-[var(--color-text-muted)]">{a.question}</div>
               <div className="mt-0.5 flex items-center gap-1 font-medium text-[var(--color-accent)]">
                 <Check className="size-3 shrink-0" />
@@ -69,21 +70,22 @@ export function AskUserForm({
 
   const toggle = (qi: number, label: string, multi: boolean) => {
     setPicked((prev) => {
-      const next = prev.map((arr) => [...arr]);
-      const arr = next[qi];
-      if (multi) {
-        next[qi] = arr.includes(label) ? arr.filter((x) => x !== label) : [...arr, label];
-      } else {
-        next[qi] = arr.includes(label) ? [] : [label];
-      }
-      return next;
+      const arr = prev[qi] ?? [];
+      const nextArr = multi
+        ? arr.includes(label)
+          ? arr.filter((x) => x !== label)
+          : [...arr, label]
+        : arr.includes(label)
+          ? []
+          : [label];
+      return { ...prev, [qi]: nextArr };
     });
   };
 
   return (
     <div className="space-y-3 rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] px-3 py-3">
       {questions.map((q, qi) => (
-        <div key={q.question} className="space-y-1.5">
+        <div key={qi} className="space-y-1.5">
           <div className="text-[12.5px] font-medium text-[var(--color-text)]">{q.question}</div>
           {q.options?.length ? (
             <div className="grid gap-1.5">
@@ -129,13 +131,7 @@ export function AskUserForm({
           <input
             type="text"
             value={typed[qi] ?? ''}
-            onChange={(event) =>
-              setTyped((prev) => {
-                const next = [...prev];
-                next[qi] = event.target.value;
-                return next;
-              })
-            }
+            onChange={(event) => setTyped((prev) => ({ ...prev, [qi]: event.target.value }))}
             placeholder={q.options?.length ? 'Or type your own answer…' : 'Type your answer…'}
             className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
           />
