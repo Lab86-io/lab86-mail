@@ -54,36 +54,54 @@ export interface UnsubscribeCalendarInput {
 export async function createCalendarEvent(input: CreateEventInput) {
   const account = await getAccount(input.userId, input.accountId);
   const accountId = account.accountId;
-  let calendarId = input.calendarId || (await getPrimaryCalendarId(input.userId, accountId));
-  // Agents sometimes pair one account with another account's calendar id —
-  // the provider answers with an opaque Bad Request. Verify ownership and
-  // fall back to the account's own primary calendar instead.
-  if (input.calendarId) {
+  // Resolve to a calendar this account can actually WRITE to. A requested
+  // calendar is honored only if it belongs to this account AND is not read-only
+  // — agents frequently pass a read-only/subscribed calendar id (holidays,
+  // shared, birthdays) from calendar_list_events, and the provider answers with
+  // an opaque "Bad Request". Otherwise fall back to the account's primary
+  // writable calendar. This is the "some calendars work, some don't" bug.
+  let calendarId = input.calendarId;
+  if (calendarId) {
     const calendars = await convexQuery<any[]>(calendarApi.listCalendars, { userId: input.userId });
-    const owned = (calendars || []).some(
-      (cal) => cal.accountId === accountId && cal.providerCalendarId === input.calendarId,
+    const target = (calendars || []).find(
+      (cal) => cal.accountId === accountId && cal.providerCalendarId === calendarId,
     );
-    if (!owned) {
+    if (!target || target.readOnly) {
       calendarId = await getPrimaryCalendarId(input.userId, accountId);
     }
+  } else {
+    calendarId = await getPrimaryCalendarId(input.userId, accountId);
   }
-  const response = await requireNylas().events.create({
-    identifier: account.grantId,
-    requestBody: {
-      title: input.title,
-      description: input.description,
-      location: input.location,
-      busy: input.busy ?? true,
-      when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone),
-      participants: input.participants?.map((p) => ({ email: p.email, name: p.name })),
-      recurrence: input.recurrence,
-    } as any,
-    queryParams: {
-      calendarId,
-      notifyParticipants: input.notifyParticipants ?? Boolean(input.participants?.length),
-    } as any,
-  });
-  const created = response.data as any;
+
+  let created: any;
+  try {
+    const response = await requireNylas().events.create({
+      identifier: account.grantId,
+      requestBody: {
+        title: input.title,
+        description: input.description,
+        location: input.location,
+        busy: input.busy ?? true,
+        when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone),
+        participants: input.participants?.map((p) => ({ email: p.email, name: p.name })),
+        recurrence: input.recurrence,
+      } as any,
+      queryParams: {
+        calendarId,
+        notifyParticipants: input.notifyParticipants ?? Boolean(input.participants?.length),
+      } as any,
+    });
+    created = response.data as any;
+  } catch (err: any) {
+    // Surface the real provider error in logs (the tool layer otherwise hides
+    // it) and return an actionable message instead of a bare "Bad Request".
+    console.error(
+      `[calendar] create failed account=${accountId} provider=${account.provider} calendar=${calendarId}: ${err?.message || err}`,
+    );
+    throw new Error(
+      `Couldn't create the event on ${account.email || accountId} (${err?.message || 'provider error'}). The calendar may be read-only, or the account may need reconnecting.`,
+    );
+  }
   const row = toEventInput(created, calendarId);
   if (row) await upsertMirror(account, [row]);
 
