@@ -61,6 +61,12 @@ jobs:
           changed-file-no-decrease: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install LCOV HTML report tools
+        if: github.event_name == 'pull_request'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lcov
+
       - name: HTML coverage report
         if: github.event_name == 'pull_request'
         uses: zgosalvez/github-actions-report-lcov@v4
