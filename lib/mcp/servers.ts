@@ -3,8 +3,10 @@
 // the documented defaults for each vendor's hosted MCP server; sync is
 // best-effort and skips any tool a server doesn't actually expose, so a vendor
 // renaming a tool degrades gracefully instead of crashing the run.
+import type { McpAuthMode } from './auth';
 
-export type McpServerId = 'github' | 'jira' | 'slack';
+export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack';
+export type McpServerTransport = 'mcp' | 'bitbucket-rest';
 
 export interface McpSyncQuery {
   tool: string;
@@ -15,8 +17,10 @@ export interface McpSyncQuery {
 export interface McpServerDef {
   id: McpServerId;
   label: string;
-  // Hosted Streamable-HTTP MCP endpoints (confirmed mid-2026). All three accept
-  // a pre-obtained bearer token / PAT in the Authorization header.
+  transport: McpServerTransport;
+  authMode: McpAuthMode;
+  // Hosted Streamable-HTTP MCP endpoints for MCP transports; REST API base URL
+  // for direct API transports.
   defaultUrl: string;
   tokenLabel: string;
   tokenHelp: string;
@@ -28,6 +32,8 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
   github: {
     id: 'github',
     label: 'GitHub',
+    transport: 'mcp',
+    authMode: 'bearer',
     defaultUrl: 'https://api.githubcopilot.com/mcp/readonly',
     tokenLabel: 'GitHub personal access token',
     tokenHelp:
@@ -47,13 +53,27 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
       },
     ],
   },
+  bitbucket: {
+    id: 'bitbucket',
+    label: 'Bitbucket',
+    transport: 'bitbucket-rest',
+    authMode: 'basic-or-bearer',
+    defaultUrl: 'https://api.bitbucket.org/2.0',
+    tokenLabel: 'Bitbucket token',
+    tokenHelp:
+      'Paste email:api_token from your Atlassian account, or a Bitbucket access token. Needs repository and pull request read access.',
+    scopes: ['repository:read', 'pullrequest:read'],
+    syncQueries: [],
+  },
   jira: {
     id: 'jira',
-    label: 'Jira',
+    label: 'Atlassian / Jira',
+    transport: 'mcp',
+    authMode: 'basic-or-bearer',
     defaultUrl: 'https://mcp.atlassian.com/v1/mcp',
-    tokenLabel: 'Atlassian API token',
+    tokenLabel: 'Atlassian token',
     tokenHelp:
-      'Use a Rovo-MCP-scoped API token (your org admin must enable headless MCP access). Respects your existing Jira permissions.',
+      'Paste email:api_token for an Atlassian API token, or a Rovo service API key. Your org admin may need to enable headless MCP access.',
     scopes: ['read:jira-work'],
     syncQueries: [
       {
@@ -69,6 +89,8 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
   slack: {
     id: 'slack',
     label: 'Slack',
+    transport: 'mcp',
+    authMode: 'bearer',
     defaultUrl: 'https://mcp.slack.com/mcp',
     tokenLabel: 'Slack token',
     tokenHelp:

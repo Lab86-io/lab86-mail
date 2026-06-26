@@ -3,9 +3,14 @@ import { v } from 'convex/values';
 import { internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
-const serverValidator = v.union(v.literal('github'), v.literal('jira'), v.literal('slack'));
+const serverValidator = v.union(
+  v.literal('github'),
+  v.literal('bitbucket'),
+  v.literal('jira'),
+  v.literal('slack'),
+);
 
-// A "the work is done" state across GitHub/Jira/Slack vocabularies.
+// A "the work is done" state across connected-tool vocabularies.
 function isTerminalState(state) {
   if (!state) return false;
   return /^(closed|merged|done|resolved|completed|complete|cancelled|canceled)$/i.test(String(state).trim());

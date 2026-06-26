@@ -1,4 +1,5 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections } from './connections';
 import { getServerDef, type NormalizedMcpItem, normalizeItems } from './servers';
@@ -37,9 +38,42 @@ export async function syncConnection(
     status: 'syncing',
   });
 
+  if (def.transport === 'bitbucket-rest') {
+    try {
+      const result = await loadBitbucketItems(row.serverUrl, token);
+      if (result.items.length) {
+        await convexMutation(mcpApi.upsertItems, {
+          userId,
+          connectionId,
+          server: row.server,
+          items: result.items,
+        });
+      }
+      await convexMutation(mcpApi.setSyncState, {
+        userId,
+        connectionId,
+        server: row.server,
+        status: 'ready',
+        lastSyncedAt: Date.now(),
+        itemCount: result.items.length,
+      });
+      return { ok: true, count: result.items.length };
+    } catch (err) {
+      const error = classifyError(err);
+      await convexMutation(mcpApi.setSyncState, {
+        userId,
+        connectionId,
+        server: row.server,
+        status: 'error',
+        error,
+      });
+      return { ok: false, count: 0, error };
+    }
+  }
+
   let handle: McpClientHandle;
   try {
-    handle = await connectMcp(row.serverUrl, token);
+    handle = await connectMcp(row.serverUrl, token, def.authMode);
   } catch (err) {
     const error = classifyError(err);
     await convexMutation(mcpApi.setSyncState, {
@@ -54,23 +88,51 @@ export async function syncConnection(
 
   const items: NormalizedMcpItem[] = [];
   const seen = new Set<string>();
+  let supportedQueries = 0;
+  let successfulQueries = 0;
+  const queryErrors: string[] = [];
   try {
     for (const query of def.syncQueries) {
       // Skip tools the server doesn't actually expose (graceful vendor drift).
       if (handle.toolNames.size && !handle.toolNames.has(query.tool)) continue;
+      supportedQueries += 1;
       try {
         const result = await callMcpTool(handle, query.tool, query.args);
+        successfulQueries += 1;
         for (const item of normalizeItems(query, result)) {
           if (seen.has(item.externalId)) continue;
           seen.add(item.externalId);
           items.push(item);
         }
-      } catch {
-        // One failing query shouldn't sink the whole connection's sync.
+      } catch (err) {
+        queryErrors.push(classifyError(err));
       }
     }
   } finally {
     await handle.close();
+  }
+
+  if (def.syncQueries.length && supportedQueries === 0) {
+    const error = `remote server did not expose supported tools: ${def.syncQueries.map((q) => q.tool).join(', ')}`;
+    await convexMutation(mcpApi.setSyncState, {
+      userId,
+      connectionId,
+      server: row.server,
+      status: 'error',
+      error,
+    });
+    return { ok: false, count: 0, error };
+  }
+  if (def.syncQueries.length && successfulQueries === 0) {
+    const error = queryErrors[0] || 'remote server rejected every supported sync query';
+    await convexMutation(mcpApi.setSyncState, {
+      userId,
+      connectionId,
+      server: row.server,
+      status: 'error',
+      error,
+    });
+    return { ok: false, count: 0, error };
   }
 
   if (items.length) {

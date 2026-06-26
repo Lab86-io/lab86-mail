@@ -45,10 +45,8 @@ export async function POST(req: NextRequest) {
       token,
       displayName: body.displayName,
     });
-    // Kick an initial sync so the connection has data right away. Railway runs a
-    // persistent server, so this background promise survives the response.
-    void syncConnection(user.userId, connectionId).catch(() => undefined);
-    return NextResponse.json({ ok: true, connectionId });
+    const validation = await syncConnection(user.userId, connectionId);
+    return NextResponse.json({ ok: true, connectionId, validation });
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: (err as { message?: string })?.message || 'Could not connect.' },

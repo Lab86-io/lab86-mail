@@ -466,7 +466,7 @@ function SyncStatusLine({ sync, connected }: { sync?: SyncState; connected: bool
 // Connections (connected tools)
 // ---------------------------------------------------------------------------
 
-type McpServer = 'github' | 'jira' | 'slack';
+type McpServer = 'github' | 'bitbucket' | 'jira' | 'slack';
 
 interface McpConnectionRow {
   connectionId: string;
@@ -490,6 +490,7 @@ interface McpServerInfo {
 
 function connectionServerIcon(server: string, className: string) {
   if (server === 'github') return <GitBranch className={className} />;
+  if (server === 'bitbucket') return <GitBranch className={className} />;
   if (server === 'jira') return <SquareKanban className={className} />;
   if (server === 'slack') return <Hash className={className} />;
   return <Plug className={className} />;
@@ -526,8 +527,12 @@ function ConnectionsSection() {
       token: string;
       displayName?: string;
     }) => postJson('/api/mcp/connect', { server, token, displayName }),
-    onSuccess: (_result, variables) => {
-      toast.success('Connected');
+    onSuccess: (result, variables) => {
+      if (result?.validation?.ok === false) {
+        toast.error(`Saved, but validation failed: ${result.validation.error || 'check the token'}`);
+      } else {
+        toast.success('Connected');
+      }
       setTokenInputs((prev) => ({ ...prev, [variables.server]: '' }));
       setNameInputs((prev) => ({ ...prev, [variables.server]: '' }));
       qc.invalidateQueries({ queryKey: ['mcp-status'] });
@@ -537,8 +542,12 @@ function ConnectionsSection() {
 
   const resync = useMutation({
     mutationFn: async (connectionId: string) => postJson('/api/mcp/resync', { connectionId }),
-    onSuccess: () => {
-      toast.success('Resync started');
+    onSuccess: (result) => {
+      if (result?.result?.ok === false) {
+        toast.error(result.result.error || 'Resync failed');
+      } else {
+        toast.success('Resynced');
+      }
       qc.invalidateQueries({ queryKey: ['mcp-status'] });
     },
     onError: (err: any) => toast.error(err?.message || 'Could not start resync'),
@@ -570,7 +579,7 @@ function ConnectionsSection() {
       <SectionHeading
         title="Connections"
         badge={<BetaBadge />}
-        blurb="Bring GitHub, Jira, and Slack into your brief and search. Beta — connecting may not surface items yet, and Slack and Jira can require admin setup. Start with GitHub."
+        blurb="Bring GitHub, Bitbucket, Atlassian/Jira, and Slack into your brief and search. Beta — Slack and Atlassian MCP can require admin setup."
       />
       <div className="space-y-2.5">
         {connections.map((connection) => (

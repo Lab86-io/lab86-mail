@@ -1123,7 +1123,7 @@ function calendarContextLine(event: DailyReportCalendarItem) {
   return `${event.title} at ${start}${event.location ? `, ${event.location}` : ''}`;
 }
 
-// Items from the user's brief-enabled MCP connections (GitHub/Jira/Slack).
+// Items from the user's brief-enabled connected-tool connections.
 // Best-effort: a connector hiccup must never break the brief.
 async function loadMcpContext(userId: string | null | undefined): Promise<DailyReportMcpItem[]> {
   if (!userId) return [];

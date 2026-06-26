@@ -380,7 +380,7 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
     services: [
       ...extras.services,
       ...[...new Set((report.sections.mcp ?? []).map((m) => m.server))].map(
-        (s) => ({ github: 'GitHub', jira: 'Jira', slack: 'Slack' })[s] || s,
+        (s) => ({ github: 'GitHub', bitbucket: 'Bitbucket', jira: 'Atlassian/Jira', slack: 'Slack' })[s] || s,
       ),
     ],
     // The user's own recent outbound prose — match this voice in any draft.
@@ -389,7 +389,7 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
     threads: extras.digests,
     tasks,
     calendar,
-    // Items from connected tools (GitHub/Jira/Slack) the user enabled for the
+    // Items from connected tools the user enabled for the
     // brief: open issues, PRs awaiting review, assigned tickets, mentions.
     mcp: (report.sections.mcp ?? []).slice(0, 20),
   };
