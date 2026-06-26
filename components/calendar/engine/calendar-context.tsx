@@ -19,7 +19,7 @@ export interface WritableCalendarOption {
 export interface CalendarPersistence {
   onEventAdded?: (event: IEvent) => void | Promise<void>;
   onEventUpdated?: (event: IEvent, previous?: IEvent) => void | Promise<void>;
-  onEventRemoved?: (event: IEvent) => void | Promise<void>;
+  onEventRemoved?: (event: IEvent, options?: { deleteSeries?: boolean }) => void | Promise<void>;
 }
 
 interface ICalendarContext {
@@ -45,7 +45,7 @@ interface ICalendarContext {
   writableCalendars: WritableCalendarOption[];
   addEvent: (event: IEvent) => void;
   updateEvent: (event: IEvent) => void;
-  removeEvent: (eventId: string) => void;
+  removeEvent: (eventId: string, options?: { deleteSeries?: boolean }) => void;
   clearFilter: () => void;
 }
 
@@ -209,11 +209,20 @@ export function CalendarProvider({
     void persistence?.onEventUpdated?.(updated, previous);
   };
 
-  const removeEvent = (eventId: string) => {
+  const removeEvent = (eventId: string, options?: { deleteSeries?: boolean }) => {
     const removed = allEvents.find((e) => e.id === eventId);
-    setAllEvents((prev) => prev.filter((e) => e.id !== eventId));
-    setFilteredEvents((prev) => prev.filter((e) => e.id !== eventId));
-    if (removed) void persistence?.onEventRemoved?.(removed);
+    if (options?.deleteSeries && removed) {
+      // Optimistically drop EVERY occurrence of the series, not just the clicked
+      // instance, so the grid matches what the backend will do.
+      const seriesKey = removed.masterEventId || removed.id;
+      const sameSeries = (e: IEvent) => (e.masterEventId || e.id) === seriesKey;
+      setAllEvents((prev) => prev.filter((e) => !sameSeries(e)));
+      setFilteredEvents((prev) => prev.filter((e) => !sameSeries(e)));
+    } else {
+      setAllEvents((prev) => prev.filter((e) => e.id !== eventId));
+      setFilteredEvents((prev) => prev.filter((e) => e.id !== eventId));
+    }
+    if (removed) void persistence?.onEventRemoved?.(removed, options);
   };
 
   const clearFilter = () => {
