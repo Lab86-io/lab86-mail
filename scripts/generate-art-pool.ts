@@ -14,8 +14,13 @@
 
 import { writeFileSync } from 'node:fs';
 
-const AIC_UA = 'lab86-mail (jjalangtry@gmail.com)';
+// Contact in the User-Agent is sourced from env so it can be rotated without a
+// code change; falls back to a project alias, never a personal address.
+const AIC_CONTACT = process.env.ART_POOL_CONTACT || 'art-pool@lab86.io';
+const AIC_UA = `lab86-mail (${AIC_CONTACT})`;
 const PER_SOURCE = 36;
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface ArtPiece {
   source: 'aic' | 'met' | 'cleveland';
@@ -60,23 +65,35 @@ async function fetchAic(): Promise<ArtPiece[]> {
 async function fetchMet(): Promise<ArtPiece[]> {
   const searchUrl =
     'https://collectionapi.metmuseum.org/public/collection/v1/search' + '?hasImages=true&q=landscape';
-  const ids: number[] = ((await (await fetch(searchUrl)).json()) as any).objectIDs ?? [];
+  const searchRes = await fetch(searchUrl);
+  if (!searchRes.ok) return [];
+  const ids: number[] = ((await searchRes.json()) as any).objectIDs ?? [];
   const out: ArtPiece[] = [];
   for (const id of ids) {
     if (out.length >= PER_SOURCE) break;
     try {
-      const obj: any = await (
-        await fetch(`https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`)
-      ).json();
-      if (!obj.isPublicDomain || !obj.primaryImageSmall) continue;
+      const res = await fetch(`https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`);
+      // The Met throttles aggressive bursts (Incapsula) with 403/429; back off
+      // and skip rather than JSON-parsing an error page into a crash.
+      if (!res.ok) {
+        await delay(500);
+        continue;
+      }
+      const obj: any = await res.json();
+      const image = obj.primaryImage || obj.primaryImageSmall;
+      if (!obj.isPublicDomain || !image) continue;
       out.push({
         source: 'met',
         sourceName: 'The Met',
         title: clean(obj.title) || 'Untitled',
         artist: clean(obj.artistDisplayName),
         date: clean(obj.objectDate),
-        imageUrl: obj.primaryImageSmall,
+        // Prefer the full-resolution image for the masthead; fall back to the
+        // thumbnail only when that's all the object has.
+        imageUrl: image,
       });
+      // Polite spacing between sequential object fetches.
+      await delay(60);
     } catch {
       // skip transient object fetch failures
     }

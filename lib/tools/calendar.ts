@@ -370,16 +370,28 @@ async function resolveEventsByTitle(
     calendarId?: string;
     from: number;
     to: number;
+    // Instance-level ops (the default) keep recurring occurrences separate so
+    // the caller disambiguates; only a series-level op collapses them.
+    collapseSeries: boolean;
   },
 ): Promise<ResolvedEventTarget[]> {
   const needle = opts.title.trim().toLowerCase();
   if (!needle) return [];
+  const LIMIT = 2000;
   const rows = await convexQuery<any[]>(calendarApi.listEvents, {
     userId,
     startAt: opts.from,
     endAt: opts.to,
-    limit: 2000,
+    limit: LIMIT,
   });
+  // A capped read is not exhaustive — resolving a destructive update/delete off
+  // a truncated window could miss the real target or hide an ambiguity. Fail
+  // closed and make the caller narrow the date range.
+  if ((rows?.length ?? 0) >= LIMIT) {
+    throw new Error(
+      'Too many events in that date range to resolve the target safely — narrow fromIso/toIso (for example to the specific day or week) and retry.',
+    );
+  }
   const account = opts.account ? await requireConnectedAccount(userId, opts.account) : null;
   const matches: ResolvedEventTarget[] = [];
   for (const row of rows || []) {
@@ -399,13 +411,17 @@ async function resolveEventsByTitle(
       startAt: row.startAt,
     });
   }
-  // Soonest-first, then collapse recurring instances of one series to a single
-  // representative (its earliest occurrence) so they don't read as ambiguous.
+  // Soonest-first. Collapse recurring instances of one series to a single
+  // representative only for series-level operations; instance-level ops keep
+  // each occurrence so a recurring match disambiguates instead of silently
+  // hitting the earliest one.
   matches.sort((a, b) => (a.startAt || 0) - (b.startAt || 0));
   const seen = new Set<string>();
   const distinct: ResolvedEventTarget[] = [];
   for (const m of matches) {
-    const key = `${m.accountId}:${m.calendarId}:${m.masterEventId || m.eventId}`;
+    const key = opts.collapseSeries
+      ? `${m.accountId}:${m.calendarId}:${m.masterEventId || m.eventId}`
+      : `${m.accountId}:${m.calendarId}:${m.eventId}`;
     if (seen.has(key)) continue;
     seen.add(key);
     distinct.push(m);
@@ -422,6 +438,9 @@ async function resolveSingleTarget(
   titleMatch: 'exact' | 'contains',
   parseIso: (value: string, field: string) => number,
   window: { fromIso?: string; toIso?: string },
+  // Only a deliberate series operation (e.g. deleteSeries) may collapse a
+  // recurring match; instance ops disambiguate among occurrences instead.
+  seriesOperation: boolean,
 ): Promise<
   | { kind: 'target'; target: ResolvedEventTarget; resolvedBy: 'id' | 'title' }
   | { kind: 'disambiguate'; candidates: ResolvedEventTarget[] }
@@ -455,6 +474,7 @@ async function resolveSingleTarget(
     calendarId: args.calendarId,
     from,
     to,
+    collapseSeries: seriesOperation,
   });
   if (matches.length === 0) {
     throw new Error(
@@ -506,6 +526,9 @@ export const calendarUpdateEvent = defineTool({
       args.titleMatch,
       parseIso,
       { fromIso: args.fromIso, toIso: args.toIso },
+      // Title-based update targets a single occurrence; whole-series edits pass
+      // the master eventId directly (which skips title resolution).
+      false,
     );
     if (resolved.kind === 'disambiguate') {
       return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
@@ -566,6 +589,8 @@ export const calendarDeleteEvent = defineTool({
       args.titleMatch,
       parseIso,
       { fromIso: args.fromIso, toIso: args.toIso },
+      // Collapsing occurrences is only safe when the whole series is going.
+      args.deleteSeries,
     );
     if (resolved.kind === 'disambiguate') {
       return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
