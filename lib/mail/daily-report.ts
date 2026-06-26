@@ -854,7 +854,8 @@ async function composeReport(input: {
     const dismissal = threadDismissals.get(dailyReportThreadKey(item.account, item.threadId));
     if (!dismissal) return false;
     const current = item.receivedAt ?? 0;
-    const clearedThrough = Math.max(dismissal.receivedAt ?? 0, dismissal.dismissedAt);
+    const clearedThrough =
+      typeof dismissal.receivedAt === 'number' ? dismissal.receivedAt : dismissal.dismissedAt;
     return current <= clearedThrough;
   };
   const toItem = (insight: ThreadInsight): DailyReportItem => {

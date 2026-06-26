@@ -133,7 +133,7 @@ function renderNeeds(items: Array<DailyReportItem & { laneLabel: string }>) {
     .map((item) => {
       const person = item.people?.[0] || 'Mail';
       const title = [person, item.subject].filter(Boolean).join(' - ');
-      return `<article class="need" data-thread-key="${escapeAttr(reportThreadKey(item.account, item.threadId))}">
+      return `<article class="need" data-thread-key="${escapeAttr(reportThreadKey(item.account, item.threadId))}" data-received-at="${escapeAttr(item.receivedAt ?? '')}">
 	<div>
 	<div class="tag">${escapeHtml(item.laneLabel)}</div>
 	<h3>${escapeHtml(title)}</h3>

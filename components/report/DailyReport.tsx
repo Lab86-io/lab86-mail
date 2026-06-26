@@ -101,6 +101,16 @@ interface ReportSummary {
   title?: string;
 }
 
+interface DailyReportThreadDismissalRecord {
+  account: string;
+  threadId: string;
+  subject?: string;
+  receivedAt?: number | null;
+  dismissedAt: number;
+  action: 'dismissed' | 'resolved';
+  threadKey?: string;
+}
+
 // Sections, in reading order. The report leads with what the user owes other
 // people, then who's new, then anything time-boxed, then quieter context.
 const SECTION_LABELS: Array<[string, string, number, boolean]> = [
@@ -179,6 +189,33 @@ function dailyReportItemThreadKey(item: DailyReportItem): string {
   return dailyReportThreadKey(item.account, item.threadId);
 }
 
+function dailyReportThreadDismissalForItem(
+  item: DailyReportItem,
+  action: DailyReportThreadDismissalRecord['action'],
+): DailyReportThreadDismissalRecord {
+  return {
+    account: item.account,
+    threadId: item.threadId,
+    subject: item.subject,
+    receivedAt: item.receivedAt ?? null,
+    dismissedAt: Date.now(),
+    action,
+  };
+}
+
+function threadDismissalCutoff(dismissal: DailyReportThreadDismissalRecord): number {
+  return typeof dismissal.receivedAt === 'number' ? dismissal.receivedAt : dismissal.dismissedAt;
+}
+
+function isHiddenByThreadDismissal(
+  item: DailyReportItem,
+  dismissals: Map<string, DailyReportThreadDismissalRecord>,
+): boolean {
+  const dismissal = dismissals.get(dailyReportItemThreadKey(item));
+  if (!dismissal) return false;
+  return (item.receivedAt ?? 0) <= threadDismissalCutoff(dismissal);
+}
+
 // Gmail-Nudge-style framing: "Received 4 days ago — reply?".
 function elapsedFraming(item: DailyReportItem): string {
   if (!item.receivedAt) return '';
@@ -219,18 +256,12 @@ const REPORT_ARTIFACT_RUNTIME_JS = `<script id="lab86-report-runtime-js">
 if(window.__lab86ReportRuntimeInstalled)return;
 window.__lab86ReportRuntimeInstalled=true;
 var hiddenCardIds={};
-var hiddenThreadKeys={};
+var hiddenThreadDismissals={};
 function hideDismissedTasks(ids){
 if(!Array.isArray(ids))return;
 for(var i=0;i<ids.length;i++){hiddenCardIds[String(ids[i])]=true;}
 var rows=document.querySelectorAll('[data-card-id]');
 for(var j=0;j<rows.length;j++){var id=rows[j].getAttribute('data-card-id');if(id&&hiddenCardIds[id])rows[j].remove();}
-}
-function hideDismissedThreads(keys){
-if(!Array.isArray(keys))return;
-for(var i=0;i<keys.length;i++){hiddenThreadKeys[String(keys[i])]=true;}
-var rows=document.querySelectorAll('[data-thread-key]');
-for(var j=0;j<rows.length;j++){var key=rows[j].getAttribute('data-thread-key');if(key&&hiddenThreadKeys[key])rows[j].remove();}
 }
 function threadKeyFromPayload(payload){
 if(!payload)return null;
@@ -238,11 +269,49 @@ if(payload.threadKey)return String(payload.threadKey);
 if(payload.account&&payload.threadId)return JSON.stringify([String(payload.account),String(payload.threadId)]);
 return null;
 }
+function threadCutoff(record){
+if(!record)return null;
+if(typeof record.receivedAt==='number')return record.receivedAt;
+if(typeof record.dismissedAt==='number')return record.dismissedAt;
+return null;
+}
+function rowReceivedAt(row){
+var raw=row.getAttribute('data-received-at');
+if(raw===null||raw==='')return null;
+var value=Number(raw);
+return isFinite(value)?value:null;
+}
+function applyThreadDismissals(){
+var rows=document.querySelectorAll('[data-thread-key]');
+for(var j=0;j<rows.length;j++){
+var key=rows[j].getAttribute('data-thread-key');
+var record=key&&hiddenThreadDismissals[key];
+if(!record)continue;
+var cutoff=threadCutoff(record);
+var received=rowReceivedAt(rows[j]);
+if(cutoff===null||received===null||received<=cutoff)rows[j].remove();
+}
+}
+function recordThreadDismissals(records){
+if(!Array.isArray(records))return;
+for(var i=0;i<records.length;i++){
+var record=records[i]||{};
+var key=threadKeyFromPayload(record);
+if(key)hiddenThreadDismissals[key]=record;
+}
+applyThreadDismissals();
+}
+function hideDismissedThreads(keys){
+if(!Array.isArray(keys))return;
+var records=[];
+for(var i=0;i<keys.length;i++){records.push({threadKey:String(keys[i])});}
+recordThreadDismissals(records);
+}
 window.addEventListener('message',function(e){
 var d=e.data;
 if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.cardIds||[]);
-if(d&&d.source==='lab86-host'&&d.type==='dismissed_threads')hideDismissedThreads(d.threadKeys||[]);
-if(d&&d.source==='lab86-host'&&d.ok&&(d.action==='resolve_thread'||d.action==='dismiss_thread')){var key=threadKeyFromPayload(d.payload);if(key)hideDismissedThreads([key]);}
+if(d&&d.source==='lab86-host'&&d.type==='dismissed_threads'){if(Array.isArray(d.dismissals)){recordThreadDismissals(d.dismissals);}else{hideDismissedThreads(d.threadKeys||[]);}}
+if(d&&d.source==='lab86-host'&&d.ok&&(d.action==='resolve_thread'||d.action==='dismiss_thread')){var payload=d.payload||{};var key=threadKeyFromPayload(payload);if(key)recordThreadDismissals([{threadKey:key,account:payload.account,threadId:payload.threadId,subject:payload.subject,receivedAt:typeof payload.receivedAt==='number'?payload.receivedAt:null,dismissedAt:Date.now(),action:d.action==='resolve_thread'?'resolved':'dismissed'}]);}
 });
 })();
 </script>`;
@@ -266,12 +335,12 @@ function withReportArtifactSafetyCss(html: string): string {
 function ReportArtifact({
   html,
   dismissedTaskIds,
-  dismissedThreadKeys,
+  dismissedThreadRecords,
   onChanged,
 }: {
   html: string;
   dismissedTaskIds: string[];
-  dismissedThreadKeys: string[];
+  dismissedThreadRecords: DailyReportThreadDismissalRecord[];
   onChanged?: () => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -322,10 +391,10 @@ function ReportArtifact({
     const win = frameRef.current?.contentWindow;
     if (!win) return;
     win.postMessage(
-      { source: 'lab86-host', type: 'dismissed_threads', threadKeys: dismissedThreadKeys },
+      { source: 'lab86-host', type: 'dismissed_threads', dismissals: dismissedThreadRecords },
       '*',
     );
-  }, [dismissedThreadKeys]);
+  }, [dismissedThreadRecords]);
 
   // Re-post on any customization change. The accent/background slices aren't
   // referenced directly (their resolved colors are read from computed CSS), but
@@ -395,7 +464,7 @@ function ReportArtifact({
                 completed,
               });
               if (completed) {
-                await callTool('dismiss_daily_report_task', { cardId, title });
+                await callTool('dismiss_daily_report_task', { cardId, title }).catch(() => undefined);
               }
             }
             onChanged?.();
@@ -555,7 +624,9 @@ export function DailyReport() {
   // never shows.
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
   const [hiddenTaskIds, setHiddenTaskIds] = useState<Set<string>>(() => new Set());
-  const [hiddenThreadKeys, setHiddenThreadKeys] = useState<Set<string>>(() => new Set());
+  const [hiddenThreadDismissals, setHiddenThreadDismissals] = useState<
+    Map<string, DailyReportThreadDismissalRecord>
+  >(() => new Map());
 
   const historyQuery = useQuery({
     queryKey: ['daily-report', 'history'],
@@ -590,7 +661,8 @@ export function DailyReport() {
   });
   const threadDismissalsQuery = useQuery({
     queryKey: ['daily-report', 'thread-dismissals'],
-    queryFn: async () => callTool<{ threadKeys: string[] }>('list_daily_report_thread_dismissals', {}),
+    queryFn: async () =>
+      callTool<{ dismissals: DailyReportThreadDismissalRecord[] }>('list_daily_report_thread_dismissals', {}),
     staleTime: 30_000,
   });
   const report = reportQuery.data?.report || null;
@@ -609,23 +681,34 @@ export function DailyReport() {
     return ids;
   }, [persistedHiddenTaskIds, hiddenTaskIds]);
   const dismissedTaskIds = useMemo(() => [...combinedHiddenTaskIds], [combinedHiddenTaskIds]);
-  const persistedHiddenThreadKeys = useMemo(
-    () => new Set(threadDismissalsQuery.data?.threadKeys || []),
-    [threadDismissalsQuery.data?.threadKeys],
+  const persistedHiddenThreadDismissals = useMemo(() => {
+    const dismissals = new Map<string, DailyReportThreadDismissalRecord>();
+    for (const dismissal of threadDismissalsQuery.data?.dismissals || []) {
+      if (!dismissal.account || !dismissal.threadId) continue;
+      dismissals.set(dailyReportThreadKey(dismissal.account, dismissal.threadId), dismissal);
+    }
+    return dismissals;
+  }, [threadDismissalsQuery.data?.dismissals]);
+  const combinedHiddenThreadDismissals = useMemo(() => {
+    const dismissals = new Map(persistedHiddenThreadDismissals);
+    for (const [key, dismissal] of hiddenThreadDismissals) dismissals.set(key, dismissal);
+    return dismissals;
+  }, [persistedHiddenThreadDismissals, hiddenThreadDismissals]);
+  const dismissedThreadRecords = useMemo(
+    () =>
+      [...combinedHiddenThreadDismissals.entries()].map(([threadKey, dismissal]) => ({
+        ...dismissal,
+        threadKey,
+      })),
+    [combinedHiddenThreadDismissals],
   );
-  const combinedHiddenThreadKeys = useMemo(() => {
-    const keys = new Set(persistedHiddenThreadKeys);
-    for (const key of hiddenThreadKeys) keys.add(key);
-    return keys;
-  }, [persistedHiddenThreadKeys, hiddenThreadKeys]);
-  const dismissedThreadKeys = useMemo(() => [...combinedHiddenThreadKeys], [combinedHiddenThreadKeys]);
   const visibleReportTasks = report
     ? asTasks(report.sections.tasks).filter(
         (task) => !task.completedAt && !combinedHiddenTaskIds.has(task.cardId),
       )
     : [];
   const visibleReportItems = (items: DailyReportItem[]) =>
-    items.filter((item) => !combinedHiddenThreadKeys.has(dailyReportItemThreadKey(item)));
+    items.filter((item) => !isHiddenByThreadDismissal(item, combinedHiddenThreadDismissals));
 
   // Stop the "generating" state once an edition newer than the click has settled.
   useEffect(() => {
@@ -681,7 +764,9 @@ export function DailyReport() {
   const completeTask = useMutation({
     mutationFn: async (task: DailyReportTaskItem) => {
       await callTool('tasks_update_card', { cardId: task.cardId, completed: true });
-      await callTool('dismiss_daily_report_task', { cardId: task.cardId, title: task.title });
+      await callTool('dismiss_daily_report_task', { cardId: task.cardId, title: task.title }).catch(
+        () => undefined,
+      );
     },
     onMutate: (task) => {
       const previous = hiddenTaskIds;
@@ -720,12 +805,16 @@ export function DailyReport() {
       if (item.trackedThreadId) await callTool('resolve_tracked_thread', { id: item.trackedThreadId });
     },
     onMutate: (item) => {
-      const previous = hiddenThreadKeys;
-      setHiddenThreadKeys((current) => new Set(current).add(dailyReportItemThreadKey(item)));
+      const previous = hiddenThreadDismissals;
+      setHiddenThreadDismissals((current) => {
+        const next = new Map(current);
+        next.set(dailyReportItemThreadKey(item), dailyReportThreadDismissalForItem(item, 'resolved'));
+        return next;
+      });
       return { previous };
     },
     onError: (_error, _item, context) => {
-      if (context?.previous) setHiddenThreadKeys(context.previous);
+      if (context?.previous) setHiddenThreadDismissals(context.previous);
     },
     onSuccess: invalidate,
   });
@@ -740,12 +829,16 @@ export function DailyReport() {
         action: 'dismissed',
       }),
     onMutate: (item) => {
-      const previous = hiddenThreadKeys;
-      setHiddenThreadKeys((current) => new Set(current).add(dailyReportItemThreadKey(item)));
+      const previous = hiddenThreadDismissals;
+      setHiddenThreadDismissals((current) => {
+        const next = new Map(current);
+        next.set(dailyReportItemThreadKey(item), dailyReportThreadDismissalForItem(item, 'dismissed'));
+        return next;
+      });
       return { previous };
     },
     onError: (_error, _item, context) => {
-      if (context?.previous) setHiddenThreadKeys(context.previous);
+      if (context?.previous) setHiddenThreadDismissals(context.previous);
     },
     onSuccess: invalidate,
   });
@@ -938,7 +1031,7 @@ export function DailyReport() {
           <ReportArtifact
             html={report.html}
             dismissedTaskIds={dismissedTaskIds}
-            dismissedThreadKeys={dismissedThreadKeys}
+            dismissedThreadRecords={dismissedThreadRecords}
             onChanged={invalidate}
           />
         ) : (
