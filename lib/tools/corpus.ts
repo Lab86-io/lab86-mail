@@ -55,7 +55,7 @@ export const corpusSearch = defineTool({
       ),
       // Linked-tool items run through their own search index; gated server-side
       // to connections the user enabled for search.
-      includeConnectedTools
+      includeConnectedTools && ctx.userId
         ? convexQuery<any[]>((api as any).mcp.searchItems, {
             userId: ctx.userId,
             query,

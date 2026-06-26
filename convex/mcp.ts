@@ -162,6 +162,15 @@ export const disconnectConnection = mutation({
     await drop('mcpCredentials');
     await drop('mcpItems');
     await drop('mcpSyncStates');
+    // mcpTaskLinks has no by_user_connection index — sweep by user and filter so
+    // links don't outlive the connection they point at.
+    const links = await ctx.db
+      .query('mcpTaskLinks')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    for (const link of links) {
+      if (link.connectionId === args.connectionId) await ctx.db.delete(link._id);
+    }
     return { ok: true };
   },
 });
@@ -274,10 +283,15 @@ export const upsertItems = mutation({
           )
           .collect();
         for (const link of links) {
+          // Defense-in-depth: only ever touch a card that belongs to the same
+          // user as this sync run (link AND card must match).
+          if (link.userId !== args.userId) continue;
           const cardId = ctx.db.normalizeId('cards', link.cardId);
           if (cardId) {
             const card = await ctx.db.get(cardId);
-            if (card && !card.completedAt) await ctx.db.patch(cardId, { completedAt: ts });
+            if (card && card.userId === args.userId && !card.completedAt) {
+              await ctx.db.patch(cardId, { completedAt: ts });
+            }
           }
           await ctx.db.patch(link._id, { lastSyncedState: item.state, updatedAt: ts });
         }
@@ -300,6 +314,13 @@ export const linkTask = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const ts = now();
+    // The card must belong to this user — a link is what later lets a sync
+    // complete the card, so never link a card the caller doesn't own.
+    const cardId = ctx.db.normalizeId('cards', args.cardId);
+    const card = cardId ? await ctx.db.get(cardId) : null;
+    if (!card || card.userId !== args.userId) {
+      throw new Error('Cannot link a task that does not belong to you.');
+    }
     const existing = await ctx.db
       .query('mcpTaskLinks')
       .withIndex('by_connection_external', (q) =>
@@ -367,8 +388,13 @@ export const searchItems = query({
       if (args.server) expr = expr.eq('server', args.server);
       return expr;
     });
-    const rows = await q.take(args.limit ?? 25);
-    return rows.filter((r) => searchable.has(r.connectionId));
+    const limit = args.limit ?? 25;
+    // Over-fetch before filtering: the search index is ranked across ALL the
+    // user's items, so a search-DISABLED connection's items could otherwise fill
+    // the top `limit` and starve enabled matches. Pull a wider pool, drop
+    // disabled connections, then slice to the requested count.
+    const rows = await q.take(Math.min(200, limit * 5 + 20));
+    return rows.filter((r) => searchable.has(r.connectionId)).slice(0, limit);
   },
 });
 
