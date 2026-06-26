@@ -8,13 +8,17 @@ import {
   CalendarDays,
   Check,
   CreditCard,
+  GitBranch,
+  Hash,
   KeyRound,
   Loader2,
   MoreHorizontal,
   Pencil,
+  Plug,
   Plus,
   RefreshCw,
   ShieldCheck,
+  SquareKanban,
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -45,6 +49,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 
 export default function SettingsPage() {
@@ -67,6 +72,7 @@ export default function SettingsPage() {
         </header>
         <div className="space-y-10">
           <MailboxesSection />
+          <ConnectionsSection />
           <SendingSection />
           <AiSection />
           <ShortcutsSection />
@@ -437,6 +443,281 @@ function SyncStatusLine({ sync, connected }: { sync?: SyncState; connected: bool
       <Loader2 className="size-3 animate-spin" />
       Downloading &amp; indexing{indexed ? ` · ${indexed} so far` : '…'}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Connections (connected tools)
+// ---------------------------------------------------------------------------
+
+type McpServer = 'github' | 'jira' | 'slack';
+
+interface McpConnectionRow {
+  connectionId: string;
+  server: McpServer;
+  serverUrl: string;
+  status: 'connected' | 'disconnected' | 'error';
+  displayName?: string;
+  scopes: string[];
+  includeInBrief: boolean;
+  includeInSearch: boolean;
+  lastSyncedAt?: number;
+  error?: string;
+}
+
+interface McpServerInfo {
+  id: McpServer;
+  label: string;
+  tokenLabel: string;
+  tokenHelp: string;
+}
+
+function connectionServerIcon(server: string, className: string) {
+  if (server === 'github') return <GitBranch className={className} />;
+  if (server === 'jira') return <SquareKanban className={className} />;
+  if (server === 'slack') return <Hash className={className} />;
+  return <Plug className={className} />;
+}
+
+function relativeTime(ms: number) {
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return 'just now';
+  const minutes = Math.round(diff / 60_000);
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+function ConnectionsSection() {
+  const qc = useQueryClient();
+  const [tokenInputs, setTokenInputs] = useState<Record<string, string>>({});
+  const [nameInputs, setNameInputs] = useState<Record<string, string>>({});
+
+  const { data } = useQuery({
+    queryKey: ['mcp-status'],
+    queryFn: async () => fetchJson('/api/mcp/status'),
+  });
+
+  const connect = useMutation({
+    mutationFn: async ({
+      server,
+      token,
+      displayName,
+    }: {
+      server: McpServer;
+      token: string;
+      displayName?: string;
+    }) => postJson('/api/mcp/connect', { server, token, displayName }),
+    onSuccess: (_result, variables) => {
+      toast.success('Connected');
+      setTokenInputs((prev) => ({ ...prev, [variables.server]: '' }));
+      setNameInputs((prev) => ({ ...prev, [variables.server]: '' }));
+      qc.invalidateQueries({ queryKey: ['mcp-status'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not connect'),
+  });
+
+  const resync = useMutation({
+    mutationFn: async (connectionId: string) => postJson('/api/mcp/resync', { connectionId }),
+    onSuccess: () => {
+      toast.success('Resync started');
+      qc.invalidateQueries({ queryKey: ['mcp-status'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not start resync'),
+  });
+
+  const disconnect = useMutation({
+    mutationFn: async (connectionId: string) => postJson('/api/mcp/disconnect', { connectionId }),
+    onSuccess: () => {
+      toast.success('Disconnected');
+      qc.invalidateQueries({ queryKey: ['mcp-status'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not disconnect'),
+  });
+
+  const toggle = useMutation({
+    mutationFn: async (body: { connectionId: string; includeInBrief?: boolean; includeInSearch?: boolean }) =>
+      postJson('/api/mcp/toggle', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['mcp-status'] }),
+    onError: (err: any) => toast.error(err?.message || 'Could not update'),
+  });
+
+  const connections: McpConnectionRow[] = data?.connections || [];
+  const servers: McpServerInfo[] = data?.servers || [];
+  const connectedServers = new Set(connections.map((c) => c.server));
+  const availableServers = servers.filter((s) => !connectedServers.has(s.id));
+
+  return (
+    <section>
+      <SectionHeading title="Connections" blurb="Bring GitHub, Jira, and Slack into your brief and search." />
+      <div className="space-y-2.5">
+        {connections.map((connection) => (
+          <div
+            key={connection.connectionId}
+            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]"
+          >
+            <div className="flex items-center gap-3">
+              <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+                {connectionServerIcon(connection.server, 'size-4.5')}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-[13.5px] font-medium capitalize">{connection.server}</span>
+                  {connection.displayName ? (
+                    <span className="truncate text-[12px] text-[var(--color-text-muted)]">
+                      · {connection.displayName}
+                    </span>
+                  ) : null}
+                </div>
+                {connection.status === 'error' ? (
+                  <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">
+                    Connection error — {connection.error || 'will retry automatically'}
+                  </div>
+                ) : connection.status === 'connected' ? (
+                  <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                    <ShieldCheck className="size-3" />
+                    Connected
+                    {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
+                  </div>
+                ) : (
+                  <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">Disconnected</div>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => resync.mutate(connection.connectionId)}
+                  disabled={resync.isPending}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >
+                  <RefreshCw className="size-3.5" />
+                  Resync
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    if (window.confirm(`Disconnect ${connection.displayName || connection.server}?`)) {
+                      disconnect.mutate(connection.connectionId);
+                    }
+                  }}
+                  disabled={disconnect.isPending}
+                  className="text-[var(--color-danger)] hover:text-[var(--color-danger)]"
+                >
+                  <Trash2 className="size-3.5" />
+                  Disconnect
+                </Button>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-[var(--color-border)] pt-3">
+              <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                <Switch
+                  id={`brief-${connection.connectionId}`}
+                  checked={connection.includeInBrief}
+                  onCheckedChange={(checked) =>
+                    toggle.mutate({ connectionId: connection.connectionId, includeInBrief: checked })
+                  }
+                />
+                <Label
+                  htmlFor={`brief-${connection.connectionId}`}
+                  className="text-[12.5px] font-normal text-[var(--color-text-muted)]"
+                >
+                  In daily brief
+                </Label>
+              </div>
+              <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                <Switch
+                  id={`search-${connection.connectionId}`}
+                  checked={connection.includeInSearch}
+                  onCheckedChange={(checked) =>
+                    toggle.mutate({ connectionId: connection.connectionId, includeInSearch: checked })
+                  }
+                />
+                <Label
+                  htmlFor={`search-${connection.connectionId}`}
+                  className="text-[12.5px] font-normal text-[var(--color-text-muted)]"
+                >
+                  In search
+                </Label>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {availableServers.length ? (
+        <div className="mt-4 space-y-2.5">
+          {availableServers.map((server) => {
+            const token = tokenInputs[server.id] || '';
+            return (
+              <form
+                key={server.id}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!token.trim()) return;
+                  connect.mutate({
+                    server: server.id,
+                    token: token.trim(),
+                    displayName: nameInputs[server.id]?.trim() || undefined,
+                  });
+                }}
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="grid size-7 shrink-0 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+                    {connectionServerIcon(server.id, 'size-3.5')}
+                  </div>
+                  <span className="text-[13.5px] font-medium">{server.label}</span>
+                </div>
+                <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label className="text-[12px]">{server.tokenLabel}</Label>
+                    <Input
+                      value={token}
+                      onChange={(event) =>
+                        setTokenInputs((prev) => ({ ...prev, [server.id]: event.target.value }))
+                      }
+                      placeholder={server.tokenLabel}
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[12px]">Display name (optional)</Label>
+                    <Input
+                      value={nameInputs[server.id] || ''}
+                      onChange={(event) =>
+                        setNameInputs((prev) => ({ ...prev, [server.id]: event.target.value }))
+                      }
+                      placeholder="e.g. Work"
+                    />
+                  </div>
+                </div>
+                <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">{server.tokenHelp}</p>
+                <div className="mt-2.5">
+                  <Button type="submit" size="sm" disabled={!token.trim() || connect.isPending}>
+                    {connect.isPending ? <Ring className="size-3" /> : <Plus className="size-3.5" />}
+                    Connect
+                  </Button>
+                </div>
+              </form>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {!connections.length && !availableServers.length ? (
+        <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
+          No connected tools available yet.
+        </div>
+      ) : null}
+    </section>
   );
 }
 

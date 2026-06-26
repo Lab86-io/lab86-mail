@@ -10,6 +10,7 @@ import type {
   DailyReport,
   DailyReportCalendarItem,
   DailyReportItem,
+  DailyReportMcpItem,
   DailyReportTaskItem,
   Message,
   ReportLane,
@@ -207,10 +208,11 @@ export async function generateDailyReport(input: {
     }
   }
 
-  const [calendarContext, taskContext, memoryContext] = await Promise.all([
+  const [calendarContext, taskContext, memoryContext, mcpContext] = await Promise.all([
     input.includeCalendar !== false ? loadCalendarContext(input.userId, now) : Promise.resolve([]),
     loadTaskContext(input.userId, now),
     loadMemoryContext(),
+    loadMcpContext(input.userId),
   ]);
 
   const byDateDesc = (a: Thread, b: Thread) => Number(b.lastDate || 0) - Number(a.lastDate || 0);
@@ -421,6 +423,7 @@ export async function generateDailyReport(input: {
     calendarContext,
     taskContext,
     memoryContext,
+    mcpContext,
     errors,
     reportId,
   });
@@ -835,6 +838,7 @@ async function composeReport(input: {
   calendarContext: DailyReportCalendarItem[];
   taskContext: DailyReportTaskItem[];
   memoryContext: string[];
+  mcpContext?: DailyReportMcpItem[];
   errors: string[];
   reportId?: string;
   status?: DailyReport['status'];
@@ -988,6 +992,7 @@ async function composeReport(input: {
       bulkTail,
       tasks: reportTasks,
       calendar: reportCalendar,
+      mcp: input.mcpContext ?? [],
       noiseSummary:
         'Bulk, subscribed, platform, and promo mail is collapsed into the tail below. Real people are never hidden there.',
     },
@@ -1116,6 +1121,26 @@ function calendarContextLine(event: DailyReportCalendarItem) {
     minute: event.allDay ? undefined : '2-digit',
   });
   return `${event.title} at ${start}${event.location ? `, ${event.location}` : ''}`;
+}
+
+// Items from the user's brief-enabled MCP connections (GitHub/Jira/Slack).
+// Best-effort: a connector hiccup must never break the brief.
+async function loadMcpContext(userId: string | null | undefined): Promise<DailyReportMcpItem[]> {
+  if (!userId) return [];
+  try {
+    const rows = await convexQuery<any[]>((api as any).mcp.listItemsForBrief, { userId, limit: 25 });
+    return (rows || []).map((row) => ({
+      server: row.server,
+      kind: row.kind,
+      title: row.title,
+      state: row.state ?? null,
+      author: row.author ?? null,
+      url: row.url ?? null,
+      updatedAt: row.updatedAtSource ?? null,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 async function loadTaskContext(

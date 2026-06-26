@@ -340,6 +340,16 @@ export interface DailyReportCalendarItem {
   scope: 'week' | 'month';
 }
 
+export interface DailyReportMcpItem {
+  server: 'github' | 'jira' | 'slack';
+  kind: string;
+  title: string;
+  state?: string | null;
+  author?: string | null;
+  url?: string | null;
+  updatedAt?: number | null;
+}
+
 export interface DailyReport {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
@@ -370,6 +380,7 @@ export interface DailyReport {
     bulkTail: DailyReportItem[];
     tasks?: DailyReportTaskItem[];
     calendar?: DailyReportCalendarItem[];
+    mcp?: DailyReportMcpItem[];
     noiseSummary?: string;
   };
   stats: {

@@ -19,4 +19,9 @@ crons.hourly('daily report editions', { minuteUTC: 0 }, internal.dailyReports.ti
 // safety net over the webhook-driven event deltas.
 crons.interval('calendar resync', { minutes: 15 }, internal.calendarSync.tick, {});
 
+// Poll each user's connected MCP servers (GitHub/Jira/Slack) every 20 minutes
+// so brief/search items stay current. Cast: the generated `internal` type only
+// gains `mcpSync` after codegen on deploy.
+crons.interval('mcp sync', { minutes: 20 }, (internal as any).mcpSync.tick, {});
+
 export default crons;

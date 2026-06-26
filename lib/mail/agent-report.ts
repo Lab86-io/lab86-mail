@@ -301,6 +301,7 @@ CONTENT (compose from your analysis; omit empty parts):
 - "Needs you": the threads YOU judged as needing action — person, your one-line read of why (from the body), how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via the draft_reply action. For every existing thread, put data-thread-key="{thread.threadKey}" and data-received-at="{thread.lastReceivedAt}" on the enclosing row/card and render compact controls: a "done/resolved" checkmark that sends resolve_thread { account, threadId, subject, receivedAt: lastReceivedAt, trackedThreadId? } and a "remove from briefs" X that sends dismiss_thread { account, threadId, subject, receivedAt: lastReceivedAt }. On successful host ack, remove that row/card from the DOM. Treat this as permanent removal from future briefs unless the same thread receives newer mail after lastReceivedAt.
 - "The week ahead": today → +7 days of calendar as a clean timeline/table; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
 - Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from the mail/meetings (create_task). Tasks are first-class, not a footnote. For every existing task with a cardId, put data-card-id="{cardId}" on the enclosing task row/card and render compact controls: a "complete" checkmark that sends toggle_task { cardId, completed: true, title } and a "remove from briefs" X that sends dismiss_task { cardId, title }. On successful host ack, remove that task row/card from the DOM so it disappears immediately and stays out of future briefs.
+- From your tools (ONLY if data.mcp is non-empty): a compact section surfacing connected-tool items — GitHub issues/PRs awaiting you, Jira tickets assigned to you, Slack mentions. Give each a plain anchor to its url (target="_blank", rel="noopener"), show its source as a small badge (the data.mcp[].server value, capitalized) and its state. Fold genuinely actionable ones into the narrative or propose a task from them. Title the section by what it is (e.g. "Across your tools" / "Issues & tickets") — never use the word "MCP".
 
 INTERACTION PROTOCOL (wire every interactive element):
 - window.parent.postMessage({ source: 'lab86-daily-report', action, payload }, '*'). Actions:
@@ -361,13 +362,21 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
     kind: report.kind,
     art,
     firstName: contextFirstName() || null,
-    services: extras.services,
+    services: [
+      ...extras.services,
+      ...[...new Set((report.sections.mcp ?? []).map((m) => m.server))].map(
+        (s) => ({ github: 'GitHub', jira: 'Jira', slack: 'Slack' })[s] || s,
+      ),
+    ],
     // The user's own recent outbound prose — match this voice in any draft.
     voiceSamples: extras.voiceSamples,
     // RAW material to analyze yourself: real thread bodies (most recent last).
     threads: extras.digests,
     tasks,
     calendar,
+    // Items from connected tools (GitHub/Jira/Slack) the user enabled for the
+    // brief: open issues, PRs awaiting review, assigned tickets, mentions.
+    mcp: (report.sections.mcp ?? []).slice(0, 20),
   };
 
   return [
