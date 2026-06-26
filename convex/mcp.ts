@@ -5,6 +5,12 @@ import { now, requireInternalSecret } from './lib';
 
 const serverValidator = v.union(v.literal('github'), v.literal('jira'), v.literal('slack'));
 
+// A "the work is done" state across GitHub/Jira/Slack vocabularies.
+function isTerminalState(state) {
+  if (!state) return false;
+  return /^(closed|merged|done|resolved|completed|complete|cancelled|canceled)$/i.test(String(state).trim());
+}
+
 // Display row + encrypted credentials, written together so re-connecting a
 // server replaces the secret in place instead of orphaning rows (mirrors
 // accounts.upsertConnectedAccount).
@@ -256,8 +262,61 @@ export const upsertItems = mutation({
       };
       if (existing) await ctx.db.patch(existing._id, row);
       else await ctx.db.insert('mcpItems', { ...row, createdAt: ts });
+
+      // "External wins for status": when an item transitions INTO a terminal
+      // state, auto-complete any task created from it. Only act on a real
+      // transition so reopening a task (user intent) isn't clobbered every sync.
+      if (isTerminalState(item.state) && !isTerminalState(existing?.state)) {
+        const links = await ctx.db
+          .query('mcpTaskLinks')
+          .withIndex('by_connection_external', (q) =>
+            q.eq('connectionId', args.connectionId).eq('externalId', item.externalId),
+          )
+          .collect();
+        for (const link of links) {
+          const cardId = ctx.db.normalizeId('cards', link.cardId);
+          if (cardId) {
+            const card = await ctx.db.get(cardId);
+            if (card && !card.completedAt) await ctx.db.patch(cardId, { completedAt: ts });
+          }
+          await ctx.db.patch(link._id, { lastSyncedState: item.state, updatedAt: ts });
+        }
+      }
     }
     return { ok: true, count: args.items.length };
+  },
+});
+
+// Record a link between an external MCP item and a Lab86 task card.
+export const linkTask = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    connectionId: v.string(),
+    server: v.string(),
+    externalId: v.string(),
+    cardId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    const existing = await ctx.db
+      .query('mcpTaskLinks')
+      .withIndex('by_connection_external', (q) =>
+        q.eq('connectionId', args.connectionId).eq('externalId', args.externalId),
+      )
+      .collect();
+    if (existing.some((row) => row.cardId === args.cardId)) return { ok: true };
+    await ctx.db.insert('mcpTaskLinks', {
+      userId: args.userId,
+      connectionId: args.connectionId,
+      server: args.server,
+      externalId: args.externalId,
+      cardId: args.cardId,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    return { ok: true };
   },
 });
 

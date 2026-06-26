@@ -802,4 +802,22 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId']),
+
+  // Links a Lab86 task card to the external MCP item it was created from, so
+  // closing the item (during sync) can auto-complete the task — "external wins
+  // for status, user wins for intent".
+  mcpTaskLinks: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    server: v.string(),
+    externalId: v.string(),
+    cardId: v.string(),
+    // Last state we reconciled to the card, so we only act on real transitions.
+    lastSyncedState: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_connection_external', ['connectionId', 'externalId'])
+    .index('by_card', ['cardId']),
 });

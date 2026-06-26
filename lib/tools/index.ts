@@ -84,7 +84,7 @@ import {
   unsnoozeThreadTool,
   unstarMessage,
 } from './mail-mutate';
-import { mcpListItems, mcpSearch } from './mcp';
+import { mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
@@ -140,6 +140,7 @@ import { browserbaseFetch, browserbaseSearch } from './web';
 const allTools: AnyTool[] = [
   mcpSearch,
   mcpListItems,
+  mcpCreateTask,
   listAccounts,
   searchThreads,
   corpusSearch,

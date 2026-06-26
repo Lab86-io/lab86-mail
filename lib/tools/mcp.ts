@@ -1,8 +1,11 @@
 import { z } from 'zod';
-import { api, convexQuery } from '@/lib/hosted/convex';
+import { recordOperation } from '@/lib/ai/operations';
+import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { defineTool } from './registry';
+import { resolveBoardAndColumn } from './tasks';
 
 const mcpApi = (api as any).mcp;
+const boardsApi = (api as any).boards;
 
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');
@@ -50,6 +53,60 @@ export const mcpListItems = defineTool({
   },
 });
 
+export const mcpCreateTask = defineTool({
+  name: 'mcp_create_task',
+  description:
+    'Create a Lab86 task from a connected-tool item (a GitHub issue/PR, Jira ticket, or Slack message). Pass the item identifiers from mcp_search/mcp_list_items. The card carries a provenance link back to the source, and when the source later closes/merges/resolves the task auto-completes. Defaults to the user’s default board, first column.',
+  category: 'mcp',
+  mutating: true,
+  input: z.object({
+    connectionId: z.string(),
+    externalId: z.string(),
+    server: serverEnum,
+    title: z.string().min(1),
+    url: z.string().optional(),
+    boardId: z.string().optional(),
+    column: z.string().optional(),
+  }),
+  output: z.object({ ok: z.boolean(), cardId: z.string(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const { board, column } = await resolveBoardAndColumn(userId, args.boardId, args.column);
+    const cardId = await convexMutation<string>(boardsApi.createCard, {
+      userId,
+      boardId: board.boardId,
+      columnId: column.columnId,
+      title: args.title,
+      source: {
+        kind: 'mcp',
+        server: args.server,
+        connectionId: args.connectionId,
+        externalId: args.externalId,
+        url: args.url,
+        title: args.title,
+      },
+    });
+    // Record the link so a future sync can auto-complete this card when the
+    // source item closes.
+    await convexMutation(mcpApi.linkTask, {
+      userId,
+      connectionId: args.connectionId,
+      server: args.server,
+      externalId: args.externalId,
+      cardId,
+    });
+    const operationId = await recordOperation({
+      userId,
+      tool: 'mcp_create_task',
+      surface: 'tasks',
+      summary: `Added "${args.title}" to ${column.name} on "${board.title}" from ${args.server}`,
+      target: { kind: 'card', id: cardId, boardId: board.boardId },
+      inverse: { kind: 'tasks.delete_card', payload: { cardId } },
+    });
+    return { ok: true, cardId, operationId };
+  },
+});
+
 function toToolItem(row: any) {
   return {
     server: row.server,
@@ -60,5 +117,7 @@ function toToolItem(row: any) {
     url: row.url ?? null,
     updatedAt: row.updatedAtSource ?? row.updatedAt ?? null,
     connectionId: row.connectionId,
+    // Needed to create/link a task from this item.
+    externalId: row.externalId,
   };
 }
