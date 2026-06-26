@@ -2,9 +2,17 @@ import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { type NylasAccountRow, requireConnectedAccount } from '@/lib/nylas/provider';
+import {
+  describeNylasError,
+  isNylasResponseParseError,
+  nylasErrorStatus,
+  withNylasRetry,
+} from '@/lib/nylas/retry';
 import { type EventInputRow, toEventInput } from './sync';
 
 const calendarApi = (api as any).calendarData;
+const CREATE_REQUEST_ID_KEY = 'lab86CreateRequestId';
+const DEFAULT_CALENDAR_WRITE_TIMEOUT_SECONDS = 20;
 
 // Calendar writes go provider-first (Nylas), then mirror into Convex so the
 // surface updates without waiting for the webhook echo. Every mutation
@@ -74,32 +82,54 @@ export async function createCalendarEvent(input: CreateEventInput) {
   }
 
   let created: any;
+  const createRequestId = newCreateRequestId();
+  const requestBody = {
+    title: input.title,
+    description: input.description,
+    location: input.location,
+    busy: input.busy ?? true,
+    when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone),
+    participants: input.participants?.map((p) => ({ email: p.email, name: p.name })),
+    recurrence: input.recurrence,
+    metadata: {
+      [CREATE_REQUEST_ID_KEY]: createRequestId,
+      lab86CreatedBy: 'lab86-mail',
+    },
+  } as any;
   try {
     const response = await requireNylas().events.create({
       identifier: account.grantId,
-      requestBody: {
-        title: input.title,
-        description: input.description,
-        location: input.location,
-        busy: input.busy ?? true,
-        when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone),
-        participants: input.participants?.map((p) => ({ email: p.email, name: p.name })),
-        recurrence: input.recurrence,
-      } as any,
+      requestBody,
       queryParams: {
         calendarId,
         notifyParticipants: input.notifyParticipants ?? Boolean(input.participants?.length),
       } as any,
+      overrides: calendarWriteOverrides(),
     });
     created = response.data as any;
   } catch (err: any) {
-    // Surface the real provider error in logs (the tool layer otherwise hides
-    // it) and return an actionable message instead of a bare "Bad Request".
-    console.error(
-      `[calendar] create failed account=${accountId} provider=${account.provider} calendar=${calendarId}: ${err?.message || err}`,
-    );
+    if (isAmbiguousCreateError(err)) {
+      const recovered = await recoverCreatedEventByMetadata(account.grantId, calendarId, createRequestId);
+      if (recovered) {
+        console.warn(
+          `[calendar] recovered created event after ambiguous response account=${accountId} provider=${account.provider} calendar=${calendarId} event=${recovered.id}`,
+        );
+        created = recovered;
+      }
+    }
+    if (!created) {
+      const providerError = describeNylasError(err);
+      console.error(
+        `[calendar] create failed account=${accountId} provider=${account.provider} calendar=${calendarId}: ${providerError}`,
+      );
+      throw new Error(
+        `Couldn't create the event on ${account.email || accountId} (${providerError}). The calendar may be read-only, or the account may need reconnecting.`,
+      );
+    }
+  }
+  if (!created?.id) {
     throw new Error(
-      `Couldn't create the event on ${account.email || accountId} (${err?.message || 'provider error'}). The calendar may be read-only, or the account may need reconnecting.`,
+      `Couldn't create the event on ${account.email || accountId}: provider returned no event id.`,
     );
   }
   const row = toEventInput(created, calendarId);
@@ -117,6 +147,64 @@ export async function createCalendarEvent(input: CreateEventInput) {
     },
   });
   return { eventId: created.id as string, calendarId, operationId, htmlLink: row?.htmlLink };
+}
+
+async function recoverCreatedEventByMetadata(grantId: string, calendarId: string, requestId: string) {
+  for (const delayMs of [500, 1500, 3000]) {
+    await sleep(delayMs);
+    try {
+      const page = await withNylasRetry(
+        () =>
+          requireNylas().events.list({
+            identifier: grantId,
+            queryParams: {
+              calendarId,
+              metadataPair: { [CREATE_REQUEST_ID_KEY]: requestId },
+              limit: 10,
+            } as any,
+            overrides: calendarWriteOverrides(),
+          }),
+        1,
+      );
+      const match = (page.data || []).find(
+        (event: any) => event?.metadata?.[CREATE_REQUEST_ID_KEY] === requestId,
+      );
+      if (match) return match;
+    } catch (err: any) {
+      console.warn(`[calendar] create recovery lookup failed: ${describeNylasError(err)}`);
+    }
+  }
+  return null;
+}
+
+function isAmbiguousCreateError(err: any): boolean {
+  const status = nylasErrorStatus(err);
+  return isNylasResponseParseError(err) || status === undefined || status >= 500;
+}
+
+function calendarWriteOverrides() {
+  const timeout = Number(process.env.NYLAS_CALENDAR_WRITE_TIMEOUT_SECONDS);
+  return {
+    timeout: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_CALENDAR_WRITE_TIMEOUT_SECONDS,
+  };
+}
+
+function newCreateRequestId() {
+  return (
+    globalThis.crypto?.randomUUID?.().replaceAll('-', '') ||
+    `cal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+  );
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function calendarMutationError(account: NylasAccountRow, err: any, action: string) {
+  const providerError = describeNylasError(err);
+  return new Error(
+    `Couldn't ${action} on ${account.email || account.accountId} (${providerError}). The account may need reconnecting, or the provider may be temporarily unavailable.`,
+  );
 }
 
 export async function updateCalendarEvent(input: {
@@ -145,15 +233,25 @@ export async function updateCalendarEvent(input: {
     if (!startAt || !endAt) throw new Error('Event times unknown; sync the calendar first.');
     requestBody.when = toNylasWhen(startAt, endAt, input.patch.allDay ?? previous?.allDay);
   }
-  const response = await requireNylas().events.update({
-    identifier: account.grantId,
-    eventId: input.eventId,
-    requestBody: requestBody as any,
-    queryParams: {
-      calendarId: input.calendarId,
-      notifyParticipants: input.notifyParticipants ?? false,
-    } as any,
-  });
+  let response: any;
+  try {
+    response = await withNylasRetry(
+      () =>
+        requireNylas().events.update({
+          identifier: account.grantId,
+          eventId: input.eventId,
+          requestBody: requestBody as any,
+          queryParams: {
+            calendarId: input.calendarId,
+            notifyParticipants: input.notifyParticipants ?? false,
+          } as any,
+          overrides: calendarWriteOverrides(),
+        }),
+      input.notifyParticipants ? 0 : 1,
+    );
+  } catch (err: any) {
+    throw calendarMutationError(account, err, 'update the event');
+  }
   const updated = toEventInput(response.data as any, input.calendarId);
   if (updated) await upsertMirror(account, [updated]);
 
@@ -210,14 +308,25 @@ export async function deleteCalendarEvent(input: {
     eventId === input.eventId
       ? previous
       : await getMirrorEvent(input.userId, accountId, eventId, input.calendarId);
-  await requireNylas().events.destroy({
-    identifier: account.grantId,
-    eventId,
-    queryParams: {
-      calendarId: input.calendarId,
-      notifyParticipants: input.notifyParticipants ?? false,
-    } as any,
-  });
+  try {
+    await withNylasRetry(
+      () =>
+        requireNylas().events.destroy({
+          identifier: account.grantId,
+          eventId,
+          queryParams: {
+            calendarId: input.calendarId,
+            notifyParticipants: input.notifyParticipants ?? false,
+          } as any,
+          overrides: calendarWriteOverrides(),
+        }),
+      input.notifyParticipants ? 0 : 1,
+    );
+  } catch (err: any) {
+    if (nylasErrorStatus(err) !== 404 && nylasErrorStatus(err) !== 410) {
+      throw calendarMutationError(account, err, 'delete the event');
+    }
+  }
   await convexMutation(calendarApi.deleteEvent, {
     userId: input.userId,
     accountId,
@@ -269,14 +378,27 @@ export async function unsubscribeCalendar(input: UnsubscribeCalendarInput) {
   let providerUnsubscribed = false;
   let providerError: string | undefined;
   try {
-    await requireNylas().calendars.destroy({
-      identifier: account.grantId,
-      calendarId: input.calendarId,
-    });
+    await withNylasRetry(
+      () =>
+        requireNylas().calendars.destroy({
+          identifier: account.grantId,
+          calendarId: input.calendarId,
+          overrides: calendarWriteOverrides(),
+        }),
+      1,
+    );
     providerUnsubscribed = true;
   } catch (err: any) {
-    providerError = err?.message || 'Provider calendar delete/unsubscribe failed.';
-    if (!input.fallbackToHide) throw err;
+    const status = nylasErrorStatus(err);
+    if (status === 404 || status === 410) {
+      // Provider already has no such calendar — the desired terminal state is
+      // reached, so treat it as a successful unsubscribe (matches the event
+      // delete path, which also suppresses 404/410).
+      providerUnsubscribed = true;
+    } else {
+      providerError = describeNylasError(err, 'Provider calendar delete/unsubscribe failed.');
+      if (!input.fallbackToHide) throw calendarMutationError(account, err, 'delete/unsubscribe the calendar');
+    }
   }
 
   if (providerUnsubscribed) {
@@ -313,12 +435,21 @@ export async function rsvpCalendarEvent(input: {
 }) {
   const account = await getAccount(input.userId, input.accountId);
   const accountId = account.accountId;
-  await requireNylas().events.sendRsvp({
-    identifier: account.grantId,
-    eventId: input.eventId,
-    requestBody: { status: input.status },
-    queryParams: { calendarId: input.calendarId } as any,
-  });
+  try {
+    await withNylasRetry(
+      () =>
+        requireNylas().events.sendRsvp({
+          identifier: account.grantId,
+          eventId: input.eventId,
+          requestBody: { status: input.status },
+          queryParams: { calendarId: input.calendarId } as any,
+          overrides: calendarWriteOverrides(),
+        }),
+      0,
+    );
+  } catch (err: any) {
+    throw calendarMutationError(account, err, 'RSVP to the event');
+  }
   const previous = await getMirrorEvent(input.userId, accountId, input.eventId, input.calendarId);
   const operationId = await recordOperation({
     userId: input.userId,
@@ -349,40 +480,65 @@ registerUndoExecutor('calendar.delete_event', async (payload, ctx) => {
 registerUndoExecutor('calendar.recreate_event', async (payload, ctx) => {
   const account = await getAccount(ctx.userId, payload.accountId);
   const fields = payload.fields || {};
-  const response = await requireNylas().events.create({
-    identifier: account.grantId,
-    requestBody: {
-      title: fields.title,
-      description: fields.description,
-      location: fields.location,
-      busy: fields.busy ?? true,
-      when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay),
-      participants: fields.participants,
-      recurrence: fields.recurrence,
-    } as any,
-    queryParams: { calendarId: payload.calendarId, notifyParticipants: false } as any,
-  });
-  const row = toEventInput(response.data as any, payload.calendarId);
+  const createRequestId = newCreateRequestId();
+  let created: any;
+  try {
+    const response = await requireNylas().events.create({
+      identifier: account.grantId,
+      requestBody: {
+        title: fields.title,
+        description: fields.description,
+        location: fields.location,
+        busy: fields.busy ?? true,
+        when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay),
+        participants: fields.participants,
+        recurrence: fields.recurrence,
+        metadata: {
+          [CREATE_REQUEST_ID_KEY]: createRequestId,
+          lab86CreatedBy: 'lab86-mail-undo',
+        },
+      } as any,
+      queryParams: { calendarId: payload.calendarId, notifyParticipants: false } as any,
+      overrides: calendarWriteOverrides(),
+    });
+    created = response.data as any;
+  } catch (err: any) {
+    if (isAmbiguousCreateError(err)) {
+      created = await recoverCreatedEventByMetadata(account.grantId, payload.calendarId, createRequestId);
+    }
+    if (!created) throw err;
+  }
+  if (!created?.id) {
+    throw new Error(
+      `Couldn't recreate the event on ${account.email || account.accountId}: provider returned no event id.`,
+    );
+  }
+  const row = toEventInput(created as any, payload.calendarId);
   if (row) await upsertMirror(account, [row]);
 });
 
 registerUndoExecutor('calendar.restore_event', async (payload, ctx) => {
   const account = await getAccount(ctx.userId, payload.accountId);
   const fields = payload.fields || {};
-  const response = await requireNylas().events.update({
-    identifier: account.grantId,
-    eventId: payload.eventId,
-    requestBody: {
-      title: fields.title,
-      description: fields.description,
-      location: fields.location,
-      busy: fields.busy,
-      when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay),
-      participants: fields.participants,
-      recurrence: fields.recurrence,
-    } as any,
-    queryParams: { calendarId: payload.calendarId, notifyParticipants: false } as any,
-  });
+  const response = await withNylasRetry(
+    () =>
+      requireNylas().events.update({
+        identifier: account.grantId,
+        eventId: payload.eventId,
+        requestBody: {
+          title: fields.title,
+          description: fields.description,
+          location: fields.location,
+          busy: fields.busy,
+          when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay),
+          participants: fields.participants,
+          recurrence: fields.recurrence,
+        } as any,
+        queryParams: { calendarId: payload.calendarId, notifyParticipants: false } as any,
+        overrides: calendarWriteOverrides(),
+      }),
+    1,
+  );
   const row = toEventInput(response.data as any, payload.calendarId);
   if (row) await upsertMirror(account, [row]);
 });
@@ -397,11 +553,20 @@ async function deleteWithoutRecording(
 ) {
   const account = await getAccount(userId, accountId);
   const resolvedAccountId = account.accountId;
-  await requireNylas().events.destroy({
-    identifier: account.grantId,
-    eventId,
-    queryParams: { calendarId, notifyParticipants: false } as any,
-  });
+  try {
+    await withNylasRetry(
+      () =>
+        requireNylas().events.destroy({
+          identifier: account.grantId,
+          eventId,
+          queryParams: { calendarId, notifyParticipants: false } as any,
+          overrides: calendarWriteOverrides(),
+        }),
+      1,
+    );
+  } catch (err: any) {
+    if (nylasErrorStatus(err) !== 404 && nylasErrorStatus(err) !== 410) throw err;
+  }
   await convexMutation(calendarApi.deleteEvent, {
     userId,
     accountId: resolvedAccountId,
@@ -412,11 +577,16 @@ async function deleteWithoutRecording(
 }
 
 async function syncEventIntoMirror(account: NylasAccountRow, calendarId: string, eventId: string) {
-  const response = await requireNylas().events.find({
-    identifier: account.grantId,
-    eventId,
-    queryParams: { calendarId } as any,
-  });
+  const response = await withNylasRetry(
+    () =>
+      requireNylas().events.find({
+        identifier: account.grantId,
+        eventId,
+        queryParams: { calendarId } as any,
+        overrides: calendarWriteOverrides(),
+      }),
+    1,
+  );
   const row = toEventInput(response.data as any, calendarId);
   if (row) await upsertMirror(account, [row]);
 }

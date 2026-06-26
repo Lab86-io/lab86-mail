@@ -288,6 +288,22 @@ describe('Calendar corpus helpers', () => {
   });
 });
 
+describe('Nylas provider resilience', () => {
+  test('classifies malformed provider bodies and preserves trace ids in errors', async () => {
+    const { describeNylasError, isNylasResponseParseError } = await import('../lib/nylas/retry');
+    const err = Object.assign(new Error('Could not parse response from the server: <html>bad gateway'), {
+      statusCode: 502,
+      requestId: 'req_123',
+      flowId: 'flow_456',
+    });
+
+    expect(isNylasResponseParseError(err)).toBe(true);
+    expect(describeNylasError(err)).toBe(
+      'HTTP 502: Could not parse response from the server: <html>bad gateway (request req_123, flow flow_456)',
+    );
+  });
+});
+
 describe('local-first mail search routing', () => {
   test('local corpus is tier 1 for every provider with per-provider fallbacks', async () => {
     const previousProviders = process.env.LAB86_MAIL_LOCAL_SEARCH_PROVIDERS;

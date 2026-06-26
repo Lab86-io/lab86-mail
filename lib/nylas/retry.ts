@@ -7,6 +7,35 @@ export function nylasErrorStatus(err: any): number | undefined {
   return err?.statusCode ?? err?.status ?? err?.response?.status;
 }
 
+export function isNylasResponseParseError(err: any): boolean {
+  const message = String(err?.message || err || '');
+  return /invalid json response|could not parse response|unexpected end of json|unexpected token/i.test(
+    message,
+  );
+}
+
+export function describeNylasError(err: any, fallback = 'provider error'): string {
+  // Preserve primitive thrown values (e.g. a thrown string) before the fallback,
+  // matching isNylasResponseParseError's normalization.
+  const message = err?.message
+    ? String(err.message)
+    : err != null && typeof err !== 'object'
+      ? String(err)
+      : fallback;
+  const status = nylasErrorStatus(err);
+  const requestId = err?.requestId;
+  const flowId = err?.flowId;
+  const parts = [status ? `HTTP ${status}` : '', message]
+    .filter(Boolean)
+    .join(': ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const trace = [requestId ? `request ${requestId}` : '', flowId ? `flow ${flowId}` : '']
+    .filter(Boolean)
+    .join(', ');
+  return trace ? `${parts} (${trace})` : parts || fallback;
+}
+
 export async function withNylasRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
   let lastError: any;
   for (let attempt = 0; attempt <= retries; attempt += 1) {

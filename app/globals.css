@@ -242,10 +242,15 @@
     --input: var(--color-bg-elevated);
     --ring: var(--color-accent);
 
-    /* Pure-black base at tint 0 (oklch L=0); raising --surface-tint lifts and
-       tints every surface toward the accent hue, Arc-style. The lightness
-       offsets reproduce the original neutral greys exactly at tint 0. */
-    --color-bg: oklch(calc(var(--surface-tint) * 0.16) calc(var(--surface-tint) * 0.04) var(--bg-hue));
+    /* Deep slate-black canvas — NOT pure #000. Light mode's floor is #f6f8fb (an
+       off-white, never pure white) so its texture has something to read against;
+       dark mode needs the same. A faint cool floor at L=0.145 lets the grain,
+       dot-grid, and shadows actually register — on true black, overlay textures
+       are mathematically invisible (2·0·blend = 0). Raising --surface-tint lifts
+       and tints every surface further toward the accent hue, Arc-style. */
+    --color-bg: oklch(
+      calc(0.145 + var(--surface-tint) * 0.14) calc(0.006 + var(--surface-tint) * 0.04) var(--bg-hue)
+    );
     --color-bg-elevated: oklch(
       calc(0.22 + var(--surface-tint) * 0.025) calc(var(--surface-tint) * 0.032) var(--bg-hue)
     );
@@ -267,7 +272,8 @@
     /* Selected/active pop: the same user hue, lifted for dark surfaces. */
     --color-selected: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-selected-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
-    --rail-bg: #000000;
+    /* --rail-bg is aliased to --color-bg in the unlayered sidebar block below;
+       no hardcoded value here (a literal would silently win or mislead). */
     --color-accent: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-accent-hover: oklch(0.79 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-accent-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
@@ -330,6 +336,27 @@
       );
   }
 
+  /* Dark rail carries a faint always-on accent sheen from the top corner so the
+     sidebar reads as crafted chrome out of the box (the Wash slider adds to it).
+     Without this the dark rail is a flat slab; light mode never needs it because
+     its white surfaces + dot lattice already give the chrome character. */
+  .dark .rail-wash {
+    background-image:
+      radial-gradient(
+        150% 85% at 0% 0%,
+        oklch(
+          0.7 calc(var(--accent-chroma) * 0.9) var(--accent-hue) /
+          calc(0.05 + var(--wash-opacity, 0) * 0.95)
+        ),
+        transparent 72%
+      ),
+      radial-gradient(
+        170% 95% at 100% 100%,
+        oklch(0.5 0.1 var(--bg-hue) / calc(0.03 + var(--wash-opacity, 0) * 0.85)),
+        transparent 80%
+      );
+  }
+
   /* Film grain: a fixed fractal-noise wash over the whole app, opacity driven
      by the theme panel. Zero-cost at opacity 0 (still composited, no paints). */
   body::after {
@@ -343,6 +370,14 @@
     /* Tile size = grain resolution: smaller tile → finer grain. */
     background-size: var(--grain-scale, 140px) var(--grain-scale, 140px);
     mix-blend-mode: overlay;
+  }
+
+  /* Overlay collapses toward invisible on a near-black base; soft-light keeps
+     the film grain legible on the dark canvas (this is why the grain slider
+     "did nothing" in dark mode before). */
+  .dark body::after {
+    mix-blend-mode: soft-light;
+    opacity: min(1, calc(var(--grain-opacity, 0) * 3.4));
   }
 
   /* GPU acceleration for scrollable areas */
@@ -735,11 +770,27 @@
   }
   .dark .app-paper,
   .dark .report-paper {
-    background-image: radial-gradient(
-      circle at 1px 1px,
-      color-mix(in srgb, var(--color-text) 6%, transparent) 1px,
-      transparent 0
-    );
+    /* The dark counterpart to light mode's accent dot-paper. Three layers over
+       var(--color-bg): a gentle top-down atmospheric lift so the canvas reads as
+       a lit surface rather than a flat void, an accent-tinted lattice for brand
+       life (mirrors light mode's accent dots), and a faint neutral lattice that
+       gives the field a quiet grain even before the grain slider is touched. */
+    background-image:
+      radial-gradient(125% 80% at 50% -15%, oklch(0.34 0.025 var(--bg-hue) / 0.5), transparent 60%),
+      radial-gradient(
+        circle at 1px 1px,
+        color-mix(in srgb, var(--color-accent) 10%, transparent) 1px,
+        transparent 0
+      ),
+      radial-gradient(
+        circle at 1px 1px,
+        color-mix(in srgb, var(--color-text) 4%, transparent) 1px,
+        transparent 0
+      );
+    background-size:
+      100% 100%,
+      24px 24px,
+      24px 24px;
   }
 
   /* Cursor glow companion to .app-paper: the same dot lattice drawn in the
