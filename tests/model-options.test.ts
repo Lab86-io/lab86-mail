@@ -32,9 +32,11 @@ describe('OpenRouter model normalization', () => {
 
 describe('OpenRouter model catalogs', () => {
   test('includes default primary and fast entries', () => {
-    expect(OPENROUTER_PRIMARY_MODEL_OPTIONS.some((option) => option.id === OPENROUTER_DEFAULT_PRIMARY_MODEL)).toBe(
+    expect(
+      OPENROUTER_PRIMARY_MODEL_OPTIONS.some((option) => option.id === OPENROUTER_DEFAULT_PRIMARY_MODEL),
+    ).toBe(true);
+    expect(OPENROUTER_FAST_MODEL_OPTIONS.some((option) => option.id === OPENROUTER_DEFAULT_FAST_MODEL)).toBe(
       true,
     );
-    expect(OPENROUTER_FAST_MODEL_OPTIONS.some((option) => option.id === OPENROUTER_DEFAULT_FAST_MODEL)).toBe(true);
   });
 });

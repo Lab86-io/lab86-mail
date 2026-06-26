@@ -12,9 +12,19 @@ describe('tool registry', () => {
     expect(new Set(names).size).toBe(names.length);
     for (const tool of metadata) {
       expect(tool.description.length).toBeGreaterThan(10);
-      expect(['mail', 'compose', 'ai', 'memory', 'calendar', 'tasks', 'contacts', 'web', 'audit', 'mcp', 'meta']).toContain(
-        tool.category,
-      );
+      expect([
+        'mail',
+        'compose',
+        'ai',
+        'memory',
+        'calendar',
+        'tasks',
+        'contacts',
+        'web',
+        'audit',
+        'mcp',
+        'meta',
+      ]).toContain(tool.category);
     }
   });
 
@@ -28,9 +38,9 @@ describe('tool registry', () => {
     const remember = getTool('remember');
     expect(remember).toBeTruthy();
     await withToolContext(async () => {
-      await expect(invokeTool(remember!, { email: 'person@example.test' }, toolContext())).rejects.toBeInstanceOf(
-        ToolValidationError,
-      );
+      await expect(
+        invokeTool(remember!, { email: 'person@example.test' }, toolContext()),
+      ).rejects.toBeInstanceOf(ToolValidationError);
     });
   });
 
@@ -39,7 +49,11 @@ describe('tool registry', () => {
     const listAudit = getTool('list_audit');
     expect(remember && listAudit).toBeTruthy();
     await withToolContext(async () => {
-      await invokeTool(remember!, { email: 'audit@example.test', notes: 'likes concise replies' }, toolContext());
+      await invokeTool(
+        remember!,
+        { email: 'audit@example.test', notes: 'likes concise replies' },
+        toolContext(),
+      );
       const audit = await invokeTool(listAudit!, { limit: 20 }, toolContext());
       expect(audit.entries.some((entry: any) => entry.tool === 'remember')).toBe(true);
     });

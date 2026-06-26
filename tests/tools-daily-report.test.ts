@@ -1,51 +1,51 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { saveDailyReport } from '../lib/store/daily-reports';
 import {
   dismissDailyReportTaskTool,
   dismissDailyReportThreadTool,
   generateDailyReportTool,
   getDailyReportTool,
   getLatestDailyReportTool,
+  listDailyReportsTool,
   listDailyReportTaskDismissalsTool,
   listDailyReportThreadDismissalsTool,
-  listDailyReportsTool,
 } from '../lib/tools/daily-report';
-import { saveDailyReport } from '../lib/store/daily-reports';
 import { runTool, withToolContext } from './tools/harness';
 
 describe('daily report tools', () => {
   test('stores, lists, and fetches reports locally', async () => {
     await withToolContext(async () => {
       await saveDailyReport({
-      _id: 'report_test_1',
-      kind: 'manual',
-      generatedAt: Date.parse('2026-06-10T08:00:00.000Z'),
-      status: 'ready',
-      accounts: ['jakob@example.test'],
-      title: 'Morning brief',
-      narrative: 'Two threads need replies.',
-      sections: {
-        replyOwed: [],
-        followUpOwed: [],
-        newPeople: [],
-        timeSensitive: [],
-        tracked: [],
-        fyi: [],
-        bulkTail: [],
-        tasks: [],
-        calendar: [],
-      },
-      stats: {},
-    } as any);
+        _id: 'report_test_1',
+        kind: 'manual',
+        generatedAt: Date.parse('2026-06-10T08:00:00.000Z'),
+        status: 'ready',
+        accounts: ['jakob@example.test'],
+        title: 'Morning brief',
+        narrative: 'Two threads need replies.',
+        sections: {
+          replyOwed: [],
+          followUpOwed: [],
+          newPeople: [],
+          timeSensitive: [],
+          tracked: [],
+          fyi: [],
+          bulkTail: [],
+          tasks: [],
+          calendar: [],
+        },
+        stats: {},
+      } as any);
 
-    const latest = await runTool(getLatestDailyReportTool.handler, { kind: 'manual' });
-    expect(latest.report?._id).toBe('report_test_1');
+      const latest = await runTool(getLatestDailyReportTool.handler, { kind: 'manual' });
+      expect(latest.report?._id).toBe('report_test_1');
 
-    const listed = await runTool(listDailyReportsTool.handler, { limit: 5 });
-    expect(listed.reports.some((report: any) => report._id === 'report_test_1')).toBe(true);
+      const listed = await runTool(listDailyReportsTool.handler, { limit: 5 });
+      expect(listed.reports.some((report: any) => report._id === 'report_test_1')).toBe(true);
 
-    const fetched = await runTool(getDailyReportTool.handler, { id: 'report_test_1' });
-    expect(fetched.report?.title).toBe('Morning brief');
+      const fetched = await runTool(getDailyReportTool.handler, { id: 'report_test_1' });
+      expect(fetched.report?.title).toBe('Morning brief');
     });
   });
 

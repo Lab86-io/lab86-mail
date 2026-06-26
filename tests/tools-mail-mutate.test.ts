@@ -35,8 +35,12 @@ describe('mail mutate tools — local paths', () => {
 
 describe('mail mutate tools — Nylas guards', () => {
   test('provider mutations fail clearly without a connected account', async () => {
-    const { account, threadId, messageId } = await seedThreadMessage();
-    await expect(runTool(archiveThread.handler, { account, threadId })).rejects.toThrow(/Nylas account|Convex/);
-    await expect(runTool(markThreadRead.handler, { account, threadId })).rejects.toThrow(/Nylas account|Convex/);
+    const { account, threadId } = await seedThreadMessage();
+    await expect(runTool(archiveThread.handler, { account, threadId })).rejects.toThrow(
+      /Nylas account|Convex/,
+    );
+    await expect(runTool(markThreadRead.handler, { account, threadId })).rejects.toThrow(
+      /Nylas account|Convex/,
+    );
   });
 });

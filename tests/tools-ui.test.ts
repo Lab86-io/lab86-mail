@@ -13,11 +13,15 @@ import { runTool } from './tools/harness';
 
 describe('UI tools', () => {
   test('return acknowledged no-op payloads', async () => {
-    expect(await runTool(uiFocusThread.handler, { threadId: 'thread_123', account: 'jakob@example.test' })).toEqual({
+    expect(
+      await runTool(uiFocusThread.handler, { threadId: 'thread_123', account: 'jakob@example.test' }),
+    ).toEqual({
       acknowledged: true,
       hint: 'UI will focus thread thread_123.',
     });
-    expect(await runTool(uiSetQuery.handler, { query: 'from:alex newer_than:7d', label: 'From Alex' })).toEqual({
+    expect(
+      await runTool(uiSetQuery.handler, { query: 'from:alex newer_than:7d', label: 'From Alex' }),
+    ).toEqual({
       acknowledged: true,
       hint: 'UI will run "from:alex newer_than:7d".',
     });
@@ -28,7 +32,9 @@ describe('UI tools', () => {
     expect(await runTool(uiOpenReply.handler, { threadId: 'thread_123', body: 'Thanks!' })).toEqual({
       acknowledged: true,
     });
-    expect(await runTool(uiToast.handler, { message: 'Saved', kind: 'success' })).toEqual({ acknowledged: true });
+    expect(await runTool(uiToast.handler, { message: 'Saved', kind: 'success' })).toEqual({
+      acknowledged: true,
+    });
     expect(await runTool(uiCloseBar.handler, {})).toEqual({ acknowledged: true });
     expect(await runTool(uiSwitchAccount.handler, { account: 'jakob@example.test' })).toEqual({
       acknowledged: true,

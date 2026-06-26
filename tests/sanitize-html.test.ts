@@ -12,9 +12,9 @@ describe('emailDeclaresOwnBackground', () => {
 
 describe('emailNeedsIsolatedFrame', () => {
   test('requires iframe rendering for branded HTML mail', () => {
-    expect(emailNeedsIsolatedFrame('<html><body><table><tr><td>Newsletter</td></tr></table></body></html>')).toBe(
-      true,
-    );
+    expect(
+      emailNeedsIsolatedFrame('<html><body><table><tr><td>Newsletter</td></tr></table></body></html>'),
+    ).toBe(true);
     expect(emailNeedsIsolatedFrame('<!--[if mso]>outlook markup<![endif]-->')).toBe(true);
     expect(emailNeedsIsolatedFrame('<p>Thanks for the update.</p>')).toBe(false);
   });

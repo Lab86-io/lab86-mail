@@ -47,17 +47,19 @@ export async function runTool<T>(
   return withToolContext(() => handler(args as any, toolContext(overrides)));
 }
 
-export async function seedThreadMessage(input: {
-  account?: string;
-  threadId?: string;
-  messageId?: string;
-  subject?: string;
-  from?: string;
-  to?: string;
-  textBody?: string;
-  labels?: string[];
-  unread?: boolean;
-} = {}) {
+export async function seedThreadMessage(
+  input: {
+    account?: string;
+    threadId?: string;
+    messageId?: string;
+    subject?: string;
+    from?: string;
+    to?: string;
+    textBody?: string;
+    labels?: string[];
+    unread?: boolean;
+  } = {},
+) {
   return withToolContext(async () => {
     const account = input.account ?? 'jakob@example.test';
     const threadId = input.threadId ?? 'thread_seed';

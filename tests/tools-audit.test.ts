@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
-import { listAuditEntries, logAction } from '../lib/tools/audit-tools';
+import { logAction } from '../lib/tools/audit-tools';
 import { invokeTool } from '../lib/tools/registry';
 import { runTool, toolContext, withToolContext } from './tools/harness';
 

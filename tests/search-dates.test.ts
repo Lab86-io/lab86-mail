@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { endOfDayMs, epochSecondsForDayEnd, epochSecondsForDayStart, startOfDayMs } from '../lib/mail/search/dates';
+import {
+  endOfDayMs,
+  epochSecondsForDayEnd,
+  epochSecondsForDayStart,
+  startOfDayMs,
+} from '../lib/mail/search/dates';
 
 describe('mail search date helpers', () => {
   test('startOfDayMs and endOfDayMs bound UTC days', () => {

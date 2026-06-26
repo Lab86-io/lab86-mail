@@ -36,8 +36,9 @@ describe('Bitbucket connection sync', () => {
       if (url.includes('/user/workspaces')) {
         return jsonResponse({ values: [{ slug: 'lab86' }] });
       }
-      if (url.includes('/workspaces/lab86/pullrequests/acct-123')) {
+      if (url.includes('/workspaces/lab86/pullrequests/acct-123') && !url.includes('page=2')) {
         return jsonResponse({
+          next: 'https://api.bitbucket.org/2.0/workspaces/lab86/pullrequests/acct-123?page=2',
           values: [
             {
               id: 42,
@@ -48,6 +49,27 @@ describe('Bitbucket connection sync', () => {
               author: { display_name: 'Ada Lovelace' },
               source: {
                 branch: { name: 'bitbucket-access' },
+                repository: { full_name: 'lab86/mail' },
+              },
+              destination: {
+                branch: { name: 'main' },
+                repository: { full_name: 'lab86/mail' },
+              },
+            },
+          ],
+        });
+      }
+      if (url.includes('/workspaces/lab86/pullrequests/acct-123') && url.includes('page=2')) {
+        return jsonResponse({
+          values: [
+            {
+              id: 43,
+              title: 'Review staged rollout',
+              state: 'OPEN',
+              links: { html: { href: 'https://bitbucket.org/lab86/mail/pull-requests/43' } },
+              author: { display_name: 'Ada Lovelace' },
+              source: {
+                branch: { name: 'staged-rollout' },
                 repository: { full_name: 'lab86/mail' },
               },
               destination: {
@@ -72,7 +94,7 @@ describe('Bitbucket connection sync', () => {
         `Basic ${Buffer.from('person@example.com:api-token', 'utf8').toString('base64')}`,
       );
       expect(result.displayName).toBe('Ada Lovelace');
-      expect(result.items).toHaveLength(1);
+      expect(result.items).toHaveLength(2);
       expect(result.items[0]).toMatchObject({
         externalId: 'https://bitbucket.org/lab86/mail/pull-requests/42',
         kind: 'pull_request',
@@ -82,6 +104,47 @@ describe('Bitbucket connection sync', () => {
         assignedToUser: true,
       });
       expect(result.items[0]?.searchText).toContain('bitbucket-access');
+      expect(result.items[1]?.title).toBe('Review staged rollout');
+      expect(requests.some((request) => request.url.includes('page=2'))).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('surfaces partial workspace failures instead of returning a partial success', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith('/user')) {
+        return jsonResponse({ account_id: 'acct-123', display_name: 'Ada Lovelace' });
+      }
+      if (url.includes('/user/workspaces')) {
+        return jsonResponse({ values: [{ slug: 'lab86' }, { slug: 'other' }] });
+      }
+      if (url.includes('/workspaces/lab86/pullrequests/acct-123')) {
+        return jsonResponse({
+          values: [
+            {
+              id: 42,
+              title: 'Add Bitbucket access',
+              state: 'OPEN',
+            },
+          ],
+        });
+      }
+      if (url.includes('/workspaces/other/pullrequests/acct-123')) {
+        return jsonResponse({ error: 'workspace unavailable' }, 500);
+      }
+      return jsonResponse({ error: 'unexpected' }, 404);
+    }) as typeof fetch;
+
+    try {
+      const { loadBitbucketItems } = await import('../lib/mcp/bitbucket');
+
+      await expect(
+        loadBitbucketItems('https://api.bitbucket.org/2.0', 'person@example.com:api-token'),
+      ).rejects.toThrow(/Bitbucket list pull requests for other failed with HTTP 500/);
     } finally {
       globalThis.fetch = originalFetch;
     }

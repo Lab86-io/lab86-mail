@@ -1,8 +1,9 @@
 import { buildAuthorizationHeader } from './auth';
 import type { NormalizedMcpItem } from './servers';
 
-const WORKSPACE_LIMIT = 12;
-const PULL_REQUESTS_PER_WORKSPACE = 25;
+const BITBUCKET_REQUEST_TIMEOUT_MS = 10_000;
+const WORKSPACE_PAGE_SIZE = 12;
+const PULL_REQUEST_PAGE_SIZE = 25;
 
 interface BitbucketPage<T> {
   values?: T[];
@@ -80,19 +81,55 @@ async function fetchJson<T>(
   pathOrUrl: string,
   params?: Record<string, string>,
 ): Promise<T> {
-  const response = await fetch(apiUrl(baseUrl, pathOrUrl, params), {
-    headers: {
-      accept: 'application/json',
-      authorization: buildAuthorizationHeader(token, 'basic-or-bearer'),
-    },
-    cache: 'no-store',
-  });
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, BITBUCKET_REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(baseUrl, pathOrUrl, params), {
+      headers: {
+        accept: 'application/json',
+        authorization: buildAuthorizationHeader(token, 'basic-or-bearer'),
+      },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (timedOut) {
+      throw new Error(`Bitbucket ${operation} timed out after ${BITBUCKET_REQUEST_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     const detail = body.trim() ? `: ${body.trim().slice(0, 500)}` : '';
     throw new Error(`Bitbucket ${operation} failed with HTTP ${response.status}${detail}`);
   }
   return (await response.json()) as T;
+}
+
+async function fetchPagedValues<T>(
+  baseUrl: string,
+  token: string,
+  operation: string,
+  pathOrUrl: string,
+  params?: Record<string, string>,
+): Promise<T[]> {
+  const values: T[] = [];
+  let next: string | undefined = pathOrUrl;
+  let nextParams: Record<string, string> | undefined = params;
+  while (next) {
+    const page: BitbucketPage<T> = await fetchJson(baseUrl, token, operation, next, nextParams);
+    values.push(...(page.values || []));
+    next = page.next;
+    nextParams = undefined;
+  }
+  return values;
 }
 
 function selectedUser(user: BitbucketUser) {
@@ -153,45 +190,33 @@ export async function loadBitbucketItems(baseUrl: string, token: string): Promis
   const userSelector = selectedUser(user);
   if (!userSelector) throw new Error('Bitbucket auth succeeded, but the current user id was missing.');
 
-  const workspacePage = await fetchJson<BitbucketPage<BitbucketWorkspace>>(
+  const workspaceRows = await fetchPagedValues<BitbucketWorkspace>(
     baseUrl,
     token,
     'list workspaces',
     '/user/workspaces',
-    { pagelen: String(WORKSPACE_LIMIT) },
+    { pagelen: String(WORKSPACE_PAGE_SIZE) },
   );
-  const workspaces = (workspacePage.values || [])
+  const workspaces = workspaceRows
     .map((workspace) => workspace.slug?.trim())
-    .filter((slug): slug is string => Boolean(slug))
-    .slice(0, WORKSPACE_LIMIT);
+    .filter((slug): slug is string => Boolean(slug));
 
   const items: NormalizedMcpItem[] = [];
-  const errors: string[] = [];
-  let successfulWorkspaceReads = 0;
   for (const workspace of workspaces) {
-    try {
-      const page = await fetchJson<BitbucketPage<BitbucketPullRequest>>(
-        baseUrl,
-        token,
-        `list pull requests for ${workspace}`,
-        `/workspaces/${encodeURIComponent(workspace)}/pullrequests/${encodeURIComponent(userSelector)}`,
-        {
-          pagelen: String(PULL_REQUESTS_PER_WORKSPACE),
-          state: 'OPEN',
-        },
-      );
-      successfulWorkspaceReads += 1;
-      for (const row of page.values || []) {
-        const item = normalizePullRequest(row, workspace);
-        if (item) items.push(item);
-      }
-    } catch (err) {
-      errors.push((err as { message?: string })?.message || String(err));
+    const rows = await fetchPagedValues<BitbucketPullRequest>(
+      baseUrl,
+      token,
+      `list pull requests for ${workspace}`,
+      `/workspaces/${encodeURIComponent(workspace)}/pullrequests/${encodeURIComponent(userSelector)}`,
+      {
+        pagelen: String(PULL_REQUEST_PAGE_SIZE),
+        state: 'OPEN',
+      },
+    );
+    for (const row of rows) {
+      const item = normalizePullRequest(row, workspace);
+      if (item) items.push(item);
     }
-  }
-
-  if (workspaces.length > 0 && successfulWorkspaceReads === 0 && errors.length > 0) {
-    throw new Error(errors[0]);
   }
 
   return {

@@ -34,9 +34,9 @@ describe('hosted tool auth guards', () => {
         toolContext({ userId: null }),
       ),
     ).rejects.toThrow(/Not authenticated/);
-    await expect(runTool(mcpSearch.handler, { query: 'open PRs' }, toolContext({ userId: null }))).rejects.toThrow(
-      /Not authenticated/,
-    );
+    await expect(
+      runTool(mcpSearch.handler, { query: 'open PRs' }, toolContext({ userId: null })),
+    ).rejects.toThrow(/Not authenticated/);
     await expect(runTool(mcpListItems.handler, { limit: 5 }, toolContext({ userId: null }))).rejects.toThrow(
       /Not authenticated/,
     );
@@ -55,20 +55,20 @@ describe('hosted tool auth guards', () => {
   });
 
   test('operations tools require authentication', async () => {
-    await expect(runTool(listRecentOperationsTool.handler, { limit: 10 }, toolContext({ userId: null }))).rejects.toThrow(
-      /Not authenticated/,
-    );
-    await expect(runTool(undoOperationTool.handler, { operationId: 'op_1' }, toolContext({ userId: null }))).rejects.toThrow(
-      /Not authenticated/,
-    );
+    await expect(
+      runTool(listRecentOperationsTool.handler, { limit: 10 }, toolContext({ userId: null })),
+    ).rejects.toThrow(/Not authenticated/);
+    await expect(
+      runTool(undoOperationTool.handler, { operationId: 'op_1' }, toolContext({ userId: null })),
+    ).rejects.toThrow(/Not authenticated/);
   });
 });
 
 describe('hosted tool configuration guards', () => {
   test('corpus tools fail when no accounts or index are available', async () => {
-    await expect(runTool(corpusSearch.handler, { query: 'invoice', max: 5, includeConnectedTools: false })).rejects.toThrow(
-      /No connected accounts or tools to search|Convex is not configured/,
-    );
+    await expect(
+      runTool(corpusSearch.handler, { query: 'invoice', max: 5, includeConnectedTools: false }),
+    ).rejects.toThrow(/No connected accounts or tools to search|Convex is not configured/);
     await expect(runTool(senderProfile.handler, { sender: 'billing@example.test' })).rejects.toThrow(
       /Mail index is not available/,
     );
