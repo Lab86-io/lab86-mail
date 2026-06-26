@@ -648,9 +648,12 @@ export function DailyReport() {
     // freshly-triggered edition to land — so the page upgrades live.
     refetchInterval: (query) => {
       const r = query.state.data?.report;
-      if (r?.status === 'partial' || r?.artifactStatus === 'composing') return 2_000;
+      // A status that has sat past this cutoff is from a generation that died
+      // mid-flight; stop polling it so we don't hammer a forever-stuck edition.
+      const stuck = !r || Date.now() - (r.generatedAt || 0) > 5 * 60_000;
+      if (!stuck && (r?.status === 'partial' || r?.artifactStatus === 'composing')) return 2_000;
       // The month pass enriches an already-shown edition in the background.
-      if (r?.artifactStatus === 'enriching') return 3_000;
+      if (!stuck && r?.artifactStatus === 'enriching') return 3_000;
       if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
       return false;
     },
@@ -667,11 +670,19 @@ export function DailyReport() {
     staleTime: 30_000,
   });
   const report = reportQuery.data?.report || null;
+  // A generation that errored partway leaves the stored edition stuck at
+  // 'partial'/'composing'/'enriching' forever. Past this cutoff we treat such a
+  // status as dead, so the in-progress UI clears and the Generate button is
+  // clickable again to force a fresh run.
+  const STUCK_GENERATION_MS = 5 * 60_000;
+  const reportIsStale = !report || Date.now() - (report.generatedAt || 0) > STUCK_GENERATION_MS;
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
-  const generating = report?.status === 'partial' || report?.artifactStatus === 'composing' || waitingForNew;
+  const generating =
+    waitingForNew ||
+    (!reportIsStale && (report?.status === 'partial' || report?.artifactStatus === 'composing'));
   // The artifact is already shown; the broader month pass is filling in behind it.
-  const enriching = report?.artifactStatus === 'enriching';
+  const enriching = !reportIsStale && report?.artifactStatus === 'enriching';
   const persistedHiddenTaskIds = useMemo(
     () => new Set(taskDismissalsQuery.data?.cardIds || []),
     [taskDismissalsQuery.data?.cardIds],

@@ -147,14 +147,20 @@ export function normalizeItems(query: McpSyncQuery, result: any): NormalizedMcpI
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     const externalId = firstString(
+      // Prefer globally-unique identifiers. GitHub reuses `number` across issues
+      // AND pull requests in the same repo, so issue #42 and PR #42 would
+      // collide and overwrite each other in mcpItems — fall back to `number`
+      // only after the unique fields (internal id, Jira key, distinct
+      // issue/pull url).
       row.id,
-      row.number,
       row.key,
+      row.html_url,
+      row.url,
+      row.permalink,
+      row.self,
+      row.number,
       row.iid,
       row.ts,
-      row.permalink,
-      row.url,
-      row.html_url,
     );
     if (!externalId) continue;
     const title = firstString(

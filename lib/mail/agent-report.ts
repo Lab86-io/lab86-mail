@@ -11,7 +11,7 @@ import type {
   DailyReportTaskItem,
   Message,
 } from '../shared/types';
-import { saveDailyReport } from '../store/daily-reports';
+import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
 import { getDailyArt } from './daily-art';
 import { generateDailyReport } from './daily-report';
@@ -158,14 +158,29 @@ export async function generateAgentReport(input: {
 
   // Phase 1 — fast week pass. Streams progress and persists the structured
   // week edition so the page has something rich to show almost immediately.
-  const week = await generateDailyReport({
-    kind: input.kind,
-    includeCalendar: true,
-    userId: input.userId,
-    now: input.now,
-    scope: 'week',
-    reportId,
-  });
+  let week: DailyReport;
+  try {
+    week = await generateDailyReport({
+      kind: input.kind,
+      includeCalendar: true,
+      userId: input.userId,
+      now: input.now,
+      scope: 'week',
+      reportId,
+    });
+  } catch (err) {
+    // The week pass persists a 'partial' edition before the work that can throw.
+    // If it dies here, settle that edition terminal so the UI doesn't stay stuck
+    // on a dead run (which would keep the Generate button disabled).
+    console.error('[agent-report] week pass failed:', err);
+    const partial = await getDailyReport(reportId).catch(() => null);
+    if (partial) {
+      await saveDailyReport({ ...partial, status: 'ready', artifactStatus: 'rendered' }).catch(
+        () => undefined,
+      );
+    }
+    throw err;
+  }
 
   const nativeWeekHtml = buildNativeDailyReportArtifact(week);
 

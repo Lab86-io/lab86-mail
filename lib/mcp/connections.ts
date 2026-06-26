@@ -31,7 +31,6 @@ export async function saveTokenConnection(opts: {
   server: McpServerId;
   token: string;
   displayName?: string;
-  serverUrl?: string;
 }): Promise<{ connectionId: string }> {
   const def = getServerDef(opts.server);
   if (!def) throw new Error(`Unknown MCP server: ${opts.server}`);
@@ -44,7 +43,10 @@ export async function saveTokenConnection(opts: {
     userId: opts.userId,
     connectionId,
     server: opts.server,
-    serverUrl: opts.serverUrl || def.defaultUrl,
+    // Pinned to the per-server default — never caller-supplied. The bearer
+    // token is sent to this host during sync, so an arbitrary serverUrl would
+    // be a token-exfiltration / SSRF surface.
+    serverUrl: def.defaultUrl,
     authKind: 'token',
     displayName: opts.displayName || def.label,
     scopes: def.scopes,
