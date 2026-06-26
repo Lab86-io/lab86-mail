@@ -34,7 +34,6 @@ import {
 import { createPortal } from 'react-dom';
 import tunnel from 'tunnel-rat';
 import { Card } from '@/components/ui/card';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
 const t = tunnel();
@@ -274,19 +273,21 @@ export const KanbanCards = <T extends KanbanItemProps = KanbanItemProps>({
     data: { type: 'column-dropzone', column: props.id },
   });
 
+  // The droppable IS the flex-filling, self-scrolling column body. Previously it
+  // sat inside a Radix ScrollArea whose display:table viewport collapsed an
+  // empty column's droppable to ~0px tall, so dnd-kit couldn't see empty columns
+  // as drop targets. As a flex-1 element it fills the whole column height, so an
+  // empty column is a full-height drop target.
   return (
-    <ScrollArea className="min-h-0 flex-1 overflow-hidden">
-      <SortableContext items={items}>
-        <div
-          ref={setNodeRef}
-          className={cn('flex min-h-full flex-grow flex-col gap-2 p-2', className)}
-          {...props}
-        >
-          {filteredData.map(children)}
-        </div>
-      </SortableContext>
-      <ScrollBar orientation="vertical" />
-    </ScrollArea>
+    <SortableContext items={items}>
+      <div
+        ref={setNodeRef}
+        className={cn('flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2', className)}
+        {...props}
+      >
+        {filteredData.map(children)}
+      </div>
+    </SortableContext>
   );
 };
 
