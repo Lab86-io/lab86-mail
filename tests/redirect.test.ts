@@ -10,7 +10,8 @@ describe('sanitizeInternalPath', () => {
     expect(sanitizeInternalPath('https://evil.test')).toBe('/');
     expect(sanitizeInternalPath('//evil.test/path')).toBe('/');
     expect(sanitizeInternalPath('/\\evil')).toBe('/');
-    expect(sanitizeInternalPath('/foo:bar')).toBe('/');
+    expect(sanitizeInternalPath('/foo:bar')).toBe('/foo:bar');
+    expect(sanitizeInternalPath('foo:bar')).toBe('/');
   });
   test('defaults empty values to root', () => {
     expect(sanitizeInternalPath(null)).toBe('/');

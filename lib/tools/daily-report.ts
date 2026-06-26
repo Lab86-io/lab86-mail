@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { generateAgentReport } from '../mail/agent-report';
+import type { DailyReport } from '../shared/types';
 import {
   dailyReportThreadKey,
   dismissDailyReportTask,
@@ -11,6 +13,7 @@ import {
   getDailyReport as getDailyReportStore,
   getLatestDailyReport,
   listDailyReports as listDailyReportsStore,
+  saveDailyReport,
 } from '../store/daily-reports';
 import { defineTool } from './registry';
 
@@ -33,7 +36,42 @@ export const generateDailyReportTool = defineTool({
     if (wait) {
       return { report: await generateAgentReport({ kind, userId: ctx.userId }) };
     }
-    void generateAgentReport({ kind, userId: ctx.userId }).catch((err) => {
+    const reportId = randomUUID();
+    const now = Date.now();
+    await saveDailyReport({
+      _id: reportId,
+      kind,
+      generatedAt: now,
+      status: 'partial',
+      progress: { stage: 'queued', done: 0, total: 1 },
+      accounts: [],
+      title: 'Daily Report',
+      narrative: 'Generating daily report.',
+      sections: {
+        replyOwed: [],
+        followUpOwed: [],
+        newPeople: [],
+        timeSensitive: [],
+        tracked: [],
+        fyi: [],
+        bulkTail: [],
+        tasks: [],
+        calendar: [],
+      },
+      stats: {
+        scannedThreads: 0,
+        trackedThreads: 0,
+        needsReply: 0,
+        replyOwed: 0,
+        dueSoon: 0,
+        bulkTailCount: 0,
+        unread: 0,
+        openTasks: 0,
+        completedTasks: 0,
+        calendarEvents: 0,
+      },
+    } satisfies DailyReport);
+    void generateAgentReport({ kind, userId: ctx.userId, reportId }).catch((err) => {
       console.error('[daily-report] background generation failed:', err);
     });
     return { report: null, started: true };

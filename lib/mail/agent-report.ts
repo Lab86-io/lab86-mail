@@ -152,9 +152,10 @@ export async function generateAgentReport(input: {
   kind: DailyReport['kind'];
   userId?: string | null;
   now?: number;
+  reportId?: string;
 }): Promise<DailyReport> {
   // Both passes share one edition id so the month pass overwrites the week one.
-  const reportId = randomUUID();
+  const reportId = input.reportId ?? randomUUID();
 
   // Phase 1 — fast week pass. Streams progress and persists the structured
   // week edition so the page has something rich to show almost immediately.

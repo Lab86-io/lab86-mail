@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
-import { saveDailyReport } from '../lib/store/daily-reports';
+import { getLatestDailyReport, saveDailyReport } from '../lib/store/daily-reports';
 import {
   dismissDailyReportTaskTool,
   dismissDailyReportThreadTool,
@@ -74,5 +74,8 @@ describe('daily report tools', () => {
     const started = await runTool(generateDailyReportTool.handler, { kind: 'manual', wait: false });
     expect(started.started).toBe(true);
     expect(started.report).toBeNull();
+    const latest = await withToolContext(() => getLatestDailyReport('manual'));
+    expect(latest?.status).toBe('partial');
+    expect(latest?.progress?.stage).toBe('queued');
   });
 });

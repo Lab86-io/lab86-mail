@@ -98,7 +98,11 @@ describe('hosted tool configuration guards', () => {
   });
 
   test('browserbase tools require API key', async () => {
-    const previous = process.env.BROWSERBASE_API_KEY;
+    const previous = {
+      BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY,
+      LAB86_BROWSERBASE_API_KEY: process.env.LAB86_BROWSERBASE_API_KEY,
+      BB_API_KEY: process.env.BB_API_KEY,
+    };
     delete process.env.BROWSERBASE_API_KEY;
     delete process.env.LAB86_BROWSERBASE_API_KEY;
     delete process.env.BB_API_KEY;
@@ -110,7 +114,13 @@ describe('hosted tool configuration guards', () => {
         /BROWSERBASE_API_KEY/,
       );
     } finally {
-      if (previous !== undefined) process.env.BROWSERBASE_API_KEY = previous;
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
     }
   });
 });

@@ -18,15 +18,31 @@ describe('parseMailSearchQuery', () => {
     ]);
   });
   test('parses relative date operators into ISO dates', () => {
-    const ast = parseMailSearchQuery('newer_than:7d older_than:1w');
-    expect(ast.clauses[0]).toMatchObject({ type: 'after', negated: false });
-    expect(ast.clauses[1]).toMatchObject({ type: 'before', negated: false });
-    expect(String(ast.clauses[0]?.value)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const originalNow = Date.now;
+    Date.now = () => Date.parse('2026-06-26T12:00:00.000Z');
+    try {
+      const ast = parseMailSearchQuery('newer_than:7d older_than:1w');
+      expect(ast.clauses).toEqual([
+        { type: 'after', value: '2026-06-19', negated: false },
+        { type: 'before', value: '2026-06-19', negated: false },
+      ]);
+    } finally {
+      Date.now = originalNow;
+    }
   });
   test('supports OR groups and negation', () => {
     const ast = parseMailSearchQuery('from:(icloud.com OR me.com) -in:spam');
-    expect(ast.clauses[0]).toMatchObject({ type: 'or', negated: false });
-    expect(ast.clauses[1]).toMatchObject({ type: 'folder', value: 'spam', negated: true });
+    expect(ast.clauses).toEqual([
+      {
+        type: 'or',
+        negated: false,
+        clauses: [
+          { type: 'from', value: 'icloud.com', negated: false },
+          { type: 'from', value: 'me.com', negated: false },
+        ],
+      },
+      { type: 'folder', value: 'spam', negated: true },
+    ]);
   });
   test('preserves free-text tokens and unknown operators', () => {
     const ast = parseMailSearchQuery('invoice custom:foo');

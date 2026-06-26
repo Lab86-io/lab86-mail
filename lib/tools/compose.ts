@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { fetchEmailAttachment, fetchWebFile } from '../attachments/fetch-store';
 import { listNylasScheduledMessages, sendNylasMessage, stopNylasScheduledMessage } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
-import type { Draft } from '../shared/types';
+import type { Draft, Message } from '../shared/types';
 import {
   deleteDraft as deleteDraftRecord,
   getDraft,
@@ -134,6 +134,42 @@ async function resolveReplyAllTarget(account: string, messageId?: string, thread
   };
 }
 
+export function buildForwardMessagePayload(
+  original: Message,
+  input: { body?: string; html?: string },
+): { subject: string; body: string; html?: string } {
+  const subject = original.subject?.startsWith('Fwd:')
+    ? original.subject
+    : `Fwd: ${original.subject || '(no subject)'}`;
+  const headerBlock = [
+    '---------- Forwarded message ----------',
+    `From: ${original.from}`,
+    `Date: ${new Date(original.date).toISOString()}`,
+    `Subject: ${original.subject || ''}`,
+    `To: ${original.to || ''}`,
+    original.cc ? `Cc: ${original.cc}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const quotedText = [input.body || '', '', headerBlock, '', original.textBody || ''].join('\n');
+  const quotedHtml = input.html
+    ? [
+        input.html,
+        '<br/><br/>',
+        `<div style="border-left:2px solid currentColor;padding-left:.6em;opacity:.72">`,
+        `<div>---------- Forwarded message ----------</div>`,
+        `<div>From: ${escapeHtml(original.from)}</div>`,
+        `<div>Date: ${new Date(original.date).toISOString()}</div>`,
+        `<div>Subject: ${escapeHtml(original.subject || '')}</div>`,
+        `<div>To: ${escapeHtml(original.to || '')}</div>`,
+        original.cc ? `<div>Cc: ${escapeHtml(original.cc)}</div>` : '',
+        `</div>`,
+        original.htmlBody || `<pre>${escapeHtml(original.textBody || '')}</pre>`,
+      ].join('')
+    : undefined;
+  return { subject, body: quotedText, html: quotedHtml };
+}
+
 export const sendMessage = defineTool({
   name: 'send_message',
   description: 'Send a brand-new email.',
@@ -243,44 +279,16 @@ export const forwardMessage = defineTool({
     const original = await getMessageRecord(account, messageId);
     if (!original)
       throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
-    const fwdSubject = original.subject?.startsWith('Fwd:')
-      ? original.subject
-      : `Fwd: ${original.subject || '(no subject)'}`;
-    const headerBlock = [
-      '---------- Forwarded message ----------',
-      `From: ${original.from}`,
-      `Date: ${new Date(original.date).toISOString()}`,
-      `Subject: ${original.subject || ''}`,
-      `To: ${original.to || ''}`,
-      original.cc ? `Cc: ${original.cc}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-    const quotedText = [body || '', '', headerBlock, '', original.textBody || ''].join('\n');
-    const quotedHtml = html
-      ? [
-          html,
-          '<br/><br/>',
-          `<div style="border-left:2px solid currentColor;padding-left:.6em;opacity:.72">`,
-          `<div>---------- Forwarded message ----------</div>`,
-          `<div>From: ${escapeHtml(original.from)}</div>`,
-          `<div>Date: ${new Date(original.date).toISOString()}</div>`,
-          `<div>Subject: ${escapeHtml(original.subject || '')}</div>`,
-          `<div>To: ${escapeHtml(original.to || '')}</div>`,
-          original.cc ? `<div>Cc: ${escapeHtml(original.cc)}</div>` : '',
-          `</div>`,
-          original.htmlBody || `<pre>${escapeHtml(original.textBody || '')}</pre>`,
-        ].join('')
-      : undefined;
+    const quoted = buildForwardMessagePayload(original, { body, html });
     await sendWithNylas({
       userId: ctx.userId,
       account,
       to,
       cc,
       bcc,
-      subject: fwdSubject,
-      body: quotedText,
-      html: quotedHtml,
+      subject: quoted.subject,
+      body: quoted.body,
+      html: quoted.html,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return { ok: true };

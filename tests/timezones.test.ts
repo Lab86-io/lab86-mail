@@ -9,7 +9,7 @@ describe('parseIsoInTimezone', () => {
   test('interprets naive timestamps in the supplied timezone', () => {
     const utc = parseIsoInTimezone('2026-01-15T09:00:00', 'America/New_York', 'start');
     const expected = Date.parse('2026-01-15T14:00:00.000Z');
-    expect(Math.abs(utc - expected)).toBeLessThan(60_000);
+    expect(utc).toBe(expected);
   });
   test('rejects invalid timestamps', () => {
     expect(() => parseIsoInTimezone('not-a-date', 'UTC', 'start')).toThrow(/Invalid ISO timestamp/);

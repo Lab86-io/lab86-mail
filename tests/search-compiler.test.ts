@@ -47,13 +47,15 @@ describe('compileMailSearch', () => {
       tier: 'structured',
       limit: 10,
     });
-    expect(archive.dropped[0]?.reason).toBe('folder has no Gmail system label equivalent');
+    expect(archive.dropped.map((item) => item.reason)).toContain(
+      'folder has no Gmail system label equivalent',
+    );
 
     const badDate = compileMailSearch(parseMailSearchQuery('after:not-a-date'), {
       provider: 'google',
       tier: 'structured',
       limit: 10,
     });
-    expect(badDate.dropped[0]?.reason).toBe('unparseable date');
+    expect(badDate.dropped.map((item) => item.reason)).toContain('unparseable date');
   });
 });

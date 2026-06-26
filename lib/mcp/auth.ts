@@ -8,7 +8,7 @@ function compactCredential(value: string): string {
 
 function bearerCredential(raw: string): string {
   let token = String(raw ?? '').trim();
-  token = token.replace(/^(?:Bearer|token)\s+/i, '').trim();
+  token = token.replace(/^(?:Bearer|token)(?:\s+|$)/i, '').trim();
   token = compactCredential(token);
   if (!token) {
     throw new Error('MCP connection failed: the access token is empty after sanitizing.');

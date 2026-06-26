@@ -87,9 +87,8 @@ async function fetchJson<T>(
     timedOut = true;
     controller.abort();
   }, BITBUCKET_REQUEST_TIMEOUT_MS);
-  let response: Response;
   try {
-    response = await fetch(apiUrl(baseUrl, pathOrUrl, params), {
+    const response = await fetch(apiUrl(baseUrl, pathOrUrl, params), {
       headers: {
         accept: 'application/json',
         authorization: buildAuthorizationHeader(token, 'basic-or-bearer'),
@@ -97,6 +96,12 @@ async function fetchJson<T>(
       cache: 'no-store',
       signal: controller.signal,
     });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      const detail = body.trim() ? `: ${body.trim().slice(0, 500)}` : '';
+      throw new Error(`Bitbucket ${operation} failed with HTTP ${response.status}${detail}`);
+    }
+    return (await response.json()) as T;
   } catch (err) {
     if (timedOut) {
       throw new Error(`Bitbucket ${operation} timed out after ${BITBUCKET_REQUEST_TIMEOUT_MS}ms`);
@@ -105,12 +110,6 @@ async function fetchJson<T>(
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    const detail = body.trim() ? `: ${body.trim().slice(0, 500)}` : '';
-    throw new Error(`Bitbucket ${operation} failed with HTTP ${response.status}${detail}`);
-  }
-  return (await response.json()) as T;
 }
 
 async function fetchPagedValues<T>(

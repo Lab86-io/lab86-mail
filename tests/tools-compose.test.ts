@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { getMessage } from '../lib/store/messages';
 import {
+  buildForwardMessagePayload,
   deleteDraftTool,
   forwardMessage,
   listDraftsTool,
@@ -11,7 +13,7 @@ import {
   sendMessage,
   updateDraft,
 } from '../lib/tools/compose';
-import { runTool, seedThreadMessage } from './tools/harness';
+import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
 describe('compose tools', () => {
   test('save, list, update, and delete local drafts', async () => {
@@ -62,6 +64,13 @@ describe('compose tools', () => {
       subject: 'Original',
       textBody: 'Please review this doc.',
     });
+    const original = await withToolContext(() => getMessage(account, messageId));
+    expect(original).toBeTruthy();
+    const quoted = buildForwardMessagePayload(original!, { body: 'FYI' });
+    expect(quoted.subject).toBe('Fwd: Original');
+    expect(quoted.body).toContain('FYI');
+    expect(quoted.body).toContain('Subject: Original');
+    expect(quoted.body).toContain('Please review this doc.');
     await expect(
       runTool(forwardMessage.handler, {
         account,

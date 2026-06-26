@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { getThread } from '../lib/store/threads';
 import {
   applySmartCorrection,
   createSmartLabel,
@@ -12,7 +13,7 @@ import {
   setSmartRuleEnabledTool,
   updateSmartLabel,
 } from '../lib/tools/smart-labels';
-import { runTool, seedThreadMessage } from './tools/harness';
+import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
 describe('smart label and rule tools', () => {
   test('creates, lists, updates, and disables custom labels', async () => {
@@ -57,7 +58,7 @@ describe('smart label and rule tools', () => {
   });
 
   test('previewSmartLabel scans cached threads', async () => {
-    await seedThreadMessage({
+    const { threadId } = await seedThreadMessage({
       subject: 'Launch checklist for Friday',
       textBody: 'Here is the go-live plan.',
       from: 'PM <pm@example.test>',
@@ -69,7 +70,11 @@ describe('smart label and rule tools', () => {
       negativeExamples: ['weekly newsletter'],
       max: 10,
     });
-    expect(Array.isArray(preview.items)).toBe(true);
+    expect(
+      preview.items.some(
+        (item: any) => item._id === threadId || item.subject === 'Launch checklist for Friday',
+      ),
+    ).toBe(true);
   });
 
   test('apply_smart_correction and mark_sender_human update local categories', async () => {
@@ -87,10 +92,16 @@ describe('smart label and rule tools', () => {
     });
     expect(corrected.ok).toBe(true);
     expect(corrected.rule).toBeTruthy();
+    const correctedThread = await withToolContext(() => getThread(account, threadId));
+    expect(correctedThread?.smartCategory?.primary).toBe('main');
+    expect(correctedThread?.smartCategory?.ruleHits).toContain(corrected.rule._id);
 
     const marked = await runTool(markSenderHuman.handler, { account, threadId });
     expect(marked.ok).toBe(true);
     expect(marked.rule.scope).toBe('sender');
+    const markedThread = await withToolContext(() => getThread(account, threadId));
+    expect(markedThread?.smartCategory?.primary).toBe('main');
+    expect(markedThread?.smartCategory?.isHumanLike).toBe(true);
   });
 
   test('apply_smart_correction requires move_to targets', async () => {

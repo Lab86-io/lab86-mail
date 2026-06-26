@@ -4,7 +4,7 @@ import { buildAuthorizationHeader } from '../lib/mcp/auth';
 describe('buildAuthorizationHeader', () => {
   test('rejects empty credentials', () => {
     expect(() => buildAuthorizationHeader('   ')).toThrow(/access token is empty/);
-    expect(buildAuthorizationHeader('Bearer')).toBe('Bearer Bearer');
+    expect(() => buildAuthorizationHeader('Bearer')).toThrow(/access token is empty/);
   });
   test('normalizes bearer and token prefixes', () => {
     expect(buildAuthorizationHeader('token ghp_123')).toBe('Bearer ghp_123');

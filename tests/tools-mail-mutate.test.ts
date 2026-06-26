@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { listDueSnoozes } from '../lib/store/snooze';
 import {
   archiveThread,
   markThreadRead,
@@ -7,7 +8,7 @@ import {
   snoozeThreadTool,
   unsnoozeThreadTool,
 } from '../lib/tools/mail-mutate';
-import { runTool, seedThreadMessage } from './tools/harness';
+import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
 describe('mail mutate tools — local paths', () => {
   test('set_smart_category stores a local override', async () => {
@@ -30,6 +31,10 @@ describe('mail mutate tools — local paths', () => {
 
     const unsnoozed = await runTool(unsnoozeThreadTool.handler, { account, messageId });
     expect(unsnoozed.ok).toBe(true);
+    const snoozes = await withToolContext(() => listDueSnoozes(Number.POSITIVE_INFINITY));
+    expect(snoozes.some((snooze) => snooze.account === account && snooze.messageId === messageId)).toBe(
+      false,
+    );
   });
 });
 
