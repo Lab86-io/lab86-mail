@@ -40,7 +40,16 @@ const TRANSIENT_GENERATE_RETRY_DELAY_MS = 450;
 // "server had an error" storms) must not take the agent down, so the chain
 // spans vendors. Each id is routed to its best available key (direct or
 // OpenRouter) at use time.
-const DEFAULT_AGENT_FALLBACKS = ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'openai/gpt-5.4-mini'];
+const DEFAULT_AGENT_FALLBACKS = [
+  'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-haiku-4.5',
+  'openai/gpt-5.5',
+  'openai/gpt-5.4-mini',
+];
+// Features that get retry + cross-provider failover. The interactive agent AND
+// the Daily Brief artifact both need it — a single provider blip on the brief
+// was silently degrading it to the plain native renderer.
+const FAILOVER_FEATURES = new Set(['agent', 'daily_report_artifact']);
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
@@ -233,7 +242,7 @@ export async function generateTextForCurrentUser(
     try {
       for (let runtimeIndex = 0; runtimeIndex < runtimes.length; runtimeIndex += 1) {
         const activeRuntime = runtimes[runtimeIndex];
-        const maxAttempts = feature === 'agent' && runtimeIndex === 0 ? 2 : 1;
+        const maxAttempts = FAILOVER_FEATURES.has(feature) && runtimeIndex === 0 ? 2 : 1;
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           try {
             const result = await generateText({
@@ -281,7 +290,7 @@ export async function generateTextForCurrentUser(
 }
 
 function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): ResolvedAiRuntime[] {
-  if (feature !== 'agent' || runtime.source !== 'lab86') return [];
+  if (!FAILOVER_FEATURES.has(feature) || runtime.source !== 'lab86') return [];
   const configured = [process.env.LAB86_MAIL_AGENT_FALLBACK_MODEL, ...DEFAULT_AGENT_FALLBACKS];
   const seen = new Set([runtime.modelName]);
   const out: ResolvedAiRuntime[] = [];
@@ -307,7 +316,7 @@ function isTransientGenerateParseError(err: any) {
 function isAgentFallbackEligible(err: any, feature: string, runtime: ResolvedAiRuntime) {
   // Eligible regardless of which provider the primary used — a direct OpenAI or
   // Anthropic primary should still fail over to the cross-provider chain.
-  if (feature !== 'agent' || runtime.source !== 'lab86') return false;
+  if (!FAILOVER_FEATURES.has(feature) || runtime.source !== 'lab86') return false;
   if (isTransientGenerateParseError(err)) return true;
   const statusCode = Number(err?.statusCode);
   if (Number.isFinite(statusCode) && (statusCode === 429 || statusCode >= 500)) return true;

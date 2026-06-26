@@ -6,6 +6,7 @@ import {
 } from 'ai';
 import type { NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
+import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest) {
       prepared.omitted || prepared.compacted
         ? `Conversation continuity note: ${prepared.omitted} older UI message(s) were omitted and ${prepared.compacted} older message(s) were compacted to text-only form to keep this long conversation stable. Treat the remaining recent transcript as authoritative.`
         : '';
-    const modelMessages = await convertToModelMessages(prepared.messages);
+    const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
     const stream = await runAgent({
       messages: modelMessages,
       extraSystem: [body.extraSystem, compactionNote].filter(Boolean).join('\n\n') || undefined,
