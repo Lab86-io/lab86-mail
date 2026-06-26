@@ -1,17 +1,19 @@
 import type { VariantProps } from 'class-variance-authority';
 import { cva } from 'class-variance-authority';
 import { differenceInMinutes, parseISO } from 'date-fns';
+import { Video } from 'lucide-react';
 import type { HTMLAttributes } from 'react';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { DraggableEvent } from '@/components/calendar/engine/draggable-event';
 import { EventDetailsDialog } from '@/components/calendar/engine/event-details-dialog';
-import { contrastTextColor, formatTime } from '@/components/calendar/engine/helpers';
+import { contrastTextColor, extractConferencingUrl, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { ResizableEvent } from '@/components/calendar/engine/resizable-event';
+import { Avatar } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 
 const calendarWeekEventCardVariants = cva(
-  'flex w-full min-w-0 select-none flex-col gap-0.5 overflow-hidden rounded-md border px-2 py-1.5 text-left text-xs focus-visible:outline-offset-2',
+  'relative flex w-full min-w-0 select-none flex-col gap-0.5 overflow-hidden rounded-md border px-2 py-1.5 text-left text-xs focus-visible:outline-offset-2',
   {
     variants: {
       color: {
@@ -72,6 +74,26 @@ export function EventBlock({ event, className }: IProps) {
     !showTime && 'py-0 justify-center',
   );
 
+  // Data drives form: a meeting you can join, a held-but-unconfirmed slot, and
+  // a free/transparent block should each *look* like what they are.
+  const conferencingUrl = extractConferencingUrl(event.conferencing);
+  const tentative = event.status === 'tentative';
+  const free = event.busy === false;
+  const participants = event.participants || [];
+  const showAvatars = showTime && heightInPixels >= 72 && participants.length > 1;
+
+  // Solid fill for a normal categorical event; outline-only when the slot is
+  // free/transparent so it reads as "available", not "booked".
+  const colorStyle: Record<string, string> = event.colorHex
+    ? free
+      ? { backgroundColor: 'transparent', borderColor: event.colorHex, color: event.colorHex }
+      : {
+          backgroundColor: event.colorHex,
+          borderColor: event.colorHex,
+          color: contrastTextColor(event.colorHex),
+        }
+    : {};
+
   return (
     <ResizableEvent event={event}>
       <DraggableEvent event={event}>
@@ -81,16 +103,24 @@ export function EventBlock({ event, className }: IProps) {
             className={calendarWeekEventCardClasses}
             style={{
               height: `${heightInPixels}px`,
-              ...(event.colorHex
-                ? {
-                    backgroundColor: event.colorHex,
-                    borderColor: event.colorHex,
-                    color: contrastTextColor(event.colorHex),
-                  }
-                : {}),
+              ...colorStyle,
+              ...(tentative ? { borderStyle: 'dashed' } : {}),
             }}
           >
-            <div className="flex items-center gap-1.5 truncate">
+            {/* Tentative events get a diagonal hatch — the universal calendar
+                cue for "held, not confirmed". currentColor = the text colour. */}
+            {tentative ? (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 opacity-25"
+                style={{
+                  backgroundImage:
+                    'repeating-linear-gradient(45deg, transparent 0 4px, currentColor 4px 5px)',
+                }}
+              />
+            ) : null}
+
+            <div className="relative flex items-center gap-1.5 truncate">
               {badgeVariant === 'dot' && (
                 <svg
                   width="8"
@@ -105,13 +135,43 @@ export function EventBlock({ event, className }: IProps) {
               )}
 
               <p className="truncate font-semibold">{event.title}</p>
+
+              {conferencingUrl ? (
+                <a
+                  href={conferencingUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Join video call"
+                  className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded border border-current/30 bg-current/15 px-1 py-px text-[10px] font-medium leading-none hover:bg-current/25"
+                >
+                  <Video className="size-2.5" />
+                  {showTime ? <span>Join</span> : null}
+                </a>
+              ) : null}
             </div>
 
             {showTime && (
-              <p className="truncate">
+              <p className="relative truncate">
                 {formatTime(start, use24HourFormat)} - {formatTime(end, use24HourFormat)}
               </p>
             )}
+
+            {showAvatars ? (
+              <div className="relative mt-auto flex items-center pt-0.5">
+                {participants.slice(0, 3).map((person, index) => (
+                  <Avatar
+                    key={person.email || person.name || index}
+                    name={person.name || person.email}
+                    size={14}
+                    className={cn('ring-1 ring-white/40', index > 0 && '-ml-1.5')}
+                  />
+                ))}
+                {participants.length > 3 ? (
+                  <span className="ml-1 text-[9px] opacity-80">+{participants.length - 3}</span>
+                ) : null}
+              </div>
+            ) : null}
           </button>
         </EventDetailsDialog>
       </DraggableEvent>
