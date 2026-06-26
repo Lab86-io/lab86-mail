@@ -401,7 +401,10 @@ export function ThreadView() {
           <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
             {data.subject}
           </h1>
-          <LinkedTaskChips threadId={data._id || ''} />
+          {/* The thread object has no top-level _id (getThread returns
+              providerThreadId as `threadId`); use the canonical thread id from
+              the store so chips match the cards' sourceThreadId, not ''. */}
+          <LinkedTaskChips threadId={threadId || ''} />
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
             <span className="shrink-0">
               {messages.length} message{messages.length === 1 ? '' : 's'}

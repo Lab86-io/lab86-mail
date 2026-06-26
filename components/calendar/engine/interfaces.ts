@@ -25,6 +25,10 @@ export interface IEvent {
   calendarId?: string;
   readOnly?: boolean;
   allDay?: boolean;
+  // RSVP/availability so the block can encode tentative vs confirmed and free
+  // vs busy as form, not just colour.
+  status?: string;
+  busy?: boolean;
   location?: string;
   masterEventId?: string;
   // Rich metadata for the event viewer.

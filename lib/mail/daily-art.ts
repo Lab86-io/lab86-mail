@@ -1,7 +1,11 @@
-import { ART_POOL } from './daily-art-pool';
+import { ART_POOL, type ArtPiece } from './daily-art-pool';
 
 export interface DailyArt {
   imageUrl: string;
+  // Ordered alternates tried (client-side, via onerror) when imageUrl fails to
+  // load — drawn from OTHER museums first, then bundled local assets last, so
+  // the hero is never blank no matter which single source is down.
+  fallbacks: string[];
   title: string;
   artist: string;
   date: string;
@@ -9,30 +13,70 @@ export interface DailyArt {
   source: string;
 }
 
-// One landscape per calendar day, chosen deterministically from the date so
-// every user sees the same piece and it stays stable across the day's morning
-// and evening editions (and in history) — no shared storage needed.
-const FALLBACK_PIECE = {
-  imageId: '3a34f988-f779-2e96-1786-8945b6b9c87d',
-  title: 'Landscape',
-  artist: 'Jean Charles Cazin',
-  date: 'c. 1895',
-};
+// Bundled last-resort backstops served from the app's own origin. Absolute URLs
+// because the brief renders inside an iframe srcDoc (no base URL to resolve
+// relative paths against). These always load whenever the app itself loads.
+function publicBase(): string {
+  return (
+    process.env.LAB86_MAIL_PUBLIC_URL ||
+    process.env.MAIL_OS_PUBLIC_URL ||
+    'https://mail.lab86.io'
+  ).replace(/\/$/, '');
+}
 
+function localFallbacks(): string[] {
+  const base = publicBase();
+  return ['/art/fallback-1.jpg', '/art/fallback-2.jpg', '/art/fallback-3.jpg'].map(
+    (path) => `${base}${path}`,
+  );
+}
+
+// One piece per calendar day, chosen deterministically from the date so every
+// user sees the same piece and it stays stable across the day's morning and
+// evening editions (and in history) — no shared storage needed.
 export function getDailyArt(at: number = Date.now()): DailyArt {
   const day = new Date(at);
   const key = `${day.getUTCFullYear()}-${day.getUTCMonth() + 1}-${day.getUTCDate()}`;
-  // Guard an empty pool so a regeneration mishap can't break brief composition.
-  const piece = ART_POOL.length > 0 ? ART_POOL[hashString(key) % ART_POOL.length] : FALLBACK_PIECE;
+  const hash = hashString(key);
+  const locals = localFallbacks();
+
+  if (ART_POOL.length === 0) {
+    return {
+      imageUrl: locals[0],
+      fallbacks: locals.slice(1),
+      title: '',
+      artist: '',
+      date: '',
+      credit: '',
+      source: '',
+    };
+  }
+
+  const primary = ART_POOL[hash % ART_POOL.length];
+  const alternates = pickAlternates(primary, hash);
   return {
-    // AIC IIIF: a wide 1686px render, ample for a full-bleed masthead.
-    imageUrl: `https://www.artic.edu/iiif/2/${piece.imageId}/full/1686,/0/default.jpg`,
-    title: piece.title,
-    artist: piece.artist,
-    date: piece.date,
-    credit: [piece.title, piece.artist, piece.date].filter(Boolean).join(', '),
-    source: 'Art Institute of Chicago',
+    imageUrl: primary.imageUrl,
+    fallbacks: [...alternates.map((a) => a.imageUrl), ...locals],
+    title: primary.title,
+    artist: primary.artist,
+    date: primary.date,
+    credit: [primary.title, primary.artist, primary.date].filter(Boolean).join(', '),
+    source: primary.sourceName,
   };
+}
+
+// Up to two alternates from DIFFERENT museums than the primary (and each other),
+// walked deterministically from the day's hash so the fallback chain is stable.
+function pickAlternates(primary: ArtPiece, hash: number): ArtPiece[] {
+  const out: ArtPiece[] = [];
+  const usedSources = new Set([primary.source]);
+  for (let i = 1; i <= ART_POOL.length && out.length < 2; i += 1) {
+    const candidate = ART_POOL[(hash + i) % ART_POOL.length];
+    if (usedSources.has(candidate.source)) continue;
+    usedSources.add(candidate.source);
+    out.push(candidate);
+  }
+  return out;
 }
 
 // FNV-1a — small, stable, dependency-free.

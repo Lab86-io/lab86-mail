@@ -735,6 +735,9 @@ export const liveCardsForThread = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity?.subject) throw new Error('Not authenticated');
+    // An empty/missing thread id must not match anything — otherwise the
+    // all-cards fallback below would surface unrelated cards on every email.
+    if (!args.threadId) return [];
     const indexed = await ctx.db
       .query('cards')
       .withIndex('by_user_source_thread', (q) =>

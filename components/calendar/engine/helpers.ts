@@ -394,3 +394,10 @@ export function contrastTextColor(hex: string): string {
   const luma = 0.299 * r + 0.587 * g + 0.114 * b;
   return luma > 165 ? '#1f1f1f' : '#ffffff';
 }
+
+// Pull a joinable meeting URL out of a Nylas conferencing blob, if any.
+export function extractConferencingUrl(conferencing: any): string | null {
+  if (!conferencing) return null;
+  const url = conferencing?.details?.url || conferencing?.details?.meetingUrl || conferencing?.url;
+  return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
+}

@@ -3,6 +3,8 @@
 import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   CalendarClock,
+  Circle,
+  CircleCheck,
   Download,
   ExternalLink,
   FileArchive,
@@ -264,6 +266,7 @@ function BoardView({ boardId }: { boardId: string }) {
   const createColumn = useConvexMutation(boardsApi.createColumn);
   const updateColumn = useConvexMutation(boardsApi.updateColumn);
   const deleteColumn = useConvexMutation(boardsApi.deleteColumn);
+  const updateCard = useConvexMutation(boardsApi.updateCard);
 
   const canEdit = board ? board.role !== 'viewer' : false;
 
@@ -468,23 +471,66 @@ function BoardView({ boardId }: { boardId: string }) {
                       />
                     ) : null}
                   </KanbanHeader>
+                  <ColumnLoadBar
+                    count={items.filter((i: any) => i.column === column.id).length}
+                    max={Math.max(
+                      1,
+                      ...columns.map((c: any) => items.filter((i: any) => i.column === c.id).length),
+                    )}
+                  />
                   <KanbanCards id={column.id}>
                     {(item: any) => {
                       const card = cardsById.get(item.id);
+                      const done = Boolean(card?.completedAt);
                       return (
-                        <KanbanCard key={item.id} {...item} onCardClick={() => setOpenCardId(item.id)}>
+                        <KanbanCard
+                          key={item.id}
+                          {...item}
+                          onCardClick={() => setOpenCardId(item.id)}
+                          className={cn('group', card?.priority ? PRIORITY_EDGE[card.priority] : undefined)}
+                        >
                           {/* Native button = keyboard activation for free.
                               Pointer taps still route through the wrapper's
                               onCardClick (drag-aware); both just set the same
                               open state, so double-firing is harmless. */}
-                          <button
-                            type="button"
-                            aria-label={`Open card: ${card?.title || item.name}`}
-                            onClick={() => setOpenCardId(item.id)}
-                            className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-                          >
-                            <CardFace card={card} fallbackTitle={item.name} />
-                          </button>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              aria-label={`Open card: ${card?.title || item.name}`}
+                              onClick={() => setOpenCardId(item.id)}
+                              className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                            >
+                              <CardFace card={card} fallbackTitle={item.name} />
+                            </button>
+                            {/* Highest-frequency action surfaced on hover; the
+                                full action set still lives in the card panel. */}
+                            {canEdit && card ? (
+                              <button
+                                type="button"
+                                title={done ? 'Mark not done' : 'Mark done'}
+                                // KanbanCard opens from its wrapper's pointerup;
+                                // swallow it so the toggle doesn't also open.
+                                onPointerUp={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void updateCard({
+                                    cardId: card.cardId,
+                                    completedAt: done ? null : Date.now(),
+                                  }).catch((err: any) =>
+                                    toast.error(err?.message || 'Could not update card'),
+                                  );
+                                }}
+                                className="absolute -right-1 -top-1 grid size-6 place-items-center rounded-md bg-[var(--color-bg-elevated)] text-[var(--color-text-faint)] opacity-0 shadow-[var(--shadow-soft)] transition-opacity hover:text-[var(--color-accent)] focus-visible:opacity-100 group-hover:opacity-100"
+                              >
+                                {done ? (
+                                  <CircleCheck className="size-4 text-[var(--color-accent)]" />
+                                ) : (
+                                  <Circle className="size-4" />
+                                )}
+                                <span className="sr-only">{done ? 'Mark not done' : 'Mark done'}</span>
+                              </button>
+                            ) : null}
+                          </div>
                         </KanbanCard>
                       );
                     }}
@@ -724,6 +770,28 @@ const PRIORITY_DOT: Record<string, string> = {
   low: 'bg-emerald-500',
 };
 
+// A coloured left edge reads priority across a whole column far faster than a
+// 6px dot buried in the meta row (colour from the data's meaning).
+const PRIORITY_EDGE: Record<string, string> = {
+  high: 'border-l-[3px] border-l-[var(--color-danger)]',
+  medium: 'border-l-[3px] border-l-amber-500',
+  low: 'border-l-[3px] border-l-emerald-500',
+};
+
+// A thin per-column load bar (cards relative to the busiest column) turns a row
+// of bare counts into a glanceable workload distribution.
+function ColumnLoadBar({ count, max }: { count: number; max: number }) {
+  if (!count) return null;
+  return (
+    <div className="mx-3 mb-1.5 h-1 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+      <div
+        className="h-full rounded-full bg-[var(--color-accent)]/40"
+        style={{ width: `${Math.round((count / Math.max(1, max)) * 100)}%` }}
+      />
+    </div>
+  );
+}
+
 function CardMetaChips({ card }: { card?: BoardCard }) {
   if (!card) return null;
   const overdue = card.dueAt && !card.completedAt && card.dueAt < Date.now();
@@ -751,11 +819,21 @@ function CardMetaChips({ card }: { card?: BoardCard }) {
           {new Date(card.dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
         </span>
       ) : null}
-      {card.source?.threadId ? (
-        <Mail className="size-3 text-[var(--color-text-faint)]" aria-label="From an email" />
+      {card.source?.threadId || card.sourceThreadId ? (
+        <span
+          className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
+          title="Created from an email"
+        >
+          <Mail className="size-2.5" /> Email
+        </span>
       ) : null}
       {card.source?.eventId || card.sourceCalendarEventId ? (
-        <CalendarClock className="size-3 text-[var(--color-text-faint)]" aria-label="From a calendar event" />
+        <span
+          className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
+          title="Created from a calendar event"
+        >
+          <CalendarClock className="size-2.5" /> Event
+        </span>
       ) : null}
       {card.attachments?.length ? (
         <Paperclip className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />

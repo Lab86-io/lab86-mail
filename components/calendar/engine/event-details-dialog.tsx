@@ -16,8 +16,19 @@ import {
 import { type ReactNode, useState } from 'react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
-import { formatTime } from '@/components/calendar/engine/helpers';
+import { extractConferencingUrl, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -229,16 +240,56 @@ export function EventDetailsDialog({ event, children }: IProps) {
             </AddEditEventDialog>
           ) : null}
           {!event.readOnly ? (
-            <DialogClose asChild>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="h-8 px-3 text-[12.5px]"
-                onClick={() => removeEvent(event.id)}
-              >
-                Delete
-              </Button>
-            </DialogClose>
+            isRecurringEvent(event) ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" size="sm" className="h-8 px-3 text-[12.5px]">
+                    Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete recurring event</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      “{event.title}” repeats. Delete just this occurrence, or every event in the series?
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter className="gap-2 sm:justify-between">
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <div className="flex gap-2">
+                      <AlertDialogAction
+                        className="bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                        onClick={() => {
+                          removeEvent(event.id, { deleteSeries: false });
+                          setOpen(false);
+                        }}
+                      >
+                        This event
+                      </AlertDialogAction>
+                      <AlertDialogAction
+                        onClick={() => {
+                          removeEvent(event.id, { deleteSeries: true });
+                          setOpen(false);
+                        }}
+                      >
+                        All events in series
+                      </AlertDialogAction>
+                    </div>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : (
+              <DialogClose asChild>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-8 px-3 text-[12.5px]"
+                  onClick={() => removeEvent(event.id)}
+                >
+                  Delete
+                </Button>
+              </DialogClose>
+            )
           ) : null}
         </div>
       </DialogContent>
@@ -246,8 +297,8 @@ export function EventDetailsDialog({ event, children }: IProps) {
   );
 }
 
-function extractConferencingUrl(conferencing: any): string | null {
-  if (!conferencing) return null;
-  const url = conferencing?.details?.url || conferencing?.details?.meetingUrl || conferencing?.url;
-  return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
+// A master event carries an RRULE (recurrence); an expanded occurrence carries
+// a masterEventId. Either means "this belongs to a series."
+function isRecurringEvent(event: IEvent): boolean {
+  return Boolean(event.recurrence?.length || event.masterEventId);
 }

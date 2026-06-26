@@ -4,7 +4,18 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { Ban, CheckCircle2, Inbox as InboxIcon, MoreHorizontal, Search, Tag, Trash2, X } from 'lucide-react';
+import {
+  Archive,
+  Ban,
+  CheckCircle2,
+  Inbox as InboxIcon,
+  MoreHorizontal,
+  Search,
+  Star,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -52,7 +63,7 @@ import { useClientStore } from '@/lib/client-state';
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
-import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
+import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
@@ -72,6 +83,8 @@ interface ThreadRow {
   snippet?: string;
   labels?: string[];
   unread?: boolean;
+  starred?: boolean;
+  messageCount?: number;
   smartCategory?: any;
   accountAlias?: string;
 }
@@ -875,6 +888,8 @@ export function Inbox() {
                     onToggle={() => toggleSelected(key)}
                     onPrefetch={() => prefetchThread(it)}
                     onApplyLabels={() => setLabelPreview(it)}
+                    onArchive={() => bulkArchive.mutate([key])}
+                    onTrash={() => bulkTrash.mutate([key])}
                     onCorrect={(action, payload = {}) =>
                       applyCorrection.mutate({
                         account: rowAccount,
@@ -923,6 +938,8 @@ function ThreadRowCard({
   onClick,
   onPrefetch,
   onApplyLabels,
+  onArchive,
+  onTrash,
   onCorrect,
   onUndoLast,
   customLabels,
@@ -938,6 +955,8 @@ function ThreadRowCard({
   onClick: () => void;
   onPrefetch: () => void;
   onApplyLabels: () => void;
+  onArchive: () => void;
+  onTrash: () => void;
   onCorrect: (action: string, payload?: Record<string, unknown>) => void;
   onUndoLast: () => void;
   customLabels: any[];
@@ -956,6 +975,13 @@ function ThreadRowCard({
   const senderLabel = shortFrom(item.from || item.fromAddress || '');
   const displaySenderLabel = senderLabel || item.account || '';
   const date = (item.date as any) || item.lastDate || 0;
+  // Unified-inbox rows carry their mailbox; a 3px colour rail lets the eye scan
+  // account membership without reading the same alias text on every row. Colour
+  // comes from the shared Tableau-10 set the calendar uses, so the palette is
+  // consistent across surfaces.
+  const accountColor = showAccount ? categoricalColor(item.account || '') : '';
+  // Already-read threads recede so unread genuinely pops (shade inactive rows).
+  const dim = !item.unread;
   const prefetchTimer = useRef<number | null>(null);
 
   const schedulePrefetch = useCallback(() => {
@@ -989,21 +1015,44 @@ function ThreadRowCard({
       role="button"
       tabIndex={0}
       className={cn(
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left transition-colors duration-150 last:border-b-0 hover:bg-[var(--color-hover-soft)]',
+        // No transition on the row itself: the hover highlight is a selection
+        // cue, so it must be instant for snappy up/down scanning.
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
       style={active ? { borderLeft: '3px solid var(--color-accent)' } : undefined}
     >
-      <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
+      {priorityClass ? (
+        <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
+      ) : null}
 
-      <Checkbox checked={selected} onCheckedChange={() => onToggle()} onClick={(e) => e.stopPropagation()} />
+      <Checkbox
+        checked={selected}
+        onCheckedChange={() => onToggle()}
+        onClick={(e) => e.stopPropagation()}
+        // Keep Space/Enter on the focused checkbox from bubbling to the row's
+        // key handler, which would open the thread instead of toggling.
+        onKeyDown={(e) => e.stopPropagation()}
+      />
 
-      <Avatar name={senderLabel || item.account} src={photoUrl} size={26} />
+      <Avatar
+        name={senderLabel || item.account}
+        src={photoUrl}
+        size={26}
+        className={cn(dim && 'opacity-80')}
+      />
 
       {/* Two-line row: sender, then subject + preview inline. */}
-      <div className="flex min-w-0 flex-col gap-0.5">
+      <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-[0.82]')}>
         <div className="flex items-center gap-1.5">
+          {item.starred ? (
+            <Star
+              role="img"
+              aria-label="Starred"
+              className="size-3 shrink-0 fill-[var(--color-warning)] text-[var(--color-warning)]"
+            />
+          ) : null}
           <span
             className={cn(
               'truncate font-display text-[13.5px]',
@@ -1012,6 +1061,14 @@ function ThreadRowCard({
           >
             {displaySenderLabel}
           </span>
+          {(item.messageCount || 0) > 1 ? (
+            <span
+              title={`${item.messageCount} messages in this thread`}
+              className="shrink-0 rounded-full bg-[var(--color-bg-subtle)] px-1.5 text-[10px] font-medium leading-[1.45] tabular-nums text-[var(--color-text-muted)]"
+            >
+              {item.messageCount}
+            </span>
+          ) : null}
           {item.unread ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
         </div>
         <span className="truncate text-[12.5px] leading-tight">
@@ -1025,7 +1082,75 @@ function ThreadRowCard({
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
       <div className="flex flex-col items-end gap-1 self-start pt-0.5">
-        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{formatDate(date)}</span>
+        {/* The date stays put; on hover the action menu shoots out fast to its
+            left (absolute, so it never shifts the date or its mailbox colour). */}
+        <div className="relative flex items-center">
+          {smart ? (
+            <div className="pointer-events-none absolute top-1/2 right-full z-10 mr-1.5 opacity-0 [transform:translate(10px,-50%)] transition-[opacity,transform] duration-100 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-hover:[transform:translate(0px,-50%)] has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:[transform:translate(0px,-50%)]">
+              <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-1 shadow-[var(--shadow-pop)]">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArchive();
+                  }}
+                  title="Archive"
+                  className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]"
+                >
+                  <Archive className="size-3.5" />
+                  <span className="sr-only">Archive</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTrash();
+                  }}
+                  title="Delete"
+                  className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-danger)_14%,transparent)] hover:text-[var(--color-danger)]"
+                >
+                  <Trash2 className="size-3.5" />
+                  <span className="sr-only">Delete</span>
+                </button>
+                <QuickFixMenu
+                  customLabels={customLabels}
+                  onApplyLabels={onApplyLabels}
+                  onCorrect={onCorrect}
+                  onCreateLabel={() => createLabelFromThread(item, onCorrect)}
+                  onUndoLast={onUndoLast}
+                />
+              </div>
+            </div>
+          ) : null}
+          {showAccount && accountColor ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Which mailbox"
+                  className="rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"
+                  style={{ backgroundColor: `color-mix(in srgb, ${accountColor} 22%, transparent)` }}
+                >
+                  {formatDate(date)}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-auto px-3 py-2 text-[12px]">
+                <div className="flex items-center gap-2">
+                  <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
+                  <span className="font-medium text-[var(--color-text)]">
+                    {accountLabel || item.accountAlias || item.account}
+                  </span>
+                </div>
+                <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+              {formatDate(date)}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-1">
           {(item.labels || []).includes('IMPORTANT') ? (
             <span
@@ -1064,52 +1189,23 @@ function ThreadRowCard({
               </PopoverContent>
             </Popover>
           ) : null}
-          {/* Mailbox chip: human alias only — a raw grant id is never useful
-              in a list row. No alias resolved yet = no chip. */}
-          {showAccount && (accountLabel || item.accountAlias) ? (
-            <Badge variant="outline" className="max-w-28 truncate text-[9px] normal-case">
-              {accountLabel || item.accountAlias}
-            </Badge>
-          ) : null}
+          {/* Mailbox identity now rides the date's colour wash (above) — no
+              repeated alias text down every row. */}
         </div>
       </div>
-
-      {/* Hover-only row actions — overlaid so they add no height at rest. */}
-      {smart ? (
-        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none transition-opacity duration-[var(--duration-normal)] ease-[var(--ease-default)] group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onApplyLabels();
-            }}
-            title="Apply smart labels"
-            className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-          >
-            <Tag className="size-3.5" />
-            <span className="sr-only">Apply labels</span>
-          </Button>
-          <QuickFixMenu
-            customLabels={customLabels}
-            onCorrect={onCorrect}
-            onCreateLabel={() => createLabelFromThread(item, onCorrect)}
-            onUndoLast={onUndoLast}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
 
 function QuickFixMenu({
   customLabels,
+  onApplyLabels,
   onCorrect,
   onCreateLabel,
   onUndoLast,
 }: {
   customLabels: any[];
+  onApplyLabels: () => void;
   onCorrect: (action: string, payload?: Record<string, unknown>) => void;
   onCreateLabel: () => void;
   onUndoLast: () => void;
@@ -1120,14 +1216,19 @@ function QuickFixMenu({
         <button
           type="button"
           onClick={(event) => event.stopPropagation()}
-          className="grid size-6 place-items-center rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
-          title="Fix classification"
+          className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          title="More actions"
         >
           <MoreHorizontal className="size-3.5" />
           <span className="sr-only">Fix classification</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+        <DropdownMenuItem onSelect={() => onApplyLabels()}>
+          <Tag className="size-3.5" />
+          Apply smart labels
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>Fix classification</DropdownMenuLabel>
         <DropdownMenuItem onSelect={() => onCorrect('never_main')}>
           <Ban className="size-3.5" />
