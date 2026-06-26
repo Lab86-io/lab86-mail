@@ -102,7 +102,7 @@ export function CalendarSurface() {
       id: `${TASK_EVENT_PREFIX}${card.cardId}`,
       startDate: new Date(card.dueAt).toISOString(),
       endDate: new Date(card.dueAt + 30 * 60_000).toISOString(),
-      title: card.completedAt ? `✓ ${card.title}` : card.title,
+      title: card.completedAt ? `${card.title} (done)` : card.title,
       description: card.description || '',
       color: 'yellow',
       colorHex: TASKS_COLOR,

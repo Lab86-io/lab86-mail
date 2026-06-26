@@ -36,7 +36,6 @@ import {
 import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import {
@@ -99,12 +98,9 @@ function SectionHeading({ title, blurb, badge }: { title: string; blurb: string;
 // external services yet (the connectors haven't been verified end-to-end).
 function BetaBadge() {
   return (
-    <Badge
-      variant="outline"
-      className="border-amber-500/40 bg-amber-500/10 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
-    >
+    <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
       Beta
-    </Badge>
+    </span>
   );
 }
 
@@ -1080,9 +1076,9 @@ function ModeCard({
         </span>
         <span className="text-[13.5px] font-semibold">{title}</span>
         {active ? (
-          <Badge className="ml-auto bg-[var(--color-accent)] text-[10px] text-[var(--color-accent-foreground)]">
+          <span className="ml-auto text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-accent)]">
             Active
-          </Badge>
+          </span>
         ) : null}
       </div>
       <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]">{description}</p>

@@ -7,7 +7,6 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -461,12 +460,16 @@ function StepHeading({
 }) {
   return (
     <div className="flex items-start gap-2.5">
-      <Badge
-        variant={done ? 'default' : 'outline'}
-        className={cn('mt-0.5 size-6 justify-center rounded-full p-0', done && 'bg-emerald-500')}
+      <span
+        className={cn(
+          'mt-0.5 grid size-6 shrink-0 place-items-center rounded-md border text-[11px] font-medium',
+          done
+            ? 'border-emerald-500 bg-emerald-500 text-white'
+            : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
+        )}
       >
         {done ? <Check className="size-3.5" /> : step}
-      </Badge>
+      </span>
       <div>
         <h3 className="text-[14px] font-semibold tracking-tight">{title}</h3>
         <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{blurb}</p>
@@ -508,9 +511,9 @@ function ModeCard({
         </span>
         <span className="text-[13px] font-semibold">{title}</span>
         {active ? (
-          <Badge className="ml-auto bg-[var(--color-accent)] text-[10px] text-[var(--color-accent-foreground)]">
+          <span className="ml-auto text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-accent)]">
             Selected
-          </Badge>
+          </span>
         ) : null}
       </div>
       <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">{description}</p>

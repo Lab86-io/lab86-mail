@@ -7,7 +7,6 @@ import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { getEventsCount, navigateDate, rangeText } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import type { TCalendarView } from '@/components/calendar/engine/types';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
 interface IProps {
@@ -16,7 +15,6 @@ interface IProps {
 }
 
 const MotionButton = motion.create(Button);
-const MotionBadge = motion.create(Badge);
 
 export function DateNavigator({ view, events }: IProps) {
   const { selectedDate, setSelectedDate } = useCalendar();
@@ -41,16 +39,16 @@ export function DateNavigator({ view, events }: IProps) {
           {month} {year}
         </motion.span>
         <AnimatePresence mode="wait">
-          <MotionBadge
+          <motion.span
             key={eventCount}
-            variant="secondary"
+            className="text-[11px] font-medium text-muted-foreground"
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.8, opacity: 0 }}
             transition={transition}
           >
             {eventCount} events
-          </MotionBadge>
+          </motion.span>
         </AnimatePresence>
       </div>
 
