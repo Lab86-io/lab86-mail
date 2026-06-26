@@ -79,7 +79,7 @@ export const getDailyReportTool = defineTool({
 export const dismissDailyReportTaskTool = defineTool({
   name: 'dismiss_daily_report_task',
   description:
-    'Hide a task card from future Daily Brief task sections without completing or deleting the underlying task.',
+    'Remove a task card from future Daily Brief task sections without completing or deleting the underlying task.',
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -95,7 +95,7 @@ export const dismissDailyReportTaskTool = defineTool({
 
 export const listDailyReportTaskDismissalsTool = defineTool({
   name: 'list_daily_report_task_dismissals',
-  description: 'List task cards the user has hidden from Daily Brief task sections.',
+  description: 'List task cards the user has removed from Daily Brief task sections.',
   category: 'tasks',
   mutating: false,
   input: z.object({}),
@@ -112,7 +112,7 @@ export const listDailyReportTaskDismissalsTool = defineTool({
 export const dismissDailyReportThreadTool = defineTool({
   name: 'dismiss_daily_report_thread',
   description:
-    'Hide or resolve a conversation from Daily Brief email sections until that thread receives newer mail.',
+    'Remove or resolve a conversation from Daily Brief email sections until that thread receives newer mail.',
   category: 'mail',
   mutating: true,
   input: z.object({
@@ -131,7 +131,7 @@ export const dismissDailyReportThreadTool = defineTool({
 
 export const listDailyReportThreadDismissalsTool = defineTool({
   name: 'list_daily_report_thread_dismissals',
-  description: 'List conversations the user has hidden or resolved from Daily Brief email sections.',
+  description: 'List conversations the user has removed or resolved from Daily Brief email sections.',
   category: 'mail',
   mutating: false,
   input: z.object({}),

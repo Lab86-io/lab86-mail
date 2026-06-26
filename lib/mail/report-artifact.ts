@@ -142,8 +142,8 @@ function renderNeeds(items: Array<DailyReportItem & { laneLabel: string }>) {
 	</div>
 	<div class="actions">
 	${button('open_thread', 'Open', { account: item.account, threadId: item.threadId }, 'primary')}
-	${iconButton('resolve_thread', '&#10003;', threadPayload(item), 'Resolve conversation')}
-	${iconButton('dismiss_thread', '&times;', threadPayload(item), 'Hide from future briefs')}
+	${iconButton('resolve_thread', '&#10003;', threadPayload(item), 'Mark resolved')}
+	${iconButton('dismiss_thread', '&times;', threadPayload(item), 'Remove from future briefs')}
 	</div>
 	</article>`;
     })
@@ -161,7 +161,7 @@ function renderTasks(tasks: DailyReportTaskItem[]) {
 	</div>
 	<div class="task-actions">
 	${iconButton('toggle_task', '&#10003;', { cardId: task.cardId, completed: true, title: task.title }, 'Complete task')}
-	${iconButton('dismiss_task', '&times;', { cardId: task.cardId, title: task.title }, 'Hide from future briefs')}
+	${iconButton('dismiss_task', '&times;', { cardId: task.cardId, title: task.title }, 'Remove from future briefs')}
 	</div>
 	</article>`,
         )

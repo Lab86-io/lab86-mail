@@ -1280,7 +1280,7 @@ function TaskCalendarBrief({
                     <TooltipTrigger asChild>
                       <button
                         type="button"
-                        aria-label="Hide from future briefs"
+                        aria-label="Remove from future briefs"
                         onClick={() => onDismissTask(task)}
                         className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-danger)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
                       >
@@ -1291,7 +1291,7 @@ function TaskCalendarBrief({
                         )}
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent side="top">Hide from briefs</TooltipContent>
+                    <TooltipContent side="top">Remove from briefs</TooltipContent>
                   </Tooltip>
                 </div>
               </li>
@@ -1533,13 +1533,13 @@ function ReportRow({
               )}
             </button>
           </TooltipTrigger>
-          <TooltipContent side="top">Resolve</TooltipContent>
+          <TooltipContent side="top">Mark resolved</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label="Hide from future briefs"
+              aria-label="Remove from future briefs"
               onClick={(event) => {
                 event.stopPropagation();
                 onHideThread(item);
@@ -1549,7 +1549,7 @@ function ReportRow({
               {hidingThreadKey === itemKey ? <Ring className="size-3.5" /> : <X className="size-3.5" />}
             </button>
           </TooltipTrigger>
-          <TooltipContent side="top">Hide from briefs</TooltipContent>
+          <TooltipContent side="top">Remove from briefs</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

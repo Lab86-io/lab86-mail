@@ -297,19 +297,19 @@ DESIGN: editorial, generous whitespace, clear hierarchy, responsive 360→1100px
 
 CONTENT (compose from your analysis; omit empty parts):
 - An integrated narrative lede (2–3 short paragraphs, the user's voice/tone from data.voiceSamples) — the through-line of the day connecting mail, calendar, and tasks. No emoji.
-- "Needs you": the threads YOU judged as needing action — person, your one-line read of why (from the body), how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via the draft_reply action. For every existing thread, put data-thread-key="{thread.threadKey}" and data-received-at="{thread.lastReceivedAt}" on the enclosing row/card and render compact controls: a checkmark that sends resolve_thread { account, threadId, subject, receivedAt: lastReceivedAt, trackedThreadId? } and an X that sends dismiss_thread { account, threadId, subject, receivedAt: lastReceivedAt }. On successful host ack, remove that row/card from the DOM.
+- "Needs you": the threads YOU judged as needing action — person, your one-line read of why (from the body), how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via the draft_reply action. For every existing thread, put data-thread-key="{thread.threadKey}" and data-received-at="{thread.lastReceivedAt}" on the enclosing row/card and render compact controls: a "done/resolved" checkmark that sends resolve_thread { account, threadId, subject, receivedAt: lastReceivedAt, trackedThreadId? } and a "remove from briefs" X that sends dismiss_thread { account, threadId, subject, receivedAt: lastReceivedAt }. On successful host ack, remove that row/card from the DOM. Treat this as permanent removal from future briefs unless the same thread receives newer mail after lastReceivedAt.
 - "The week ahead": today → +7 days of calendar as a clean timeline/table; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
-- Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from the mail/meetings (create_task). Tasks are first-class, not a footnote. For every existing task with a cardId, put data-card-id="{cardId}" on the enclosing task row/card and render compact controls: a checkmark that sends toggle_task { cardId, completed: true, title } and an X that sends dismiss_task { cardId, title }. On successful host ack, remove that task row/card from the DOM so it disappears immediately.
+- Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from the mail/meetings (create_task). Tasks are first-class, not a footnote. For every existing task with a cardId, put data-card-id="{cardId}" on the enclosing task row/card and render compact controls: a "complete" checkmark that sends toggle_task { cardId, completed: true, title } and a "remove from briefs" X that sends dismiss_task { cardId, title }. On successful host ack, remove that task row/card from the DOM so it disappears immediately and stays out of future briefs.
 
 INTERACTION PROTOCOL (wire every interactive element):
 - window.parent.postMessage({ source: 'lab86-daily-report', action, payload }, '*'). Actions:
   - 'open_thread'  { account, threadId }
   - 'open_view'    { view: 'mail'|'tasks'|'calendar' }
   - 'open_event'   { account, eventId }
-  - 'resolve_thread' { account, threadId, subject?, receivedAt?, trackedThreadId? } // clears this conversation from briefs; trackedThreadId is also resolved
-  - 'dismiss_thread' { account, threadId, subject?, receivedAt? } // hides this conversation from briefs
+  - 'resolve_thread' { account, threadId, subject?, receivedAt?, trackedThreadId? } // marks resolved and removes this conversation from future briefs; trackedThreadId is also resolved
+  - 'dismiss_thread' { account, threadId, subject?, receivedAt? } // removes this conversation from future briefs until newer mail arrives
   - 'toggle_task'  { cardId, completed, title? }
-  - 'dismiss_task' { cardId, title? }                  // hides from future briefs, does not complete/delete
+  - 'dismiss_task' { cardId, title? }                  // removes from future briefs, does not complete/delete
   - 'create_task'  { title, dueAt? }                 // dueAt = epoch ms
   - 'draft_reply'  { account, threadId, body }       // opens the thread with your draft seeded
 - Host may ack on the same listener (e.data.source==='lab86-host' && e.data.action → e.data.ok/error). Update optimistically; reconcile on error.
