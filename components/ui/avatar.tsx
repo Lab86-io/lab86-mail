@@ -1,34 +1,26 @@
 'use client';
 
-import BoringAvatar from 'boring-avatars';
 import { useEffect, useState } from 'react';
-import { shortFrom } from '@/lib/shared/format';
+import { fromColor, fromInitials, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
-
-const PALETTE = [
-  'var(--color-avatar-1)',
-  'var(--color-avatar-2)',
-  'var(--color-avatar-3)',
-  'var(--color-avatar-4)',
-  'var(--color-avatar-5)',
-];
 
 export function Avatar({
   name,
   src,
   size = 28,
   className,
-  variant = 'beam',
 }: {
   name: string | null | undefined;
   src?: string | null;
   size?: number;
   className?: string;
+  // Kept for call-site compatibility; geometric variants are no longer drawn —
+  // identity reads faster from initials than from a marble (data drives form).
   variant?: 'marble' | 'beam' | 'pixel' | 'sunset' | 'ring' | 'bauhaus';
 }) {
   const seed = shortFrom(name || 'unknown').toLowerCase() || 'unknown';
   // If the upstream URL fails (CSP, network, default-photo HEAD denial),
-  // gracefully fall back to the boring-avatar without flashing a broken image.
+  // gracefully fall back to initials without flashing a broken image.
   // Reset the broken-image flag whenever the URL changes so we'll retry loading.
   const [broken, setBroken] = useState(false);
   useEffect(() => {
@@ -52,7 +44,18 @@ export function Avatar({
           className="h-full w-full object-cover"
         />
       ) : (
-        <BoringAvatar size={size} name={seed} variant={variant} colors={PALETTE} square={false} />
+        <span
+          role="img"
+          aria-label={seed}
+          className="grid h-full w-full select-none place-items-center font-semibold uppercase leading-none text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14)]"
+          style={{
+            backgroundColor: fromColor(name),
+            fontSize: Math.max(9, Math.round(size * 0.4)),
+            letterSpacing: '0.01em',
+          }}
+        >
+          {fromInitials(name)}
+        </span>
       )}
     </div>
   );

@@ -95,11 +95,20 @@ export const summarizeThread = defineTool({
         // Summaries are bulk single-shot work: nano tier (always the cheap
         // model, ignores the user's fast-model override).
         speed: 'nano',
+        // Minimal reasoning: nano is a reasoning model, and with a tight output
+        // cap its hidden reasoning tokens can consume the entire budget and
+        // return EMPTY visible text. A TL;DR needs no chain-of-thought — force
+        // the fastest, cheapest single-pass behavior.
+        providerOptions: { openai: { reasoningEffort: 'minimal' } },
         system:
           "You are lab86-mail, the user's email assistant. Be concrete. Never claim an action was performed; you can only reason.",
         prompt,
       });
       const summary = result.text.trim();
+      // An empty completion is a silent failure (e.g. reasoning ate the budget,
+      // or the provider returned no text). Treat it as an error so the local
+      // fallback below fires instead of caching a blank card.
+      if (!summary) throw new Error('model returned an empty summary');
       // The provider's response carries the concrete model id it served.
       const model = (result as any)?.response?.modelId || describeProvider().fast || 'ai';
       await setThreadSummary(account, threadId, summary, model).catch(() => undefined);

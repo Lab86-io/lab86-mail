@@ -7,6 +7,7 @@ import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -881,20 +882,27 @@ export function DailyReport() {
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               {history.length > 1 ? (
-                <select
-                  value={selectedId ?? ''}
-                  onChange={(event) => setSelectedId(event.target.value || null)}
-                  aria-label="Browse past editions"
-                  title="Browse past editions"
-                  className="h-8 max-w-[170px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                <Select
+                  value={selectedId ?? 'latest'}
+                  onValueChange={(value) => setSelectedId(value === 'latest' ? null : value)}
                 >
-                  <option value="">Latest edition</option>
-                  {history.map((item) => (
-                    <option key={item._id} value={item._id}>
-                      {editionLabel(item)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    size="sm"
+                    aria-label="Browse past editions"
+                    title="Browse past editions"
+                    className="max-w-[180px] rounded-md border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  >
+                    <SelectValue placeholder="Latest edition" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="latest">Latest edition</SelectItem>
+                    {history.map((item) => (
+                      <SelectItem key={item._id} value={item._id}>
+                        {editionLabel(item)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               ) : null}
               <Button
                 type="button"
@@ -961,20 +969,27 @@ export function DailyReport() {
             </span>
           ) : null}
           {history.length > 1 ? (
-            <select
-              value={selectedId ?? ''}
-              onChange={(event) => setSelectedId(event.target.value || null)}
-              aria-label="Browse past editions"
-              title="Browse past editions"
-              className="h-7 max-w-[140px] rounded-full bg-transparent px-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            <Select
+              value={selectedId ?? 'latest'}
+              onValueChange={(value) => setSelectedId(value === 'latest' ? null : value)}
             >
-              <option value="">Latest</option>
-              {history.map((item) => (
-                <option key={item._id} value={item._id}>
-                  {editionLabel(item)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                size="sm"
+                aria-label="Browse past editions"
+                title="Browse past editions"
+                className="h-7 max-w-[150px] rounded-full border-0 bg-transparent text-[11px] text-[var(--color-text-muted)] shadow-none hover:text-[var(--color-text)]"
+              >
+                <SelectValue placeholder="Latest" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="latest">Latest</SelectItem>
+                {history.map((item) => (
+                  <SelectItem key={item._id} value={item._id}>
+                    {editionLabel(item)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           ) : null}
           <button
             type="button"

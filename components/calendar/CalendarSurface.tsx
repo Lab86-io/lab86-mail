@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CalendarBody } from '@/components/calendar/engine/calendar-body';
@@ -12,21 +13,12 @@ import { CalendarDaysIcon } from '@/components/ui/calendar-days';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
+import { TABLEAU10 } from '@/lib/shared/format';
 
-// Tableau-10 categorical palette: opaque, distinguishable, configurable
-// per calendar (calendars.colorIndex).
-export const TABLEAU10 = [
-  '#4E79A7',
-  '#F28E2B',
-  '#E15759',
-  '#76B7B2',
-  '#59A14E',
-  '#EDC948',
-  '#B07AA1',
-  '#FF9DA7',
-  '#9C755F',
-  '#BAB0AC',
-] as const;
+// Tableau-10 categorical palette now lives in lib/shared/format (re-exported
+// here for existing import sites) so the inbox's per-account rails draw from the
+// same colours the calendar assigns per calendar.
+export { TABLEAU10 };
 
 const TASKS_COLOR = '#EDC948';
 
@@ -137,6 +129,8 @@ export function CalendarSurface() {
           calendarId: row.providerCalendarId,
           readOnly: row.readOnly,
           allDay: row.allDay,
+          status: row.status,
+          busy: row.busy,
           location: row.location,
           masterEventId: row.masterEventId,
           participants: row.participants,
@@ -226,7 +220,7 @@ export function CalendarSurface() {
           toast.error(err?.message || 'Could not update the event.');
         }
       },
-      onEventRemoved: async (event) => {
+      onEventRemoved: async (event, options) => {
         if (event.id.startsWith('local_')) return;
         if (event.id.startsWith(TASK_EVENT_PREFIX)) {
           // Removing a task block clears the due date; the card survives.
@@ -243,6 +237,7 @@ export function CalendarSurface() {
             account: event.accountId,
             calendarId: event.calendarId,
             eventId: event.id,
+            deleteSeries: options?.deleteSeries ?? false,
           });
         } catch (err: any) {
           toast.error(err?.message || 'Could not delete the event.');
@@ -332,8 +327,9 @@ export function CalendarSurface() {
   );
 }
 
-// One chip per synced calendar: shows its categorical color; clicking opens
-// the ten-swatch picker. Colors persist per calendar (colorIndex).
+// Calendars collapse behind one popover — a stack of colour dots plus a count —
+// instead of wrapping a dozen always-visible chips across two rows. Inside,
+// each calendar exposes its ten-swatch picker; colours persist (colorIndex).
 function CalendarColorBar({
   calendars,
   colorByCalendar,
@@ -342,52 +338,86 @@ function CalendarColorBar({
   colorByCalendar: Map<string, string>;
 }) {
   const setCalendarColor = useConvexMutation((api as any).calendarData.setCalendarColor);
-  if (!calendars.length) return null;
+  const [editing, setEditing] = useState<string | null>(null);
+  const visible = calendars.filter((cal) => !cal.hidden);
+  if (!visible.length) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-4 py-1.5">
-      {calendars
-        .filter((cal) => !cal.hidden)
-        .map((cal) => (
-          <Popover key={cal._id}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-                title={`${cal.name} — change color`}
-              >
+    <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5">
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            title="Calendars & colours"
+          >
+            <span className="flex -space-x-1">
+              {visible.slice(0, 6).map((cal) => (
                 <span
-                  className="size-2.5 rounded-full"
+                  key={cal._id}
+                  className="size-2.5 rounded-full ring-1 ring-[var(--color-bg)]"
                   style={{ backgroundColor: colorByCalendar.get(cal.providerCalendarId) }}
                 />
-                <span className="max-w-36 truncate">{cal.name}</span>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-2" align="start">
-              <div className="flex gap-1.5">
-                {TABLEAU10.map((hex, index) => (
-                  <button
-                    key={hex}
-                    type="button"
-                    title={hex}
-                    onClick={() => {
-                      void setCalendarColor({ calendarId: cal._id, colorIndex: index }).catch((err: any) =>
-                        toast.error(err?.message || 'Could not set color'),
-                      );
-                    }}
-                    className={
-                      colorByCalendar.get(cal.providerCalendarId) === hex
-                        ? 'size-6 rounded-full ring-2 ring-[var(--color-text)] ring-offset-1'
-                        : 'size-6 rounded-full transition-transform hover:scale-110'
-                    }
-                    style={{ backgroundColor: hex }}
-                  >
-                    <span className="sr-only">{hex}</span>
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        ))}
+              ))}
+            </span>
+            <span className="font-medium text-[var(--color-text)]">
+              {visible.length} calendar{visible.length === 1 ? '' : 's'}
+            </span>
+            <ChevronDown className="size-3 opacity-60" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72 p-1.5" align="start">
+          <div className="max-h-[60vh] space-y-0.5 overflow-y-auto">
+            {visible.map((cal) => {
+              const open = editing === cal._id;
+              const current = colorByCalendar.get(cal.providerCalendarId);
+              return (
+                <div key={cal._id} className="rounded-md px-2 py-1.5 hover:bg-[var(--color-bg-subtle)]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: current }} />
+                      <span className="truncate text-[12.5px] text-[var(--color-text)]">{cal.name}</span>
+                    </span>
+                    <button
+                      type="button"
+                      title="Change colour"
+                      onClick={() => setEditing(open ? null : cal._id)}
+                      className="size-5 shrink-0 rounded-full ring-1 ring-[var(--color-border)] transition-transform hover:scale-110"
+                      style={{ backgroundColor: current }}
+                    >
+                      <span className="sr-only">Change colour for {cal.name}</span>
+                    </button>
+                  </div>
+                  {open ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 pl-[18px]">
+                      {TABLEAU10.map((hex, index) => (
+                        <button
+                          key={hex}
+                          type="button"
+                          title={hex}
+                          onClick={() => {
+                            setEditing(null);
+                            void setCalendarColor({ calendarId: cal._id, colorIndex: index }).catch(
+                              (err: any) => toast.error(err?.message || 'Could not set colour'),
+                            );
+                          }}
+                          className={
+                            current === hex
+                              ? 'size-6 rounded-full ring-2 ring-[var(--color-text)] ring-offset-1'
+                              : 'size-6 rounded-full transition-transform hover:scale-110'
+                          }
+                          style={{ backgroundColor: hex }}
+                        >
+                          <span className="sr-only">{hex}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

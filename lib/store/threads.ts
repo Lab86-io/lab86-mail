@@ -116,6 +116,10 @@ async function patchThread(account: string, id: string, patch: Partial<Thread>) 
 }
 
 export async function setThreadSummary(account: string, id: string, summary: string, model?: string) {
+  // Never stamp a blank summary as "fresh" — doing so makes the 6h cache window
+  // lock the thread onto an empty card with no auto-retry. Skip the write so the
+  // UI re-queries instead.
+  if (!summary.trim()) return;
   await patchThread(account, id, { summary, summaryAt: Date.now(), summaryModel: model ?? null });
 }
 

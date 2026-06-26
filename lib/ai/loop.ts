@@ -194,6 +194,14 @@ function errorText(error: unknown): string {
   }
 }
 
+// Auth-failure diagnostics can carry bearer tokens or submitted key material —
+// non-Error objects stringify request metadata. Redact before logging.
+function safeAuthErrorText(error: unknown): string {
+  return errorText(error)
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
+    .replace(/\bsk-(?:or-v1-|ant-)?[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
+}
+
 function isRecoverableAgentProviderError(error: any): boolean {
   const message = String(error?.message || error || '');
   const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.status);
@@ -210,6 +218,34 @@ function isRecoverableAgentProviderError(error: any): boolean {
     statusCode >= 500 ||
     /provider returned error|temporarily unavailable|rate.?limit/i.test(responseBody)
   );
+}
+
+// A rejected/missing API key is NOT a transient provider hiccup — retrying or
+// falling back can't fix it, and routing it through providerFailureResult hides
+// the real problem behind "malformed response". Detect it so we can tell the
+// user exactly what to do.
+function isAuthError(error: any): boolean {
+  const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.status);
+  const haystack = `${error?.message || ''} ${error?.responseBody || ''}`.toLowerCase();
+  const hasAuthSignal =
+    /invalid api key|incorrect api key|invalid_api_key|no auth credentials|unauthorized|authentication (failed|error)|missing.*api key|api key.*(missing|invalid|expired)/.test(
+      haystack,
+    );
+  // 401 is unambiguously auth. A bare 403 is NOT — it can mean model access,
+  // billing/project limits, policy, or region — so only treat 403 as an auth
+  // failure when the message also looks like a key problem.
+  return statusCode === 401 || hasAuthSignal;
+}
+
+function authFailureResult(error: any) {
+  const text =
+    'Your AI provider rejected the API key (auth error). Open Settings → AI and re-enter a valid OpenRouter, OpenAI, or Anthropic key — then retry. Nothing was changed.';
+  console.error(`[ai] auth failure: ${safeAuthErrorText(error)}`);
+  return {
+    text,
+    finishReason: 'stop',
+    steps: [{ stepNumber: 0, content: [{ type: 'text', text }] }],
+  };
 }
 
 function providerFailureResult(error: any) {
@@ -418,9 +454,17 @@ export async function runAgent({
       stopWhen: stepCountIs(20),
     });
   } catch (err: any) {
-    if (!isRecoverableAgentProviderError(err)) throw err;
-    console.warn('[agent] provider failed after retries; returning text fallback', errorText(err));
-    result = providerFailureResult(err);
+    // Auth errors get a clear "fix your key" message instead of being masked as
+    // a transient failure or thrown as an opaque provider string.
+    if (isAuthError(err)) {
+      console.warn('[agent] auth error; returning key-fix guidance', safeAuthErrorText(err));
+      result = authFailureResult(err);
+    } else if (isRecoverableAgentProviderError(err)) {
+      console.warn('[agent] provider failed after retries; returning text fallback', errorText(err));
+      result = providerFailureResult(err);
+    } else {
+      throw err;
+    }
   }
   return {
     toUIMessageStreamResponse() {
