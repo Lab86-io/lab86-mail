@@ -8,6 +8,19 @@ const MORNING_HOUR = 7;
 // Users without a synced calendar timezone fall back to this.
 const DEFAULT_TZ = 'America/New_York';
 
+function isStagingCronTarget(appUrl: string) {
+  const environment = String(
+    process.env.RAILWAY_ENVIRONMENT_NAME || process.env.LAB86_MAIL_ENV || process.env.LAB86_ENV || '',
+  ).toLowerCase();
+  if (environment === 'staging' || environment === 'development') return true;
+  try {
+    const host = new URL(appUrl).hostname.toLowerCase();
+    return host === 'mail-staging.lab86.io';
+  } catch {
+    return /\bstaging\b/i.test(appUrl);
+  }
+}
+
 // Users eligible for scheduled editions: anyone with a connected mail account.
 // (AI availability is resolved app-side; users without AI still get the
 // structured edition.) Each target carries the timezone of their primary
@@ -62,6 +75,10 @@ export const tick = internalAction({
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
     if (!appUrl || !secret) {
       console.error('[daily-report cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    if (isStagingCronTarget(appUrl)) {
+      console.log('[daily-report cron] skipped on staging target');
       return;
     }
 

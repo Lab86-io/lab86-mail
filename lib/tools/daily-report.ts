@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { generateAgentReport } from '../mail/agent-report';
 import {
+  dailyReportThreadKey,
+  dismissDailyReportTask,
+  dismissDailyReportThread,
+  listDismissedDailyReportTasks,
+  listDismissedDailyReportThreads,
+} from '../store/daily-report-dismissals';
+import {
   getDailyReport as getDailyReportStore,
   getLatestDailyReport,
   listDailyReports as listDailyReportsStore,
@@ -66,5 +73,74 @@ export const getDailyReportTool = defineTool({
   output: z.object({ report: z.any().nullable() }),
   async handler({ id }) {
     return { report: await getDailyReportStore(id) };
+  },
+});
+
+export const dismissDailyReportTaskTool = defineTool({
+  name: 'dismiss_daily_report_task',
+  description:
+    'Hide a task card from future Daily Brief task sections without completing or deleting the underlying task.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    cardId: z.string().min(1),
+    title: z.string().optional(),
+  }),
+  output: z.object({ ok: z.boolean(), dismissal: z.any() }),
+  async handler(args) {
+    const dismissal = await dismissDailyReportTask(args);
+    return { ok: true, dismissal };
+  },
+});
+
+export const listDailyReportTaskDismissalsTool = defineTool({
+  name: 'list_daily_report_task_dismissals',
+  description: 'List task cards the user has hidden from Daily Brief task sections.',
+  category: 'tasks',
+  mutating: false,
+  input: z.object({}),
+  output: z.object({ cardIds: z.array(z.string()), dismissals: z.array(z.any()) }),
+  async handler() {
+    const dismissals = await listDismissedDailyReportTasks();
+    return {
+      cardIds: dismissals.map((dismissal) => dismissal.cardId).filter(Boolean),
+      dismissals,
+    };
+  },
+});
+
+export const dismissDailyReportThreadTool = defineTool({
+  name: 'dismiss_daily_report_thread',
+  description:
+    'Hide or resolve a conversation from Daily Brief email sections until that thread receives newer mail.',
+  category: 'mail',
+  mutating: true,
+  input: z.object({
+    account: z.string().min(1),
+    threadId: z.string().min(1),
+    subject: z.string().optional(),
+    receivedAt: z.number().nullable().optional(),
+    action: z.enum(['dismissed', 'resolved']).default('dismissed'),
+  }),
+  output: z.object({ ok: z.boolean(), dismissal: z.any() }),
+  async handler(args) {
+    const dismissal = await dismissDailyReportThread(args);
+    return { ok: true, dismissal };
+  },
+});
+
+export const listDailyReportThreadDismissalsTool = defineTool({
+  name: 'list_daily_report_thread_dismissals',
+  description: 'List conversations the user has hidden or resolved from Daily Brief email sections.',
+  category: 'mail',
+  mutating: false,
+  input: z.object({}),
+  output: z.object({ threadKeys: z.array(z.string()), dismissals: z.array(z.any()) }),
+  async handler() {
+    const dismissals = await listDismissedDailyReportThreads();
+    return {
+      threadKeys: dismissals.map((dismissal) => dailyReportThreadKey(dismissal.account, dismissal.threadId)),
+      dismissals,
+    };
   },
 });

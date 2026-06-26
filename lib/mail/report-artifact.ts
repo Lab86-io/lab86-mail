@@ -30,7 +30,7 @@ export function buildNativeDailyReportArtifact(report: DailyReport): string {
     ...withLane(sections.newPeople || [], 'New person'),
     ...withLane(sections.tracked || [], 'Tracked'),
   ].slice(0, MAX_NEEDS);
-  const tasks = (sections.tasks || []).slice(0, MAX_TASKS);
+  const tasks = (sections.tasks || []).filter((task) => !task.completedAt).slice(0, MAX_TASKS);
   const events = (sections.calendar || [])
     .slice()
     .sort((a, b) => Number(a.startAt || 0) - Number(b.startAt || 0))
@@ -77,7 +77,11 @@ section{min-width:0}
 .side{display:grid;gap:1.6rem;align-content:start}
 .task,.event{border-top:1px solid var(--brief-hairline);padding:.78rem 0}
 .task:first-child,.event:first-child{border-top:0}
+.task{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.75rem;align-items:start}
 .task h3,.event h3{margin:0;font-size:.96rem;line-height:1.25}
+.task-actions{display:flex;align-items:center;gap:.25rem}
+.icon-btn{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--brief-hairline);border-radius:.5rem;background:transparent;color:var(--brief-muted);cursor:pointer}
+.icon-btn:hover{color:var(--brief-accent);background:var(--brief-accent-soft)}
 .meta{margin-top:.28rem;color:var(--brief-muted);font-size:.78rem;line-height:1.35}
 .week{grid-column:1/-1;width:100%;max-width:100%;min-width:0;margin-top:1rem}
 .agenda{border-top:1px solid var(--brief-hairline)}
@@ -86,7 +90,7 @@ section{min-width:0}
 .event h3,.event .meta{overflow-wrap:anywhere}
 .empty{padding:1rem 0;color:var(--brief-muted);border-top:1px solid var(--brief-hairline)}
 footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--brief-hairline);color:var(--brief-muted);font-size:.74rem}
-@media (max-width:640px){.masthead{padding:2.5rem}.masthead h1{font-size:clamp(3.35rem,20vw,6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
+	@media (max-width:640px){.masthead{padding:2.5rem}.masthead h1{font-size:clamp(3.35rem,20vw,6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.task{grid-template-columns:minmax(0,1fr) auto}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
 </style>
 </head>
 <body>
@@ -109,8 +113,9 @@ ${renderEvents(events, timezone)}
 <footer>Built for you using your ${escapeHtml(serviceText)} with care.</footer>
 </main>
 <script>
-window.addEventListener('message',function(e){var d=e.data;if(d&&d.source==='lab86-host'&&d.type==='theme'&&d.theme){for(var k in d.theme){document.documentElement.style.setProperty(k,d.theme[k]);}}});
-document.addEventListener('click',function(e){var el=e.target.closest('[data-action]');if(!el)return;var payload={};try{payload=JSON.parse(el.getAttribute('data-payload')||'{}');}catch(_){}window.parent.postMessage({source:'lab86-daily-report',action:el.getAttribute('data-action'),payload:payload},'*');});
+	var pendingRemovals={};
+	window.addEventListener('message',function(e){var d=e.data;if(d&&d.source==='lab86-host'&&d.type==='theme'&&d.theme){for(var k in d.theme){document.documentElement.style.setProperty(k,d.theme[k]);}}if(d&&d.source==='lab86-host'&&d.payload&&d.payload.clientActionId){var row=pendingRemovals[d.payload.clientActionId];if(row){if(d.ok){row.remove();}else{row.style.opacity='';row.style.pointerEvents='';}delete pendingRemovals[d.payload.clientActionId];}}});
+	document.addEventListener('click',function(e){var el=e.target.closest('[data-action]');if(!el)return;var action=el.getAttribute('data-action');var payload={};try{payload=JSON.parse(el.getAttribute('data-payload')||'{}');}catch(_){}var row=el.closest('[data-card-id],[data-thread-key]');if(row&&(action==='dismiss_task'||action==='dismiss_thread'||action==='resolve_thread'||(action==='toggle_task'&&payload.completed))){var id=String(Date.now())+String(Math.random()).slice(2);payload.clientActionId=id;pendingRemovals[id]=row;row.style.opacity='.45';row.style.pointerEvents='none';}window.parent.postMessage({source:'lab86-daily-report',action:action,payload:payload},'*');});
 </script>
 </body>
 </html>`;
@@ -128,15 +133,19 @@ function renderNeeds(items: Array<DailyReportItem & { laneLabel: string }>) {
     .map((item) => {
       const person = item.people?.[0] || 'Mail';
       const title = [person, item.subject].filter(Boolean).join(' - ');
-      return `<article class="need">
-<div>
-<div class="tag">${escapeHtml(item.laneLabel)}</div>
-<h3>${escapeHtml(title)}</h3>
-<p>${escapeHtml(item.whyItMatters || item.nextAction || 'Review this thread when you have a moment.')}</p>
-<div class="meta">${escapeHtml(ageLine(item.receivedAt ?? undefined))}</div>
-</div>
-<div class="actions">${button('open_thread', 'Open', { account: item.account, threadId: item.threadId }, 'primary')}</div>
-</article>`;
+      return `<article class="need" data-thread-key="${escapeAttr(reportThreadKey(item.account, item.threadId))}">
+	<div>
+	<div class="tag">${escapeHtml(item.laneLabel)}</div>
+	<h3>${escapeHtml(title)}</h3>
+	<p>${escapeHtml(item.whyItMatters || item.nextAction || 'Review this thread when you have a moment.')}</p>
+	<div class="meta">${escapeHtml(ageLine(item.receivedAt ?? undefined))}</div>
+	</div>
+	<div class="actions">
+	${button('open_thread', 'Open', { account: item.account, threadId: item.threadId }, 'primary')}
+	${iconButton('resolve_thread', '&#10003;', threadPayload(item), 'Resolve conversation')}
+	${iconButton('dismiss_thread', '&times;', threadPayload(item), 'Hide from future briefs')}
+	</div>
+	</article>`;
     })
     .join('')}</div></section>`;
 }
@@ -145,10 +154,16 @@ function renderTasks(tasks: DailyReportTaskItem[]) {
   const rows = tasks.length
     ? tasks
         .map(
-          (task) => `<article class="task">
-<h3>${escapeHtml(task.title)}</h3>
-<div class="meta">${escapeHtml([task.boardTitle, task.columnName, task.dueAt ? `Due ${shortDate(task.dueAt)}` : ''].filter(Boolean).join(' - '))}</div>
-</article>`,
+          (task) => `<article class="task" data-card-id="${escapeAttr(task.cardId)}">
+	<div>
+	<h3>${escapeHtml(task.title)}</h3>
+	<div class="meta">${escapeHtml([task.boardTitle, task.columnName, task.dueAt ? `Due ${shortDate(task.dueAt)}` : ''].filter(Boolean).join(' - '))}</div>
+	</div>
+	<div class="task-actions">
+	${iconButton('toggle_task', '&#10003;', { cardId: task.cardId, completed: true, title: task.title }, 'Complete task')}
+	${iconButton('dismiss_task', '&times;', { cardId: task.cardId, title: task.title }, 'Hide from future briefs')}
+	</div>
+	</article>`,
         )
         .join('')
     : `<div class="empty">No active task context is waiting.</div>`;
@@ -175,6 +190,24 @@ ${event.location ? `<div class="meta">${escapeHtml(event.location)}</div>` : ''}
 
 function button(action: string, label: string, payload: Record<string, unknown>, variant = '') {
   return `<button type="button" class="btn ${variant}" data-action="${escapeAttr(action)}" data-payload="${escapeAttr(JSON.stringify(payload))}">${escapeHtml(label)}</button>`;
+}
+
+function iconButton(action: string, labelHtml: string, payload: Record<string, unknown>, title: string) {
+  return `<button type="button" class="icon-btn" data-action="${escapeAttr(action)}" data-payload="${escapeAttr(JSON.stringify(payload))}" aria-label="${escapeAttr(title)}" title="${escapeAttr(title)}">${labelHtml}</button>`;
+}
+
+function reportThreadKey(account: string, threadId: string) {
+  return JSON.stringify([account, threadId]);
+}
+
+function threadPayload(item: DailyReportItem) {
+  return {
+    account: item.account,
+    threadId: item.threadId,
+    subject: item.subject,
+    receivedAt: item.receivedAt ?? null,
+    trackedThreadId: item.trackedThreadId,
+  };
 }
 
 function serviceLine(report: DailyReport, hasCalendar: boolean, hasTasks: boolean) {

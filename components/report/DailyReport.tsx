@@ -1,17 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Ban,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Inbox,
-  Newspaper,
-  RefreshCw,
-  User,
-} from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Ban, CheckCircle2, ChevronDown, Inbox, Newspaper, RefreshCw, User, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
@@ -180,6 +171,14 @@ function asEvents(value: DailyReportPayload['sections'][string]): DailyReportCal
   return Array.isArray(value) ? (value as DailyReportCalendarItem[]) : [];
 }
 
+function dailyReportThreadKey(account: string, threadId: string): string {
+  return JSON.stringify([account, threadId]);
+}
+
+function dailyReportItemThreadKey(item: DailyReportItem): string {
+  return dailyReportThreadKey(item.account, item.threadId);
+}
+
 // Gmail-Nudge-style framing: "Received 4 days ago — reply?".
 function elapsedFraming(item: DailyReportItem): string {
   if (!item.receivedAt) return '';
@@ -215,13 +214,66 @@ th,td{min-width:0;overflow-wrap:anywhere}
 @media (max-width:640px){[class*="week" i] table,[id*="week" i] table,[class*="calendar" i] table,[id*="calendar" i] table,[class*="agenda" i] table,[id*="agenda" i] table{table-layout:auto}}
 </style>`;
 
+const REPORT_ARTIFACT_RUNTIME_JS = `<script id="lab86-report-runtime-js">
+(function(){
+if(window.__lab86ReportRuntimeInstalled)return;
+window.__lab86ReportRuntimeInstalled=true;
+var hiddenCardIds={};
+var hiddenThreadKeys={};
+function hideDismissedTasks(ids){
+if(!Array.isArray(ids))return;
+for(var i=0;i<ids.length;i++){hiddenCardIds[String(ids[i])]=true;}
+var rows=document.querySelectorAll('[data-card-id]');
+for(var j=0;j<rows.length;j++){var id=rows[j].getAttribute('data-card-id');if(id&&hiddenCardIds[id])rows[j].remove();}
+}
+function hideDismissedThreads(keys){
+if(!Array.isArray(keys))return;
+for(var i=0;i<keys.length;i++){hiddenThreadKeys[String(keys[i])]=true;}
+var rows=document.querySelectorAll('[data-thread-key]');
+for(var j=0;j<rows.length;j++){var key=rows[j].getAttribute('data-thread-key');if(key&&hiddenThreadKeys[key])rows[j].remove();}
+}
+function threadKeyFromPayload(payload){
+if(!payload)return null;
+if(payload.threadKey)return String(payload.threadKey);
+if(payload.account&&payload.threadId)return JSON.stringify([String(payload.account),String(payload.threadId)]);
+return null;
+}
+window.addEventListener('message',function(e){
+var d=e.data;
+if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.cardIds||[]);
+if(d&&d.source==='lab86-host'&&d.type==='dismissed_threads')hideDismissedThreads(d.threadKeys||[]);
+if(d&&d.source==='lab86-host'&&d.ok&&(d.action==='resolve_thread'||d.action==='dismiss_thread')){var key=threadKeyFromPayload(d.payload);if(key)hideDismissedThreads([key]);}
+});
+})();
+</script>`;
+
 function withReportArtifactSafetyCss(html: string): string {
-  if (!html || html.includes('id="lab86-report-safety-css"')) return html;
-  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${REPORT_ARTIFACT_SAFETY_CSS}</head>`);
-  return `${REPORT_ARTIFACT_SAFETY_CSS}${html}`;
+  if (!html) return html;
+  let next = html;
+  if (!next.includes('id="lab86-report-safety-css"')) {
+    next = /<\/head>/i.test(next)
+      ? next.replace(/<\/head>/i, `${REPORT_ARTIFACT_SAFETY_CSS}</head>`)
+      : `${REPORT_ARTIFACT_SAFETY_CSS}${next}`;
+  }
+  if (!next.includes('id="lab86-report-runtime-js"')) {
+    next = /<\/body>/i.test(next)
+      ? next.replace(/<\/body>/i, `${REPORT_ARTIFACT_RUNTIME_JS}</body>`)
+      : `${next}${REPORT_ARTIFACT_RUNTIME_JS}`;
+  }
+  return next;
 }
 
-function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => void }) {
+function ReportArtifact({
+  html,
+  dismissedTaskIds,
+  dismissedThreadKeys,
+  onChanged,
+}: {
+  html: string;
+  dismissedTaskIds: string[];
+  dismissedThreadKeys: string[];
+  onChanged?: () => void;
+}) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -260,13 +312,39 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
     win.postMessage({ source: 'lab86-host', type: 'theme', theme }, '*');
   }, [appFont]);
 
+  const postDismissedTasks = useCallback(() => {
+    const win = frameRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage({ source: 'lab86-host', type: 'dismissed_tasks', cardIds: dismissedTaskIds }, '*');
+  }, [dismissedTaskIds]);
+
+  const postDismissedThreads = useCallback(() => {
+    const win = frameRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(
+      { source: 'lab86-host', type: 'dismissed_threads', threadKeys: dismissedThreadKeys },
+      '*',
+    );
+  }, [dismissedThreadKeys]);
+
   // Re-post on any customization change. The accent/background slices aren't
   // referenced directly (their resolved colors are read from computed CSS), but
   // they must still re-trigger the post, so they belong in the dependency list.
   // biome-ignore lint/correctness/useExhaustiveDependencies: theme slices intentionally trigger a re-post; resolved values come from computed CSS.
   useEffect(() => {
     postTheme();
-  }, [postTheme, accentHue, accentChroma, bgHue, surfaceTint, html]);
+    postDismissedTasks();
+    postDismissedThreads();
+  }, [
+    postTheme,
+    postDismissedTasks,
+    postDismissedThreads,
+    accentHue,
+    accentChroma,
+    bgHue,
+    surfaceTint,
+    html,
+  ]);
 
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
@@ -277,7 +355,7 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
       const payload = data.payload || {};
       const ack = (ok: boolean, error?: string) =>
         frameRef.current?.contentWindow?.postMessage(
-          { source: 'lab86-host', action: data.action, ok, error },
+          { source: 'lab86-host', action: data.action, ok, error, payload },
           '*',
         );
       try {
@@ -308,12 +386,45 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
             return ack(false, 'unknown view');
           case 'toggle_task':
             if (!payload.cardId) return ack(false, 'missing cardId');
-            await callTool('tasks_update_card', {
+            {
+              const completed = Boolean(payload.completed);
+              const cardId = String(payload.cardId);
+              const title = typeof payload.title === 'string' ? payload.title : undefined;
+              await callTool('tasks_update_card', {
+                cardId,
+                completed,
+              });
+              if (completed) {
+                await callTool('dismiss_daily_report_task', { cardId, title });
+              }
+            }
+            onChanged?.();
+            return ack(true);
+          case 'dismiss_task':
+            if (!payload.cardId) return ack(false, 'missing cardId');
+            await callTool('dismiss_daily_report_task', {
               cardId: String(payload.cardId),
-              completed: Boolean(payload.completed),
+              title: typeof payload.title === 'string' ? payload.title : undefined,
             });
             onChanged?.();
             return ack(true);
+          case 'resolve_thread':
+          case 'dismiss_thread': {
+            if (!payload.account) return ack(false, 'missing account');
+            if (!payload.threadId) return ack(false, 'missing threadId');
+            await callTool('dismiss_daily_report_thread', {
+              account: String(payload.account),
+              threadId: String(payload.threadId),
+              subject: typeof payload.subject === 'string' ? payload.subject : undefined,
+              receivedAt: typeof payload.receivedAt === 'number' ? payload.receivedAt : null,
+              action: data.action === 'resolve_thread' ? 'resolved' : 'dismissed',
+            });
+            if (data.action === 'resolve_thread' && payload.trackedThreadId) {
+              await callTool('resolve_tracked_thread', { id: String(payload.trackedThreadId) });
+            }
+            onChanged?.();
+            return ack(true);
+          }
           case 'create_task': {
             const title = String(payload.title || '').trim();
             if (!title) return ack(false, 'missing title');
@@ -340,7 +451,11 @@ function ReportArtifact({ html, onChanged }: { html: string; onChanged?: () => v
       ref={frameRef}
       title="The Daily Brief"
       srcDoc={withReportArtifactSafetyCss(html)}
-      onLoad={postTheme}
+      onLoad={() => {
+        postTheme();
+        postDismissedTasks();
+        postDismissedThreads();
+      }}
       // allow-scripts (for interactivity) WITHOUT allow-same-origin keeps the
       // artifact sandboxed from the app origin; allow-popups lets external
       // links open in a new tab.
@@ -439,6 +554,8 @@ export function DailyReport() {
   // report (the new one isn't saved yet), polling stops, and the fresh brief
   // never shows.
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
+  const [hiddenTaskIds, setHiddenTaskIds] = useState<Set<string>>(() => new Set());
+  const [hiddenThreadKeys, setHiddenThreadKeys] = useState<Set<string>>(() => new Set());
 
   const historyQuery = useQuery({
     queryKey: ['daily-report', 'history'],
@@ -466,12 +583,49 @@ export function DailyReport() {
       return false;
     },
   });
+  const taskDismissalsQuery = useQuery({
+    queryKey: ['daily-report', 'task-dismissals'],
+    queryFn: async () => callTool<{ cardIds: string[] }>('list_daily_report_task_dismissals', {}),
+    staleTime: 30_000,
+  });
+  const threadDismissalsQuery = useQuery({
+    queryKey: ['daily-report', 'thread-dismissals'],
+    queryFn: async () => callTool<{ threadKeys: string[] }>('list_daily_report_thread_dismissals', {}),
+    staleTime: 30_000,
+  });
   const report = reportQuery.data?.report || null;
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
   const generating = report?.status === 'partial' || report?.artifactStatus === 'composing' || waitingForNew;
   // The artifact is already shown; the broader month pass is filling in behind it.
   const enriching = report?.artifactStatus === 'enriching';
+  const persistedHiddenTaskIds = useMemo(
+    () => new Set(taskDismissalsQuery.data?.cardIds || []),
+    [taskDismissalsQuery.data?.cardIds],
+  );
+  const combinedHiddenTaskIds = useMemo(() => {
+    const ids = new Set(persistedHiddenTaskIds);
+    for (const id of hiddenTaskIds) ids.add(id);
+    return ids;
+  }, [persistedHiddenTaskIds, hiddenTaskIds]);
+  const dismissedTaskIds = useMemo(() => [...combinedHiddenTaskIds], [combinedHiddenTaskIds]);
+  const persistedHiddenThreadKeys = useMemo(
+    () => new Set(threadDismissalsQuery.data?.threadKeys || []),
+    [threadDismissalsQuery.data?.threadKeys],
+  );
+  const combinedHiddenThreadKeys = useMemo(() => {
+    const keys = new Set(persistedHiddenThreadKeys);
+    for (const key of hiddenThreadKeys) keys.add(key);
+    return keys;
+  }, [persistedHiddenThreadKeys, hiddenThreadKeys]);
+  const dismissedThreadKeys = useMemo(() => [...combinedHiddenThreadKeys], [combinedHiddenThreadKeys]);
+  const visibleReportTasks = report
+    ? asTasks(report.sections.tasks).filter(
+        (task) => !task.completedAt && !combinedHiddenTaskIds.has(task.cardId),
+      )
+    : [];
+  const visibleReportItems = (items: DailyReportItem[]) =>
+    items.filter((item) => !combinedHiddenThreadKeys.has(dailyReportItemThreadKey(item)));
 
   // Stop the "generating" state once an edition newer than the click has settled.
   useEffect(() => {
@@ -504,11 +658,6 @@ export function DailyReport() {
     onError: () => setGeneratingSince(null),
   });
 
-  const resolveTracked = useMutation({
-    mutationFn: async (id: string) => callTool('resolve_tracked_thread', { id }),
-    onSuccess: invalidate,
-  });
-
   // Correction loop — both feed the classifier's user-rule short-circuit, so the
   // next report self-corrects. "Not for me" routes the sender to noise; "This is
   // a person" pins the sender to Main.
@@ -529,6 +678,78 @@ export function DailyReport() {
     onSuccess: invalidate,
   });
 
+  const completeTask = useMutation({
+    mutationFn: async (task: DailyReportTaskItem) => {
+      await callTool('tasks_update_card', { cardId: task.cardId, completed: true });
+      await callTool('dismiss_daily_report_task', { cardId: task.cardId, title: task.title });
+    },
+    onMutate: (task) => {
+      const previous = hiddenTaskIds;
+      setHiddenTaskIds((current) => new Set(current).add(task.cardId));
+      return { previous };
+    },
+    onError: (_error, _task, context) => {
+      if (context?.previous) setHiddenTaskIds(context.previous);
+    },
+    onSuccess: invalidate,
+  });
+
+  const dismissTask = useMutation({
+    mutationFn: async (task: DailyReportTaskItem) =>
+      callTool('dismiss_daily_report_task', { cardId: task.cardId, title: task.title }),
+    onMutate: (task) => {
+      const previous = hiddenTaskIds;
+      setHiddenTaskIds((current) => new Set(current).add(task.cardId));
+      return { previous };
+    },
+    onError: (_error, _task, context) => {
+      if (context?.previous) setHiddenTaskIds(context.previous);
+    },
+    onSuccess: invalidate,
+  });
+
+  const resolveThread = useMutation({
+    mutationFn: async (item: DailyReportItem) => {
+      await callTool('dismiss_daily_report_thread', {
+        account: item.account,
+        threadId: item.threadId,
+        subject: item.subject,
+        receivedAt: item.receivedAt ?? null,
+        action: 'resolved',
+      });
+      if (item.trackedThreadId) await callTool('resolve_tracked_thread', { id: item.trackedThreadId });
+    },
+    onMutate: (item) => {
+      const previous = hiddenThreadKeys;
+      setHiddenThreadKeys((current) => new Set(current).add(dailyReportItemThreadKey(item)));
+      return { previous };
+    },
+    onError: (_error, _item, context) => {
+      if (context?.previous) setHiddenThreadKeys(context.previous);
+    },
+    onSuccess: invalidate,
+  });
+
+  const hideThread = useMutation({
+    mutationFn: async (item: DailyReportItem) =>
+      callTool('dismiss_daily_report_thread', {
+        account: item.account,
+        threadId: item.threadId,
+        subject: item.subject,
+        receivedAt: item.receivedAt ?? null,
+        action: 'dismissed',
+      }),
+    onMutate: (item) => {
+      const previous = hiddenThreadKeys;
+      setHiddenThreadKeys((current) => new Set(current).add(dailyReportItemThreadKey(item)));
+      return { previous };
+    },
+    onError: (_error, _item, context) => {
+      if (context?.previous) setHiddenThreadKeys(context.previous);
+    },
+    onSuccess: invalidate,
+  });
+
   const openThread = (item: DailyReportItem) => {
     setThreadAccount(item.account);
     setSelectedThread(item.threadId);
@@ -536,9 +757,15 @@ export function DailyReport() {
 
   const rowHandlers = {
     onOpen: openThread,
-    onResolve: (id: string) => resolveTracked.mutate(id),
-    resolvingId: resolveTracked.variables as string | undefined,
-    onDismiss: (item: DailyReportItem) => dismissSender.mutate(item),
+    onResolveThread: (item: DailyReportItem) => resolveThread.mutate(item),
+    onHideThread: (item: DailyReportItem) => hideThread.mutate(item),
+    resolvingThreadKey: resolveThread.isPending
+      ? dailyReportItemThreadKey(resolveThread.variables as DailyReportItem)
+      : undefined,
+    hidingThreadKey: hideThread.isPending
+      ? dailyReportItemThreadKey(hideThread.variables as DailyReportItem)
+      : undefined,
+    onDismissSender: (item: DailyReportItem) => dismissSender.mutate(item),
     onMarkPerson: (item: DailyReportItem) => markPerson.mutate(item),
     dismissingId: dismissSender.isPending ? dismissSender.variables?.threadId : undefined,
     markingId: markPerson.isPending ? markPerson.variables?.threadId : undefined,
@@ -708,7 +935,12 @@ export function DailyReport() {
             </EmptyHeader>
           </Empty>
         ) : report.html ? (
-          <ReportArtifact html={report.html} onChanged={invalidate} />
+          <ReportArtifact
+            html={report.html}
+            dismissedTaskIds={dismissedTaskIds}
+            dismissedThreadKeys={dismissedThreadKeys}
+            onChanged={invalidate}
+          />
         ) : (
           <div className="mx-auto flex max-w-5xl flex-col gap-7">
             {/* Lede — the narrative as an editorial pull-quote. */}
@@ -727,7 +959,7 @@ export function DailyReport() {
               style={{ animationDelay: '120ms' }}
             >
               {summaryKeys.map(([key, label]) => {
-                const items = asItems(report.sections[key]);
+                const items = visibleReportItems(asItems(report.sections[key]));
                 const first = items[0];
                 return (
                   <button
@@ -757,11 +989,15 @@ export function DailyReport() {
             </div>
 
             <TaskCalendarBrief
-              tasks={asTasks(report.sections.tasks)}
+              tasks={visibleReportTasks}
               events={asEvents(report.sections.calendar)}
               delay={170}
               onOpenTasks={() => setPrimaryView('tasks')}
               onOpenCalendar={() => setPrimaryView('calendar')}
+              onCompleteTask={(task) => completeTask.mutate(task)}
+              onDismissTask={(task) => dismissTask.mutate(task)}
+              completingTaskId={completeTask.isPending ? completeTask.variables?.cardId : undefined}
+              dismissingTaskId={dismissTask.isPending ? dismissTask.variables?.cardId : undefined}
             />
 
             {/* Sections. */}
@@ -769,7 +1005,7 @@ export function DailyReport() {
               <ReportSection
                 key={String(key)}
                 label={label}
-                items={asItems(report.sections[key])}
+                items={visibleReportItems(asItems(report.sections[key]))}
                 limit={limit}
                 roomy={roomy}
                 delay={240 + i * 60}
@@ -779,7 +1015,7 @@ export function DailyReport() {
 
             {/* Bulk & automated tail — collapsed by default, humans never here. */}
             <BulkTail
-              items={asItems(report.sections.bulkTail)}
+              items={visibleReportItems(asItems(report.sections.bulkTail))}
               delay={240 + SECTION_LABELS.length * 60}
               onOpen={openThread}
             />
@@ -807,9 +1043,11 @@ export function DailyReport() {
 
 interface RowHandlers {
   onOpen: (item: DailyReportItem) => void;
-  onResolve: (id: string) => void;
-  resolvingId?: string;
-  onDismiss: (item: DailyReportItem) => void;
+  onResolveThread: (item: DailyReportItem) => void;
+  resolvingThreadKey?: string;
+  onHideThread: (item: DailyReportItem) => void;
+  hidingThreadKey?: string;
+  onDismissSender: (item: DailyReportItem) => void;
   onMarkPerson: (item: DailyReportItem) => void;
   dismissingId?: string;
   markingId?: string;
@@ -847,12 +1085,20 @@ function TaskCalendarBrief({
   delay,
   onOpenTasks,
   onOpenCalendar,
+  onCompleteTask,
+  onDismissTask,
+  completingTaskId,
+  dismissingTaskId,
 }: {
   tasks: DailyReportTaskItem[];
   events: DailyReportCalendarItem[];
   delay: number;
   onOpenTasks: () => void;
   onOpenCalendar: () => void;
+  onCompleteTask: (task: DailyReportTaskItem) => void;
+  onDismissTask: (task: DailyReportTaskItem) => void;
+  completingTaskId?: string;
+  dismissingTaskId?: string;
 }) {
   if (!tasks.length && !events.length) return null;
   const visibleTasks = tasks.slice(0, 8);
@@ -875,7 +1121,7 @@ function TaskCalendarBrief({
         {visibleTasks.length ? (
           <ul className="space-y-2">
             {visibleTasks.map((task) => (
-              <li key={task.cardId} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2">
+              <li key={task.cardId} className="grid grid-cols-[1rem_minmax(0,1fr)_auto] gap-2">
                 <span
                   className={cn(
                     'mt-1 grid size-3.5 place-items-center rounded-sm border',
@@ -918,6 +1164,42 @@ function TaskCalendarBrief({
                       {stripEmoji(task.description)}
                     </p>
                   ) : null}
+                </div>
+                <div className="flex shrink-0 items-start gap-0.5 pt-0.5">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Complete task"
+                        onClick={() => onCompleteTask(task)}
+                        className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-success)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+                      >
+                        {completingTaskId === task.cardId ? (
+                          <Ring className="size-3.5" />
+                        ) : (
+                          <CheckCircle2 className="size-3.5" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Complete</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Hide from future briefs"
+                        onClick={() => onDismissTask(task)}
+                        className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-danger)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+                      >
+                        {dismissingTaskId === task.cardId ? (
+                          <Ring className="size-3.5" />
+                        ) : (
+                          <X className="size-3.5" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Hide from briefs</TooltipContent>
+                  </Tooltip>
                 </div>
               </li>
             ))}
@@ -1036,9 +1318,11 @@ function ReportRow({
   item,
   index,
   onOpen,
-  onResolve,
-  resolvingId,
-  onDismiss,
+  onResolveThread,
+  resolvingThreadKey,
+  onHideThread,
+  hidingThreadKey,
+  onDismissSender,
   onMarkPerson,
   dismissingId,
   markingId,
@@ -1048,7 +1332,9 @@ function ReportRow({
   const subject = stripEmoji(item.subject || '(no subject)');
   const framing = elapsedFraming(item);
   const pills = (item.surfacedBecause || []).filter((code) => PILL_LABELS[code]).slice(0, 4);
-  const correcting = dismissingId === item.threadId || markingId === item.threadId;
+  const itemKey = dailyReportItemThreadKey(item);
+  const clearing = resolvingThreadKey === itemKey || hidingThreadKey === itemKey;
+  const correcting = dismissingId === item.threadId || markingId === item.threadId || clearing;
   return (
     // biome-ignore lint/a11y/useSemanticElements: a native <button> can't contain the nested action <button>s; role+keydown keep it accessible.
     <div
@@ -1140,6 +1426,42 @@ function ReportRow({
           <TooltipTrigger asChild>
             <button
               type="button"
+              aria-label="Resolve conversation"
+              onClick={(event) => {
+                event.stopPropagation();
+                onResolveThread(item);
+              }}
+              className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-success)] focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              {resolvingThreadKey === itemKey ? (
+                <Ring className="size-3.5" />
+              ) : (
+                <CheckCircle2 className="size-3.5" />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">Resolve</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Hide from future briefs"
+              onClick={(event) => {
+                event.stopPropagation();
+                onHideThread(item);
+              }}
+              className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-danger)] focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              {hidingThreadKey === itemKey ? <Ring className="size-3.5" /> : <X className="size-3.5" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">Hide from briefs</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
               aria-label="This is a real person — always Main"
               onClick={(event) => {
                 event.stopPropagation();
@@ -1159,7 +1481,7 @@ function ReportRow({
               aria-label="Not for me — stop surfacing this sender"
               onClick={(event) => {
                 event.stopPropagation();
-                onDismiss(item);
+                onDismissSender(item);
               }}
               className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-danger)] focus-visible:opacity-100 group-hover:opacity-100"
             >
@@ -1168,32 +1490,6 @@ function ReportRow({
           </TooltipTrigger>
           <TooltipContent side="top">Not for me</TooltipContent>
         </Tooltip>
-        {item.trackedThreadId ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="Resolve tracked thread"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onResolve(item.trackedThreadId as string);
-                }}
-                className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-success)] focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                {resolvingId === item.trackedThreadId ? (
-                  <Ring className="size-3.5" />
-                ) : (
-                  <CheckCircle2 className="size-3.5" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">Resolve</TooltipContent>
-          </Tooltip>
-        ) : (
-          <span className="grid size-7 place-items-center" aria-hidden>
-            <ChevronRight className="size-3.5 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
-          </span>
-        )}
       </div>
     </div>
   );

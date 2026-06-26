@@ -44,10 +44,14 @@ import {
 import { contactLookup, expandAlias } from './contacts';
 import { corpusCount, corpusSearch, senderProfile, threadTimeline } from './corpus';
 import {
+  dismissDailyReportTaskTool,
+  dismissDailyReportThreadTool,
   generateDailyReportTool,
   getDailyReportTool,
   getLatestDailyReportTool,
   listDailyReportsTool,
+  listDailyReportTaskDismissalsTool,
+  listDailyReportThreadDismissalsTool,
 } from './daily-report';
 import {
   getMessage,
@@ -187,6 +191,10 @@ const allTools: AnyTool[] = [
   getLatestDailyReportTool,
   listDailyReportsTool,
   getDailyReportTool,
+  dismissDailyReportTaskTool,
+  listDailyReportTaskDismissalsTool,
+  dismissDailyReportThreadTool,
+  listDailyReportThreadDismissalsTool,
   listSmartLabels,
   createSmartLabel,
   previewSmartLabel,
