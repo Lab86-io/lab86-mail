@@ -411,6 +411,11 @@ export const deleteUserCascade = mutation({
       'suggestions',
       'calendars',
       'calendarSyncStates',
+      'mcpConnections',
+      'mcpCredentials',
+      'mcpItems',
+      'mcpSyncStates',
+      'mcpTaskLinks',
     ] as const;
 
     for (const table of userTables) {
