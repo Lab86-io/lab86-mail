@@ -4,7 +4,17 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { Ban, CheckCircle2, Inbox as InboxIcon, MoreHorizontal, Search, Tag, Trash2, X } from 'lucide-react';
+import {
+  Ban,
+  CheckCircle2,
+  Inbox as InboxIcon,
+  MoreHorizontal,
+  Search,
+  Star,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -52,7 +62,7 @@ import { useClientStore } from '@/lib/client-state';
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
-import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
+import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
@@ -72,6 +82,8 @@ interface ThreadRow {
   snippet?: string;
   labels?: string[];
   unread?: boolean;
+  starred?: boolean;
+  messageCount?: number;
   smartCategory?: any;
   accountAlias?: string;
 }
@@ -956,6 +968,13 @@ function ThreadRowCard({
   const senderLabel = shortFrom(item.from || item.fromAddress || '');
   const displaySenderLabel = senderLabel || item.account || '';
   const date = (item.date as any) || item.lastDate || 0;
+  // Unified-inbox rows carry their mailbox; a 3px colour rail lets the eye scan
+  // account membership without reading the same alias text on every row. Colour
+  // comes from the shared Tableau-10 set the calendar uses, so the palette is
+  // consistent across surfaces.
+  const accountColor = showAccount ? categoricalColor(item.account || '') : '';
+  // Already-read threads recede so unread genuinely pops (shade inactive rows).
+  const dim = !item.unread;
   const prefetchTimer = useRef<number | null>(null);
 
   const schedulePrefetch = useCallback(() => {
@@ -995,15 +1014,36 @@ function ThreadRowCard({
       )}
       style={active ? { borderLeft: '3px solid var(--color-accent)' } : undefined}
     >
-      <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
+      {priorityClass ? (
+        <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
+      ) : accountColor ? (
+        <span
+          title={accountLabel || item.accountAlias || undefined}
+          aria-hidden
+          className="absolute left-0 inset-y-1 w-[3px] rounded-r-full opacity-80"
+          style={{ backgroundColor: accountColor }}
+        />
+      ) : null}
 
       <Checkbox checked={selected} onCheckedChange={() => onToggle()} onClick={(e) => e.stopPropagation()} />
 
-      <Avatar name={senderLabel || item.account} src={photoUrl} size={26} />
+      <Avatar
+        name={senderLabel || item.account}
+        src={photoUrl}
+        size={26}
+        className={cn(dim && 'opacity-80')}
+      />
 
       {/* Two-line row: sender, then subject + preview inline. */}
-      <div className="flex min-w-0 flex-col gap-0.5">
+      <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-[0.82]')}>
         <div className="flex items-center gap-1.5">
+          {item.starred ? (
+            <Star
+              role="img"
+              aria-label="Starred"
+              className="size-3 shrink-0 fill-[var(--color-warning)] text-[var(--color-warning)]"
+            />
+          ) : null}
           <span
             className={cn(
               'truncate font-display text-[13.5px]',
@@ -1012,6 +1052,14 @@ function ThreadRowCard({
           >
             {displaySenderLabel}
           </span>
+          {(item.messageCount || 0) > 1 ? (
+            <span
+              title={`${item.messageCount} messages in this thread`}
+              className="shrink-0 rounded-full bg-[var(--color-bg-subtle)] px-1.5 text-[10px] font-medium leading-[1.45] tabular-nums text-[var(--color-text-muted)]"
+            >
+              {item.messageCount}
+            </span>
+          ) : null}
           {item.unread ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
         </div>
         <span className="truncate text-[12.5px] leading-tight">
@@ -1064,13 +1112,8 @@ function ThreadRowCard({
               </PopoverContent>
             </Popover>
           ) : null}
-          {/* Mailbox chip: human alias only — a raw grant id is never useful
-              in a list row. No alias resolved yet = no chip. */}
-          {showAccount && (accountLabel || item.accountAlias) ? (
-            <Badge variant="outline" className="max-w-28 truncate text-[9px] normal-case">
-              {accountLabel || item.accountAlias}
-            </Badge>
-          ) : null}
+          {/* Mailbox identity moved to the coloured left rail (alias on hover) so
+              it no longer repeats as text down every row. */}
         </div>
       </div>
 

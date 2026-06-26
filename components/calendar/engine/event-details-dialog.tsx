@@ -16,7 +16,7 @@ import {
 import { type ReactNode, useState } from 'react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
-import { formatTime } from '@/components/calendar/engine/helpers';
+import { extractConferencingUrl, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import {
   AlertDialog,
@@ -301,10 +301,4 @@ export function EventDetailsDialog({ event, children }: IProps) {
 // a masterEventId. Either means "this belongs to a series."
 function isRecurringEvent(event: IEvent): boolean {
   return Boolean(event.recurrence?.length || event.masterEventId);
-}
-
-function extractConferencingUrl(conferencing: any): string | null {
-  if (!conferencing) return null;
-  const url = conferencing?.details?.url || conferencing?.details?.meetingUrl || conferencing?.url;
-  return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
 }

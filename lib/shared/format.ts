@@ -36,6 +36,32 @@ export function fromColor(value: string | null | undefined): string {
   return `var(--color-avatar-${index})`;
 }
 
+// Tableau-10 categorical palette — the same opaque, distinguishable set the
+// calendar assigns per calendar (calendars.colorIndex). Shared so per-account
+// rails and calendar events draw colour from one system.
+export const TABLEAU10 = [
+  '#4E79A7',
+  '#F28E2B',
+  '#E15759',
+  '#76B7B2',
+  '#59A14E',
+  '#EDC948',
+  '#B07AA1',
+  '#FF9DA7',
+  '#9C755F',
+  '#BAB0AC',
+] as const;
+
+// Deterministic categorical colour for a stable key (account id, label, …),
+// drawn from the same palette the calendar uses so colours line up across
+// surfaces.
+export function categoricalColor(value: string | null | undefined): string {
+  const str = String(value || '').toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  return TABLEAU10[Math.abs(hash) % TABLEAU10.length];
+}
+
 export function dateToEpoch(value: number | string | null | undefined): number {
   if (value == null) return 0;
   if (typeof value === 'number') return value < 1e12 ? value * 1000 : value;
