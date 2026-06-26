@@ -13,6 +13,7 @@
     "convex:codegen": "convex codegen",
     "daily-report": "bun --bun scripts/generate-daily-report.ts",
     "test": "bun test",
+    "test:coverage": "bun test --coverage --coverage-reporter=lcov --coverage-reporter=text --coverage-dir=coverage",
     "lint": "biome check .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit"

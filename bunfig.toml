@@ -1,0 +1,10 @@
+[test]
+# Keep coverage focused on application logic rather than generated or UI-only code.
+coveragePathIgnorePatterns = [
+  "**/*.d.ts",
+  "**/node_modules/**",
+  "components/**",
+  "app/**",
+  "convex/_generated/**",
+  "scripts/**",
+]
