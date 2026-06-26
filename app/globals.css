@@ -317,45 +317,14 @@
     scroll-behavior: smooth;
   }
 
-  /* Arc-style theme wash: the rail carries the gradient (Arc anchors its
-     space gradient in the sidebar; content stays neutral). Two corner-anchored
-     radial seeds - accent hue from the top, background hue from the bottom -
-     strength from the panel's Wash slider. Drawn as background-image so it
-     sits over the rail's own background color. */
-  .rail-wash {
-    background-image:
-      radial-gradient(
-        160% 90% at 0% 0%,
-        oklch(0.58 calc(var(--accent-chroma) * 1.25) var(--accent-hue) / calc(var(--wash-opacity, 0) * 1)),
-        transparent 78%
-      ),
-      radial-gradient(
-        170% 95% at 100% 100%,
-        oklch(0.52 0.11 var(--bg-hue) / calc(var(--wash-opacity, 0) * 0.9)),
-        transparent 80%
-      );
-  }
-
-  /* Dark rail carries a faint always-on accent sheen from the top corner so the
-     sidebar reads as crafted chrome out of the box (the Wash slider adds to it).
-     Without this the dark rail is a flat slab; light mode never needs it because
-     its white surfaces + dot lattice already give the chrome character. */
-  .dark .rail-wash {
-    background-image:
-      radial-gradient(
-        150% 85% at 0% 0%,
-        oklch(
-          0.7 calc(var(--accent-chroma) * 0.9) var(--accent-hue) /
-          calc(0.05 + var(--wash-opacity, 0) * 0.95)
-        ),
-        transparent 72%
-      ),
-      radial-gradient(
-        170% 95% at 100% 100%,
-        oklch(0.5 0.1 var(--bg-hue) / calc(0.03 + var(--wash-opacity, 0) * 0.85)),
-        transparent 80%
-      );
-  }
+  /* ONE shared wash. The wash itself lives on the BACKGROUND (.app-paper::before,
+     driven by --bg-wash-opacity); the rail no longer paints its own separate
+     gradient. Instead the rail is a slightly translucent panel (see the
+     translucent --rail-bg below, scaled by the "Rail wash" slider
+     --wash-opacity), so the same background wash bleeds THROUGH it. Because the
+     background wash's accent seed is anchored top-left — right under the
+     left-hand rail — the wash reads as flowing out of the rail and into the
+     content: delineated by the rail's border, but a single shared wash. */
 
   /* Film grain: a fixed fractal-noise wash over the whole app, opacity driven
      by the theme panel. Zero-cost at opacity 0 (still composited, no paints). */
@@ -824,7 +793,15 @@
    palette. */
 :root,
 :root.dark {
-  --rail-bg: var(--color-bg);
+  /* The rail is a translucent panel so the shared background wash shows through
+     it (delineated by its border, same wash). Always a bit see-through (8%),
+     more as the "Rail wash" slider (--wash-opacity) rises. At slider 0 over a
+     bg with no wash this is visually identical to the old opaque rail. */
+  --rail-bg: color-mix(
+    in oklab,
+    var(--color-bg),
+    transparent calc((0.08 + var(--wash-opacity, 0) * 0.34) * 100%)
+  );
   --sidebar: var(--color-bg);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
