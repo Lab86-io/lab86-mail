@@ -720,4 +720,104 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_key_window', ['userId', 'key', 'windowStart'])
     .index('by_expires', ['expiresAt']),
+
+  // --- MCP connectors: remote MCP servers (GitHub, Jira, Slack) a user opts
+  // into so their items feed the Daily Brief, search, and tasks. Mirrors the
+  // connectedAccounts/providerGrants split — display row here, secrets in
+  // mcpCredentials, normalized items in mcpItems. ---
+  mcpConnections: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    server: v.union(v.literal('github'), v.literal('jira'), v.literal('slack')),
+    serverUrl: v.string(),
+    authKind: v.union(v.literal('token'), v.literal('oauth')),
+    status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
+    displayName: v.optional(v.string()),
+    scopes: v.array(v.string()),
+    // Per-connection toggles — opt-in by default with opt-out, per the design.
+    includeInBrief: v.boolean(),
+    includeInSearch: v.boolean(),
+    lastSyncedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_server', ['server']),
+
+  mcpCredentials: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    server: v.string(),
+    accessTokenEncrypted: v.optional(v.string()),
+    refreshTokenEncrypted: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
+    fingerprint: v.optional(v.string()),
+    masked: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId']),
+
+  mcpItems: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    server: v.union(v.literal('github'), v.literal('jira'), v.literal('slack')),
+    externalId: v.string(),
+    kind: v.string(),
+    title: v.string(),
+    summary: v.optional(v.string()),
+    url: v.optional(v.string()),
+    state: v.optional(v.string()),
+    author: v.optional(v.string()),
+    assignedToUser: v.optional(v.boolean()),
+    updatedAtSource: v.optional(v.number()),
+    raw: v.optional(v.any()),
+    searchText: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_connection_external', ['connectionId', 'externalId'])
+    .index('by_user_updated', ['userId', 'updatedAtSource'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'server', 'connectionId', 'state'],
+    }),
+
+  mcpSyncStates: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    server: v.string(),
+    status: v.union(v.literal('idle'), v.literal('syncing'), v.literal('ready'), v.literal('error')),
+    lastSyncedAt: v.optional(v.number()),
+    lastCursor: v.optional(v.string()),
+    itemCount: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId']),
+
+  // Links a Lab86 task card to the external MCP item it was created from, so
+  // closing the item (during sync) can auto-complete the task — "external wins
+  // for status, user wins for intent".
+  mcpTaskLinks: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    server: v.string(),
+    externalId: v.string(),
+    cardId: v.string(),
+    // Last state we reconciled to the card, so we only act on real transitions.
+    lastSyncedState: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_connection_external', ['connectionId', 'externalId'])
+    .index('by_card', ['cardId']),
 });

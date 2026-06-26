@@ -32,6 +32,7 @@ export interface ToolDefinition<
     | 'contacts'
     | 'web'
     | 'audit'
+    | 'mcp'
     | 'meta';
   mutating: boolean;
   input: TArgs;

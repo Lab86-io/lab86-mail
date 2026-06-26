@@ -21,31 +21,64 @@ async function authedAccountIds(userId?: string | null): Promise<string[]> {
 export const corpusSearch = defineTool({
   name: 'corpus_search',
   description:
-    'Search mail across ALL connected accounts at once through the standard account search path. Prefer this over per-account search_threads when the user has not named a specific mailbox.',
+    'Search across ALL connected accounts at once — mail plus any linked tools (GitHub/Jira/Slack) the user enabled for search. Each item carries a "source" of "mail" or "mcp". Prefer this over per-account search_threads when the user has not named a specific mailbox.',
   category: 'mail',
   mutating: false,
   input: z.object({
-    query: z.string().describe('Mail search query (from:, to:, subject:, newer_than:, free text, …)'),
+    query: z.string().describe('Search query (from:, to:, subject:, newer_than:, free text, …)'),
     accounts: z.array(z.string()).optional().describe('Restrict to these accountIds (default: all)'),
+    includeConnectedTools: z
+      .boolean()
+      .default(true)
+      .describe('Also search linked GitHub/Jira/Slack items (default: true).'),
     max: z.number().int().min(1).max(50).default(20),
   }),
   output: z.object({ items: z.array(z.any()), accountsSearched: z.array(z.string()) }),
-  async handler({ query, accounts, max }, ctx) {
+  async handler({ query, accounts, includeConnectedTools, max }, ctx) {
     const all = await authedAccountIds(ctx.userId);
     const targets = accounts?.length ? all.filter((id) => accounts.includes(id)) : all;
-    if (!targets.length) throw new Error('No connected accounts to search.');
-    const perAccount = Math.max(5, Math.ceil(max / targets.length));
-    const results = await Promise.all(
-      targets.map((account) =>
-        searchNylasThreads({ userId: ctx.userId, account, query, max: perAccount })
-          .then((result) =>
-            (result?.items || []).map((item: any) => ({ ...item, account, searchTier: result?.searchTier })),
-          )
-          .catch(() => []),
+    const perAccount = Math.max(5, Math.ceil(max / Math.max(1, targets.length)));
+    const [results, mcpRows] = await Promise.all([
+      Promise.all(
+        targets.map((account) =>
+          searchNylasThreads({ userId: ctx.userId, account, query, max: perAccount })
+            .then((result) =>
+              (result?.items || []).map((item: any) => ({
+                ...item,
+                account,
+                source: 'mail',
+                searchTier: result?.searchTier,
+              })),
+            )
+            .catch(() => []),
+        ),
       ),
-    );
-    const merged = results
-      .flat()
+      // Linked-tool items run through their own search index; gated server-side
+      // to connections the user enabled for search.
+      includeConnectedTools && ctx.userId
+        ? convexQuery<any[]>((api as any).mcp.searchItems, {
+            userId: ctx.userId,
+            query,
+            limit: max,
+          }).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    if (!targets.length && !mcpRows.length) {
+      throw new Error('No connected accounts or tools to search.');
+    }
+    // Map tool items onto the same recency key the sort already reads.
+    const mcpItems = (mcpRows || []).map((row: any) => ({
+      source: 'mcp',
+      server: row.server,
+      kind: row.kind,
+      title: row.title,
+      state: row.state ?? null,
+      author: row.author ?? null,
+      url: row.url ?? null,
+      account: row.connectionId,
+      lastDate: row.updatedAtSource ?? row.updatedAt ?? null,
+    }));
+    const merged = [...results.flat(), ...mcpItems]
       .sort((a: any, b: any) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0))
       .slice(0, max);
     return { items: merged, accountsSearched: targets };

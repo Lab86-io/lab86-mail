@@ -357,6 +357,15 @@
       );
   }
 
+  /* The shared Sidebar paints an opaque inner panel (bg-sidebar) that sits on
+     top of the wash, which is drawn on the outer container the .rail-wash class
+     lands on — so the gradient was never visible. Make that inner panel
+     transparent inside the wash so the container's --rail-bg + gradient show
+     through. Scoped to .rail-wash, so other Sidebar instances are untouched. */
+  .rail-wash [data-slot="sidebar-inner"] {
+    background-color: transparent;
+  }
+
   /* Film grain: a fixed fractal-noise wash over the whole app, opacity driven
      by the theme panel. Zero-cost at opacity 0 (still composited, no paints). */
   body::after {

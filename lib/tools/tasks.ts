@@ -27,7 +27,7 @@ async function getBoardForUser(userId: string, boardId: string) {
   return convexQuery<any>(boardsApi.getBoard, { userId, boardId });
 }
 
-async function resolveBoardAndColumn(
+export async function resolveBoardAndColumn(
   userId: string,
   boardId: string | undefined,
   columnName: string | undefined,
@@ -60,12 +60,16 @@ async function resolveBoardAndColumn(
 
 const prioritySchema = z.enum(['low', 'medium', 'high']);
 const sourceSchema = z.object({
-  kind: z.enum(['email', 'calendar', 'chat', 'suggestion', 'manual']),
+  kind: z.enum(['email', 'calendar', 'chat', 'suggestion', 'manual', 'mcp']),
   accountId: z.string().optional(),
   threadId: z.string().optional(),
   messageId: z.string().optional(),
   calendarId: z.string().optional(),
   eventId: z.string().optional(),
+  // MCP provenance (when kind === 'mcp'): which connected tool + item.
+  server: z.string().optional(),
+  connectionId: z.string().optional(),
+  externalId: z.string().optional(),
   url: z.string().optional(),
   title: z.string().optional(),
 });
