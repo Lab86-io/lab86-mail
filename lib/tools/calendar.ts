@@ -94,9 +94,9 @@ export const calendarListEvents = defineTool({
       .int()
       .min(1)
       .max(500)
-      .default(100)
+      .default(50)
       .describe(
-        'Maximum event summaries to return. Use calendar_event_detail for full descriptions/attendees.',
+        'Maximum event summaries to return (default 50 — keep result payloads small so the agent stays reliable). Use calendar_event_detail for full descriptions/attendees, or calendar_search_events to target by name.',
       ),
   }),
   output: z.object({ events: z.array(z.any()) }),
@@ -350,16 +350,135 @@ export const calendarCreateEvent = defineTool({
   },
 });
 
+// Shared "find the event the user means" resolver, mirroring how mail mutators
+// let the agent name a target instead of threading exact ids. Returns matches
+// sorted soonest-first, deduped to one row per distinct event/series.
+interface ResolvedEventTarget {
+  accountId: string;
+  calendarId: string;
+  eventId: string;
+  masterEventId?: string;
+  title: string;
+  startAt: number;
+}
+async function resolveEventsByTitle(
+  userId: string,
+  opts: {
+    title: string;
+    titleMatch: 'exact' | 'contains';
+    account?: string;
+    calendarId?: string;
+    from: number;
+    to: number;
+  },
+): Promise<ResolvedEventTarget[]> {
+  const needle = opts.title.trim().toLowerCase();
+  if (!needle) return [];
+  const rows = await convexQuery<any[]>(calendarApi.listEvents, {
+    userId,
+    startAt: opts.from,
+    endAt: opts.to,
+    limit: 2000,
+  });
+  const account = opts.account ? await requireConnectedAccount(userId, opts.account) : null;
+  const matches: ResolvedEventTarget[] = [];
+  for (const row of rows || []) {
+    if (account && row.accountId !== account.accountId) continue;
+    if (opts.calendarId && row.providerCalendarId !== opts.calendarId) continue;
+    const rowTitle = String(row.title || '')
+      .trim()
+      .toLowerCase();
+    const ok = opts.titleMatch === 'contains' ? rowTitle.includes(needle) : rowTitle === needle;
+    if (!ok) continue;
+    matches.push({
+      accountId: row.accountId,
+      calendarId: row.providerCalendarId,
+      eventId: row.providerEventId,
+      masterEventId: row.masterEventId,
+      title: row.title,
+      startAt: row.startAt,
+    });
+  }
+  // Soonest-first, then collapse recurring instances of one series to a single
+  // representative (its earliest occurrence) so they don't read as ambiguous.
+  matches.sort((a, b) => (a.startAt || 0) - (b.startAt || 0));
+  const seen = new Set<string>();
+  const distinct: ResolvedEventTarget[] = [];
+  for (const m of matches) {
+    const key = `${m.accountId}:${m.calendarId}:${m.masterEventId || m.eventId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    distinct.push(m);
+  }
+  return distinct;
+}
+
+// Turns the resolver result into the agent's next move: an exact target to act
+// on, or a disambiguation payload it can hand to ask_user. `resolve` throws a
+// clear, actionable message when nothing matches.
+async function resolveSingleTarget(
+  userId: string,
+  args: { account?: string; calendarId?: string; eventId?: string; title?: string },
+  titleMatch: 'exact' | 'contains',
+  parseIso: (value: string, field: string) => number,
+  window: { fromIso?: string; toIso?: string },
+): Promise<
+  | { kind: 'target'; target: ResolvedEventTarget; resolvedBy: 'id' | 'title' }
+  | { kind: 'disambiguate'; candidates: ResolvedEventTarget[] }
+> {
+  if (args.eventId) {
+    if (!args.account || !args.calendarId) {
+      throw new Error('account and calendarId are required when you pass an exact eventId.');
+    }
+    const account = await requireConnectedAccount(userId, args.account);
+    return {
+      kind: 'target',
+      resolvedBy: 'id',
+      target: {
+        accountId: account.accountId,
+        calendarId: args.calendarId,
+        eventId: args.eventId,
+        title: '',
+        startAt: 0,
+      },
+    };
+  }
+  if (!args.title?.trim()) {
+    throw new Error('Provide either an exact eventId (with account + calendarId) or a title to match.');
+  }
+  const from = window.fromIso ? parseIso(window.fromIso, 'fromIso') : Date.now() - 30 * DAY_MS;
+  const to = window.toIso ? parseIso(window.toIso, 'toIso') : Date.now() + 365 * DAY_MS;
+  const matches = await resolveEventsByTitle(userId, {
+    title: args.title,
+    titleMatch,
+    account: args.account,
+    calendarId: args.calendarId,
+    from,
+    to,
+  });
+  if (matches.length === 0) {
+    throw new Error(
+      `No event matching "${args.title}" between the given dates. Widen fromIso/toIso, or run calendar_sync_now if it should exist.`,
+    );
+  }
+  if (matches.length > 1) return { kind: 'disambiguate', candidates: matches.slice(0, 10) };
+  return { kind: 'target', resolvedBy: 'title', target: matches[0] };
+}
+
 export const calendarUpdateEvent = defineTool({
   name: 'calendar_update_event',
   description:
-    'Update fields of an existing event (title, times, location, description, attendees, recurrence). For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
+    'Update fields of an existing event (title, times, location, description, attendees, recurrence). Identify the event by exact eventId (with account + calendarId), OR by title to have the tool find it — when a title matches several events it returns candidates to disambiguate instead of guessing. For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
   category: 'calendar',
   mutating: true,
   input: z.object({
-    account: z.string(),
-    calendarId: z.string(),
-    eventId: z.string(),
+    account: z.string().optional(),
+    calendarId: z.string().optional(),
+    eventId: z.string().optional(),
+    matchTitle: z.string().optional().describe('Resolve the target event by title when eventId is unknown.'),
+    titleMatch: z.enum(['exact', 'contains']).default('contains'),
+    fromIso: z.string().optional(),
+    toIso: z.string().optional(),
     title: z.string().optional(),
     startIso: z.string().optional(),
     endIso: z.string().optional(),
@@ -371,15 +490,31 @@ export const calendarUpdateEvent = defineTool({
     busy: z.boolean().optional(),
     notifyParticipants: z.boolean().default(false),
   }),
-  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  output: z.object({
+    ok: z.boolean(),
+    operationId: z.string().optional(),
+    resolvedBy: z.enum(['id', 'title']).optional(),
+    needsDisambiguation: z.boolean().optional(),
+    candidates: z.array(z.any()).optional(),
+  }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const parseIso = makeParseIso(ctx.userTimezone);
+    const resolved = await resolveSingleTarget(
+      userId,
+      { account: args.account, calendarId: args.calendarId, eventId: args.eventId, title: args.matchTitle },
+      args.titleMatch,
+      parseIso,
+      { fromIso: args.fromIso, toIso: args.toIso },
+    );
+    if (resolved.kind === 'disambiguate') {
+      return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
+    }
     const result = await updateCalendarEvent({
       userId,
-      accountId: args.account,
-      calendarId: args.calendarId,
-      eventId: args.eventId,
+      accountId: resolved.target.accountId,
+      calendarId: resolved.target.calendarId,
+      eventId: resolved.target.eventId,
       notifyParticipants: args.notifyParticipants,
       patch: {
         title: args.title,
@@ -393,35 +528,62 @@ export const calendarUpdateEvent = defineTool({
         busy: args.busy,
       },
     });
-    return { ok: true, operationId: result.operationId };
+    return { ok: true, operationId: result.operationId, resolvedBy: resolved.resolvedBy };
   },
 });
 
 export const calendarDeleteEvent = defineTool({
   name: 'calendar_delete_event',
   description:
-    'Delete an event. If deleteSeries is true and eventId is a recurring instance, the tool resolves and deletes the whole series. Undoable — undo recreates the event. notifyParticipants emails attendees a cancellation — confirm with the user first.',
+    'Delete an event. Identify it by exact eventId (with account + calendarId), OR by matchTitle to have the tool find the closest match — when a title matches several events it returns candidates to disambiguate instead of guessing. If deleteSeries is true and the resolved event is a recurring instance, the whole series is deleted. Undoable — undo recreates the event. notifyParticipants emails attendees a cancellation — confirm with the user first.',
   category: 'calendar',
   mutating: true,
   input: z.object({
-    account: z.string(),
-    calendarId: z.string(),
-    eventId: z.string(),
+    account: z.string().optional(),
+    calendarId: z.string().optional(),
+    eventId: z.string().optional(),
+    matchTitle: z.string().optional().describe('Resolve the target event by title when eventId is unknown.'),
+    titleMatch: z.enum(['exact', 'contains']).default('contains'),
+    fromIso: z.string().optional(),
+    toIso: z.string().optional(),
     notifyParticipants: z.boolean().default(false),
     deleteSeries: z.boolean().default(false),
   }),
-  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  output: z.object({
+    ok: z.boolean(),
+    operationId: z.string().optional(),
+    resolvedBy: z.enum(['id', 'title']).optional(),
+    deletedTitle: z.string().optional(),
+    needsDisambiguation: z.boolean().optional(),
+    candidates: z.array(z.any()).optional(),
+  }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const parseIso = makeParseIso(ctx.userTimezone);
+    const resolved = await resolveSingleTarget(
+      userId,
+      { account: args.account, calendarId: args.calendarId, eventId: args.eventId, title: args.matchTitle },
+      args.titleMatch,
+      parseIso,
+      { fromIso: args.fromIso, toIso: args.toIso },
+    );
+    if (resolved.kind === 'disambiguate') {
+      return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
+    }
     const result = await deleteCalendarEvent({
       userId,
-      accountId: args.account,
-      calendarId: args.calendarId,
-      eventId: args.eventId,
+      accountId: resolved.target.accountId,
+      calendarId: resolved.target.calendarId,
+      eventId: resolved.target.eventId,
       notifyParticipants: args.notifyParticipants,
       deleteSeries: args.deleteSeries,
     });
-    return { ok: true, operationId: result.operationId };
+    return {
+      ok: true,
+      operationId: result.operationId,
+      resolvedBy: resolved.resolvedBy,
+      deletedTitle: resolved.target.title || undefined,
+    };
   },
 });
 

@@ -226,7 +226,7 @@ export function CalendarSurface() {
           toast.error(err?.message || 'Could not update the event.');
         }
       },
-      onEventRemoved: async (event) => {
+      onEventRemoved: async (event, options) => {
         if (event.id.startsWith('local_')) return;
         if (event.id.startsWith(TASK_EVENT_PREFIX)) {
           // Removing a task block clears the due date; the card survives.
@@ -243,6 +243,7 @@ export function CalendarSurface() {
             account: event.accountId,
             calendarId: event.calendarId,
             eventId: event.id,
+            deleteSeries: options?.deleteSeries ?? false,
           });
         } catch (err: any) {
           toast.error(err?.message || 'Could not delete the event.');

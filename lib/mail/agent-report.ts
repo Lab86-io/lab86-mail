@@ -271,7 +271,7 @@ ANALYZE, DON'T TRANSCRIBE:
 
 OUTPUT RULES (critical):
 - Output ONLY a complete HTML document, starting with <!doctype html>. No markdown fences, no commentary.
-- All CSS in one <style>, all JS in one <script>. The ONLY external resources allowed: (1) the artwork at the exact data.art.imageUrl, (2) ONE Google Fonts <link> for the families below. Everything else inline. Render with no console errors; degrade gracefully when a section is empty.
+- All CSS in one <style>, all JS in one <script>. The ONLY external resources allowed: (1) the artwork at data.art.imageUrl plus its data.art.fallbacks, (2) ONE Google Fonts <link> for the families below. Everything else inline. Render with no console errors; degrade gracefully when a section is empty.
 
 DO NOT:
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
@@ -279,6 +279,7 @@ DO NOT:
 
 MASTHEAD (signature element — replaces any app header):
 - Full-bleed landscape banner using data.art.imageUrl (object-fit: cover, ~38–46vh, never distorted). Overlay "The {data.weekday} Brief" in the display face, centered, with a legibility scrim.
+- RESILIENT IMAGE (required): the banner <img> MUST recover from a failed load. Give it an onerror handler that walks through data.art.fallbacks in order (set img.src to the next URL each time it errors); when the list is exhausted, clear onerror, hide the img, and leave the scrim/accent background so the masthead is never a blank void. data.art.fallbacks already ends with bundled local images, so a working banner is always reachable.
 - Use data.localDate (e.g. "15 JUN 2026") and data.localTime (e.g. "9:54 AM") VERBATIM — they are already in the user's timezone; do not recompute or reformat times yourself. Set them vertically along the left/right edges, like a newspaper's spine.
 - Small monospace caption beneath the image: data.art.credit + " · " + data.art.source.
 

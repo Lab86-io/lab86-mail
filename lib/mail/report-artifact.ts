@@ -95,7 +95,7 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--brief-hairlin
 </head>
 <body>
 <header class="hero">
-<img src="${escapeAttr(art.imageUrl)}" alt="">
+<img src="${escapeAttr(art.imageUrl)}" alt="" data-fallbacks="${escapeAttr(JSON.stringify(art.fallbacks))}" onerror="(function(img){try{var f=JSON.parse(img.getAttribute('data-fallbacks')||'[]');if(f.length){img.setAttribute('data-fallbacks',JSON.stringify(f.slice(1)));img.src=f[0];}else{img.onerror=null;img.style.display='none';var h=img.closest('.hero');if(h){h.style.background='var(--brief-accent-soft)';}}}catch(e){img.onerror=null;}})(this)">
 <div class="spine left">${escapeHtml(localDate)}</div>
 <div class="spine right">${escapeHtml(localTime)}</div>
 <div class="masthead"><h1>The ${escapeHtml(weekday)} Brief</h1></div>
