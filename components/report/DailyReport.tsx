@@ -131,7 +131,7 @@ const summaryKeys: Array<[string, string]> = [
   ['newPeople', 'New'],
 ];
 
-// Provenance labels explain why the floor surfaced a thread, in plain language.
+// Provenance pills — why the floor surfaced a thread, in plain language.
 const PILL_LABELS: Record<string, string> = {
   reply_owed: 'Reply owed',
   follow_up_owed: 'Follow-up',
@@ -972,7 +972,7 @@ export function DailyReport() {
 
       {/* Floating toolbar for the artifact view — fades until hovered. */}
       {report?.html ? (
-        <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/80 px-1.5 py-1 opacity-50 backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
+        <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
           {enriching ? (
             <span className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]">
               <Ring className="size-2.5" />
@@ -988,7 +988,7 @@ export function DailyReport() {
                 size="sm"
                 aria-label="Browse past editions"
                 title="Browse past editions"
-                className="h-7 max-w-[150px] rounded-md border-0 bg-transparent text-[11px] text-[var(--color-text-muted)] shadow-none hover:text-[var(--color-text)]"
+                className="h-7 max-w-[150px] rounded-full border-0 bg-transparent text-[11px] text-[var(--color-text-muted)] shadow-none hover:text-[var(--color-text)]"
               >
                 <SelectValue placeholder="Latest" />
               </SelectTrigger>
@@ -1007,7 +1007,7 @@ export function DailyReport() {
             onClick={() => setPrimaryView('mail')}
             aria-label="Open inbox"
             title="Inbox"
-            className="grid size-7 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            className="grid size-7 place-items-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           >
             <Inbox className="size-3.5" />
           </button>
@@ -1017,7 +1017,7 @@ export function DailyReport() {
             onClick={() => generate.mutate()}
             aria-label="Generate a fresh report"
             title="Generate a fresh brief"
-            className="grid size-7 place-items-center rounded-md bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-60"
+            className="grid size-7 place-items-center rounded-full bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-60"
           >
             {generate.isPending || generating ? (
               <Ring className="size-3" />
@@ -1450,10 +1450,7 @@ function ReportRow({
   const person = item.people[0] ? stripEmoji(item.people[0]) : '';
   const subject = stripEmoji(item.subject || '(no subject)');
   const framing = elapsedFraming(item);
-  const provenance = (item.surfacedBecause || [])
-    .filter((code) => PILL_LABELS[code])
-    .slice(0, 4)
-    .map((code) => PILL_LABELS[code]);
+  const pills = (item.surfacedBecause || []).filter((code) => PILL_LABELS[code]).slice(0, 4);
   const itemKey = dailyReportItemThreadKey(item);
   const clearing = resolvingThreadKey === itemKey || hidingThreadKey === itemKey;
   const correcting = dismissingId === item.threadId || markingId === item.threadId || clearing;
@@ -1523,10 +1520,17 @@ function ReportRow({
             {framing}
           </span>
         ) : null}
-        {provenance.length ? (
-          <p className="mt-1 text-[10.5px] uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-            {provenance.join(' · ')}
-          </p>
+        {pills.length ? (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {pills.map((code) => (
+              <span
+                key={code}
+                className="rounded-sm bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]"
+              >
+                {PILL_LABELS[code]}
+              </span>
+            ))}
+          </div>
         ) : null}
       </div>
 

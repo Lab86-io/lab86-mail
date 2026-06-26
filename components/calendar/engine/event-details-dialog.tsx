@@ -4,7 +4,6 @@ import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import { format, parseISO } from 'date-fns';
 import {
   CalendarDays,
-  CheckCircle2,
   Clock,
   ExternalLink,
   ListChecks,
@@ -30,6 +29,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -144,12 +144,10 @@ export function EventDetailsDialog({ event, children }: IProps) {
                       key={card.cardId}
                       type="button"
                       onClick={() => setPrimaryView('tasks')}
-                      className="flex max-w-full items-center gap-1.5 truncate py-0.5 text-left text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                      className="block max-w-full truncate rounded-md border border-[var(--color-border)] px-2 py-1 text-left text-[12px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                     >
-                      {card.completedAt ? (
-                        <CheckCircle2 className="size-3 shrink-0 text-[var(--color-accent)]" />
-                      ) : null}
-                      <span className="truncate">{card.title}</span>
+                      {card.completedAt ? '✓ ' : ''}
+                      {card.title}
                     </button>
                   ))}
                   {linkedCards.length > 5 ? (
@@ -212,9 +210,9 @@ export function EventDetailsDialog({ event, children }: IProps) {
                     >
                       <span className="min-w-0 truncate">{person.name || person.email}</span>
                       {person.status ? (
-                        <span className="shrink-0 text-[10.5px] text-[var(--color-text-faint)]">
+                        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[9.5px]">
                           {RSVP_LABEL[person.status] || person.status}
-                        </span>
+                        </Badge>
                       ) : null}
                     </li>
                   ))}

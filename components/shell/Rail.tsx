@@ -9,6 +9,7 @@ import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { AlarmClockIcon } from '@/components/ui/alarm-clock';
 import { ArchiveIcon } from '@/components/ui/archive';
+import { Badge } from '@/components/ui/badge';
 import { BellIcon } from '@/components/ui/bell';
 import { BookmarkIcon } from '@/components/ui/bookmark';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
@@ -741,9 +742,7 @@ function SmartLabelsSettings({
                   <div key={label._id} className="rounded-md border p-2">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-[13px]">{label.name}</span>
-                      <span className="text-[10.5px] uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-                        {label.enabled ? 'enabled' : 'disabled'}
-                      </span>
+                      <Badge variant="outline">{label.enabled ? 'enabled' : 'disabled'}</Badge>
                       <button
                         type="button"
                         onClick={() => toggleLabel.mutate({ id: label._id, enabled: !label.enabled })}
@@ -895,11 +894,7 @@ function AccountScopePopover({
         >
           <RowIcon icon={UsersIcon} size={14} />
           All accounts
-          {allSelected ? (
-            <span className="ml-auto text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-accent)]">
-              Selected
-            </span>
-          ) : null}
+          {allSelected ? <span className="ml-auto text-[var(--color-accent)]">✓</span> : null}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {accounts.map((mailbox) => (

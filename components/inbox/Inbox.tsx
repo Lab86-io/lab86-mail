@@ -32,6 +32,7 @@ import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -741,7 +742,7 @@ export function Inbox() {
           </Button>
         </div>
       </div>
-      {/* Status context lives in its own transparent row BELOW the bordered bar,
+      {/* Status chips live in their own transparent row BELOW the bordered bar,
           so the search bar's bottom border lines up with the assistant header.
           Rendered only when there's something to show, so it adds no height
           otherwise. */}
@@ -751,26 +752,28 @@ export function Inbox() {
       query !== DEFAULT_QUERY ||
       translating ||
       queryError ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 text-[11px] text-[var(--color-text-muted)]">
+        <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5">
           {smartCategory ? (
-            <span className="font-medium text-[var(--color-text)]">{activeSmartLabel}</span>
+            <Badge variant="secondary" className="gap-1">
+              {activeSmartLabel}
+            </Badge>
           ) : null}
-          {nlSearchIntent ? <span>Asked: {nlSearchIntent}</span> : null}
+          {nlSearchIntent ? <Badge variant="outline">Asked: {nlSearchIntent}</Badge> : null}
           {translatedQuery && !smartCategory ? (
-            <span className="inline-flex items-center gap-1">
+            <Badge variant="outline" className="gap-1">
               Filter: <span className="font-mono">{translatedQuery}</span>
               <button type="button" onClick={clearSearch} title="Clear generated filter">
                 <X className="size-3" />
               </button>
-            </span>
+            </Badge>
           ) : null}
           {!translatedQuery && !smartCategory && query !== DEFAULT_QUERY ? (
-            <span className="inline-flex items-center gap-1">
+            <Badge variant="outline" className="gap-1">
               Filter: <span className="font-mono">{query}</span>
               <button type="button" onClick={clearSearch} title="Clear filter">
                 <X className="size-3" />
               </button>
-            </span>
+            </Badge>
           ) : null}
           {translating ? (
             <TextShimmer className="text-[11px] text-[var(--color-accent)]">Translating filter</TextShimmer>
@@ -1167,7 +1170,7 @@ function ThreadRowCard({
               aria-hidden
             />
           ) : null}
-          {/* The category label only earns its place when it says something the
+          {/* The category chip only earns its place when it says something the
               view doesn't already — inside a category view every row would
               repeat the view's own name. */}
           {smart?.primary && smart.primary !== activeCategory ? (
@@ -1175,26 +1178,24 @@ function ThreadRowCard({
               <PopoverTrigger asChild>
                 <button
                   type="button"
-                  className="inline-flex max-w-24 cursor-help truncate text-[10px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  className="inline-flex cursor-help"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {SMART_CATEGORY_LABELS[smart.primary as keyof typeof SMART_CATEGORY_LABELS] ||
-                    smart.primary}
+                  <Badge variant="secondary" className="max-w-24 truncate text-[9px]">
+                    {SMART_CATEGORY_LABELS[smart.primary as keyof typeof SMART_CATEGORY_LABELS] ||
+                      smart.primary}
+                  </Badge>
                 </button>
               </PopoverTrigger>
               <PopoverContent className="w-72 text-[12px]">
                 <div className="space-y-2">
                   <div className="font-medium text-[var(--color-text)]">Why this is here</div>
                   <p className="text-[var(--color-text-muted)]">{smart.reason}</p>
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-                    {[
-                      `${Math.round((smart.confidence || 0) * 100)}%`,
-                      smart.needsAttention ? 'needs attention' : null,
-                      smart.isHumanLike ? 'human-like' : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant="outline">{Math.round((smart.confidence || 0) * 100)}%</Badge>
+                    {smart.needsAttention ? <Badge variant="outline">needs attention</Badge> : null}
+                    {smart.isHumanLike ? <Badge variant="outline">human-like</Badge> : null}
+                  </div>
                 </div>
               </PopoverContent>
             </Popover>
@@ -1454,9 +1455,13 @@ function LabelConfirmDialog({
                   {(item as any).smartCategory?.reason || 'Smart category label preview.'}
                 </div>
               </div>
-              <p className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-                {labels.join(' · ')}
-              </p>
+              <div className="flex flex-wrap gap-1">
+                {labels.map((label) => (
+                  <Badge key={label} variant="outline">
+                    {label}
+                  </Badge>
+                ))}
+              </div>
               <ConfirmationActions>
                 <ConfirmationAction variant="outline" onClick={onClose}>
                   Cancel

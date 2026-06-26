@@ -1171,13 +1171,13 @@ function LinkedTaskChips({ threadId }: { threadId: string }) {
     live.status === 'success' ? live.data || [] : [];
   if (!cards.length) return null;
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
       {cards.slice(0, 4).map((card) => (
         <button
           key={card.cardId}
           type="button"
           onClick={() => setPrimaryView('tasks')}
-          className="inline-flex max-w-56 items-center gap-1 truncate text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+          className="inline-flex max-w-56 items-center gap-1 truncate rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           title="Open the Tasks board"
         >
           <CheckCircle2 className={card.completedAt ? 'size-3 text-emerald-500' : 'size-3'} />

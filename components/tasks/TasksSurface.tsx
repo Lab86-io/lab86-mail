@@ -51,6 +51,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -749,7 +750,7 @@ function ListView({
                       {card.title}
                     </span>
                   </button>
-                  <CardMetaLine card={card} />
+                  <CardMetaChips card={card} />
                 </li>
               ))}
               {!cards.length ? (
@@ -791,24 +792,22 @@ function ColumnLoadBar({ count, max }: { count: number; max: number }) {
   );
 }
 
-function CardMetaLine({ card }: { card?: BoardCard }) {
+function CardMetaChips({ card }: { card?: BoardCard }) {
   if (!card) return null;
   const overdue = card.dueAt && !card.completedAt && card.dueAt < Date.now();
-  const textParts = [
-    ...(card.labels || []).slice(0, 3),
-    card.source?.threadId || card.sourceThreadId ? 'Email' : null,
-    card.source?.eventId || card.sourceCalendarEventId ? 'Event' : null,
-    card.comments?.length ? `${card.comments.length} comment${card.comments.length === 1 ? '' : 's'}` : null,
-    card.weight !== undefined ? `Weight ${card.weight}` : null,
-  ].filter(Boolean) as string[];
   return (
-    <span className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-[var(--color-text-faint)]">
+    <span className="flex shrink-0 flex-wrap items-center gap-1.5">
       {card.priority ? (
         <span
           className={cn('size-1.5 rounded-full', PRIORITY_DOT[card.priority])}
           title={`${card.priority} priority`}
         />
       ) : null}
+      {(card.labels || []).slice(0, 3).map((label) => (
+        <Badge key={label} variant="outline" className="px-1.5 py-0 text-[9.5px]">
+          {label}
+        </Badge>
+      ))}
       {card.dueAt ? (
         <span
           className={cn(
@@ -820,12 +819,44 @@ function CardMetaLine({ card }: { card?: BoardCard }) {
           {new Date(card.dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
         </span>
       ) : null}
+      {card.source?.threadId || card.sourceThreadId ? (
+        <span
+          className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
+          title="Created from an email"
+        >
+          <Mail className="size-2.5" /> Email
+        </span>
+      ) : null}
+      {card.source?.eventId || card.sourceCalendarEventId ? (
+        <span
+          className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
+          title="Created from a calendar event"
+        >
+          <CalendarClock className="size-2.5" /> Event
+        </span>
+      ) : null}
       {card.attachments?.length ? (
         <Paperclip className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />
       ) : null}
-      {textParts.length ? <span>{textParts.join(' · ')}</span> : null}
+      {card.comments?.length ? (
+        <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">
+          {card.comments.length} comment{card.comments.length === 1 ? '' : 's'}
+        </span>
+      ) : null}
+      {card.weight !== undefined ? (
+        <span
+          className="rounded bg-[var(--color-bg-muted)] px-1 text-[10px] font-medium tabular-nums text-[var(--color-text-muted)]"
+          title={`Weight ${card.weight}`}
+        >
+          {card.weight}
+        </span>
+      ) : null}
       {(card.assignees || []).slice(0, 3).map((email) => (
-        <span key={email} title={email} className="font-medium uppercase text-[var(--color-text-muted)]">
+        <span
+          key={email}
+          title={email}
+          className="grid size-4 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8px] font-semibold uppercase text-[var(--color-accent)]"
+        >
           {emailInitials(email)}
         </span>
       ))}
@@ -858,7 +889,7 @@ function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: st
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-1.5">
-        <CardMetaLine card={card} />
+        <CardMetaChips card={card} />
       </div>
     </div>
   );
@@ -1364,7 +1395,7 @@ function CardPanel({
             Card
           </span>
           {done ? (
-            <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-[var(--color-accent)]">
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-accent)]">
               Done
             </span>
           ) : null}
@@ -1628,13 +1659,20 @@ function CardPanel({
                 className="h-9 text-[12.5px]"
               />
               {labels.trim() ? (
-                <p className="text-[10.5px] text-[var(--color-text-faint)]">
+                <div className="flex flex-wrap gap-1">
                   {labels
                     .split(',')
                     .map((label) => label.trim())
                     .filter(Boolean)
-                    .join(' · ')}
-                </p>
+                    .map((label) => (
+                      <span
+                        key={label}
+                        className="rounded-full bg-[var(--color-bg-muted)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                </div>
               ) : null}
             </div>
 
@@ -1653,13 +1691,13 @@ function CardPanel({
                           setAssignees(on ? assignees.filter((a) => a !== email) : [...assignees, email])
                         }
                         className={cn(
-                          'inline-flex max-w-full items-center gap-1 border-b border-transparent py-0.5 text-[11px] transition-colors',
+                          'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
                           on
-                            ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
-                            : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                            ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                            : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
                         )}
                       >
-                        <span className="shrink-0 text-[9px] font-semibold uppercase text-[var(--color-text-faint)]">
+                        <span className="grid size-3.5 shrink-0 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8px] font-semibold uppercase">
                           {emailInitials(email)}
                         </span>
                         <span className="truncate">{email}</span>
@@ -1685,7 +1723,7 @@ function CardPanel({
                     setPrimaryView('mail');
                     onClose();
                   }}
-                  className="inline-flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                  className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                 >
                   <Mail className="size-3.5 shrink-0" /> From this email — open thread
                 </button>
@@ -1701,7 +1739,7 @@ function CardPanel({
                       href={card.source.url || card.source.htmlLink}
                       target="_blank"
                       rel="noreferrer noopener"
-                      className="inline-flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                      className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                     >
                       <ExternalLink className="size-3.5 shrink-0" />
                       {card.source?.title || 'Open calendar event'}
@@ -1713,7 +1751,7 @@ function CardPanel({
                       setPrimaryView('calendar');
                       onClose();
                     }}
-                    className="inline-flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                    className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                   >
                     <CalendarClock className="size-3.5 shrink-0" /> Show calendar
                   </button>
@@ -1783,10 +1821,10 @@ function ShareDialog({ board, onClose }: { board: BoardPayload; onClose: () => v
               {board.members.map((member) => (
                 <li key={member.memberId} className="flex items-center gap-2 text-[12.5px]">
                   <span className="min-w-0 flex-1 truncate">{member.email}</span>
-                  <span className="shrink-0 text-[10.5px] text-[var(--color-text-faint)]">
+                  <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
                     {member.role}
                     {member.status === 'invited' ? ' · invited' : ''}
-                  </span>
+                  </Badge>
                   <button
                     type="button"
                     onClick={async () => {
