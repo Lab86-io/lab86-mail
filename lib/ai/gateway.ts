@@ -292,15 +292,20 @@ export async function generateTextForCurrentUser(
 function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): ResolvedAiRuntime[] {
   if (!FAILOVER_FEATURES.has(feature) || runtime.source !== 'lab86') return [];
   const configured = [process.env.LAB86_MAIL_AGENT_FALLBACK_MODEL, ...DEFAULT_AGENT_FALLBACKS];
-  const seen = new Set([runtime.modelName]);
+  // Dedup on the vendor-agnostic (direct) id: the primary's modelName may be
+  // OpenRouter-prefixed ("openai/gpt-5.5") while routePlatformModel returns the
+  // direct form ("gpt-5.5") when a direct key is set — comparing raw strings
+  // would miss that and retry the same underlying model.
+  const seen = new Set([toDirectModelId(runtime.modelName)]);
   const out: ResolvedAiRuntime[] = [];
   for (const name of configured) {
     const trimmed = name?.trim();
     if (!trimmed) continue;
     const routed = routePlatformModel(trimmed);
+    const key = routed ? toDirectModelId(routed.modelName) : '';
     // Skip anything we can't route or already tried (incl. the primary model).
-    if (!routed || seen.has(routed.modelName)) continue;
-    seen.add(routed.modelName);
+    if (!routed || seen.has(key)) continue;
+    seen.add(key);
     out.push({ ...runtime, provider: routed.provider, modelName: routed.modelName, model: routed.model });
   }
   return out;

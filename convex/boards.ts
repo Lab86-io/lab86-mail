@@ -491,9 +491,13 @@ export const updateCard = mutation({
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt === null ? undefined : args.dueAt;
     if (args.completedAt !== undefined) {
       const completing = args.completedAt !== null;
+      // The completion toggle is ALWAYS honored — we never block marking a card
+      // done on a board's shape (a board may legitimately have no "Done"
+      // column). The column move below is best-effort: it only fires when a
+      // matching destination column actually exists, so completion state and
+      // column membership stay consistent on boards that have a Done column,
+      // and the toggle still works on those that don't.
       patch.completedAt = completing ? args.completedAt : undefined;
-      // Mirror the Done column: completing moves the card into Done; reopening a
-      // card that sits in Done moves it back out to the first non-Done column.
       const columns = await columnsForBoard(ctx, card.boardId);
       if (completing) {
         const done = columns.find((column) => isDoneColumn(column.name));
@@ -573,7 +577,9 @@ export const moveCard = mutation({
         .collect();
       order = nextOrder(siblings.map((sibling) => sibling.order));
     }
-    const previous = { columnId: card.columnId, order: card.order };
+    // Full snapshot (not just columnId/order) so callers can restore completion
+    // state too, now that a move into/out of Done flips completedAt.
+    const previous = snapshotCard(card);
     const movePatch: Record<string, unknown> = { columnId: args.columnId, order, updatedAt: now() };
     // Keep completion in sync with the Done column.
     if (isDoneColumn(column.name)) {
