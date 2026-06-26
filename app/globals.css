@@ -776,11 +776,7 @@
        life (mirrors light mode's accent dots), and a faint neutral lattice that
        gives the field a quiet grain even before the grain slider is touched. */
     background-image:
-      radial-gradient(
-        125% 80% at 50% -15%,
-        oklch(0.34 0.025 var(--bg-hue) / 0.5),
-        transparent 60%
-      ),
+      radial-gradient(125% 80% at 50% -15%, oklch(0.34 0.025 var(--bg-hue) / 0.5), transparent 60%),
       radial-gradient(
         circle at 1px 1px,
         color-mix(in srgb, var(--color-accent) 10%, transparent) 1px,
