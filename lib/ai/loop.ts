@@ -194,6 +194,40 @@ function errorText(error: unknown): string {
   }
 }
 
+function isRecoverableAgentProviderError(error: any): boolean {
+  const message = String(error?.message || error || '');
+  const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.status);
+  const responseBody = String(error?.responseBody || '');
+  const looksLikeProviderError =
+    error?.provider ||
+    error?.statusCode !== undefined ||
+    error?.responseBody ||
+    error?.isRetryable !== undefined;
+  return (
+    (/invalid json response|could not parse response/i.test(message) && looksLikeProviderError) ||
+    (/unexpected end of json|unexpected token/i.test(message) && responseBody) ||
+    statusCode === 429 ||
+    statusCode >= 500 ||
+    /provider returned error|temporarily unavailable|rate.?limit/i.test(responseBody)
+  );
+}
+
+function providerFailureResult(error: any) {
+  const text = /invalid json response/i.test(String(error?.message || ''))
+    ? 'The AI provider returned a malformed response after the request started, so I could not produce a reliable final answer. The agent stayed connected; please check whether the requested change is already reflected, then retry only if it is missing.'
+    : `The AI provider failed while finishing that request: ${errorText(error)}. The agent stayed connected; please retry the last step if the requested change is not visible.`;
+  return {
+    text,
+    finishReason: 'stop',
+    steps: [
+      {
+        stepNumber: 0,
+        content: [{ type: 'text', text }],
+      },
+    ],
+  };
+}
+
 function writeTextPart(writer: UiStreamWriter, id: string, text: string, providerMetadata?: any) {
   if (!text) return;
   writer.write({ type: 'text-start', id, providerMetadata });
@@ -363,22 +397,29 @@ export async function runAgent({
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();
-  const result = await generateTextForCurrentUser({
-    userId,
-    userEmail,
-    userName,
-    feature: 'agent',
-    // The interactive agent uses the PRIMARY (big) model — it reasons over many
-    // tools and multi-step plans; the fast model was both weaker and the source
-    // of intermittent empty completions.
-    speed: 'primary',
-    system,
-    messages,
-    tools: liftToolsForAgent(operationBatchId, timezone),
-    // Multi-step flows (fetch a file → store → attach → send) need headroom
-    // beyond the old 6-step cap.
-    stopWhen: stepCountIs(20),
-  });
+  let result: any;
+  try {
+    result = await generateTextForCurrentUser({
+      userId,
+      userEmail,
+      userName,
+      feature: 'agent',
+      // The interactive agent uses the PRIMARY (big) model — it reasons over many
+      // tools and multi-step plans; the fast model was both weaker and the source
+      // of intermittent empty completions.
+      speed: 'primary',
+      system,
+      messages,
+      tools: liftToolsForAgent(operationBatchId, timezone),
+      // Multi-step flows (fetch a file → store → attach → send) need headroom
+      // beyond the old 6-step cap.
+      stopWhen: stepCountIs(20),
+    });
+  } catch (err: any) {
+    if (!isRecoverableAgentProviderError(err)) throw err;
+    console.warn('[agent] provider failed after retries; returning text fallback', errorText(err));
+    result = providerFailureResult(err);
+  }
   return {
     toUIMessageStreamResponse() {
       return createUIMessageStreamResponse({

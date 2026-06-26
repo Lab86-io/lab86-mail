@@ -24,14 +24,17 @@ export async function callTool<T = any>(name: string, args: any = {}, headers: H
     body: JSON.stringify(args),
   });
   let data: any = null;
+  let raw = '';
   try {
-    data = await res.json();
+    raw = await res.text();
+    data = raw ? JSON.parse(raw) : null;
   } catch {}
   if (!res.ok || data?.ok === false) {
-    throw new Error(data?.error || `${name} failed (${res.status})`);
+    const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 180);
+    throw new Error(data?.error || `${name} failed (${res.status})${preview ? `: ${preview}` : ''}`);
   }
   if (data === null) {
-    throw new Error(`${name} failed: invalid JSON response`);
+    throw new Error(`${name} failed: empty or unreadable server response`);
   }
   return data.result as T;
 }
