@@ -1082,10 +1082,46 @@ function ThreadRowCard({
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
       <div className="flex flex-col items-end gap-1 self-start pt-0.5">
-        {/* Date + hover actions share a line: the actions expand from zero
-            width on hover, pushing the date left instead of covering it. The
-            date carries the mailbox colour; its popover names the mailbox. */}
-        <div className="flex items-center">
+        {/* The date stays put; on hover the action menu shoots out fast to its
+            left (absolute, so it never shifts the date or its mailbox colour). */}
+        <div className="relative flex items-center">
+          {smart ? (
+            <div className="pointer-events-none absolute top-1/2 right-full z-10 mr-1.5 opacity-0 [transform:translate(10px,-50%)] transition-[opacity,transform] duration-100 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-hover:[transform:translate(0px,-50%)] has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:[transform:translate(0px,-50%)]">
+              <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-1 shadow-[var(--shadow-pop)]">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArchive();
+                  }}
+                  title="Archive"
+                  className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]"
+                >
+                  <Archive className="size-3.5" />
+                  <span className="sr-only">Archive</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTrash();
+                  }}
+                  title="Delete"
+                  className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-danger)_14%,transparent)] hover:text-[var(--color-danger)]"
+                >
+                  <Trash2 className="size-3.5" />
+                  <span className="sr-only">Delete</span>
+                </button>
+                <QuickFixMenu
+                  customLabels={customLabels}
+                  onApplyLabels={onApplyLabels}
+                  onCorrect={onCorrect}
+                  onCreateLabel={() => createLabelFromThread(item, onCorrect)}
+                  onUndoLast={onUndoLast}
+                />
+              </div>
+            </div>
+          ) : null}
           {showAccount && accountColor ? (
             <Popover>
               <PopoverTrigger asChild>
@@ -1114,43 +1150,6 @@ function ThreadRowCard({
               {formatDate(date)}
             </span>
           )}
-          {smart ? (
-            <div className="flex max-w-0 items-center overflow-hidden opacity-0 transition-[max-width,opacity] duration-200 ease-out group-hover:max-w-[116px] group-hover:opacity-100 has-[[data-state=open]]:max-w-[116px] has-[[data-state=open]]:opacity-100">
-              <div className="ml-1.5 flex shrink-0 items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 shadow-[var(--shadow-soft)] [transform:translateX(8px)] transition-transform duration-200 ease-out group-hover:[transform:translateX(0px)] has-[[data-state=open]]:[transform:translateX(0px)]">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onArchive();
-                  }}
-                  title="Archive"
-                  className="grid size-6 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-                >
-                  <Archive className="size-3.5" />
-                  <span className="sr-only">Archive</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onTrash();
-                  }}
-                  title="Delete"
-                  className="grid size-6 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-danger)]"
-                >
-                  <Trash2 className="size-3.5" />
-                  <span className="sr-only">Delete</span>
-                </button>
-                <QuickFixMenu
-                  customLabels={customLabels}
-                  onApplyLabels={onApplyLabels}
-                  onCorrect={onCorrect}
-                  onCreateLabel={() => createLabelFromThread(item, onCorrect)}
-                  onUndoLast={onUndoLast}
-                />
-              </div>
-            </div>
-          ) : null}
         </div>
         <div className="flex items-center gap-1">
           {(item.labels || []).includes('IMPORTANT') ? (
@@ -1217,8 +1216,8 @@ function QuickFixMenu({
         <button
           type="button"
           onClick={(event) => event.stopPropagation()}
-          className="grid size-6 place-items-center rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
-          title="Fix classification"
+          className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          title="More actions"
         >
           <MoreHorizontal className="size-3.5" />
           <span className="sr-only">Fix classification</span>
