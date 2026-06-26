@@ -677,7 +677,7 @@ export function Inbox() {
     <section className="flex h-full flex-col bg-[var(--color-bg)]">
       <div
         className={cn(
-          'flex flex-col gap-2 border-b border-[var(--color-border)] px-3 py-2.5',
+          'flex flex-col border-b border-[var(--color-border)] px-3 py-2.5',
           !railOpen && 'pl-12',
           !aiBarOpen && !readerVisible && 'pr-12',
         )}
@@ -741,7 +741,18 @@ export function Inbox() {
             )}
           </Button>
         </div>
-        <div className="flex min-h-6 flex-wrap items-center gap-1.5">
+      </div>
+      {/* Status chips live in their own transparent row BELOW the bordered bar,
+          so the search bar's bottom border lines up with the assistant header.
+          Rendered only when there's something to show, so it adds no height
+          otherwise. */}
+      {smartCategory ||
+      nlSearchIntent ||
+      translatedQuery ||
+      query !== DEFAULT_QUERY ||
+      translating ||
+      queryError ? (
+        <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5">
           {smartCategory ? (
             <Badge variant="secondary" className="gap-1">
               {activeSmartLabel}
@@ -769,7 +780,7 @@ export function Inbox() {
           ) : null}
           {queryError ? <span className="text-[11px] text-[var(--color-danger)]">{queryError}</span> : null}
         </div>
-      </div>
+      ) : null}
 
       <AnimatePresence>
         {selectedIds.length > 0 ? (
