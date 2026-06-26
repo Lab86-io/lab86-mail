@@ -93,87 +93,100 @@ export function EventBlock({ event, className }: IProps) {
           color: contrastTextColor(event.colorHex),
         }
     : {};
+  const joinColor = colorStyle.color;
 
   return (
     <ResizableEvent event={event}>
       <DraggableEvent event={event}>
-        <EventDetailsDialog event={event}>
-          <button
-            type="button"
-            className={calendarWeekEventCardClasses}
-            style={{
-              height: `${heightInPixels}px`,
-              ...colorStyle,
-              ...(tentative ? { borderStyle: 'dashed' } : {}),
-            }}
-          >
-            {/* Tentative events get a diagonal hatch — the universal calendar
+        <div className="relative w-full">
+          <EventDetailsDialog event={event}>
+            <button
+              type="button"
+              className={calendarWeekEventCardClasses}
+              style={{
+                height: `${heightInPixels}px`,
+                ...colorStyle,
+                ...(tentative ? { borderStyle: 'dashed' } : {}),
+              }}
+            >
+              {/* Tentative events get a diagonal hatch — the universal calendar
                 cue for "held, not confirmed". currentColor = the text colour. */}
-            {tentative ? (
-              <span
-                aria-hidden
-                className="pointer-events-none absolute inset-0 opacity-25"
-                style={{
-                  backgroundImage:
-                    'repeating-linear-gradient(45deg, transparent 0 4px, currentColor 4px 5px)',
-                }}
-              />
-            ) : null}
+              {tentative ? (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 opacity-25"
+                  style={{
+                    backgroundImage:
+                      'repeating-linear-gradient(45deg, transparent 0 4px, currentColor 4px 5px)',
+                  }}
+                />
+              ) : null}
 
-            <div className="relative flex items-center gap-1.5 truncate">
-              {badgeVariant === 'dot' && (
-                <svg
-                  width="8"
-                  height="8"
-                  viewBox="0 0 8 8"
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="shrink-0"
-                  aria-hidden="true"
-                >
-                  <circle cx="4" cy="4" r="4" />
-                </svg>
+              <div
+                className={cn(
+                  'relative flex items-center gap-1.5 truncate',
+                  conferencingUrl && (showTime ? 'pr-12' : 'pr-6'),
+                )}
+              >
+                {badgeVariant === 'dot' && (
+                  <svg
+                    width="8"
+                    height="8"
+                    viewBox="0 0 8 8"
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="shrink-0"
+                    aria-hidden="true"
+                  >
+                    <circle cx="4" cy="4" r="4" />
+                  </svg>
+                )}
+
+                <p className="truncate font-semibold">{event.title}</p>
+              </div>
+
+              {showTime && (
+                <p className="relative truncate">
+                  {formatTime(start, use24HourFormat)} - {formatTime(end, use24HourFormat)}
+                </p>
               )}
 
-              <p className="truncate font-semibold">{event.title}</p>
-
-              {conferencingUrl ? (
-                <a
-                  href={conferencingUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  title="Join video call"
-                  className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded border border-current/30 bg-current/15 px-1 py-px text-[10px] font-medium leading-none hover:bg-current/25"
-                >
-                  <Video className="size-2.5" />
-                  {showTime ? <span>Join</span> : null}
-                </a>
+              {showAvatars ? (
+                <div className="relative mt-auto flex items-center pt-0.5">
+                  {participants.slice(0, 3).map((person, index) => (
+                    <Avatar
+                      key={person.email || person.name || index}
+                      name={person.name || person.email}
+                      size={14}
+                      className={cn('ring-1 ring-white/40', index > 0 && '-ml-1.5')}
+                    />
+                  ))}
+                  {participants.length > 3 ? (
+                    <span className="ml-1 text-[9px] opacity-80">+{participants.length - 3}</span>
+                  ) : null}
+                </div>
               ) : null}
-            </div>
+            </button>
+          </EventDetailsDialog>
 
-            {showTime && (
-              <p className="relative truncate">
-                {formatTime(start, use24HourFormat)} - {formatTime(end, use24HourFormat)}
-              </p>
-            )}
-
-            {showAvatars ? (
-              <div className="relative mt-auto flex items-center pt-0.5">
-                {participants.slice(0, 3).map((person, index) => (
-                  <Avatar
-                    key={person.email || person.name || index}
-                    name={person.name || person.email}
-                    size={14}
-                    className={cn('ring-1 ring-white/40', index > 0 && '-ml-1.5')}
-                  />
-                ))}
-                {participants.length > 3 ? (
-                  <span className="ml-1 text-[9px] opacity-80">+{participants.length - 3}</span>
-                ) : null}
-              </div>
-            ) : null}
-          </button>
-        </EventDetailsDialog>
+          {/* The join CTA is a sibling of the card trigger, never nested inside
+              it — an <a> in a <button> is invalid and breaks keyboard/focus. */}
+          {conferencingUrl ? (
+            <a
+              href={conferencingUrl}
+              target="_blank"
+              rel="noreferrer"
+              draggable={false}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              title="Join video call"
+              className="absolute right-1 top-1 z-10 inline-flex shrink-0 items-center gap-0.5 rounded border border-current/30 bg-current/15 px-1 py-px text-[10px] font-medium leading-none hover:bg-current/25"
+              style={joinColor ? { color: joinColor } : undefined}
+            >
+              <Video className="size-2.5" />
+              {showTime ? <span>Join</span> : null}
+            </a>
+          ) : null}
+        </div>
       </DraggableEvent>
     </ResizableEvent>
   );

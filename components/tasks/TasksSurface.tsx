@@ -508,6 +508,9 @@ function BoardView({ boardId }: { boardId: string }) {
                               <button
                                 type="button"
                                 title={done ? 'Mark not done' : 'Mark done'}
+                                // KanbanCard opens from its wrapper's pointerup;
+                                // swallow it so the toggle doesn't also open.
+                                onPointerUp={(e) => e.stopPropagation()}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void updateCard({

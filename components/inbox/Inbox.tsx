@@ -1020,7 +1020,14 @@ function ThreadRowCard({
         <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
       ) : null}
 
-      <Checkbox checked={selected} onCheckedChange={() => onToggle()} onClick={(e) => e.stopPropagation()} />
+      <Checkbox
+        checked={selected}
+        onCheckedChange={() => onToggle()}
+        onClick={(e) => e.stopPropagation()}
+        // Keep Space/Enter on the focused checkbox from bubbling to the row's
+        // key handler, which would open the thread instead of toggling.
+        onKeyDown={(e) => e.stopPropagation()}
+      />
 
       <Avatar
         name={senderLabel || item.account}
