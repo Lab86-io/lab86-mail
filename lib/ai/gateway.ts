@@ -14,6 +14,7 @@ import {
 } from './budget';
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
+import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-router';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
@@ -35,7 +36,20 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;
 const DEFAULT_STREAM_MAX_TOKENS = 24000;
 const TRANSIENT_GENERATE_RETRY_DELAY_MS = 450;
-const DEFAULT_OPENROUTER_AGENT_FALLBACKS = ['openai/gpt-5.1-chat', 'openai/gpt-5.4-mini'];
+// Cross-provider fallback chain: an outage at one provider (e.g. OpenAI's
+// "server had an error" storms) must not take the agent down, so the chain
+// spans vendors. Each id is routed to its best available key (direct or
+// OpenRouter) at use time.
+const DEFAULT_AGENT_FALLBACKS = [
+  'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-haiku-4.5',
+  'openai/gpt-5.5',
+  'openai/gpt-5.4-mini',
+];
+// Features that get retry + cross-provider failover. The interactive agent AND
+// the Daily Brief artifact both need it — a single provider blip on the brief
+// was silently degrading it to the plain native renderer.
+const FAILOVER_FEATURES = new Set(['agent', 'daily_report_artifact']);
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
@@ -228,7 +242,7 @@ export async function generateTextForCurrentUser(
     try {
       for (let runtimeIndex = 0; runtimeIndex < runtimes.length; runtimeIndex += 1) {
         const activeRuntime = runtimes[runtimeIndex];
-        const maxAttempts = feature === 'agent' && runtimeIndex === 0 ? 2 : 1;
+        const maxAttempts = FAILOVER_FEATURES.has(feature) && runtimeIndex === 0 ? 2 : 1;
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           try {
             const result = await generateText({
@@ -276,31 +290,18 @@ export async function generateTextForCurrentUser(
 }
 
 function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): ResolvedAiRuntime[] {
-  const router = openrouter;
-  if (feature !== 'agent' || runtime.source !== 'lab86' || runtime.provider !== 'openrouter' || !router) {
-    return [];
-  }
-  const configured = [
-    process.env.LAB86_MAIL_AGENT_FALLBACK_MODEL,
-    process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL,
-    ...DEFAULT_OPENROUTER_AGENT_FALLBACKS,
-  ];
-  return uniqueModels(configured)
-    .filter((modelName) => modelName !== runtime.modelName)
-    .map((modelName) => ({
-      ...runtime,
-      provider: 'openrouter' as const,
-      modelName,
-      model: router.chat(modelName),
-    }));
-}
-
-function uniqueModels(values: Array<string | undefined>) {
-  const out: string[] = [];
-  for (const value of values) {
-    const model = value?.trim();
-    if (!model || out.includes(model)) continue;
-    out.push(model);
+  if (!FAILOVER_FEATURES.has(feature) || runtime.source !== 'lab86') return [];
+  const configured = [process.env.LAB86_MAIL_AGENT_FALLBACK_MODEL, ...DEFAULT_AGENT_FALLBACKS];
+  const seen = new Set([runtime.modelName]);
+  const out: ResolvedAiRuntime[] = [];
+  for (const name of configured) {
+    const trimmed = name?.trim();
+    if (!trimmed) continue;
+    const routed = routePlatformModel(trimmed);
+    // Skip anything we can't route or already tried (incl. the primary model).
+    if (!routed || seen.has(routed.modelName)) continue;
+    seen.add(routed.modelName);
+    out.push({ ...runtime, provider: routed.provider, modelName: routed.modelName, model: routed.model });
   }
   return out;
 }
@@ -313,7 +314,9 @@ function isTransientGenerateParseError(err: any) {
 }
 
 function isAgentFallbackEligible(err: any, feature: string, runtime: ResolvedAiRuntime) {
-  if (feature !== 'agent' || runtime.source !== 'lab86' || runtime.provider !== 'openrouter') return false;
+  // Eligible regardless of which provider the primary used — a direct OpenAI or
+  // Anthropic primary should still fail over to the cross-provider chain.
+  if (!FAILOVER_FEATURES.has(feature) || runtime.source !== 'lab86') return false;
   if (isTransientGenerateParseError(err)) return true;
   const statusCode = Number(err?.statusCode);
   if (Number.isFinite(statusCode) && (statusCode === 429 || statusCode >= 500)) return true;
@@ -379,45 +382,65 @@ export async function streamTextForUser(
   );
 }
 
-function platformRuntime(speed: AiSpeed, preference?: PlatformPreference) {
-  if (isLab86AiDisabled()) return null;
-  const requestedModel = preference?.modelName?.trim();
-  if (
-    requestedModel &&
-    openrouter &&
-    (preference?.provider === 'openrouter' || requestedModel.includes('/'))
-  ) {
-    return {
-      provider: 'openrouter' as const,
-      modelName: requestedModel,
-      model: openrouter.chat(requestedModel),
-    };
+type RoutedModel = { provider: AiProvider; modelName: string; model: any };
+
+// Route a model id to the best AVAILABLE provider for it: the model's own
+// direct key (OpenAI key for OpenAI models, Anthropic key for Anthropic models)
+// when configured — most reliable, no passthrough — otherwise OpenRouter as the
+// universal catch-all. Translates the id between direct and OpenRouter forms.
+function routePlatformModel(modelName: string): RoutedModel | null {
+  const name = (modelName || '').trim();
+  if (!name) return null;
+  const vendor = classifyModel(name);
+  if (vendor === 'openai' && openai) {
+    const id = toDirectModelId(name);
+    // .chat() = Chat Completions, the tool-call format the agent expects
+    // (matches how models run via OpenRouter).
+    return { provider: 'openai', modelName: id, model: openai.chat(id) };
   }
-  if (preference?.provider === 'openai' && openai) {
-    const modelName = requestedModel || modelFor('openai', speed);
-    return { provider: 'openai' as const, modelName, model: openai(modelName) };
-  }
-  if (preference?.provider === 'anthropic' && anthropic) {
-    const modelName = requestedModel || modelFor('anthropic', speed);
-    return { provider: 'anthropic' as const, modelName, model: anthropic(modelName) };
-  }
-  if (preference?.provider === 'openrouter' && openrouter) {
-    const modelName = requestedModel || modelFor('openrouter', speed);
-    return { provider: 'openrouter' as const, modelName, model: openrouter.chat(modelName) };
+  if (vendor === 'anthropic' && anthropic) {
+    const id = toDirectModelId(name);
+    return { provider: 'anthropic', modelName: id, model: anthropic(id) };
   }
   if (openrouter) {
-    const modelName = modelFor('openrouter', speed);
-    return { provider: 'openrouter' as const, modelName, model: openrouter.chat(modelName) };
+    const id = toOpenRouterModelId(name);
+    return { provider: 'openrouter', modelName: id, model: openrouter.chat(id) };
   }
-  if (openai) {
-    const modelName = modelFor('openai', speed);
-    return { provider: 'openai' as const, modelName, model: openai(modelName) };
+  // No OpenRouter — last resort is a direct key that can serve this vendor.
+  if (vendor === 'openai' && openai) {
+    const id = toDirectModelId(name);
+    return { provider: 'openai', modelName: id, model: openai.chat(id) };
   }
-  if (anthropic) {
-    const modelName = modelFor('anthropic', speed);
-    return { provider: 'anthropic' as const, modelName, model: anthropic(modelName) };
+  if (vendor === 'anthropic' && anthropic) {
+    const id = toDirectModelId(name);
+    return { provider: 'anthropic', modelName: id, model: anthropic(id) };
   }
   return null;
+}
+
+function platformRuntime(speed: AiSpeed, preference?: PlatformPreference): RoutedModel | null {
+  if (isLab86AiDisabled()) return null;
+  const requested = preference?.modelName?.trim();
+
+  // An explicit provider preference with a matching configured key is honored
+  // as the user chose it (BYOK-style platform preference).
+  if (preference?.provider === 'openai' && openai) {
+    const id = toDirectModelId(requested || modelFor('openai', speed));
+    return { provider: 'openai', modelName: id, model: openai.chat(id) };
+  }
+  if (preference?.provider === 'anthropic' && anthropic) {
+    const id = toDirectModelId(requested || modelFor('anthropic', speed));
+    return { provider: 'anthropic', modelName: id, model: anthropic(id) };
+  }
+  if (preference?.provider === 'openrouter' && openrouter) {
+    const id = toOpenRouterModelId(requested || modelFor('openrouter', speed));
+    return { provider: 'openrouter', modelName: id, model: openrouter.chat(id) };
+  }
+
+  // Default path: take the configured model id (the canonical env defaults carry
+  // vendor prefixes) and route it by vendor.
+  const modelName = requested || modelFor('openrouter', speed);
+  return routePlatformModel(modelName);
 }
 
 function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
