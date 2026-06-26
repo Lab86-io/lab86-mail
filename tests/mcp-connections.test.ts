@@ -19,6 +19,25 @@ describe('MCP connection auth', () => {
       'Basic cGVyc29uOmFwaS10b2tlbg==',
     );
   });
+
+  test('matches each provider definition to the expected auth header scheme', async () => {
+    const { buildAuthorizationHeader } = await import('../lib/mcp/auth');
+    const { getServerDef } = await import('../lib/mcp/servers');
+    const emailToken = 'person@example.com:api-token';
+
+    const cases = [
+      ['github', 'ghp_123', 'Bearer ghp_123'],
+      ['slack', 'xoxb-123', 'Bearer xoxb-123'],
+      ['bitbucket', emailToken, `Basic ${Buffer.from(emailToken, 'utf8').toString('base64')}`],
+      ['jira', emailToken, `Basic ${Buffer.from(emailToken, 'utf8').toString('base64')}`],
+    ] as const;
+
+    for (const [server, credential, expected] of cases) {
+      const def = getServerDef(server);
+      expect(def).toBeTruthy();
+      expect(buildAuthorizationHeader(credential, def!.authMode)).toBe(expected);
+    }
+  });
 });
 
 describe('Bitbucket connection sync', () => {

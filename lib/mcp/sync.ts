@@ -1,10 +1,28 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
-import { getConnectionToken, listUserConnections } from './connections';
+import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
 import { getServerDef, type NormalizedMcpItem, normalizeItems } from './servers';
 
 const mcpApi = (api as any).mcp;
+
+export interface SyncConnectionDeps {
+  getConnectionToken: typeof getConnectionToken;
+  listUserConnections: typeof listUserConnections;
+  convexMutation: typeof convexMutation;
+  loadBitbucketItems: typeof loadBitbucketItems;
+  connectMcp: typeof connectMcp;
+  callMcpTool: typeof callMcpTool;
+}
+
+const defaultDeps: SyncConnectionDeps = {
+  getConnectionToken,
+  listUserConnections,
+  convexMutation,
+  loadBitbucketItems,
+  connectMcp,
+  callMcpTool,
+};
 
 function classifyError(err: unknown): string {
   const code = Number((err as { statusCode?: number; code?: number })?.statusCode ?? (err as any)?.code);
@@ -15,10 +33,11 @@ function classifyError(err: unknown): string {
 export async function syncConnection(
   userId: string,
   connectionId: string,
+  deps: SyncConnectionDeps = defaultDeps,
 ): Promise<{ ok: boolean; count: number; error?: string }> {
-  const resolved = await getConnectionToken(userId, connectionId);
+  const resolved = await deps.getConnectionToken(userId, connectionId);
   if (!resolved) {
-    await convexMutation(mcpApi.setSyncState, {
+    await deps.convexMutation(mcpApi.setSyncState, {
       userId,
       connectionId,
       server: 'unknown',
@@ -31,7 +50,7 @@ export async function syncConnection(
   const def = getServerDef(row.server);
   if (!def) return { ok: false, count: 0, error: 'unknown server' };
 
-  await convexMutation(mcpApi.setSyncState, {
+  await deps.convexMutation(mcpApi.setSyncState, {
     userId,
     connectionId,
     server: row.server,
@@ -40,16 +59,16 @@ export async function syncConnection(
 
   if (def.transport === 'bitbucket-rest') {
     try {
-      const result = await loadBitbucketItems(row.serverUrl, token);
+      const result = await deps.loadBitbucketItems(row.serverUrl, token);
       if (result.items.length) {
-        await convexMutation(mcpApi.upsertItems, {
+        await deps.convexMutation(mcpApi.upsertItems, {
           userId,
           connectionId,
           server: row.server,
           items: result.items,
         });
       }
-      await convexMutation(mcpApi.setSyncState, {
+      await deps.convexMutation(mcpApi.setSyncState, {
         userId,
         connectionId,
         server: row.server,
@@ -60,7 +79,7 @@ export async function syncConnection(
       return { ok: true, count: result.items.length };
     } catch (err) {
       const error = classifyError(err);
-      await convexMutation(mcpApi.setSyncState, {
+      await deps.convexMutation(mcpApi.setSyncState, {
         userId,
         connectionId,
         server: row.server,
@@ -73,10 +92,10 @@ export async function syncConnection(
 
   let handle: McpClientHandle;
   try {
-    handle = await connectMcp(row.serverUrl, token, def.authMode);
+    handle = await deps.connectMcp(row.serverUrl, token, def.authMode);
   } catch (err) {
     const error = classifyError(err);
-    await convexMutation(mcpApi.setSyncState, {
+    await deps.convexMutation(mcpApi.setSyncState, {
       userId,
       connectionId,
       server: row.server,
@@ -97,7 +116,7 @@ export async function syncConnection(
       if (handle.toolNames.size && !handle.toolNames.has(query.tool)) continue;
       supportedQueries += 1;
       try {
-        const result = await callMcpTool(handle, query.tool, query.args);
+        const result = await deps.callMcpTool(handle, query.tool, query.args);
         successfulQueries += 1;
         for (const item of normalizeItems(query, result)) {
           if (seen.has(item.externalId)) continue;
@@ -114,7 +133,7 @@ export async function syncConnection(
 
   if (def.syncQueries.length && supportedQueries === 0) {
     const error = `remote server did not expose supported tools: ${def.syncQueries.map((q) => q.tool).join(', ')}`;
-    await convexMutation(mcpApi.setSyncState, {
+    await deps.convexMutation(mcpApi.setSyncState, {
       userId,
       connectionId,
       server: row.server,
@@ -125,7 +144,7 @@ export async function syncConnection(
   }
   if (def.syncQueries.length && successfulQueries === 0) {
     const error = queryErrors[0] || 'remote server rejected every supported sync query';
-    await convexMutation(mcpApi.setSyncState, {
+    await deps.convexMutation(mcpApi.setSyncState, {
       userId,
       connectionId,
       server: row.server,
@@ -136,14 +155,14 @@ export async function syncConnection(
   }
 
   if (items.length) {
-    await convexMutation(mcpApi.upsertItems, {
+    await deps.convexMutation(mcpApi.upsertItems, {
       userId,
       connectionId,
       server: row.server,
       items,
     });
   }
-  await convexMutation(mcpApi.setSyncState, {
+  await deps.convexMutation(mcpApi.setSyncState, {
     userId,
     connectionId,
     server: row.server,
@@ -154,11 +173,16 @@ export async function syncConnection(
   return { ok: true, count: items.length };
 }
 
-export async function syncAllMcpConnections(userId: string): Promise<{ connections: number; items: number }> {
-  const connections = (await listUserConnections(userId)).filter((c) => c.status === 'connected');
+export async function syncAllMcpConnections(
+  userId: string,
+  deps: SyncConnectionDeps = defaultDeps,
+): Promise<{ connections: number; items: number }> {
+  const connections = (await deps.listUserConnections(userId)).filter(
+    (c): c is McpConnectionRow => c.status === 'connected',
+  );
   let items = 0;
   for (const connection of connections) {
-    const result = await syncConnection(userId, connection.connectionId).catch(() => ({
+    const result = await syncConnection(userId, connection.connectionId, deps).catch(() => ({
       ok: false,
       count: 0,
     }));
