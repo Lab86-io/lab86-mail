@@ -15,7 +15,13 @@ export function isNylasResponseParseError(err: any): boolean {
 }
 
 export function describeNylasError(err: any, fallback = 'provider error'): string {
-  const message = String(err?.message || fallback);
+  // Preserve primitive thrown values (e.g. a thrown string) before the fallback,
+  // matching isNylasResponseParseError's normalization.
+  const message = err?.message
+    ? String(err.message)
+    : err != null && typeof err !== 'object'
+      ? String(err)
+      : fallback;
   const status = nylasErrorStatus(err);
   const requestId = err?.requestId;
   const flowId = err?.flowId;

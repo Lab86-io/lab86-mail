@@ -215,7 +215,9 @@ function isRecoverableAgentProviderError(error: any): boolean {
 function providerFailureResult(error: any) {
   const text = /invalid json response/i.test(String(error?.message || ''))
     ? 'The AI provider returned a malformed response after the request started, so I could not produce a reliable final answer. The agent stayed connected; please check whether the requested change is already reflected, then retry only if it is missing.'
-    : `The AI provider failed while finishing that request: ${errorText(error)}. The agent stayed connected; please retry the last step if the requested change is not visible.`;
+    : 'The AI provider failed while finishing that request. The agent stayed connected; please retry the last step if the requested change is not visible.';
+  // Keep raw provider diagnostics out of the user-facing text; log for triage.
+  console.error(`[ai] provider failure while finishing request: ${errorText(error)}`);
   return {
     text,
     finishReason: 'stop',

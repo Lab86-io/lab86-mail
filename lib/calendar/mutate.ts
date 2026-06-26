@@ -389,8 +389,16 @@ export async function unsubscribeCalendar(input: UnsubscribeCalendarInput) {
     );
     providerUnsubscribed = true;
   } catch (err: any) {
-    providerError = describeNylasError(err, 'Provider calendar delete/unsubscribe failed.');
-    if (!input.fallbackToHide) throw err;
+    const status = nylasErrorStatus(err);
+    if (status === 404 || status === 410) {
+      // Provider already has no such calendar — the desired terminal state is
+      // reached, so treat it as a successful unsubscribe (matches the event
+      // delete path, which also suppresses 404/410).
+      providerUnsubscribed = true;
+    } else {
+      providerError = describeNylasError(err, 'Provider calendar delete/unsubscribe failed.');
+      if (!input.fallbackToHide) throw calendarMutationError(account, err, 'delete/unsubscribe the calendar');
+    }
   }
 
   if (providerUnsubscribed) {
@@ -499,6 +507,11 @@ registerUndoExecutor('calendar.recreate_event', async (payload, ctx) => {
       created = await recoverCreatedEventByMetadata(account.grantId, payload.calendarId, createRequestId);
     }
     if (!created) throw err;
+  }
+  if (!created?.id) {
+    throw new Error(
+      `Couldn't recreate the event on ${account.email || account.accountId}: provider returned no event id.`,
+    );
   }
   const row = toEventInput(created as any, payload.calendarId);
   if (row) await upsertMirror(account, [row]);

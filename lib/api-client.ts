@@ -30,11 +30,19 @@ export async function callTool<T = any>(name: string, args: any = {}, headers: H
     data = raw ? JSON.parse(raw) : null;
   } catch {}
   if (!res.ok || data?.ok === false) {
-    const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 180);
-    throw new Error(data?.error || `${name} failed (${res.status})${preview ? `: ${preview}` : ''}`);
+    // Prefer the API's structured, intentional error; never splice the raw
+    // response body (HTML error pages, stack traces) into a client-facing error.
+    throw new Error(data?.error || `${name} failed (${res.status})`);
   }
   if (data === null) {
-    throw new Error(`${name} failed: empty or unreadable server response`);
+    // 2xx with an unreadable/non-JSON body: keep the captured preview since it's
+    // the only failure context available for this direct-call debugging path.
+    const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 180);
+    throw new Error(
+      preview
+        ? `${name} failed: unreadable server response: ${preview}`
+        : `${name} failed: empty or unreadable server response`,
+    );
   }
   return data.result as T;
 }
