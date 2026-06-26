@@ -1008,7 +1008,9 @@ function ThreadRowCard({
       role="button"
       tabIndex={0}
       className={cn(
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left transition-colors duration-150 last:border-b-0 hover:bg-[var(--color-hover-soft)]',
+        // No transition on the row itself: the hover highlight is a selection
+        // cue, so it must be instant for snappy up/down scanning.
+        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
@@ -1016,13 +1018,6 @@ function ThreadRowCard({
     >
       {priorityClass ? (
         <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
-      ) : accountColor ? (
-        <span
-          title={accountLabel || item.accountAlias || undefined}
-          aria-hidden
-          className="absolute left-0 inset-y-1 w-[3px] rounded-r-full opacity-80"
-          style={{ backgroundColor: accountColor }}
-        />
       ) : null}
 
       <Checkbox checked={selected} onCheckedChange={() => onToggle()} onClick={(e) => e.stopPropagation()} />
@@ -1073,7 +1068,35 @@ function ThreadRowCard({
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
       <div className="flex flex-col items-end gap-1 self-start pt-0.5">
-        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{formatDate(date)}</span>
+        {/* In the unified inbox the date carries the mailbox colour as a soft
+            wash; the popover names the mailbox so the colour means something
+            instead of being a bare unlabelled rail. */}
+        {showAccount && accountColor ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                onClick={(e) => e.stopPropagation()}
+                title="Which mailbox"
+                className="rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"
+                style={{ backgroundColor: `color-mix(in srgb, ${accountColor} 22%, transparent)` }}
+              >
+                {formatDate(date)}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto px-3 py-2 text-[12px]">
+              <div className="flex items-center gap-2">
+                <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
+                <span className="font-medium text-[var(--color-text)]">
+                  {accountLabel || item.accountAlias || item.account}
+                </span>
+              </div>
+              <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{formatDate(date)}</span>
+        )}
         <div className="flex items-center gap-1">
           {(item.labels || []).includes('IMPORTANT') ? (
             <span
@@ -1112,14 +1135,14 @@ function ThreadRowCard({
               </PopoverContent>
             </Popover>
           ) : null}
-          {/* Mailbox identity moved to the coloured left rail (alias on hover) so
-              it no longer repeats as text down every row. */}
+          {/* Mailbox identity now rides the date's colour wash (above) — no
+              repeated alias text down every row. */}
         </div>
       </div>
 
       {/* Hover-only row actions — overlaid so they add no height at rest. */}
       {smart ? (
-        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none transition-opacity duration-[var(--duration-normal)] ease-[var(--ease-default)] group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
+        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 translate-x-2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none transition-[opacity,transform] duration-[120ms] ease-[var(--ease-enter)] group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:translate-x-0 has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
           <Button
             type="button"
             variant="ghost"
