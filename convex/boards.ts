@@ -69,6 +69,34 @@ function nextOrder(existing: number[]): number {
   return existing.length ? Math.max(...existing) + ORDER_STEP : ORDER_STEP;
 }
 
+// "Done" column ⟺ completed. Moving a card into the Done column completes it and
+// moving it out reopens it; completing/reopening a card moves it in/out of Done.
+// Unifying both directions in these mutations keeps drag-and-drop, the
+// checkmark, and the AI tools consistent with one rule.
+function isDoneColumn(name?: string | null): boolean {
+  return (
+    String(name || '')
+      .trim()
+      .toLowerCase() === 'done'
+  );
+}
+
+async function columnsForBoard(ctx: MutationCtx, boardId: Id<'boards'>) {
+  const columns = await ctx.db
+    .query('boardColumns')
+    .withIndex('by_board', (q) => q.eq('boardId', boardId))
+    .collect();
+  return columns.sort((a, b) => a.order - b.order);
+}
+
+async function appendOrderInColumn(ctx: MutationCtx, columnId: Id<'boardColumns'>): Promise<number> {
+  const siblings = await ctx.db
+    .query('cards')
+    .withIndex('by_column_order', (q) => q.eq('columnId', columnId))
+    .collect();
+  return nextOrder(siblings.map((sibling) => sibling.order));
+}
+
 // Assignees must be board members (owner included); normalize casing and
 // reject anything off-board so a direct client call can't write arbitrary
 // strings into the assignee contract.
@@ -461,8 +489,33 @@ export const updateCard = mutation({
     }
     // null clears; undefined leaves untouched.
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt === null ? undefined : args.dueAt;
-    if (args.completedAt !== undefined)
-      patch.completedAt = args.completedAt === null ? undefined : args.completedAt;
+    if (args.completedAt !== undefined) {
+      const completing = args.completedAt !== null;
+      // The completion toggle is ALWAYS honored — we never block marking a card
+      // done on a board's shape (a board may legitimately have no "Done"
+      // column). The column move below is best-effort: it only fires when a
+      // matching destination column actually exists, so completion state and
+      // column membership stay consistent on boards that have a Done column,
+      // and the toggle still works on those that don't.
+      patch.completedAt = completing ? args.completedAt : undefined;
+      const columns = await columnsForBoard(ctx, card.boardId);
+      if (completing) {
+        const done = columns.find((column) => isDoneColumn(column.name));
+        if (done && card.columnId !== done._id) {
+          patch.columnId = done._id;
+          patch.order = await appendOrderInColumn(ctx, done._id);
+        }
+      } else {
+        const current = columns.find((column) => column._id === card.columnId);
+        if (current && isDoneColumn(current.name)) {
+          const target = columns.find((column) => !isDoneColumn(column.name));
+          if (target) {
+            patch.columnId = target._id;
+            patch.order = await appendOrderInColumn(ctx, target._id);
+          }
+        }
+      }
+    }
     await ctx.db.patch(args.cardId, patch);
     const changed = Object.keys(patch).filter((key) => key !== 'updatedAt');
     if (changed.length) {
@@ -524,8 +577,17 @@ export const moveCard = mutation({
         .collect();
       order = nextOrder(siblings.map((sibling) => sibling.order));
     }
-    const previous = { columnId: card.columnId, order: card.order };
-    await ctx.db.patch(args.cardId, { columnId: args.columnId, order, updatedAt: now() });
+    // Full snapshot (not just columnId/order) so callers can restore completion
+    // state too, now that a move into/out of Done flips completedAt.
+    const previous = snapshotCard(card);
+    const movePatch: Record<string, unknown> = { columnId: args.columnId, order, updatedAt: now() };
+    // Keep completion in sync with the Done column.
+    if (isDoneColumn(column.name)) {
+      if (!card.completedAt) movePatch.completedAt = now();
+    } else if (card.completedAt) {
+      movePatch.completedAt = undefined; // leaving Done reopens the card
+    }
+    await ctx.db.patch(args.cardId, movePatch);
     if (previous.columnId !== args.columnId) {
       const fresh = await ctx.db.get(args.cardId);
       if (fresh) await appendActivity(ctx, fresh, userId, 'moved', `to ${column.name}`);
