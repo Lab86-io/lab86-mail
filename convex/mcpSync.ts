@@ -3,7 +3,7 @@ import { internal } from './_generated/api';
 import { internalAction } from './_generated/server';
 import { fanOutInternalPost } from './lib';
 
-// Periodic poll of each user's connected MCP servers (GitHub/Jira/Slack). The
+// Periodic poll of each user's connected tool servers/APIs. The
 // actual remote-MCP IO runs in the Next.js app (the SDK + tokens live there),
 // reached over the internal-secret-gated route; the route ACKs immediately and
 // syncs in the background, so this stays fast.

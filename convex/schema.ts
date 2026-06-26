@@ -721,14 +721,14 @@ export default defineSchema({
     .index('by_user_key_window', ['userId', 'key', 'windowStart'])
     .index('by_expires', ['expiresAt']),
 
-  // --- MCP connectors: remote MCP servers (GitHub, Jira, Slack) a user opts
+  // --- MCP connectors: remote MCP servers/APIs a user opts
   // into so their items feed the Daily Brief, search, and tasks. Mirrors the
   // connectedAccounts/providerGrants split — display row here, secrets in
   // mcpCredentials, normalized items in mcpItems. ---
   mcpConnections: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('jira'), v.literal('slack')),
+    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
     serverUrl: v.string(),
     authKind: v.union(v.literal('token'), v.literal('oauth')),
     status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
@@ -764,7 +764,7 @@ export default defineSchema({
   mcpItems: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('jira'), v.literal('slack')),
+    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
     externalId: v.string(),
     kind: v.string(),
     title: v.string(),

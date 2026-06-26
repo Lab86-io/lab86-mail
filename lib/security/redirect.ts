@@ -3,7 +3,7 @@
 // absolute URLs, and backslash tricks all fall back to '/'.
 export function sanitizeInternalPath(value: string | null | undefined): string {
   if (!value) return '/';
-  if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\') || value.includes(':')) {
+  if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {
     return '/';
   }
   return value;
