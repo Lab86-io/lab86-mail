@@ -19,6 +19,12 @@ import type {
   ThreadInsight,
   TrackedThread,
 } from '../shared/types';
+import {
+  type DailyReportThreadDismissal,
+  dailyReportThreadKey,
+  listDismissedDailyReportTaskIds,
+  listDismissedDailyReportThreads,
+} from '../store/daily-report-dismissals';
 import { saveDailyReport } from '../store/daily-reports';
 import { listMemories } from '../store/memories';
 import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
@@ -837,8 +843,21 @@ async function composeReport(input: {
   skipNarrative?: boolean;
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
+  const threadDismissals = new Map(
+    (await listDismissedDailyReportThreads().catch(() => [] as DailyReportThreadDismissal[])).map(
+      (dismissal) => [dailyReportThreadKey(dismissal.account, dismissal.threadId), dismissal],
+    ),
+  );
   const reportTasks = input.taskContext.slice(0, 24);
   const reportCalendar = input.calendarContext.slice(0, 24);
+  const hiddenByUser = (item: DailyReportItem) => {
+    const dismissal = threadDismissals.get(dailyReportThreadKey(item.account, item.threadId));
+    if (!dismissal) return false;
+    const current = item.receivedAt ?? 0;
+    const clearedThrough =
+      typeof dismissal.receivedAt === 'number' ? dismissal.receivedAt : dismissal.dismissedAt;
+    return current <= clearedThrough;
+  };
   const toItem = (insight: ThreadInsight): DailyReportItem => {
     const tracked = trackedKeys.get(`${insight.account}:${insight.threadId}`);
     return {
@@ -875,6 +894,7 @@ async function composeReport(input: {
     input.insights
       .filter((insight) => insight.lane === lane)
       .map(toItem)
+      .filter((item) => !hiddenByUser(item))
       .slice(0, REPORT_LANE_LIMITS[lane]);
 
   const replyOwed = byLane('reply_owed');
@@ -889,6 +909,7 @@ async function composeReport(input: {
         insight.lane === 'bulk' && !activeTrackedKeys.has(`${insight.account}:${insight.threadId}`),
     )
     .map(toItem)
+    .filter((item) => !hiddenByUser(item))
     .slice(0, BULK_TAIL_LIMIT);
 
   // Tracked section comes from the tracked-thread store (active only). Every
@@ -908,14 +929,16 @@ async function composeReport(input: {
       unread: false,
       trackedThreadId: item._id,
       lane: 'tracked' as ReportLane,
+      receivedAt: input.lastDateByKey.get(`${item.account}:${item.threadId}`) || null,
     }));
+  const visibleTrackedItems = trackedItems.filter((item) => !hiddenByUser(item));
 
   let narrative = localNarrative(
     input.kind,
     replyOwed,
     followUpOwed,
     newPeople,
-    trackedItems,
+    visibleTrackedItems,
     reportTasks,
     reportCalendar,
     input.now,
@@ -938,7 +961,7 @@ async function composeReport(input: {
           `Follow-up owed: ${followUpOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
           `New people: ${newPeople.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
           `Time-sensitive: ${timeSensitive.map((i) => `${i.people.join(', ')}: ${i.subject} due ${i.dueAt ? new Date(i.dueAt).toString() : ''}`).join('\n')}`,
-          `Tracked: ${trackedItems.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
+          `Tracked: ${visibleTrackedItems.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
         ].join('\n\n'),
       });
       narrative = stripEmoji(text.trim()) || narrative;
@@ -960,7 +983,7 @@ async function composeReport(input: {
       followUpOwed,
       newPeople,
       timeSensitive,
-      tracked: trackedItems,
+      tracked: visibleTrackedItems,
       fyi,
       bulkTail,
       tasks: reportTasks,
@@ -970,7 +993,7 @@ async function composeReport(input: {
     },
     stats: {
       scannedThreads: input.insights.length,
-      trackedThreads: trackedItems.length,
+      trackedThreads: visibleTrackedItems.length,
       needsReply: replyOwed.length,
       replyOwed: replyOwed.length,
       dueSoon: timeSensitive.length,
@@ -1101,6 +1124,7 @@ async function loadTaskContext(
 ): Promise<DailyReportTaskItem[]> {
   if (!userId) return [];
   try {
+    const dismissedTaskIds = await listDismissedDailyReportTaskIds().catch(() => new Set<string>());
     const rows = await convexQuery<any[]>((api as any).boards.listReportCards, {
       userId,
       since: now - MONTH_CONTEXT_WINDOW,
@@ -1108,6 +1132,7 @@ async function loadTaskContext(
       limit: 500,
     });
     return rows
+      .filter((card) => !dismissedTaskIds.has(String(card.cardId)))
       .map((card) => {
         const source = card.source || {};
         const sourceUrl = source.url || source.htmlLink;

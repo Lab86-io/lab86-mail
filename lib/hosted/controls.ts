@@ -35,6 +35,7 @@ export function isStagingHost(host: string) {
 
 export function isStagingRuntime(host?: string | null) {
   return (
+    process.env.RAILWAY_ENVIRONMENT_NAME === 'staging' ||
     process.env.RAILWAY_ENVIRONMENT_NAME === 'development' ||
     process.env.NODE_ENV === 'development' ||
     Boolean(host && isStagingHost(host)) ||

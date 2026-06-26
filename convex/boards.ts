@@ -809,8 +809,8 @@ export const listDueCards = query({
   },
 });
 
-// Daily report context: open cards plus recently-touched/due cards within the
-// report horizon, enriched with board and column labels for the renderer.
+// Daily report context: open cards only, enriched with board and column labels
+// for the renderer. Completed cards stay out of briefs once checked off.
 export const listReportCards = query({
   args: {
     ...callerArgs,
@@ -827,9 +827,7 @@ export const listReportCards = query({
       .take(cap);
     const filtered = rows
       .filter((card) => {
-        const dueRelevant = card.dueAt !== undefined && card.dueAt >= args.since && card.dueAt < args.endAt;
-        const touchedRecently = card.updatedAt >= args.since || card.createdAt >= args.since;
-        return !card.completedAt || dueRelevant || touchedRecently;
+        return !card.completedAt;
       })
       .sort((a, b) => {
         const aDone = a.completedAt ? 1 : 0;

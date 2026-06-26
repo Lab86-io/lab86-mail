@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { isInternalCronRequest } from '@/lib/cron-auth';
+import { isStagingRuntime } from '@/lib/hosted/controls';
 import { generateAgentReport } from '@/lib/mail/agent-report';
 
 export const runtime = 'nodejs';
@@ -15,6 +16,10 @@ export const maxDuration = 300;
 export async function POST(req: NextRequest) {
   if (!isInternalCronRequest(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
+  }
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
+  if (isStagingRuntime(host)) {
+    return NextResponse.json({ ok: true, skipped: true, reason: 'staging' }, { status: 200 });
   }
   let body: any = {};
   try {
