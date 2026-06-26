@@ -5,6 +5,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
+  Archive,
   Ban,
   CheckCircle2,
   Inbox as InboxIcon,
@@ -887,6 +888,8 @@ export function Inbox() {
                     onToggle={() => toggleSelected(key)}
                     onPrefetch={() => prefetchThread(it)}
                     onApplyLabels={() => setLabelPreview(it)}
+                    onArchive={() => bulkArchive.mutate([key])}
+                    onTrash={() => bulkTrash.mutate([key])}
                     onCorrect={(action, payload = {}) =>
                       applyCorrection.mutate({
                         account: rowAccount,
@@ -935,6 +938,8 @@ function ThreadRowCard({
   onClick,
   onPrefetch,
   onApplyLabels,
+  onArchive,
+  onTrash,
   onCorrect,
   onUndoLast,
   customLabels,
@@ -950,6 +955,8 @@ function ThreadRowCard({
   onClick: () => void;
   onPrefetch: () => void;
   onApplyLabels: () => void;
+  onArchive: () => void;
+  onTrash: () => void;
   onCorrect: (action: string, payload?: Record<string, unknown>) => void;
   onUndoLast: () => void;
   customLabels: any[];
@@ -1075,35 +1082,76 @@ function ThreadRowCard({
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
       <div className="flex flex-col items-end gap-1 self-start pt-0.5">
-        {/* In the unified inbox the date carries the mailbox colour as a soft
-            wash; the popover names the mailbox so the colour means something
-            instead of being a bare unlabelled rail. */}
-        {showAccount && accountColor ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                onClick={(e) => e.stopPropagation()}
-                title="Which mailbox"
-                className="rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"
-                style={{ backgroundColor: `color-mix(in srgb, ${accountColor} 22%, transparent)` }}
-              >
-                {formatDate(date)}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto px-3 py-2 text-[12px]">
-              <div className="flex items-center gap-2">
-                <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
-                <span className="font-medium text-[var(--color-text)]">
-                  {accountLabel || item.accountAlias || item.account}
-                </span>
+        {/* Date + hover actions share a line: the actions expand from zero
+            width on hover, pushing the date left instead of covering it. The
+            date carries the mailbox colour; its popover names the mailbox. */}
+        <div className="flex items-center">
+          {showAccount && accountColor ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Which mailbox"
+                  className="rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"
+                  style={{ backgroundColor: `color-mix(in srgb, ${accountColor} 22%, transparent)` }}
+                >
+                  {formatDate(date)}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-auto px-3 py-2 text-[12px]">
+                <div className="flex items-center gap-2">
+                  <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
+                  <span className="font-medium text-[var(--color-text)]">
+                    {accountLabel || item.accountAlias || item.account}
+                  </span>
+                </div>
+                <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+              {formatDate(date)}
+            </span>
+          )}
+          {smart ? (
+            <div className="flex max-w-0 items-center overflow-hidden opacity-0 transition-[max-width,opacity] duration-200 ease-out group-hover:max-w-[116px] group-hover:opacity-100 has-[[data-state=open]]:max-w-[116px] has-[[data-state=open]]:opacity-100">
+              <div className="ml-1.5 flex shrink-0 items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 shadow-[var(--shadow-soft)] [transform:translateX(8px)] transition-transform duration-200 ease-out group-hover:[transform:translateX(0px)] has-[[data-state=open]]:[transform:translateX(0px)]">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArchive();
+                  }}
+                  title="Archive"
+                  className="grid size-6 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+                >
+                  <Archive className="size-3.5" />
+                  <span className="sr-only">Archive</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTrash();
+                  }}
+                  title="Delete"
+                  className="grid size-6 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-danger)]"
+                >
+                  <Trash2 className="size-3.5" />
+                  <span className="sr-only">Delete</span>
+                </button>
+                <QuickFixMenu
+                  customLabels={customLabels}
+                  onApplyLabels={onApplyLabels}
+                  onCorrect={onCorrect}
+                  onCreateLabel={() => createLabelFromThread(item, onCorrect)}
+                  onUndoLast={onUndoLast}
+                />
               </div>
-              <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
-            </PopoverContent>
-          </Popover>
-        ) : (
-          <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{formatDate(date)}</span>
-        )}
+            </div>
+          ) : null}
+        </div>
         <div className="flex items-center gap-1">
           {(item.labels || []).includes('IMPORTANT') ? (
             <span
@@ -1146,43 +1194,19 @@ function ThreadRowCard({
               repeated alias text down every row. */}
         </div>
       </div>
-
-      {/* Hover-only row actions — overlaid so they add no height at rest. */}
-      {smart ? (
-        <div className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 translate-x-2 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5 opacity-0 shadow-[var(--shadow-soft)] pointer-events-none transition-[opacity,transform] duration-[120ms] ease-[var(--ease-enter)] group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto has-[[data-state=open]]:translate-x-0 has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:pointer-events-auto">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onApplyLabels();
-            }}
-            title="Apply smart labels"
-            className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-          >
-            <Tag className="size-3.5" />
-            <span className="sr-only">Apply labels</span>
-          </Button>
-          <QuickFixMenu
-            customLabels={customLabels}
-            onCorrect={onCorrect}
-            onCreateLabel={() => createLabelFromThread(item, onCorrect)}
-            onUndoLast={onUndoLast}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
 
 function QuickFixMenu({
   customLabels,
+  onApplyLabels,
   onCorrect,
   onCreateLabel,
   onUndoLast,
 }: {
   customLabels: any[];
+  onApplyLabels: () => void;
   onCorrect: (action: string, payload?: Record<string, unknown>) => void;
   onCreateLabel: () => void;
   onUndoLast: () => void;
@@ -1201,6 +1225,11 @@ function QuickFixMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+        <DropdownMenuItem onSelect={() => onApplyLabels()}>
+          <Tag className="size-3.5" />
+          Apply smart labels
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>Fix classification</DropdownMenuLabel>
         <DropdownMenuItem onSelect={() => onCorrect('never_main')}>
           <Ban className="size-3.5" />
