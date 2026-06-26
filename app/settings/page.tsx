@@ -22,7 +22,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import {
   type ModelOption,
@@ -83,12 +83,28 @@ export default function SettingsPage() {
   );
 }
 
-function SectionHeading({ title, blurb }: { title: string; blurb: string }) {
+function SectionHeading({ title, blurb, badge }: { title: string; blurb: string; badge?: ReactNode }) {
   return (
     <div className="mb-4">
-      <h2 className="text-[16px] font-semibold tracking-tight">{title}</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-[16px] font-semibold tracking-tight">{title}</h2>
+        {badge}
+      </div>
       <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{blurb}</p>
     </div>
+  );
+}
+
+// A small "Beta" pill for features that ship but aren't proven against real
+// external services yet (the connectors haven't been verified end-to-end).
+function BetaBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="border-amber-500/40 bg-amber-500/10 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+    >
+      Beta
+    </Badge>
   );
 }
 
@@ -551,7 +567,11 @@ function ConnectionsSection() {
 
   return (
     <section>
-      <SectionHeading title="Connections" blurb="Bring GitHub, Jira, and Slack into your brief and search." />
+      <SectionHeading
+        title="Connections"
+        badge={<BetaBadge />}
+        blurb="Bring GitHub, Jira, and Slack into your brief and search. Beta — connecting may not surface items yet, and Slack and Jira can require admin setup. Start with GitHub."
+      />
       <div className="space-y-2.5">
         {connections.map((connection) => (
           <div
@@ -673,6 +693,7 @@ function ConnectionsSection() {
                     {connectionServerIcon(server.id, 'size-3.5')}
                   </div>
                   <span className="text-[13.5px] font-medium">{server.label}</span>
+                  <BetaBadge />
                 </div>
                 <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
                   <div className="space-y-1">
