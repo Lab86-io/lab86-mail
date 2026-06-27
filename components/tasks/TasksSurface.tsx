@@ -1191,7 +1191,16 @@ function CardAttachments({
         ) : null}
 
         {linkOpen && canEdit ? (
-          <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 p-2">
+          // biome-ignore lint/a11y/noStaticElementInteractions: scopes Escape for every control in the inline form so it doesn't close the whole drawer
+          <div
+            className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 p-2"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                setLinkOpen(false);
+              }
+            }}
+          >
             <label htmlFor={linkLabelId} className="sr-only">
               Link label
             </label>
@@ -1214,11 +1223,6 @@ function CardAttachments({
                   if (event.key === 'Enter') {
                     event.preventDefault();
                     submitLink();
-                  } else if (event.key === 'Escape') {
-                    // Dismiss only the inline form; CardPanel's window Escape
-                    // listener would otherwise close the whole drawer.
-                    event.stopPropagation();
-                    setLinkOpen(false);
                   }
                 }}
                 placeholder="https://example.com/page"
@@ -1358,6 +1362,7 @@ function CardPanel({
   const [commentMode, setCommentMode] = useState<MarkdownMode>('write');
   const [editingNotes, setEditingNotes] = useState(false);
   const [composingComment, setComposingComment] = useState(false);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [portalReady, setPortalReady] = useState(false);
   const onCloseRef = useRef(onClose);
@@ -1757,13 +1762,16 @@ function CardPanel({
                         onSubmit={async (event) => {
                           event.preventDefault();
                           const body = commentDraft.trim();
-                          if (!body) return;
+                          if (!body || commentSubmitting) return;
+                          setCommentSubmitting(true);
                           try {
                             await addComment({ cardId: card.cardId, body });
                             setCommentDraft('');
                             setComposingComment(false);
                           } catch (err: any) {
                             toast.error(err?.message || 'Could not comment');
+                          } finally {
+                            setCommentSubmitting(false);
                           }
                         }}
                       >
@@ -1793,7 +1801,7 @@ function CardPanel({
                             type="submit"
                             size="sm"
                             className="h-9 px-3 text-[12px]"
-                            disabled={!commentDraft.trim()}
+                            disabled={commentSubmitting || !commentDraft.trim()}
                           >
                             Comment
                           </Button>
