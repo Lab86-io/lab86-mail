@@ -805,17 +805,22 @@ function AssigneeStack({ emails, max = 3 }: { emails?: string[]; max?: number })
   const extra = emails.length - shown.length;
   return (
     <span className="flex shrink-0 items-center -space-x-1.5">
+      <span className="sr-only">Assigned to {emails.join(', ')}</span>
       {shown.map((email) => (
         <span
           key={email}
           title={email}
+          aria-hidden="true"
           className="grid size-5 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8.5px] font-semibold uppercase text-[var(--color-accent)] ring-2 ring-[var(--color-bg-elevated)]"
         >
           {emailInitials(email)}
         </span>
       ))}
       {extra > 0 ? (
-        <span className="grid size-5 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8.5px] font-semibold tabular-nums text-[var(--color-text-muted)] ring-2 ring-[var(--color-bg-elevated)]">
+        <span
+          aria-hidden="true"
+          className="grid size-5 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8.5px] font-semibold tabular-nums text-[var(--color-text-muted)] ring-2 ring-[var(--color-bg-elevated)]"
+        >
           +{extra}
         </span>
       ) : null}
@@ -1187,6 +1192,9 @@ function CardAttachments({
 
         {linkOpen && canEdit ? (
           <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 p-2">
+            <label htmlFor={linkLabelId} className="sr-only">
+              Link label
+            </label>
             <Input
               id={linkLabelId}
               value={attachName}
@@ -1194,6 +1202,9 @@ function CardAttachments({
               placeholder="Label (optional)"
               className="h-8 bg-[var(--color-bg-elevated)] text-[12px]"
             />
+            <label htmlFor={linkUrlId} className="sr-only">
+              Link URL
+            </label>
             <div className="flex gap-2">
               <Input
                 id={linkUrlId}
@@ -1204,6 +1215,9 @@ function CardAttachments({
                     event.preventDefault();
                     submitLink();
                   } else if (event.key === 'Escape') {
+                    // Dismiss only the inline form; CardPanel's window Escape
+                    // listener would otherwise close the whole drawer.
+                    event.stopPropagation();
                     setLinkOpen(false);
                   }
                 }}
@@ -1361,18 +1375,32 @@ function CardPanel({
     const nodes: TimelineNode[] = [];
     for (const c of card.comments || [])
       nodes.push({ kind: 'comment', id: `c-${c.id}`, who: c.authorEmail, at: c.createdAt, body: c.body });
+    // `commented` activities mirror entries already in card.comments, so skip
+    // them here to avoid rendering every comment twice in the timeline.
     for (const a of card.activity || [])
-      nodes.push({
-        kind: 'activity',
-        id: `a-${a.id}`,
-        who: a.actorEmail,
-        at: a.createdAt,
-        action: a.action,
-        detail: a.detail,
-      });
+      if (a.action !== 'commented')
+        nodes.push({
+          kind: 'activity',
+          id: `a-${a.id}`,
+          who: a.actorEmail,
+          at: a.createdAt,
+          action: a.action,
+          detail: a.detail,
+        });
     nodes.sort((x, y) => x.at - y.at);
     return nodes;
   }, [card.comments, card.activity]);
+
+  // Always (re)enter editors in write mode — a leftover `preview` from a prior
+  // session would otherwise reopen read-only and the autofocus never engages.
+  const openNotesEditor = () => {
+    setDescriptionMode('write');
+    setEditingNotes(true);
+  };
+  const openComposer = () => {
+    setCommentMode('write');
+    setComposingComment(true);
+  };
 
   // Strip the read-time-resolved URL off stored files so we never persist a
   // serving URL next to its storage id (it's re-resolved on every read).
@@ -1627,7 +1655,7 @@ function CardPanel({
                           {canEdit && description.trim() ? (
                             <button
                               type="button"
-                              onClick={() => setEditingNotes(true)}
+                              onClick={openNotesEditor}
                               className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
                             >
                               <Pencil className="size-3" /> Edit
@@ -1637,7 +1665,7 @@ function CardPanel({
                         {description.trim() ? (
                           // biome-ignore lint/a11y/noStaticElementInteractions: double-click to edit keeps links clickable on single click
                           <div
-                            onDoubleClick={() => canEdit && setEditingNotes(true)}
+                            onDoubleClick={() => canEdit && openNotesEditor()}
                             title={canEdit ? 'Double-click to edit' : undefined}
                             className={cn('px-3.5 py-3', canEdit && 'cursor-text')}
                           >
@@ -1646,7 +1674,7 @@ function CardPanel({
                         ) : canEdit ? (
                           <button
                             type="button"
-                            onClick={() => setEditingNotes(true)}
+                            onClick={openNotesEditor}
                             className="flex w-full items-center gap-2 px-3.5 py-3 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text-muted)]"
                           >
                             <Pencil className="size-3.5 shrink-0" /> Add details, context, or a checklist…
@@ -1774,7 +1802,7 @@ function CardPanel({
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setComposingComment(true)}
+                        onClick={openComposer}
                         className="flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-3.5 py-2.5 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)]"
                       >
                         {role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
