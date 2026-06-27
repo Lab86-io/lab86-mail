@@ -432,9 +432,9 @@ function BoardView({ boardId }: { boardId: string }) {
                 <KanbanBoard
                   id={column.id}
                   key={column.id}
-                  className="h-full w-72 shrink-0 bg-[var(--color-bg-subtle)]"
+                  className="h-full w-[300px] shrink-0 divide-y-0 rounded-xl border-[var(--color-border)] bg-[var(--color-bg-subtle)]/45 shadow-none"
                 >
-                  <KanbanHeader className="flex items-center px-3 py-2">
+                  <KanbanHeader className="flex items-center px-3 pb-1.5 pt-3">
                     {canEdit ? (
                       <KanbanColumnHandle
                         className="mr-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text-muted)]"
@@ -479,7 +479,7 @@ function BoardView({ boardId }: { boardId: string }) {
                       ...columns.map((c: any) => items.filter((i: any) => i.column === c.id).length),
                     )}
                   />
-                  <KanbanCards id={column.id}>
+                  <KanbanCards id={column.id} className="gap-2.5 px-2.5">
                     {(item: any) => {
                       const card = cardsById.get(item.id);
                       const done = Boolean(card?.completedAt);
@@ -488,7 +488,11 @@ function BoardView({ boardId }: { boardId: string }) {
                           key={item.id}
                           {...item}
                           onCardClick={() => setOpenCardId(item.id)}
-                          className={cn('group', card?.priority ? PRIORITY_EDGE[card.priority] : undefined)}
+                          className={cn(
+                            'group rounded-xl border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)] transition-[transform,box-shadow,border-color] duration-150 hover:-translate-y-px hover:border-[var(--color-border-strong)] hover:shadow-md',
+                            done && 'opacity-75',
+                            card?.priority ? PRIORITY_EDGE[card.priority] : undefined,
+                          )}
                         >
                           {/* Native button = keyboard activation for free.
                               Pointer taps still route through the wrapper's
@@ -540,7 +544,7 @@ function BoardView({ boardId }: { boardId: string }) {
                     <button
                       type="button"
                       onClick={() => setCreateInColumn(column.id)}
-                      className="mx-2 mb-2 mt-auto inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 text-[12.5px] font-medium text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
+                      className="mx-2 mb-2 mt-auto inline-flex h-8 items-center justify-start gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
                     >
                       <Plus className="size-3.5" /> Add card
                     </button>
@@ -793,7 +797,33 @@ function ColumnLoadBar({ count, max }: { count: number; max: number }) {
   );
 }
 
-function CardMetaChips({ card }: { card?: BoardCard }) {
+// Overlapping initials avatars (Linear/ClickUp idiom). The ring colour matches
+// the card surface so the stack reads as layered chips, not floating dots.
+function AssigneeStack({ emails, max = 3 }: { emails?: string[]; max?: number }) {
+  if (!emails?.length) return null;
+  const shown = emails.slice(0, max);
+  const extra = emails.length - shown.length;
+  return (
+    <span className="flex shrink-0 items-center -space-x-1.5">
+      {shown.map((email) => (
+        <span
+          key={email}
+          title={email}
+          className="grid size-5 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8.5px] font-semibold uppercase text-[var(--color-accent)] ring-2 ring-[var(--color-bg-elevated)]"
+        >
+          {emailInitials(email)}
+        </span>
+      ))}
+      {extra > 0 ? (
+        <span className="grid size-5 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8.5px] font-semibold tabular-nums text-[var(--color-text-muted)] ring-2 ring-[var(--color-bg-elevated)]">
+          +{extra}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function CardMetaChips({ card, hideAssignees }: { card?: BoardCard; hideAssignees?: boolean }) {
   if (!card) return null;
   const overdue = card.dueAt && !card.completedAt && card.dueAt < Date.now();
   return (
@@ -840,8 +870,12 @@ function CardMetaChips({ card }: { card?: BoardCard }) {
         <Paperclip className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />
       ) : null}
       {card.comments?.length ? (
-        <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">
-          {card.comments.length} comment{card.comments.length === 1 ? '' : 's'}
+        <span
+          className="inline-flex items-center gap-1 text-[10.5px] tabular-nums text-[var(--color-text-faint)]"
+          title={`${card.comments.length} comment${card.comments.length === 1 ? '' : 's'}`}
+        >
+          <MessageSquare className="size-3" />
+          {card.comments.length}
         </span>
       ) : null}
       {card.weight !== undefined ? (
@@ -852,15 +886,11 @@ function CardMetaChips({ card }: { card?: BoardCard }) {
           {card.weight}
         </span>
       ) : null}
-      {(card.assignees || []).slice(0, 3).map((email) => (
-        <span
-          key={email}
-          title={email}
-          className="grid size-4 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8px] font-semibold uppercase text-[var(--color-accent)]"
-        >
-          {emailInitials(email)}
+      {hideAssignees || !card.assignees?.length ? null : (
+        <span className="ml-auto pl-1">
+          <AssigneeStack emails={card.assignees} />
         </span>
-      ))}
+      )}
     </span>
   );
 }
@@ -874,11 +904,25 @@ function emailInitials(email: string): string {
 
 function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: string }) {
   const done = Boolean(card?.completedAt);
+  const hasMeta =
+    card &&
+    (card.priority ||
+      card.labels?.length ||
+      card.dueAt ||
+      card.source?.threadId ||
+      card.sourceThreadId ||
+      card.source?.eventId ||
+      card.sourceCalendarEventId ||
+      card.attachments?.length ||
+      card.comments?.length ||
+      card.weight !== undefined ||
+      card.assignees?.length);
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
+      {/* pr-5 leaves room for the hover "mark done" toggle at the top-right corner. */}
       <p
         className={cn(
-          'text-[13px] font-medium leading-snug text-[var(--color-text)]',
+          'pr-5 text-[13.5px] font-semibold leading-snug text-[var(--color-text)]',
           done && 'text-[var(--color-text-faint)] line-through',
         )}
       >
@@ -889,9 +933,11 @@ function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: st
           {card.description}
         </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <CardMetaChips card={card} />
-      </div>
+      {hasMeta ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <CardMetaChips card={card} />
+        </div>
+      ) : null}
     </div>
   );
 }
