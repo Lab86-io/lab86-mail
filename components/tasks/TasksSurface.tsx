@@ -1186,39 +1186,41 @@ function CardAttachments({
         ) : null}
 
         {linkOpen && canEdit ? (
-          <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 p-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 p-2">
             <Input
               id={linkLabelId}
               value={attachName}
               onChange={(event) => setAttachName(event.target.value)}
               placeholder="Label (optional)"
-              className="h-8 bg-[var(--color-bg-elevated)] text-[12px] sm:w-40"
+              className="h-8 bg-[var(--color-bg-elevated)] text-[12px]"
             />
-            <Input
-              id={linkUrlId}
-              value={attachUrl}
-              onChange={(event) => setAttachUrl(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  submitLink();
-                } else if (event.key === 'Escape') {
-                  setLinkOpen(false);
-                }
-              }}
-              placeholder="https://example.com/page"
-              autoFocus
-              className="h-8 flex-1 bg-[var(--color-bg-elevated)] text-[12px]"
-            />
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 px-3 text-[12px]"
-              disabled={!normalizeUrl(attachUrl)}
-              onClick={submitLink}
-            >
-              Add
-            </Button>
+            <div className="flex gap-2">
+              <Input
+                id={linkUrlId}
+                value={attachUrl}
+                onChange={(event) => setAttachUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    submitLink();
+                  } else if (event.key === 'Escape') {
+                    setLinkOpen(false);
+                  }
+                }}
+                placeholder="https://example.com/page"
+                autoFocus
+                className="h-8 flex-1 bg-[var(--color-bg-elevated)] text-[12px]"
+              />
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 px-3 text-[12px]"
+                disabled={!normalizeUrl(attachUrl)}
+                onClick={submitLink}
+              >
+                Add
+              </Button>
+            </div>
           </div>
         ) : null}
 
@@ -1573,81 +1575,92 @@ function CardPanel({
         </header>
 
         <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_310px]">
-          {/* Main column — title, notes, attachments, discussion. */}
-          <div className="min-h-0 space-y-6 overflow-y-auto px-6 py-5">
-            <section className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Notes</h3>
-                {canEdit && editingNotes ? (
-                  <button
-                    type="button"
-                    onClick={() => setEditingNotes(false)}
-                    className="text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
-                  >
-                    Done
-                  </button>
-                ) : canEdit && description.trim() ? (
-                  <button
-                    type="button"
-                    onClick={() => setEditingNotes(true)}
-                    className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
-                  >
-                    <Pencil className="size-3" /> Edit
-                  </button>
-                ) : null}
-              </div>
-              {canEdit && editingNotes ? (
-                <MarkdownEditor
-                  value={description}
-                  onChange={setDescription}
-                  placeholder="Add details, context, or a checklist (markdown supported)…"
-                  mode={descriptionMode}
-                  onModeChange={setDescriptionMode}
-                  autoFocus
-                />
-              ) : description.trim() ? (
-                // biome-ignore lint/a11y/noStaticElementInteractions: double-click to edit keeps links clickable on single click
-                <div
-                  onDoubleClick={() => canEdit && setEditingNotes(true)}
-                  title={canEdit ? 'Double-click to edit' : undefined}
-                  className={cn(
-                    'rounded-xl border border-transparent px-3.5 py-3 transition-colors',
-                    canEdit &&
-                      'cursor-text hover:border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)]/40',
-                  )}
-                >
-                  <Markdown className={markdownClass}>{description}</Markdown>
-                </div>
-              ) : canEdit ? (
-                <button
-                  type="button"
-                  onClick={() => setEditingNotes(true)}
-                  className="flex w-full items-center gap-2 rounded-xl border border-dashed border-[var(--color-border)] px-3.5 py-3 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)]"
-                >
-                  <Pencil className="size-3.5 shrink-0" /> Add details, context, or a checklist…
-                </button>
-              ) : (
-                <p className="px-0.5 text-[13px] text-[var(--color-text-faint)]">No notes.</p>
-              )}
-            </section>
-
-            <CardAttachments
-              attachments={card.attachments || []}
-              canEdit={canEdit}
-              uploading={uploading}
-              onUploadFiles={uploadFiles}
-              onAddLink={addAttachment}
-              onRemove={removeAttachment}
-            />
-
-            {/* Activity + comments as one timeline. The spine runs through the
-                centre of each node's avatar and connects down into the composer,
-                which is itself the final node. */}
-            <section className="space-y-3 pb-2">
-              <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">
-                Activity{timeline.length ? ` · ${timeline.length}` : ''}
-              </h3>
+          {/* Main column — one continuous timeline: the description card heads
+              the spine, comments + activity hang off it, and the composer card
+              terminates it. The connecting line never breaks. */}
+          <div className="min-h-0 overflow-y-auto px-6 py-5">
+            <section className="pb-2">
               <ol className="space-y-0">
+                {/* Description — the first node, wrapped in its own card so it's
+                    unmistakably the description. View-first: double-click to edit. */}
+                <li className="relative flex gap-3 pb-4">
+                  <span
+                    aria-hidden
+                    className="absolute bottom-0 left-[14px] top-4 w-px -translate-x-1/2 bg-[var(--color-border)]"
+                  />
+                  <span
+                    className="relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]"
+                    aria-hidden
+                  >
+                    <FileText className="size-3.5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {canEdit && editingNotes ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
+                            Description
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditingNotes(false)}
+                            className="text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
+                          >
+                            Done
+                          </button>
+                        </div>
+                        <MarkdownEditor
+                          value={description}
+                          onChange={setDescription}
+                          placeholder="Add details, context, or a checklist (markdown supported)…"
+                          mode={descriptionMode}
+                          onModeChange={setDescriptionMode}
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40">
+                        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3.5 py-2">
+                          <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-faint)]">
+                            Description
+                          </span>
+                          {canEdit && description.trim() ? (
+                            <button
+                              type="button"
+                              onClick={() => setEditingNotes(true)}
+                              className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
+                            >
+                              <Pencil className="size-3" /> Edit
+                            </button>
+                          ) : null}
+                        </div>
+                        {description.trim() ? (
+                          // biome-ignore lint/a11y/noStaticElementInteractions: double-click to edit keeps links clickable on single click
+                          <div
+                            onDoubleClick={() => canEdit && setEditingNotes(true)}
+                            title={canEdit ? 'Double-click to edit' : undefined}
+                            className={cn('px-3.5 py-3', canEdit && 'cursor-text')}
+                          >
+                            <Markdown className={markdownClass}>{description}</Markdown>
+                          </div>
+                        ) : canEdit ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingNotes(true)}
+                            className="flex w-full items-center gap-2 px-3.5 py-3 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text-muted)]"
+                          >
+                            <Pencil className="size-3.5 shrink-0" /> Add details, context, or a checklist…
+                          </button>
+                        ) : (
+                          <p className="px-3.5 py-3 text-[13px] text-[var(--color-text-faint)]">
+                            No description.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </li>
+
                 {timeline.map((node) => (
                   <li key={node.id} className="relative flex gap-3 pb-4">
                     {/* Spine segment: centred on the avatar, drawn behind it (z-0),
@@ -1891,6 +1904,15 @@ function CardPanel({
                 </p>
               )}
             </div>
+
+            <CardAttachments
+              attachments={card.attachments || []}
+              canEdit={canEdit}
+              uploading={uploading}
+              onUploadFiles={uploadFiles}
+              onAddLink={addAttachment}
+              onRemove={removeAttachment}
+            />
 
             {card.source?.threadId ? (
               <div className="space-y-1.5">
