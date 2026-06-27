@@ -13,7 +13,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 
 const calendarWeekEventCardVariants = cva(
-  'relative flex w-full min-w-0 select-none flex-col gap-0.5 overflow-hidden rounded-md border px-2 py-1.5 text-left text-xs focus-visible:outline-offset-2',
+  'relative flex w-full min-w-0 select-none flex-col gap-0.5 overflow-hidden rounded-lg border px-2 py-1.5 text-left text-xs focus-visible:outline-offset-2',
   {
     variants: {
       color: {

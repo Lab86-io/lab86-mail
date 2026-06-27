@@ -1,4 +1,4 @@
-import { addDays, format, isSameDay, parseISO, startOfWeek } from 'date-fns';
+import { addDays, format, isSameDay, isToday, parseISO, startOfWeek } from 'date-fns';
 import { motion } from 'motion/react';
 import { useEffect, useRef } from 'react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
@@ -11,6 +11,7 @@ import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { RenderGroupedEvents } from '@/components/calendar/engine/render-grouped-events';
 import { WeekViewMultiDayEventsRow } from '@/components/calendar/engine/week-view-multi-day-events-row';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
 
 interface IProps {
   singleDayEvents: IEvent[];
@@ -103,13 +104,35 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
                 >
                   {/* Mobile: Show only day abbreviation and number */}
                   <span className="block sm:hidden">
-                    {format(day, 'EEE').charAt(0)}
-                    <span className="block font-semibold text-t-secondary text-xs">{format(day, 'd')}</span>
+                    <span className={cn(isToday(day) && 'text-[var(--color-accent)]')}>
+                      {format(day, 'EEE').charAt(0)}
+                    </span>
+                    <span
+                      className={cn(
+                        'mx-auto mt-0.5 grid size-5 place-items-center rounded-full text-xs font-semibold',
+                        isToday(day)
+                          ? 'bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
+                          : 'text-t-secondary',
+                      )}
+                    >
+                      {format(day, 'd')}
+                    </span>
                   </span>
-                  {/* Desktop: Show full format */}
-                  <span className="hidden sm:inline">
-                    {format(day, 'EE')}{' '}
-                    <span className="ml-1 font-semibold text-t-secondary">{format(day, 'd')}</span>
+                  {/* Desktop: weekday + date, with today called out like Amie/Motion */}
+                  <span className="hidden items-center justify-center gap-1.5 sm:inline-flex">
+                    <span className={cn(isToday(day) && 'font-semibold text-[var(--color-accent)]')}>
+                      {format(day, 'EE')}
+                    </span>
+                    <span
+                      className={cn(
+                        'grid size-6 place-items-center rounded-full font-semibold tabular-nums',
+                        isToday(day)
+                          ? 'bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
+                          : 'text-t-secondary',
+                      )}
+                    >
+                      {format(day, 'd')}
+                    </span>
                   </span>
                 </motion.span>
               ))}

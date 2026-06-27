@@ -895,6 +895,15 @@ function CardMetaChips({ card, hideAssignees }: { card?: BoardCard; hideAssignee
   );
 }
 
+function formatTimelineTime(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function emailInitials(email: string): string {
   const name = email.split('@')[0] || email;
   const parts = name.split(/[.\-_]+/).filter(Boolean);
@@ -1334,12 +1343,34 @@ function CardPanel({
   const [editingNotes, setEditingNotes] = useState(false);
   const [composingComment, setComposingComment] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [showActivity, setShowActivity] = useState(false);
   const [portalReady, setPortalReady] = useState(false);
   const onCloseRef = useRef(onClose);
   const done = Boolean(card.completedAt);
 
   onCloseRef.current = onClose;
+
+  // Comments and activity events are a single chronological timeline (a comment
+  // is just one kind of timeline node); oldest first so the newest sits next to
+  // the composer at the bottom.
+  type TimelineNode =
+    | { kind: 'comment'; id: string; who?: string; at: number; body: string }
+    | { kind: 'activity'; id: string; who?: string; at: number; action: string; detail?: string };
+  const timeline = useMemo<TimelineNode[]>(() => {
+    const nodes: TimelineNode[] = [];
+    for (const c of card.comments || [])
+      nodes.push({ kind: 'comment', id: `c-${c.id}`, who: c.authorEmail, at: c.createdAt, body: c.body });
+    for (const a of card.activity || [])
+      nodes.push({
+        kind: 'activity',
+        id: `a-${a.id}`,
+        who: a.actorEmail,
+        at: a.createdAt,
+        action: a.action,
+        detail: a.detail,
+      });
+    nodes.sort((x, y) => x.at - y.at);
+    return nodes;
+  }, [card.comments, card.activity]);
 
   // Strip the read-time-resolved URL off stored files so we never persist a
   // serving URL next to its storage id (it's re-resolved on every read).
@@ -1457,16 +1488,21 @@ function CardPanel({
         exit={{ opacity: 0, x: 56 }}
         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       >
-        <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-5 py-3">
-          <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">
-            Card
-          </span>
+        <header className="flex items-center gap-3 border-b border-[var(--color-border)] px-5 py-3">
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            disabled={!canEdit}
+            placeholder="Card title"
+            aria-label="Card title"
+            className="min-w-0 flex-1 border-none bg-transparent font-display text-[16px] font-semibold leading-tight text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] disabled:opacity-100"
+          />
           {done ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-accent)]">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-accent)]">
               Done
             </span>
           ) : null}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {canEdit ? (
               <Button type="button" size="sm" className="h-8 px-3 text-[12px]" onClick={save}>
                 Save
@@ -1539,14 +1575,6 @@ function CardPanel({
         <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_310px]">
           {/* Main column — title, notes, attachments, discussion. */}
           <div className="min-h-0 space-y-6 overflow-y-auto px-6 py-5">
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              disabled={!canEdit}
-              placeholder="Card title"
-              className="w-full border-none bg-transparent font-display text-[22px] font-semibold leading-snug text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] disabled:opacity-100"
-            />
-
             <section className="space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Notes</h3>
@@ -1612,126 +1640,136 @@ function CardPanel({
               onRemove={removeAttachment}
             />
 
-            <section className="space-y-2.5">
-              <div className="flex items-center gap-2">
-                <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">
-                  Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
-                </h3>
-              </div>
-              {card.comments?.length ? (
-                <div className="relative space-y-3 pl-4 before:absolute before:bottom-2 before:left-[0.72rem] before:top-2 before:w-px before:bg-[var(--color-border)]">
-                  {card.comments.map((comment) => (
-                    <article key={comment.id} className="relative flex gap-3">
-                      <span className="relative z-10 mt-2 grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[9px] font-semibold uppercase text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]">
-                        {emailInitials(comment.authorEmail || '?')}
-                      </span>
+            {/* Activity + comments as one timeline. The spine runs through the
+                centre of each node's avatar and connects down into the composer,
+                which is itself the final node. */}
+            <section className="space-y-3 pb-2">
+              <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">
+                Activity{timeline.length ? ` · ${timeline.length}` : ''}
+              </h3>
+              <ol className="space-y-0">
+                {timeline.map((node) => (
+                  <li key={node.id} className="relative flex gap-3 pb-4">
+                    {/* Spine segment: centred on the avatar, drawn behind it (z-0),
+                        running the full row height so it meets the next node. */}
+                    <span
+                      aria-hidden
+                      className="absolute bottom-0 left-[14px] top-0 w-px -translate-x-1/2 bg-[var(--color-border)]"
+                    />
+                    <span
+                      className={cn(
+                        'relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-[9px] font-semibold uppercase shadow-[var(--shadow-soft)]',
+                        node.kind === 'comment'
+                          ? 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)]'
+                          : 'border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-text-faint)]',
+                      )}
+                    >
+                      {emailInitials(node.who || '?')}
+                    </span>
+                    {node.kind === 'comment' ? (
                       <div className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 px-3 py-2.5">
                         <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px]">
                           <span className="font-medium text-[var(--color-text-muted)]">
-                            {comment.authorEmail || 'someone'}
+                            {node.who || 'someone'}
                           </span>
                           <span className="text-[var(--color-text-faint)]">
-                            {new Date(comment.createdAt).toLocaleString(undefined, {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: 'numeric',
-                              minute: '2-digit',
-                            })}
+                            {formatTimelineTime(node.at)}
                           </span>
                         </div>
-                        <Markdown className={markdownClass}>{comment.body}</Markdown>
+                        <Markdown className={markdownClass}>{node.body}</Markdown>
                       </div>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-              {/* Everyone with access can comment — viewers included. View-first: a
-                  resting prompt that expands into the markdown editor on click. */}
-              {composingComment ? (
-                <form
-                  className="space-y-2"
-                  onSubmit={async (event) => {
-                    event.preventDefault();
-                    const body = commentDraft.trim();
-                    if (!body) return;
-                    try {
-                      await addComment({ cardId: card.cardId, body });
-                      setCommentDraft('');
-                      setComposingComment(false);
-                    } catch (err: any) {
-                      toast.error(err?.message || 'Could not comment');
-                    }
-                  }}
-                >
-                  <MarkdownEditor
-                    value={commentDraft}
-                    onChange={setCommentDraft}
-                    placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
-                    minHeight="min-h-24"
-                    mode={commentMode}
-                    onModeChange={setCommentMode}
-                    autoFocus
-                  />
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-9 px-3 text-[12px]"
-                      onClick={() => {
-                        setComposingComment(false);
-                        setCommentDraft('');
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="submit"
-                      size="sm"
-                      className="h-9 px-3 text-[12px]"
-                      disabled={!commentDraft.trim()}
-                    >
-                      Comment
-                    </Button>
-                  </div>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setComposingComment(true)}
-                  className="flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-3.5 py-2.5 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)]"
-                >
-                  <MessageSquare className="size-3.5 shrink-0" />
-                  {role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
-                </button>
-              )}
-            </section>
+                    ) : (
+                      <p className="min-w-0 flex-1 self-center text-[11.5px] leading-snug text-[var(--color-text-faint)]">
+                        <span className="font-medium text-[var(--color-text-muted)]">
+                          {node.who || 'someone'}
+                        </span>{' '}
+                        {node.action}
+                        {node.detail ? ` — ${node.detail}` : ''}
+                        <span className="px-1 text-[var(--color-text-faint)]">·</span>
+                        {formatTimelineTime(node.at)}
+                      </p>
+                    )}
+                  </li>
+                ))}
 
-            <section className="space-y-2 pb-2">
-              <button
-                type="button"
-                onClick={() => setShowActivity(!showActivity)}
-                className="inline-flex text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              >
-                Activity{card.activity?.length ? ` · ${card.activity.length}` : ''}
-              </button>
-              {showActivity ? (
-                <ul className="space-y-1 border-l border-[var(--color-border)] pl-3">
-                  {[...(card.activity || [])].reverse().map((entry) => (
-                    <li key={entry.id} className="text-[11px] text-[var(--color-text-faint)]">
-                      <span className="text-[var(--color-text-muted)]">{entry.actorEmail || 'someone'}</span>{' '}
-                      {entry.action}
-                      {entry.detail ? ` — ${entry.detail}` : ''} ·{' '}
-                      {new Date(entry.createdAt).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+                {/* Composer = the terminal node. Everyone with access can comment
+                    (viewers included); view-first, it rests as a prompt. */}
+                <li className="relative flex gap-3">
+                  {/* Incoming spine stub so the timeline connects into the composer
+                      avatar (only drawn when there are nodes above it). */}
+                  {timeline.length ? (
+                    <span
+                      aria-hidden
+                      className="absolute left-[14px] top-0 h-4 w-px -translate-x-1/2 bg-[var(--color-border)]"
+                    />
+                  ) : null}
+                  <span
+                    className="relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-faint)] shadow-[var(--shadow-soft)]"
+                    aria-hidden
+                  >
+                    <MessageSquare className="size-3.5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {composingComment ? (
+                      <form
+                        className="space-y-2"
+                        onSubmit={async (event) => {
+                          event.preventDefault();
+                          const body = commentDraft.trim();
+                          if (!body) return;
+                          try {
+                            await addComment({ cardId: card.cardId, body });
+                            setCommentDraft('');
+                            setComposingComment(false);
+                          } catch (err: any) {
+                            toast.error(err?.message || 'Could not comment');
+                          }
+                        }}
+                      >
+                        <MarkdownEditor
+                          value={commentDraft}
+                          onChange={setCommentDraft}
+                          placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
+                          minHeight="min-h-24"
+                          mode={commentMode}
+                          onModeChange={setCommentMode}
+                          autoFocus
+                        />
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-9 px-3 text-[12px]"
+                            onClick={() => {
+                              setComposingComment(false);
+                              setCommentDraft('');
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            className="h-9 px-3 text-[12px]"
+                            disabled={!commentDraft.trim()}
+                          >
+                            Comment
+                          </Button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setComposingComment(true)}
+                        className="flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-3.5 py-2.5 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)]"
+                      >
+                        {role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              </ol>
             </section>
           </div>
 
