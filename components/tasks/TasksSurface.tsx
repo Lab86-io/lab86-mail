@@ -16,6 +16,7 @@ import {
   LayoutList,
   Link2,
   Mail,
+  MessageSquare,
   MoreHorizontal,
   Paperclip,
   Pencil,
@@ -431,9 +432,9 @@ function BoardView({ boardId }: { boardId: string }) {
                 <KanbanBoard
                   id={column.id}
                   key={column.id}
-                  className="h-full w-72 shrink-0 bg-[var(--color-bg-subtle)]"
+                  className="h-full w-[300px] shrink-0 divide-y-0 rounded-xl border-[var(--color-border)] bg-[var(--color-bg-subtle)]/45 shadow-none"
                 >
-                  <KanbanHeader className="flex items-center px-3 py-2">
+                  <KanbanHeader className="flex items-center px-3 pb-1.5 pt-3">
                     {canEdit ? (
                       <KanbanColumnHandle
                         className="mr-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text-muted)]"
@@ -478,7 +479,7 @@ function BoardView({ boardId }: { boardId: string }) {
                       ...columns.map((c: any) => items.filter((i: any) => i.column === c.id).length),
                     )}
                   />
-                  <KanbanCards id={column.id}>
+                  <KanbanCards id={column.id} className="gap-2.5 px-2.5">
                     {(item: any) => {
                       const card = cardsById.get(item.id);
                       const done = Boolean(card?.completedAt);
@@ -487,7 +488,11 @@ function BoardView({ boardId }: { boardId: string }) {
                           key={item.id}
                           {...item}
                           onCardClick={() => setOpenCardId(item.id)}
-                          className={cn('group', card?.priority ? PRIORITY_EDGE[card.priority] : undefined)}
+                          className={cn(
+                            'group rounded-xl border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)] transition-[transform,box-shadow,border-color] duration-150 hover:-translate-y-px hover:border-[var(--color-border-strong)] hover:shadow-md',
+                            done && 'opacity-75',
+                            card?.priority ? PRIORITY_EDGE[card.priority] : undefined,
+                          )}
                         >
                           {/* Native button = keyboard activation for free.
                               Pointer taps still route through the wrapper's
@@ -539,7 +544,7 @@ function BoardView({ boardId }: { boardId: string }) {
                     <button
                       type="button"
                       onClick={() => setCreateInColumn(column.id)}
-                      className="mx-2 mb-2 mt-auto inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 text-[12.5px] font-medium text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
+                      className="mx-2 mb-2 mt-auto inline-flex h-8 items-center justify-start gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
                     >
                       <Plus className="size-3.5" /> Add card
                     </button>
@@ -792,7 +797,38 @@ function ColumnLoadBar({ count, max }: { count: number; max: number }) {
   );
 }
 
-function CardMetaChips({ card }: { card?: BoardCard }) {
+// Overlapping initials avatars (Linear/ClickUp idiom). The ring colour matches
+// the card surface so the stack reads as layered chips, not floating dots.
+function AssigneeStack({ emails, max = 3 }: { emails?: string[]; max?: number }) {
+  if (!emails?.length) return null;
+  const shown = emails.slice(0, max);
+  const extra = emails.length - shown.length;
+  return (
+    <span className="flex shrink-0 items-center -space-x-1.5">
+      <span className="sr-only">Assigned to {emails.join(', ')}</span>
+      {shown.map((email) => (
+        <span
+          key={email}
+          title={email}
+          aria-hidden="true"
+          className="grid size-5 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8.5px] font-semibold uppercase text-[var(--color-accent)] ring-2 ring-[var(--color-bg-elevated)]"
+        >
+          {emailInitials(email)}
+        </span>
+      ))}
+      {extra > 0 ? (
+        <span
+          aria-hidden="true"
+          className="grid size-5 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8.5px] font-semibold tabular-nums text-[var(--color-text-muted)] ring-2 ring-[var(--color-bg-elevated)]"
+        >
+          +{extra}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function CardMetaChips({ card, hideAssignees }: { card?: BoardCard; hideAssignees?: boolean }) {
   if (!card) return null;
   const overdue = card.dueAt && !card.completedAt && card.dueAt < Date.now();
   return (
@@ -839,8 +875,12 @@ function CardMetaChips({ card }: { card?: BoardCard }) {
         <Paperclip className="size-3 text-[var(--color-text-faint)]" aria-label="Has attachments" />
       ) : null}
       {card.comments?.length ? (
-        <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">
-          {card.comments.length} comment{card.comments.length === 1 ? '' : 's'}
+        <span
+          className="inline-flex items-center gap-1 text-[10.5px] tabular-nums text-[var(--color-text-faint)]"
+          title={`${card.comments.length} comment${card.comments.length === 1 ? '' : 's'}`}
+        >
+          <MessageSquare className="size-3" />
+          {card.comments.length}
         </span>
       ) : null}
       {card.weight !== undefined ? (
@@ -851,17 +891,22 @@ function CardMetaChips({ card }: { card?: BoardCard }) {
           {card.weight}
         </span>
       ) : null}
-      {(card.assignees || []).slice(0, 3).map((email) => (
-        <span
-          key={email}
-          title={email}
-          className="grid size-4 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8px] font-semibold uppercase text-[var(--color-accent)]"
-        >
-          {emailInitials(email)}
+      {hideAssignees || !card.assignees?.length ? null : (
+        <span className="ml-auto pl-1">
+          <AssigneeStack emails={card.assignees} />
         </span>
-      ))}
+      )}
     </span>
   );
+}
+
+function formatTimelineTime(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function emailInitials(email: string): string {
@@ -873,11 +918,25 @@ function emailInitials(email: string): string {
 
 function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: string }) {
   const done = Boolean(card?.completedAt);
+  const hasMeta =
+    card &&
+    (card.priority ||
+      card.labels?.length ||
+      card.dueAt ||
+      card.source?.threadId ||
+      card.sourceThreadId ||
+      card.source?.eventId ||
+      card.sourceCalendarEventId ||
+      card.attachments?.length ||
+      card.comments?.length ||
+      card.weight !== undefined ||
+      card.assignees?.length);
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
+      {/* pr-5 leaves room for the hover "mark done" toggle at the top-right corner. */}
       <p
         className={cn(
-          'text-[13px] font-medium leading-snug text-[var(--color-text)]',
+          'pr-5 text-[13.5px] font-semibold leading-snug text-[var(--color-text)]',
           done && 'text-[var(--color-text-faint)] line-through',
         )}
       >
@@ -888,9 +947,11 @@ function CardFace({ card, fallbackTitle }: { card?: BoardCard; fallbackTitle: st
           {card.description}
         </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <CardMetaChips card={card} />
-      </div>
+      {hasMeta ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <CardMetaChips card={card} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -962,6 +1023,7 @@ function CardAttachments({
   const [attachName, setAttachName] = useState('');
   const [attachUrl, setAttachUrl] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const linkLabelId = useId();
   const linkUrlId = useId();
@@ -972,197 +1034,225 @@ function CardAttachments({
     onAddLink({ name: attachName.trim() || url, url });
     setAttachName('');
     setAttachUrl('');
+    setLinkOpen(false);
   };
 
   return (
     <section className="space-y-2.5">
-      <div className="flex items-center gap-2">
-        <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Attachments</h3>
-        {attachments.length ? (
-          <span className="rounded-full bg-[var(--color-bg-muted)] px-1.5 text-[10px] text-[var(--color-text-faint)]">
-            {attachments.length}
-          </span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Attachments</h3>
+          {attachments.length ? (
+            <span className="rounded-full bg-[var(--color-bg-muted)] px-1.5 text-[10px] text-[var(--color-text-faint)]">
+              {attachments.length}
+            </span>
+          ) : null}
+        </div>
+        {canEdit ? (
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              title="Attach a file"
+              className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:opacity-60"
+            >
+              <Paperclip className="size-3.5" />
+              {uploading ? 'Uploading…' : 'Attach'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLinkOpen((open) => !open)}
+              title="Add a link"
+              className={cn(
+                'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[11.5px] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]',
+                linkOpen ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]',
+              )}
+            >
+              <Link2 className="size-3.5" /> Link
+            </button>
+          </div>
         ) : null}
       </div>
 
-      {attachments.length ? (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {attachments.map((attachment, index) => {
-            const { Icon, kind, isImage } = attachmentVisual(attachment);
-            const meta = [kind, formatBytes(attachment.size)].filter(Boolean).join(' · ');
-            return (
-              <li
-                key={attachment.storageId || attachment.url || `${attachment.name}-${index}`}
-                className="group relative flex items-center gap-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2 transition-colors hover:border-[var(--color-accent)]/60"
-              >
-                {isImage && attachment.url ? (
-                  // biome-ignore lint/performance/noImgElement: storage/remote thumbnail, not a static asset
-                  <img
-                    src={attachment.url}
-                    alt={attachment.name}
-                    className="size-11 shrink-0 rounded-lg object-cover"
-                  />
-                ) : (
-                  <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
-                    <Icon className="size-5" />
-                  </span>
-                )}
-                <div className="min-w-0 flex-1">
-                  {attachment.url ? (
-                    <a
-                      href={attachment.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="block truncate text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
-                      title={attachment.name}
-                    >
-                      {attachment.name || attachment.url}
-                    </a>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          const files = Array.from(event.target.files || []);
+          if (files.length) onUploadFiles(files);
+          event.target.value = '';
+        }}
+      />
+
+      {/* The whole list region is a drop target; the dashed overlay only shows while dragging. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop dropzone, the Attach button handles the click path */}
+      <div
+        onDragOver={
+          canEdit
+            ? (event) => {
+                event.preventDefault();
+                setDragOver(true);
+              }
+            : undefined
+        }
+        onDragLeave={canEdit ? () => setDragOver(false) : undefined}
+        onDrop={
+          canEdit
+            ? (event) => {
+                event.preventDefault();
+                setDragOver(false);
+                const files = Array.from(event.dataTransfer.files || []);
+                if (files.length) onUploadFiles(files);
+              }
+            : undefined
+        }
+        className={cn(
+          'relative space-y-1.5 rounded-xl transition-colors',
+          dragOver && 'outline-2 outline-dashed -outline-offset-2 outline-[var(--color-accent)]',
+        )}
+      >
+        {attachments.length ? (
+          <ul className="space-y-1.5">
+            {attachments.map((attachment, index) => {
+              const { Icon, kind, isImage } = attachmentVisual(attachment);
+              const meta = [kind, formatBytes(attachment.size)].filter(Boolean).join(' · ');
+              return (
+                <li
+                  key={attachment.storageId || attachment.url || `${attachment.name}-${index}`}
+                  className="group relative flex items-center gap-3 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 p-2 transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-subtle)]"
+                >
+                  {isImage && attachment.url ? (
+                    // biome-ignore lint/performance/noImgElement: storage/remote thumbnail, not a static asset
+                    <img
+                      src={attachment.url}
+                      alt={attachment.name}
+                      className="size-10 shrink-0 rounded-md object-cover"
+                    />
                   ) : (
-                    <span className="block truncate text-[12.5px] font-medium text-[var(--color-text)]">
-                      {attachment.name}
+                    <span className="grid size-10 shrink-0 place-items-center rounded-md bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+                      <Icon className="size-[18px]" />
                     </span>
                   )}
-                  <span className="text-[10.5px] uppercase tracking-wide text-[var(--color-text-faint)]">
-                    {meta}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  {attachment.url ? (
-                    <a
-                      href={attachment.url}
-                      {...(attachment.storageId
-                        ? { download: attachment.name }
-                        : { target: '_blank', rel: 'noreferrer noopener' })}
-                      className="grid size-6 place-items-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-                      title={attachment.storageId ? 'Download' : 'Open'}
-                    >
-                      {attachment.storageId ? (
-                        <Download className="size-3.5" />
-                      ) : (
-                        <ExternalLink className="size-3.5" />
-                      )}
-                    </a>
-                  ) : null}
-                  {canEdit ? (
-                    <button
-                      type="button"
-                      onClick={() => onRemove(index)}
-                      className="grid size-6 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-danger)] group-hover:opacity-100"
-                      title="Remove attachment"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
+                  <div className="min-w-0 flex-1">
+                    {attachment.url ? (
+                      <a
+                        href={attachment.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="block truncate text-[12.5px] font-medium text-[var(--color-text)] hover:text-[var(--color-accent)]"
+                        title={attachment.name}
+                      >
+                        {attachment.name || attachment.url}
+                      </a>
+                    ) : (
+                      <span className="block truncate text-[12.5px] font-medium text-[var(--color-text)]">
+                        {attachment.name}
+                      </span>
+                    )}
+                    {meta ? (
+                      <span className="text-[10.5px] text-[var(--color-text-faint)]">{meta}</span>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    {attachment.url ? (
+                      <a
+                        href={attachment.url}
+                        {...(attachment.storageId
+                          ? { download: attachment.name }
+                          : { target: '_blank', rel: 'noreferrer noopener' })}
+                        className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+                        title={attachment.storageId ? 'Download' : 'Open'}
+                      >
+                        {attachment.storageId ? (
+                          <Download className="size-3.5" />
+                        ) : (
+                          <ExternalLink className="size-3.5" />
+                        )}
+                      </a>
+                    ) : null}
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        onClick={() => onRemove(index)}
+                        className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-danger)] focus-visible:opacity-100 group-hover:opacity-100"
+                        title="Remove attachment"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
 
-      {canEdit ? (
-        <>
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop dropzone, click delegates to the file input button */}
+        {linkOpen && canEdit ? (
+          // biome-ignore lint/a11y/noStaticElementInteractions: scopes Escape for every control in the inline form so it doesn't close the whole drawer
           <div
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragOver(true);
+            className="flex flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 p-2"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                setLinkOpen(false);
+              }
             }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragOver(false);
-              const files = Array.from(event.dataTransfer.files || []);
-              if (files.length) onUploadFiles(files);
-            }}
-            className={cn(
-              'flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed px-3 py-4 text-center transition-colors',
-              dragOver
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                : 'border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40',
-            )}
           >
-            <UploadCloud
-              className={cn(
-                'size-5',
-                dragOver ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
-              )}
+            <label htmlFor={linkLabelId} className="sr-only">
+              Link label
+            </label>
+            <Input
+              id={linkLabelId}
+              value={attachName}
+              onChange={(event) => setAttachName(event.target.value)}
+              placeholder="Label (optional)"
+              className="h-8 bg-[var(--color-bg-elevated)] text-[12px]"
             />
-            <p className="text-[12px] text-[var(--color-text-muted)]">
-              Drop files here, or{' '}
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="font-medium text-[var(--color-accent)] hover:underline disabled:opacity-60"
-              >
-                {uploading ? 'uploading…' : 'browse'}
-              </button>
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(event) => {
-                const files = Array.from(event.target.files || []);
-                if (files.length) onUploadFiles(files);
-                event.target.value = '';
-              }}
-            />
-          </div>
-
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/45 p-2.5">
-            <div className="mb-2 flex items-center justify-between">
-              <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                Add link
-              </h4>
-              <span className="text-[10.5px] text-[var(--color-text-faint)]">URL attachment</span>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-[minmax(8rem,0.35fr)_minmax(0,1fr)_auto]">
-              <label htmlFor={linkLabelId} className="space-y-1">
-                <span className="text-[10.5px] font-medium text-[var(--color-text-muted)]">Link label</span>
-                <Input
-                  id={linkLabelId}
-                  value={attachName}
-                  onChange={(event) => setAttachName(event.target.value)}
-                  placeholder="Optional"
-                  className="h-9 bg-[var(--color-bg-elevated)] text-[12px]"
-                />
-              </label>
-              <label htmlFor={linkUrlId} className="space-y-1">
-                <span className="text-[10.5px] font-medium text-[var(--color-text-muted)]">Link URL</span>
-                <Input
-                  id={linkUrlId}
-                  value={attachUrl}
-                  onChange={(event) => setAttachUrl(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      submitLink();
-                    }
-                  }}
-                  placeholder="https://example.com/page"
-                  className="h-9 bg-[var(--color-bg-elevated)] text-[12px]"
-                />
-              </label>
+            <label htmlFor={linkUrlId} className="sr-only">
+              Link URL
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id={linkUrlId}
+                value={attachUrl}
+                onChange={(event) => setAttachUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    submitLink();
+                  }
+                }}
+                placeholder="https://example.com/page"
+                autoFocus
+                className="h-8 flex-1 bg-[var(--color-bg-elevated)] text-[12px]"
+              />
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                className="h-9 self-end px-3 text-[12px]"
+                className="h-8 px-3 text-[12px]"
                 disabled={!normalizeUrl(attachUrl)}
                 onClick={submitLink}
               >
-                Add link
+                Add
               </Button>
             </div>
           </div>
-        </>
-      ) : !attachments.length ? (
-        <p className="text-[11.5px] text-[var(--color-text-faint)]">Nothing attached.</p>
-      ) : null}
+        ) : null}
+
+        {!attachments.length && !linkOpen ? (
+          canEdit ? (
+            <div className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-3 py-2.5 text-[12px] text-[var(--color-text-faint)]">
+              <UploadCloud className="size-3.5 shrink-0" />
+              Drag files here, or use Attach / Link above.
+            </div>
+          ) : (
+            <p className="text-[11.5px] text-[var(--color-text-faint)]">Nothing attached.</p>
+          )
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -1180,6 +1270,7 @@ function MarkdownEditor({
   minHeight = 'min-h-40',
   mode,
   onModeChange,
+  autoFocus,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -1188,6 +1279,7 @@ function MarkdownEditor({
   minHeight?: string;
   mode: MarkdownMode;
   onModeChange: (mode: MarkdownMode) => void;
+  autoFocus?: boolean;
 }) {
   const showWrite = !disabled && mode === 'write';
   return (
@@ -1214,6 +1306,8 @@ function MarkdownEditor({
       </div>
       {showWrite ? (
         <textarea
+          // biome-ignore lint/a11y/noAutofocus: editor mounts only after an explicit edit affordance is clicked
+          autoFocus={autoFocus}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
@@ -1266,13 +1360,52 @@ function CardPanel({
   const [commentDraft, setCommentDraft] = useState('');
   const [descriptionMode, setDescriptionMode] = useState<MarkdownMode>('write');
   const [commentMode, setCommentMode] = useState<MarkdownMode>('write');
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [composingComment, setComposingComment] = useState(false);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [showActivity, setShowActivity] = useState(false);
   const [portalReady, setPortalReady] = useState(false);
   const onCloseRef = useRef(onClose);
   const done = Boolean(card.completedAt);
 
   onCloseRef.current = onClose;
+
+  // Comments and activity events are a single chronological timeline (a comment
+  // is just one kind of timeline node); oldest first so the newest sits next to
+  // the composer at the bottom.
+  type TimelineNode =
+    | { kind: 'comment'; id: string; who?: string; at: number; body: string }
+    | { kind: 'activity'; id: string; who?: string; at: number; action: string; detail?: string };
+  const timeline = useMemo<TimelineNode[]>(() => {
+    const nodes: TimelineNode[] = [];
+    for (const c of card.comments || [])
+      nodes.push({ kind: 'comment', id: `c-${c.id}`, who: c.authorEmail, at: c.createdAt, body: c.body });
+    // `commented` activities mirror entries already in card.comments, so skip
+    // them here to avoid rendering every comment twice in the timeline.
+    for (const a of card.activity || [])
+      if (a.action !== 'commented')
+        nodes.push({
+          kind: 'activity',
+          id: `a-${a.id}`,
+          who: a.actorEmail,
+          at: a.createdAt,
+          action: a.action,
+          detail: a.detail,
+        });
+    nodes.sort((x, y) => x.at - y.at);
+    return nodes;
+  }, [card.comments, card.activity]);
+
+  // Always (re)enter editors in write mode — a leftover `preview` from a prior
+  // session would otherwise reopen read-only and the autofocus never engages.
+  const openNotesEditor = () => {
+    setDescriptionMode('write');
+    setEditingNotes(true);
+  };
+  const openComposer = () => {
+    setCommentMode('write');
+    setComposingComment(true);
+  };
 
   // Strip the read-time-resolved URL off stored files so we never persist a
   // serving URL next to its storage id (it's re-resolved on every read).
@@ -1390,16 +1523,21 @@ function CardPanel({
         exit={{ opacity: 0, x: 56 }}
         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       >
-        <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-5 py-3">
-          <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">
-            Card
-          </span>
+        <header className="flex items-center gap-3 border-b border-[var(--color-border)] px-5 py-3">
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            disabled={!canEdit}
+            placeholder="Card title"
+            aria-label="Card title"
+            className="min-w-0 flex-1 border-none bg-transparent font-display text-[16px] font-semibold leading-tight text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] disabled:opacity-100"
+          />
           {done ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-accent)]">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-accent)]">
               Done
             </span>
           ) : null}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {canEdit ? (
               <Button type="button" size="sm" className="h-8 px-3 text-[12px]" onClick={save}>
                 Save
@@ -1470,126 +1608,217 @@ function CardPanel({
         </header>
 
         <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_310px]">
-          {/* Main column — title, notes, attachments, discussion. */}
-          <div className="min-h-0 space-y-6 overflow-y-auto px-6 py-5">
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              disabled={!canEdit}
-              placeholder="Card title"
-              className="w-full border-none bg-transparent font-display text-[22px] font-semibold leading-snug text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] disabled:opacity-100"
-            />
+          {/* Main column — one continuous timeline: the description card heads
+              the spine, comments + activity hang off it, and the composer card
+              terminates it. The connecting line never breaks. */}
+          <div className="min-h-0 overflow-y-auto px-6 py-5">
+            <section className="pb-2">
+              <ol className="space-y-0">
+                {/* Description — the first node, wrapped in its own card so it's
+                    unmistakably the description. View-first: double-click to edit. */}
+                <li className="relative flex gap-3 pb-4">
+                  <span
+                    aria-hidden
+                    className="absolute bottom-0 left-[14px] top-4 w-px -translate-x-1/2 bg-[var(--color-border)]"
+                  />
+                  <span
+                    className="relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]"
+                    aria-hidden
+                  >
+                    <FileText className="size-3.5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {canEdit && editingNotes ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
+                            Description
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditingNotes(false)}
+                            className="text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
+                          >
+                            Done
+                          </button>
+                        </div>
+                        <MarkdownEditor
+                          value={description}
+                          onChange={setDescription}
+                          placeholder="Add details, context, or a checklist (markdown supported)…"
+                          mode={descriptionMode}
+                          onModeChange={setDescriptionMode}
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40">
+                        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3.5 py-2">
+                          <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-faint)]">
+                            Description
+                          </span>
+                          {canEdit && description.trim() ? (
+                            <button
+                              type="button"
+                              onClick={openNotesEditor}
+                              className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
+                            >
+                              <Pencil className="size-3" /> Edit
+                            </button>
+                          ) : null}
+                        </div>
+                        {description.trim() ? (
+                          // biome-ignore lint/a11y/noStaticElementInteractions: double-click to edit keeps links clickable on single click
+                          <div
+                            onDoubleClick={() => canEdit && openNotesEditor()}
+                            title={canEdit ? 'Double-click to edit' : undefined}
+                            className={cn('px-3.5 py-3', canEdit && 'cursor-text')}
+                          >
+                            <Markdown className={markdownClass}>{description}</Markdown>
+                          </div>
+                        ) : canEdit ? (
+                          <button
+                            type="button"
+                            onClick={openNotesEditor}
+                            className="flex w-full items-center gap-2 px-3.5 py-3 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text-muted)]"
+                          >
+                            <Pencil className="size-3.5 shrink-0" /> Add details, context, or a checklist…
+                          </button>
+                        ) : (
+                          <p className="px-3.5 py-3 text-[13px] text-[var(--color-text-faint)]">
+                            No description.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </li>
 
-            <div className="space-y-2">
-              <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Notes</h3>
-              <MarkdownEditor
-                value={description}
-                onChange={setDescription}
-                disabled={!canEdit}
-                placeholder="Add details, context, or a checklist (markdown supported)…"
-                mode={descriptionMode}
-                onModeChange={setDescriptionMode}
-              />
-            </div>
-
-            <CardAttachments
-              attachments={card.attachments || []}
-              canEdit={canEdit}
-              uploading={uploading}
-              onUploadFiles={uploadFiles}
-              onAddLink={addAttachment}
-              onRemove={removeAttachment}
-            />
-
-            <section className="space-y-2.5">
-              <div className="flex items-center gap-2">
-                <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">
-                  Comments{card.comments?.length ? ` · ${card.comments.length}` : ''}
-                </h3>
-              </div>
-              {card.comments?.length ? (
-                <div className="relative space-y-3 pl-4 before:absolute before:bottom-2 before:left-[0.72rem] before:top-2 before:w-px before:bg-[var(--color-border)]">
-                  {card.comments.map((comment) => (
-                    <article key={comment.id} className="relative flex gap-3">
-                      <span className="relative z-10 mt-2 grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[9px] font-semibold uppercase text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]">
-                        {emailInitials(comment.authorEmail || '?')}
-                      </span>
+                {timeline.map((node) => (
+                  <li key={node.id} className="relative flex gap-3 pb-4">
+                    {/* Spine segment: centred on the avatar, drawn behind it (z-0),
+                        running the full row height so it meets the next node. */}
+                    <span
+                      aria-hidden
+                      className="absolute bottom-0 left-[14px] top-0 w-px -translate-x-1/2 bg-[var(--color-border)]"
+                    />
+                    <span
+                      className={cn(
+                        'relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-[9px] font-semibold uppercase shadow-[var(--shadow-soft)]',
+                        node.kind === 'comment'
+                          ? 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)]'
+                          : 'border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-text-faint)]',
+                      )}
+                    >
+                      {emailInitials(node.who || '?')}
+                    </span>
+                    {node.kind === 'comment' ? (
                       <div className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/50 px-3 py-2.5">
                         <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px]">
                           <span className="font-medium text-[var(--color-text-muted)]">
-                            {comment.authorEmail || 'someone'}
+                            {node.who || 'someone'}
                           </span>
                           <span className="text-[var(--color-text-faint)]">
-                            {new Date(comment.createdAt).toLocaleString(undefined, {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: 'numeric',
-                              minute: '2-digit',
-                            })}
+                            {formatTimelineTime(node.at)}
                           </span>
                         </div>
-                        <Markdown className={markdownClass}>{comment.body}</Markdown>
+                        <Markdown className={markdownClass}>{node.body}</Markdown>
                       </div>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-              {/* Everyone with access can comment — viewers included. */}
-              <form
-                className="space-y-2"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  const body = commentDraft.trim();
-                  if (!body) return;
-                  try {
-                    await addComment({ cardId: card.cardId, body });
-                    setCommentDraft('');
-                  } catch (err: any) {
-                    toast.error(err?.message || 'Could not comment');
-                  }
-                }}
-              >
-                <MarkdownEditor
-                  value={commentDraft}
-                  onChange={setCommentDraft}
-                  placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
-                  minHeight="min-h-24"
-                  mode={commentMode}
-                  onModeChange={setCommentMode}
-                />
-                <div className="flex justify-end">
-                  <Button type="submit" size="sm" variant="outline" className="h-9 px-3 text-[12px]">
-                    Post
-                  </Button>
-                </div>
-              </form>
-            </section>
+                    ) : (
+                      <p className="min-w-0 flex-1 self-center text-[11.5px] leading-snug text-[var(--color-text-faint)]">
+                        <span className="font-medium text-[var(--color-text-muted)]">
+                          {node.who || 'someone'}
+                        </span>{' '}
+                        {node.action}
+                        {node.detail ? ` — ${node.detail}` : ''}
+                        <span className="px-1 text-[var(--color-text-faint)]">·</span>
+                        {formatTimelineTime(node.at)}
+                      </p>
+                    )}
+                  </li>
+                ))}
 
-            <section className="space-y-2 pb-2">
-              <button
-                type="button"
-                onClick={() => setShowActivity(!showActivity)}
-                className="inline-flex text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              >
-                Activity{card.activity?.length ? ` · ${card.activity.length}` : ''}
-              </button>
-              {showActivity ? (
-                <ul className="space-y-1 border-l border-[var(--color-border)] pl-3">
-                  {[...(card.activity || [])].reverse().map((entry) => (
-                    <li key={entry.id} className="text-[11px] text-[var(--color-text-faint)]">
-                      <span className="text-[var(--color-text-muted)]">{entry.actorEmail || 'someone'}</span>{' '}
-                      {entry.action}
-                      {entry.detail ? ` — ${entry.detail}` : ''} ·{' '}
-                      {new Date(entry.createdAt).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+                {/* Composer = the terminal node. Everyone with access can comment
+                    (viewers included); view-first, it rests as a prompt. */}
+                <li className="relative flex gap-3">
+                  {/* Incoming spine stub so the timeline connects into the composer
+                      avatar (only drawn when there are nodes above it). */}
+                  {timeline.length ? (
+                    <span
+                      aria-hidden
+                      className="absolute left-[14px] top-0 h-4 w-px -translate-x-1/2 bg-[var(--color-border)]"
+                    />
+                  ) : null}
+                  <span
+                    className="relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-faint)] shadow-[var(--shadow-soft)]"
+                    aria-hidden
+                  >
+                    <MessageSquare className="size-3.5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {composingComment ? (
+                      <form
+                        className="space-y-2"
+                        onSubmit={async (event) => {
+                          event.preventDefault();
+                          const body = commentDraft.trim();
+                          if (!body || commentSubmitting) return;
+                          setCommentSubmitting(true);
+                          try {
+                            await addComment({ cardId: card.cardId, body });
+                            setCommentDraft('');
+                            setComposingComment(false);
+                          } catch (err: any) {
+                            toast.error(err?.message || 'Could not comment');
+                          } finally {
+                            setCommentSubmitting(false);
+                          }
+                        }}
+                      >
+                        <MarkdownEditor
+                          value={commentDraft}
+                          onChange={setCommentDraft}
+                          placeholder={role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
+                          minHeight="min-h-24"
+                          mode={commentMode}
+                          onModeChange={setCommentMode}
+                          autoFocus
+                        />
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-9 px-3 text-[12px]"
+                            onClick={() => {
+                              setComposingComment(false);
+                              setCommentDraft('');
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            className="h-9 px-3 text-[12px]"
+                            disabled={commentSubmitting || !commentDraft.trim()}
+                          >
+                            Comment
+                          </Button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={openComposer}
+                        className="flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 px-3.5 py-2.5 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)]"
+                      >
+                        {role === 'viewer' ? 'Comment as a viewer…' : 'Add a comment…'}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              </ol>
             </section>
           </div>
 
@@ -1711,6 +1940,15 @@ function CardPanel({
                 </p>
               )}
             </div>
+
+            <CardAttachments
+              attachments={card.attachments || []}
+              canEdit={canEdit}
+              uploading={uploading}
+              onUploadFiles={uploadFiles}
+              onAddLink={addAttachment}
+              onRemove={removeAttachment}
+            />
 
             {card.source?.threadId ? (
               <div className="space-y-1.5">

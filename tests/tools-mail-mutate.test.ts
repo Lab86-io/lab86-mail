@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
 import { listDueSnoozes } from '../lib/store/snooze';
+import { getThread } from '../lib/store/threads';
 import {
   archiveThread,
   markThreadRead,
@@ -20,6 +21,12 @@ describe('mail mutate tools — local paths', () => {
       reason: 'User flagged for review',
     });
     expect(result.ok).toBe(true);
+    const thread = await withToolContext(() => getThread(account, threadId));
+    expect(thread?.smartCategory).toMatchObject({
+      primary: 'review',
+      reason: 'User flagged for review',
+      model: 'user',
+    });
   });
 
   test('snooze and unsnooze messages locally', async () => {

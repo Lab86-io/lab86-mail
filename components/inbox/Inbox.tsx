@@ -762,7 +762,12 @@ export function Inbox() {
           {translatedQuery && !smartCategory ? (
             <Badge variant="outline" className="gap-1">
               Filter: <span className="font-mono">{translatedQuery}</span>
-              <button type="button" onClick={clearSearch} title="Clear generated filter">
+              <button
+                type="button"
+                onClick={clearSearch}
+                title="Clear generated filter"
+                aria-label="Clear generated filter"
+              >
                 <X className="size-3" />
               </button>
             </Badge>
@@ -770,7 +775,7 @@ export function Inbox() {
           {!translatedQuery && !smartCategory && query !== DEFAULT_QUERY ? (
             <Badge variant="outline" className="gap-1">
               Filter: <span className="font-mono">{query}</span>
-              <button type="button" onClick={clearSearch} title="Clear filter">
+              <button type="button" onClick={clearSearch} title="Clear filter" aria-label="Clear filter">
                 <X className="size-3" />
               </button>
             </Badge>

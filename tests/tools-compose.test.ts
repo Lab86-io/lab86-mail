@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { getDraft } from '../lib/store/drafts';
 import { getMessage } from '../lib/store/messages';
 import {
   buildForwardMessagePayload,
@@ -34,9 +35,13 @@ describe('compose tools', () => {
       patch: { body: 'Updated body' },
     });
     expect(updated.ok).toBe(true);
+    await expect(withToolContext(() => getDraft(saved.draft._id))).resolves.toMatchObject({
+      body: 'Updated body',
+    });
 
     const deleted = await runTool(deleteDraftTool.handler, { id: saved.draft._id });
     expect(deleted.ok).toBe(true);
+    await expect(withToolContext(() => getDraft(saved.draft._id))).resolves.toBeNull();
   });
 
   test('reply and reply_all require cached anchor messages', async () => {
