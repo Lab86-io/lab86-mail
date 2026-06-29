@@ -1,12 +1,15 @@
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
-import type {
-  DailyReport,
-  DailyReportArtifactError,
-  DailyReportCalendarItem,
-  DailyReportItem,
-  DailyReportMcpItem,
-  DailyReportTaskItem,
+import {
+  DAILY_REPORT_ARTIFACT_ERROR_STAGES,
+  type DailyReport,
+  type DailyReportArtifactError,
+  type DailyReportArtifactErrorStage,
+  type DailyReportCalendarItem,
+  type DailyReportItem,
+  type DailyReportMcpItem,
+  type DailyReportTaskItem,
+  MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
 
@@ -129,8 +132,8 @@ function sanitizeArtifactErrors(value: unknown): DailyReportArtifactError[] {
     }))
     .filter(
       (entry): entry is DailyReportArtifactError =>
-        ['ai_availability', 'week_artifact', 'month_artifact', 'month_enrichment'].includes(entry.stage) &&
+        DAILY_REPORT_ARTIFACT_ERROR_STAGES.includes(entry.stage as DailyReportArtifactErrorStage) &&
         Boolean(entry.message),
     )
-    .slice(-8);
+    .slice(-MAX_ARTIFACT_ERRORS);
 }

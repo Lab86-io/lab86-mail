@@ -367,11 +367,16 @@ export interface DailyReportMcpItem {
   updatedAt?: number | null;
 }
 
-export type DailyReportArtifactErrorStage =
-  | 'ai_availability'
-  | 'week_artifact'
-  | 'month_artifact'
-  | 'month_enrichment';
+export const DAILY_REPORT_ARTIFACT_ERROR_STAGES = [
+  'ai_availability',
+  'week_artifact',
+  'month_artifact',
+  'month_enrichment',
+] as const;
+
+export const MAX_ARTIFACT_ERRORS = 8;
+
+export type DailyReportArtifactErrorStage = (typeof DAILY_REPORT_ARTIFACT_ERROR_STAGES)[number];
 
 export interface DailyReportArtifactError {
   stage: DailyReportArtifactErrorStage;

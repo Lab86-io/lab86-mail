@@ -11,14 +11,15 @@ import {
   parseBriefComposition,
 } from '../shared/brief-composition';
 import { emailFromHeader } from '../shared/format';
-import type {
-  DailyReport,
-  DailyReportArtifactError,
-  DailyReportArtifactErrorStage,
-  DailyReportCalendarItem,
-  DailyReportItem,
-  DailyReportTaskItem,
-  Message,
+import {
+  type DailyReport,
+  type DailyReportArtifactError,
+  type DailyReportArtifactErrorStage,
+  type DailyReportCalendarItem,
+  type DailyReportItem,
+  type DailyReportTaskItem,
+  MAX_ARTIFACT_ERRORS,
+  type Message,
 } from '../shared/types';
 import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
@@ -49,7 +50,6 @@ const MAX_MSGS_PER_THREAD = 6;
 const MAX_BODY_CHARS = 1100;
 const MAX_VOICE_SAMPLES = 6;
 const MAX_VOICE_CHARS = 600;
-const MAX_ARTIFACT_ERRORS = 8;
 
 interface ThreadDigest {
   threadKey: string;
@@ -368,7 +368,9 @@ export async function generateAgentReport(input: {
       failure = artifactError('month_artifact', err);
     }
     const finalReport = settleMonthArtifactReport({ full, phase1, composition, failure });
-    await saveDailyReport(finalReport);
+    await saveDailyReport(finalReport).catch((err) => {
+      console.error('[agent-report] month report save failed:', err);
+    });
     return finalReport;
   } catch (err) {
     console.error('[agent-report] month enrichment failed:', err);
