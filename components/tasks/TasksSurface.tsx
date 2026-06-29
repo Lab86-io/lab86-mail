@@ -22,6 +22,7 @@ import {
   Pencil,
   Plus,
   Share2,
+  Sparkles,
   SquareKanban,
   Trash2,
   UploadCloud,
@@ -29,7 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import type { DragEndEvent } from '@/components/kibo-ui/kanban';
@@ -66,6 +67,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Markdown } from '@/components/ui/markdown';
 import { api } from '@/convex/_generated/api';
+import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { normalizeUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
@@ -126,10 +128,16 @@ interface BoardPayload {
 type BoardViewMode = 'kanban' | 'list';
 type BoardColumnItem = { id: string; name: string; order: number };
 
+// Lets BoardView render its toolbar controls into the parent header row.
+const BoardHeaderActionsSlot = createContext<HTMLElement | null>(null);
+
 export function TasksSurface() {
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [newBoardOpen, setNewBoardOpen] = useState(false);
   const [renameBoardOpen, setRenameBoardOpen] = useState(false);
+  // BoardView portals its view/column/share controls up into this header slot
+  // so they sit inline with the "Tasks" title instead of in a second toolbar row.
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
 
   const boardsQuery = useConvexQuery({ query: boardsApi.listMyBoards, args: {} });
   const boards: any[] = boardsQuery.status === 'success' ? boardsQuery.data || [] : [];
@@ -156,90 +164,96 @@ export function TasksSurface() {
   const activeBoard = boards.find((board) => board.boardId === activeBoardId);
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden">
-      <header className="flex items-center gap-2 overflow-x-auto border-b border-[var(--color-border)] px-5 pb-3 pt-12 md:pt-4">
-        <h1 className="mr-2 font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
-          Tasks
-        </h1>
-        {boards.map((board) => (
-          <button
-            key={board.boardId}
-            type="button"
-            onClick={() => setSelectedBoardId(board.boardId)}
-            // Rename the active, owned board — no separate edit button. Mouse:
-            // double-click. Keyboard: F2, or Enter when it's already active
-            // (so keyboard/AT users still have a rename path).
-            onDoubleClick={() => {
-              if (board.boardId === activeBoardId && board.owned) setRenameBoardOpen(true);
-            }}
-            onKeyDown={(event) => {
-              if (!board.owned) return;
-              const renameKey =
-                event.key === 'F2' || (event.key === 'Enter' && board.boardId === activeBoardId);
-              if (renameKey) {
-                event.preventDefault();
-                setSelectedBoardId(board.boardId);
-                setRenameBoardOpen(true);
-              }
-            }}
-            title={board.owned ? 'Double-click or press F2 to rename' : undefined}
-            className={cn(
-              'shrink-0 rounded-full border px-3 py-1 text-[12.5px] transition-colors',
-              board.boardId === activeBoardId
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
-            )}
-          >
-            {board.title}
-            {!board.owned ? <Users className="ml-1 inline size-3 opacity-60" /> : null}
-          </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setNewBoardOpen(true)}
-          className="grid size-6 shrink-0 place-items-center rounded-full border border-dashed border-[var(--color-border)] text-[var(--color-text-faint)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+    <BoardHeaderActionsSlot.Provider value={headerSlot}>
+      <div className="flex h-full min-w-0 flex-col overflow-hidden">
+        <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-5 pb-3 pt-12 md:pt-4">
+          <h1 className="shrink-0 font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
+            Tasks
+          </h1>
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+            {boards.map((board) => (
+              <button
+                key={board.boardId}
+                type="button"
+                onClick={() => setSelectedBoardId(board.boardId)}
+                // Rename the active, owned board — no separate edit button. Mouse:
+                // double-click. Keyboard: F2, or Enter when it's already active
+                // (so keyboard/AT users still have a rename path).
+                onDoubleClick={() => {
+                  if (board.boardId === activeBoardId && board.owned) setRenameBoardOpen(true);
+                }}
+                onKeyDown={(event) => {
+                  if (!board.owned) return;
+                  const renameKey =
+                    event.key === 'F2' || (event.key === 'Enter' && board.boardId === activeBoardId);
+                  if (renameKey) {
+                    event.preventDefault();
+                    setSelectedBoardId(board.boardId);
+                    setRenameBoardOpen(true);
+                  }
+                }}
+                title={board.owned ? 'Double-click or press F2 to rename' : undefined}
+                className={cn(
+                  'shrink-0 rounded-full border px-3 py-1 text-[12.5px] transition-colors',
+                  board.boardId === activeBoardId
+                    ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                    : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+                )}
+              >
+                {board.title}
+                {!board.owned ? <Users className="ml-1 inline size-3 opacity-60" /> : null}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setNewBoardOpen(true)}
+              className="grid size-6 shrink-0 place-items-center rounded-full border border-dashed border-[var(--color-border)] text-[var(--color-text-faint)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              title="New board"
+            >
+              <Plus className="size-3.5" />
+            </button>
+          </div>
+          {/* BoardView portals its view/column/share controls in here. */}
+          <div ref={setHeaderSlot} className="flex shrink-0 items-center gap-1.5" />
+        </header>
+        {activeBoardId ? (
+          <BoardView key={activeBoardId} boardId={activeBoardId} />
+        ) : (
+          <EmptyState loading={boardsQuery.status !== 'success'} />
+        )}
+        <NameDialog
+          open={newBoardOpen}
           title="New board"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </header>
-      {activeBoardId ? (
-        <BoardView key={activeBoardId} boardId={activeBoardId} />
-      ) : (
-        <EmptyState loading={boardsQuery.status !== 'success'} />
-      )}
-      <NameDialog
-        open={newBoardOpen}
-        title="New board"
-        placeholder="Board name"
-        submitLabel="Create board"
-        onClose={() => setNewBoardOpen(false)}
-        onSubmit={async (title) => {
-          try {
-            const boardId = await createBoard({ title });
-            setSelectedBoardId(boardId as string);
-          } catch (err: any) {
-            toast.error(err?.message || 'Could not create board');
-          }
-        }}
-      />
-      <NameDialog
-        open={renameBoardOpen}
-        title="Rename board"
-        placeholder="Board name"
-        submitLabel="Rename"
-        initialValue={activeBoard?.title || ''}
-        onClose={() => setRenameBoardOpen(false)}
-        onSubmit={async (title) => {
-          if (!activeBoardId) return;
-          try {
-            await renameBoard({ boardId: activeBoardId, title });
-          } catch (err: any) {
-            toast.error(err?.message || 'Could not rename board');
-          }
-        }}
-      />
-    </div>
+          placeholder="Board name"
+          submitLabel="Create board"
+          onClose={() => setNewBoardOpen(false)}
+          onSubmit={async (title) => {
+            try {
+              const boardId = await createBoard({ title });
+              setSelectedBoardId(boardId as string);
+            } catch (err: any) {
+              toast.error(err?.message || 'Could not create board');
+            }
+          }}
+        />
+        <NameDialog
+          open={renameBoardOpen}
+          title="Rename board"
+          placeholder="Board name"
+          submitLabel="Rename"
+          initialValue={activeBoard?.title || ''}
+          onClose={() => setRenameBoardOpen(false)}
+          onSubmit={async (title) => {
+            if (!activeBoardId) return;
+            try {
+              await renameBoard({ boardId: activeBoardId, title });
+            } catch (err: any) {
+              toast.error(err?.message || 'Could not rename board');
+            }
+          }}
+        />
+      </div>
+    </BoardHeaderActionsSlot.Provider>
   );
 }
 
@@ -259,6 +273,7 @@ function EmptyState({ loading }: { loading: boolean }) {
 }
 
 function BoardView({ boardId }: { boardId: string }) {
+  const headerSlot = useContext(BoardHeaderActionsSlot);
   const boardQuery = useConvexQuery({ query: boardsApi.getBoard, args: { boardId } });
   const board: BoardPayload | null = boardQuery.status === 'success' ? boardQuery.data : null;
 
@@ -358,67 +373,67 @@ function BoardView({ boardId }: { boardId: string }) {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center gap-2 px-5 py-2">
-          <span className="text-[12px] text-[var(--color-text-faint)]">
-            {board.cards.length} card{board.cards.length === 1 ? '' : 's'}
-            {board.role !== 'owner' ? ` · shared with you (${board.role})` : ''}
-          </span>
-          <div className="ml-auto flex items-center gap-1.5">
-            <div className="flex overflow-hidden rounded-md border border-[var(--color-border)]">
-              <button
-                type="button"
-                onClick={() => switchView('kanban')}
-                className={cn(
-                  'grid h-7 w-8 place-items-center',
-                  viewMode === 'kanban'
-                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]',
-                )}
-                title="Kanban view"
-              >
-                <SquareKanban className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => switchView('list')}
-                className={cn(
-                  'grid h-7 w-8 place-items-center border-l border-[var(--color-border)]',
-                  viewMode === 'list'
-                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]',
-                )}
-                title="To-do list view"
-              >
-                <LayoutList className="size-3.5" />
-              </button>
-            </div>
-            {canEdit ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 px-2 text-[12px]"
-                onClick={() => setNewColumnOpen(true)}
-              >
-                <Plus className="size-3" /> Column
-              </Button>
-            ) : null}
-            {board.role === 'owner' ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 px-2 text-[12px]"
-                onClick={() => setShareOpen(true)}
-              >
-                <Share2 className="size-3" /> Share
-              </Button>
-            ) : null}
-          </div>
-        </div>
+        {/* Toolbar controls live inline with the page title (parent header slot). */}
+        {headerSlot
+          ? createPortal(
+              <>
+                <div className="flex overflow-hidden rounded-md border border-[var(--color-border)]">
+                  <button
+                    type="button"
+                    onClick={() => switchView('kanban')}
+                    className={cn(
+                      'grid h-7 w-8 place-items-center',
+                      viewMode === 'kanban'
+                        ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                        : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]',
+                    )}
+                    title="Kanban view"
+                  >
+                    <SquareKanban className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchView('list')}
+                    className={cn(
+                      'grid h-7 w-8 place-items-center border-l border-[var(--color-border)]',
+                      viewMode === 'list'
+                        ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                        : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]',
+                    )}
+                    title="To-do list view"
+                  >
+                    <LayoutList className="size-3.5" />
+                  </button>
+                </div>
+                {canEdit ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1.5 px-2 text-[12px]"
+                    onClick={() => setNewColumnOpen(true)}
+                  >
+                    <Plus className="size-3" /> Column
+                  </Button>
+                ) : null}
+                {board.role === 'owner' ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1.5 px-2 text-[12px]"
+                    onClick={() => setShareOpen(true)}
+                  >
+                    <Share2 className="size-3" /> Share
+                  </Button>
+                ) : null}
+              </>,
+              headerSlot,
+            )
+          : null}
 
         {viewMode === 'kanban' ? (
-          <div className="min-h-0 flex-1 overflow-x-auto px-5 pb-5">
+          <div className="min-h-0 flex-1 overflow-x-auto px-5 pb-2 pt-3">
             <KanbanProvider
               columns={columns}
               data={items}
@@ -707,7 +722,7 @@ function ListView({
 }) {
   const updateCard = useConvexMutation(boardsApi.updateCard);
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-3">
       {board.columns.map((column) => {
         const cards = board.cards.filter((card) => card.columnId === column.columnId);
         return (
@@ -2159,6 +2174,41 @@ function CreateCardDialog({
   const [due, setDue] = useState('');
   const [attachments, setAttachments] = useState<CardAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [nlText, setNlText] = useState('');
+  const [parsing, setParsing] = useState(false);
+
+  // Natural-language quick-add: parse one line into the structured fields below
+  // (the user still reviews + confirms before the card is created).
+  const parseNl = async () => {
+    const text = nlText.trim();
+    if (!text || parsing) return;
+    setParsing(true);
+    try {
+      const r = await callTool<{
+        title: string;
+        dueAt: number | null;
+        priority: 'low' | 'medium' | 'high' | null;
+        labels: string[];
+        description: string | null;
+        model: string;
+      }>('nl_task', { text, now: localIsoWithOffset() });
+      // Replace (not merge) every field so re-running Autofill after editing the
+      // sentence can't leave stale due/priority/labels/description behind.
+      if (r.title) setTitle(r.title);
+      setDescription(r.description || '');
+      setPriority(r.priority || '');
+      setLabels(r.labels?.length ? r.labels.join(', ') : '');
+      setDue(r.dueAt ? toLocalInputValue(r.dueAt) : '');
+      setNlText('');
+      if (r.model === 'local') {
+        toast.message('Used your text as the title — enable AI in settings for date/priority parsing.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not parse that');
+    } finally {
+      setParsing(false);
+    }
+  };
 
   const uploadFiles = async (files: File[]) => {
     setUploading(true);
@@ -2214,6 +2264,37 @@ function CreateCardDialog({
             });
           }}
         >
+          {/* Natural-language quick-add — parses into the fields below. */}
+          <div className="space-y-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40 p-2">
+            <div className="flex gap-2">
+              <Input
+                value={nlText}
+                onChange={(event) => setNlText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void parseNl();
+                  }
+                }}
+                placeholder={'Type naturally — e.g. "Pay AT&T bill Tuesday, high priority"'}
+                className="h-9 bg-[var(--color-bg-elevated)] text-[13px]"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 shrink-0 gap-1.5 px-2.5 text-[12px]"
+                onClick={() => void parseNl()}
+                disabled={parsing || !nlText.trim()}
+              >
+                <Sparkles className="size-3.5" /> {parsing ? 'Reading…' : 'Autofill'}
+              </Button>
+            </div>
+            <p className="px-0.5 text-[11px] text-[var(--color-text-faint)]">
+              Fills in the details below — review, then create.
+            </p>
+          </div>
+
           <Input
             autoFocus
             value={title}
@@ -2374,4 +2455,18 @@ function toLocalInputValue(epoch: number): string {
   const date = new Date(epoch);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// Current time as an ISO 8601 string carrying the user's local UTC offset, so
+// the nl_task model resolves "tomorrow"/"next Tuesday" against the right day
+// (a bare toISOString() is UTC and shifts the day near midnight off-UTC).
+function localIsoWithOffset(date = new Date()): string {
+  const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `${sign}${pad(offsetMin / 60)}:${pad(offsetMin % 60)}`
+  );
 }

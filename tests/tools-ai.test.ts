@@ -7,6 +7,8 @@ import {
   draftReply,
   extractActionItems,
   nlSearch,
+  nlTask,
+  parseNlTaskResult,
   preSendCritique,
   summarizeThread,
   translateThread,
@@ -136,5 +138,68 @@ describe('AI model tools — local fallbacks', () => {
     });
     expect(search.model).toBe('local');
     expect(search.query).toBe('from noreply@example.test newer than 30 days');
+  });
+
+  test('nl_task falls back to the raw text as the title without AI', async () => {
+    const parsed = await runTool(nlTask.handler, { text: '  Pay AT&T bill Tuesday  ' });
+    expect(parsed.model).toBe('local');
+    expect(parsed.title).toBe('Pay AT&T bill Tuesday');
+    expect(parsed.dueAt).toBeNull();
+    expect(parsed.priority).toBeNull();
+    expect(parsed.labels).toEqual([]);
+    expect(parsed.description).toBeNull();
+  });
+
+  test('nl_task returns an empty title for blank input', async () => {
+    const parsed = await runTool(nlTask.handler, { text: '   ' });
+    expect(parsed).toEqual({
+      title: '',
+      dueAt: null,
+      priority: null,
+      labels: [],
+      description: null,
+      model: 'local',
+    });
+  });
+});
+
+describe('parseNlTaskResult', () => {
+  test('parses a full JSON object', () => {
+    const r = parseNlTaskResult(
+      '{"title":"Pay AT&T bill","due":"2026-06-24T09:00:00-04:00","priority":"high","labels":["bills"," finance "],"description":"autopay failed"}',
+      'fallback',
+    );
+    expect(r.title).toBe('Pay AT&T bill');
+    expect(r.dueAt).toBe(Date.parse('2026-06-24T09:00:00-04:00'));
+    expect(r.priority).toBe('high');
+    expect(r.labels).toEqual(['bills', 'finance']);
+    expect(r.description).toBe('autopay failed');
+  });
+
+  test('tolerates prose/fences around the JSON and bad fields', () => {
+    const r = parseNlTaskResult(
+      'Here you go:\n```json\n{"title":"  ","priority":"urgent","labels":"nope"}\n```',
+      'raw text',
+    );
+    expect(r.title).toBe('raw text'); // blank title → fallback
+    expect(r.priority).toBeNull(); // "urgent" is not an allowed value
+    expect(r.labels).toEqual([]); // non-array → []
+    expect(r.dueAt).toBeNull();
+    expect(r.description).toBeNull();
+  });
+
+  test('ignores an unparseable due date and caps labels at 6', () => {
+    const r = parseNlTaskResult(
+      '{"title":"x","due":"not a date","labels":["a","b","c","d","e","f","g"]}',
+      'raw',
+    );
+    expect(r.dueAt).toBeNull();
+    expect(r.labels).toHaveLength(6);
+  });
+
+  test('falls back when there is no JSON at all', () => {
+    const r = parseNlTaskResult('sorry, I cannot help with that', 'do the thing');
+    expect(r.title).toBe('do the thing');
+    expect(r.labels).toEqual([]);
   });
 });

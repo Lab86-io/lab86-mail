@@ -428,6 +428,25 @@ function ReportArtifact({
           { source: 'lab86-host', action: data.action, ok, error, payload },
           '*',
         );
+      // The artifact srcDoc is authored by the model from UNTRUSTED mailbox
+      // content, so a prompt-injected script could post a state-changing action
+      // with no user click. Gate EVERY mutating action behind a host-rendered
+      // confirm() (a sandboxed iframe cannot suppress a top-window dialog).
+      // Read-only actions (open_*, draft_reply only seeds the composer) are exempt.
+      const confirmFor: Record<string, string> = {
+        toggle_task: payload.completed
+          ? `Mark “${payload.title || 'this task'}” complete?`
+          : `Reopen “${payload.title || 'this task'}”?`,
+        dismiss_task: `Remove “${payload.title || 'this task'}” from future briefs?`,
+        resolve_thread: `Mark “${payload.subject || 'this thread'}” resolved and remove it from future briefs?`,
+        dismiss_thread: `Remove “${payload.subject || 'this conversation'}” from future briefs?`,
+        create_task: `Add “${payload.title || 'this task'}” to your tasks?`,
+        archive_thread: `Archive “${payload.subject || 'this conversation'}” and remove it from future briefs?`,
+        rsvp_event: `Send a “${payload.status}” RSVP for this event?`,
+        create_event: `Add “${payload.title || 'this event'}” to your calendar?`,
+      };
+      const confirmMsg = data.action ? confirmFor[data.action] : undefined;
+      if (confirmMsg && !window.confirm(confirmMsg)) return ack(false, 'cancelled');
       try {
         switch (data.action) {
           case 'open_thread':
@@ -501,6 +520,72 @@ function ReportArtifact({
             await callTool('tasks_create_card', {
               title: title.slice(0, 500),
               dueIso: typeof payload.dueAt === 'number' ? new Date(payload.dueAt).toISOString() : undefined,
+            });
+            onChanged?.();
+            return ack(true);
+          }
+          // These three actions mutate mail/calendar state. The artifact is
+          // authored by the model from UNTRUSTED mailbox content, so a
+          // prompt-injected script could post them on load with no user click.
+          // Require a host-rendered confirmation (top-window confirm() the
+          // sandboxed iframe cannot suppress) as the intent gate.
+          case 'archive_thread': {
+            if (!payload.account) return ack(false, 'missing account');
+            if (!payload.threadId) return ack(false, 'missing threadId');
+            await callTool('archive_thread', {
+              account: String(payload.account),
+              threadId: String(payload.threadId),
+            });
+            // Archiving must also clear it from future briefs; let a failure
+            // surface (ack false) rather than archive silently and let it return.
+            await callTool('dismiss_daily_report_thread', {
+              account: String(payload.account),
+              threadId: String(payload.threadId),
+              subject: typeof payload.subject === 'string' ? payload.subject : undefined,
+              receivedAt: typeof payload.receivedAt === 'number' ? payload.receivedAt : null,
+              action: 'dismissed',
+            });
+            onChanged?.();
+            return ack(true);
+          }
+          case 'rsvp_event': {
+            if (!payload.account) return ack(false, 'missing account');
+            if (!payload.eventId) return ack(false, 'missing eventId');
+            if (!payload.calendarId) return ack(false, 'missing calendarId');
+            if (!['yes', 'no', 'maybe'].includes(payload.status))
+              return ack(false, 'status must be yes/no/maybe');
+            await callTool('calendar_rsvp_event', {
+              account: String(payload.account),
+              calendarId: String(payload.calendarId),
+              eventId: String(payload.eventId),
+              status: payload.status,
+            });
+            onChanged?.();
+            return ack(true);
+          }
+          case 'create_event': {
+            const title = String(payload.title || '').trim();
+            if (!title) return ack(false, 'missing title');
+            if (!payload.account) return ack(false, 'missing account');
+            const startAt = payload.startAt;
+            const endAt = payload.endAt;
+            if (
+              typeof startAt !== 'number' ||
+              typeof endAt !== 'number' ||
+              !Number.isFinite(startAt) ||
+              !Number.isFinite(endAt) ||
+              endAt <= startAt
+            )
+              return ack(false, 'invalid start/end window');
+            await callTool('calendar_create_event', {
+              account: String(payload.account),
+              title: title.slice(0, 300),
+              startIso: new Date(startAt).toISOString(),
+              endIso: new Date(endAt).toISOString(),
+              allDay: Boolean(payload.allDay),
+              // Never invite attendees from the brief — holds only.
+              location: typeof payload.location === 'string' ? payload.location : undefined,
+              description: typeof payload.description === 'string' ? payload.description : undefined,
             });
             onChanged?.();
             return ack(true);

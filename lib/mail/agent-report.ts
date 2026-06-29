@@ -32,12 +32,12 @@ import { buildNativeDailyReportArtifact } from './report-artifact';
 //   2. the agent tries to replace that native artifact with a richer designed
 //      artifact, then the month pass updates the same _id in place.
 
-const MAX_TASKS = 24;
-const MAX_EVENTS = 24;
-const MAX_DIGEST_THREADS = 16;
-const MAX_MSGS_PER_THREAD = 4;
-const MAX_BODY_CHARS = 800;
-const MAX_VOICE_SAMPLES = 4;
+const MAX_TASKS = 32;
+const MAX_EVENTS = 32;
+const MAX_DIGEST_THREADS = 20;
+const MAX_MSGS_PER_THREAD = 6;
+const MAX_BODY_CHARS = 1100;
+const MAX_VOICE_SAMPLES = 6;
 const MAX_VOICE_CHARS = 600;
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -57,6 +57,14 @@ interface ThreadDigest {
   lastReceivedAt: number | null;
   trackedThreadId?: string;
   lane?: string;
+  // The app's own grounding analysis, handed to the agent as a starting point
+  // (it can override with its own read) rather than thrown away.
+  whyItMatters?: string;
+  nextAction?: string;
+  openLoops?: string[];
+  dueAt?: number | null;
+  surfacedBecause?: string[];
+  isNewSender?: boolean;
   messages: Array<{ from: string; date: number | null; body: string }>;
 }
 
@@ -124,6 +132,12 @@ async function gatherBriefExtras(report: DailyReport, userId?: string | null): P
       lastReceivedAt: item.receivedAt ?? null,
       trackedThreadId: item.trackedThreadId,
       lane: item.lane,
+      whyItMatters: item.whyItMatters,
+      nextAction: item.nextAction,
+      openLoops: item.openLoops,
+      dueAt: item.dueAt ?? null,
+      surfacedBecause: item.surfacedBecause,
+      isNewSender: item.isNewSender,
       messages: digestMessages,
     });
     // The user's own replies, as voice samples for matching tone in drafts.
@@ -280,9 +294,10 @@ function extractHtml(raw: string): string | null {
 const DESIGN_BRIEF = `You are the user's chief of staff AND a world-class editorial designer/front-end engineer. You are handed the RAW material — the actual email bodies, the week's calendar, and the task board — and you do your OWN analysis: read the threads, judge what genuinely needs the user, connect the dots across mail/calendar/tasks, and compose a single, self-contained, beautiful HTML "Daily Brief". Polish of a Claude Artifact × a finely-typeset broadsheet.
 
 ANALYZE, DON'T TRANSCRIBE:
-- Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view.
-- Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task").
-- Be PROACTIVE: propose to-dos, meeting prep, and ready-to-send reply drafts. Nothing executes without a tap.
+- Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view. Each thread also carries the app's own first-pass read (whyItMatters, nextAction, openLoops, surfacedBecause, isNewSender) — treat it as a STARTING POINT you can sharpen or overrule with what you find in the bodies, never as text to copy verbatim.
+- Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task"). Use the richer fields you're given — task descriptions/labels/assignees, event descriptions/locations — to make those connections concrete.
+- Be PROACTIVE, and you have real levers — propose AND wire them: to-dos (create_task), ready-to-send reply drafts in the user's voice (draft_reply), calendar holds for focus/prep/buffer (create_event), invite responses (rsvp_event), and clearing obvious noise (archive_thread). Nothing executes without a tap, so lean toward offering the action rather than just naming it.
+- YOU HAVE FULL EDITORIAL CONTROL. Beyond the sections below, add whatever you judge genuinely useful for THIS person today and omit what isn't — e.g. a "Focus blocks" suggestion that proposes create_event holds around deep work, a "Waiting on others" list, a tight "Clear the noise" row of archivable FYIs, or a prep dossier for the day's most important meeting. Go deeper where it earns its space; stay calm and short on a light day. Never pad.
 - Adaptive density: short and calm on a light day, fuller when it's busy. Never pad.
 
 OUTPUT RULES (critical):
@@ -315,7 +330,7 @@ DESIGN: editorial, generous whitespace, clear hierarchy, responsive 360→1100px
 CONTENT (compose from your analysis; omit empty parts):
 - An integrated narrative lede (2–3 short paragraphs, the user's voice/tone from data.voiceSamples) — the through-line of the day connecting mail, calendar, and tasks. No emoji.
 - "Needs you": the threads YOU judged as needing action — person, your one-line read of why (from the body), how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via the draft_reply action. For every existing thread, put data-thread-key="{thread.threadKey}" and data-received-at="{thread.lastReceivedAt}" on the enclosing row/card and render compact controls: a "done/resolved" checkmark that sends resolve_thread { account, threadId, subject, receivedAt: lastReceivedAt, trackedThreadId? } and a "remove from briefs" X that sends dismiss_thread { account, threadId, subject, receivedAt: lastReceivedAt }. On successful host ack, remove that row/card from the DOM. Treat this as permanent removal from future briefs unless the same thread receives newer mail after lastReceivedAt.
-- "The week ahead": today → +7 days of calendar as a clean timeline/table; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
+- "The week ahead": today → +7 days of calendar as a clean timeline/table; for notable meetings propose prep (context from related mail/threads, related tasks/docs, a short suggested agenda) and offer a one-tap prep task. When an event has a calendarId you may offer Yes/Maybe/No controls via rsvp_event, and you may propose a create_event focus/prep hold (reuse the account of a real event from data.calendar; pass startAt/endAt as epoch ms).
 - Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from the mail/meetings (create_task). Tasks are first-class, not a footnote. For every existing task with a cardId, put data-card-id="{cardId}" on the enclosing task row/card and render compact controls: a "complete" checkmark that sends toggle_task { cardId, completed: true, title } and a "remove from briefs" X that sends dismiss_task { cardId, title }. On successful host ack, remove that task row/card from the DOM so it disappears immediately and stays out of future briefs.
 - From your tools (ONLY if data.mcp is non-empty): a compact section surfacing connected-tool items — GitHub issues/PRs awaiting you, Jira tickets assigned to you, Slack mentions. Give each a plain anchor to its url (target="_blank", rel="noopener"), show its source as a small badge (the data.mcp[].server value, capitalized) and its state. Fold genuinely actionable ones into the narrative or propose a task from them. Title the section by what it is (e.g. "Across your tools" / "Issues & tickets") — never use the word "MCP".
 
@@ -330,34 +345,55 @@ INTERACTION PROTOCOL (wire every interactive element):
   - 'dismiss_task' { cardId, title? }                  // removes from future briefs, does not complete/delete
   - 'create_task'  { title, dueAt? }                 // dueAt = epoch ms
   - 'draft_reply'  { account, threadId, body }       // opens the thread with your draft seeded
+  - 'archive_thread' { account, threadId, subject?, receivedAt? } // archives the email and drops it from future briefs — use for clear noise/FYIs only
+  - 'rsvp_event'   { account, calendarId, eventId, status }       // status: 'yes'|'no'|'maybe'; only when the event has a calendarId
+  - 'create_event' { account, title, startAt, endAt, location?, description? } // startAt/endAt = epoch ms; schedule a focus/prep block or hold. Never add attendees.
 - Host may ack on the same listener (e.data.source==='lab86-host' && e.data.action → e.data.ok/error). Update optimistically; reconcile on error.
+- For archive_thread, put data-thread-key + data-received-at on the row like the dismiss controls so the host removes it on ack.
 - Use the exact ids/accounts from the data; never invent ids. If an item lacks an id an action needs, render it without that action.`;
+
+// The shapes handed to the agent for each task/event. Pure + exported so the
+// field mapping (everything the brief gets to act on) is unit-tested directly.
+export function toBriefTask(t: DailyReportTaskItem) {
+  return {
+    cardId: t.cardId,
+    boardTitle: t.boardTitle,
+    columnName: t.columnName,
+    title: t.title,
+    description: t.description ?? null,
+    dueAt: t.dueAt ?? null,
+    priority: t.priority,
+    labels: t.labels ?? [],
+    assignees: t.assignees ?? [],
+    completed: false,
+    sourceUrl: t.sourceUrl ?? null,
+    sourceTitle: t.sourceTitle ?? null,
+  };
+}
+
+export function toBriefEvent(e: DailyReportCalendarItem) {
+  return {
+    account: e.account,
+    eventId: e.eventId,
+    calendarId: e.calendarId ?? null,
+    calendarName: e.calendarName ?? null,
+    title: e.title,
+    startAt: e.startAt,
+    endAt: e.endAt,
+    allDay: e.allDay ?? false,
+    location: e.location ?? null,
+    description: e.description ?? null,
+    htmlLink: e.htmlLink ?? null,
+  };
+}
 
 function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
   const s = report.sections;
   const tasks = (s.tasks ?? [])
     .filter((t: DailyReportTaskItem) => !t.completedAt)
     .slice(0, MAX_TASKS)
-    .map((t: DailyReportTaskItem) => ({
-      cardId: t.cardId,
-      boardTitle: t.boardTitle,
-      columnName: t.columnName,
-      title: t.title,
-      dueAt: t.dueAt ?? null,
-      priority: t.priority,
-      completed: false,
-      sourceUrl: t.sourceUrl ?? null,
-      sourceTitle: t.sourceTitle ?? null,
-    }));
-  const calendar = (s.calendar ?? []).slice(0, MAX_EVENTS).map((e: DailyReportCalendarItem) => ({
-    account: e.account,
-    eventId: e.eventId,
-    title: e.title,
-    startAt: e.startAt,
-    endAt: e.endAt,
-    allDay: e.allDay ?? false,
-    location: e.location ?? null,
-  }));
+    .map(toBriefTask);
+  const calendar = (s.calendar ?? []).slice(0, MAX_EVENTS).map(toBriefEvent);
 
   // Format the dateline in the USER's timezone (set on the request context) so
   // the masthead shows their local day/time, not the server's UTC clock.
