@@ -76,7 +76,7 @@ function cleanBody(message: Message): string {
 // Pulls the ACTUAL message bodies for the action-worthy threads (plus the
 // user's own outbound prose as a voice sample) so the agent analyzes real
 // content rather than pre-canned one-liners. Bounded for token cost.
-async function gatherBriefExtras(report: DailyReport, userId?: string | null): Promise<BriefExtras> {
+export async function gatherBriefExtras(report: DailyReport, userId?: string | null): Promise<BriefExtras> {
   const accounts = userId ? await listNylasAccounts(userId).catch(() => []) : [];
   const self = new Set(
     accounts
@@ -386,7 +386,7 @@ export function toBriefEvent(e: DailyReportCalendarItem) {
   };
 }
 
-function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
+export function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
   const s = report.sections;
   const tasks = (s.tasks ?? [])
     .filter((t: DailyReportTaskItem) => !t.completedAt)

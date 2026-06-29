@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { toBriefEvent, toBriefTask } from '../lib/mail/agent-report';
-import type { DailyReportCalendarItem, DailyReportTaskItem } from '../lib/shared/types';
+import './tools/harness';
+import { buildDataPrompt, gatherBriefExtras, toBriefEvent, toBriefTask } from '../lib/mail/agent-report';
+import type { DailyReport, DailyReportCalendarItem, DailyReportTaskItem } from '../lib/shared/types';
+import { withToolContext } from './tools/harness';
 
 describe('toBriefTask', () => {
   test('passes through the richer fields the agent acts on', () => {
@@ -103,3 +105,98 @@ describe('toBriefEvent', () => {
     expect(shaped.allDay).toBe(false);
   });
 });
+
+describe('daily brief service metadata', () => {
+  test('gatherBriefExtras falls back to mail and includes calendar/task sources', async () => {
+    const empty = reportFixture();
+    await expect(gatherBriefExtras(empty)).resolves.toMatchObject({
+      digests: [],
+      voiceSamples: [],
+      services: ['mail'],
+    });
+
+    const withSources = reportFixture({
+      sections: {
+        ...empty.sections,
+        calendar: [
+          {
+            account: 'me@example.test',
+            eventId: 'evt_3',
+            title: 'Review',
+            startAt: 1,
+            endAt: 2,
+            scope: 'week',
+          },
+        ],
+        tasks: [
+          {
+            cardId: 'card_3',
+            boardId: 'board',
+            columnId: 'column',
+            title: 'Prep agenda',
+            scope: 'week',
+          },
+        ],
+      },
+    });
+    const extras = await gatherBriefExtras(withSources);
+    expect(extras.services).toEqual(['calendar', 'tasks']);
+  });
+
+  test('buildDataPrompt serializes logo-bearing service definitions', async () => {
+    const report = reportFixture({
+      services: ['gmail'],
+      sections: {
+        ...reportFixture().sections,
+        mcp: [
+          {
+            server: 'github',
+            kind: 'pull_request',
+            title: 'Review auth fix',
+          },
+        ],
+      },
+    });
+
+    const prompt = await withToolContext(() =>
+      Promise.resolve(
+        buildDataPrompt(report, {
+          digests: [],
+          voiceSamples: ['Sounds good, thanks for moving this forward.'],
+          services: ['slack'],
+        }),
+      ),
+    );
+    const json = prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}';
+    const data = JSON.parse(json);
+    expect(data.services.map((service: any) => service.id)).toEqual(['gmail', 'slack', 'github']);
+    expect(data.services.map((service: any) => service.label)).toEqual(['Gmail', 'Slack', 'GitHub']);
+    expect(data.services.every((service: any) => service.logoSvg.includes('footer-logo'))).toBe(true);
+  });
+});
+
+function reportFixture(overrides: Partial<DailyReport> = {}): DailyReport {
+  return {
+    _id: 'report_agent_shape',
+    kind: 'manual',
+    generatedAt: Date.parse('2026-06-10T12:00:00.000Z'),
+    status: 'ready',
+    accounts: [],
+    title: 'Brief',
+    narrative: 'Brief narrative.',
+    sections: {
+      replyOwed: [],
+      followUpOwed: [],
+      newPeople: [],
+      timeSensitive: [],
+      tracked: [],
+      fyi: [],
+      bulkTail: [],
+      tasks: [],
+      calendar: [],
+      mcp: [],
+    },
+    stats: {},
+    ...overrides,
+  };
+}
