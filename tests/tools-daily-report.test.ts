@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { generateDailyReport } from '../lib/mail/daily-report';
 import { getDailyReport, getLatestDailyReport, saveDailyReport } from '../lib/store/daily-reports';
+import { upsertTrackedThread } from '../lib/store/tracked-threads';
 import {
   dismissDailyReportTaskTool,
   dismissDailyReportThreadTool,
@@ -11,7 +13,7 @@ import {
   listDailyReportTaskDismissalsTool,
   listDailyReportThreadDismissalsTool,
 } from '../lib/tools/daily-report';
-import { runTool, withToolContext } from './tools/harness';
+import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
 describe('daily report tools', () => {
   test('stores, lists, and fetches reports locally', async () => {
@@ -79,6 +81,70 @@ describe('daily report tools', () => {
     expect(latest?.progress?.stage).toBe('queued');
   });
 
+  test('generate_daily_report reuses an active generation instead of starting another', async () => {
+    await withToolContext(() =>
+      saveDailyReport({
+        _id: 'report_active_generation',
+        kind: 'evening',
+        generatedAt: Date.now(),
+        status: 'partial',
+        artifactStatus: 'composing',
+        progress: { stage: 'queued', done: 0, total: 1 },
+        accounts: [],
+        title: 'Daily Report',
+        narrative: 'Generating daily report.',
+        sections: {
+          replyOwed: [],
+          followUpOwed: [],
+          newPeople: [],
+          timeSensitive: [],
+          tracked: [],
+          fyi: [],
+          bulkTail: [],
+          tasks: [],
+          calendar: [],
+        },
+        stats: {},
+      } as any),
+    );
+
+    const active = await runTool(generateDailyReportTool.handler, { kind: 'evening', wait: false });
+    expect(active.started).toBe(false);
+    expect(active.report?._id).toBe('report_active_generation');
+  });
+
+  test('scoped reports do not widen unresolved tracked threads to other accounts', async () => {
+    const seeded = await seedThreadMessage({
+      account: 'outside@example.test',
+      threadId: 'tracked_outside_scope',
+      messageId: 'msg_tracked_outside_scope',
+      subject: 'Outside scope',
+      from: 'Alex <alex@example.test>',
+      textBody: 'Please review this outside-scope thread.',
+    });
+    await withToolContext(() =>
+      upsertTrackedThread({
+        account: seeded.account,
+        threadId: seeded.threadId,
+        subject: 'Outside scope',
+        status: 'open',
+      }),
+    );
+
+    const report = await withToolContext(() =>
+      generateDailyReport({
+        kind: 'manual',
+        accounts: ['missing@example.test'],
+        includeCalendar: false,
+        maxRecentPerAccount: 1,
+        now: Date.parse('2026-06-10T08:00:00.000Z'),
+      }),
+    );
+
+    expect(report.sections.tracked).toEqual([]);
+    expect(JSON.stringify(report.sections)).not.toContain('Outside scope');
+  });
+
   test('generate_daily_report wait=true persists a terminal edition', async () => {
     const generated = await runTool(generateDailyReportTool.handler, { kind: 'manual', wait: true });
     expect(generated.started).toBeUndefined();
@@ -91,6 +157,7 @@ describe('daily report tools', () => {
       kind: 'manual',
       status: 'ready',
       artifactStatus: 'rendered',
+      artifactSource: 'deterministic',
     });
   });
 });

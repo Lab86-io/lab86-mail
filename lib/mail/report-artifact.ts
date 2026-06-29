@@ -1,17 +1,18 @@
 import { getAiRequestContext } from '../ai/context';
-import type {
-  DailyReport,
-  DailyReportCalendarItem,
-  DailyReportItem,
-  DailyReportTaskItem,
-} from '../shared/types';
+import {
+  type BriefAction,
+  type BriefBlock,
+  type BriefComposition,
+  compositionFromReport,
+} from '../shared/brief-composition';
+import type { DailyReport } from '../shared/types';
+import { type BriefService, briefServicesFromIds } from './brief-services';
 import { getDailyArt } from './daily-art';
 
-const MAX_NEEDS = 8;
-const MAX_TASKS = 8;
-const MAX_EVENTS = 12;
-
-export function buildNativeDailyReportArtifact(report: DailyReport): string {
+export function buildNativeDailyReportArtifact(
+  report: DailyReport,
+  compositionInput?: BriefComposition,
+): string {
   const timezone = getAiRequestContext().userTimezone || 'UTC';
   const generatedAt = report.generatedAt || Date.now();
   const art = getDailyArt(generatedAt);
@@ -22,20 +23,8 @@ export function buildNativeDailyReportArtifact(report: DailyReport): string {
     year: 'numeric',
   }).toUpperCase();
   const localTime = formatInTimezone(generatedAt, timezone, { hour: 'numeric', minute: '2-digit' });
-  const sections = report.sections || ({} as DailyReport['sections']);
-  const needs = [
-    ...withLane(sections.replyOwed || [], 'Reply owed'),
-    ...withLane(sections.followUpOwed || [], 'Follow-up'),
-    ...withLane(sections.timeSensitive || [], 'Time-sensitive'),
-    ...withLane(sections.newPeople || [], 'New person'),
-    ...withLane(sections.tracked || [], 'Tracked'),
-  ].slice(0, MAX_NEEDS);
-  const tasks = (sections.tasks || []).filter((task) => !task.completedAt).slice(0, MAX_TASKS);
-  const events = (sections.calendar || [])
-    .slice()
-    .sort((a, b) => Number(a.startAt || 0) - Number(b.startAt || 0))
-    .slice(0, MAX_EVENTS);
-  const serviceText = serviceLine(report, Boolean(events.length), Boolean(tasks.length));
+  const composition = compositionInput || report.composition || compositionFromReport(report);
+  const services = servicesForReport(report, composition);
 
   return `<!doctype html>
 <html lang="en">
@@ -56,12 +45,16 @@ button,a{font:inherit}
 .masthead h1{max-width:12ch;margin:0;font-family:var(--brief-font-display);font-size:clamp(4rem,11vw,9.5rem);font-weight:650;font-style:italic;line-height:.82;letter-spacing:var(--brief-display-tracking);text-wrap:balance;text-shadow:0 2px 30px rgba(0,0,0,.48)}
 .spine{position:absolute;z-index:2;top:1.5rem;bottom:1.5rem;display:flex;align-items:center;font-size:.72rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.84);writing-mode:vertical-rl}
 .spine.left{left:1rem}.spine.right{right:1rem;transform:rotate(180deg)}
-.caption{max-width:1080px;margin:.55rem auto 0;padding:0 1.25rem;color:var(--brief-muted);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase}
-main{max-width:1080px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
-.lede{max-width:920px;margin:0 0 2.5rem;font-family:var(--brief-font-display);font-size:clamp(1.35rem,3.4vw,2.45rem);font-style:italic;line-height:1.15;text-wrap:balance}
-.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:2rem}
-@media (min-width:860px){.grid{grid-template-columns:minmax(0,.92fr) minmax(18rem,.48fr)}}
-section{min-width:0}
+.caption{max-width:1120px;margin:.55rem auto 0;padding:0 1.25rem;color:var(--brief-muted);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase}
+main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
+.blocks{display:grid;grid-template-columns:minmax(0,1fr);gap:2rem}
+@media (min-width:860px){.blocks{grid-template-columns:minmax(0,.92fr) minmax(18rem,.48fr)}}
+.block{min-width:0}
+.block-wide,.lede-block,.week,.chart-block,.timeline-block,.widget-block{grid-column:1/-1}
+.lede-block{max-width:960px;margin-bottom:.5rem}
+.lede{margin:0;font-family:var(--brief-font-display);font-size:clamp(1.35rem,3.4vw,2.45rem);font-style:italic;line-height:1.15;text-wrap:balance}
+.lede-block .lede:first-of-type::first-letter{float:left;margin:.06em .12em 0 0;font-size:3.1em;font-style:normal;font-weight:700;line-height:.78;color:var(--brief-accent)}
+.lede + .lede{margin-top:1rem}
 .section-title{display:flex;align-items:center;gap:.85rem;margin:0 0 1rem;font-family:var(--brief-font-display);font-size:.82rem;font-weight:700;letter-spacing:max(var(--brief-display-tracking),.12em);text-transform:uppercase;color:var(--brief-ink)}
 .section-title::after{content:"";height:1px;flex:1;background:var(--brief-hairline)}
 .needs{display:grid;gap:.8rem}
@@ -80,16 +73,36 @@ section{min-width:0}
 .task{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.75rem;align-items:start}
 .task h3,.event h3{margin:0;font-size:.96rem;line-height:1.25}
 .task-actions{display:flex;align-items:center;gap:.25rem}
-.icon-btn{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--brief-hairline);border-radius:.5rem;background:transparent;color:var(--brief-muted);cursor:pointer}
-.icon-btn:hover{color:var(--brief-accent);background:var(--brief-accent-soft)}
+.icon-btn{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--brief-hairline);border-radius:999px;background:rgba(255,255,255,.58);color:var(--brief-muted);font-size:1.05rem;font-weight:750;line-height:1;box-shadow:0 1px 0 rgba(255,255,255,.65) inset,0 8px 20px rgba(24,24,24,.06);cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease,transform .12s ease}
+.icon-btn:hover{color:var(--brief-accent);border-color:rgba(194,104,60,.35);background:var(--brief-accent-soft);transform:translateY(-1px)}
 .meta{margin-top:.28rem;color:var(--brief-muted);font-size:.78rem;line-height:1.35}
 .week{grid-column:1/-1;width:100%;max-width:100%;min-width:0;margin-top:1rem}
 .agenda{border-top:1px solid var(--brief-hairline)}
 .event{display:grid;grid-template-columns:minmax(7rem,max-content) minmax(0,1fr) auto;gap:1rem;align-items:start}
 .time{color:var(--brief-accent);font-weight:700;font-size:.82rem;white-space:nowrap}
 .event h3,.event .meta{overflow-wrap:anywhere}
+.tool-item,.check-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:start;border-top:1px solid var(--brief-hairline);padding:.82rem 0}
+.tool-item:first-child,.check-item:first-child{border-top:0}
+.badge{display:inline-flex;align-items:center;border:1px solid var(--brief-hairline);border-radius:999px;padding:.12rem .48rem;color:var(--brief-muted);font-size:.68rem}
+.chart-shell{border-top:1px solid var(--brief-hairline);padding-top:1rem}
+.chart-row{display:grid;grid-template-columns:minmax(5rem,10rem) minmax(0,1fr) max-content;gap:.75rem;align-items:center;margin:.6rem 0}
+.bar{height:.7rem;border-radius:999px;background:var(--brief-accent-soft);overflow:hidden}
+.bar span{display:block;height:100%;border-radius:inherit;background:var(--brief-accent)}
+.timeline{border-top:1px solid var(--brief-hairline)}
+.timeline-item{display:grid;grid-template-columns:minmax(7rem,max-content) minmax(0,1fr);gap:1rem;padding:.8rem 0;border-bottom:1px solid var(--brief-hairline)}
+.widget-frame{width:100%;min-height:280px;border:1px solid var(--brief-hairline);border-radius:14px;background:var(--brief-bg)}
+.fallback{white-space:pre-wrap;color:var(--brief-muted);line-height:1.55}
 .empty{padding:1rem 0;color:var(--brief-muted);border-top:1px solid var(--brief-hairline)}
-footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--brief-hairline);color:var(--brief-muted);font-size:.74rem}
+.brief-footer{position:relative;margin-top:4.5rem;padding:4.4rem 1rem 5.5rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
+.brief-footer::before{content:"";position:absolute;top:0;left:50%;width:min(920px,100%);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,var(--brief-hairline),transparent)}
+.brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.45;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
+.brief-footer-line{position:relative;z-index:1;max-width:1200px;margin:0 auto;font-family:var(--brief-font-display);font-size:clamp(1.32rem,2.35vw,2.15rem);font-weight:650;line-height:1.2;letter-spacing:var(--brief-display-tracking);text-wrap:balance}
+.brief-footer-line .soft{color:var(--brief-muted)}
+.footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
+.footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
+.footer-sep{color:var(--brief-muted)}
+.brief-footer-love{position:relative;z-index:1;margin-top:1.25rem;font-family:var(--brief-font-display);font-size:clamp(.88rem,1.55vw,1.08rem);line-height:1.2;color:var(--brief-muted);opacity:.72}
+.footer-lab86{letter-spacing:.16em;text-transform:uppercase}
 	@media (max-width:640px){.masthead{padding:2.5rem}.masthead h1{font-size:clamp(3.35rem,20vw,6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.task{grid-template-columns:minmax(0,1fr) auto}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
 </style>
 </head>
@@ -102,105 +115,243 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--brief-hairlin
 </header>
 <div class="caption">${escapeHtml(art.credit)} · ${escapeHtml(art.source)}</div>
 <main>
-<p class="lede">${escapeHtml(report.narrative || fallbackNarrative(needs, tasks, events))}</p>
-<div class="grid">
-${renderNeeds(needs)}
-<aside class="side">
-${renderTasks(tasks)}
-</aside>
-${renderEvents(events, timezone)}
+<div class="blocks">
+${renderBlocks(composition.blocks, timezone)}
 </div>
-<footer>Built for you using your ${escapeHtml(serviceText)} with care.</footer>
+${renderBriefFooter(services)}
 </main>
 <script>
-	var pendingRemovals={};
-	window.addEventListener('message',function(e){var d=e.data;if(d&&d.source==='lab86-host'&&d.type==='theme'&&d.theme){for(var k in d.theme){document.documentElement.style.setProperty(k,d.theme[k]);}}if(d&&d.source==='lab86-host'&&d.payload&&d.payload.clientActionId){var row=pendingRemovals[d.payload.clientActionId];if(row){if(d.ok){row.remove();}else{row.style.opacity='';row.style.pointerEvents='';}delete pendingRemovals[d.payload.clientActionId];}}});
-	document.addEventListener('click',function(e){var el=e.target.closest('[data-action]');if(!el)return;var action=el.getAttribute('data-action');var payload={};try{payload=JSON.parse(el.getAttribute('data-payload')||'{}');}catch(_){}var row=el.closest('[data-card-id],[data-thread-key]');if(row&&(action==='dismiss_task'||action==='dismiss_thread'||action==='resolve_thread'||(action==='toggle_task'&&payload.completed))){var id=String(Date.now())+String(Math.random()).slice(2);payload.clientActionId=id;pendingRemovals[id]=row;row.style.opacity='.45';row.style.pointerEvents='none';}window.parent.postMessage({source:'lab86-daily-report',action:action,payload:payload},'*');});
-</script>
+		var pendingRemovals={};
+		var widgetActions=new Map();
+		function syncWidgetActions(){var frames=document.querySelectorAll('iframe[data-widget-actions]');for(var i=0;i<frames.length;i++){try{widgetActions.set(frames[i].contentWindow,JSON.parse(frames[i].getAttribute('data-widget-actions')||'[]'));}catch(_){widgetActions.set(frames[i].contentWindow,[]);}}}
+		syncWidgetActions();
+		window.addEventListener('message',function(e){var d=e.data;if(d&&d.source==='lab86-brief-widget'){var allowed=widgetActions.get(e.source)||[];if(allowed.indexOf(d.action)!==-1){window.parent.postMessage({source:'lab86-daily-report',action:d.action,payload:d.payload||{}},'*');}}if(d&&d.source==='lab86-host'&&d.type==='theme'&&d.theme){for(var k in d.theme){document.documentElement.style.setProperty(k,d.theme[k]);}}if(d&&d.source==='lab86-host'&&d.payload&&d.payload.clientActionId){var row=pendingRemovals[d.payload.clientActionId];if(row){if(d.ok){row.remove();}else{row.style.opacity='';row.style.pointerEvents='';}delete pendingRemovals[d.payload.clientActionId];}}});
+		document.addEventListener('click',function(e){var el=e.target.closest('[data-action]');if(!el)return;var action=el.getAttribute('data-action');var payload={};try{payload=JSON.parse(el.getAttribute('data-payload')||'{}');}catch(_){}var row=el.closest('[data-card-id],[data-thread-key]');if(row&&(action==='dismiss_task'||action==='dismiss_thread'||action==='resolve_thread'||(action==='toggle_task'&&payload.completed))){var id=String(Date.now())+String(Math.random()).slice(2);payload.clientActionId=id;pendingRemovals[id]=row;row.style.opacity='.45';row.style.pointerEvents='none';}window.parent.postMessage({source:'lab86-daily-report',action:action,payload:payload},'*');});
+	</script>
 </body>
 </html>`;
 }
 
-function withLane(items: DailyReportItem[], laneLabel: string) {
-  return items.map((item) => ({ ...item, laneLabel }));
+function renderBlocks(blocks: BriefBlock[], timezone: string) {
+  return blocks.map((block) => renderBlock(block, timezone)).join('');
 }
 
-function renderNeeds(items: Array<DailyReportItem & { laneLabel: string }>) {
-  if (!items.length) {
+function renderBlock(block: BriefBlock, timezone: string): string {
+  switch (block.type) {
+    case 'lede':
+      return `<section class="block lede-block">${block.title ? `<h2 class="section-title">${escapeHtml(block.title)}</h2>` : ''}${block.paragraphs.map((paragraph) => `<p class="lede">${escapeHtml(paragraph)}</p>`).join('')}</section>`;
+    case 'needs_you':
+      return renderNeedsBlock(block);
+    case 'task_digest':
+      return renderTasksBlock(block, timezone);
+    case 'week_ahead':
+      return renderWeekBlock(block, timezone);
+    case 'tool_digest':
+      return renderToolBlock(block);
+    case 'chart':
+      return renderChartBlock(block);
+    case 'timeline':
+      return renderTimelineBlock(block, timezone);
+    case 'prep_checklist':
+      return renderChecklistBlock(block);
+    case 'custom_widget':
+      return renderCustomWidgetBlock(block);
+    default:
+      return '';
+  }
+}
+
+function renderNeedsBlock(block: Extract<BriefBlock, { type: 'needs_you' }>) {
+  if (!block.items.length) {
     return `<section><h2 class="section-title">Needs you</h2><div class="empty">No open thread needs you right now.</div></section>`;
   }
-  return `<section><h2 class="section-title">Needs you</h2><div class="needs">${items
+  return `<section class="block"><h2 class="section-title">${escapeHtml(block.title)}</h2><div class="needs">${block.items
     .map((item) => {
-      const person = item.people?.[0] || 'Mail';
+      const person = item.person || 'Mail';
       const title = [person, item.subject].filter(Boolean).join(' - ');
       return `<article class="need" data-thread-key="${escapeAttr(reportThreadKey(item.account, item.threadId))}" data-received-at="${escapeAttr(item.receivedAt ?? '')}">
-	<div>
-	<div class="tag">${escapeHtml(item.laneLabel)}</div>
-	<h3>${escapeHtml(title)}</h3>
-	<p>${escapeHtml(item.whyItMatters || item.nextAction || 'Review this thread when you have a moment.')}</p>
-	<div class="meta">${escapeHtml(ageLine(item.receivedAt ?? undefined))}</div>
-	</div>
-	<div class="actions">
-	${button('open_thread', 'Open', { account: item.account, threadId: item.threadId }, 'primary')}
-	${iconButton('resolve_thread', '&#10003;', threadPayload(item), 'Mark resolved')}
-	${iconButton('dismiss_thread', '&times;', threadPayload(item), 'Remove from future briefs')}
-	</div>
-	</article>`;
+		<div>
+		<div class="tag">${escapeHtml(item.lane || 'Thread')}</div>
+		<h3>${escapeHtml(title)}</h3>
+		<p>${escapeHtml(item.reason || 'Review this thread when you have a moment.')}</p>
+		<div class="meta">${escapeHtml(ageLine(item.receivedAt ?? undefined))}</div>
+		</div>
+		<div class="actions">
+		${renderActions(
+      item.actions.length
+        ? item.actions
+        : [
+            {
+              action: 'open_thread',
+              label: 'Open',
+              payload: { account: item.account, threadId: item.threadId },
+              style: 'primary',
+            },
+            {
+              action: 'resolve_thread',
+              label: 'Done',
+              payload: threadPayload(item),
+              style: 'quiet',
+            },
+            {
+              action: 'dismiss_thread',
+              label: 'Remove',
+              payload: threadPayload(item),
+              style: 'quiet',
+            },
+          ],
+    )}
+		</div>
+		</article>`;
     })
     .join('')}</div></section>`;
 }
 
-function renderTasks(tasks: DailyReportTaskItem[]) {
-  const rows = tasks.length
-    ? tasks
+function renderTasksBlock(block: Extract<BriefBlock, { type: 'task_digest' }>, timezone: string) {
+  const rows = block.tasks.length
+    ? block.tasks
         .map(
           (task) => `<article class="task" data-card-id="${escapeAttr(task.cardId)}">
-	<div>
-	<h3>${escapeHtml(task.title)}</h3>
-	<div class="meta">${escapeHtml([task.boardTitle, task.columnName, task.dueAt ? `Due ${shortDate(task.dueAt)}` : ''].filter(Boolean).join(' - '))}</div>
-	</div>
-	<div class="task-actions">
-	${iconButton('toggle_task', '&#10003;', { cardId: task.cardId, completed: true, title: task.title }, 'Complete task')}
-	${iconButton('dismiss_task', '&times;', { cardId: task.cardId, title: task.title }, 'Remove from future briefs')}
-	</div>
-	</article>`,
+			<div>
+			<h3>${escapeHtml(task.title)}</h3>
+			${renderTaskMeta(task, timezone)}
+			</div>
+			<div class="task-actions">
+		${renderActions(
+      task.actions.length
+        ? task.actions
+        : [
+            {
+              action: 'toggle_task',
+              label: 'Done',
+              payload: { cardId: task.cardId, completed: true, title: task.title },
+              style: 'quiet',
+            },
+            {
+              action: 'dismiss_task',
+              label: 'Remove',
+              payload: { cardId: task.cardId, title: task.title },
+              style: 'quiet',
+            },
+          ],
+    )}
+		</div>
+		</article>`,
         )
         .join('')
     : `<div class="empty">No active task context is waiting.</div>`;
-  return `<section><h2 class="section-title">Tasks</h2>${rows}<div class="actions">${button('open_view', 'Open tasks', { view: 'tasks' })}</div></section>`;
+  return `<section class="block"><h2 class="section-title">${escapeHtml(block.title)}</h2>${rows}<div class="actions">${button('open_view', 'Open tasks', { view: 'tasks' })}</div></section>`;
 }
 
-function renderEvents(events: DailyReportCalendarItem[], timezone: string) {
-  const rows = events.length
-    ? events
+function renderWeekBlock(block: Extract<BriefBlock, { type: 'week_ahead' }>, timezone: string) {
+  const rows = block.events.length
+    ? block.events
         .map(
           (event) => `<article class="event">
-<div class="time">${escapeHtml(eventWindow(event, timezone))}</div>
-<div>
-<h3>${escapeHtml(event.title)}</h3>
-${event.location ? `<div class="meta">${escapeHtml(event.location)}</div>` : ''}
-</div>
-<div class="actions">${button('open_event', 'Open', { account: event.account, eventId: event.eventId })}</div>
-</article>`,
+	<div class="time">${escapeHtml(eventWindow(event, timezone))}</div>
+	<div>
+	<h3>${escapeHtml(event.title)}</h3>
+	${event.location ? `<div class="meta">${escapeHtml(event.location)}</div>` : ''}
+	${event.prep ? `<p class="meta">${escapeHtml(event.prep)}</p>` : ''}
+	</div>
+	<div class="actions">${renderActions(event.actions.length ? event.actions : [{ action: 'open_event', label: 'Open', payload: { account: event.account, eventId: event.eventId }, style: 'secondary' }])}</div>
+	</article>`,
         )
         .join('')
     : `<div class="empty">No calendar context is scheduled for the next week.</div>`;
-  return `<section class="week"><h2 class="section-title">The week ahead</h2><div class="agenda">${rows}</div><div class="actions" style="margin-top:1rem">${button('open_view', 'Open calendar', { view: 'calendar' })}</div></section>`;
+  return `<section class="block week"><h2 class="section-title">${escapeHtml(block.title)}</h2><div class="agenda">${rows}</div><div class="actions" style="margin-top:1rem">${button('open_view', 'Open calendar', { view: 'calendar' })}</div></section>`;
+}
+
+function renderToolBlock(block: Extract<BriefBlock, { type: 'tool_digest' }>) {
+  const rows = block.items.length
+    ? block.items
+        .map(
+          (item) => `<article class="tool-item">
+	<div>
+	<div class="tag">${escapeHtml(item.server)}</div>
+	<h3>${item.url ? `<a href="${escapeAttr(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>` : escapeHtml(item.title)}</h3>
+	<div class="meta">${escapeHtml([item.state, item.author].filter(Boolean).join(' - '))}</div>
+	${item.reason ? `<p class="meta">${escapeHtml(item.reason)}</p>` : ''}
+	</div>
+	${item.actions.length ? `<div class="actions">${renderActions(item.actions)}</div>` : ''}
+	</article>`,
+        )
+        .join('')
+    : `<div class="empty">No connected-tool context is waiting.</div>`;
+  return `<section class="block block-wide"><h2 class="section-title">${escapeHtml(block.title)}</h2>${rows}</section>`;
+}
+
+function renderChartBlock(block: Extract<BriefBlock, { type: 'chart' }>) {
+  const max = Math.max(...block.data.map((item) => item.value), 1);
+  const rows = block.data
+    .map((item) => {
+      const pct = Math.max(2, Math.round((item.value / max) * 100));
+      return `<div class="chart-row"><span>${escapeHtml(item.label)}</span><div class="bar"><span style="width:${pct}%"></span></div><strong>${escapeHtml(item.value)}</strong></div>`;
+    })
+    .join('');
+  return `<section class="block chart-block"><h2 class="section-title">${escapeHtml(block.title)}</h2>${block.description ? `<p class="muted">${escapeHtml(block.description)}</p>` : ''}<div class="chart-shell">${rows}</div></section>`;
+}
+
+function renderTimelineBlock(block: Extract<BriefBlock, { type: 'timeline' }>, timezone: string) {
+  const rows = block.items
+    .map(
+      (item) => `<article class="timeline-item">
+	<div class="time">${escapeHtml(item.at ? shortDate(item.at, timezone) : '')}</div>
+	<div><h3>${escapeHtml(item.label)}</h3>${item.detail ? `<p class="meta">${escapeHtml(item.detail)}</p>` : ''}</div>
+	</article>`,
+    )
+    .join('');
+  return `<section class="block timeline-block"><h2 class="section-title">${escapeHtml(block.title)}</h2><div class="timeline">${rows}</div></section>`;
+}
+
+function renderChecklistBlock(block: Extract<BriefBlock, { type: 'prep_checklist' }>) {
+  const rows = block.items
+    .map(
+      (item) => `<article class="check-item">
+	<div><h3>${escapeHtml(item.label)}</h3>${item.detail ? `<p class="meta">${escapeHtml(item.detail)}</p>` : ''}</div>
+	${item.action ? `<div class="actions">${renderActions([item.action])}</div>` : ''}
+	</article>`,
+    )
+    .join('');
+  return `<section class="block block-wide"><h2 class="section-title">${escapeHtml(block.title)}</h2>${rows}</section>`;
+}
+
+function renderCustomWidgetBlock(block: Extract<BriefBlock, { type: 'custom_widget' }>) {
+  if (!isAllowedWidgetHtml(block.html)) {
+    return `<section class="block widget-block"><h2 class="section-title">${escapeHtml(block.title)}</h2><div class="fallback">${escapeHtml(block.fallbackMarkdown)}</div></section>`;
+  }
+  return `<section class="block widget-block"><h2 class="section-title">${escapeHtml(block.title)}</h2><iframe class="widget-frame" title="${escapeAttr(block.title)}" sandbox="allow-scripts" data-widget-actions="${escapeAttr(JSON.stringify(block.allowedActions))}" srcdoc="${escapeAttr(block.html)}"></iframe></section>`;
 }
 
 function button(action: string, label: string, payload: Record<string, unknown>, variant = '') {
   return `<button type="button" class="btn ${variant}" data-action="${escapeAttr(action)}" data-payload="${escapeAttr(JSON.stringify(payload))}">${escapeHtml(label)}</button>`;
 }
 
-function iconButton(action: string, labelHtml: string, payload: Record<string, unknown>, title: string) {
-  return `<button type="button" class="icon-btn" data-action="${escapeAttr(action)}" data-payload="${escapeAttr(JSON.stringify(payload))}" aria-label="${escapeAttr(title)}" title="${escapeAttr(title)}">${labelHtml}</button>`;
+function renderActions(actions: BriefAction[]) {
+  return actions
+    .map((action) => {
+      const quietIcon = action.style === 'quiet' && /^(done|complete|remove|dismiss)$/i.test(action.label);
+      const cls = action.style === 'primary' ? 'primary' : quietIcon ? 'icon-btn' : '';
+      if (quietIcon) {
+        const label = /remove|dismiss/i.test(action.label) ? '&times;' : '&#10003;';
+        return `<button type="button" class="${cls}" data-action="${escapeAttr(action.action)}" data-payload="${escapeAttr(JSON.stringify(action.payload))}" aria-label="${escapeAttr(action.label)}" title="${escapeAttr(action.label)}">${label}</button>`;
+      }
+      return button(action.action, action.label, action.payload, cls);
+    })
+    .join('');
 }
 
 function reportThreadKey(account: string, threadId: string) {
   return JSON.stringify([account, threadId]);
 }
 
-function threadPayload(item: DailyReportItem) {
+function threadPayload(item: {
+  account: string;
+  threadId: string;
+  subject?: string;
+  receivedAt?: number | null;
+  trackedThreadId?: string;
+}) {
   return {
     account: item.account,
     threadId: item.threadId,
@@ -210,38 +361,54 @@ function threadPayload(item: DailyReportItem) {
   };
 }
 
-function serviceLine(report: DailyReport, hasCalendar: boolean, hasTasks: boolean) {
-  const services = new Set<string>();
-  if ((report.accounts || []).length) services.add('Mail');
-  if (hasCalendar) services.add('Calendar');
-  if (hasTasks) services.add('Tasks');
-  if (!services.size) services.add('Mail');
-  const values = [...services];
-  if (values.length <= 1) return values[0];
-  return `${values.slice(0, -1).join(', ')} and ${values[values.length - 1]}`;
+function servicesForReport(report: DailyReport, composition: BriefComposition): BriefService[] {
+  const hasCalendar = composition.blocks.some((block) => block.type === 'week_ahead' && block.events.length);
+  const hasTasks = composition.blocks.some((block) => block.type === 'task_digest' && block.tasks.length);
+  const serviceIds = [
+    ...(composition.services || []),
+    ...(report.services || []),
+    ...(report.sections?.mcp || []).map((item) => item.server),
+    ...(hasCalendar ? ['calendar'] : []),
+    ...(hasTasks ? ['tasks'] : []),
+  ];
+  if (!serviceIds.length && (report.accounts || []).length) serviceIds.push('mail');
+  if (!serviceIds.length) serviceIds.push('mail');
+  return briefServicesFromIds(serviceIds);
 }
 
-function fallbackNarrative(
-  needs: Array<DailyReportItem & { laneLabel: string }>,
-  tasks: DailyReportTaskItem[],
-  events: DailyReportCalendarItem[],
-) {
-  const parts = [];
-  if (needs.length) parts.push(`${needs.length} thread${needs.length === 1 ? '' : 's'} need attention`);
-  if (events.length)
-    parts.push(`${events.length} calendar item${events.length === 1 ? '' : 's'} shape the week`);
-  if (tasks.length) parts.push(`${tasks.length} task${tasks.length === 1 ? '' : 's'} are active`);
-  return parts.length
-    ? `Here is the shape of the day: ${parts.join(', ')}.`
-    : 'A quiet brief today: nothing urgent is waiting.';
+function renderBriefFooter(services: BriefService[]) {
+  return `<footer class="brief-footer">
+<div class="brief-footer-line"><span class="soft">Made for you by</span> <span class="footer-brand">Lab86</span> <span class="soft">using your</span> ${renderServiceList(services)}<span class="footer-sep">.</span></div>
+<div class="brief-footer-love">With love from <span class="footer-lab86">LAB86</span></div>
+</footer>`;
 }
 
-function eventWindow(event: DailyReportCalendarItem, timezone: string) {
+function renderServiceList(services: BriefService[]) {
+  if (!services.length) return `<span class="footer-service">Mail</span>`;
+  return services
+    .map((service, index) => {
+      const prefix =
+        index === 0 ? '' : services.length === 2 ? ' and ' : index === services.length - 1 ? ', and ' : ', ';
+      return `${prefix}<span class="footer-service">${service.logoSvg}<span>${escapeHtml(service.label)}</span></span>`;
+    })
+    .join('');
+}
+
+function eventWindow(event: { startAt: number; endAt: number; allDay?: boolean | null }, timezone: string) {
   if (event.allDay) return shortDate(event.startAt, timezone);
   const date = shortDate(event.startAt, timezone);
   const start = formatInTimezone(event.startAt, timezone, { hour: 'numeric', minute: '2-digit' });
   const end = formatInTimezone(event.endAt, timezone, { hour: 'numeric', minute: '2-digit' });
   return `${date} ${start}-${end}`;
+}
+
+function renderTaskMeta(
+  task: Extract<BriefBlock, { type: 'task_digest' }>['tasks'][number],
+  timezone: string,
+) {
+  const values = [task.meta, task.dueAt ? `Due ${shortDate(task.dueAt, timezone)}` : ''].filter(Boolean);
+  if (!values.length) return '';
+  return `<div class="meta">${escapeHtml(values.join(' - '))}</div>`;
 }
 
 function ageLine(receivedAt?: number) {
@@ -278,4 +445,18 @@ function escapeHtml(value: unknown) {
 
 function escapeAttr(value: unknown) {
   return escapeHtml(value);
+}
+
+function isAllowedWidgetHtml(html: string) {
+  const value = String(html || '').toLowerCase();
+  if (/<script[^>]+\bsrc\s*=/.test(value)) return false;
+  if (/<iframe\b/.test(value)) return false;
+  if (/<meta\b[^>]*http-equiv\s*=\s*["']?refresh/.test(value)) return false;
+  if (/\b(fetch|xmlhttprequest|websocket|eventsource)\s*\(/.test(value)) return false;
+  if (/\b(localstorage|sessionstorage|indexeddb|document\.cookie)\b/.test(value)) return false;
+  if (/\b(src|href|data|poster|action)\s*=\s*["']?\s*(https?:|\/\/)/.test(value)) return false;
+  if (/\bsrcset\s*=/.test(value)) return false;
+  if (/@import\b/.test(value)) return false;
+  if (/\burl\s*\(/.test(value)) return false;
+  return true;
 }

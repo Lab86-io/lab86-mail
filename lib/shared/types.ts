@@ -1,3 +1,5 @@
+import type { BriefComposition } from './brief-composition';
+
 export type AccountEmail = string;
 export type AccountProvider = 'google' | 'microsoft' | 'icloud' | 'imap';
 
@@ -322,6 +324,21 @@ export interface DailyReportTaskItem {
   assignees?: string[];
   sourceTitle?: string;
   sourceUrl?: string;
+  source?: {
+    kind?: string;
+    accountId?: string;
+    threadId?: string;
+    messageId?: string;
+    calendarId?: string;
+    eventId?: string;
+    providerEventId?: string;
+    url?: string;
+    htmlLink?: string;
+    title?: string;
+  };
+  sourceThreadId?: string;
+  sourceCalendarEventId?: string;
+  sourceAccountId?: string;
   scope: 'week' | 'month';
 }
 
@@ -361,15 +378,23 @@ export interface DailyReport {
   accounts: AccountEmail[];
   title: string;
   narrative: string;
-  // The self-contained HTML artifact for this edition. AI-authored artifacts
-  // are preferred; deterministic native artifacts are synthesized for legacy
-  // or fallback editions. The structured `sections`/`stats` below remain as
-  // grounding data and history metadata.
+  // The self-contained HTML artifact for this edition. It is produced by the
+  // deterministic artifact renderer from `composition` so the app owns chrome,
+  // typography, logos, sandboxing, and action wiring.
   html?: string;
+  // Validated editorial plan used by deterministic brief renderers. The model
+  // may author this JSON, but the app owns the rendering.
+  composition?: BriefComposition;
   // Generation phase for the artifact: 'composing' while the agent writes the
   // first (week) HTML, 'enriching' while the broader month pass runs in the
   // background over an already-rendered edition, 'rendered' once final.
   artifactStatus?: 'composing' | 'enriching' | 'rendered';
+  // Whether the artifact composition came from the model or the deterministic
+  // structured fallback. The renderer is deterministic in both cases.
+  artifactSource?: 'ai' | 'deterministic';
+  // Source services used to compose this brief, normalized to ids such as
+  // gmail, outlook, github, slack. Used for the branded footer.
+  services?: string[];
   sections: {
     replyOwed: DailyReportItem[];
     followUpOwed: DailyReportItem[];

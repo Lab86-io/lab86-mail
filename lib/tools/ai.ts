@@ -22,6 +22,14 @@ import {
 } from '../store/threads';
 import { defineTool } from './registry';
 
+const SUMMARY_PROMPT_INSTRUCTIONS = [
+  'Summarize this multi-message email thread for the user as a reliable working-memory note.',
+  'Output format: one compact sentence with the current state, then up to 3 short "- " bullets only when useful.',
+  'Prioritize: what changed most recently, who owes what, explicit asks, decisions, deadlines, blockers, and follow-up risk.',
+  'Do not repeat the subject unless needed. Do not include a heading, greeting, sign-off, or generic advice.',
+  'Never invent facts. If timing, ownership, or outcome is unclear, say so plainly.',
+].join('\n');
+
 async function loadThread(account: string, threadId: string, userId?: string | null) {
   const cached = await getThreadMessages(account, threadId);
   if (cached.length) return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
@@ -64,6 +72,10 @@ export const summarizeThread = defineTool({
   input: z.object({ account: z.string(), threadId: z.string() }),
   output: z.object({ summary: z.string(), model: z.string() }),
   async handler({ account, threadId }, ctx) {
+    const messages = await loadThread(account, threadId, ctx.userId);
+    if (!messages.length) return { summary: '(empty thread)', model: 'none' };
+    if (messages.length <= 1) return { summary: '', model: 'none' };
+
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
     if (
       cachedThread?.summary &&
@@ -73,22 +85,14 @@ export const summarizeThread = defineTool({
       // Surface the real model that produced the cached summary, not 'cached'.
       return { summary: cachedThread.summary, model: cachedThread.summaryModel || 'cached' };
     }
-    const messages = await loadThread(account, threadId, ctx.userId);
-    if (!messages.length) return { summary: '(empty thread)', model: 'none' };
     if (!(await hasAiForCurrentUser())) {
       const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
-      const summary = `${messages[0].subject} — ${messages.length} message(s) with ${senders}.`;
+      const last = messages[messages.length - 1];
+      const summary = `${last.subject} — ${messages.length} messages with ${senders}; latest from ${last.from}.`;
       await setThreadSummary(account, threadId, summary, 'local').catch(() => undefined);
       return { summary, model: 'local' };
     }
-    const prompt = [
-      'Summarize this email thread for the user as a tight TL;DR.',
-      'Output: one plain sentence (max ~25 words) capturing the gist. Then, ONLY if the thread genuinely warrants it, up to 3 short bullets (each "- ", max ~12 words) for the key facts, asks, or deadlines.',
-      'No headings, no preamble, no sign-off. Omit the bullets entirely for simple threads.',
-      '',
-      'Thread:',
-      concatThread(messages),
-    ].join('\n');
+    const prompt = [SUMMARY_PROMPT_INSTRUCTIONS, '', 'Thread:', concatThread(messages)].join('\n');
     try {
       const result = await generateTextForCurrentUser({
         feature: 'summarize_thread',

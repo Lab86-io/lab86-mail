@@ -1,8 +1,10 @@
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
+import { compositionFromReport } from '../shared/brief-composition';
 import type {
   DailyReport,
   DailyReportCalendarItem,
   DailyReportItem,
+  DailyReportMcpItem,
   DailyReportTaskItem,
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
@@ -41,6 +43,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   const items = (value: unknown): DailyReportItem[] => (Array.isArray(value) ? value : []);
   const tasks = (Array.isArray(sections.tasks) ? sections.tasks : []) as DailyReportTaskItem[];
   const calendar = (Array.isArray(sections.calendar) ? sections.calendar : []) as DailyReportCalendarItem[];
+  const mcp = (Array.isArray(sections.mcp) ? sections.mcp : []) as DailyReportMcpItem[];
 
   const replyOwed = items(sections.replyOwed);
   const followUpOwed = items(sections.followUpOwed);
@@ -64,10 +67,13 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     status: raw.status ?? 'ready',
     progress: raw.progress,
     accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
+    services: Array.isArray(raw.services) ? raw.services : undefined,
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
+    composition: raw.composition,
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
+    artifactSource: raw.artifactSource,
     sections: {
       replyOwed,
       followUpOwed,
@@ -78,6 +84,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
       bulkTail,
       tasks,
       calendar,
+      mcp,
       noiseSummary: typeof sections.noiseSummary === 'string' ? sections.noiseSummary : undefined,
     },
     stats: {
@@ -96,9 +103,14 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     errors: Array.isArray(raw.errors) ? raw.errors : undefined,
   };
 
+  if (!migrated.composition && migrated.status !== 'partial') {
+    migrated.composition = compositionFromReport(migrated);
+  }
+
   if (!migrated.html && migrated.status !== 'partial') {
-    migrated.html = buildNativeDailyReportArtifact(migrated);
+    migrated.html = buildNativeDailyReportArtifact(migrated, migrated.composition);
     migrated.artifactStatus = migrated.artifactStatus ?? 'rendered';
+    migrated.artifactSource = migrated.artifactSource ?? 'deterministic';
   }
 
   return migrated;

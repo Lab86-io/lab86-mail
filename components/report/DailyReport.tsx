@@ -1,17 +1,31 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, CheckCircle2, ChevronDown, Inbox, Newspaper, RefreshCw, User, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Ban,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  FileText,
+  Inbox,
+  Newspaper,
+  Palette,
+  RefreshCw,
+  User,
+  X,
+} from 'lucide-react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ConnectionLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
-import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
+import { taskSourceColor } from '@/lib/shared/task-colors';
 import { cn } from '@/lib/utils';
 
 interface DailyReportItem {
@@ -47,6 +61,16 @@ interface DailyReportTaskItem {
   assignees?: string[];
   sourceTitle?: string;
   sourceUrl?: string;
+  source?: {
+    accountId?: string;
+    threadId?: string;
+    calendarId?: string;
+    eventId?: string;
+    providerEventId?: string;
+  };
+  sourceThreadId?: string;
+  sourceCalendarEventId?: string;
+  sourceAccountId?: string;
   scope: 'week' | 'month';
 }
 
@@ -65,6 +89,16 @@ interface DailyReportCalendarItem {
   scope: 'week' | 'month';
 }
 
+interface DailyReportMcpItem {
+  server: 'github' | 'bitbucket' | 'jira' | 'slack';
+  kind: string;
+  title: string;
+  state?: string | null;
+  author?: string | null;
+  url?: string | null;
+  updatedAt?: number | null;
+}
+
 interface DailyReportPayload {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
@@ -73,7 +107,12 @@ interface DailyReportPayload {
   narrative: string;
   sections: Record<
     string,
-    DailyReportItem[] | DailyReportTaskItem[] | DailyReportCalendarItem[] | string | undefined
+    | DailyReportItem[]
+    | DailyReportTaskItem[]
+    | DailyReportCalendarItem[]
+    | DailyReportMcpItem[]
+    | string
+    | undefined
   >;
   stats: {
     scannedThreads: number;
@@ -88,11 +127,13 @@ interface DailyReportPayload {
   };
   model?: string;
   errors?: string[];
+  services?: string[];
   status?: 'partial' | 'ready';
   progress?: { stage: string; done: number; total: number };
   // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
   html?: string;
   artifactStatus?: 'composing' | 'enriching' | 'rendered';
+  artifactSource?: 'ai' | 'deterministic';
 }
 
 interface ReportSummary {
@@ -182,6 +223,22 @@ function asEvents(value: DailyReportPayload['sections'][string]): DailyReportCal
   return Array.isArray(value) ? (value as DailyReportCalendarItem[]) : [];
 }
 
+function narrativeParagraphs(value: string): string[] {
+  const normalized = stripEmoji(value).replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const explicit = stripEmoji(value)
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (explicit.length > 1) return explicit.slice(0, 4);
+  const sentences = normalized.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)?.map((part) => part.trim()) || [
+    normalized,
+  ];
+  if (sentences.length < 3) return [normalized];
+  const first = Math.ceil(sentences.length / 2);
+  return [sentences.slice(0, first).join(' '), sentences.slice(first).join(' ')].filter(Boolean);
+}
+
 function dailyReportThreadKey(account: string, threadId: string): string {
   return JSON.stringify([account, threadId]);
 }
@@ -225,6 +282,79 @@ function elapsedFraming(item: DailyReportItem): string {
   if (item.lane === 'reply_owed') return `Received ${when} — reply?`;
   if (item.lane === 'follow_up_owed') return `You wrote ${when === 'today' ? 'today' : when} — nudge?`;
   return '';
+}
+
+function servicesForReport(report: DailyReportPayload): BriefService[] {
+  const serviceIds = [
+    ...(report.services || []),
+    ...asMcpItems(report.sections.mcp).map((item) => item.server),
+    ...(asEvents(report.sections.calendar).length ? ['calendar'] : []),
+    ...(asTasks(report.sections.tasks).some((task) => !task.completedAt) ? ['tasks'] : []),
+  ];
+  if (!serviceIds.length) serviceIds.push('mail');
+  return briefServicesFromIds(serviceIds);
+}
+
+function asMcpItems(value: DailyReportPayload['sections'][string]): DailyReportMcpItem[] {
+  return Array.isArray(value) ? (value as DailyReportMcpItem[]) : [];
+}
+
+function BriefFooter({ report }: { report: DailyReportPayload }) {
+  const services = servicesForReport(report);
+  return (
+    <footer className="relative mt-16 overflow-hidden py-14 text-center text-[var(--color-text-muted)] before:absolute before:left-1/2 before:top-0 before:h-px before:w-full before:max-w-3xl before:-translate-x-1/2 before:bg-gradient-to-r before:from-transparent before:via-[var(--color-border)] before:to-transparent after:absolute after:inset-x-0 after:bottom-0 after:h-1/2 after:bg-[radial-gradient(var(--color-border)_0.65px,transparent_0.65px)] after:bg-[length:10px_10px] after:opacity-45 after:[mask-image:linear-gradient(to_bottom,transparent,black)]">
+      <div className="relative z-10 mx-auto max-w-6xl text-balance font-display text-[clamp(1.28rem,2.45vw,2.15rem)] font-semibold leading-[1.2]">
+        <span>Made for you by</span> <span className="whitespace-nowrap text-[var(--color-text)]">Lab86</span>{' '}
+        <span>using your</span> <ServiceList services={services} />
+        <span>.</span>
+      </div>
+      <div className="relative z-10 mt-4 font-display text-[clamp(0.85rem,1.55vw,1.05rem)] opacity-70">
+        With love from <span className="tracking-[0.16em]">LAB86</span>
+      </div>
+    </footer>
+  );
+}
+
+function ServiceList({ services }: { services: BriefService[] }) {
+  return (
+    <>
+      {services.map((service, index) => (
+        <span key={service.id}>
+          <span className="text-[var(--color-text-muted)]">
+            {index === 0
+              ? ''
+              : services.length === 2
+                ? ' and '
+                : index === services.length - 1
+                  ? ', and '
+                  : ', '}
+          </span>
+          <span className="inline-flex items-center gap-x-[0.14em] whitespace-nowrap text-[var(--color-text)]">
+            <ServiceLogo service={service} />
+            <span>{service.label}</span>
+          </span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+function ServiceLogo({ service }: { service: BriefService }) {
+  const className = 'inline-block size-[0.88em] shrink-0 translate-y-[-0.04em]';
+  if (service.id === 'gmail') return <ProviderLogo provider="google" className={className} />;
+  if (service.id === 'outlook') return <ProviderLogo provider="microsoft" className={className} />;
+  if (service.id === 'icloud') return <ProviderLogo provider="icloud" className={className} />;
+  if (
+    service.id === 'github' ||
+    service.id === 'bitbucket' ||
+    service.id === 'jira' ||
+    service.id === 'slack'
+  ) {
+    return <ConnectionLogo server={service.id} className={className} />;
+  }
+  if (service.id === 'calendar') return <CalendarDays className={className} />;
+  if (service.id === 'tasks') return <CheckCircle2 className={className} />;
+  return <Inbox className={className} />;
 }
 
 // Renders the agent-authored HTML artifact in a sandboxed iframe and bridges
@@ -621,33 +751,32 @@ function ReportArtifact({
 }
 
 const GENERATING_PHRASES = [
-  'Reading the last week of mail…',
-  'Sorting who actually needs a reply…',
-  'Folding in your tasks and calendar…',
-  "Choosing today's painting…",
-  'Composing the narrative…',
-  'Laying out the charts and to-dos…',
+  'Reading the last week of mail',
+  'Finding the threads that need a decision',
+  'Folding in tasks and calendar context',
+  "Choosing today's artwork",
+  'Composing the brief artifact',
+  'Laying out charts, actions, and widgets',
 ];
 
-// The "we're working on it" state: a shimmering masthead, a typewriter cycling
-// reassuring lines (token-by-token feel), and a stage-aware progress bar driven
-// by the report's live progress when available.
+const GENERATION_STEPS = [
+  { label: 'Source scan', icon: Inbox },
+  { label: 'Editorial pass', icon: FileText },
+  { label: 'Artwork', icon: Palette },
+  { label: 'Artifact render', icon: Newspaper },
+];
+
+const STUCK_GENERATION_MS = 20 * 60_000;
+
+// The "we're working on it" state: a quiet, staged progress surface. Mobbin
+// references favored calm skeleton/progress cards over rapid typewriter motion.
 function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
   const [phraseIdx, setPhraseIdx] = useState(0);
-  const [typed, setTyped] = useState('');
 
   useEffect(() => {
-    const phrase = GENERATING_PHRASES[phraseIdx % GENERATING_PHRASES.length];
-    if (typed.length < phrase.length) {
-      const t = setTimeout(() => setTyped(phrase.slice(0, typed.length + 1)), 34);
-      return () => clearTimeout(t);
-    }
-    const hold = setTimeout(() => {
-      setTyped('');
-      setPhraseIdx((i) => (i + 1) % GENERATING_PHRASES.length);
-    }, 1300);
-    return () => clearTimeout(hold);
-  }, [typed, phraseIdx]);
+    const t = window.setInterval(() => setPhraseIdx((i) => (i + 1) % GENERATING_PHRASES.length), 1600);
+    return () => window.clearInterval(t);
+  }, []);
 
   const stage =
     report?.artifactStatus === 'composing'
@@ -656,24 +785,29 @@ function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
   const pct = report?.progress?.total
     ? Math.max(8, Math.min(100, (report.progress.done / report.progress.total) * 100))
     : null;
+  const currentStep = pct == null ? 0 : Math.min(GENERATION_STEPS.length - 1, Math.floor(pct / 25));
 
   return (
     <div className="grid h-full place-items-center px-6">
-      <div className="w-full max-w-md text-center">
-        <div className="relative mx-auto mb-6 h-40 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
-          <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-[var(--color-accent-soft)] via-transparent to-[var(--color-accent-soft)]" />
-          <div className="absolute inset-0 grid place-items-center">
-            <Newspaper className="size-8 text-[var(--color-text-faint)]" />
+      <div className="@container w-full max-w-xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-left shadow-[var(--shadow-soft)]">
+        <div className="flex items-start gap-4">
+          <div className="relative grid size-12 shrink-0 place-items-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-accent)] shadow-[var(--shadow-control)]">
+            <Ring className="size-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-serif text-[13px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+              Daily Brief
+            </p>
+            <h1 className="mt-1 font-serif text-[26px] font-semibold italic leading-none text-[var(--color-text)]">
+              Building your report
+            </h1>
+            <p className="mt-3 min-h-[1.45em] text-[14px] text-[var(--color-text-muted)] transition-opacity duration-150">
+              {GENERATING_PHRASES[phraseIdx % GENERATING_PHRASES.length]}
+            </p>
           </div>
         </div>
-        <h1 className="font-serif text-[26px] font-semibold italic leading-none text-[var(--color-text)]">
-          The Daily Brief
-        </h1>
-        <p className="mt-3 min-h-[1.5em] font-serif text-[15px] italic text-[var(--color-accent)]">
-          {typed}
-          <span className="ml-0.5 inline-block animate-pulse">▍</span>
-        </p>
-        <div className="mt-5">
+
+        <div className="mt-6">
           <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
             {pct != null ? (
               <div
@@ -684,12 +818,39 @@ function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
               <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--color-accent)]" />
             )}
           </div>
-          <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-            {stripEmoji(stage)}
-            {report?.progress?.total
-              ? ` · ${Math.min(report.progress.done, report.progress.total)}/${report.progress.total}`
-              : ''}
-          </p>
+          <div className="mt-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            <span>{stripEmoji(stage)}</span>
+            <span>
+              {report?.progress?.total
+                ? `${Math.min(report.progress.done, report.progress.total)}/${report.progress.total}`
+                : 'Queued'}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-2 @[520px]:grid-cols-4">
+          {GENERATION_STEPS.map((step, index) => {
+            const Icon = step.icon;
+            const complete = pct != null && index < currentStep;
+            const active = index === currentStep;
+            return (
+              <div
+                key={step.label}
+                className={cn(
+                  'rounded-xl border px-3 py-3 text-[12px]',
+                  active || complete
+                    ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-subtle)] text-[var(--color-text)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]',
+                )}
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <Icon className="size-3.5" />
+                  {complete ? <CheckCircle2 className="size-3.5 text-[var(--color-accent)]" /> : null}
+                </div>
+                <div className="truncate font-medium">{step.label}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -735,7 +896,7 @@ export function DailyReport() {
       const r = query.state.data?.report;
       // A status that has sat past this cutoff is from a generation that died
       // mid-flight; stop polling it so we don't hammer a forever-stuck edition.
-      const stuck = !r || Date.now() - (r.generatedAt || 0) > 5 * 60_000;
+      const stuck = !r || Date.now() - (r.generatedAt || 0) > STUCK_GENERATION_MS;
       if (!stuck && (r?.status === 'partial' || r?.artifactStatus === 'composing')) return 2_000;
       // The month pass enriches an already-shown edition in the background.
       if (!stuck && r?.artifactStatus === 'enriching') return 3_000;
@@ -759,7 +920,6 @@ export function DailyReport() {
   // 'partial'/'composing'/'enriching' forever. Past this cutoff we treat such a
   // status as dead, so the in-progress UI clears and the Generate button is
   // clickable again to force a fresh run.
-  const STUCK_GENERATION_MS = 5 * 60_000;
   const reportIsStale = !report || Date.now() - (report.generatedAt || 0) > STUCK_GENERATION_MS;
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
@@ -834,7 +994,12 @@ export function DailyReport() {
       setSelectedId(null);
       setGeneratingSince(Date.now());
     },
-    onSuccess: invalidate,
+    onSuccess: (result) => {
+      if (result.started === false && result.report?.generatedAt) {
+        setGeneratingSince(result.report.generatedAt);
+      }
+      invalidate();
+    },
     onError: () => setGeneratingSince(null),
   });
 
@@ -972,9 +1137,19 @@ export function DailyReport() {
               <h1 className="font-serif text-[clamp(22px,6cqi,30px)] font-semibold italic leading-none tracking-tight text-[var(--color-text)]">
                 The Daily Brief
               </h1>
-              <p className="mt-2 font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                {report ? formatDateline(report) : 'From your mail & calendar'}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <p className="font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                  {report ? formatDateline(report) : 'From your mail & calendar'}
+                </p>
+                {report && report.status !== 'partial' ? (
+                  <span
+                    title="The rich artifact is not present for this edition."
+                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--color-text-muted)]"
+                  >
+                    Fallback view
+                  </span>
+                ) : null}
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               {history.length > 1 ? (
@@ -1015,12 +1190,12 @@ export function DailyReport() {
               <Button
                 type="button"
                 size="sm"
-                disabled={generate.isPending || generating}
+                disabled={generate.isPending || generating || enriching}
                 onClick={() => generate.mutate()}
                 aria-label="Generate a fresh report"
                 title="Generate"
               >
-                {generate.isPending || generating ? (
+                {generate.isPending || generating || enriching ? (
                   <Ring className="size-3" />
                 ) : (
                   <RefreshCw className="size-3" />
@@ -1031,13 +1206,13 @@ export function DailyReport() {
           </div>
           {generate.isPending || generating ? (
             <div className="mt-3 space-y-2">
-              <TextShimmer className="text-[12px] text-[var(--color-accent)]">
+              <p className="text-[12px] text-[var(--color-accent)]">
                 {report?.artifactStatus === 'composing'
                   ? 'Designing your brief — laying out the narrative, charts, and to-dos…'
                   : generating && report?.progress
                     ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
                     : 'Reading your mail, tasks, and calendar to write today’s brief…'}
-              </TextShimmer>
+              </p>
               <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
                 <div
                   className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
@@ -1058,6 +1233,15 @@ export function DailyReport() {
       {/* Floating toolbar for the artifact view — fades until hovered. */}
       {report?.html ? (
         <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
+          {report.artifactSource === 'deterministic' ? (
+            <span
+              title="AI composition was unavailable, so this edition is using the structured artifact fallback."
+              className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]"
+            >
+              <FileText className="size-2.5" />
+              <span className="hidden @[520px]:inline">Structured fallback</span>
+            </span>
+          ) : null}
           {enriching ? (
             <span className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]">
               <Ring className="size-2.5" />
@@ -1149,12 +1333,24 @@ export function DailyReport() {
           <div className="mx-auto flex max-w-5xl flex-col gap-7">
             {/* Lede — the narrative as an editorial pull-quote. */}
             {report.narrative ? (
-              <blockquote
-                className="blur-in border-l-2 border-[var(--color-accent)] pl-4 font-serif text-[clamp(15px,3.6cqi,19px)] italic leading-[1.55] text-[var(--color-text)]"
+              <section
+                className="blur-in rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-5 py-5 shadow-[var(--shadow-soft)]"
                 style={{ animationDelay: '60ms' }}
               >
-                {stripEmoji(report.narrative)}
-              </blockquote>
+                {narrativeParagraphs(report.narrative).map((paragraph, index) => (
+                  <p
+                    key={paragraph}
+                    className={cn(
+                      'font-serif text-[clamp(16px,3.6cqi,20px)] leading-[1.55] text-[var(--color-text)]',
+                      index === 0 &&
+                        'first-letter:float-left first-letter:mr-2 first-letter:font-serif first-letter:text-[3.35em] first-letter:font-semibold first-letter:leading-[0.82] first-letter:text-[var(--color-accent)]',
+                      index > 0 && 'mt-3 text-[var(--color-text)]/90',
+                    )}
+                  >
+                    {paragraph}
+                  </p>
+                ))}
+              </section>
             ) : null}
 
             {/* Front-page lanes. */}
@@ -1224,20 +1420,21 @@ export function DailyReport() {
               onOpen={openThread}
             />
 
-            <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--color-border)] pt-4 pb-6 text-[11px] text-[var(--color-text-faint)]">
-              <span>Filed {new Date(report.generatedAt).toLocaleString()}</span>
-              {report.model ? <span>· Composed by {report.model}</span> : null}
-              {typeof report.sections.noiseSummary === 'string' ? (
-                <span className="basis-full text-[var(--color-text-muted)]">
-                  {stripEmoji(report.sections.noiseSummary)}
-                </span>
-              ) : null}
-              {report.errors?.length ? (
-                <span className="basis-full text-[var(--color-danger)]">
-                  Some sources failed: {report.errors.join('; ')}
-                </span>
-              ) : null}
-            </footer>
+            <BriefFooter report={report} />
+            {(typeof report.sections.noiseSummary === 'string' || report.errors?.length) && (
+              <div className="pb-6 text-[11px] text-[var(--color-text-faint)]">
+                {typeof report.sections.noiseSummary === 'string' ? (
+                  <div className="text-[var(--color-text-muted)]">
+                    {stripEmoji(report.sections.noiseSummary)}
+                  </div>
+                ) : null}
+                {report.errors?.length ? (
+                  <div className="text-[var(--color-danger)]">
+                    Some sources failed: {report.errors.join('; ')}
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1325,16 +1522,11 @@ function TaskCalendarBrief({
         {visibleTasks.length ? (
           <ul className="space-y-2">
             {visibleTasks.map((task) => (
-              <li key={task.cardId} className="grid grid-cols-[1rem_minmax(0,1fr)_auto] gap-2">
-                <span
-                  className={cn(
-                    'mt-1 grid size-3.5 place-items-center rounded-sm border',
-                    task.completedAt
-                      ? 'border-[var(--color-success)] bg-[var(--color-success)]'
-                      : 'border-[var(--color-border-strong)]',
-                  )}
-                  aria-hidden
-                />
+              <li
+                key={task.cardId}
+                className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-xl border border-[var(--task-border,var(--color-border))] bg-[var(--color-bg-elevated)] px-3 py-2.5 shadow-[var(--shadow-soft)]"
+                style={taskBriefSurfaceStyle(task)}
+              >
                 <div className="min-w-0">
                   <button
                     type="button"
@@ -1474,6 +1666,16 @@ function TaskCalendarBrief({
       </div>
     </section>
   );
+}
+
+function taskBriefSurfaceStyle(task: DailyReportTaskItem): CSSProperties | undefined {
+  const color = taskSourceColor(task);
+  if (!color) return undefined;
+  return {
+    '--task-border': `color-mix(in oklab, ${color} 34%, var(--color-border))`,
+    backgroundColor: `color-mix(in oklab, ${color} 14%, var(--color-bg-elevated))`,
+    borderColor: `color-mix(in oklab, ${color} 34%, var(--color-border))`,
+  } as CSSProperties;
 }
 
 function ReportSection({

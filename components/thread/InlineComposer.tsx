@@ -33,6 +33,7 @@ import { formatBytes } from '@/lib/shared/files';
 import { DEFAULT_UNDO_SEND_SECONDS } from '@/lib/shared/sending';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
+import { attachmentPreviewKind, buildAttachmentPreviewItem } from './attachment-preview';
 
 // Hard guard: gmail's hard ceiling is 25MB total per send. We refuse slightly
 // under to leave headroom for MIME encoding overhead.
@@ -515,8 +516,8 @@ export function InlineComposer({
 
   const modeLabel: Record<ComposeMode, string> = {
     new: 'New message',
-    reply: replyToLabel ? `Reply to ${replyToLabel}` : 'Reply',
-    reply_all: replyToLabel ? `Reply-all (${replyToLabel})` : 'Reply-all',
+    reply: 'Reply',
+    reply_all: 'Reply all',
     forward: 'Forward',
   };
 
@@ -537,44 +538,48 @@ export function InlineComposer({
         </div>
       ) : null}
 
-      <header className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
-        <div className="grid h-6 w-6 place-items-center rounded-md bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
-          {composerMode === 'forward' ? (
-            <ForwardIcon className="h-3.5 w-3.5" />
-          ) : composerMode === 'new' ? (
-            <EditIcon className="h-3.5 w-3.5" />
-          ) : (
-            <ReplyIcon className="h-3.5 w-3.5" />
-          )}
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]">
+            {composerMode === 'forward' ? (
+              <ForwardIcon className="h-3.5 w-3.5" />
+            ) : composerMode === 'new' ? (
+              <EditIcon className="h-3.5 w-3.5" />
+            ) : (
+              <ReplyIcon className="h-3.5 w-3.5" />
+            )}
+          </div>
+          <span className="shrink-0 whitespace-nowrap text-[12.5px] font-medium text-[var(--color-text)]">
+            {modeLabel[composerMode]}
+          </span>
+          <span className="flex min-w-0 items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
+            <span className="shrink-0">from</span>
+            {fromOptions.length > 1 ? (
+              <Select value={fromAccount || account} onValueChange={setFromAccount}>
+                <SelectTrigger
+                  size="sm"
+                  className="h-7 max-w-[11rem] gap-1 border-[var(--color-control-border)] bg-[var(--color-control)] px-2 py-0 text-[11px] text-[var(--color-text)] shadow-[var(--shadow-control)]"
+                >
+                  <SelectValue placeholder={account} />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {fromOptions.map((accountId) => (
+                    <SelectItem key={accountId} value={accountId} className="text-[12px]">
+                      {accountAliasById[accountId] || accountId}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <span className="truncate text-[var(--color-text-muted)]">
+                {accountAliasById[fromAccount || account] || fromAccount || account}
+              </span>
+            )}
+          </span>
         </div>
-        <span className="text-[12.5px] font-medium text-[var(--color-text)]">{modeLabel[composerMode]}</span>
-        <span className="flex items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
-          <span>· from</span>
-          {fromOptions.length > 1 ? (
-            <Select value={fromAccount || account} onValueChange={setFromAccount}>
-              <SelectTrigger
-                size="sm"
-                className="h-6 gap-1 border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0 text-[11px] text-[var(--color-text)] shadow-none focus-visible:ring-0"
-              >
-                <SelectValue placeholder={account} />
-              </SelectTrigger>
-              <SelectContent align="start">
-                {fromOptions.map((accountId) => (
-                  <SelectItem key={accountId} value={accountId} className="text-[12px]">
-                    {accountAliasById[accountId] || accountId}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <span className="text-[var(--color-text-muted)]">
-              {accountAliasById[fromAccount || account] || fromAccount || account}
-            </span>
-          )}
-        </span>
 
         {isReply ? (
-          <div className="ml-3 flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5 text-[10.5px]">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] p-0.5 text-[10.5px] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)]">
             <ModeChip active={composerMode === 'reply'} onClick={() => setComposerMode('reply')}>
               Reply
             </ModeChip>
@@ -587,7 +592,7 @@ export function InlineComposer({
           </div>
         ) : null}
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           <TabButton
             active={tab === 'write'}
             onClick={() => setTab('write')}
@@ -606,7 +611,7 @@ export function InlineComposer({
             <button
               type="button"
               onClick={onClose}
-              className="ml-1 grid h-6 w-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+              className="ml-1 grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-faint)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               title="Close"
             >
               <X className="h-3 w-3" />
@@ -695,12 +700,12 @@ export function InlineComposer({
         </div>
       ) : null}
 
-      <footer className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
+      <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={openFilePicker}
-            className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]"
+            className="flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
             title="Attach files"
           >
             <Paperclip className="h-3 w-3" />
@@ -711,7 +716,7 @@ export function InlineComposer({
               type="button"
               onClick={() => aiDraft.mutate()}
               disabled={aiDraft.isPending || !threadId}
-              className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
+              className="flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] disabled:opacity-50"
               title="Ask AI to draft a reply"
             >
               <PenLine className="h-3 w-3 text-[var(--color-accent)]" />
@@ -725,7 +730,7 @@ export function InlineComposer({
               <button
                 type="button"
                 disabled={!canSend}
-                className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+                className="grid h-8 w-8 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] disabled:opacity-50"
                 title="Schedule send"
               >
                 <CalendarClock className="h-3.5 w-3.5" />
@@ -936,10 +941,10 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] transition-colors',
+        'flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] shadow-[var(--shadow-control)] transition-colors',
         active
-          ? 'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]'
-          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+          ? 'bg-[var(--color-control-hover)] text-[var(--color-text)]'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
       )}
     >
       {icon}
@@ -962,10 +967,10 @@ function ModeChip({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded px-1.5 py-0.5 transition-colors',
+        'h-6 whitespace-nowrap rounded px-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--color-bg-elevated)]',
         active
-          ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+          ? 'bg-[var(--color-control-hover)] text-[var(--color-text)]'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
       )}
     >
       {children}
@@ -983,14 +988,14 @@ function FileChip({
   onRemove: () => void;
 }) {
   return (
-    <div className="group flex max-w-[260px] items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[11.5px]">
+    <div className="group flex max-w-[260px] items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[11.5px] shadow-[var(--shadow-control)]">
       <button
         type="button"
         onClick={onPreview}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left hover:bg-[var(--color-bg-muted)]"
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left hover:bg-[var(--color-hover-soft)]"
         title={`Preview ${file.name}`}
       >
-        <span className="grid size-5 shrink-0 place-items-center rounded bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+        <span className="grid size-5 shrink-0 place-items-center rounded-lg bg-[var(--color-control)] text-[var(--color-text-muted)]">
           <AttachmentIcon mime={file.type} className="size-3" />
         </span>
         <span className="min-w-0 flex-1">
@@ -1001,8 +1006,9 @@ function FileChip({
       <button
         type="button"
         onClick={onRemove}
-        className="mr-1 grid h-5 w-5 shrink-0 place-items-center rounded text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-hover:opacity-100"
-        title="Remove"
+        aria-label={`Remove ${file.name}`}
+        className="mr-1 grid h-5 w-5 shrink-0 place-items-center rounded-lg text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--color-bg-elevated)] group-hover:opacity-100"
+        title={`Remove ${file.name}`}
       >
         <X className="h-3 w-3" />
       </button>
@@ -1021,7 +1027,7 @@ function DraftAttachmentPreviewDialog({ file }: { file: File }) {
         <DialogTitle className="truncate text-[14px]">{file.name}</DialogTitle>
         <DialogDescription className="text-[11px]">{meta}</DialogDescription>
       </DialogHeader>
-      <div className="min-h-0 px-4 pb-4">
+      <div className="min-h-0 bg-[var(--color-bg)] px-4 pb-4 pt-1">
         {url ? <DraftAttachmentPreview file={file} url={url} /> : <div className="h-60 rounded shimmer" />}
         {url ? (
           <div className="mt-3 flex justify-end">
@@ -1029,7 +1035,7 @@ function DraftAttachmentPreviewDialog({ file }: { file: File }) {
               href={url}
               target="_blank"
               rel="noreferrer"
-              className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
             >
               <ExternalLink className="size-3.5" />
               Open
@@ -1042,30 +1048,53 @@ function DraftAttachmentPreviewDialog({ file }: { file: File }) {
 }
 
 function DraftAttachmentPreview({ file, url }: { file: File; url: string }) {
-  const mime = (file.type || '').toLowerCase();
+  const preview = buildAttachmentPreviewItem({
+    filename: file.name,
+    mimeType: file.type,
+    size: file.size,
+    downloadHref: url,
+    previewHref: url,
+  });
+  const kind = attachmentPreviewKind(file.type, file.name);
   const frameClass =
-    'h-[min(68vh,760px)] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]';
+    'h-[min(68vh,760px)] w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]';
 
-  if (mime.startsWith('image/')) {
+  if (kind === 'image') {
     return (
-      <div className="grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
         {/* biome-ignore lint/performance/noImgElement: blob URLs from local draft files cannot be optimized by next/image. */}
         <img src={url} alt={file.name} className="max-h-full max-w-full object-contain" />
       </div>
     );
   }
 
-  if (mime === 'application/pdf' || mime.startsWith('text/') || /(json|xml|csv|markdown)/.test(mime)) {
-    return <iframe title={file.name} src={url} className={frameClass} />;
+  if (['pdf', 'text', 'code', 'calendar'].includes(kind)) {
+    return <iframe title={file.name} src={url} className={frameClass} sandbox="" />;
+  }
+
+  if (kind === 'video') {
+    // biome-ignore lint/a11y/useMediaCaption: user attachments do not provide caption tracks.
+    return <video src={url} controls className={frameClass} />;
+  }
+
+  if (kind === 'audio') {
+    return (
+      <div className="grid min-h-40 place-items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]">
+        {/* biome-ignore lint/a11y/useMediaCaption: user attachments do not provide caption tracks. */}
+        <audio src={url} controls className="w-full" />
+      </div>
+    );
   }
 
   return (
-    <div className="grid min-h-[260px] place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-6 text-center">
+    <div className="grid min-h-[260px] place-items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-6 text-center shadow-[var(--shadow-soft)]">
       <div className="flex max-w-sm flex-col items-center gap-2">
-        <span className="grid size-12 place-items-center rounded-lg bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
-          <AttachmentIcon mime={mime} className="size-5" />
+        <span className="grid size-12 place-items-center rounded-xl bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]">
+          <AttachmentIcon mime={preview.mime} className="size-5" />
         </span>
-        <div className="text-[12px] font-medium text-[var(--color-text)]">Preview unavailable</div>
+        <div className="text-[12px] font-medium text-[var(--color-text)]">
+          {preview.previewLabel} preview unavailable
+        </div>
         <div className="text-[11px] text-[var(--color-text-muted)]">
           This file type can still be opened by the browser.
         </div>

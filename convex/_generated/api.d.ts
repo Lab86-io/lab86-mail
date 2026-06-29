@@ -19,6 +19,8 @@ import type * as dailyReports from "../dailyReports.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
 import type * as mailCorpus from "../mailCorpus.js";
+import type * as mcp from "../mcp.js";
+import type * as mcpSync from "../mcpSync.js";
 import type * as operations from "../operations.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as smart from "../smart.js";
@@ -44,6 +46,8 @@ declare const fullApi: ApiFromModules<{
   lib: typeof lib;
   liveMail: typeof liveMail;
   mailCorpus: typeof mailCorpus;
+  mcp: typeof mcp;
+  mcpSync: typeof mcpSync;
   operations: typeof operations;
   rateLimits: typeof rateLimits;
   smart: typeof smart;

@@ -18,6 +18,7 @@ import {
 import { defineTool } from './registry';
 
 const ReportKindSchema = z.enum(['morning', 'evening', 'manual']);
+const ACTIVE_GENERATION_MS = 20 * 60_000;
 
 export const generateDailyReportTool = defineTool({
   name: 'generate_daily_report',
@@ -36,6 +37,9 @@ export const generateDailyReportTool = defineTool({
     if (wait) {
       return { report: await generateAgentReport({ kind, userId: ctx.userId }) };
     }
+    const active = await getActiveGeneration(kind);
+    if (active) return { report: active, started: false };
+
     const reportId = randomUUID();
     const now = Date.now();
     await saveDailyReport({
@@ -71,12 +75,22 @@ export const generateDailyReportTool = defineTool({
         calendarEvents: 0,
       },
     } satisfies DailyReport);
-    void generateAgentReport({ kind, userId: ctx.userId, reportId }).catch((err) => {
-      console.error('[daily-report] background generation failed:', err);
-    });
+    void generateAgentReport({ kind, userId: ctx.userId, reportId }).catch(
+      console.error.bind(console, '[daily-report] background generation failed:'),
+    );
     return { report: null, started: true };
   },
 });
+
+async function getActiveGeneration(kind: z.infer<typeof ReportKindSchema>) {
+  const latest = await getLatestDailyReport(kind);
+  if (!latest) return null;
+  const age = Date.now() - Number(latest.generatedAt || 0);
+  if (age > ACTIVE_GENERATION_MS) return null;
+  if (latest.status === 'partial') return latest;
+  if (latest.artifactStatus === 'composing' || latest.artifactStatus === 'enriching') return latest;
+  return null;
+}
 
 export const getLatestDailyReportTool = defineTool({
   name: 'get_latest_daily_report',

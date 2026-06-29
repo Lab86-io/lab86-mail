@@ -1,4 +1,4 @@
-import { Mail } from 'lucide-react';
+import { Mail, Plug } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Official brand marks, inlined as SVG paths so they render crisply at any
@@ -47,10 +47,92 @@ export function AppleLogo({ className }: { className?: string }) {
   );
 }
 
+export function GitHubLogo({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      role="img"
+      aria-label="GitHub"
+      className={cn('size-4 fill-current text-[#181717] dark:text-white', className)}
+    >
+      <title>GitHub</title>
+      <path d="M12 .5a12 12 0 0 0-3.8 23.38c.6.11.82-.26.82-.58v-2.04c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.48.99.11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.92 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.47 11.47 0 0 1 6.02 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.6-2.81 5.61-5.48 5.91.43.37.82 1.1.82 2.22v3.31c0 .32.21.7.83.58A12 12 0 0 0 12 .5Z" />
+    </svg>
+  );
+}
+
+export function BitbucketLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" role="img" aria-label="Bitbucket" className={cn('size-4', className)}>
+      <title>Bitbucket</title>
+      <path
+        fill="#2684FF"
+        d="M2.26 3.1a.72.72 0 0 0-.71.83l2.97 18.04c.08.5.51.87 1.02.87h14.25c.38 0 .7-.27.76-.65l2.97-18.25a.72.72 0 0 0-.71-.84H2.26Zm12.74 13.1H9.1L7.5 9.74h8.58L15 16.2Z"
+      />
+      <path
+        fill="#0052CC"
+        d="M22.22 9.74h-6.14L15 16.2H9.1l-6.96 8.26c.19.17.44.27.7.27h14.25c.38 0 .7-.27.76-.65l4.37-14.34Z"
+        opacity="0.55"
+      />
+    </svg>
+  );
+}
+
+export function JiraLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" role="img" aria-label="Jira" className={cn('size-4', className)}>
+      <title>Jira</title>
+      <path
+        fill="#2684FF"
+        d="M11.88 2.43 2.34 11.97a1.64 1.64 0 0 0 0 2.32l6.55 6.55 3.02-3.02-5.38-5.38 5.35-5.35 5.38 5.38 3.02-3.02-6.08-6.08a1.64 1.64 0 0 0-2.32 0Z"
+      />
+      <path
+        fill="#0052CC"
+        d="m11.91 7.09 5.35 5.38-5.35 5.35 3.02 3.02 6.55-6.55a1.64 1.64 0 0 0 0-2.32l-6.55-6.55-3.02 3.02Z"
+      />
+    </svg>
+  );
+}
+
+export function SlackLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" role="img" aria-label="Slack" className={cn('size-4', className)}>
+      <title>Slack</title>
+      <path
+        fill="#36C5F0"
+        d="M8.45 2a2.05 2.05 0 0 0 0 4.1h2.05V4.05A2.05 2.05 0 0 0 8.45 2Zm0 5.47H2.98a2.05 2.05 0 0 0 0 4.1h5.47a2.05 2.05 0 0 0 0-4.1Z"
+      />
+      <path
+        fill="#2EB67D"
+        d="M22 9.52a2.05 2.05 0 0 0-4.1 0v2.05h2.05A2.05 2.05 0 0 0 22 9.52Zm-5.47 0V4.05a2.05 2.05 0 0 0-4.1 0v5.47a2.05 2.05 0 0 0 4.1 0Z"
+      />
+      <path
+        fill="#ECB22E"
+        d="M14.48 22a2.05 2.05 0 0 0 0-4.1h-2.05v2.05A2.05 2.05 0 0 0 14.48 22Zm0-5.47h5.47a2.05 2.05 0 0 0 0-4.1h-5.47a2.05 2.05 0 0 0 0 4.1Z"
+      />
+      <path
+        fill="#E01E5A"
+        d="M2 14.48a2.05 2.05 0 0 0 4.1 0v-2.05H4.05A2.05 2.05 0 0 0 2 14.48Zm5.47 0v5.47a2.05 2.05 0 0 0 4.1 0v-5.47a2.05 2.05 0 0 0-4.1 0Z"
+      />
+    </svg>
+  );
+}
+
+export function ConnectionLogo({ server, className }: { server: string; className?: string }) {
+  if (server === 'github') return <GitHubLogo className={className} />;
+  if (server === 'bitbucket') return <BitbucketLogo className={className} />;
+  if (server === 'jira') return <JiraLogo className={className} />;
+  if (server === 'slack') return <SlackLogo className={className} />;
+  return <Plug aria-hidden className={cn('size-4', className)} />;
+}
+
 export function ProviderLogo({ provider, className }: { provider: string; className?: string }) {
   if (provider === 'google') return <GoogleLogo className={className} />;
   if (provider === 'microsoft') return <MicrosoftLogo className={className} />;
   if (provider === 'icloud') return <AppleLogo className={className} />;
+  if (provider === 'github' || provider === 'bitbucket' || provider === 'jira' || provider === 'slack') {
+    return <ConnectionLogo server={provider} className={className} />;
+  }
   return <Mail aria-hidden className={cn('size-4', className)} />;
 }
 
@@ -59,5 +141,9 @@ export function providerDisplayName(provider: string) {
   if (provider === 'microsoft') return 'Outlook';
   if (provider === 'icloud') return 'iCloud';
   if (provider === 'imap') return 'IMAP';
+  if (provider === 'github') return 'GitHub';
+  if (provider === 'bitbucket') return 'Bitbucket';
+  if (provider === 'jira') return 'Jira';
+  if (provider === 'slack') return 'Slack';
   return provider;
 }

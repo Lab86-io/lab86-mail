@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useState } from 'react';
 import { fromColor, fromInitials, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
@@ -29,7 +29,10 @@ export function Avatar({
   const showImage = !!src && !broken;
   return (
     <div
-      className={cn('shrink-0 overflow-hidden rounded-full shadow-[var(--shadow-soft)]', className)}
+      className={cn(
+        'shrink-0 overflow-hidden rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-control)] shadow-[var(--shadow-control)]',
+        className,
+      )}
       style={{ width: size, height: size }}
     >
       {showImage ? (
@@ -41,18 +44,24 @@ export function Avatar({
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setBroken(true)}
-          className="h-full w-full object-cover"
+          className="h-full w-full bg-[var(--color-control)] object-cover"
         />
       ) : (
         <span
           role="img"
           aria-label={seed}
-          className="grid h-full w-full select-none place-items-center font-semibold uppercase leading-none text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14)]"
-          style={{
-            backgroundColor: fromColor(name),
-            fontSize: Math.max(9, Math.round(size * 0.4)),
-            letterSpacing: '0.01em',
-          }}
+          className="grid h-full w-full select-none place-items-center font-display font-semibold uppercase leading-none shadow-[inset_0_0_0_1px_rgb(255_255_255/0.18)]"
+          style={
+            {
+              '--avatar-seed': fromColor(name),
+              backgroundColor:
+                'color-mix(in oklab, var(--avatar-seed) var(--avatar-initial-bg-strength), var(--color-avatar-bg))',
+              color:
+                'color-mix(in oklab, var(--avatar-seed) var(--avatar-initial-text-strength), var(--color-text))',
+              fontSize: Math.max(9, Math.round(size * 0.4)),
+              letterSpacing: '0.01em',
+            } as CSSProperties
+          }
         >
           {fromInitials(name)}
         </span>

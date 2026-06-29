@@ -90,7 +90,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body>
         {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
-          <ClerkProvider {...(clerkProxyUrl ? { proxyUrl: clerkProxyUrl } : {})}>{content}</ClerkProvider>
+          <ClerkProvider
+            {...(clerkProxyUrl ? { proxyUrl: clerkProxyUrl } : {})}
+            appearance={{
+              variables: {
+                colorBackground: 'var(--color-bg-elevated)',
+                colorText: 'var(--color-text)',
+                colorPrimary: 'var(--color-accent)',
+              },
+              elements: {
+                avatarBox: 'bg-[var(--color-avatar-bg)] shadow-[var(--shadow-control)]',
+                userButtonAvatarBox: 'bg-[var(--color-avatar-bg)] shadow-[var(--shadow-control)]',
+                userButtonTrigger:
+                  'rounded-md focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]',
+              },
+            }}
+          >
+            {content}
+          </ClerkProvider>
         ) : (
           content
         )}
