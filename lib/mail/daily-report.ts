@@ -172,8 +172,9 @@ export async function generateDailyReport(input: {
   );
   // Callers may still pass raw emails in input.accounts; honor them for
   // self-detection even though transport lookups use accountIds.
-  for (const value of accounts) {
-    if (value.includes('@')) self.add(value.toLowerCase());
+  for (const value of input.accounts ?? []) {
+    const email = String(value).toLowerCase();
+    if (email.includes('@')) self.add(email);
   }
 
   // ---- Candidate gathering -------------------------------------------------

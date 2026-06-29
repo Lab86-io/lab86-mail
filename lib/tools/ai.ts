@@ -72,6 +72,10 @@ export const summarizeThread = defineTool({
   input: z.object({ account: z.string(), threadId: z.string() }),
   output: z.object({ summary: z.string(), model: z.string() }),
   async handler({ account, threadId }, ctx) {
+    const messages = await loadThread(account, threadId, ctx.userId);
+    if (!messages.length) return { summary: '(empty thread)', model: 'none' };
+    if (messages.length <= 1) return { summary: '', model: 'none' };
+
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
     if (
       cachedThread?.summary &&
@@ -81,9 +85,6 @@ export const summarizeThread = defineTool({
       // Surface the real model that produced the cached summary, not 'cached'.
       return { summary: cachedThread.summary, model: cachedThread.summaryModel || 'cached' };
     }
-    const messages = await loadThread(account, threadId, ctx.userId);
-    if (!messages.length) return { summary: '(empty thread)', model: 'none' };
-    if (messages.length <= 1) return { summary: '', model: 'none' };
     if (!(await hasAiForCurrentUser())) {
       const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
       const last = messages[messages.length - 1];

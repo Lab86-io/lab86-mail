@@ -53,6 +53,7 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .block-wide,.lede-block,.week,.chart-block,.timeline-block,.widget-block{grid-column:1/-1}
 .lede-block{max-width:960px;margin-bottom:.5rem}
 .lede{margin:0;font-family:var(--brief-font-display);font-size:clamp(1.35rem,3.4vw,2.45rem);font-style:italic;line-height:1.15;text-wrap:balance}
+.lede-block .lede:first-of-type::first-letter{float:left;margin:.06em .12em 0 0;font-size:3.1em;font-style:normal;font-weight:700;line-height:.78;color:var(--brief-accent)}
 .lede + .lede{margin-top:1rem}
 .section-title{display:flex;align-items:center;gap:.85rem;margin:0 0 1rem;font-family:var(--brief-font-display);font-size:.82rem;font-weight:700;letter-spacing:max(var(--brief-display-tracking),.12em);text-transform:uppercase;color:var(--brief-ink)}
 .section-title::after{content:"";height:1px;flex:1;background:var(--brief-hairline)}
@@ -72,8 +73,8 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .task{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.75rem;align-items:start}
 .task h3,.event h3{margin:0;font-size:.96rem;line-height:1.25}
 .task-actions{display:flex;align-items:center;gap:.25rem}
-.icon-btn{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--brief-hairline);border-radius:.5rem;background:transparent;color:var(--brief-muted);cursor:pointer}
-.icon-btn:hover{color:var(--brief-accent);background:var(--brief-accent-soft)}
+.icon-btn{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--brief-hairline);border-radius:999px;background:rgba(255,255,255,.58);color:var(--brief-muted);font-size:1.05rem;font-weight:750;line-height:1;box-shadow:0 1px 0 rgba(255,255,255,.65) inset,0 8px 20px rgba(24,24,24,.06);cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease,transform .12s ease}
+.icon-btn:hover{color:var(--brief-accent);border-color:rgba(194,104,60,.35);background:var(--brief-accent-soft);transform:translateY(-1px)}
 .meta{margin-top:.28rem;color:var(--brief-muted);font-size:.78rem;line-height:1.35}
 .week{grid-column:1/-1;width:100%;max-width:100%;min-width:0;margin-top:1rem}
 .agenda{border-top:1px solid var(--brief-hairline)}
@@ -95,13 +96,13 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .brief-footer{position:relative;margin-top:4.5rem;padding:4.4rem 1rem 5.5rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
 .brief-footer::before{content:"";position:absolute;top:0;left:50%;width:min(920px,100%);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,var(--brief-hairline),transparent)}
 .brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.45;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
-.brief-footer-line{position:relative;z-index:1;max-width:1200px;margin:0 auto;font-family:var(--brief-font-display);font-size:clamp(1.65rem,3vw,2.75rem);font-weight:650;line-height:1.18;letter-spacing:var(--brief-display-tracking);text-wrap:balance}
+.brief-footer-line{position:relative;z-index:1;max-width:1200px;margin:0 auto;font-family:var(--brief-font-display);font-size:clamp(1.32rem,2.35vw,2.15rem);font-weight:650;line-height:1.2;letter-spacing:var(--brief-display-tracking);text-wrap:balance}
 .brief-footer-line .soft{color:var(--brief-muted)}
 .footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
 .footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
 .footer-sep{color:var(--brief-muted)}
-.brief-footer-love{position:relative;z-index:1;margin-top:1.55rem;font-family:var(--brief-font-display);font-size:clamp(1rem,2vw,1.35rem);line-height:1.2;color:var(--brief-muted);opacity:.72}
-.footer-letter{display:inline-grid;place-items:center;width:1.25em;height:1.25em;margin-left:.1em;border:1px solid currentColor;border-radius:999px;font-size:.72em;line-height:1;text-transform:uppercase}
+.brief-footer-love{position:relative;z-index:1;margin-top:1.25rem;font-family:var(--brief-font-display);font-size:clamp(.88rem,1.55vw,1.08rem);line-height:1.2;color:var(--brief-muted);opacity:.72}
+.footer-lab86{letter-spacing:.16em;text-transform:uppercase}
 	@media (max-width:640px){.masthead{padding:2.5rem}.masthead h1{font-size:clamp(3.35rem,20vw,6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.task{grid-template-columns:minmax(0,1fr) auto}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
 </style>
 </head>
@@ -378,7 +379,7 @@ function servicesForReport(report: DailyReport, composition: BriefComposition): 
 function renderBriefFooter(services: BriefService[]) {
   return `<footer class="brief-footer">
 <div class="brief-footer-line"><span class="soft">Made for you by</span> <span class="footer-brand">Lab86</span> <span class="soft">using your</span> ${renderServiceList(services)}<span class="footer-sep">.</span></div>
-<div class="brief-footer-love">With love from ${renderLab86Letters()}</div>
+<div class="brief-footer-love">With love from <span class="footer-lab86">LAB86</span></div>
 </footer>`;
 }
 
@@ -391,10 +392,6 @@ function renderServiceList(services: BriefService[]) {
       return `${prefix}<span class="footer-service">${service.logoSvg}<span>${escapeHtml(service.label)}</span></span>`;
     })
     .join('');
-}
-
-function renderLab86Letters() {
-  return ['L', 'A', 'B', '8', '6'].map((letter) => `<span class="footer-letter">${letter}</span>`).join('');
 }
 
 function eventWindow(event: { startAt: number; endAt: number; allDay?: boolean | null }, timezone: string) {
@@ -457,7 +454,7 @@ function isAllowedWidgetHtml(html: string) {
   if (/<meta\b[^>]*http-equiv\s*=\s*["']?refresh/.test(value)) return false;
   if (/\b(fetch|xmlhttprequest|websocket|eventsource)\s*\(/.test(value)) return false;
   if (/\b(localstorage|sessionstorage|indexeddb|document\.cookie)\b/.test(value)) return false;
-  if (/\b(src|href)\s*=\s*["']?\s*(https?:|\/\/)/.test(value)) return false;
+  if (/\b(src|href|data|poster|action)\s*=\s*["']?\s*(https?:|\/\/)/.test(value)) return false;
   if (/\bsrcset\s*=/.test(value)) return false;
   if (/@import\b/.test(value)) return false;
   if (/\burl\s*\(/.test(value)) return false;

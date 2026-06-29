@@ -219,6 +219,7 @@ export async function generateAgentReport(input: {
       composition: nativeWeekComposition,
       html: nativeWeekHtml,
       artifactStatus: 'rendered',
+      artifactSource: 'deterministic',
     };
     await saveDailyReport(nativeOnly).catch(() => undefined);
     return nativeOnly;
@@ -229,6 +230,7 @@ export async function generateAgentReport(input: {
     composition: nativeWeekComposition,
     html: nativeWeekHtml,
     artifactStatus: 'composing',
+    artifactSource: 'deterministic',
   }).catch(() => undefined);
 
   let phase1: DailyReport;
@@ -241,6 +243,7 @@ export async function generateAgentReport(input: {
           composition,
           html: buildNativeDailyReportArtifact(week, composition),
           artifactStatus: 'enriching',
+          artifactSource: 'ai',
           model: describeProvider().primary || week.model,
         }
       : {
@@ -248,6 +251,7 @@ export async function generateAgentReport(input: {
           composition: nativeWeekComposition,
           html: nativeWeekHtml,
           artifactStatus: 'enriching',
+          artifactSource: 'deterministic',
         };
   } catch (err) {
     console.error('[agent-report] week artifact failed:', err);
@@ -256,6 +260,7 @@ export async function generateAgentReport(input: {
       composition: nativeWeekComposition,
       html: nativeWeekHtml,
       artifactStatus: 'enriching',
+      artifactSource: 'deterministic',
     };
   }
   await saveDailyReport(phase1).catch(() => undefined);
@@ -288,6 +293,7 @@ export async function generateAgentReport(input: {
         ? buildNativeDailyReportArtifact(full, finalComposition)
         : nativeFullHtml || phase1.html,
       artifactStatus: 'rendered',
+      artifactSource: composition ? 'ai' : 'deterministic',
       model: composition ? describeProvider().primary || full.model : full.model,
     };
     await saveDailyReport(finalReport);
@@ -327,6 +333,7 @@ ANALYZE, DON'T TRANSCRIBE:
 - Be PROACTIVE, and you have real levers — propose AND wire them: to-dos (create_task), ready-to-send reply drafts in the user's voice (draft_reply), calendar holds for focus/prep/buffer (create_event), invite responses (rsvp_event), and clearing obvious noise (archive_thread). Nothing executes without a tap, so lean toward offering the action rather than just naming it.
 - YOU HAVE FULL EDITORIAL CONTROL. Beyond the sections below, add whatever you judge genuinely useful for THIS person today and omit what isn't — e.g. a "Focus blocks" suggestion that proposes create_event holds around deep work, a "Waiting on others" list, a tight "Clear the noise" row of archivable FYIs, or a prep dossier for the day's most important meeting. Go deeper where it earns its space; stay calm and short on a light day. Never pad.
 - Adaptive density: short and calm on a light day, fuller when it's busy. Never pad.
+- DESIGN THE BRIEF, DON'T JUST SUMMARIZE. The rendered output should feel like an editorial artifact: lead with 2-3 short lede paragraphs when there is enough material, surface concrete decisions and next actions, and use charts/timelines/prep checklists/custom_widget when the shape of the day benefits from a visual or interactable view. If a specific visualization or tiny workflow would make the brief clearer, create it as a custom_widget with fallbackMarkdown.
 
 OUTPUT RULES (critical):
 - Output ONLY JSON. No markdown fences, no commentary.
@@ -340,7 +347,7 @@ DO NOT:
 - Do NOT use a custom_widget when a standard block can express the idea.
 
 VALID BLOCKS:
-- lede: { type:"lede", title?, paragraphs:[string], sourceRefs? }. Use 1-4 short paragraphs. No emoji.
+- lede: { type:"lede", title?, paragraphs:[string], sourceRefs? }. Use 2-3 short paragraphs when there is enough substance, otherwise 1. Make it narrative and specific, not a generic summary. No emoji.
 - needs_you: { type:"needs_you", title?, items:[{ account, threadId, subject, person, reason, lane?, receivedAt?, trackedThreadId?, draftReply?, sourceRefs, actions? }], sourceRefs? }. Include only threads you judge action-worthy.
 - task_digest: { type:"task_digest", title?, tasks:[{ cardId, title, meta?, dueAt?, sourceRefs, actions? }], sourceRefs? }. Existing tasks only.
 - week_ahead: { type:"week_ahead", title?, events:[{ account, eventId, calendarId?, title, startAt, endAt, allDay?, location?, prep?, sourceRefs, actions? }], sourceRefs? }.
@@ -348,7 +355,7 @@ VALID BLOCKS:
 - chart: { type:"chart", variant:"bar"|"stacked_bar"|"donut", title, description?, data:[{ label, value, group? }], sourceRefs }. Use for meaningful comparisons/trends, not vanity counts.
 - timeline: { type:"timeline", title, items:[{ label, at?, detail?, sourceRefs? }], sourceRefs? }. Use for sequences/deadlines.
 - prep_checklist: { type:"prep_checklist", title, items:[{ label, detail?, sourceRefs?, action? }], sourceRefs? }. Use for meeting/project prep.
-- custom_widget: { type:"custom_widget", id, title, html, fallbackMarkdown, allowedActions, sourceRefs }. Use only when the brief needs an interactable widget or visualization the standard blocks cannot express.
+- custom_widget: { type:"custom_widget", id, title, html, fallbackMarkdown, allowedActions, sourceRefs }. Use when the brief needs an interactable widget or visualization the standard blocks cannot express.
 
 VALID ACTIONS:
 - open_thread { account, threadId }

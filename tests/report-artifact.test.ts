@@ -65,6 +65,8 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html.toLowerCase()).toContain('</html>');
     expect(html).toContain('<style>');
     expect(html).toContain('<script>');
+    expect(html).toContain('.lede-block .lede:first-of-type::first-letter');
+    expect(html).toContain('class="icon-btn"');
   });
 
   test('renders branded source footer with service logos', () => {
@@ -74,6 +76,8 @@ describe('buildNativeDailyReportArtifact', () => {
     });
     expect(html).toContain('Made for you by');
     expect(html).toContain('With love from');
+    expect(html).toContain('<span class="footer-lab86">LAB86</span>');
+    expect(html).not.toContain('footer-letter');
     expect(html).toContain('aria-label="Gmail"');
     expect(html).toContain('aria-label="GitHub"');
     expect(html).toContain('aria-label="Slack"');
@@ -344,6 +348,9 @@ describe('buildNativeDailyReportArtifact', () => {
       '<div style="background:url(https://example.com/x.png)">x</div>',
       '<img srcset="https://example.com/x.png 1x">',
       '<meta http-equiv="refresh" content="0;url=https://example.com">',
+      '<object data="https://example.com/file"></object>',
+      '<video poster="https://example.com/poster.png"></video>',
+      '<form action="https://example.com/post"></form>',
     ]) {
       const html = buildNativeDailyReportArtifact(sampleReport(), {
         version: 1,

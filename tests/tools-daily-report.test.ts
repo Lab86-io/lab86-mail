@@ -79,6 +79,38 @@ describe('daily report tools', () => {
     expect(latest?.progress?.stage).toBe('queued');
   });
 
+  test('generate_daily_report reuses an active generation instead of starting another', async () => {
+    await withToolContext(() =>
+      saveDailyReport({
+        _id: 'report_active_generation',
+        kind: 'evening',
+        generatedAt: Date.now(),
+        status: 'partial',
+        artifactStatus: 'composing',
+        progress: { stage: 'queued', done: 0, total: 1 },
+        accounts: [],
+        title: 'Daily Report',
+        narrative: 'Generating daily report.',
+        sections: {
+          replyOwed: [],
+          followUpOwed: [],
+          newPeople: [],
+          timeSensitive: [],
+          tracked: [],
+          fyi: [],
+          bulkTail: [],
+          tasks: [],
+          calendar: [],
+        },
+        stats: {},
+      } as any),
+    );
+
+    const active = await runTool(generateDailyReportTool.handler, { kind: 'evening', wait: false });
+    expect(active.started).toBe(false);
+    expect(active.report?._id).toBe('report_active_generation');
+  });
+
   test('generate_daily_report wait=true persists a terminal edition', async () => {
     const generated = await runTool(generateDailyReportTool.handler, { kind: 'manual', wait: true });
     expect(generated.started).toBeUndefined();
@@ -91,6 +123,7 @@ describe('daily report tools', () => {
       kind: 'manual',
       status: 'ready',
       artifactStatus: 'rendered',
+      artifactSource: 'deterministic',
     });
   });
 });

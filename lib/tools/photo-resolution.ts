@@ -1,3 +1,4 @@
+import { getDomain } from 'tldts';
 import { isNylasConfigured } from '../hosted/env';
 import { requireNylas } from '../nylas/client';
 import { listNylasAccounts, type NylasAccountRow, resolveConnectedAccount } from '../nylas/provider';
@@ -51,16 +52,6 @@ const PERSONAL_DOMAINS = new Set([
 ]);
 
 const RESERVED_DOMAINS = new Set(['example.com', 'example.net', 'example.org']);
-const MULTI_PART_PUBLIC_SUFFIXES = new Set([
-  'co.uk',
-  'com.au',
-  'com.br',
-  'com.mx',
-  'co.jp',
-  'co.nz',
-  'com.sg',
-  'com.tr',
-]);
 const LOGO_DOMAIN_ALIASES: Record<string, string> = {
   'microsoftonline.com': 'microsoft.com',
   'office.com': 'microsoft.com',
@@ -222,11 +213,7 @@ export function logoDomainForEmail(email: string): string {
   if (LOGO_DOMAIN_ALIASES[rawDomain]) return LOGO_DOMAIN_ALIASES[rawDomain];
   const aliasMatch = Object.entries(LOGO_DOMAIN_ALIASES).find(([suffix]) => rawDomain.endsWith(`.${suffix}`));
   if (aliasMatch) return aliasMatch[1];
-  const parts = rawDomain.split('.').filter(Boolean);
-  if (parts.length <= 2) return rawDomain;
-  const lastTwo = parts.slice(-2).join('.');
-  if (MULTI_PART_PUBLIC_SUFFIXES.has(lastTwo) && parts.length >= 3) return parts.slice(-3).join('.');
-  return lastTwo;
+  return registrableDomain(rawDomain) || rawDomain;
 }
 
 export function isCompanyDomain(domain: string | null): boolean {
@@ -234,5 +221,9 @@ export function isCompanyDomain(domain: string | null): boolean {
   if (!domain || PERSONAL_DOMAINS.has(domain) || RESERVED_DOMAINS.has(domain)) return false;
   if (domain.endsWith('.test') || domain.endsWith('.invalid') || domain.endsWith('.localhost')) return false;
   if (domain === 'localhost' || domain.endsWith('.local')) return false;
-  return domain.includes('.');
+  return registrableDomain(domain) === domain;
+}
+
+function registrableDomain(domain: string): string | null {
+  return getDomain(domain, { allowPrivateDomains: true }) || null;
 }

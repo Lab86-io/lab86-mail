@@ -213,6 +213,34 @@ describe('contact and photo tools', () => {
     }
   });
 
+  test('resolve_photos remembers provider misses when using a company logo fallback', async () => {
+    const providerLookup = mock(async () => null);
+    const reset = setPhotoToolDependenciesForTest({
+      resolveProviderProfilePhoto: providerLookup,
+      companyLogoUrl: () => '/api/logos/acme.com',
+    });
+    try {
+      const email = 'alex@acme.com';
+      const first = await runTool(resolvePhotos.handler, {
+        account: 'jakob@example.test',
+        emails: [email],
+      });
+      expect(first.photos[email]).toBe('/api/logos/acme.com');
+      expect(providerLookup).toHaveBeenCalledTimes(1);
+      const cached = await withToolContext(() => getPhotoFromCache(email));
+      expect(cached?.source).toBe('company-provider-miss');
+
+      const second = await runTool(resolvePhotos.handler, {
+        account: 'jakob@example.test',
+        emails: [email],
+      });
+      expect(second.photos[email]).toBe('/api/logos/acme.com');
+      expect(providerLookup).toHaveBeenCalledTimes(1);
+    } finally {
+      reset();
+    }
+  });
+
   test('resolve_photos does not negative-cache provider timeouts', async () => {
     const reset = setPhotoToolDependenciesForTest({
       providerLookupTimeoutMs: 1,
@@ -398,10 +426,13 @@ describe('contact and photo tools', () => {
     expect(isCompanyDomain('linear.app')).toBe(true);
     expect(isCompanyDomain('gmail.com')).toBe(false);
     expect(isCompanyDomain('example.com')).toBe(false);
+    expect(isCompanyDomain('co.in')).toBe(false);
     expect(isCompanyDomain('example.test')).toBe(false);
     expect(isCompanyDomain('localhost')).toBe(false);
     expect(companyLogoUrl('alerts@Linear.app')).toBe('/api/logos/linear.app');
     expect(logoDomainForEmail('alerts@mail.microsoftonline.com')).toBe('microsoft.com');
+    expect(logoDomainForEmail('alerts@mail.acme.co.in')).toBe('acme.co.in');
+    expect(logoDomainForEmail('alerts@service.acme.com.cn')).toBe('acme.com.cn');
     expect(companyLogoUrl('friend@gmail.com')).toBeNull();
 
     await expect(

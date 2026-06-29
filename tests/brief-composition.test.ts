@@ -34,6 +34,22 @@ describe('BriefComposition', () => {
     });
   });
 
+  test('splits long deterministic ledes into editorial paragraphs', () => {
+    const report = {
+      ...reportFixture(),
+      narrative:
+        'Alex needs a decision before the launch review. The calendar has a tight review window in the afternoon. The prep task is the highest-leverage thing to finish before then.',
+    };
+    const lede = compositionFromReport(report).blocks.find((block) => block.type === 'lede');
+    expect(lede).toMatchObject({
+      type: 'lede',
+      paragraphs: expect.arrayContaining([
+        expect.stringContaining('Alex needs a decision'),
+        expect.stringContaining('prep task'),
+      ]),
+    });
+  });
+
   test('extracts and validates model-authored composition JSON', () => {
     const raw = `Here you go:\n\n\`\`\`json\n${JSON.stringify({
       version: 1,

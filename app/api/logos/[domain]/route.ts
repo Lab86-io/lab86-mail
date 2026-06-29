@@ -7,12 +7,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ dom
   const { domain: rawDomain } = await params;
   const domain = logoDomainForEmail(decodeURIComponent(rawDomain || ''));
   const candidates = companyLogoCandidatesForDomain(domain);
+  let sawTransientFailure = false;
   for (const url of candidates) {
     try {
       const response = await fetch(url, {
         headers: { accept: 'image/avif,image/webp,image/png,image/svg+xml,image/*,*/*;q=0.8' },
         signal: AbortSignal.timeout(1800),
       });
+      if (isTransientLogoStatus(response.status)) sawTransientFailure = true;
       if (!response.ok) continue;
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.startsWith('image/')) continue;
@@ -24,11 +26,22 @@ export async function GET(_request: Request, { params }: { params: Promise<{ dom
         },
       });
     } catch {
+      sawTransientFailure = true;
       // Try the next source.
     }
+  }
+  if (sawTransientFailure) {
+    return new NextResponse(null, {
+      status: 502,
+      headers: { 'cache-control': 'no-store' },
+    });
   }
   return new NextResponse(null, {
     status: 404,
     headers: { 'cache-control': 'public, max-age=86400, stale-while-revalidate=604800' },
   });
+}
+
+function isTransientLogoStatus(status: number) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
 }

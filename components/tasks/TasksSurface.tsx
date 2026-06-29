@@ -753,7 +753,7 @@ function ListView({
                 </button>
               ) : null}
             </div>
-            <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+            <ul className="divide-y divide-[var(--color-border)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
               {cards.map((card) => (
                 <li
                   key={card.cardId}

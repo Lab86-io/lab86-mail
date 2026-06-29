@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { setThreadSummary } from '../lib/store/threads';
 import {
   bulkTriage,
   classifyThreads,
@@ -47,6 +48,20 @@ describe('AI model tools — local fallbacks', () => {
       from: 'Alex <alex@example.test>',
       textBody: 'The launch checklist is ready for review.',
     });
+    const summary = await runTool(summarizeThread.handler, { account, threadId });
+    expect(summary).toEqual({ summary: '', model: 'none' });
+  });
+
+  test('summarize_thread skips stale cached summaries for one-message chains', async () => {
+    const { account, threadId } = await seedThreadMessage({
+      threadId: 'thread_summary_single_cached',
+      messageId: 'msg_summary_single_cached',
+      subject: 'Single update',
+      from: 'Alex <alex@example.test>',
+      textBody: 'Only one message exists.',
+    });
+    await withToolContext(() => setThreadSummary(account, threadId, 'Old cached summary', 'local'));
+
     const summary = await runTool(summarizeThread.handler, { account, threadId });
     expect(summary).toEqual({ summary: '', model: 'none' });
   });

@@ -223,7 +223,7 @@ export function compositionFromReport(report: DailyReport): BriefComposition {
   const blocks: BriefBlock[] = [
     {
       type: 'lede',
-      paragraphs: [report.narrative || fallbackNarrative(needs, tasks, events)],
+      paragraphs: ledeParagraphs(report.narrative || fallbackNarrative(needs, tasks, events)),
       sourceRefs: [],
     },
     {
@@ -400,4 +400,22 @@ function fallbackNarrative(
   return parts.length
     ? `Here is the shape of the day: ${parts.join(', ')}.`
     : 'A quiet brief today: nothing urgent is waiting.';
+}
+
+function ledeParagraphs(value: string): string[] {
+  const normalized = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return ['A quiet brief today: nothing urgent is waiting.'];
+  const explicit = String(value)
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (explicit.length > 1) return explicit.slice(0, 4);
+  const sentences = normalized.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)?.map((part) => part.trim()) || [
+    normalized,
+  ];
+  if (sentences.length < 3) return [normalized];
+  const first = Math.ceil(sentences.length / 2);
+  return [sentences.slice(0, first).join(' '), sentences.slice(first).join(' ')].filter(Boolean);
 }

@@ -389,6 +389,9 @@ export interface DailyReport {
   // first (week) HTML, 'enriching' while the broader month pass runs in the
   // background over an already-rendered edition, 'rendered' once final.
   artifactStatus?: 'composing' | 'enriching' | 'rendered';
+  // Whether the artifact composition came from the model or the deterministic
+  // structured fallback. The renderer is deterministic in both cases.
+  artifactSource?: 'ai' | 'deterministic';
   // Source services used to compose this brief, normalized to ids such as
   // gmail, outlook, github, slack. Used for the branded footer.
   services?: string[];

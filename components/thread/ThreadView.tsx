@@ -1084,7 +1084,7 @@ function AttachmentPreview({ item, compact = false }: { item: AttachmentPreviewI
   }
 
   if (['pdf', 'text', 'code', 'calendar'].includes(item.previewKind)) {
-    return <iframe title={item.filename} src={item.previewHref} className={frameClass} />;
+    return <iframe title={item.filename} src={item.previewHref} className={frameClass} sandbox="" />;
   }
 
   if (item.previewKind === 'video') {

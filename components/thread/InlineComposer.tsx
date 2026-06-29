@@ -1006,8 +1006,9 @@ function FileChip({
       <button
         type="button"
         onClick={onRemove}
-        className="mr-1 grid h-5 w-5 shrink-0 place-items-center rounded-lg text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] group-hover:opacity-100"
-        title="Remove"
+        aria-label={`Remove ${file.name}`}
+        className="mr-1 grid h-5 w-5 shrink-0 place-items-center rounded-lg text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--color-bg-elevated)] group-hover:opacity-100"
+        title={`Remove ${file.name}`}
       >
         <X className="h-3 w-3" />
       </button>
@@ -1068,7 +1069,7 @@ function DraftAttachmentPreview({ file, url }: { file: File; url: string }) {
   }
 
   if (['pdf', 'text', 'code', 'calendar'].includes(kind)) {
-    return <iframe title={file.name} src={url} className={frameClass} />;
+    return <iframe title={file.name} src={url} className={frameClass} sandbox="" />;
   }
 
   if (kind === 'video') {

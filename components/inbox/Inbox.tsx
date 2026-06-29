@@ -12,6 +12,7 @@ import {
   Inbox as InboxIcon,
   MoreHorizontal,
   Search,
+  Square,
   Star,
   Tag,
   Trash2,
@@ -564,9 +565,14 @@ export function Inbox() {
     [account, queryClient],
   );
 
+  const parseRowKey = (id: string) => {
+    const splitAt = id.indexOf(':');
+    if (splitAt <= 0) return null;
+    return { account: id.slice(0, splitAt), threadId: id.slice(splitAt + 1) };
+  };
   const rowForKey = (id: string) => items.find((it) => rowKey(it) === id || it._id === id);
-  const accountOfRow = (id: string) => rowForKey(id)?.account || account;
-  const threadIdOfRow = (id: string) => rowForKey(id)?._id || id.split(':').slice(1).join(':') || id;
+  const accountOfRow = (id: string) => rowForKey(id)?.account || parseRowKey(id)?.account || account;
+  const threadIdOfRow = (id: string) => rowForKey(id)?._id || parseRowKey(id)?.threadId || id;
 
   // Optimistically drop rows from every cached search page so archive/trash
   // feel instant; a failure invalidates and refetches the truth.
@@ -945,7 +951,9 @@ export function Inbox() {
                       activeCategory={smartCategory}
                       selected={selectedIds.includes(key)}
                       active={selectedThreadId === it._id && threadAccount === rowAccount}
+                      selecting={selectedIds.length > 0}
                       onSelectRange={() => selectRangeTo(key)}
+                      onToggleSelect={() => toggleRowSelection(key)}
                       onPrefetch={() => prefetchThread(it)}
                       onApplyLabels={() => setLabelPreview(it)}
                       onArchive={() => bulkArchive.mutate([key])}
@@ -995,7 +1003,9 @@ function ThreadRowCard({
   photoUrl,
   selected,
   active,
+  selecting,
   onSelectRange,
+  onToggleSelect,
   onClick,
   onPrefetch,
   onApplyLabels,
@@ -1012,7 +1022,9 @@ function ThreadRowCard({
   photoUrl?: string | null;
   selected: boolean;
   active: boolean;
+  selecting: boolean;
   onSelectRange: () => void;
+  onToggleSelect: () => void;
   onClick: () => void;
   onPrefetch: () => void;
   onApplyLabels: () => void;
@@ -1069,16 +1081,34 @@ function ThreadRowCard({
           onSelectRange();
           return;
         }
+        if (event.metaKey || event.ctrlKey || selecting) {
+          event.preventDefault();
+          onToggleSelect();
+          return;
+        }
         onClick();
       }}
       onPointerEnter={schedulePrefetch}
       onPointerLeave={cancelPrefetch}
       onFocus={onPrefetch}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (event.key === ' ') {
           event.preventDefault();
           if (event.shiftKey) {
             onSelectRange();
+            return;
+          }
+          onToggleSelect();
+          return;
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          if (event.shiftKey) {
+            onSelectRange();
+            return;
+          }
+          if (event.metaKey || event.ctrlKey || selecting) {
+            onToggleSelect();
             return;
           }
           onClick();
@@ -1139,9 +1169,30 @@ function ThreadRowCard({
 
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
-      <div className="flex flex-col items-end gap-1 self-center">
-        <div className="flex items-center justify-end gap-1.5">
-          <div className="pointer-events-none flex w-[82px] -translate-x-1 items-center justify-end gap-0.5 opacity-0 transition-[opacity,transform] duration-100 ease-out group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:translate-x-0 has-[[data-state=open]]:opacity-100">
+      <div className="flex min-h-[40px] flex-col items-end justify-center gap-1 self-center">
+        <div className="flex h-7 items-center justify-end gap-1.5">
+          <div
+            className={cn(
+              'pointer-events-none flex w-[112px] items-center justify-end gap-0.5 opacity-0 transition-opacity duration-75 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100',
+              selected && 'pointer-events-auto opacity-100',
+            )}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSelect();
+              }}
+              title={selected ? 'Deselect' : 'Select'}
+              aria-pressed={selected}
+              className={cn(
+                'grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-accent)]',
+                selected && 'border-[var(--color-accent)] text-[var(--color-accent)]',
+              )}
+            >
+              {selected ? <CheckSquare className="size-3.5" /> : <Square className="size-3.5" />}
+              <span className="sr-only">{selected ? 'Deselect' : 'Select'}</span>
+            </button>
             <button
               type="button"
               onClick={(e) => {

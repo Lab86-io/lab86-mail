@@ -55,14 +55,24 @@ export function getDailyArt(at: number = Date.now()): DailyArt {
   const primary = ART_POOL[hash % ART_POOL.length];
   const alternates = pickAlternates(primary, hash);
   return {
-    imageUrl: primary.imageUrl,
-    fallbacks: [...alternates.map((a) => a.imageUrl), ...locals],
+    imageUrl: highResolutionArtUrl(primary.imageUrl),
+    fallbacks: [...alternates.map((a) => highResolutionArtUrl(a.imageUrl)), ...locals],
     title: primary.title,
     artist: primary.artist,
     date: primary.date,
     credit: [primary.title, primary.artist, primary.date].filter(Boolean).join(', '),
     source: primary.sourceName,
   };
+}
+
+export function highResolutionArtUrl(url: string): string {
+  if (url.includes('images.metmuseum.org/')) {
+    return url.replace('/web-large/', '/original/');
+  }
+  if (url.includes('openaccess-cdn.clevelandart.org/')) {
+    return url.replace(/_web(\.[a-z0-9]+)$/i, '_print$1');
+  }
+  return url;
 }
 
 // Up to two alternates from DIFFERENT museums than the primary (and each other),

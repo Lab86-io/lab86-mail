@@ -4,7 +4,7 @@ export interface PhotoCacheEntry {
   email: string;
   url: string | null;
   at: number;
-  source?: 'provider' | 'company' | 'none';
+  source?: 'provider' | 'company' | 'company-provider-miss' | 'none';
   version?: number;
 }
 

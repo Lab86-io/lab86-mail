@@ -64,9 +64,19 @@ export const resolvePhotos = defineTool({
 
       const cached = await deps.getPhotoFromCache(email).catch(() => null);
       const logoUrl =
-        cached?.url && cached.version === PHOTO_CACHE_VERSION && cached.source === 'company'
+        cached?.url &&
+        cached.version === PHOTO_CACHE_VERSION &&
+        (cached.source === 'company' || cached.source === 'company-provider-miss')
           ? cached.url
           : deps.companyLogoUrl(email);
+      if (
+        cached?.url &&
+        cached.version === PHOTO_CACHE_VERSION &&
+        cached.source === 'company-provider-miss'
+      ) {
+        out[email] = cached.url;
+        continue;
+      }
       if (
         cached?.url &&
         cached.version === PHOTO_CACHE_VERSION &&
@@ -107,7 +117,8 @@ export const resolvePhotos = defineTool({
       }
       if (logoUrl) {
         out[email] = logoUrl;
-        await deps.setPhotoCache(email, logoUrl, 'company').catch(() => undefined);
+        const cacheSource = provider.status === 'resolved' ? 'company-provider-miss' : 'company';
+        await deps.setPhotoCache(email, logoUrl, cacheSource).catch(() => undefined);
         continue;
       }
       out[email] = null;

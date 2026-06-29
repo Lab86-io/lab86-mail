@@ -73,6 +73,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     composition: raw.composition,
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
+    artifactSource: raw.artifactSource,
     sections: {
       replyOwed,
       followUpOwed,
@@ -109,6 +110,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   if (!migrated.html && migrated.status !== 'partial') {
     migrated.html = buildNativeDailyReportArtifact(migrated, migrated.composition);
     migrated.artifactStatus = migrated.artifactStatus ?? 'rendered';
+    migrated.artifactSource = migrated.artifactSource ?? 'deterministic';
   }
 
   return migrated;
