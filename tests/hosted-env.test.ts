@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   aiCreditDefaults,
   convexInternalSecret,
@@ -12,14 +12,58 @@ import {
 } from '../lib/hosted/env';
 
 describe('hosted env detectors', () => {
-  test('the configured-* checks return booleans', () => {
-    for (const fn of [isClerkConfigured, isConvexConfigured, isNylasConfigured, isStripeConfigured]) {
-      expect(typeof fn()).toBe('boolean');
+  const keys = [
+    'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
+    'CLERK_SECRET_KEY',
+    'NEXT_PUBLIC_CONVEX_URL',
+    'CONVEX_URL',
+    'NYLAS_API_KEY',
+    'NYLAS_CLIENT_ID',
+    'STRIPE_SECRET_KEY',
+    'STRIPE_PRO_PRICE_ID',
+  ];
+  const saved: Record<string, string | undefined> = {};
+  const set = (k: string, v: string | undefined) => {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  };
+  beforeEach(() => {
+    for (const k of keys) {
+      saved[k] = process.env[k];
+      delete process.env[k];
     }
   });
+  afterEach(() => {
+    for (const k of keys) set(k, saved[k]);
+  });
 
-  test('convexUrl / convexInternalSecret return strings', () => {
-    expect(typeof convexUrl()).toBe('string');
+  test('each detector flips on exactly its required env vars', () => {
+    // All cleared in beforeEach → everything is unconfigured.
+    expect(isClerkConfigured()).toBe(false);
+    expect(isConvexConfigured()).toBe(false);
+    expect(isNylasConfigured()).toBe(false);
+    expect(isStripeConfigured()).toBe(false);
+
+    set('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'pk_test');
+    expect(isClerkConfigured()).toBe(false); // needs the secret too
+    set('CLERK_SECRET_KEY', 'sk_test');
+    expect(isClerkConfigured()).toBe(true);
+
+    set('CONVEX_URL', 'https://convex.test');
+    expect(isConvexConfigured()).toBe(true);
+    expect(convexUrl()).toBe('https://convex.test');
+
+    set('NYLAS_API_KEY', 'k');
+    set('NYLAS_CLIENT_ID', 'c');
+    expect(isNylasConfigured()).toBe(true);
+
+    set('STRIPE_SECRET_KEY', 's');
+    set('STRIPE_PRO_PRICE_ID', 'p');
+    expect(isStripeConfigured()).toBe(true);
+  });
+
+  test('convexUrl / convexInternalSecret default to empty strings', () => {
+    expect(convexUrl()).toBe('');
     expect(typeof convexInternalSecret()).toBe('string');
   });
 });

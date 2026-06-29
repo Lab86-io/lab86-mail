@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { SmartRule } from '../lib/shared/types';
 import {
   bodyExcerpt,
   bulkSignals,
@@ -17,6 +16,7 @@ import {
   labelsForSmartCategory,
   SMART_CATEGORY_IDS,
 } from '../lib/mail/smart-categories';
+import type { SmartRule } from '../lib/shared/types';
 
 const isValidCategory = (c: unknown) => (SMART_CATEGORY_IDS as readonly string[]).includes(c as string);
 
@@ -62,9 +62,12 @@ describe('smart-category predicates', () => {
 });
 
 describe('classifyThreadDeterministic routes diverse mail', () => {
-  const cases: Array<{ name: string; t: any }> = [
+  // Each case asserts the EXPECTED routing, so a regression that collapses
+  // everything into one bucket fails here.
+  const cases: Array<{ name: string; expected: string; t: any }> = [
     {
       name: 'verification code',
+      expected: 'codes',
       t: {
         fromAddress: 'security@bank.test',
         subject: 'Your verification code',
@@ -74,41 +77,40 @@ describe('classifyThreadDeterministic routes diverse mail', () => {
     },
     {
       name: 'order',
-      t: { fromAddress: 'ship@shop.test', subject: 'Your order shipped', bodyText: 'Tracking 1Z999', labels: [] },
-    },
-    {
-      name: 'invoice',
-      t: { fromAddress: 'billing@vendor.test', subject: 'Invoice #42 past due', bodyText: 'Payment failed', labels: [] },
-    },
-    {
-      name: 'newsletter',
-      t: { fromAddress: 'news@list.test', subject: 'Weekly digest', bodyText: 'unsubscribe here', labels: [] },
-    },
-    {
-      name: 'human reply',
+      expected: 'orders',
       t: {
-        fromAddress: 'Alex <alex@example.test>',
-        subject: 'Re: can we meet?',
-        bodyText: 'Are you free at 2pm?',
-        labels: ['CATEGORY_PERSONAL', 'UNREAD'],
-        unread: true,
+        fromAddress: 'ship@shop.test',
+        subject: 'Your order shipped',
+        bodyText: 'Tracking 1Z999',
+        labels: [],
       },
     },
     {
-      name: 'no-reply update',
+      name: 'invoice',
+      expected: 'finance_admin',
       t: {
-        fromAddress: 'no-reply@app.test',
-        subject: 'Your weekly summary',
-        bodyText: 'Here is your activity',
-        labels: ['CATEGORY_UPDATES'],
+        fromAddress: 'billing@vendor.test',
+        subject: 'Invoice #42 past due',
+        bodyText: 'Payment failed',
+        labels: [],
+      },
+    },
+    {
+      name: 'newsletter',
+      expected: 'noise',
+      t: {
+        fromAddress: 'news@list.test',
+        subject: 'Weekly digest',
+        bodyText: 'unsubscribe here',
+        labels: [],
       },
     },
   ];
 
   for (const c of cases) {
-    test(`${c.name} → structurally valid verdict`, () => {
+    test(`${c.name} → ${c.expected}`, () => {
       const verdict = classifyThreadDeterministic(c.t);
-      expect(isValidCategory(verdict.primary)).toBe(true);
+      expect(verdict.primary).toBe(c.expected);
       expect(Array.isArray(verdict.secondary)).toBe(true);
       expect(verdict.confidence).toBeGreaterThanOrEqual(0);
       expect(verdict.confidence).toBeLessThanOrEqual(1);

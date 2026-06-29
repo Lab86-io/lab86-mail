@@ -2191,12 +2191,14 @@ function CreateCardDialog({
         labels: string[];
         description: string | null;
         model: string;
-      }>('nl_task', { text, now: new Date().toISOString() });
+      }>('nl_task', { text, now: localIsoWithOffset() });
+      // Replace (not merge) every field so re-running Autofill after editing the
+      // sentence can't leave stale due/priority/labels/description behind.
       if (r.title) setTitle(r.title);
-      if (r.description) setDescription(r.description);
-      if (r.priority) setPriority(r.priority);
-      if (r.labels?.length) setLabels(r.labels.join(', '));
-      if (r.dueAt) setDue(toLocalInputValue(r.dueAt));
+      setDescription(r.description || '');
+      setPriority(r.priority || '');
+      setLabels(r.labels?.length ? r.labels.join(', ') : '');
+      setDue(r.dueAt ? toLocalInputValue(r.dueAt) : '');
       setNlText('');
       if (r.model === 'local') {
         toast.message('Used your text as the title — enable AI in settings for date/priority parsing.');
@@ -2453,4 +2455,18 @@ function toLocalInputValue(epoch: number): string {
   const date = new Date(epoch);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// Current time as an ISO 8601 string carrying the user's local UTC offset, so
+// the nl_task model resolves "tomorrow"/"next Tuesday" against the right day
+// (a bare toISOString() is UTC and shifts the day near midnight off-UTC).
+function localIsoWithOffset(date = new Date()): string {
+  const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `${sign}${pad(offsetMin / 60)}:${pad(offsetMin % 60)}`
+  );
 }
