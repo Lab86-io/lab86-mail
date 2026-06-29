@@ -13,6 +13,7 @@ import {
   setPhotoResolutionDependenciesForTest,
 } from '../lib/tools/photo-resolution';
 import {
+  logoCandidatesForEmail,
   resolvePhotos,
   setPhotoToolDependenciesForTest,
   withTimeout,
@@ -64,6 +65,23 @@ describe('contact and photo tools', () => {
       emails: ['alerts@linear.app'],
     });
     expect(result.photos['alerts@linear.app']).toBe('https://cdn.example/linear.png');
+  });
+
+  test('resolve_photos reuses fresh generic cached URLs', async () => {
+    await withToolContext(() =>
+      kvUpsert('photo', 'cached@example.test', {
+        email: 'cached@example.test',
+        url: 'https://cdn.example/avatar.png',
+        version: 2,
+        at: Date.now(),
+      }),
+    );
+
+    const result = await runTool(resolvePhotos.handler, {
+      account: '__all__',
+      emails: ['cached@example.test'],
+    });
+    expect(result.photos['cached@example.test']).toBe('https://cdn.example/avatar.png');
   });
 
   test('resolve_photos ignores legacy provider-scoped cache entries', async () => {
@@ -162,6 +180,19 @@ describe('contact and photo tools', () => {
       status: 'timeout',
       value: 'fallback',
     });
+  });
+
+  test('logoCandidatesForEmail uses the configured company-logo resolver', () => {
+    const restore = setPhotoToolDependenciesForTest({
+      companyLogoCandidates: (email) => [`https://logos.example/${email}`],
+    });
+    try {
+      expect(logoCandidatesForEmail('alerts@linear.app')).toEqual([
+        'https://logos.example/alerts@linear.app',
+      ]);
+    } finally {
+      restore();
+    }
   });
 
   test('resolve_photos tries provider photos before company logos', async () => {

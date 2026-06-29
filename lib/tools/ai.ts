@@ -22,6 +22,14 @@ import {
 } from '../store/threads';
 import { defineTool } from './registry';
 
+const SUMMARY_PROMPT_INSTRUCTIONS = [
+  'Summarize this multi-message email thread for the user as a reliable working-memory note.',
+  'Output format: one compact sentence with the current state, then up to 3 short "- " bullets only when useful.',
+  'Prioritize: what changed most recently, who owes what, explicit asks, decisions, deadlines, blockers, and follow-up risk.',
+  'Do not repeat the subject unless needed. Do not include a heading, greeting, sign-off, or generic advice.',
+  'Never invent facts. If timing, ownership, or outcome is unclear, say so plainly.',
+].join('\n');
+
 async function loadThread(account: string, threadId: string, userId?: string | null) {
   const cached = await getThreadMessages(account, threadId);
   if (cached.length) return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
@@ -83,16 +91,7 @@ export const summarizeThread = defineTool({
       await setThreadSummary(account, threadId, summary, 'local').catch(() => undefined);
       return { summary, model: 'local' };
     }
-    const prompt = [
-      'Summarize this multi-message email thread for the user as a reliable working-memory note.',
-      'Output format: one compact sentence with the current state, then up to 3 short "- " bullets only when useful.',
-      'Prioritize: what changed most recently, who owes what, explicit asks, decisions, deadlines, blockers, and follow-up risk.',
-      'Do not repeat the subject unless needed. Do not include a heading, greeting, sign-off, or generic advice.',
-      'Never invent facts. If timing, ownership, or outcome is unclear, say so plainly.',
-      '',
-      'Thread:',
-      concatThread(messages),
-    ].join('\n');
+    const prompt = [SUMMARY_PROMPT_INSTRUCTIONS, '', 'Thread:', concatThread(messages)].join('\n');
     try {
       const result = await generateTextForCurrentUser({
         feature: 'summarize_thread',
