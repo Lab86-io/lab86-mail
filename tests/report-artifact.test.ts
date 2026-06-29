@@ -75,8 +75,9 @@ describe('buildNativeDailyReportArtifact', () => {
       services: ['gmail', 'github', 'slack'],
     });
     expect(html).toContain('Made for you by');
-    expect(html).toContain('With love from');
-    expect(html).toContain('<span class="footer-lab86">LAB86</span>');
+    expect(html).toContain('Lab86');
+    expect(html).not.toContain('With love from');
+    expect(html).not.toContain('footer-lab86');
     expect(html).not.toContain('footer-letter');
     expect(html).toContain('aria-label="Gmail"');
     expect(html).toContain('aria-label="GitHub"');
@@ -136,6 +137,17 @@ describe('buildNativeDailyReportArtifact', () => {
     const html = buildNativeDailyReportArtifact(sampleReport());
     expect(html).not.toContain('<b>Q3</b>');
     expect(html).toContain('&lt;b&gt;Q3&lt;/b&gt;');
+  });
+
+  test('renders markdown-style narrative as structured body copy', () => {
+    const html = buildNativeDailyReportArtifact({
+      ...sampleReport(),
+      narrative: '# Focus\n\nThe day has one important thread.\n\n- Prepare the launch notes',
+    });
+    expect(html).toContain('<h1>Focus</h1>');
+    expect(html).toContain('<p>The day has one important thread.</p>');
+    expect(html).toContain('<li>Prepare the launch notes</li>');
+    expect(html).not.toContain('<p class="lede"># Focus');
   });
 
   test('falls back to graceful empty states when every section is bare', () => {

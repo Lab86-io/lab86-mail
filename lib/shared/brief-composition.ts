@@ -403,6 +403,8 @@ function fallbackNarrative(
 }
 
 function ledeParagraphs(value: string): string[] {
+  const raw = String(value || '').trim();
+  if (/^\s{0,3}#{1,3}\s+\S/m.test(raw) || /^\s*[-*]\s+\S/m.test(raw)) return [raw];
   const normalized = String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
