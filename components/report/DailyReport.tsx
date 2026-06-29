@@ -948,9 +948,7 @@ export function DailyReport() {
     staleTime: 30_000,
   });
   const report = reportQuery.data?.report || null;
-  const reportArtifactKey = report
-    ? [report._id, report.artifactSource ?? '', report.artifactStatus ?? ''].join(':')
-    : '';
+  const reportArtifactKey = report ? [report._id, report.artifactSource ?? ''].join(':') : '';
   // A generation that errored partway leaves the stored edition stuck at
   // 'partial'/'composing'/'enriching' forever. Past this cutoff we treat such a
   // status as dead, so the in-progress UI clears and the Generate button is
