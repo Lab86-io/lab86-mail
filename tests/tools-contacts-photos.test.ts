@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import './tools/harness';
 import { kvUpsert } from '../lib/store/kv';
 import { getPhotoFromCache, setPhotoCache } from '../lib/store/photos';
@@ -106,14 +106,41 @@ describe('contact and photo tools', () => {
   });
 
   test('resolve_photos caps provider lookups per batch', async () => {
-    const emails = Array.from({ length: 26 }, (_, index) => `person${index}@gmail.com`);
-    const result = await runTool(resolvePhotos.handler, {
-      account: '__all__',
-      emails,
+    const contactsList = mock(async () => ({ data: [] }));
+    const restore = setPhotoResolutionDependenciesForTest({
+      isNylasConfigured: () => true,
+      listNylasAccounts: async () => [{ accountId: 'test-google', authed: true }],
+      resolveConnectedAccount: async () => ({
+        userId: 'test_user_tools',
+        accountId: 'test-google',
+        email: 'jakob@gmail.com',
+        provider: 'google',
+        status: 'connected',
+        displayName: 'Jakob',
+        grantId: 'grant_google',
+        scopes: [],
+      }),
+      requireNylas: () =>
+        ({
+          contacts: {
+            list: contactsList,
+            find: mock(async () => ({ data: null })),
+          },
+        }) as any,
     });
-    expect(Object.keys(result.photos)).toHaveLength(26);
-    expect(result.photos['person24@gmail.com']).toBeNull();
-    expect(result.photos['person25@gmail.com']).toBeNull();
+    const emails = Array.from({ length: 26 }, (_, index) => `person${index}@gmail.com`);
+    try {
+      const result = await runTool(resolvePhotos.handler, {
+        account: '__all__',
+        emails,
+      });
+      expect(Object.keys(result.photos)).toHaveLength(26);
+      expect(contactsList).toHaveBeenCalledTimes(24);
+      expect(result.photos['person24@gmail.com']).toBeNull();
+      expect(result.photos['person25@gmail.com']).toBeNull();
+    } finally {
+      restore();
+    }
   });
 
   test('withTimeout resolves values, rejected promises, and slow promises', async () => {

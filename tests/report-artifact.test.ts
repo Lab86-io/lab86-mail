@@ -367,6 +367,11 @@ describe('buildNativeDailyReportArtifact', () => {
   });
 
   test('falls back to default date formatting when an invalid timezone is supplied', () => {
+    const startAt = Date.parse('2026-06-13T17:00:00.000Z');
+    const expectedFallbackDate = new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+    }).format(new Date(startAt));
     const html = runWithAiRequestContext({ userTimezone: 'Invalid/Zone' }, () =>
       buildNativeDailyReportArtifact(sampleReport(), {
         version: 1,
@@ -381,8 +386,8 @@ describe('buildNativeDailyReportArtifact', () => {
                 account: 'me@example.test',
                 eventId: 'event_invalid_tz',
                 title: 'Fallback time',
-                startAt: Date.parse('2026-06-13T17:00:00.000Z'),
-                endAt: Date.parse('2026-06-13T18:00:00.000Z'),
+                startAt,
+                endAt: startAt + 60 * 60 * 1000,
                 actions: [],
                 sourceRefs: [],
               },
@@ -393,7 +398,7 @@ describe('buildNativeDailyReportArtifact', () => {
       }),
     );
     expect(html).toContain('Fallback time');
-    expect(html).toContain('Jun 13');
+    expect(html).toContain(expectedFallbackDate);
   });
 
   test('tolerates a report with no sections object at all', () => {
