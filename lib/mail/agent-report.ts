@@ -378,7 +378,12 @@ export async function generateAgentReport(input: {
       { ...phase1, artifactStatus: 'rendered' },
       artifactError('month_enrichment', err),
     );
-    await saveDailyReport(settled).catch(() => undefined);
+    try {
+      await saveDailyReport(settled);
+    } catch (saveErr) {
+      console.error('[agent-report] month enrichment fallback save failed:', saveErr);
+      throw saveErr;
+    }
     return settled;
   }
 
