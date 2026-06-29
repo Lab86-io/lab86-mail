@@ -18,8 +18,8 @@ export type TaskSourceColorInput = {
 export function taskSourceColorKey(task: TaskSourceColorInput | null | undefined): string | null {
   if (!task) return null;
   return (
-    clean(task.sourceAccountId) ||
     clean(task.source?.accountId) ||
+    clean(task.sourceAccountId) ||
     clean(task.source?.calendarId) ||
     clean(task.sourceCalendarEventId) ||
     clean(task.source?.eventId) ||

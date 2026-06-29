@@ -209,7 +209,10 @@ export async function generateDailyReport(input: {
   // Always include unresolved tracked threads.
   for (const item of tracked) {
     if (item.status === 'resolved' || item.status === 'dismissed') continue;
-    if (accounts.length && !accountIdSet.has(String(item.account).toLowerCase())) continue;
+    const trackedAccount = String(item.account).toLowerCase();
+    if (selectedAccounts.size && !accountIdSet.has(trackedAccount) && !selectedAccounts.has(trackedAccount)) {
+      continue;
+    }
     const existing = await getThread(item.account, item.threadId);
     if (existing) {
       const key = `${existing.account}:${existing._id}`;

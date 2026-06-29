@@ -8,6 +8,7 @@ describe('task source colors', () => {
       cardId: 'card_1',
       boardId: 'board_1',
       source: { accountId: 'work@example.com', threadId: 'thread_1' },
+      sourceAccountId: 'legacy-account-id',
     };
     expect(taskSourceColorKey(task)).toBe('work@example.com');
     expect(taskSourceColor(task)).toBe(categoricalColor('work@example.com'));
