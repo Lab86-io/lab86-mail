@@ -352,26 +352,27 @@ INTERACTION PROTOCOL (wire every interactive element):
 - For archive_thread, put data-thread-key + data-received-at on the row like the dismiss controls so the host removes it on ack.
 - Use the exact ids/accounts from the data; never invent ids. If an item lacks an id an action needs, render it without that action.`;
 
-function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
-  const s = report.sections;
-  const tasks = (s.tasks ?? [])
-    .filter((t: DailyReportTaskItem) => !t.completedAt)
-    .slice(0, MAX_TASKS)
-    .map((t: DailyReportTaskItem) => ({
-      cardId: t.cardId,
-      boardTitle: t.boardTitle,
-      columnName: t.columnName,
-      title: t.title,
-      description: t.description ?? null,
-      dueAt: t.dueAt ?? null,
-      priority: t.priority,
-      labels: t.labels ?? [],
-      assignees: t.assignees ?? [],
-      completed: false,
-      sourceUrl: t.sourceUrl ?? null,
-      sourceTitle: t.sourceTitle ?? null,
-    }));
-  const calendar = (s.calendar ?? []).slice(0, MAX_EVENTS).map((e: DailyReportCalendarItem) => ({
+// The shapes handed to the agent for each task/event. Pure + exported so the
+// field mapping (everything the brief gets to act on) is unit-tested directly.
+export function toBriefTask(t: DailyReportTaskItem) {
+  return {
+    cardId: t.cardId,
+    boardTitle: t.boardTitle,
+    columnName: t.columnName,
+    title: t.title,
+    description: t.description ?? null,
+    dueAt: t.dueAt ?? null,
+    priority: t.priority,
+    labels: t.labels ?? [],
+    assignees: t.assignees ?? [],
+    completed: false,
+    sourceUrl: t.sourceUrl ?? null,
+    sourceTitle: t.sourceTitle ?? null,
+  };
+}
+
+export function toBriefEvent(e: DailyReportCalendarItem) {
+  return {
     account: e.account,
     eventId: e.eventId,
     calendarId: e.calendarId ?? null,
@@ -383,7 +384,16 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
     location: e.location ?? null,
     description: e.description ?? null,
     htmlLink: e.htmlLink ?? null,
-  }));
+  };
+}
+
+function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
+  const s = report.sections;
+  const tasks = (s.tasks ?? [])
+    .filter((t: DailyReportTaskItem) => !t.completedAt)
+    .slice(0, MAX_TASKS)
+    .map(toBriefTask);
+  const calendar = (s.calendar ?? []).slice(0, MAX_EVENTS).map(toBriefEvent);
 
   // Format the dateline in the USER's timezone (set on the request context) so
   // the masthead shows their local day/time, not the server's UTC clock.

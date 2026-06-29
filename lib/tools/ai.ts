@@ -662,30 +662,45 @@ export const nlTask = defineTool({
       prompt: raw,
     });
 
-    let parsed: any = {};
-    try {
-      const m = out.match(/\{[\s\S]*\}/);
-      parsed = m ? JSON.parse(m[0]) : {};
-    } catch {}
-
-    const title = typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : raw;
-    let dueAt: number | null = null;
-    if (typeof parsed.due === 'string' && parsed.due.trim()) {
-      const t = Date.parse(parsed.due);
-      if (!Number.isNaN(t)) dueAt = t;
-    }
-    const priority = ['low', 'medium', 'high'].includes(parsed.priority) ? parsed.priority : null;
-    const labels = Array.isArray(parsed.labels)
-      ? parsed.labels
-          .map((l: any) => String(l).trim())
-          .filter(Boolean)
-          .slice(0, 6)
-      : [];
-    const description =
-      typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim() : null;
-    return { title, dueAt, priority, labels, description, model: 'fast' };
+    return { ...parseNlTaskResult(out, raw), model: 'fast' };
   },
 });
+
+// Pull structured task fields out of the model's JSON reply. Pure + exported so
+// the parsing (the part that can go wrong) is unit-tested without a live model.
+export function parseNlTaskResult(
+  out: string,
+  fallbackTitle: string,
+): {
+  title: string;
+  dueAt: number | null;
+  priority: 'low' | 'medium' | 'high' | null;
+  labels: string[];
+  description: string | null;
+} {
+  let parsed: any = {};
+  try {
+    const m = (out || '').match(/\{[\s\S]*\}/);
+    parsed = m ? JSON.parse(m[0]) : {};
+  } catch {}
+
+  const title = typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : fallbackTitle;
+  let dueAt: number | null = null;
+  if (typeof parsed.due === 'string' && parsed.due.trim()) {
+    const t = Date.parse(parsed.due);
+    if (!Number.isNaN(t)) dueAt = t;
+  }
+  const priority = ['low', 'medium', 'high'].includes(parsed.priority) ? parsed.priority : null;
+  const labels = Array.isArray(parsed.labels)
+    ? parsed.labels
+        .map((l: any) => String(l).trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+  const description =
+    typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim() : null;
+  return { title, dueAt, priority, labels, description };
+}
 
 function normalizeAiVerdict(parsed: any) {
   const rawSecondary: SmartCategoryId[] = Array.isArray(parsed.secondary)
