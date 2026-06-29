@@ -143,19 +143,18 @@ export async function generateDailyReport(input: {
   const profile = scopeProfile(input.scope);
   const connected = await listNylasAccounts(input.userId).catch(() => []);
   const authed = connected.filter((account) => account.authed);
-  const accounts = input.accounts?.length ? input.accounts : authed.map((account) => account.accountId);
   const selectedAccounts = new Set((input.accounts ?? []).map((value) => String(value).toLowerCase()));
+  const selectedAuthed = selectedAccounts.size
+    ? authed.filter(
+        (account) =>
+          selectedAccounts.has(String(account.accountId).toLowerCase()) ||
+          selectedAccounts.has(String(account.email || '').toLowerCase()),
+      )
+    : authed;
+  const accounts = selectedAuthed.map((account) => account.accountId);
+  const accountIdSet = new Set(accounts.map((value) => String(value).toLowerCase()));
   const serviceIds = [
-    ...new Set(
-      authed
-        .filter(
-          (account) =>
-            !selectedAccounts.size ||
-            selectedAccounts.has(String(account.accountId).toLowerCase()) ||
-            selectedAccounts.has(String(account.email || '').toLowerCase()),
-        )
-        .map((account) => briefServiceFromProvider(account.provider)),
-    ),
+    ...new Set(selectedAuthed.map((account) => briefServiceFromProvider(account.provider))),
   ];
   const errors: string[] = [];
   if (!accounts.length) errors.push('No connected Nylas mail accounts found for this user.');
@@ -168,17 +167,8 @@ export async function generateDailyReport(input: {
   // "Self" is the set of EMAIL ADDRESSES on this user's connected accounts.
   // `accounts` above are opaque accountIds used for transport, while sender
   // checks downstream compare against addresses.
-  const accountIdSet = new Set(accounts.map((value) => String(value).toLowerCase()));
   const self = new Set<string>(
-    authed
-      .filter(
-        (account) =>
-          !input.accounts?.length ||
-          accountIdSet.has(String(account.accountId).toLowerCase()) ||
-          accountIdSet.has(String(account.email || '').toLowerCase()),
-      )
-      .map((account) => String(account.email || '').toLowerCase())
-      .filter(Boolean),
+    selectedAuthed.map((account) => String(account.email || '').toLowerCase()).filter(Boolean),
   );
   // Callers may still pass raw emails in input.accounts; honor them for
   // self-detection even though transport lookups use accountIds.
@@ -218,7 +208,7 @@ export async function generateDailyReport(input: {
   // Always include unresolved tracked threads.
   for (const item of tracked) {
     if (item.status === 'resolved' || item.status === 'dismissed') continue;
-    if (accounts.length && !accounts.includes(item.account)) continue;
+    if (accounts.length && !accountIdSet.has(String(item.account).toLowerCase())) continue;
     const existing = await getThread(item.account, item.threadId);
     if (existing) {
       const key = `${existing.account}:${existing._id}`;
@@ -253,11 +243,11 @@ export async function generateDailyReport(input: {
     messagesByKey.set(key, messages);
     // Reliable allowlist: anyone the user has actually emailed in these threads.
     for (const message of messages) {
-      const fromEmail = emailFromHeader(message.from) || '';
+      const fromEmail = (emailFromHeader(message.from) || '').toLowerCase();
       if (!fromEmail || !self.has(fromEmail)) continue;
       for (const field of [message.to, message.cc]) {
         for (const part of String(field || '').split(',')) {
-          const email = emailFromHeader(part);
+          const email = emailFromHeader(part)?.toLowerCase();
           if (!email || self.has(email)) continue;
           sentAllowlist.add(email);
           const domain = email.split('@')[1];
@@ -439,7 +429,7 @@ export async function generateDailyReport(input: {
     accounts,
     services: serviceIds,
     insights,
-    tracked: refreshedTracked.filter((item) => accounts.includes(item.account)),
+    tracked: refreshedTracked.filter((item) => accountIdSet.has(String(item.account).toLowerCase())),
     lastDateByKey,
     calendarContext,
     taskContext,
@@ -471,7 +461,7 @@ function collectSentRecipientsFromRaw(thread: Thread, self: Set<string>, out: Se
   for (const field of fields) {
     if (!field) continue;
     for (const part of String(field).split(/[,;]/)) {
-      const email = emailFromHeader(part);
+      const email = emailFromHeader(part)?.toLowerCase();
       if (!email || self.has(email)) continue;
       out.add(email);
       const domain = email.split('@')[1];
@@ -1201,6 +1191,10 @@ async function loadTaskContext(
           assignees: card.assignees || [],
           sourceTitle,
           sourceUrl,
+          source,
+          sourceThreadId: card.sourceThreadId,
+          sourceCalendarEventId: card.sourceCalendarEventId,
+          sourceAccountId: card.sourceAccountId,
           scope: contextScope(card.dueAt || card.updatedAt || card.createdAt || now, now),
         } satisfies DailyReportTaskItem;
       })
@@ -1319,7 +1313,7 @@ function extractPeople(thread: Thread, messages: Message[], self: Set<string>) {
   const names = new Set<string>();
   for (const value of values) {
     for (const part of String(value || '').split(',')) {
-      const email = emailFromHeader(part);
+      const email = emailFromHeader(part)?.toLowerCase();
       if (email && self.has(email)) continue;
       const label = shortFrom(part);
       if (label) names.add(label);

@@ -810,6 +810,8 @@ export function AIBarSidebar() {
                     <button
                       type="button"
                       onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
+                      aria-label={`Remove ${file.name}`}
+                      title={`Remove ${file.name}`}
                       className="hover:text-[var(--color-danger)]"
                     >
                       <X className="size-2.5" />

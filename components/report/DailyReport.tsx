@@ -12,7 +12,7 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConnectionLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
@@ -24,6 +24,7 @@ import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
+import { taskSourceColor } from '@/lib/shared/task-colors';
 import { cn } from '@/lib/utils';
 
 interface DailyReportItem {
@@ -59,6 +60,16 @@ interface DailyReportTaskItem {
   assignees?: string[];
   sourceTitle?: string;
   sourceUrl?: string;
+  source?: {
+    accountId?: string;
+    threadId?: string;
+    calendarId?: string;
+    eventId?: string;
+    providerEventId?: string;
+  };
+  sourceThreadId?: string;
+  sourceCalendarEventId?: string;
+  sourceAccountId?: string;
   scope: 'week' | 'month';
 }
 
@@ -1259,7 +1270,7 @@ export function DailyReport() {
             {/* Lede — the narrative as an editorial pull-quote. */}
             {report.narrative ? (
               <blockquote
-                className="blur-in border-l-2 border-[var(--color-accent)] pl-4 font-serif text-[clamp(15px,3.6cqi,19px)] italic leading-[1.55] text-[var(--color-text)]"
+                className="blur-in rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 font-serif text-[clamp(15px,3.6cqi,19px)] italic leading-[1.55] text-[var(--color-text)] shadow-[var(--shadow-soft)]"
                 style={{ animationDelay: '60ms' }}
               >
                 {stripEmoji(report.narrative)}
@@ -1435,16 +1446,11 @@ function TaskCalendarBrief({
         {visibleTasks.length ? (
           <ul className="space-y-2">
             {visibleTasks.map((task) => (
-              <li key={task.cardId} className="grid grid-cols-[1rem_minmax(0,1fr)_auto] gap-2">
-                <span
-                  className={cn(
-                    'mt-1 grid size-3.5 place-items-center rounded-sm border',
-                    task.completedAt
-                      ? 'border-[var(--color-success)] bg-[var(--color-success)]'
-                      : 'border-[var(--color-border-strong)]',
-                  )}
-                  aria-hidden
-                />
+              <li
+                key={task.cardId}
+                className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-xl border border-[var(--task-border,var(--color-border))] bg-[var(--color-bg-elevated)] px-3 py-2.5 shadow-[var(--shadow-soft)]"
+                style={taskBriefSurfaceStyle(task)}
+              >
                 <div className="min-w-0">
                   <button
                     type="button"
@@ -1584,6 +1590,16 @@ function TaskCalendarBrief({
       </div>
     </section>
   );
+}
+
+function taskBriefSurfaceStyle(task: DailyReportTaskItem): CSSProperties | undefined {
+  const color = taskSourceColor(task);
+  if (!color) return undefined;
+  return {
+    '--task-border': `color-mix(in oklab, ${color} 34%, var(--color-border))`,
+    backgroundColor: `color-mix(in oklab, ${color} 14%, var(--color-bg-elevated))`,
+    borderColor: `color-mix(in oklab, ${color} 34%, var(--color-border))`,
+  } as CSSProperties;
 }
 
 function ReportSection({

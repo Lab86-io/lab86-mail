@@ -325,9 +325,7 @@ function taskToComposition(task: DailyReportTaskItem) {
   return {
     cardId: task.cardId,
     title: task.title,
-    meta: [task.boardTitle, task.columnName, task.dueAt ? `Due ${shortDate(task.dueAt)}` : '']
-      .filter(Boolean)
-      .join(' - '),
+    meta: [task.boardTitle, task.columnName].filter(Boolean).join(' - '),
     dueAt: task.dueAt ?? null,
     sourceRefs: [{ kind: 'task', id: task.cardId }],
     actions: [
@@ -402,8 +400,4 @@ function fallbackNarrative(
   return parts.length
     ? `Here is the shape of the day: ${parts.join(', ')}.`
     : 'A quiet brief today: nothing urgent is waiting.';
-}
-
-function shortDate(ts: number) {
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(ts));
 }

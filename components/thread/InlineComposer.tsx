@@ -33,6 +33,7 @@ import { formatBytes } from '@/lib/shared/files';
 import { DEFAULT_UNDO_SEND_SECONDS } from '@/lib/shared/sending';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
+import { attachmentPreviewKind, buildAttachmentPreviewItem } from './attachment-preview';
 
 // Hard guard: gmail's hard ceiling is 25MB total per send. We refuse slightly
 // under to leave headroom for MIME encoding overhead.
@@ -966,7 +967,7 @@ function ModeChip({
       type="button"
       onClick={onClick}
       className={cn(
-        'h-6 whitespace-nowrap rounded px-2 transition-colors focus-visible:outline-none focus-visible:ring-0',
+        'h-6 whitespace-nowrap rounded px-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--color-bg-elevated)]',
         active
           ? 'bg-[var(--color-control-hover)] text-[var(--color-text)]'
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
@@ -987,14 +988,14 @@ function FileChip({
   onRemove: () => void;
 }) {
   return (
-    <div className="group flex max-w-[260px] items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[11.5px]">
+    <div className="group flex max-w-[260px] items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[11.5px] shadow-[var(--shadow-control)]">
       <button
         type="button"
         onClick={onPreview}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left hover:bg-[var(--color-bg-muted)]"
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left hover:bg-[var(--color-hover-soft)]"
         title={`Preview ${file.name}`}
       >
-        <span className="grid size-5 shrink-0 place-items-center rounded bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+        <span className="grid size-5 shrink-0 place-items-center rounded-lg bg-[var(--color-control)] text-[var(--color-text-muted)]">
           <AttachmentIcon mime={file.type} className="size-3" />
         </span>
         <span className="min-w-0 flex-1">
@@ -1005,7 +1006,7 @@ function FileChip({
       <button
         type="button"
         onClick={onRemove}
-        className="mr-1 grid h-5 w-5 shrink-0 place-items-center rounded text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-hover:opacity-100"
+        className="mr-1 grid h-5 w-5 shrink-0 place-items-center rounded-lg text-[var(--color-text-faint)] opacity-0 transition-opacity hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] group-hover:opacity-100"
         title="Remove"
       >
         <X className="h-3 w-3" />
@@ -1025,7 +1026,7 @@ function DraftAttachmentPreviewDialog({ file }: { file: File }) {
         <DialogTitle className="truncate text-[14px]">{file.name}</DialogTitle>
         <DialogDescription className="text-[11px]">{meta}</DialogDescription>
       </DialogHeader>
-      <div className="min-h-0 px-4 pb-4">
+      <div className="min-h-0 bg-[var(--color-bg)] px-4 pb-4 pt-1">
         {url ? <DraftAttachmentPreview file={file} url={url} /> : <div className="h-60 rounded shimmer" />}
         {url ? (
           <div className="mt-3 flex justify-end">
@@ -1033,7 +1034,7 @@ function DraftAttachmentPreviewDialog({ file }: { file: File }) {
               href={url}
               target="_blank"
               rel="noreferrer"
-              className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
             >
               <ExternalLink className="size-3.5" />
               Open
@@ -1046,30 +1047,53 @@ function DraftAttachmentPreviewDialog({ file }: { file: File }) {
 }
 
 function DraftAttachmentPreview({ file, url }: { file: File; url: string }) {
-  const mime = (file.type || '').toLowerCase();
+  const preview = buildAttachmentPreviewItem({
+    filename: file.name,
+    mimeType: file.type,
+    size: file.size,
+    downloadHref: url,
+    previewHref: url,
+  });
+  const kind = attachmentPreviewKind(file.type, file.name);
   const frameClass =
-    'h-[min(68vh,760px)] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]';
+    'h-[min(68vh,760px)] w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]';
 
-  if (mime.startsWith('image/')) {
+  if (kind === 'image') {
     return (
-      <div className="grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
         {/* biome-ignore lint/performance/noImgElement: blob URLs from local draft files cannot be optimized by next/image. */}
         <img src={url} alt={file.name} className="max-h-full max-w-full object-contain" />
       </div>
     );
   }
 
-  if (mime === 'application/pdf' || mime.startsWith('text/') || /(json|xml|csv|markdown)/.test(mime)) {
+  if (['pdf', 'text', 'code', 'calendar'].includes(kind)) {
     return <iframe title={file.name} src={url} className={frameClass} />;
   }
 
+  if (kind === 'video') {
+    // biome-ignore lint/a11y/useMediaCaption: user attachments do not provide caption tracks.
+    return <video src={url} controls className={frameClass} />;
+  }
+
+  if (kind === 'audio') {
+    return (
+      <div className="grid min-h-40 place-items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]">
+        {/* biome-ignore lint/a11y/useMediaCaption: user attachments do not provide caption tracks. */}
+        <audio src={url} controls className="w-full" />
+      </div>
+    );
+  }
+
   return (
-    <div className="grid min-h-[260px] place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-6 text-center">
+    <div className="grid min-h-[260px] place-items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-6 text-center shadow-[var(--shadow-soft)]">
       <div className="flex max-w-sm flex-col items-center gap-2">
-        <span className="grid size-12 place-items-center rounded-lg bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
-          <AttachmentIcon mime={mime} className="size-5" />
+        <span className="grid size-12 place-items-center rounded-xl bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]">
+          <AttachmentIcon mime={preview.mime} className="size-5" />
         </span>
-        <div className="text-[12px] font-medium text-[var(--color-text)]">Preview unavailable</div>
+        <div className="text-[12px] font-medium text-[var(--color-text)]">
+          {preview.previewLabel} preview unavailable
+        </div>
         <div className="text-[11px] text-[var(--color-text-muted)]">
           This file type can still be opened by the browser.
         </div>

@@ -324,6 +324,21 @@ export interface DailyReportTaskItem {
   assignees?: string[];
   sourceTitle?: string;
   sourceUrl?: string;
+  source?: {
+    kind?: string;
+    accountId?: string;
+    threadId?: string;
+    messageId?: string;
+    calendarId?: string;
+    eventId?: string;
+    providerEventId?: string;
+    url?: string;
+    htmlLink?: string;
+    title?: string;
+  };
+  sourceThreadId?: string;
+  sourceCalendarEventId?: string;
+  sourceAccountId?: string;
   scope: 'week' | 'month';
 }
 

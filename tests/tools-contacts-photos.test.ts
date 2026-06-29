@@ -6,12 +6,18 @@ import { contactLookup, expandAlias } from '../lib/tools/contacts';
 import {
   companyLogoUrl,
   isCompanyDomain,
+  logoDomainForEmail,
   photoUrlFromContact,
   resolvePhotoUrl,
   resolveProviderProfilePhoto,
   setPhotoResolutionDependenciesForTest,
 } from '../lib/tools/photo-resolution';
-import { resolvePhotos, withTimeout } from '../lib/tools/photos';
+import {
+  resolvePhotos,
+  setPhotoToolDependenciesForTest,
+  withTimeout,
+  withTimeoutResult,
+} from '../lib/tools/photos';
 import { runTool, withToolContext } from './tools/harness';
 
 describe('contact and photo tools', () => {
@@ -45,9 +51,7 @@ describe('contact and photo tools', () => {
       account: '__all__',
       emails: ['alerts@linear.app'],
     });
-    expect(result.photos['alerts@linear.app']).toBe(
-      'https://www.google.com/s2/favicons?sz=128&domain=linear.app',
-    );
+    expect(result.photos['alerts@linear.app']).toBe('/api/logos/linear.app');
   });
 
   test('resolve_photos reuses fresh public cache entries', async () => {
@@ -116,6 +120,59 @@ describe('contact and photo tools', () => {
     await expect(withTimeout(Promise.resolve('ok'), 50, 'fallback')).resolves.toBe('ok');
     await expect(withTimeout(Promise.reject(new Error('nope')), 50, 'fallback')).resolves.toBe('fallback');
     await expect(withTimeout(new Promise<string>(() => undefined), 1, 'fallback')).resolves.toBe('fallback');
+  });
+
+  test('withTimeoutResult distinguishes provider misses from failures', async () => {
+    await expect(withTimeoutResult(Promise.resolve('ok'), 50, 'fallback')).resolves.toEqual({
+      status: 'resolved',
+      value: 'ok',
+    });
+    await expect(withTimeoutResult(Promise.reject(new Error('nope')), 50, 'fallback')).resolves.toEqual({
+      status: 'rejected',
+      value: 'fallback',
+    });
+    await expect(withTimeoutResult(new Promise<string>(() => undefined), 1, 'fallback')).resolves.toEqual({
+      status: 'timeout',
+      value: 'fallback',
+    });
+  });
+
+  test('resolve_photos tries provider photos before company logos', async () => {
+    const reset = setPhotoToolDependenciesForTest({
+      resolveProviderProfilePhoto: async () => 'https://cdn.example/alex.png',
+      companyLogoUrl: () => '/api/logos/microsoft.com',
+    });
+    try {
+      const result = await runTool(resolvePhotos.handler, {
+        account: 'jakob@example.test',
+        emails: ['alex@microsoft.com'],
+      });
+      expect(result.photos['alex@microsoft.com']).toBe('https://cdn.example/alex.png');
+      const cached = await withToolContext(() => getPhotoFromCache('alex@microsoft.com'));
+      expect(cached).toBeNull();
+    } finally {
+      reset();
+    }
+  });
+
+  test('resolve_photos does not negative-cache provider timeouts', async () => {
+    const reset = setPhotoToolDependenciesForTest({
+      providerLookupTimeoutMs: 1,
+      companyLogoUrl: () => null,
+      resolveProviderProfilePhoto: async () => new Promise<string | null>(() => undefined),
+    });
+    try {
+      const email = 'slow-provider@example.net';
+      const result = await runTool(resolvePhotos.handler, {
+        account: 'jakob@example.test',
+        emails: [email],
+      });
+      expect(result.photos[email]).toBeNull();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(await withToolContext(() => getPhotoFromCache(email))).toBeNull();
+    } finally {
+      reset();
+    }
   });
 
   test('resolveProviderProfilePhoto normalizes provider contact lookups', async () => {
@@ -285,9 +342,8 @@ describe('contact and photo tools', () => {
     expect(isCompanyDomain('example.com')).toBe(false);
     expect(isCompanyDomain('example.test')).toBe(false);
     expect(isCompanyDomain('localhost')).toBe(false);
-    expect(companyLogoUrl('alerts@Linear.app')).toBe(
-      'https://www.google.com/s2/favicons?sz=128&domain=linear.app',
-    );
+    expect(companyLogoUrl('alerts@Linear.app')).toBe('/api/logos/linear.app');
+    expect(logoDomainForEmail('alerts@mail.microsoftonline.com')).toBe('microsoft.com');
     expect(companyLogoUrl('friend@gmail.com')).toBeNull();
 
     await expect(
@@ -299,7 +355,7 @@ describe('contact and photo tools', () => {
     ).resolves.toBeNull();
     await expect(
       resolvePhotoUrl({ userId: null, account: 'jakob@example.test', email: 'alerts@linear.app' }),
-    ).resolves.toBe('https://www.google.com/s2/favicons?sz=128&domain=linear.app');
+    ).resolves.toBe('/api/logos/linear.app');
   });
 });
 

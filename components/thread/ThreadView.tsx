@@ -36,11 +36,15 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { emailNeedsIsolatedFrame, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
-import { formatBytes } from '@/lib/shared/files';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
+import {
+  type AttachmentPreviewItem,
+  buildAttachmentPreviewItem,
+  canEmbedAttachmentPreview,
+} from './attachment-preview';
 import { InlineComposer } from './InlineComposer';
 
 export function ThreadView() {
@@ -223,17 +227,18 @@ export function ThreadView() {
   const cachedSummary = data?.summary || '';
   const cachedSummaryFresh = Boolean(data?.summaryAt && Date.now() - data.summaryAt < 6 * 60 * 60_000);
   const [summaryEnabled, setSummaryEnabled] = useState(false);
+  const canSummarizeThread = messages.length > 1;
   useEffect(() => {
     setSummaryEnabled(false);
-    if (!account || !threadId || !messages.length || cachedSummaryFresh) return;
+    if (!account || !threadId || !canSummarizeThread || cachedSummaryFresh) return;
     const timeout = window.setTimeout(() => setSummaryEnabled(true), 700);
     return () => window.clearTimeout(timeout);
-  }, [account, threadId, messages.length, cachedSummaryFresh]);
+  }, [account, threadId, canSummarizeThread, cachedSummaryFresh]);
   const summary = useQuery({
     queryKey: ['summary', account, threadId, latestMessageStamp],
     queryFn: async () =>
       callTool<{ summary: string; model: string }>('summarize_thread', { account, threadId }),
-    enabled: summaryEnabled && !!account && !!threadId && messages.length > 0 && !cachedSummaryFresh,
+    enabled: summaryEnabled && !!account && !!threadId && canSummarizeThread && !cachedSummaryFresh,
     staleTime: 6 * 60 * 60_000,
     gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
@@ -495,16 +500,18 @@ export function ThreadView() {
       </header>
 
       <div className="scrollable flex-1 px-5 py-4">
-        <SummaryCard
-          data={summary.data?.summary || cachedSummary}
-          model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
-          loading={!cachedSummary && summaryEnabled && summary.isLoading}
-          error={summary.error ? (summary.error as Error).message : null}
-          onRetry={() => {
-            setSummaryEnabled(true);
-            summary.refetch();
-          }}
-        />
+        {canSummarizeThread ? (
+          <SummaryCard
+            data={summary.data?.summary || cachedSummary}
+            model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
+            loading={!cachedSummary && summaryEnabled && summary.isLoading}
+            error={summary.error ? (summary.error as Error).message : null}
+            onRetry={() => {
+              setSummaryEnabled(true);
+              summary.refetch();
+            }}
+          />
+        ) : null}
 
         {composeForThisThread && activeMode && activeAnchorMessageId ? (
           <div className="mt-4">
@@ -587,13 +594,8 @@ function SummaryCard({
       layout
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3 pl-4"
+      className="relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]"
     >
-      {/* Editorial pull-quote rule. */}
-      <span
-        aria-hidden
-        className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-[var(--color-accent)]/70"
-      />
       <header className="mb-1.5 flex items-center justify-between">
         <span className="font-display text-[11.5px] italic text-[var(--color-text-muted)]">Summary</span>
         <div className="flex items-center gap-2">
@@ -948,7 +950,7 @@ function Attachments({
             return (
               <div
                 key={att.attachmentId || i}
-                className="group flex max-w-[300px] items-stretch overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)]"
+                className="group flex max-w-[300px] items-stretch overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-control)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-hover-soft)]"
               >
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -958,7 +960,7 @@ function Attachments({
                       title={`Preview ${att.filename}`}
                       className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
                     >
-                      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--color-bg-muted)] text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">
+                      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[inset_0_1px_0_rgb(255_255_255/0.45)] group-hover:text-[var(--color-text)]">
                         <AttachmentIcon mime={att.mimeType} />
                       </span>
                       <span className="min-w-0 flex-1">
@@ -985,7 +987,7 @@ function Attachments({
                   href={href}
                   download={att.filename}
                   title={`Download ${att.filename}`}
-                  className="grid min-h-[48px] w-10 shrink-0 place-items-center border-l border-[var(--color-border)] text-[var(--color-text-faint)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+                  className="grid min-h-[48px] w-10 shrink-0 place-items-center border-l border-[var(--color-border)] bg-[var(--color-control)] text-[var(--color-text-faint)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
                 >
                   <Download className="size-3.5" />
                 </a>
@@ -995,20 +997,20 @@ function Attachments({
         </div>
       </TooltipProvider>
       <Dialog open={!!preview} onOpenChange={(open) => !open && setPreview(null)}>
-        <DialogContent className="max-h-[92vh] gap-3 overflow-hidden p-0 sm:max-w-[min(1000px,92vw)]">
+        <DialogContent className="max-h-[92vh] gap-3 overflow-hidden border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0 shadow-[var(--shadow-pop)] sm:max-w-[min(1000px,92vw)]">
           {preview ? (
             <>
               <DialogHeader className="border-b border-[var(--color-border)] px-4 py-3 pr-11">
                 <DialogTitle className="truncate text-[14px]">{preview.filename}</DialogTitle>
                 <DialogDescription className="text-[11px]">{preview.meta || preview.mime}</DialogDescription>
               </DialogHeader>
-              <div className="min-h-0 px-4 pb-4">
+              <div className="min-h-0 bg-[var(--color-bg)] px-4 pb-4 pt-1">
                 <AttachmentPreview item={preview} />
                 <div className="mt-3 flex justify-end gap-2">
                   <a
                     href={preview.downloadHref}
                     download={preview.filename}
-                    className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)]"
+                    className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
                   >
                     <Download className="size-3.5" />
                     Download
@@ -1017,7 +1019,7 @@ function Attachments({
                     href={preview.previewHref}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+                    className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
                   >
                     <ExternalLink className="size-3.5" />
                     Open
@@ -1031,15 +1033,6 @@ function Attachments({
     </>
   );
 }
-
-type AttachmentPreviewItem = {
-  filename: string;
-  mime: string;
-  meta: string;
-  downloadHref: string;
-  previewHref: string;
-  previewKind: 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'unknown';
-};
 
 function attachmentHref({
   account,
@@ -1065,34 +1058,24 @@ function attachmentPreviewItem(
   downloadHref: string,
   previewHref: string,
 ): AttachmentPreviewItem {
-  const mime = (att.mimeType || '').toLowerCase();
-  const ext = (att.filename.split('.').pop() || '').slice(0, 5).toUpperCase();
-  const meta = [ext, formatBytes(att.size)].filter(Boolean).join(' · ');
-  let previewKind: AttachmentPreviewItem['previewKind'] = 'unknown';
-  if (mime.startsWith('image/')) previewKind = 'image';
-  else if (mime === 'application/pdf') previewKind = 'pdf';
-  else if (mime.startsWith('text/') || /(json|xml|csv|markdown)/.test(mime)) previewKind = 'text';
-  else if (mime.startsWith('video/')) previewKind = 'video';
-  else if (mime.startsWith('audio/')) previewKind = 'audio';
-  return {
+  return buildAttachmentPreviewItem({
     filename: att.filename,
-    mime: att.mimeType || 'application/octet-stream',
-    meta,
+    mimeType: att.mimeType,
+    size: att.size,
     downloadHref,
     previewHref,
-    previewKind,
-  };
+  });
 }
 
 function AttachmentPreview({ item, compact = false }: { item: AttachmentPreviewItem; compact?: boolean }) {
   const frameClass = compact
-    ? 'h-40 w-64 rounded border border-[var(--color-border)] bg-[var(--color-bg)]'
-    : 'h-[min(68vh,760px)] w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]';
+    ? 'h-40 w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]'
+    : 'h-[min(68vh,760px)] w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]';
 
   if (item.previewKind === 'image') {
     const className = compact
-      ? 'grid h-40 w-64 place-items-center overflow-hidden rounded border border-[var(--color-border)] bg-[var(--color-bg)]'
-      : 'grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]';
+      ? 'grid h-40 w-64 place-items-center overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]'
+      : 'grid max-h-[68vh] min-h-[240px] place-items-center overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]';
     return (
       <div className={className}>
         <img src={item.previewHref} alt={item.filename} className="max-h-full max-w-full object-contain" />
@@ -1100,7 +1083,7 @@ function AttachmentPreview({ item, compact = false }: { item: AttachmentPreviewI
     );
   }
 
-  if (item.previewKind === 'pdf' || item.previewKind === 'text') {
+  if (['pdf', 'text', 'code', 'calendar'].includes(item.previewKind)) {
     return <iframe title={item.filename} src={item.previewHref} className={frameClass} />;
   }
 
@@ -1111,7 +1094,7 @@ function AttachmentPreview({ item, compact = false }: { item: AttachmentPreviewI
 
   if (item.previewKind === 'audio') {
     return (
-      <div className="grid min-h-40 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+      <div className="grid min-h-40 place-items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]">
         {/* biome-ignore lint/a11y/useMediaCaption: user attachments do not provide caption tracks. */}
         <audio src={item.previewHref} controls className="w-full" />
       </div>
@@ -1119,15 +1102,19 @@ function AttachmentPreview({ item, compact = false }: { item: AttachmentPreviewI
   }
 
   const className = compact
-    ? 'grid h-40 w-64 place-items-center rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-center'
-    : 'grid min-h-[260px] place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-6 text-center';
+    ? 'grid h-40 w-64 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 text-center shadow-[var(--shadow-soft)]'
+    : 'grid min-h-[260px] place-items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-6 text-center shadow-[var(--shadow-soft)]';
   return (
     <div className={className}>
       <div className="flex max-w-sm flex-col items-center gap-2">
-        <span className="grid size-12 place-items-center rounded-lg bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
+        <span className="grid size-12 place-items-center rounded-xl bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]">
           <AttachmentIcon mime={item.mime} className="size-5" />
         </span>
-        <div className="text-[12px] font-medium text-[var(--color-text)]">Preview unavailable</div>
+        <div className="text-[12px] font-medium text-[var(--color-text)]">
+          {canEmbedAttachmentPreview(item.previewKind)
+            ? 'Open preview'
+            : `${item.previewLabel} preview unavailable`}
+        </div>
         <div className="text-[11px] text-[var(--color-text-muted)]">
           This file type can still be opened or downloaded.
         </div>

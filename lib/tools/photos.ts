@@ -1,11 +1,45 @@
 import { z } from 'zod';
 import { getPhotoFromCache, PHOTO_CACHE_VERSION, setPhotoCache } from '../store/photos';
-import { companyLogoUrl, resolveProviderProfilePhoto } from './photo-resolution';
+import { companyLogoCandidates, companyLogoUrl, resolveProviderProfilePhoto } from './photo-resolution';
 import { defineTool } from './registry';
 
 const PROVIDER_LOOKUP_CAP = 24;
 const PROVIDER_LOOKUP_BUDGET_MS = 5_000;
 const PROVIDER_LOOKUP_TIMEOUT_MS = 900;
+
+type TimeoutResult<T> =
+  | { status: 'resolved'; value: T }
+  | { status: 'rejected'; value: T }
+  | { status: 'timeout'; value: T };
+
+interface PhotoToolDeps {
+  getPhotoFromCache: typeof getPhotoFromCache;
+  setPhotoCache: typeof setPhotoCache;
+  companyLogoUrl: typeof companyLogoUrl;
+  companyLogoCandidates: typeof companyLogoCandidates;
+  resolveProviderProfilePhoto: typeof resolveProviderProfilePhoto;
+  now: () => number;
+  providerLookupTimeoutMs: number;
+}
+
+const defaultDeps: PhotoToolDeps = {
+  getPhotoFromCache,
+  setPhotoCache,
+  companyLogoUrl,
+  companyLogoCandidates,
+  resolveProviderProfilePhoto,
+  now: () => Date.now(),
+  providerLookupTimeoutMs: PROVIDER_LOOKUP_TIMEOUT_MS,
+};
+
+let deps = defaultDeps;
+
+export function setPhotoToolDependenciesForTest(overrides: Partial<PhotoToolDeps>) {
+  deps = { ...defaultDeps, ...overrides };
+  return () => {
+    deps = defaultDeps;
+  };
+}
 
 export const resolvePhotos = defineTool({
   name: 'resolve_photos',
@@ -20,7 +54,7 @@ export const resolvePhotos = defineTool({
   async handler({ account, emails }, ctx) {
     const out: Record<string, string | null> = {};
     const seen = new Set<string>();
-    const providerStartedAt = Date.now();
+    const providerStartedAt = deps.now();
     let providerLookups = 0;
 
     for (const raw of emails) {
@@ -28,16 +62,18 @@ export const resolvePhotos = defineTool({
       if (!email || seen.has(email)) continue;
       seen.add(email);
 
-      const logoUrl = companyLogoUrl(email);
-      const cached = await getPhotoFromCache(email).catch(() => null);
-      if (cached?.url && cached.version === PHOTO_CACHE_VERSION && cached.source !== 'provider') {
+      const cached = await deps.getPhotoFromCache(email).catch(() => null);
+      const logoUrl =
+        cached?.url && cached.version === PHOTO_CACHE_VERSION && cached.source === 'company'
+          ? cached.url
+          : deps.companyLogoUrl(email);
+      if (
+        cached?.url &&
+        cached.version === PHOTO_CACHE_VERSION &&
+        cached.source !== 'provider' &&
+        cached.source !== 'company'
+      ) {
         out[email] = cached.url;
-        continue;
-      }
-
-      if (logoUrl) {
-        out[email] = logoUrl;
-        await setPhotoCache(email, logoUrl, 'company').catch(() => undefined);
         continue;
       }
 
@@ -48,29 +84,44 @@ export const resolvePhotos = defineTool({
       }
 
       const canLookupProvider =
-        providerLookups < PROVIDER_LOOKUP_CAP && Date.now() - providerStartedAt < PROVIDER_LOOKUP_BUDGET_MS;
+        providerLookups < PROVIDER_LOOKUP_CAP && deps.now() - providerStartedAt < PROVIDER_LOOKUP_BUDGET_MS;
       if (!canLookupProvider) {
-        out[email] = null;
+        out[email] = logoUrl || null;
+        if (logoUrl) await deps.setPhotoCache(email, logoUrl, 'company').catch(() => undefined);
         continue;
       }
 
       providerLookups += 1;
-      const providerUrl = await withTimeout(
-        resolveProviderProfilePhoto({
+      const provider = await withTimeoutResult(
+        deps.resolveProviderProfilePhoto({
           userId: ctx.userId,
           account,
           email,
-        }).catch(() => null),
-        PROVIDER_LOOKUP_TIMEOUT_MS,
+        }),
+        deps.providerLookupTimeoutMs,
         null,
       );
-      out[email] = providerUrl;
-      if (!providerUrl) await setPhotoCache(email, null, 'none').catch(() => undefined);
+      if (provider.status === 'resolved' && provider.value) {
+        out[email] = provider.value;
+        continue;
+      }
+      if (logoUrl) {
+        out[email] = logoUrl;
+        await deps.setPhotoCache(email, logoUrl, 'company').catch(() => undefined);
+        continue;
+      }
+      out[email] = null;
+      if (provider.status === 'resolved')
+        await deps.setPhotoCache(email, null, 'none').catch(() => undefined);
     }
 
     return { photos: out };
   },
 });
+
+export function logoCandidatesForEmail(email: string): string[] {
+  return deps.companyLogoCandidates(email);
+}
 
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
@@ -92,6 +143,34 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback:
         settled = true;
         clearTimeout(timer);
         resolve(fallback);
+      });
+  });
+}
+
+export function withTimeoutResult<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<TimeoutResult<T>> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ status: 'timeout', value: fallback });
+    }, timeoutMs);
+    promise
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status: 'resolved', value });
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status: 'rejected', value: fallback });
       });
   });
 }

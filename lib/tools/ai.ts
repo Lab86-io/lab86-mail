@@ -75,16 +75,20 @@ export const summarizeThread = defineTool({
     }
     const messages = await loadThread(account, threadId, ctx.userId);
     if (!messages.length) return { summary: '(empty thread)', model: 'none' };
+    if (messages.length <= 1) return { summary: '', model: 'none' };
     if (!(await hasAiForCurrentUser())) {
       const senders = [...new Set(messages.map((m) => m.from))].slice(0, 3).join(', ');
-      const summary = `${messages[0].subject} — ${messages.length} message(s) with ${senders}.`;
+      const last = messages[messages.length - 1];
+      const summary = `${last.subject} — ${messages.length} messages with ${senders}; latest from ${last.from}.`;
       await setThreadSummary(account, threadId, summary, 'local').catch(() => undefined);
       return { summary, model: 'local' };
     }
     const prompt = [
-      'Summarize this email thread for the user as a tight TL;DR.',
-      'Output: one plain sentence (max ~25 words) capturing the gist. Then, ONLY if the thread genuinely warrants it, up to 3 short bullets (each "- ", max ~12 words) for the key facts, asks, or deadlines.',
-      'No headings, no preamble, no sign-off. Omit the bullets entirely for simple threads.',
+      'Summarize this multi-message email thread for the user as a reliable working-memory note.',
+      'Output format: one compact sentence with the current state, then up to 3 short "- " bullets only when useful.',
+      'Prioritize: what changed most recently, who owes what, explicit asks, decisions, deadlines, blockers, and follow-up risk.',
+      'Do not repeat the subject unless needed. Do not include a heading, greeting, sign-off, or generic advice.',
+      'Never invent facts. If timing, ownership, or outcome is unclear, say so plainly.',
       '',
       'Thread:',
       concatThread(messages),

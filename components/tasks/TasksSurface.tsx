@@ -30,7 +30,16 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import type { DragEndEvent } from '@/components/kibo-ui/kanban';
@@ -69,6 +78,7 @@ import { Markdown } from '@/components/ui/markdown';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { taskSourceColor } from '@/lib/shared/task-colors';
 import { normalizeUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
 
@@ -504,10 +514,10 @@ function BoardView({ boardId }: { boardId: string }) {
                           {...item}
                           onCardClick={() => setOpenCardId(item.id)}
                           className={cn(
-                            'group rounded-xl border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)] transition-[transform,box-shadow,border-color] duration-150 hover:-translate-y-px hover:border-[var(--color-border-strong)] hover:shadow-md',
+                            'group rounded-xl border p-3.5 shadow-[var(--shadow-soft)] transition-[transform,box-shadow,border-color] duration-150 hover:-translate-y-px hover:border-[var(--task-border,var(--color-border-strong))] hover:shadow-md',
                             done && 'opacity-75',
-                            card?.priority ? PRIORITY_EDGE[card.priority] : undefined,
                           )}
+                          style={taskSurfaceStyle(card)}
                         >
                           {/* Native button = keyboard activation for free.
                               Pointer taps still route through the wrapper's
@@ -743,9 +753,13 @@ function ListView({
                 </button>
               ) : null}
             </div>
-            <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+            <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
               {cards.map((card) => (
-                <li key={card.cardId} className="flex items-center gap-2.5 px-3 py-2">
+                <li
+                  key={card.cardId}
+                  className="flex items-center gap-2.5 px-3 py-2"
+                  style={taskSurfaceStyle(card)}
+                >
                   <Checkbox
                     checked={Boolean(card.completedAt)}
                     disabled={!canEdit}
@@ -790,14 +804,6 @@ const PRIORITY_DOT: Record<string, string> = {
   low: 'bg-emerald-500',
 };
 
-// A coloured left edge reads priority across a whole column far faster than a
-// 6px dot buried in the meta row (colour from the data's meaning).
-const PRIORITY_EDGE: Record<string, string> = {
-  high: 'border-l-[3px] border-l-[var(--color-danger)]',
-  medium: 'border-l-[3px] border-l-amber-500',
-  low: 'border-l-[3px] border-l-emerald-500',
-};
-
 // A thin per-column load bar (cards relative to the busiest column) turns a row
 // of bare counts into a glanceable workload distribution.
 function ColumnLoadBar({ count, max }: { count: number; max: number }) {
@@ -810,6 +816,17 @@ function ColumnLoadBar({ count, max }: { count: number; max: number }) {
       />
     </div>
   );
+}
+
+function taskSurfaceStyle(card?: BoardCard): CSSProperties | undefined {
+  const color = taskSourceColor(card);
+  if (!color) return undefined;
+  return {
+    '--task-color': color,
+    '--task-border': `color-mix(in oklab, ${color} 38%, var(--color-border))`,
+    backgroundColor: `color-mix(in oklab, ${color} 16%, var(--color-bg-elevated))`,
+    borderColor: `color-mix(in oklab, ${color} 34%, var(--color-border))`,
+  } as CSSProperties;
 }
 
 // Overlapping initials avatars (Linear/ClickUp idiom). The ring colour matches

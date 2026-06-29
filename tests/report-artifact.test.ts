@@ -308,6 +308,64 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toContain('draft_reply');
   });
 
+  test('keeps non-destructive quiet actions labeled', () => {
+    const html = buildNativeDailyReportArtifact(sampleReport(), {
+      version: 1,
+      title: 'Quiet action labels',
+      services: [],
+      blocks: [
+        {
+          type: 'tool_digest',
+          title: 'Tools',
+          items: [
+            {
+              server: 'github',
+              title: 'Open PR',
+              state: null,
+              author: null,
+              url: null,
+              actions: [
+                { action: 'open_view', label: 'Open tasks', payload: { view: 'tasks' }, style: 'quiet' },
+              ],
+              sourceRefs: [],
+            },
+          ],
+          sourceRefs: [],
+        },
+      ],
+    });
+    expect(html).toContain('>Open tasks</button>');
+    expect(html).not.toContain('aria-label="Open tasks" title="Open tasks">&#10003;');
+  });
+
+  test('rejects custom widgets with external loading escape hatches', () => {
+    for (const unsafeHtml of [
+      '<style>@import url("https://example.com/x.css")</style>',
+      '<div style="background:url(https://example.com/x.png)">x</div>',
+      '<img srcset="https://example.com/x.png 1x">',
+      '<meta http-equiv="refresh" content="0;url=https://example.com">',
+    ]) {
+      const html = buildNativeDailyReportArtifact(sampleReport(), {
+        version: 1,
+        title: 'Unsafe widget',
+        services: [],
+        blocks: [
+          {
+            type: 'custom_widget',
+            id: 'unsafe',
+            title: 'Unsafe',
+            html: unsafeHtml,
+            fallbackMarkdown: 'Fallback rendered.',
+            allowedActions: [],
+            sourceRefs: [],
+          },
+        ],
+      });
+      expect(html).toContain('Fallback rendered.');
+      expect(html).not.toContain('sandbox="allow-scripts"');
+    }
+  });
+
   test('falls back to default date formatting when an invalid timezone is supplied', () => {
     const html = runWithAiRequestContext({ userTimezone: 'Invalid/Zone' }, () =>
       buildNativeDailyReportArtifact(sampleReport(), {

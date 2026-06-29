@@ -30,11 +30,11 @@
   --color-destructive-foreground: var(--color-danger-foreground);
   --color-input: var(--color-bg-elevated);
   --color-ring: var(--color-accent);
-  --radius: 0.5rem;
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  --radius: 0.875rem;
+  --radius-sm: 0.625rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -137,11 +137,11 @@
   --shadow-pop: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);
 
   /* radii */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
 
   /* motion — Linear-calibrated: fast for hover/color, normal for state
      changes, moderate for panels/dialogs. Nothing springy; if an animation
@@ -215,6 +215,13 @@
     --color-selected-soft: oklch(0.55 calc(var(--accent-chroma) * 0.8) var(--accent-hue) / 0.13);
     --color-border-beam-from: oklch(0.45 var(--accent-chroma) var(--accent-hue));
     --color-border-beam-to: oklch(0.62 var(--accent-chroma) var(--accent-hue));
+    --color-avatar-1: oklch(0.43 var(--accent-chroma) var(--accent-hue));
+    --color-avatar-2: oklch(0.43 calc(var(--accent-chroma) * 0.9) calc(var(--accent-hue) + 48));
+    --color-avatar-3: oklch(0.43 calc(var(--accent-chroma) * 0.86) calc(var(--accent-hue) + 112));
+    --color-avatar-4: oklch(0.43 calc(var(--accent-chroma) * 0.95) calc(var(--accent-hue) + 184));
+    --color-avatar-5: oklch(0.43 calc(var(--accent-chroma) * 0.82) calc(var(--accent-hue) + 252));
+    --avatar-initial-bg-strength: 14%;
+    --avatar-initial-text-strength: 88%;
   }
 
   :root {
@@ -302,6 +309,13 @@
     --color-hover-soft: oklch(0.73 calc(var(--accent-chroma) * 0.4) var(--accent-hue) / 0.07);
     --color-border-beam-from: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-border-beam-to: oklch(0.85 calc(var(--accent-chroma) * 0.6) var(--accent-hue));
+    --color-avatar-1: oklch(0.74 calc(var(--accent-chroma) * 0.76) var(--accent-hue));
+    --color-avatar-2: oklch(0.74 calc(var(--accent-chroma) * 0.72) calc(var(--accent-hue) + 48));
+    --color-avatar-3: oklch(0.74 calc(var(--accent-chroma) * 0.68) calc(var(--accent-hue) + 112));
+    --color-avatar-4: oklch(0.74 calc(var(--accent-chroma) * 0.74) calc(var(--accent-hue) + 184));
+    --color-avatar-5: oklch(0.74 calc(var(--accent-chroma) * 0.64) calc(var(--accent-hue) + 252));
+    --avatar-initial-bg-strength: 28%;
+    --avatar-initial-text-strength: 40%;
     --color-success: #5fb289;
     --color-success-foreground: #f0fdf4;
     --color-success-soft: #14532d;
@@ -326,11 +340,6 @@
     --color-prio-1: #e1655c;
     --color-prio-2: #d49a4d;
     --color-prio-3: #889aa8;
-    --color-avatar-1: #73a984;
-    --color-avatar-2: #5fb289;
-    --color-avatar-3: #d49a4d;
-    --color-avatar-4: #e1655c;
-    --color-avatar-5: #a796d8;
     --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
     --shadow-control:
       inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.45), 0 8px 18px rgb(0 0 0 / 0.22);

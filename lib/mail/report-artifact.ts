@@ -142,7 +142,7 @@ function renderBlock(block: BriefBlock, timezone: string): string {
     case 'needs_you':
       return renderNeedsBlock(block);
     case 'task_digest':
-      return renderTasksBlock(block);
+      return renderTasksBlock(block, timezone);
     case 'week_ahead':
       return renderWeekBlock(block, timezone);
     case 'tool_digest':
@@ -206,16 +206,16 @@ function renderNeedsBlock(block: Extract<BriefBlock, { type: 'needs_you' }>) {
     .join('')}</div></section>`;
 }
 
-function renderTasksBlock(block: Extract<BriefBlock, { type: 'task_digest' }>) {
+function renderTasksBlock(block: Extract<BriefBlock, { type: 'task_digest' }>, timezone: string) {
   const rows = block.tasks.length
     ? block.tasks
         .map(
           (task) => `<article class="task" data-card-id="${escapeAttr(task.cardId)}">
-		<div>
-		<h3>${escapeHtml(task.title)}</h3>
-		<div class="meta">${escapeHtml(task.meta || (task.dueAt ? `Due ${shortDate(task.dueAt)}` : ''))}</div>
-		</div>
-		<div class="task-actions">
+			<div>
+			<h3>${escapeHtml(task.title)}</h3>
+			${renderTaskMeta(task, timezone)}
+			</div>
+			<div class="task-actions">
 		${renderActions(
       task.actions.length
         ? task.actions
@@ -329,8 +329,9 @@ function button(action: string, label: string, payload: Record<string, unknown>,
 function renderActions(actions: BriefAction[]) {
   return actions
     .map((action) => {
-      const cls = action.style === 'primary' ? 'primary' : action.style === 'quiet' ? 'icon-btn' : '';
-      if (action.style === 'quiet') {
+      const quietIcon = action.style === 'quiet' && /^(done|complete|remove|dismiss)$/i.test(action.label);
+      const cls = action.style === 'primary' ? 'primary' : quietIcon ? 'icon-btn' : '';
+      if (quietIcon) {
         const label = /remove|dismiss/i.test(action.label) ? '&times;' : '&#10003;';
         return `<button type="button" class="${cls}" data-action="${escapeAttr(action.action)}" data-payload="${escapeAttr(JSON.stringify(action.payload))}" aria-label="${escapeAttr(action.label)}" title="${escapeAttr(action.label)}">${label}</button>`;
       }
@@ -404,6 +405,15 @@ function eventWindow(event: { startAt: number; endAt: number; allDay?: boolean |
   return `${date} ${start}-${end}`;
 }
 
+function renderTaskMeta(
+  task: Extract<BriefBlock, { type: 'task_digest' }>['tasks'][number],
+  timezone: string,
+) {
+  const values = [task.meta, task.dueAt ? `Due ${shortDate(task.dueAt, timezone)}` : ''].filter(Boolean);
+  if (!values.length) return '';
+  return `<div class="meta">${escapeHtml(values.join(' - '))}</div>`;
+}
+
 function ageLine(receivedAt?: number) {
   if (!receivedAt) return '';
   const days = Math.max(0, Math.floor((Date.now() - receivedAt) / 86_400_000));
@@ -444,8 +454,12 @@ function isAllowedWidgetHtml(html: string) {
   const value = String(html || '').toLowerCase();
   if (/<script[^>]+\bsrc\s*=/.test(value)) return false;
   if (/<iframe\b/.test(value)) return false;
+  if (/<meta\b[^>]*http-equiv\s*=\s*["']?refresh/.test(value)) return false;
   if (/\b(fetch|xmlhttprequest|websocket|eventsource)\s*\(/.test(value)) return false;
   if (/\b(localstorage|sessionstorage|indexeddb|document\.cookie)\b/.test(value)) return false;
   if (/\b(src|href)\s*=\s*["']?\s*(https?:|\/\/)/.test(value)) return false;
+  if (/\bsrcset\s*=/.test(value)) return false;
+  if (/@import\b/.test(value)) return false;
+  if (/\burl\s*\(/.test(value)) return false;
   return true;
 }

@@ -721,8 +721,7 @@ describe('AI tools on fake noreply mail with no provider configured', () => {
         });
 
         const summary = await summarizeThread.handler({ account, threadId }, { agent: 'codex' });
-        expect(summary.model).toBe('local');
-        expect(summary.summary).toContain('Automated account notice');
+        expect(summary).toEqual({ summary: '', model: 'none' });
 
         const triage = await triageThread.handler({ account, threadId }, { agent: 'codex' });
         expect(triage.model).toBe('local');

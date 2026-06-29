@@ -8,6 +8,7 @@ import {
   Archive,
   Ban,
   CheckCircle2,
+  CheckSquare,
   Inbox as InboxIcon,
   MoreHorizontal,
   Search,
@@ -17,7 +18,16 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  type KeyboardEvent,
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import {
   Confirmation,
@@ -35,7 +45,6 @@ import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -167,9 +176,8 @@ export function Inbox() {
   const selectedIds = useClientStore((s) => s.selectedIds);
   const toggleSelected = useClientStore((s) => s.toggleSelected);
   const clearSelected = useClientStore((s) => s.clearSelected);
+  const selectMany = useClientStore((s) => s.selectMany);
   const railOpen = useClientStore((s) => s.railOpen);
-  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
-  const composeMode = useClientStore((s) => s.compose.mode);
 
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState(searchDraft || (query === DEFAULT_QUERY ? '' : query));
@@ -177,6 +185,7 @@ export function Inbox() {
   const [labelPreview, setLabelPreview] = useState<ThreadRow | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [suppressions, setSuppressions] = useState<QuickFixSuppression[]>([]);
+  const [lastSelectionKey, setLastSelectionKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -439,6 +448,9 @@ export function Inbox() {
 
   const liveItems =
     liveInbox.status === 'success' ? (liveInbox.data?.items as ThreadRow[] | undefined) : undefined;
+  // Each item knows its own account (set by the fan-out above), so row ids remain
+  // stable in ALL_ACCOUNTS view and bulk operations can dispatch per mailbox.
+  const rowKey = useCallback((item: ThreadRow) => `${item.account || account}:${item._id}`, [account]);
   const items = useMemo(() => {
     const byKey = new Map<string, ThreadRow>();
     for (const item of liveItems || []) {
@@ -456,12 +468,38 @@ export function Inbox() {
     });
     return rows.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
   }, [account, data?.pages, liveItems, suppressions, smartCategory]);
+  const visibleRowKeys = useMemo(() => items.map((item) => rowKey(item)), [items, rowKey]);
+  const smartCategoryBadge = smartCategory && smartCategory !== 'main' ? activeSmartLabel : '';
+  const selectVisible = useCallback(() => {
+    selectMany(visibleRowKeys);
+    setLastSelectionKey(visibleRowKeys[0] || null);
+  }, [selectMany, visibleRowKeys]);
+  const toggleRowSelection = useCallback(
+    (key: string) => {
+      toggleSelected(key);
+      setLastSelectionKey(key);
+    },
+    [toggleSelected],
+  );
+  const selectRangeTo = useCallback(
+    (key: string) => {
+      const anchor = lastSelectionKey && visibleRowKeys.includes(lastSelectionKey) ? lastSelectionKey : key;
+      const a = visibleRowKeys.indexOf(anchor);
+      const b = visibleRowKeys.indexOf(key);
+      if (a < 0 || b < 0) {
+        toggleRowSelection(key);
+        return;
+      }
+      const [start, end] = a < b ? [a, b] : [b, a];
+      selectMany([...new Set([...selectedIds, ...visibleRowKeys.slice(start, end + 1)])]);
+      setLastSelectionKey(key);
+    },
+    [lastSelectionKey, selectMany, selectedIds, toggleRowSelection, visibleRowKeys],
+  );
   // Skeleton while either source is still on its first load for this view —
   // an empty live result alone must not flash "Nothing here" while the HTTP
   // page (which can still backfill brand-new accounts) is in flight.
   const showInitialLoading = !items.length && (isLoading || liveInbox.status === 'pending');
-  const readerVisible = !!(selectedThreadId || composeMode);
-
   useEffect(() => {
     const root = scrollRef.current;
     const target = loadMoreRef.current;
@@ -526,10 +564,6 @@ export function Inbox() {
     [account, queryClient],
   );
 
-  // Each item knows its own account (set by the fan-out above), so bulk
-  // operations dispatch per-item using that account rather than the
-  // currently-selected one. Required for ALL_ACCOUNTS view.
-  const rowKey = (item: ThreadRow) => `${item.account || account}:${item._id}`;
   const rowForKey = (id: string) => items.find((it) => rowKey(it) === id || it._id === id);
   const accountOfRow = (id: string) => rowForKey(id)?.account || account;
   const threadIdOfRow = (id: string) => rowForKey(id)?._id || id.split(':').slice(1).join(':') || id;
@@ -674,16 +708,15 @@ export function Inbox() {
   });
   return (
     <section className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
         <div
           className={cn(
             'flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5',
             !railOpen && 'pl-12',
-            !aiBarOpen && !readerVisible && 'pr-12',
           )}
         >
           <div className="flex items-center gap-2">
-            <InputGroup className="relative flex-1 overflow-hidden border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+            <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
               {translating ? (
                 <BorderBeam
                   size={80}
@@ -728,8 +761,9 @@ export function Inbox() {
               variant="outline"
               size="icon"
               onClick={refreshInbox}
+              aria-label="Refresh inbox"
               className={cn(
-                'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
+                'h-9 w-9 shrink-0 rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
                 isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
               )}
               title="Refresh"
@@ -746,16 +780,16 @@ export function Inbox() {
           so the search bar's bottom border lines up with the assistant header.
           Rendered only when there's something to show, so it adds no height
           otherwise. */}
-        {smartCategory ||
+        {smartCategoryBadge ||
         nlSearchIntent ||
         translatedQuery ||
         query !== DEFAULT_QUERY ||
         translating ||
         queryError ? (
           <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5">
-            {smartCategory ? (
+            {smartCategoryBadge ? (
               <Badge variant="secondary" className="gap-1">
-                {activeSmartLabel}
+                {smartCategoryBadge}
               </Badge>
             ) : null}
             {nlSearchIntent ? <Badge variant="outline">Asked: {nlSearchIntent}</Badge> : null}
@@ -796,10 +830,20 @@ export function Inbox() {
               className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-3 py-2 text-[12px]"
             >
               <span className="font-semibold text-[var(--color-text)]">{selectedIds.length} selected</span>
+              {selectedIds.length < visibleRowKeys.length ? (
+                <button
+                  type="button"
+                  onClick={selectVisible}
+                  className="ml-2 flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                >
+                  <CheckSquare className="size-3" />
+                  Select visible
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => bulkArchive.mutate(selectedIds)}
-                className="ml-2 flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
+                className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
               >
                 <RowIcon icon={ArchiveIcon} size={12} />
                 Archive
@@ -807,7 +851,7 @@ export function Inbox() {
               <button
                 type="button"
                 onClick={() => bulkTrash.mutate(selectedIds)}
-                className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
+                className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
               >
                 <RowIcon icon={DeleteIcon} size={12} />
                 Trash
@@ -815,7 +859,7 @@ export function Inbox() {
               <button
                 type="button"
                 onClick={() => bulkTriage.mutate()}
-                className="flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
+                className="flex items-center gap-1 rounded-lg bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] shadow-[var(--shadow-control)] hover:bg-[var(--color-accent-hover)]"
               >
                 <RowIcon icon={GaugeIcon} size={12} />
                 AI: triage
@@ -901,7 +945,7 @@ export function Inbox() {
                       activeCategory={smartCategory}
                       selected={selectedIds.includes(key)}
                       active={selectedThreadId === it._id && threadAccount === rowAccount}
-                      onToggle={() => toggleSelected(key)}
+                      onSelectRange={() => selectRangeTo(key)}
                       onPrefetch={() => prefetchThread(it)}
                       onApplyLabels={() => setLabelPreview(it)}
                       onArchive={() => bulkArchive.mutate([key])}
@@ -951,7 +995,7 @@ function ThreadRowCard({
   photoUrl,
   selected,
   active,
-  onToggle,
+  onSelectRange,
   onClick,
   onPrefetch,
   onApplyLabels,
@@ -968,7 +1012,7 @@ function ThreadRowCard({
   photoUrl?: string | null;
   selected: boolean;
   active: boolean;
-  onToggle: () => void;
+  onSelectRange: () => void;
   onClick: () => void;
   onPrefetch: () => void;
   onApplyLabels: () => void;
@@ -1019,13 +1063,24 @@ function ThreadRowCard({
 
   return (
     <div
-      onClick={onClick}
+      onClick={(event) => {
+        if (event.shiftKey) {
+          event.preventDefault();
+          onSelectRange();
+          return;
+        }
+        onClick();
+      }}
       onPointerEnter={schedulePrefetch}
       onPointerLeave={cancelPrefetch}
       onFocus={onPrefetch}
-      onKeyDown={(event) => {
+      onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
+          if (event.shiftKey) {
+            onSelectRange();
+            return;
+          }
           onClick();
         }
       }}
@@ -1034,7 +1089,7 @@ function ThreadRowCard({
       className={cn(
         // No transition on the row itself: the hover highlight is a selection
         // cue, so it must be instant for snappy up/down scanning.
-        'group relative grid grid-cols-[20px_30px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]',
+        'group relative grid grid-cols-[30px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
@@ -1043,15 +1098,6 @@ function ThreadRowCard({
       {priorityClass ? (
         <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
       ) : null}
-
-      <Checkbox
-        checked={selected}
-        onCheckedChange={() => onToggle()}
-        onClick={(e) => e.stopPropagation()}
-        // Keep Space/Enter on the focused checkbox from bubbling to the row's
-        // key handler, which would open the thread instead of toggling.
-        onKeyDown={(e) => e.stopPropagation()}
-      />
 
       <Avatar name={senderLabel || item.account} src={photoUrl} size={28} />
 

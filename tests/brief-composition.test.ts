@@ -29,6 +29,9 @@ describe('BriefComposition', () => {
         },
       ],
     });
+    expect(composition.blocks.find((block) => block.type === 'task_digest')).toMatchObject({
+      tasks: [expect.objectContaining({ dueAt: null, meta: '' })],
+    });
   });
 
   test('extracts and validates model-authored composition JSON', () => {

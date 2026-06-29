@@ -51,6 +51,27 @@ const PERSONAL_DOMAINS = new Set([
 ]);
 
 const RESERVED_DOMAINS = new Set(['example.com', 'example.net', 'example.org']);
+const MULTI_PART_PUBLIC_SUFFIXES = new Set([
+  'co.uk',
+  'com.au',
+  'com.br',
+  'com.mx',
+  'co.jp',
+  'co.nz',
+  'com.sg',
+  'com.tr',
+]);
+const LOGO_DOMAIN_ALIASES: Record<string, string> = {
+  'microsoftonline.com': 'microsoft.com',
+  'office.com': 'microsoft.com',
+  'office365.com': 'microsoft.com',
+  'onmicrosoft.com': 'microsoft.com',
+  'windows.net': 'microsoft.com',
+  'appleid.apple.com': 'apple.com',
+  'googleusercontent.com': 'google.com',
+  'googlemail.com': 'google.com',
+  'amazonses.com': 'amazon.com',
+};
 
 export async function resolvePhotoUrl({
   userId,
@@ -164,12 +185,52 @@ export function photoUrlFromContact(contact: any): string | null {
 }
 
 export function companyLogoUrl(email: string): string | null {
-  const domain = email.split('@')[1]?.toLowerCase() || '';
+  const domain = logoDomainForEmail(email);
   if (!isCompanyDomain(domain)) return null;
-  return `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(domain)}`;
+  return `/api/logos/${encodeURIComponent(domain)}`;
 }
 
-export function isCompanyDomain(domain: string): boolean {
+export function companyLogoCandidates(email: string): string[] {
+  return companyLogoCandidatesForDomain(logoDomainForEmail(email));
+}
+
+export function companyLogoCandidatesForDomain(domain: string): string[] {
+  if (!isCompanyDomain(domain)) return [];
+  const encoded = encodeURIComponent(domain);
+  const out: string[] = [];
+  const logoDevToken = process.env.LOGO_DEV_TOKEN || process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN;
+  if (logoDevToken) {
+    out.push(
+      `https://img.logo.dev/${encoded}?token=${encodeURIComponent(logoDevToken)}&size=128&retina=true&format=png`,
+    );
+  }
+  const brandfetchClientId = process.env.BRANDFETCH_CLIENT_ID || process.env.NEXT_PUBLIC_BRANDFETCH_CLIENT_ID;
+  if (brandfetchClientId) {
+    out.push(`https://cdn.brandfetch.io/${encoded}/w/128/h/128?c=${encodeURIComponent(brandfetchClientId)}`);
+  }
+  out.push(
+    `https://logo.clearbit.com/${encoded}?size=128`,
+    `https://icons.duckduckgo.com/ip3/${encoded}.ico`,
+    `https://www.google.com/s2/favicons?sz=128&domain=${encoded}`,
+  );
+  return [...new Set(out)];
+}
+
+export function logoDomainForEmail(email: string): string {
+  const rawDomain = (email.split('@')[1] || email).trim().toLowerCase().replace(/\.$/, '');
+  if (!rawDomain) return '';
+  if (LOGO_DOMAIN_ALIASES[rawDomain]) return LOGO_DOMAIN_ALIASES[rawDomain];
+  const aliasMatch = Object.entries(LOGO_DOMAIN_ALIASES).find(([suffix]) => rawDomain.endsWith(`.${suffix}`));
+  if (aliasMatch) return aliasMatch[1];
+  const parts = rawDomain.split('.').filter(Boolean);
+  if (parts.length <= 2) return rawDomain;
+  const lastTwo = parts.slice(-2).join('.');
+  if (MULTI_PART_PUBLIC_SUFFIXES.has(lastTwo) && parts.length >= 3) return parts.slice(-3).join('.');
+  return lastTwo;
+}
+
+export function isCompanyDomain(domain: string | null): boolean {
+  domain = String(domain || '').toLowerCase();
   if (!domain || PERSONAL_DOMAINS.has(domain) || RESERVED_DOMAINS.has(domain)) return false;
   if (domain.endsWith('.test') || domain.endsWith('.invalid') || domain.endsWith('.localhost')) return false;
   if (domain === 'localhost' || domain.endsWith('.local')) return false;

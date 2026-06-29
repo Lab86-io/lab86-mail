@@ -17,15 +17,38 @@ import {
 import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
 describe('AI model tools — local fallbacks', () => {
-  test('summarize_thread uses local heuristics without provider keys', async () => {
+  test('summarize_thread uses local heuristics for multi-message chains without provider keys', async () => {
     const { account, threadId } = await seedThreadMessage({
+      threadId: 'thread_summary_multi',
+      messageId: 'msg_summary_multi_1',
+      subject: 'Project update',
+      from: 'Alex <alex@example.test>',
+      textBody: 'The launch checklist is ready for review.',
+    });
+    await seedThreadMessage({
+      account,
+      threadId,
+      messageId: 'msg_summary_multi_2',
+      subject: 'Project update',
+      from: 'Jakob <jakob@example.test>',
+      textBody: 'I will review it today.',
+    });
+    const summary = await runTool(summarizeThread.handler, { account, threadId });
+    expect(summary.model).toBe('local');
+    expect(summary.summary).toContain('Project update');
+    expect(summary.summary).toContain('2 messages');
+  });
+
+  test('summarize_thread skips one-message chains', async () => {
+    const { account, threadId } = await seedThreadMessage({
+      threadId: 'thread_summary_single',
+      messageId: 'msg_summary_single',
       subject: 'Project update',
       from: 'Alex <alex@example.test>',
       textBody: 'The launch checklist is ready for review.',
     });
     const summary = await runTool(summarizeThread.handler, { account, threadId });
-    expect(summary.model).toBe('local');
-    expect(summary.summary).toContain('Project update');
+    expect(summary).toEqual({ summary: '', model: 'none' });
   });
 
   test('summarize_thread returns none for empty threads', async () => {
