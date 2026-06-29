@@ -62,6 +62,28 @@ describe('hosted env detectors', () => {
     expect(isStripeConfigured()).toBe(true);
   });
 
+  test('convexUrl honors NEXT_PUBLIC_CONVEX_URL and prefers it over CONVEX_URL', () => {
+    // Only the public var set.
+    set('CONVEX_URL', undefined);
+    set('NEXT_PUBLIC_CONVEX_URL', 'https://public.convex.test');
+    expect(isConvexConfigured()).toBe(true);
+    expect(convexUrl()).toBe('https://public.convex.test');
+
+    // Both set → the public var wins.
+    set('CONVEX_URL', 'https://private.convex.test');
+    expect(convexUrl()).toBe('https://public.convex.test');
+  });
+
+  test('legacy detectors still flip on their own env vars', () => {
+    set('NYLAS_API_KEY', 'k');
+    set('NYLAS_CLIENT_ID', 'c');
+    expect(isNylasConfigured()).toBe(true);
+
+    set('STRIPE_SECRET_KEY', 's');
+    set('STRIPE_PRO_PRICE_ID', 'p');
+    expect(isStripeConfigured()).toBe(true);
+  });
+
   test('convexUrl / convexInternalSecret default to empty strings', () => {
     expect(convexUrl()).toBe('');
     expect(typeof convexInternalSecret()).toBe('string');

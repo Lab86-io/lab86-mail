@@ -428,6 +428,25 @@ function ReportArtifact({
           { source: 'lab86-host', action: data.action, ok, error, payload },
           '*',
         );
+      // The artifact srcDoc is authored by the model from UNTRUSTED mailbox
+      // content, so a prompt-injected script could post a state-changing action
+      // with no user click. Gate EVERY mutating action behind a host-rendered
+      // confirm() (a sandboxed iframe cannot suppress a top-window dialog).
+      // Read-only actions (open_*, draft_reply only seeds the composer) are exempt.
+      const confirmFor: Record<string, string> = {
+        toggle_task: payload.completed
+          ? `Mark “${payload.title || 'this task'}” complete?`
+          : `Reopen “${payload.title || 'this task'}”?`,
+        dismiss_task: `Remove “${payload.title || 'this task'}” from future briefs?`,
+        resolve_thread: `Mark “${payload.subject || 'this thread'}” resolved and remove it from future briefs?`,
+        dismiss_thread: `Remove “${payload.subject || 'this conversation'}” from future briefs?`,
+        create_task: `Add “${payload.title || 'this task'}” to your tasks?`,
+        archive_thread: `Archive “${payload.subject || 'this conversation'}” and remove it from future briefs?`,
+        rsvp_event: `Send a “${payload.status}” RSVP for this event?`,
+        create_event: `Add “${payload.title || 'this event'}” to your calendar?`,
+      };
+      const confirmMsg = data.action ? confirmFor[data.action] : undefined;
+      if (confirmMsg && !window.confirm(confirmMsg)) return ack(false, 'cancelled');
       try {
         switch (data.action) {
           case 'open_thread':
@@ -513,9 +532,6 @@ function ReportArtifact({
           case 'archive_thread': {
             if (!payload.account) return ack(false, 'missing account');
             if (!payload.threadId) return ack(false, 'missing threadId');
-            const subject = typeof payload.subject === 'string' ? payload.subject : 'this conversation';
-            if (!window.confirm(`Archive “${subject}” and remove it from future briefs?`))
-              return ack(false, 'cancelled');
             await callTool('archive_thread', {
               account: String(payload.account),
               threadId: String(payload.threadId),
@@ -538,8 +554,6 @@ function ReportArtifact({
             if (!payload.calendarId) return ack(false, 'missing calendarId');
             if (!['yes', 'no', 'maybe'].includes(payload.status))
               return ack(false, 'status must be yes/no/maybe');
-            if (!window.confirm(`Send a “${payload.status}” RSVP for this event?`))
-              return ack(false, 'cancelled');
             await callTool('calendar_rsvp_event', {
               account: String(payload.account),
               calendarId: String(payload.calendarId),
@@ -563,7 +577,6 @@ function ReportArtifact({
               endAt <= startAt
             )
               return ack(false, 'invalid start/end window');
-            if (!window.confirm(`Add “${title}” to your calendar?`)) return ack(false, 'cancelled');
             await callTool('calendar_create_event', {
               account: String(payload.account),
               title: title.slice(0, 300),
