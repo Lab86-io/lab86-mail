@@ -13,6 +13,7 @@ import type {
 } from '../shared/types';
 import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
+import { briefServiceFromProvider, briefServicesFromIds } from './brief-services';
 import { getDailyArt } from './daily-art';
 import { generateDailyReport } from './daily-report';
 import { buildNativeDailyReportArtifact } from './report-artifact';
@@ -39,13 +40,6 @@ const MAX_MSGS_PER_THREAD = 6;
 const MAX_BODY_CHARS = 1100;
 const MAX_VOICE_SAMPLES = 6;
 const MAX_VOICE_CHARS = 600;
-
-const PROVIDER_LABEL: Record<string, string> = {
-  google: 'Gmail',
-  microsoft: 'Outlook',
-  icloud: 'iCloud Mail',
-  imap: 'Mail',
-};
 
 interface ThreadDigest {
   threadKey: string;
@@ -151,12 +145,11 @@ async function gatherBriefExtras(report: DailyReport, userId?: string | null): P
     }
   }
 
-  const mailLabels = [
-    ...new Set(accounts.filter((a) => a.authed).map((a) => PROVIDER_LABEL[a.provider] || 'Mail')),
+  const services = [
+    ...new Set(accounts.filter((a) => a.authed).map((a) => briefServiceFromProvider(a.provider))),
   ];
-  const services = [...mailLabels];
-  if ((s.calendar ?? []).length) services.push('Calendar');
-  if ((s.tasks ?? []).length) services.push('Tasks');
+  if ((s.calendar ?? []).length) services.push('calendar');
+  if ((s.tasks ?? []).length) services.push('tasks');
   if (!services.length) services.push('mail');
 
   return { digests, voiceSamples, services };
@@ -306,7 +299,13 @@ OUTPUT RULES (critical):
 
 DO NOT:
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
-- The ONLY reference to data sources is a single small footer line at the very bottom: "Built for you using your <services> with care." — where <services> is data.services joined with commas and a final "and" (e.g. "Gmail, Calendar, and Tasks"). No other "sources/scanned/powered by" mentions anywhere.
+- The ONLY reference to data sources is the branded footer at the very bottom. No other "sources/scanned/powered by" mentions anywhere.
+
+FOOTER (must match the reference mood):
+- At the very bottom, centered on the page, render a generous editorial signoff using var(--brief-font-display), not a card and not small metadata.
+- Exact wording: "Made for you by Lab86 using your <services>." Below it, smaller: "With love from L A B 8 6" with each character in a thin circle.
+- <services> comes from data.services, an array of { id, label, logoSvg }. Render each service as logo + label using its inline data.services[].logoSvg exactly; do not fetch remote logos. Join naturally with commas and a final "and".
+- The whole footer should use muted gray for connective words and darker ink for Lab86/service names, with a subtle top hairline and a soft dotted fade behind the lower part, like an editorial colophon.
 
 MASTHEAD (signature element — replaces any app header):
 - Full-bleed landscape banner using data.art.imageUrl (object-fit: cover, ~38–46vh, never distorted). Overlay "The {data.weekday} Brief" in the display face, centered, with a legibility scrim.
@@ -406,6 +405,12 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
   const localTime = fmt({ hour: 'numeric', minute: '2-digit' });
   const art = getDailyArt(report.generatedAt);
 
+  const serviceIds = [
+    ...(report.services || []),
+    ...extras.services,
+    ...[...new Set((report.sections.mcp ?? []).map((m) => m.server))],
+  ];
+
   const data = {
     weekday,
     localDate,
@@ -414,12 +419,7 @@ function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
     kind: report.kind,
     art,
     firstName: contextFirstName() || null,
-    services: [
-      ...extras.services,
-      ...[...new Set((report.sections.mcp ?? []).map((m) => m.server))].map(
-        (s) => ({ github: 'GitHub', bitbucket: 'Bitbucket', jira: 'Atlassian/Jira', slack: 'Slack' })[s] || s,
-      ),
-    ],
+    services: briefServicesFromIds(serviceIds),
     // The user's own recent outbound prose — match this voice in any draft.
     voiceSamples: extras.voiceSamples,
     // RAW material to analyze yourself: real thread bodies (most recent last).

@@ -5,6 +5,7 @@ import type {
   DailyReportItem,
   DailyReportTaskItem,
 } from '../shared/types';
+import { type BriefService, briefServicesFromIds } from './brief-services';
 import { getDailyArt } from './daily-art';
 
 const MAX_NEEDS = 8;
@@ -35,7 +36,7 @@ export function buildNativeDailyReportArtifact(report: DailyReport): string {
     .slice()
     .sort((a, b) => Number(a.startAt || 0) - Number(b.startAt || 0))
     .slice(0, MAX_EVENTS);
-  const serviceText = serviceLine(report, Boolean(events.length), Boolean(tasks.length));
+  const services = servicesForReport(report, Boolean(events.length), Boolean(tasks.length));
 
   return `<!doctype html>
 <html lang="en">
@@ -89,7 +90,16 @@ section{min-width:0}
 .time{color:var(--brief-accent);font-weight:700;font-size:.82rem;white-space:nowrap}
 .event h3,.event .meta{overflow-wrap:anywhere}
 .empty{padding:1rem 0;color:var(--brief-muted);border-top:1px solid var(--brief-hairline)}
-footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--brief-hairline);color:var(--brief-muted);font-size:.74rem}
+.brief-footer{position:relative;margin-top:4.5rem;padding:4.4rem 1rem 5.5rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
+.brief-footer::before{content:"";position:absolute;top:0;left:50%;width:min(920px,100%);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,var(--brief-hairline),transparent)}
+.brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.45;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
+.brief-footer-line{position:relative;z-index:1;max-width:1200px;margin:0 auto;font-family:var(--brief-font-display);font-size:clamp(1.65rem,3vw,2.75rem);font-weight:650;line-height:1.18;letter-spacing:var(--brief-display-tracking);text-wrap:balance}
+.brief-footer-line .soft{color:var(--brief-muted)}
+.footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
+.footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
+.footer-sep{color:var(--brief-muted)}
+.brief-footer-love{position:relative;z-index:1;margin-top:1.55rem;font-family:var(--brief-font-display);font-size:clamp(1rem,2vw,1.35rem);line-height:1.2;color:var(--brief-muted);opacity:.72}
+.footer-letter{display:inline-grid;place-items:center;width:1.25em;height:1.25em;margin-left:.1em;border:1px solid currentColor;border-radius:999px;font-size:.72em;line-height:1;text-transform:uppercase}
 	@media (max-width:640px){.masthead{padding:2.5rem}.masthead h1{font-size:clamp(3.35rem,20vw,6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.task{grid-template-columns:minmax(0,1fr) auto}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
 </style>
 </head>
@@ -110,7 +120,7 @@ ${renderTasks(tasks)}
 </aside>
 ${renderEvents(events, timezone)}
 </div>
-<footer>Built for you using your ${escapeHtml(serviceText)} with care.</footer>
+${renderBriefFooter(services)}
 </main>
 <script>
 	var pendingRemovals={};
@@ -210,15 +220,38 @@ function threadPayload(item: DailyReportItem) {
   };
 }
 
-function serviceLine(report: DailyReport, hasCalendar: boolean, hasTasks: boolean) {
-  const services = new Set<string>();
-  if ((report.accounts || []).length) services.add('Mail');
-  if (hasCalendar) services.add('Calendar');
-  if (hasTasks) services.add('Tasks');
-  if (!services.size) services.add('Mail');
-  const values = [...services];
-  if (values.length <= 1) return values[0];
-  return `${values.slice(0, -1).join(', ')} and ${values[values.length - 1]}`;
+function servicesForReport(report: DailyReport, hasCalendar: boolean, hasTasks: boolean): BriefService[] {
+  const serviceIds = [
+    ...(report.services || []),
+    ...(report.sections?.mcp || []).map((item) => item.server),
+    ...(hasCalendar ? ['calendar'] : []),
+    ...(hasTasks ? ['tasks'] : []),
+  ];
+  if (!serviceIds.length && (report.accounts || []).length) serviceIds.push('mail');
+  if (!serviceIds.length) serviceIds.push('mail');
+  return briefServicesFromIds(serviceIds);
+}
+
+function renderBriefFooter(services: BriefService[]) {
+  return `<footer class="brief-footer">
+<div class="brief-footer-line"><span class="soft">Made for you by</span> <span class="footer-brand">Lab86</span> <span class="soft">using your</span> ${renderServiceList(services)}<span class="footer-sep">.</span></div>
+<div class="brief-footer-love">With love from ${renderLab86Letters()}</div>
+</footer>`;
+}
+
+function renderServiceList(services: BriefService[]) {
+  if (!services.length) return `<span class="footer-service">Mail</span>`;
+  return services
+    .map((service, index) => {
+      const prefix =
+        index === 0 ? '' : services.length === 2 ? ' and ' : index === services.length - 1 ? ', and ' : ', ';
+      return `${prefix}<span class="footer-service">${service.logoSvg}<span>${escapeHtml(service.label)}</span></span>`;
+    })
+    .join('');
+}
+
+function renderLab86Letters() {
+  return ['L', 'A', 'B', '8', '6'].map((letter) => `<span class="footer-letter">${letter}</span>`).join('');
 }
 
 function fallbackNarrative(

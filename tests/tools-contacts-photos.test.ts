@@ -29,4 +29,14 @@ describe('contact and photo tools', () => {
     });
     expect(second.photos['alex@example.test']).toBeNull();
   });
+
+  test('resolve_photos falls back to company-domain logos for public domains', async () => {
+    const result = await runTool(resolvePhotos.handler, {
+      account: 'jakob@example.test',
+      emails: ['alerts@linear.app'],
+    });
+    expect(result.photos['alerts@linear.app']).toBe(
+      'https://www.google.com/s2/favicons?sz=128&domain=linear.app',
+    );
+  });
 });

@@ -29,7 +29,10 @@ export function Avatar({
   const showImage = !!src && !broken;
   return (
     <div
-      className={cn('shrink-0 overflow-hidden rounded-full shadow-[var(--shadow-soft)]', className)}
+      className={cn(
+        'shrink-0 overflow-hidden rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-avatar-bg)] shadow-[var(--shadow-control)]',
+        className,
+      )}
       style={{ width: size, height: size }}
     >
       {showImage ? (

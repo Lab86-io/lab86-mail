@@ -208,6 +208,7 @@ export async function POST(req: NextRequest) {
     userId: user.userId,
     email: user.email,
     name: user.name,
+    imageUrl: user.imageUrl,
   });
   await convexMutation(api.ai.upsertSettings, {
     userId: user.userId,

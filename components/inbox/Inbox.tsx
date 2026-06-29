@@ -477,10 +477,9 @@ export function Inbox() {
     return () => observer.disconnect();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
-  // Once we know the visible senders, fetch their Google profile photos.
-  // The lookup is best-effort: contacts + the user's own accounts resolve,
-  // everyone else stays on the boring-avatar. Cached server-side for ~7 days
-  // (including negative results) so this is essentially free after first load.
+  // Once we know the visible senders, resolve provider contact photos or
+  // company-domain logos. Initials remain the fallback when no image exists.
+  // Cached server-side for ~7 days, including misses.
   const primaryAccount = useClientStore((s) => s.primaryAccount);
   const photoAccount =
     primaryAccount && primaryAccount !== ALL_ACCOUNTS
@@ -729,7 +728,7 @@ export function Inbox() {
             size="icon"
             onClick={refreshInbox}
             className={cn(
-              'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+              'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
               isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
             )}
             title="Refresh"

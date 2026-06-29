@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
     userId: user.userId,
     email: user.email,
     name: user.name,
+    imageUrl: user.imageUrl,
   });
   const state = randomBytes(24).toString('base64url');
   await convexMutation(api.accounts.createOAuthState, {

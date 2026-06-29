@@ -66,6 +66,18 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toContain('<script>');
   });
 
+  test('renders branded source footer with service logos', () => {
+    const html = buildNativeDailyReportArtifact({
+      ...sampleReport(),
+      services: ['gmail', 'github', 'slack'],
+    });
+    expect(html).toContain('Made for you by');
+    expect(html).toContain('With love from');
+    expect(html).toContain('aria-label="Gmail"');
+    expect(html).toContain('aria-label="GitHub"');
+    expect(html).toContain('aria-label="Slack"');
+  });
+
   test('wires the full host interaction protocol on every item', () => {
     const html = buildNativeDailyReportArtifact(sampleReport());
     // postMessage bridge

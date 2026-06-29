@@ -8,6 +8,7 @@ export const upsertFromClerk = mutation({
     userId: v.string(),
     email: v.string(),
     name: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -20,6 +21,7 @@ export const upsertFromClerk = mutation({
       await ctx.db.patch(existing._id, {
         email: args.email,
         name: args.name,
+        imageUrl: args.imageUrl,
         updatedAt: ts,
       });
       return existing._id;
@@ -28,6 +30,7 @@ export const upsertFromClerk = mutation({
       clerkUserId: args.userId,
       email: args.email,
       name: args.name,
+      imageUrl: args.imageUrl,
       createdAt: ts,
       updatedAt: ts,
     });

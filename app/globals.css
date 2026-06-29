@@ -101,6 +101,11 @@
   --color-danger-foreground: #ffffff;
   --color-danger-soft: #ffe4e6;
   --color-neutral-soft: #f1f5f9;
+  --color-control: #eef3f8;
+  --color-control-hover: #e4ebf3;
+  --color-control-border: #cbd7e4;
+  --color-avatar-bg: #ffffff;
+  --color-avatar-ring: #c7d3df;
 
   /* priority */
   --color-prio-1: #d54848;
@@ -127,6 +132,8 @@
 
   /* shadow */
   --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 24px rgb(15 23 42 / 0.06);
+  --shadow-control:
+    inset 0 1px 0 rgb(255 255 255 / 0.7), 0 1px 2px rgb(15 23 42 / 0.06), 0 6px 16px rgb(15 23 42 / 0.05);
   --shadow-pop: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);
 
   /* radii */
@@ -185,6 +192,17 @@
     --color-border-strong: oklch(
       calc(0.85 - var(--surface-tint) * 0.02) calc(0.012 + var(--surface-tint) * 0.028) var(--bg-hue)
     );
+    --color-control: oklch(
+      calc(0.94 - var(--surface-tint) * 0.014) calc(0.01 + var(--surface-tint) * 0.025) var(--bg-hue)
+    );
+    --color-control-hover: oklch(
+      calc(0.91 - var(--surface-tint) * 0.016) calc(0.012 + var(--surface-tint) * 0.027) var(--bg-hue)
+    );
+    --color-control-border: oklch(
+      calc(0.835 - var(--surface-tint) * 0.02) calc(0.014 + var(--surface-tint) * 0.028) var(--bg-hue)
+    );
+    --color-avatar-bg: var(--color-bg-elevated);
+    --color-avatar-ring: var(--color-control-border);
 
     --color-accent: oklch(0.45 var(--accent-chroma) var(--accent-hue));
     --color-accent-hover: oklch(0.39 var(--accent-chroma) var(--accent-hue));
@@ -294,6 +312,17 @@
     --color-danger-foreground: #fff1f2;
     --color-danger-soft: #450a0a;
     --color-neutral-soft: #282828;
+    --color-control: oklch(
+      calc(0.285 + var(--surface-tint) * 0.026) calc(0.006 + var(--surface-tint) * 0.03) var(--bg-hue)
+    );
+    --color-control-hover: oklch(
+      calc(0.335 + var(--surface-tint) * 0.028) calc(0.008 + var(--surface-tint) * 0.032) var(--bg-hue)
+    );
+    --color-control-border: oklch(
+      calc(0.39 + var(--surface-tint) * 0.026) calc(0.008 + var(--surface-tint) * 0.028) var(--bg-hue)
+    );
+    --color-avatar-bg: var(--color-control);
+    --color-avatar-ring: var(--color-control-border);
     --color-prio-1: #e1655c;
     --color-prio-2: #d49a4d;
     --color-prio-3: #889aa8;
@@ -303,6 +332,8 @@
     --color-avatar-4: #e1655c;
     --color-avatar-5: #a796d8;
     --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
+    --shadow-control:
+      inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.45), 0 8px 18px rgb(0 0 0 / 0.22);
     --shadow-pop: 0 14px 36px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.3);
   }
 
@@ -404,6 +435,19 @@
     border-radius: 4px;
     background: var(--color-bg-subtle);
     color: var(--color-text-muted);
+  }
+
+  .cl-userButtonTrigger {
+    border-radius: var(--radius-sm);
+    outline-color: var(--color-accent);
+  }
+
+  .cl-userButtonAvatarBox,
+  .cl-avatarBox {
+    background: var(--color-avatar-bg);
+    box-shadow:
+      inset 0 0 0 1px var(--color-avatar-ring),
+      var(--shadow-control);
   }
 
   @media (max-width: 767px) {

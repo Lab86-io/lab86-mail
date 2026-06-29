@@ -8,17 +8,13 @@ import {
   CalendarDays,
   Check,
   CreditCard,
-  GitBranch,
-  Hash,
   KeyRound,
   Loader2,
   MoreHorizontal,
   Pencil,
-  Plug,
   Plus,
   RefreshCw,
   ShieldCheck,
-  SquareKanban,
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -33,7 +29,7 @@ import {
   type Provider,
   setProviderForByok,
 } from '@/components/hosted/ai-options';
-import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
+import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { Badge } from '@/components/ui/badge';
@@ -347,7 +343,7 @@ function MailboxCard({
 
   return (
     <div className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]">
-      <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
         <ProviderLogo provider={account.provider} className="size-4.5" />
       </div>
       <div className="min-w-0 flex-1">
@@ -394,7 +390,7 @@ function MailboxCard({
           <Button
             type="button"
             size="icon-sm"
-            variant="ghost"
+            variant="outline"
             disabled={busy}
             className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             title="Account actions"
@@ -486,14 +482,6 @@ interface McpServerInfo {
   label: string;
   tokenLabel: string;
   tokenHelp: string;
-}
-
-function connectionServerIcon(server: string, className: string) {
-  if (server === 'github') return <GitBranch className={className} />;
-  if (server === 'bitbucket') return <GitBranch className={className} />;
-  if (server === 'jira') return <SquareKanban className={className} />;
-  if (server === 'slack') return <Hash className={className} />;
-  return <Plug className={className} />;
 }
 
 function relativeTime(ms: number) {
@@ -588,8 +576,8 @@ function ConnectionsSection() {
             className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]"
           >
             <div className="flex items-center gap-3">
-              <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
-                {connectionServerIcon(connection.server, 'size-4.5')}
+              <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+                <ConnectionLogo server={connection.server} className="size-4.5" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
@@ -618,7 +606,7 @@ function ConnectionsSection() {
                 <Button
                   type="button"
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   onClick={() => resync.mutate(connection.connectionId)}
                   disabled={resync.isPending}
                   className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -629,14 +617,14 @@ function ConnectionsSection() {
                 <Button
                   type="button"
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   onClick={() => {
                     if (window.confirm(`Disconnect ${connection.displayName || connection.server}?`)) {
                       disconnect.mutate(connection.connectionId);
                     }
                   }}
                   disabled={disconnect.isPending}
-                  className="text-[var(--color-danger)] hover:text-[var(--color-danger)]"
+                  className="border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
                 >
                   <Trash2 className="size-3.5" />
                   Disconnect
@@ -698,8 +686,8 @@ function ConnectionsSection() {
                 className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]"
               >
                 <div className="flex items-center gap-2">
-                  <div className="grid size-7 shrink-0 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
-                    {connectionServerIcon(server.id, 'size-3.5')}
+                  <div className="grid size-7 shrink-0 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+                    <ConnectionLogo server={server.id} className="size-3.5" />
                   </div>
                   <span className="text-[13.5px] font-medium">{server.label}</span>
                   <BetaBadge />
@@ -731,7 +719,12 @@ function ConnectionsSection() {
                 </div>
                 <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">{server.tokenHelp}</p>
                 <div className="mt-2.5">
-                  <Button type="submit" size="sm" disabled={!token.trim() || connect.isPending}>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="outline"
+                    disabled={!token.trim() || connect.isPending}
+                  >
                     {connect.isPending ? <Ring className="size-3" /> : <Plus className="size-3.5" />}
                     Connect
                   </Button>
@@ -982,7 +975,7 @@ function AiSection() {
                   {ai?.key ? (
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="outline"
                       size="icon-sm"
                       onClick={() => deleteKey.mutate()}
                       disabled={deleteKey.isPending}
@@ -1008,7 +1001,7 @@ function AiSection() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-3 text-[12.5px]">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 text-[12.5px] shadow-[var(--shadow-soft)]">
             <span className="text-[var(--color-text-muted)]">
               {subscriptionsDisabled
                 ? 'Subscriptions are paused. AI usage requires your OpenRouter key.'
@@ -1033,7 +1026,7 @@ function AiSection() {
                 <Button
                   type="button"
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   onClick={() => portal.mutate()}
                   disabled={portal.isPending}
                 >
@@ -1115,9 +1108,9 @@ function AccountSection() {
       <div className="space-y-2.5">
         <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]">
           <span className="text-[12.5px] text-[var(--color-text-muted)]">Signed in with Clerk</span>
-          <UserButton />
+          <UserButton appearance={{ elements: { avatarBox: 'size-7' } }} />
         </div>
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-danger)]/30 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]">
           <div className="min-w-0 text-[12px] text-[var(--color-text-muted)]">
             <span className="font-medium text-[var(--color-text)]">Delete everything.</span> Mail grants, the
             search index, AI settings, usage records, and your Lab86 account — gone for good.
@@ -1133,7 +1126,7 @@ function AccountSection() {
               );
               if (confirmed) deleteAccount.mutate();
             }}
-            className="shrink-0 text-[var(--color-danger)]"
+            className="shrink-0 border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
           >
             {deleteAccount.isPending ? <Ring className="size-3" /> : <Trash2 className="size-3.5" />}
             Delete

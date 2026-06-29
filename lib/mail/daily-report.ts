@@ -35,6 +35,7 @@ import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
 import { classifyThreadsBatched } from '../tools/ai';
+import { briefServiceFromProvider } from './brief-services';
 
 // The user's own addresses. Used to decide message direction (inbound vs outbound)
 // for reply/follow-up detection and to keep him out of the "people" list. The
@@ -143,6 +144,13 @@ export async function generateDailyReport(input: {
   const connected = await listNylasAccounts(input.userId).catch(() => []);
   const authed = connected.filter((account) => account.authed);
   const accounts = input.accounts?.length ? input.accounts : authed.map((account) => account.accountId);
+  const serviceIds = [
+    ...new Set(
+      authed
+        .filter((account) => !input.accounts?.length || input.accounts.includes(account.accountId))
+        .map((account) => briefServiceFromProvider(account.provider)),
+    ),
+  ];
   const errors: string[] = [];
   if (!accounts.length) errors.push('No connected Nylas mail accounts found for this user.');
   const [rules, customLabels, tracked] = await Promise.all([
@@ -334,6 +342,7 @@ export async function generateDailyReport(input: {
         kind: input.kind,
         now,
         accounts,
+        services: serviceIds,
         insights: partialInsights,
         tracked,
         lastDateByKey,
@@ -417,6 +426,7 @@ export async function generateDailyReport(input: {
     kind: input.kind,
     now,
     accounts,
+    services: serviceIds,
     insights,
     tracked: refreshedTracked.filter((item) => accounts.includes(item.account)),
     lastDateByKey,
@@ -832,6 +842,7 @@ async function composeReport(input: {
   kind: DailyReport['kind'];
   now: number;
   accounts: string[];
+  services?: string[];
   insights: ThreadInsight[];
   tracked: Awaited<ReturnType<typeof listTrackedThreads>>;
   lastDateByKey: Map<string, number>;
@@ -980,6 +991,7 @@ async function composeReport(input: {
     status: input.status ?? 'ready',
     progress: input.progress,
     accounts: input.accounts,
+    services: input.services,
     title: `${input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'} Daily Report`,
     narrative: stripEmoji(narrative),
     sections: {

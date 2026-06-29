@@ -159,8 +159,7 @@ export function ThreadView() {
   });
 
   // Collect every sender visible in this thread up front so we can resolve
-  // photos once, then pass them down to each card. (Same cached batch tool
-  // the inbox uses.)
+  // profile or company images once, then pass them down to each card.
   const messages = useMemo(
     () => [...(data?.messages || [])].sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0)),
     [data?.messages],
@@ -417,14 +416,14 @@ export function ThreadView() {
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)] [&>button]:rounded-none [&>button]:border-0 [&>button+button]:border-l [&>button+button]:border-[var(--color-border)]">
+          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => startReply('reply')}
               disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               title="Reply (r)"
             >
               <RowIcon icon={CornerUpLeftIcon} size={14} />
@@ -434,11 +433,11 @@ export function ThreadView() {
             </Button>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => startReply('reply_all')}
               disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               title="Reply all"
             >
               <RowIcon icon={ReplyAllIcon} size={14} />
@@ -448,11 +447,11 @@ export function ThreadView() {
             </Button>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => startReply('forward')}
               disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               title="Forward"
             >
               <RowIcon icon={CornerUpRightIcon} size={14} />
@@ -462,7 +461,7 @@ export function ThreadView() {
             </Button>
           </div>
           {/* Utility cluster — one segmented group so the icons read as a set. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)] [&>button]:rounded-none [&>button]:border-0 [&>button+button]:border-l [&>button+button]:border-[var(--color-border)]">
+          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
             <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
               <RowIcon icon={ArchiveIcon} size={14} />
             </IconBtn>
@@ -1149,11 +1148,11 @@ function IconBtn({
   return (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
       size="icon-sm"
       onClick={onClick}
       title={title}
-      className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+      className="text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
     >
       {children}
     </Button>

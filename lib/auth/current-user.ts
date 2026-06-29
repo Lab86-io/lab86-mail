@@ -5,6 +5,7 @@ export interface CurrentUser {
   userId: string;
   email: string;
   name: string;
+  imageUrl?: string;
   source: 'clerk';
 }
 
@@ -40,6 +41,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     userId: session.userId,
     email: primaryEmail,
     name: clerkUser?.fullName || clerkUser?.firstName || primaryEmail || session.userId,
+    imageUrl: clerkProfileImageUrl(clerkUser),
     source: 'clerk',
   };
   // Only cache real profiles — a failed Clerk fetch must not pin fallbacks.
@@ -52,6 +54,18 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     profileCache.set(session.userId, { user, at: Date.now() });
   }
   return user;
+}
+
+function clerkProfileImageUrl(clerkUser: any): string | undefined {
+  const customImage = typeof clerkUser?.imageUrl === 'string' ? clerkUser.imageUrl.trim() : '';
+  if (customImage && clerkUser?.hasImage) return customImage;
+  const oauthImage =
+    (Array.isArray(clerkUser?.externalAccounts)
+      ? clerkUser.externalAccounts.find(
+          (account: any) => typeof account?.imageUrl === 'string' && account.imageUrl,
+        )?.imageUrl
+      : '') || '';
+  return oauthImage || undefined;
 }
 
 export async function requireCurrentUser(): Promise<CurrentUser> {

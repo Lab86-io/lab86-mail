@@ -20,12 +20,14 @@ export async function POST(req: NextRequest) {
   const userId = String(data.id || data.user_id || data.userId || '');
   const email = primaryEmail(data);
   const name = [data.first_name, data.last_name].filter(Boolean).join(' ') || data.full_name || email;
+  const imageUrl = profileImageUrl(data);
 
   if (userId && email && (type === 'user.created' || type === 'user.updated')) {
     await convexMutation(api.users.upsertFromClerk, {
       userId,
       email,
       name,
+      imageUrl,
     });
   }
 
@@ -55,4 +57,14 @@ function primaryEmail(data: any) {
     data.email ||
     ''
   );
+}
+
+function profileImageUrl(data: any) {
+  const customImage = String(data.image_url || data.profile_image_url || '').trim();
+  if (customImage && data.has_image) return customImage;
+  const externalAccounts = Array.isArray(data.external_accounts) ? data.external_accounts : [];
+  const oauthImage =
+    externalAccounts.find((account: any) => typeof account?.image_url === 'string' && account.image_url)
+      ?.image_url || '';
+  return oauthImage || undefined;
 }

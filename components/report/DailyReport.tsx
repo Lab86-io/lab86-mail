@@ -1,8 +1,19 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, CheckCircle2, ChevronDown, Inbox, Newspaper, RefreshCw, User, X } from 'lucide-react';
+import {
+  Ban,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  Inbox,
+  Newspaper,
+  RefreshCw,
+  User,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ConnectionLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { Button } from '@/components/ui/button';
@@ -11,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
@@ -65,6 +77,16 @@ interface DailyReportCalendarItem {
   scope: 'week' | 'month';
 }
 
+interface DailyReportMcpItem {
+  server: 'github' | 'bitbucket' | 'jira' | 'slack';
+  kind: string;
+  title: string;
+  state?: string | null;
+  author?: string | null;
+  url?: string | null;
+  updatedAt?: number | null;
+}
+
 interface DailyReportPayload {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
@@ -73,7 +95,12 @@ interface DailyReportPayload {
   narrative: string;
   sections: Record<
     string,
-    DailyReportItem[] | DailyReportTaskItem[] | DailyReportCalendarItem[] | string | undefined
+    | DailyReportItem[]
+    | DailyReportTaskItem[]
+    | DailyReportCalendarItem[]
+    | DailyReportMcpItem[]
+    | string
+    | undefined
   >;
   stats: {
     scannedThreads: number;
@@ -88,6 +115,7 @@ interface DailyReportPayload {
   };
   model?: string;
   errors?: string[];
+  services?: string[];
   status?: 'partial' | 'ready';
   progress?: { stage: string; done: number; total: number };
   // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
@@ -225,6 +253,87 @@ function elapsedFraming(item: DailyReportItem): string {
   if (item.lane === 'reply_owed') return `Received ${when} — reply?`;
   if (item.lane === 'follow_up_owed') return `You wrote ${when === 'today' ? 'today' : when} — nudge?`;
   return '';
+}
+
+function servicesForReport(report: DailyReportPayload): BriefService[] {
+  const serviceIds = [
+    ...(report.services || []),
+    ...asMcpItems(report.sections.mcp).map((item) => item.server),
+    ...(asEvents(report.sections.calendar).length ? ['calendar'] : []),
+    ...(asTasks(report.sections.tasks).some((task) => !task.completedAt) ? ['tasks'] : []),
+  ];
+  if (!serviceIds.length) serviceIds.push('mail');
+  return briefServicesFromIds(serviceIds);
+}
+
+function asMcpItems(value: DailyReportPayload['sections'][string]): DailyReportMcpItem[] {
+  return Array.isArray(value) ? (value as DailyReportMcpItem[]) : [];
+}
+
+function BriefFooter({ report }: { report: DailyReportPayload }) {
+  const services = servicesForReport(report);
+  return (
+    <footer className="relative mt-16 overflow-hidden py-14 text-center text-[var(--color-text-muted)] before:absolute before:left-1/2 before:top-0 before:h-px before:w-full before:max-w-3xl before:-translate-x-1/2 before:bg-gradient-to-r before:from-transparent before:via-[var(--color-border)] before:to-transparent after:absolute after:inset-x-0 after:bottom-0 after:h-1/2 after:bg-[radial-gradient(var(--color-border)_0.65px,transparent_0.65px)] after:bg-[length:10px_10px] after:opacity-45 after:[mask-image:linear-gradient(to_bottom,transparent,black)]">
+      <div className="relative z-10 mx-auto max-w-6xl text-balance font-display text-[clamp(1.55rem,3.2vw,2.7rem)] font-semibold leading-[1.18]">
+        <span>Made for you by</span> <span className="whitespace-nowrap text-[var(--color-text)]">Lab86</span>{' '}
+        <span>using your</span> <ServiceList services={services} />
+        <span>.</span>
+      </div>
+      <div className="relative z-10 mt-5 font-display text-[clamp(0.95rem,2vw,1.25rem)] opacity-70">
+        With love from{' '}
+        {['L', 'A', 'B', '8', '6'].map((letter) => (
+          <span
+            key={letter}
+            className="ml-1 inline-grid size-[1.25em] place-items-center rounded-full border border-current text-[0.72em] leading-none"
+          >
+            {letter}
+          </span>
+        ))}
+      </div>
+    </footer>
+  );
+}
+
+function ServiceList({ services }: { services: BriefService[] }) {
+  return (
+    <>
+      {services.map((service, index) => (
+        <span key={service.id}>
+          <span className="text-[var(--color-text-muted)]">
+            {index === 0
+              ? ''
+              : services.length === 2
+                ? ' and '
+                : index === services.length - 1
+                  ? ', and '
+                  : ', '}
+          </span>
+          <span className="inline-flex items-center gap-x-[0.14em] whitespace-nowrap text-[var(--color-text)]">
+            <ServiceLogo service={service} />
+            <span>{service.label}</span>
+          </span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+function ServiceLogo({ service }: { service: BriefService }) {
+  const className = 'inline-block size-[0.88em] shrink-0 translate-y-[-0.04em]';
+  if (service.id === 'gmail') return <ProviderLogo provider="google" className={className} />;
+  if (service.id === 'outlook') return <ProviderLogo provider="microsoft" className={className} />;
+  if (service.id === 'icloud') return <ProviderLogo provider="icloud" className={className} />;
+  if (
+    service.id === 'github' ||
+    service.id === 'bitbucket' ||
+    service.id === 'jira' ||
+    service.id === 'slack'
+  ) {
+    return <ConnectionLogo server={service.id} className={className} />;
+  }
+  if (service.id === 'calendar') return <CalendarDays className={className} />;
+  if (service.id === 'tasks') return <CheckCircle2 className={className} />;
+  return <Inbox className={className} />;
 }
 
 // Renders the agent-authored HTML artifact in a sandboxed iframe and bridges
@@ -1224,20 +1333,21 @@ export function DailyReport() {
               onOpen={openThread}
             />
 
-            <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--color-border)] pt-4 pb-6 text-[11px] text-[var(--color-text-faint)]">
-              <span>Filed {new Date(report.generatedAt).toLocaleString()}</span>
-              {report.model ? <span>· Composed by {report.model}</span> : null}
-              {typeof report.sections.noiseSummary === 'string' ? (
-                <span className="basis-full text-[var(--color-text-muted)]">
-                  {stripEmoji(report.sections.noiseSummary)}
-                </span>
-              ) : null}
-              {report.errors?.length ? (
-                <span className="basis-full text-[var(--color-danger)]">
-                  Some sources failed: {report.errors.join('; ')}
-                </span>
-              ) : null}
-            </footer>
+            <BriefFooter report={report} />
+            {(typeof report.sections.noiseSummary === 'string' || report.errors?.length) && (
+              <div className="pb-6 text-[11px] text-[var(--color-text-faint)]">
+                {typeof report.sections.noiseSummary === 'string' ? (
+                  <div className="text-[var(--color-text-muted)]">
+                    {stripEmoji(report.sections.noiseSummary)}
+                  </div>
+                ) : null}
+                {report.errors?.length ? (
+                  <div className="text-[var(--color-danger)]">
+                    Some sources failed: {report.errors.join('; ')}
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         )}
       </div>

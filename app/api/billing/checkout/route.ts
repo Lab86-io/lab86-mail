@@ -38,6 +38,7 @@ export async function POST() {
     userId: user.userId,
     email: user.email,
     name: user.name,
+    imageUrl: user.imageUrl,
   }).catch((error) => {
     // Checkout still proceeds, but leave a trace for the missing Convex record.
     console.error('[checkout] Failed to upsert user to Convex:', error);

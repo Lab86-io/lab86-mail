@@ -3,6 +3,7 @@ import type {
   DailyReport,
   DailyReportCalendarItem,
   DailyReportItem,
+  DailyReportMcpItem,
   DailyReportTaskItem,
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
@@ -41,6 +42,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   const items = (value: unknown): DailyReportItem[] => (Array.isArray(value) ? value : []);
   const tasks = (Array.isArray(sections.tasks) ? sections.tasks : []) as DailyReportTaskItem[];
   const calendar = (Array.isArray(sections.calendar) ? sections.calendar : []) as DailyReportCalendarItem[];
+  const mcp = (Array.isArray(sections.mcp) ? sections.mcp : []) as DailyReportMcpItem[];
 
   const replyOwed = items(sections.replyOwed);
   const followUpOwed = items(sections.followUpOwed);
@@ -64,6 +66,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     status: raw.status ?? 'ready',
     progress: raw.progress,
     accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
+    services: Array.isArray(raw.services) ? raw.services : undefined,
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
     html: typeof raw.html === 'string' ? raw.html : undefined,
@@ -78,6 +81,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
       bulkTail,
       tasks,
       calendar,
+      mcp,
       noiseSummary: typeof sections.noiseSummary === 'string' ? sections.noiseSummary : undefined,
     },
     stats: {
