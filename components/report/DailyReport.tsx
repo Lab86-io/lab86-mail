@@ -505,6 +505,58 @@ function ReportArtifact({
             onChanged?.();
             return ack(true);
           }
+          case 'archive_thread': {
+            if (!payload.account) return ack(false, 'missing account');
+            if (!payload.threadId) return ack(false, 'missing threadId');
+            await callTool('archive_thread', {
+              account: String(payload.account),
+              threadId: String(payload.threadId),
+            });
+            // Archiving also clears it from future briefs.
+            await callTool('dismiss_daily_report_thread', {
+              account: String(payload.account),
+              threadId: String(payload.threadId),
+              subject: typeof payload.subject === 'string' ? payload.subject : undefined,
+              receivedAt: typeof payload.receivedAt === 'number' ? payload.receivedAt : null,
+              action: 'dismissed',
+            }).catch(() => undefined);
+            onChanged?.();
+            return ack(true);
+          }
+          case 'rsvp_event': {
+            if (!payload.account) return ack(false, 'missing account');
+            if (!payload.eventId) return ack(false, 'missing eventId');
+            if (!payload.calendarId) return ack(false, 'missing calendarId');
+            if (!['yes', 'no', 'maybe'].includes(payload.status))
+              return ack(false, 'status must be yes/no/maybe');
+            await callTool('calendar_rsvp_event', {
+              account: String(payload.account),
+              calendarId: String(payload.calendarId),
+              eventId: String(payload.eventId),
+              status: payload.status,
+            });
+            onChanged?.();
+            return ack(true);
+          }
+          case 'create_event': {
+            const title = String(payload.title || '').trim();
+            if (!title) return ack(false, 'missing title');
+            if (!payload.account) return ack(false, 'missing account');
+            if (typeof payload.startAt !== 'number' || typeof payload.endAt !== 'number')
+              return ack(false, 'missing start/end');
+            await callTool('calendar_create_event', {
+              account: String(payload.account),
+              title: title.slice(0, 300),
+              startIso: new Date(payload.startAt).toISOString(),
+              endIso: new Date(payload.endAt).toISOString(),
+              allDay: Boolean(payload.allDay),
+              // Never invite attendees from the brief — holds only.
+              location: typeof payload.location === 'string' ? payload.location : undefined,
+              description: typeof payload.description === 'string' ? payload.description : undefined,
+            });
+            onChanged?.();
+            return ack(true);
+          }
           default:
             return ack(false, 'unknown action');
         }
