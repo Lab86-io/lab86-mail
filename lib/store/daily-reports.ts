@@ -9,6 +9,7 @@ import {
   type DailyReportItem,
   type DailyReportMcpItem,
   type DailyReportTaskItem,
+  MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
   MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
@@ -127,7 +128,8 @@ function sanitizeArtifactErrors(value: unknown): DailyReportArtifactError[] {
   return value
     .map((entry: any) => ({
       stage: entry?.stage,
-      message: typeof entry?.message === 'string' ? entry.message.slice(0, 1200) : '',
+      message:
+        typeof entry?.message === 'string' ? entry.message.slice(0, MAX_ARTIFACT_ERROR_MESSAGE_CHARS) : '',
       at: Number.isFinite(Number(entry?.at)) ? Number(entry.at) : 0,
     }))
     .filter(

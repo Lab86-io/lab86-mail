@@ -18,6 +18,7 @@ import {
   type DailyReportCalendarItem,
   type DailyReportItem,
   type DailyReportTaskItem,
+  MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
   MAX_ARTIFACT_ERRORS,
   type Message,
 } from '../shared/types';
@@ -181,6 +182,7 @@ function artifactError(stage: DailyReportArtifactErrorStage, err: unknown): Dail
 }
 
 function artifactErrorText(err: unknown): string {
+  const limit = (text: string) => text.slice(0, MAX_ARTIFACT_ERROR_MESSAGE_CHARS);
   const anyErr = err as any;
   if (Array.isArray(anyErr?.issues)) {
     const issues = anyErr.issues
@@ -190,14 +192,14 @@ function artifactErrorText(err: unknown): string {
         return `${path}: ${issue.message || 'invalid value'}`;
       })
       .join('; ');
-    return `Composition schema validation failed: ${issues}`;
+    return limit(`Composition schema validation failed: ${issues}`);
   }
-  if (err instanceof SyntaxError) return `Composition JSON parse failed: ${err.message}`;
-  if (err instanceof Error && err.message) return err.message;
-  if (typeof err === 'string' && err.trim()) return err.trim();
+  if (err instanceof SyntaxError) return limit(`Composition JSON parse failed: ${err.message}`);
+  if (err instanceof Error && err.message) return limit(err.message);
+  if (typeof err === 'string' && err.trim()) return limit(err.trim());
   try {
     const text = JSON.stringify(err);
-    if (text && text !== '{}') return text.slice(0, 1200);
+    if (text && text !== '{}') return limit(text);
   } catch {
     // ignored
   }

@@ -375,6 +375,7 @@ export const DAILY_REPORT_ARTIFACT_ERROR_STAGES = [
 ] as const;
 
 export const MAX_ARTIFACT_ERRORS = 8;
+export const MAX_ARTIFACT_ERROR_MESSAGE_CHARS = 1200;
 
 export type DailyReportArtifactErrorStage = (typeof DAILY_REPORT_ARTIFACT_ERROR_STAGES)[number];
 
