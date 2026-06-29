@@ -142,11 +142,15 @@ describe('buildNativeDailyReportArtifact', () => {
   test('renders markdown-style narrative as structured body copy', () => {
     const html = buildNativeDailyReportArtifact({
       ...sampleReport(),
-      narrative: '# Focus\n\nThe day has one important thread.\n\n- Prepare the launch notes',
+      narrative:
+        '# Focus\n\nThe day has one important thread with **bold context** and `*literal*` markdown.\n\n- Prepare the launch notes',
     });
     expect(html).toContain('<h1>Focus</h1>');
-    expect(html).toContain('<p>The day has one important thread.</p>');
+    expect(html).toContain(
+      '<p>The day has one important thread with <strong>bold context</strong> and <code>*literal*</code> markdown.</p>',
+    );
     expect(html).toContain('<li>Prepare the launch notes</li>');
+    expect(html).not.toContain('<code><em>literal</em></code>');
     expect(html).not.toContain('<p class="lede"># Focus');
   });
 

@@ -232,10 +232,16 @@ function renderNarrativeMarkdown(value: string) {
 }
 
 function renderInlineMarkdown(value: string) {
-  return escapeHtml(value)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
+  const codeSpans: string[] = [];
+  const withPlaceholders = escapeHtml(value).replace(/`([^`]+)`/g, (_match, code) => {
+    const index = codeSpans.push(`<code>${code}</code>`) - 1;
+    return `@@CODE_${index}@@`;
+  });
+
+  return withPlaceholders
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/@@CODE_(\d+)@@/g, (_match, index) => codeSpans[Number(index)] || '');
 }
 
 function renderNeedsBlock(block: Extract<BriefBlock, { type: 'needs_you' }>) {

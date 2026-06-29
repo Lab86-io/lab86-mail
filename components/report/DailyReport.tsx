@@ -235,6 +235,12 @@ function dailyReportThreadKey(account: string, threadId: string): string {
   return JSON.stringify([account, threadId]);
 }
 
+function stripEmojiPreservingMarkdown(value: string) {
+  return String(value || '')
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .trim();
+}
+
 function dailyReportItemThreadKey(item: DailyReportItem): string {
   return dailyReportThreadKey(item.account, item.threadId);
 }
@@ -958,7 +964,7 @@ export function DailyReport() {
     !reportIsStale &&
     (report?.artifactStatus === 'composing' || report?.artifactStatus === 'enriching');
   const structuredArtifactUnavailable =
-    structuredArtifactHidden && !waitingForAiArtifact && report?.status !== 'partial';
+    structuredArtifactHidden && !waitingForAiArtifact && (reportIsStale || report?.status !== 'partial');
   const displayArtifact = Boolean(report?.html && !structuredArtifactHidden);
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
@@ -1396,7 +1402,7 @@ export function DailyReport() {
                 style={{ animationDelay: '60ms' }}
               >
                 <Markdown className="space-y-3 text-[13px] leading-6 text-[var(--color-text-muted)] [&_h1]:font-serif [&_h1]:text-[20px] [&_h1]:font-semibold [&_h1]:italic [&_h1]:leading-tight [&_h1]:text-[var(--color-text)] [&_h2]:mt-4 [&_h2]:font-serif [&_h2]:text-[16px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:text-[var(--color-text)] [&_h3]:mt-3 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:uppercase [&_h3]:tracking-[0.12em] [&_h3]:text-[var(--color-accent)] [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_strong]:font-semibold [&_strong]:text-[var(--color-text)]">
-                  {stripEmoji(report.narrative)}
+                  {stripEmojiPreservingMarkdown(report.narrative)}
                 </Markdown>
               </section>
             ) : null}
