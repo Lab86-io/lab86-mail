@@ -75,9 +75,9 @@ export const generateDailyReportTool = defineTool({
         calendarEvents: 0,
       },
     } satisfies DailyReport);
-    void generateAgentReport({ kind, userId: ctx.userId, reportId }).catch((err) => {
-      console.error('[daily-report] background generation failed:', err);
-    });
+    void generateAgentReport({ kind, userId: ctx.userId, reportId }).catch(
+      console.error.bind(console, '[daily-report] background generation failed:'),
+    );
     return { report: null, started: true };
   },
 });
