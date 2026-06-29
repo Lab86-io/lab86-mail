@@ -107,6 +107,12 @@ interface DailyReportMcpItem {
   updatedAt?: number | null;
 }
 
+interface DailyReportArtifactError {
+  stage: 'ai_availability' | 'week_artifact' | 'month_artifact' | 'month_enrichment';
+  message: string;
+  at: number;
+}
+
 interface DailyReportPayload {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
@@ -142,6 +148,7 @@ interface DailyReportPayload {
   html?: string;
   artifactStatus?: 'composing' | 'enriching' | 'rendered';
   artifactSource?: 'ai' | 'deterministic';
+  artifactErrors?: DailyReportArtifactError[];
 }
 
 interface ReportSummary {
@@ -853,14 +860,17 @@ function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
 }
 
 function FullArtifactUnavailable({
+  artifactErrors,
   retrying,
   onRetry,
   onShowFallback,
 }: {
+  artifactErrors?: DailyReportArtifactError[];
   retrying: boolean;
   onRetry: () => void;
   onShowFallback: () => void;
 }) {
+  const failures = (artifactErrors || []).slice(-3).reverse();
   return (
     <Empty className="grid h-full place-items-center px-6 py-12 text-center">
       <EmptyHeader>
@@ -869,10 +879,29 @@ function FullArtifactUnavailable({
         </EmptyMedia>
         <EmptyTitle className="font-serif text-[18px] italic">Full artifact unavailable</EmptyTitle>
         <EmptyDescription>
-          The AI composition pass did not finish, so the beautiful report was not saved for this edition.
+          The AI artifact was not saved for this edition. The exact recorded failure is below.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
+        <div className="w-full space-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-left shadow-[var(--shadow-soft)]">
+          {failures.length ? (
+            failures.map((failure) => (
+              <div key={`${failure.stage}-${failure.at}`} className="space-y-1">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent)]">
+                  {artifactStageLabel(failure.stage)}
+                </div>
+                <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+                  {stripEmojiPreservingMarkdown(failure.message)}
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+              No artifact failure detail was saved for this older edition. Generate again to capture the exact
+              failure.
+            </p>
+          )}
+        </div>
         <div className="flex flex-wrap items-center justify-center gap-2">
           <Button type="button" size="sm" onClick={onRetry} disabled={retrying}>
             {retrying ? <Ring className="size-3" /> : <RefreshCw className="size-3" />}
@@ -886,6 +915,19 @@ function FullArtifactUnavailable({
       </EmptyContent>
     </Empty>
   );
+}
+
+function artifactStageLabel(stage: DailyReportArtifactError['stage']) {
+  switch (stage) {
+    case 'ai_availability':
+      return 'AI availability';
+    case 'week_artifact':
+      return 'Week artifact composition';
+    case 'month_artifact':
+      return 'Month artifact composition';
+    case 'month_enrichment':
+      return 'Month report enrichment';
+  }
 }
 
 export function DailyReport() {
@@ -1387,6 +1429,7 @@ export function DailyReport() {
           />
         ) : structuredArtifactUnavailable ? (
           <FullArtifactUnavailable
+            artifactErrors={report.artifactErrors}
             retrying={generate.isPending}
             onRetry={() => generate.mutate()}
             onShowFallback={() => setShowStructuredFallback(true)}

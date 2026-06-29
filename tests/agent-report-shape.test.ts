@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
-import { buildDataPrompt, gatherBriefExtras, toBriefEvent, toBriefTask } from '../lib/mail/agent-report';
+import {
+  buildDataPrompt,
+  gatherBriefExtras,
+  settleMonthArtifactReport,
+  toBriefEvent,
+  toBriefTask,
+} from '../lib/mail/agent-report';
 import type { DailyReport, DailyReportCalendarItem, DailyReportTaskItem } from '../lib/shared/types';
 import { withToolContext } from './tools/harness';
 
@@ -174,6 +180,67 @@ describe('daily brief service metadata', () => {
     expect(data.services.every((service: any) => service.logoSvg.includes('footer-logo'))).toBe(true);
   });
 });
+
+describe('settleMonthArtifactReport', () => {
+  test('keeps a successful week AI artifact when month AI composition fails', () => {
+    const phase1 = reportFixture({
+      composition: briefComposition('Week AI'),
+      html: '<html>week ai</html>',
+      artifactStatus: 'enriching',
+      artifactSource: 'ai',
+    });
+    const full = reportFixture({ narrative: 'Full month deterministic data.' });
+
+    const settled = settleMonthArtifactReport({
+      phase1,
+      full,
+      composition: null,
+      failure: { stage: 'month_artifact', message: 'invalid JSON from model', at: 123 },
+    });
+
+    expect(settled.artifactSource).toBe('ai');
+    expect(settled.artifactStatus).toBe('rendered');
+    expect(settled.html).toBe('<html>week ai</html>');
+    expect(settled.artifactErrors).toEqual([
+      { stage: 'month_artifact', message: 'invalid JSON from model', at: 123 },
+    ]);
+  });
+
+  test('records deterministic artifact failures when no AI artifact succeeded', () => {
+    const phase1 = reportFixture({
+      composition: briefComposition('Week fallback'),
+      html: '<html>fallback</html>',
+      artifactStatus: 'enriching',
+      artifactSource: 'deterministic',
+      artifactErrors: [{ stage: 'week_artifact', message: 'week schema failed', at: 100 }],
+    });
+    const full = reportFixture({ narrative: 'Full month deterministic data.' });
+
+    const settled = settleMonthArtifactReport({
+      phase1,
+      full,
+      composition: null,
+      failure: { stage: 'month_artifact', message: 'month schema failed', at: 200 },
+    });
+
+    expect(settled.artifactSource).toBe('deterministic');
+    expect(settled.artifactStatus).toBe('rendered');
+    expect(settled.html).toContain('<!doctype html>');
+    expect(settled.artifactErrors).toEqual([
+      { stage: 'week_artifact', message: 'week schema failed', at: 100 },
+      { stage: 'month_artifact', message: 'month schema failed', at: 200 },
+    ]);
+  });
+});
+
+function briefComposition(title: string) {
+  return {
+    version: 1 as const,
+    title,
+    services: [],
+    blocks: [{ type: 'lede' as const, paragraphs: ['A composed report.'], sourceRefs: [] }],
+  };
+}
 
 function reportFixture(overrides: Partial<DailyReport> = {}): DailyReport {
   return {

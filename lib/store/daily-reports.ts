@@ -2,6 +2,7 @@ import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
 import type {
   DailyReport,
+  DailyReportArtifactError,
   DailyReportCalendarItem,
   DailyReportItem,
   DailyReportMcpItem,
@@ -54,6 +55,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   const bulkTail = items(sections.bulkTail);
 
   const stats = (raw.stats ?? {}) as Partial<DailyReport['stats']>;
+  const artifactErrors = sanitizeArtifactErrors((raw as any).artifactErrors);
   // Prefer stored counts; fall back to deriving them from the sections so a
   // legacy doc that predates a given stat still shows a truthful number.
   const replyOwedCount = stats.replyOwed ?? stats.needsReply ?? replyOwed.length;
@@ -74,6 +76,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
     artifactSource: raw.artifactSource,
+    artifactErrors: artifactErrors.length ? artifactErrors : undefined,
     sections: {
       replyOwed,
       followUpOwed,
@@ -114,4 +117,20 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   }
 
   return migrated;
+}
+
+function sanitizeArtifactErrors(value: unknown): DailyReportArtifactError[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry: any) => ({
+      stage: entry?.stage,
+      message: typeof entry?.message === 'string' ? entry.message.slice(0, 1200) : '',
+      at: Number.isFinite(Number(entry?.at)) ? Number(entry.at) : 0,
+    }))
+    .filter(
+      (entry): entry is DailyReportArtifactError =>
+        ['ai_availability', 'week_artifact', 'month_artifact', 'month_enrichment'].includes(entry.stage) &&
+        Boolean(entry.message),
+    )
+    .slice(-8);
 }

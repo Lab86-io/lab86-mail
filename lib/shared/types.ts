@@ -367,6 +367,18 @@ export interface DailyReportMcpItem {
   updatedAt?: number | null;
 }
 
+export type DailyReportArtifactErrorStage =
+  | 'ai_availability'
+  | 'week_artifact'
+  | 'month_artifact'
+  | 'month_enrichment';
+
+export interface DailyReportArtifactError {
+  stage: DailyReportArtifactErrorStage;
+  message: string;
+  at: number;
+}
+
 export interface DailyReport {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
@@ -392,6 +404,10 @@ export interface DailyReport {
   // Whether the artifact composition came from the model or the deterministic
   // structured fallback. The renderer is deterministic in both cases.
   artifactSource?: 'ai' | 'deterministic';
+  // Failures from the artifact generation pipeline. These are intentionally
+  // separate from source-gathering `errors` so the UI can explain exactly why
+  // the full AI artifact is unavailable.
+  artifactErrors?: DailyReportArtifactError[];
   // Source services used to compose this brief, normalized to ids such as
   // gmail, outlook, github, slack. Used for the branded footer.
   services?: string[];

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext } from '../ai/context';
-import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { listNylasAccounts } from '../nylas/provider';
 import {
   BRIEF_COMPOSITION_VERSION,
@@ -13,6 +13,8 @@ import {
 import { emailFromHeader } from '../shared/format';
 import type {
   DailyReport,
+  DailyReportArtifactError,
+  DailyReportArtifactErrorStage,
   DailyReportCalendarItem,
   DailyReportItem,
   DailyReportTaskItem,
@@ -47,6 +49,7 @@ const MAX_MSGS_PER_THREAD = 6;
 const MAX_BODY_CHARS = 1100;
 const MAX_VOICE_SAMPLES = 6;
 const MAX_VOICE_CHARS = 600;
+const MAX_ARTIFACT_ERRORS = 8;
 
 interface ThreadDigest {
   threadKey: string;
@@ -173,6 +176,81 @@ export async function gatherBriefExtras(report: DailyReport, userId?: string | n
   return { digests, voiceSamples, services };
 }
 
+function artifactError(stage: DailyReportArtifactErrorStage, err: unknown): DailyReportArtifactError {
+  return { stage, message: artifactErrorText(err), at: Date.now() };
+}
+
+function artifactErrorText(err: unknown): string {
+  const anyErr = err as any;
+  if (Array.isArray(anyErr?.issues)) {
+    const issues = anyErr.issues
+      .slice(0, 8)
+      .map((issue: any) => {
+        const path = Array.isArray(issue.path) && issue.path.length ? issue.path.join('.') : 'composition';
+        return `${path}: ${issue.message || 'invalid value'}`;
+      })
+      .join('; ');
+    return `Composition schema validation failed: ${issues}`;
+  }
+  if (err instanceof SyntaxError) return `Composition JSON parse failed: ${err.message}`;
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string' && err.trim()) return err.trim();
+  try {
+    const text = JSON.stringify(err);
+    if (text && text !== '{}') return text.slice(0, 1200);
+  } catch {
+    // ignored
+  }
+  return 'Unknown artifact generation failure.';
+}
+
+function withArtifactError(report: DailyReport, error: DailyReportArtifactError): DailyReport {
+  return {
+    ...report,
+    artifactErrors: [...(report.artifactErrors || []), error].slice(-MAX_ARTIFACT_ERRORS),
+  };
+}
+
+export function settleMonthArtifactReport(input: {
+  full: DailyReport;
+  phase1: DailyReport;
+  composition: BriefComposition | null;
+  failure?: DailyReportArtifactError;
+}): DailyReport {
+  const { full, phase1, composition, failure } = input;
+  if (composition) {
+    return {
+      ...full,
+      composition,
+      html: buildNativeDailyReportArtifact(full, composition),
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+      artifactErrors: phase1.artifactErrors,
+      model: describeProvider().primary || full.model,
+    };
+  }
+
+  if (phase1.artifactSource === 'ai') {
+    const settled: DailyReport = {
+      ...phase1,
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+    };
+    return failure ? withArtifactError(settled, failure) : settled;
+  }
+
+  const nativeFullComposition = compositionFromReport(full);
+  const fallback: DailyReport = {
+    ...full,
+    composition: nativeFullComposition,
+    html: buildNativeDailyReportArtifact(full, nativeFullComposition),
+    artifactStatus: 'rendered',
+    artifactSource: 'deterministic',
+    artifactErrors: phase1.artifactErrors,
+  };
+  return failure ? withArtifactError(fallback, failure) : fallback;
+}
+
 export async function generateAgentReport(input: {
   kind: DailyReport['kind'];
   userId?: string | null;
@@ -211,16 +289,25 @@ export async function generateAgentReport(input: {
   const nativeWeekComposition = compositionFromReport(week);
   const nativeWeekHtml = buildNativeDailyReportArtifact(week, nativeWeekComposition);
 
-  // No model -> still save the deterministic artifact. The legacy structured
-  // renderer is no longer the scheduled-edition fallback.
-  if (!(await hasAiForCurrentUser())) {
-    const nativeOnly: DailyReport = {
-      ...week,
-      composition: nativeWeekComposition,
-      html: nativeWeekHtml,
-      artifactStatus: 'rendered',
-      artifactSource: 'deterministic',
-    };
+  // No model -> still save the deterministic artifact, but persist the exact
+  // availability error so the UI can tell the user what blocked the artifact.
+  try {
+    await resolveAiRuntime({
+      userId: input.userId,
+      speed: 'primary',
+      feature: 'daily_report_artifact',
+    });
+  } catch (err) {
+    const nativeOnly = withArtifactError(
+      {
+        ...week,
+        composition: nativeWeekComposition,
+        html: nativeWeekHtml,
+        artifactStatus: 'rendered',
+        artifactSource: 'deterministic',
+      },
+      artifactError('ai_availability', err),
+    );
     await saveDailyReport(nativeOnly).catch(() => undefined);
     return nativeOnly;
   }
@@ -237,31 +324,26 @@ export async function generateAgentReport(input: {
   try {
     const composition = await composeComposition(week, input.userId);
     // 'enriching' (not 'rendered') keeps the page polling for the month pass.
-    phase1 = composition
-      ? {
-          ...week,
-          composition,
-          html: buildNativeDailyReportArtifact(week, composition),
-          artifactStatus: 'enriching',
-          artifactSource: 'ai',
-          model: describeProvider().primary || week.model,
-        }
-      : {
-          ...week,
-          composition: nativeWeekComposition,
-          html: nativeWeekHtml,
-          artifactStatus: 'enriching',
-          artifactSource: 'deterministic',
-        };
-  } catch (err) {
-    console.error('[agent-report] week artifact failed:', err);
     phase1 = {
       ...week,
-      composition: nativeWeekComposition,
-      html: nativeWeekHtml,
+      composition,
+      html: buildNativeDailyReportArtifact(week, composition),
       artifactStatus: 'enriching',
-      artifactSource: 'deterministic',
+      artifactSource: 'ai',
+      model: describeProvider().primary || week.model,
     };
+  } catch (err) {
+    console.error('[agent-report] week artifact failed:', err);
+    phase1 = withArtifactError(
+      {
+        ...week,
+        composition: nativeWeekComposition,
+        html: nativeWeekHtml,
+        artifactStatus: 'enriching',
+        artifactSource: 'deterministic',
+      },
+      artifactError('week_artifact', err),
+    );
   }
   await saveDailyReport(phase1).catch(() => undefined);
 
@@ -277,31 +359,24 @@ export async function generateAgentReport(input: {
       reportId,
       silent: true,
     });
-    const nativeFullComposition = compositionFromReport(full);
-    const nativeFullHtml = buildNativeDailyReportArtifact(full, nativeFullComposition);
     let composition: BriefComposition | null = null;
+    let failure: DailyReportArtifactError | undefined;
     try {
       composition = await composeComposition(full, input.userId);
     } catch (err) {
       console.error('[agent-report] month artifact failed:', err);
+      failure = artifactError('month_artifact', err);
     }
-    const finalComposition = composition || nativeFullComposition || phase1.composition;
-    const finalReport: DailyReport = {
-      ...full,
-      composition: finalComposition,
-      html: finalComposition
-        ? buildNativeDailyReportArtifact(full, finalComposition)
-        : nativeFullHtml || phase1.html,
-      artifactStatus: 'rendered',
-      artifactSource: composition ? 'ai' : 'deterministic',
-      model: composition ? describeProvider().primary || full.model : full.model,
-    };
+    const finalReport = settleMonthArtifactReport({ full, phase1, composition, failure });
     await saveDailyReport(finalReport);
     return finalReport;
   } catch (err) {
     console.error('[agent-report] month enrichment failed:', err);
     // Settle on the week edition so the page stops polling.
-    const settled: DailyReport = { ...phase1, artifactStatus: 'rendered' };
+    const settled = withArtifactError(
+      { ...phase1, artifactStatus: 'rendered' },
+      artifactError('month_enrichment', err),
+    );
     await saveDailyReport(settled).catch(() => undefined);
     return settled;
   }
@@ -309,10 +384,7 @@ export async function generateAgentReport(input: {
 
 // ---- Artifact composition --------------------------------------------------
 
-async function composeComposition(
-  report: DailyReport,
-  userId?: string | null,
-): Promise<BriefComposition | null> {
+async function composeComposition(report: DailyReport, userId?: string | null): Promise<BriefComposition> {
   const extras = await gatherBriefExtras(report, userId);
   const { text } = await generateTextForCurrentUser({
     feature: 'daily_report_artifact', // tiered cap → 32k output
