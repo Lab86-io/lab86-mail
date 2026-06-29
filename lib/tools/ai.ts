@@ -625,6 +625,68 @@ export const nlSearch = defineTool({
   },
 });
 
+export const nlTask = defineTool({
+  name: 'nl_task',
+  description:
+    'Parse a natural-language to-do into structured task fields (title, due date, priority, labels, notes).',
+  category: 'ai',
+  mutating: false,
+  // `now` is the caller's current time as an ISO string WITH offset, so relative
+  // dates ("tomorrow", "next Tuesday", "June 24") resolve in the user's timezone.
+  input: z.object({ text: z.string(), now: z.string().optional() }),
+  output: z.object({
+    title: z.string(),
+    dueAt: z.number().nullable(),
+    priority: z.enum(['low', 'medium', 'high']).nullable(),
+    labels: z.array(z.string()),
+    description: z.string().nullable(),
+    model: z.string(),
+  }),
+  async handler({ text, now }) {
+    const raw = text.trim();
+    if (!raw)
+      return { title: '', dueAt: null, priority: null, labels: [], description: null, model: 'local' };
+    if (!(await hasAiForCurrentUser()))
+      return { title: raw, dueAt: null, priority: null, labels: [], description: null, model: 'local' };
+
+    const reference = now && !Number.isNaN(Date.parse(now)) ? now : new Date().toISOString();
+    const { text: out } = await generateTextForCurrentUser({
+      feature: 'nl_task',
+      speed: 'fast',
+      system: `You convert a natural-language to-do into JSON. The user's current local date/time is ${reference}. Resolve relative dates ("today", "tonight", "tomorrow", "next Tuesday", "June 24", "in 3 days") against it. Output ONLY a JSON object (no prose, no markdown fences) with exactly these keys:
+- "title": string — a concise imperative task title with date/priority/label noise stripped.
+- "due": string|null — ISO 8601 datetime using the SAME UTC offset as the reference time, or null when no date is implied. If a date is given without a time, use 09:00 local (or 23:59 for "tonight"/"by end of day").
+- "priority": "low"|"medium"|"high"|null — only when clearly implied ("urgent"/"asap" => high).
+- "labels": string[] — short tags the user wrote with # or that are clearly implied; otherwise [].
+- "description": string|null — extra detail beyond the title, otherwise null.`,
+      prompt: raw,
+    });
+
+    let parsed: any = {};
+    try {
+      const m = out.match(/\{[\s\S]*\}/);
+      parsed = m ? JSON.parse(m[0]) : {};
+    } catch {}
+
+    const title = typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : raw;
+    let dueAt: number | null = null;
+    if (typeof parsed.due === 'string' && parsed.due.trim()) {
+      const t = Date.parse(parsed.due);
+      if (!Number.isNaN(t)) dueAt = t;
+    }
+    const priority = ['low', 'medium', 'high'].includes(parsed.priority) ? parsed.priority : null;
+    const labels = Array.isArray(parsed.labels)
+      ? parsed.labels
+          .map((l: any) => String(l).trim())
+          .filter(Boolean)
+          .slice(0, 6)
+      : [];
+    const description =
+      typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim() : null;
+    return { title, dueAt, priority, labels, description, model: 'fast' };
+  },
+});
+
 function normalizeAiVerdict(parsed: any) {
   const rawSecondary: SmartCategoryId[] = Array.isArray(parsed.secondary)
     ? parsed.secondary.filter((id: string) => SMART_CATEGORY_IDS.includes(id as SmartCategoryId)).slice(0, 3)
