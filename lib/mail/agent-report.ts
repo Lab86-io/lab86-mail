@@ -349,6 +349,7 @@ export async function generateAgentReport(input: {
 
   // Phase 2 — broaden to the full month silently, then replace the edition in
   // place. Best-effort: if it fails (e.g. out of credits), keep the week brief.
+  let finalReport: DailyReport;
   try {
     const full = await generateDailyReport({
       kind: input.kind,
@@ -367,11 +368,7 @@ export async function generateAgentReport(input: {
       console.error('[agent-report] month artifact failed:', err);
       failure = artifactError('month_artifact', err);
     }
-    const finalReport = settleMonthArtifactReport({ full, phase1, composition, failure });
-    await saveDailyReport(finalReport).catch((err) => {
-      console.error('[agent-report] month report save failed:', err);
-    });
-    return finalReport;
+    finalReport = settleMonthArtifactReport({ full, phase1, composition, failure });
   } catch (err) {
     console.error('[agent-report] month enrichment failed:', err);
     // Settle on the week edition so the page stops polling.
@@ -382,6 +379,15 @@ export async function generateAgentReport(input: {
     await saveDailyReport(settled).catch(() => undefined);
     return settled;
   }
+
+  try {
+    await saveDailyReport(finalReport);
+  } catch (err) {
+    console.error('[agent-report] month report save failed:', err);
+    throw err;
+  }
+
+  return finalReport;
 }
 
 // ---- Artifact composition --------------------------------------------------
