@@ -310,7 +310,12 @@ export async function generateAgentReport(input: {
       },
       artifactError('ai_availability', err),
     );
-    await saveDailyReport(nativeOnly).catch(() => undefined);
+    try {
+      await saveDailyReport(nativeOnly);
+    } catch (saveErr) {
+      console.error('[agent-report] AI availability fallback save failed:', saveErr);
+      throw saveErr;
+    }
     return nativeOnly;
   }
 
