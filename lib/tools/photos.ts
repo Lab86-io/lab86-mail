@@ -72,7 +72,7 @@ export const resolvePhotos = defineTool({
   },
 });
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     let settled = false;
     const timer = setTimeout(() => {

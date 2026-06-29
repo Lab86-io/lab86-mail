@@ -2,6 +2,34 @@ import { isNylasConfigured } from '../hosted/env';
 import { requireNylas } from '../nylas/client';
 import { listNylasAccounts, type NylasAccountRow, resolveConnectedAccount } from '../nylas/provider';
 
+interface PhotoAccountCandidate {
+  accountId: string;
+  authed?: boolean;
+}
+
+interface PhotoResolutionDeps {
+  isNylasConfigured: () => boolean;
+  requireNylas: typeof requireNylas;
+  listNylasAccounts: (userId?: string | null) => Promise<PhotoAccountCandidate[]>;
+  resolveConnectedAccount: typeof resolveConnectedAccount;
+}
+
+const defaultDeps: PhotoResolutionDeps = {
+  isNylasConfigured,
+  requireNylas,
+  listNylasAccounts,
+  resolveConnectedAccount,
+};
+
+let deps = defaultDeps;
+
+export function setPhotoResolutionDependenciesForTest(overrides: Partial<PhotoResolutionDeps>) {
+  deps = { ...defaultDeps, ...overrides };
+  return () => {
+    deps = defaultDeps;
+  };
+}
+
 const PERSONAL_DOMAINS = new Set([
   'aol.com',
   'fastmail.com',
@@ -46,7 +74,7 @@ export async function resolveProviderProfilePhoto({
   account: string;
   email: string;
 }): Promise<string | null> {
-  if (!userId || !account || !isNylasConfigured()) return null;
+  if (!userId || !account || !deps.isNylasConfigured()) return null;
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return null;
   const rows = await photoCandidateAccounts(userId, account, normalizedEmail);
@@ -67,16 +95,16 @@ async function photoCandidateAccounts(
   email: string,
 ): Promise<NylasAccountRow[]> {
   if (account !== '__all__') {
-    const row = await resolveConnectedAccount(userId, account);
+    const row = await deps.resolveConnectedAccount(userId, account);
     return row?.status === 'connected' ? [row] : [];
   }
 
-  const accounts = await listNylasAccounts(userId).catch(() => []);
+  const accounts = await deps.listNylasAccounts(userId).catch(() => []);
   const rows = (
     await Promise.all(
       accounts
         .filter((item) => item.authed)
-        .map((item) => resolveConnectedAccount(userId, item.accountId).catch(() => null)),
+        .map((item) => deps.resolveConnectedAccount(userId, item.accountId).catch(() => null)),
     )
   ).filter((row): row is NylasAccountRow => Boolean(row && row.status === 'connected'));
 
@@ -84,7 +112,7 @@ async function photoCandidateAccounts(
 }
 
 async function resolveProviderPhotoFromAccount(row: NylasAccountRow, email: string): Promise<string | null> {
-  const page = await requireNylas().contacts.list({
+  const page = await deps.requireNylas().contacts.list({
     identifier: row.grantId,
     queryParams: { email, limit: 5 },
   });
@@ -100,7 +128,7 @@ async function resolveProviderPhotoFromAccount(row: NylasAccountRow, email: stri
   if (direct) return direct;
   if (!contact?.id) return null;
 
-  const detailed = await requireNylas().contacts.find({
+  const detailed = await deps.requireNylas().contacts.find({
     identifier: row.grantId,
     contactId: contact.id,
     queryParams: { profilePicture: true },
