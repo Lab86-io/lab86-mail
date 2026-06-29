@@ -1,4 +1,5 @@
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
+import { compositionFromReport } from '../shared/brief-composition';
 import type {
   DailyReport,
   DailyReportCalendarItem,
@@ -69,6 +70,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     services: Array.isArray(raw.services) ? raw.services : undefined,
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
+    composition: raw.composition,
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
     sections: {
@@ -100,8 +102,12 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     errors: Array.isArray(raw.errors) ? raw.errors : undefined,
   };
 
+  if (!migrated.composition && migrated.status !== 'partial') {
+    migrated.composition = compositionFromReport(migrated);
+  }
+
   if (!migrated.html && migrated.status !== 'partial') {
-    migrated.html = buildNativeDailyReportArtifact(migrated);
+    migrated.html = buildNativeDailyReportArtifact(migrated, migrated.composition);
     migrated.artifactStatus = migrated.artifactStatus ?? 'rendered';
   }
 

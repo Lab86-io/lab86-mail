@@ -78,6 +78,36 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toContain('aria-label="Slack"');
   });
 
+  test('derives footer services from calendar, tasks, and connected tools', () => {
+    const html = buildNativeDailyReportArtifact(
+      sampleReport({
+        ...sampleReport().sections,
+        mcp: [{ server: 'github', kind: 'pull_request', title: 'Review #42' }],
+      }),
+    );
+    expect(html).toContain('aria-label="Calendar"');
+    expect(html).toContain('aria-label="Tasks"');
+    expect(html).toContain('aria-label="GitHub"');
+  });
+
+  test('falls back to mail in the footer when no services can be inferred', () => {
+    const html = buildNativeDailyReportArtifact(
+      sampleReport({
+        replyOwed: [],
+        followUpOwed: [],
+        newPeople: [],
+        timeSensitive: [],
+        tracked: [],
+        fyi: [],
+        bulkTail: [],
+        tasks: [],
+        calendar: [],
+        mcp: [],
+      }),
+    );
+    expect(html).toContain('aria-label="Mail"');
+  });
+
   test('wires the full host interaction protocol on every item', () => {
     const html = buildNativeDailyReportArtifact(sampleReport());
     // postMessage bridge

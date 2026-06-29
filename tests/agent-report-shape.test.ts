@@ -196,7 +196,15 @@ function reportFixture(overrides: Partial<DailyReport> = {}): DailyReport {
       calendar: [],
       mcp: [],
     },
-    stats: {},
+    stats: {
+      scannedThreads: 0,
+      trackedThreads: 0,
+      needsReply: 0,
+      replyOwed: 0,
+      dueSoon: 0,
+      bulkTailCount: 0,
+      unread: 0,
+    },
     ...overrides,
   };
 }

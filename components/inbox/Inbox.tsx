@@ -486,7 +486,7 @@ export function Inbox() {
       ? primaryAccount
       : account && account !== ALL_ACCOUNTS
         ? account
-        : '';
+        : ALL_ACCOUNTS;
   const photoEmails = useMemo(() => {
     const set = new Set<string>();
     for (const it of items.slice(0, 48)) {
@@ -502,7 +502,7 @@ export function Inbox() {
         account: photoAccount,
         emails: photoEmails,
       }),
-    enabled: !!photoAccount && photoEmails.length > 0,
+    enabled: photoEmails.length > 0,
     staleTime: 24 * 60 * 60_000,
   });
   const photos = photosQuery.data?.photos || {};
@@ -673,273 +673,275 @@ export function Inbox() {
     onError: (err: any) => toast.error(`Could not undo: ${err?.message || 'unknown error'}`),
   });
   return (
-    <section className="flex h-full flex-col bg-[var(--color-bg)]">
-      <div
-        className={cn(
-          'flex flex-col border-b border-[var(--color-border)] px-3 py-2.5',
-          !railOpen && 'pl-12',
-          !aiBarOpen && !readerVisible && 'pr-12',
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <InputGroup className="relative flex-1 overflow-hidden bg-[var(--color-bg-elevated)]">
-            {translating ? (
-              <BorderBeam
-                size={80}
-                duration={3}
-                colorFrom="var(--color-border-beam-from)"
-                colorTo="var(--color-border-beam-to)"
-              />
-            ) : null}
-            <InputGroupAddon>
+    <section className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+        <div
+          className={cn(
+            'flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5',
+            !railOpen && 'pl-12',
+            !aiBarOpen && !readerVisible && 'pr-12',
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <InputGroup className="relative flex-1 overflow-hidden border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
               {translating ? (
-                <OrbitRing className="size-4 text-[var(--color-accent)]" />
-              ) : (
-                <RowIcon icon={SearchIcon} size={16} className="text-[var(--color-text-faint)]" />
-              )}
-            </InputGroupAddon>
-            <InputGroupInput
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  submitSearch();
-                } else if (e.key === 'Escape' && searchInput) {
-                  e.preventDefault();
-                  clearSearch();
-                }
-              }}
-              placeholder='Ask for mail or type search filters, e.g. "order updates from this week"'
-              className="text-[13px]"
-            />
-            {searchInput ? (
-              <InputGroupAddon align="inline-end">
-                <InputGroupButton size="icon-xs" onClick={clearSearch} title="Clear search">
-                  <X className="size-3" />
-                  <span className="sr-only">Clear search</span>
-                </InputGroupButton>
+                <BorderBeam
+                  size={80}
+                  duration={3}
+                  colorFrom="var(--color-border-beam-from)"
+                  colorTo="var(--color-border-beam-to)"
+                />
+              ) : null}
+              <InputGroupAddon>
+                {translating ? (
+                  <OrbitRing className="size-4 text-[var(--color-accent)]" />
+                ) : (
+                  <RowIcon icon={SearchIcon} size={16} className="text-[var(--color-text-faint)]" />
+                )}
               </InputGroupAddon>
-            ) : null}
-          </InputGroup>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={refreshInbox}
-            className={cn(
-              'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
-              isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
-            )}
-            title="Refresh"
-          >
-            {isFetching && !isFetchingNextPage ? (
-              <Ring className="size-4" />
-            ) : (
-              <RowIcon icon={RefreshCWIcon} size={14} />
-            )}
-          </Button>
+              <InputGroupInput
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitSearch();
+                  } else if (e.key === 'Escape' && searchInput) {
+                    e.preventDefault();
+                    clearSearch();
+                  }
+                }}
+                placeholder='Ask for mail or type search filters, e.g. "order updates from this week"'
+                className="text-[13px]"
+              />
+              {searchInput ? (
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton size="icon-xs" onClick={clearSearch} title="Clear search">
+                    <X className="size-3" />
+                    <span className="sr-only">Clear search</span>
+                  </InputGroupButton>
+                </InputGroupAddon>
+              ) : null}
+            </InputGroup>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={refreshInbox}
+              className={cn(
+                'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
+                isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
+              )}
+              title="Refresh"
+            >
+              {isFetching && !isFetchingNextPage ? (
+                <Ring className="size-4" />
+              ) : (
+                <RowIcon icon={RefreshCWIcon} size={14} />
+              )}
+            </Button>
+          </div>
         </div>
-      </div>
-      {/* Status chips live in their own transparent row BELOW the bordered bar,
+        {/* Status chips live in their own transparent row BELOW the bordered bar,
           so the search bar's bottom border lines up with the assistant header.
           Rendered only when there's something to show, so it adds no height
           otherwise. */}
-      {smartCategory ||
-      nlSearchIntent ||
-      translatedQuery ||
-      query !== DEFAULT_QUERY ||
-      translating ||
-      queryError ? (
-        <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5">
-          {smartCategory ? (
-            <Badge variant="secondary" className="gap-1">
-              {activeSmartLabel}
-            </Badge>
-          ) : null}
-          {nlSearchIntent ? <Badge variant="outline">Asked: {nlSearchIntent}</Badge> : null}
-          {translatedQuery && !smartCategory ? (
-            <Badge variant="outline" className="gap-1">
-              Filter: <span className="font-mono">{translatedQuery}</span>
+        {smartCategory ||
+        nlSearchIntent ||
+        translatedQuery ||
+        query !== DEFAULT_QUERY ||
+        translating ||
+        queryError ? (
+          <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5">
+            {smartCategory ? (
+              <Badge variant="secondary" className="gap-1">
+                {activeSmartLabel}
+              </Badge>
+            ) : null}
+            {nlSearchIntent ? <Badge variant="outline">Asked: {nlSearchIntent}</Badge> : null}
+            {translatedQuery && !smartCategory ? (
+              <Badge variant="outline" className="gap-1">
+                Filter: <span className="font-mono">{translatedQuery}</span>
+                <button
+                  type="button"
+                  onClick={clearSearch}
+                  title="Clear generated filter"
+                  aria-label="Clear generated filter"
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            ) : null}
+            {!translatedQuery && !smartCategory && query !== DEFAULT_QUERY ? (
+              <Badge variant="outline" className="gap-1">
+                Filter: <span className="font-mono">{query}</span>
+                <button type="button" onClick={clearSearch} title="Clear filter" aria-label="Clear filter">
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            ) : null}
+            {translating ? (
+              <TextShimmer className="text-[11px] text-[var(--color-accent)]">Translating filter</TextShimmer>
+            ) : null}
+            {queryError ? <span className="text-[11px] text-[var(--color-danger)]">{queryError}</span> : null}
+          </div>
+        ) : null}
+
+        <AnimatePresence>
+          {selectedIds.length > 0 ? (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-3 py-2 text-[12px]"
+            >
+              <span className="font-semibold text-[var(--color-text)]">{selectedIds.length} selected</span>
               <button
                 type="button"
-                onClick={clearSearch}
-                title="Clear generated filter"
-                aria-label="Clear generated filter"
+                onClick={() => bulkArchive.mutate(selectedIds)}
+                className="ml-2 flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
               >
-                <X className="size-3" />
+                <RowIcon icon={ArchiveIcon} size={12} />
+                Archive
               </button>
-            </Badge>
-          ) : null}
-          {!translatedQuery && !smartCategory && query !== DEFAULT_QUERY ? (
-            <Badge variant="outline" className="gap-1">
-              Filter: <span className="font-mono">{query}</span>
-              <button type="button" onClick={clearSearch} title="Clear filter" aria-label="Clear filter">
-                <X className="size-3" />
+              <button
+                type="button"
+                onClick={() => bulkTrash.mutate(selectedIds)}
+                className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
+              >
+                <RowIcon icon={DeleteIcon} size={12} />
+                Trash
               </button>
-            </Badge>
+              <button
+                type="button"
+                onClick={() => bulkTriage.mutate()}
+                className="flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
+              >
+                <RowIcon icon={GaugeIcon} size={12} />
+                AI: triage
+              </button>
+              <button
+                type="button"
+                onClick={() => clearSelected()}
+                className="ml-auto grid h-5 w-5 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+                title="Clear selection"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </motion.div>
           ) : null}
-          {translating ? (
-            <TextShimmer className="text-[11px] text-[var(--color-accent)]">Translating filter</TextShimmer>
-          ) : null}
-          {queryError ? <span className="text-[11px] text-[var(--color-danger)]">{queryError}</span> : null}
-        </div>
-      ) : null}
+        </AnimatePresence>
 
-      <AnimatePresence>
-        {selectedIds.length > 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-3 py-2 text-[12px]"
-          >
-            <span className="font-semibold text-[var(--color-text)]">{selectedIds.length} selected</span>
-            <button
-              type="button"
-              onClick={() => bulkArchive.mutate(selectedIds)}
-              className="ml-2 flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
-            >
-              <RowIcon icon={ArchiveIcon} size={12} />
-              Archive
-            </button>
-            <button
-              type="button"
-              onClick={() => bulkTrash.mutate(selectedIds)}
-              className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 hover:bg-[var(--color-bg-subtle)]"
-            >
-              <RowIcon icon={DeleteIcon} size={12} />
-              Trash
-            </button>
-            <button
-              type="button"
-              onClick={() => bulkTriage.mutate()}
-              className="flex items-center gap-1 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
-            >
-              <RowIcon icon={GaugeIcon} size={12} />
-              AI: triage
-            </button>
-            <button
-              type="button"
-              onClick={() => clearSelected()}
-              className="ml-auto grid h-5 w-5 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
-              title="Clear selection"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
-      <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
-        {showInitialLoading ? (
-          <SkeletonRows />
-        ) : isError ? (
-          <SearchErrorState
-            message={(searchError as Error | null)?.message || 'Mail search failed.'}
-            onRetry={() => refetch()}
-          />
-        ) : items.length === 0 ? (
-          translatedQuery || nlSearchIntent ? (
-            <SearchEmptyState
-              onClear={clearSearch}
-              onEditGenerated={() => {
-                const editable = translatedQuery || query;
-                setQuery(editable);
-                setSearchInput(editable);
-                setSearchDraft(editable);
-                setTranslatedSearch(null, editable, 'typed');
-              }}
-              onRetryOriginal={() => {
-                if (!nlSearchIntent) return;
-                setSearchInput(nlSearchIntent);
-                runSearch(nlSearchIntent);
-              }}
-              onUseRaw={() => {
-                if (nlSearchIntent) {
-                  setQuery(nlSearchIntent);
-                  setSearchInput(nlSearchIntent);
-                }
-              }}
+        <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
+          {showInitialLoading ? (
+            <SkeletonRows />
+          ) : isError ? (
+            <SearchErrorState
+              message={(searchError as Error | null)?.message || 'Mail search failed.'}
+              onRetry={() => refetch()}
             />
+          ) : items.length === 0 ? (
+            translatedQuery || nlSearchIntent ? (
+              <SearchEmptyState
+                onClear={clearSearch}
+                onEditGenerated={() => {
+                  const editable = translatedQuery || query;
+                  setQuery(editable);
+                  setSearchInput(editable);
+                  setSearchDraft(editable);
+                  setTranslatedSearch(null, editable, 'typed');
+                }}
+                onRetryOriginal={() => {
+                  if (!nlSearchIntent) return;
+                  setSearchInput(nlSearchIntent);
+                  runSearch(nlSearchIntent);
+                }}
+                onUseRaw={() => {
+                  if (nlSearchIntent) {
+                    setQuery(nlSearchIntent);
+                    setSearchInput(nlSearchIntent);
+                  }
+                }}
+              />
+            ) : (
+              <EmptyState account={account} />
+            )
           ) : (
-            <EmptyState account={account} />
-          )
-        ) : (
-          <motion.div
-            key={`${account}:${smartCategory || 'search'}`}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-          >
-            {items.map((it, index) => {
-              const senderEmail = emailFromHeader(it.from || it.fromAddress);
-              const key = rowKey(it);
-              const rowAccount = it.account || account;
-              // Editorial datelines: a serif group header whenever the day
-              // bucket changes (the list is already date-sorted).
-              const groupLabel = dateGroupLabel(Number(it.lastDate ?? it.date) || 0);
-              const previous = index > 0 ? items[index - 1] : null;
-              const showHeader =
-                !previous || dateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
-              return (
-                <Fragment key={key}>
-                  {showHeader ? (
-                    <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
-                      <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
-                        {groupLabel}
-                      </span>
-                      <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
-                    </div>
-                  ) : null}
-                  <ThreadRowCard
-                    item={it}
-                    photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
-                    showAccount={account === ALL_ACCOUNTS}
-                    accountLabel={accountAliasById[rowAccount] || ''}
-                    activeCategory={smartCategory}
-                    selected={selectedIds.includes(key)}
-                    active={selectedThreadId === it._id && threadAccount === rowAccount}
-                    onToggle={() => toggleSelected(key)}
-                    onPrefetch={() => prefetchThread(it)}
-                    onApplyLabels={() => setLabelPreview(it)}
-                    onArchive={() => bulkArchive.mutate([key])}
-                    onTrash={() => bulkTrash.mutate([key])}
-                    onCorrect={(action, payload = {}) =>
-                      applyCorrection.mutate({
-                        account: rowAccount,
-                        threadId: it._id,
-                        action,
-                        scope: 'sender',
-                        ...payload,
-                      })
-                    }
-                    onUndoLast={() => undoLastRule.mutate()}
-                    customLabels={customLabels}
-                    onClick={() => {
-                      // Unified inbox stays put; just remember which mailbox this
-                      // thread belongs to so the reader can load/reply correctly.
-                      startTransition(() => {
-                        setThreadAccount(rowAccount);
-                        setSelectedThread(it._id);
-                      });
-                    }}
-                  />
-                </Fragment>
-              );
-            })}
-            <div ref={loadMoreRef} className="min-h-1" aria-hidden />
-            {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
-          </motion.div>
-        )}
+            <motion.div
+              key={`${account}:${smartCategory || 'search'}`}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+            >
+              {items.map((it, index) => {
+                const senderEmail = emailFromHeader(it.from || it.fromAddress);
+                const key = rowKey(it);
+                const rowAccount = it.account || account;
+                // Editorial datelines: a serif group header whenever the day
+                // bucket changes (the list is already date-sorted).
+                const groupLabel = dateGroupLabel(Number(it.lastDate ?? it.date) || 0);
+                const previous = index > 0 ? items[index - 1] : null;
+                const showHeader =
+                  !previous || dateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
+                return (
+                  <Fragment key={key}>
+                    {showHeader ? (
+                      <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
+                        <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+                          {groupLabel}
+                        </span>
+                        <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+                      </div>
+                    ) : null}
+                    <ThreadRowCard
+                      item={it}
+                      photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                      showAccount={account === ALL_ACCOUNTS}
+                      accountLabel={accountAliasById[rowAccount] || ''}
+                      activeCategory={smartCategory}
+                      selected={selectedIds.includes(key)}
+                      active={selectedThreadId === it._id && threadAccount === rowAccount}
+                      onToggle={() => toggleSelected(key)}
+                      onPrefetch={() => prefetchThread(it)}
+                      onApplyLabels={() => setLabelPreview(it)}
+                      onArchive={() => bulkArchive.mutate([key])}
+                      onTrash={() => bulkTrash.mutate([key])}
+                      onCorrect={(action, payload = {}) =>
+                        applyCorrection.mutate({
+                          account: rowAccount,
+                          threadId: it._id,
+                          action,
+                          scope: 'sender',
+                          ...payload,
+                        })
+                      }
+                      onUndoLast={() => undoLastRule.mutate()}
+                      customLabels={customLabels}
+                      onClick={() => {
+                        // Unified inbox stays put; just remember which mailbox this
+                        // thread belongs to so the reader can load/reply correctly.
+                        startTransition(() => {
+                          setThreadAccount(rowAccount);
+                          setSelectedThread(it._id);
+                        });
+                      }}
+                    />
+                  </Fragment>
+                );
+              })}
+              <div ref={loadMoreRef} className="min-h-1" aria-hidden />
+              {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
+            </motion.div>
+          )}
+        </div>
+        <LabelConfirmDialog
+          item={labelPreview}
+          applying={applyLabels.isPending}
+          customLabels={customLabels}
+          onClose={() => setLabelPreview(null)}
+          onApply={(item) => applyLabels.mutate(item)}
+        />
       </div>
-      <LabelConfirmDialog
-        item={labelPreview}
-        applying={applyLabels.isPending}
-        customLabels={customLabels}
-        onClose={() => setLabelPreview(null)}
-        onApply={(item) => applyLabels.mutate(item)}
-      />
     </section>
   );
 }
@@ -1032,7 +1034,7 @@ function ThreadRowCard({
       className={cn(
         // No transition on the row itself: the hover highlight is a selection
         // cue, so it must be instant for snappy up/down scanning.
-        'group relative grid grid-cols-[20px_28px_1fr_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]',
+        'group relative grid grid-cols-[20px_30px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
@@ -1051,15 +1053,10 @@ function ThreadRowCard({
         onKeyDown={(e) => e.stopPropagation()}
       />
 
-      <Avatar
-        name={senderLabel || item.account}
-        src={photoUrl}
-        size={26}
-        className={cn(dim && 'opacity-80')}
-      />
+      <Avatar name={senderLabel || item.account} src={photoUrl} size={28} />
 
       {/* Two-line row: sender, then subject + preview inline. */}
-      <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-[0.82]')}>
+      <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-90')}>
         <div className="flex items-center gap-1.5">
           {item.starred ? (
             <Star
@@ -1096,47 +1093,41 @@ function ThreadRowCard({
 
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
-      <div className="flex flex-col items-end gap-1 self-start pt-0.5">
-        {/* The date stays put; on hover the action menu shoots out fast to its
-            left (absolute, so it never shifts the date or its mailbox colour). */}
-        <div className="relative flex items-center">
-          {smart ? (
-            <div className="pointer-events-none absolute top-1/2 right-full z-10 mr-1.5 opacity-0 [transform:translate(10px,-50%)] transition-[opacity,transform] duration-100 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-hover:[transform:translate(0px,-50%)] has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:[transform:translate(0px,-50%)]">
-              <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-1 shadow-[var(--shadow-pop)]">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onArchive();
-                  }}
-                  title="Archive"
-                  className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)]"
-                >
-                  <Archive className="size-3.5" />
-                  <span className="sr-only">Archive</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onTrash();
-                  }}
-                  title="Delete"
-                  className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-danger)_14%,transparent)] hover:text-[var(--color-danger)]"
-                >
-                  <Trash2 className="size-3.5" />
-                  <span className="sr-only">Delete</span>
-                </button>
-                <QuickFixMenu
-                  customLabels={customLabels}
-                  onApplyLabels={onApplyLabels}
-                  onCorrect={onCorrect}
-                  onCreateLabel={() => createLabelFromThread(item, onCorrect)}
-                  onUndoLast={onUndoLast}
-                />
-              </div>
-            </div>
-          ) : null}
+      <div className="flex flex-col items-end gap-1 self-center">
+        <div className="flex items-center justify-end gap-1.5">
+          <div className="pointer-events-none flex w-[82px] -translate-x-1 items-center justify-end gap-0.5 opacity-0 transition-[opacity,transform] duration-100 ease-out group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:translate-x-0 has-[[data-state=open]]:opacity-100">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onArchive();
+              }}
+              title="Archive"
+              className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-accent)]"
+            >
+              <Archive className="size-3.5" />
+              <span className="sr-only">Archive</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onTrash();
+              }}
+              title="Delete"
+              className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-danger)]"
+            >
+              <Trash2 className="size-3.5" />
+              <span className="sr-only">Delete</span>
+            </button>
+            <QuickFixMenu
+              customLabels={customLabels}
+              onApplyLabels={onApplyLabels}
+              onCorrect={onCorrect}
+              onCreateLabel={() => createLabelFromThread(item, onCorrect)}
+              onUndoLast={onUndoLast}
+            />
+          </div>
           {showAccount && accountColor ? (
             <Popover>
               <PopoverTrigger asChild>
@@ -1144,8 +1135,11 @@ function ThreadRowCard({
                   type="button"
                   onClick={(e) => e.stopPropagation()}
                   title="Which mailbox"
-                  className="rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"
-                  style={{ backgroundColor: `color-mix(in srgb, ${accountColor} 22%, transparent)` }}
+                  className="rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text)] shadow-[inset_0_1px_0_rgb(255_255_255/0.38)] hover:text-[var(--color-text)]"
+                  style={{
+                    backgroundColor: `color-mix(in srgb, ${accountColor} 18%, var(--color-bg-elevated))`,
+                    borderColor: `color-mix(in srgb, ${accountColor} 34%, var(--color-border))`,
+                  }}
                 >
                   {formatDate(date)}
                 </button>
@@ -1161,7 +1155,7 @@ function ThreadRowCard({
               </PopoverContent>
             </Popover>
           ) : (
-            <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+            <span className="rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text-muted)]">
               {formatDate(date)}
             </span>
           )}
@@ -1231,7 +1225,7 @@ function QuickFixMenu({
         <button
           type="button"
           onClick={(event) => event.stopPropagation()}
-          className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
           title="More actions"
         >
           <MoreHorizontal className="size-3.5" />

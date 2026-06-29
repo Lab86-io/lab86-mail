@@ -652,207 +652,212 @@ export function AIBarSidebar() {
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 20, opacity: 0 }}
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-      className="relative flex h-full w-full flex-col overflow-hidden bg-[var(--color-bg)]"
+      className="relative flex h-full w-full flex-col overflow-hidden bg-[var(--color-bg)] p-2"
     >
-      <TopProgressBar active={busy} />
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+        <TopProgressBar active={busy} />
 
-      <header className="flex items-center justify-between gap-2 px-3 py-2.5">
-        <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
-          <RowIcon icon={MessageSquareIcon} size={14} className="text-[var(--color-accent)]" />
-          <span className="truncate font-medium text-[var(--color-text)]">Ask Assistant</span>
-        </div>
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={startNewChat}
-            title="New chat"
-            className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-          >
-            <RowIcon icon={PlusIcon} size={14} />
-            <span className="sr-only">New chat</span>
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title="Chat history"
-                className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-              >
-                <RowIcon icon={HistoryIcon} size={14} />
-                <span className="sr-only">Chat history</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
-              <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
-              {chatSessions.length === 0 ? (
-                <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
-              ) : (
-                chatSessions.map((session) => (
-                  <DropdownMenuItem
-                    key={session._id}
-                    onSelect={() => void loadSession(session._id)}
-                    className="flex flex-col items-start gap-0.5"
-                  >
-                    <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
-                      {session.title || 'Untitled chat'}
-                    </span>
-                    <span className="text-[10.5px] text-[var(--color-text-faint)]">
-                      {formatDate(session.updatedAt)} · {session.messageCount} message
-                      {session.messageCount === 1 ? '' : 's'}
-                    </span>
-                  </DropdownMenuItem>
-                ))
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={startNewChat}>
-                <Plus className="size-3.5" />
-                Start a new chat
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setAiBarOpen(false)}
-            title="Close (⌘K)"
-            className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-          >
-            <X className="h-3.5 w-3.5" />
-            <span className="sr-only">Close</span>
-          </Button>
-        </div>
-      </header>
-
-      {messages.length === 0 ? (
-        <div className="scrollable flex flex-1 flex-col items-center justify-center gap-5 px-5 py-8 text-center">
-          <div className="space-y-1.5">
-            <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
-            <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-              Search, triage, summarize, draft replies, schedule sends, look up contacts and calendar,
-              research links — and act across your inbox in real time.
-            </p>
+        <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
+          <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
+            <RowIcon icon={MessageSquareIcon} size={14} className="text-[var(--color-accent)]" />
+            <span className="truncate font-medium text-[var(--color-text)]">Ask Assistant</span>
           </div>
-          <div className="flex w-full max-w-[320px] flex-col gap-2">
-            {(selectedThreadId ? THREAD_SUGGESTIONS : BASE_SUGGESTIONS).map((s) => (
-              <PromptSuggestion
-                key={s}
-                variant="outline"
-                onClick={() => void send(s)}
-                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
-              >
-                {s}
-              </PromptSuggestion>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <ChatContainerRoot className="relative flex-1">
-          <ChatContainerContent className="gap-4 px-3 py-4">
-            <AskUserContext.Provider value={answerAskUser}>
-              {messages.map((m) => (
-                <MessageView key={m.id} message={m} />
-              ))}
-            </AskUserContext.Provider>
-            {showLoader ? (
-              <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
-                <Loader variant="typing" />
-              </div>
-            ) : null}
-            {error ? (
-              <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
-                <div>{error.message}</div>
-                {/* Long conversations can hit a limit mid-turn; let the user
-                    pick up where it stopped (the server windows the transcript,
-                    so the retry fits). */}
-                <button
-                  type="button"
-                  onClick={() => regenerate()}
-                  className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={startNewChat}
+              title="New chat"
+              className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+            >
+              <RowIcon icon={PlusIcon} size={14} />
+              <span className="sr-only">New chat</span>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Chat history"
+                  className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
                 >
-                  Continue
-                </button>
-              </div>
-            ) : null}
-          </ChatContainerContent>
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-            <ScrollButton className="pointer-events-auto shadow-[var(--shadow-pop)]" />
+                  <RowIcon icon={HistoryIcon} size={14} />
+                  <span className="sr-only">Chat history</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
+                <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
+                {chatSessions.length === 0 ? (
+                  <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
+                ) : (
+                  chatSessions.map((session) => (
+                    <DropdownMenuItem
+                      key={session._id}
+                      onSelect={() => void loadSession(session._id)}
+                      className="flex flex-col items-start gap-0.5"
+                    >
+                      <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
+                        {session.title || 'Untitled chat'}
+                      </span>
+                      <span className="text-[10.5px] text-[var(--color-text-faint)]">
+                        {formatDate(session.updatedAt)} · {session.messageCount} message
+                        {session.messageCount === 1 ? '' : 's'}
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={startNewChat}>
+                  <Plus className="size-3.5" />
+                  Start a new chat
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setAiBarOpen(false)}
+              title="Close (⌘K)"
+              className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+            >
+              <X className="h-3.5 w-3.5" />
+              <span className="sr-only">Close</span>
+            </Button>
           </div>
-        </ChatContainerRoot>
-      )}
+        </header>
 
-      <div ref={inputWrapRef} className="p-2.5">
-        <PromptInput
-          value={input}
-          onValueChange={setInput}
-          isLoading={busy}
-          onSubmit={submit}
-          maxHeight={176}
-          className="border-[var(--color-accent)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
-        >
-          <PromptInputTextarea
-            placeholder="Find, draft, schedule, label, anything…"
-            className="text-[13px] leading-relaxed text-[var(--color-text)]"
-          />
-          {pendingFiles.length ? (
-            <div className="flex flex-wrap gap-1 px-1 pb-1">
-              {pendingFiles.map((file, index) => (
-                <span
-                  key={`${file.name}-${file.size}-${file.lastModified}`}
-                  className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+        {messages.length === 0 ? (
+          <div className="scrollable flex flex-1 flex-col items-center justify-center gap-5 bg-[var(--color-bg)]/35 px-5 py-8 text-center">
+            <div className="space-y-1.5">
+              <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
+              <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+                Search, triage, summarize, draft replies, schedule sends, look up contacts and calendar,
+                research links — and act across your inbox in real time.
+              </p>
+            </div>
+            <div className="flex w-full max-w-[320px] flex-col gap-2">
+              {(selectedThreadId ? THREAD_SUGGESTIONS : BASE_SUGGESTIONS).map((s) => (
+                <PromptSuggestion
+                  key={s}
+                  variant="outline"
+                  onClick={() => void send(s)}
+                  className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
                 >
-                  {file.name}
-                  <button
-                    type="button"
-                    onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
-                    className="hover:text-[var(--color-danger)]"
-                  >
-                    <X className="size-2.5" />
-                  </button>
-                </span>
+                  {s}
+                </PromptSuggestion>
               ))}
             </div>
-          ) : null}
-          <PromptInputActions className="justify-end pt-1">
-            <PromptInputAction tooltip="Attach a file for the assistant">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={busy}
-                className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-              >
-                <Paperclip className="size-3.5" />
-                <span className="sr-only">Attach file</span>
-              </Button>
-            </PromptInputAction>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,application/pdf,text/plain,text/csv"
-              className="hidden"
-              onChange={(event) => {
-                const picked = Array.from(event.target.files || []);
-                if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
-                event.target.value = '';
-              }}
+          </div>
+        ) : (
+          <ChatContainerRoot className="relative flex-1 bg-[var(--color-bg)]/25">
+            <ChatContainerContent className="gap-4 px-3 py-4">
+              <AskUserContext.Provider value={answerAskUser}>
+                {messages.map((m) => (
+                  <MessageView key={m.id} message={m} />
+                ))}
+              </AskUserContext.Provider>
+              {showLoader ? (
+                <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
+                  <Loader variant="typing" />
+                </div>
+              ) : null}
+              {error ? (
+                <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
+                  <div>{error.message}</div>
+                  {/* Long conversations can hit a limit mid-turn; let the user
+                    pick up where it stopped (the server windows the transcript,
+                    so the retry fits). */}
+                  <button
+                    type="button"
+                    onClick={() => regenerate()}
+                    className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
+                  >
+                    Continue
+                  </button>
+                </div>
+              ) : null}
+            </ChatContainerContent>
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+              <ScrollButton className="pointer-events-auto shadow-[var(--shadow-pop)]" />
+            </div>
+          </ChatContainerRoot>
+        )}
+
+        <div
+          ref={inputWrapRef}
+          className="border-t border-[var(--color-border)] bg-[var(--color-bg)]/45 p-2.5"
+        >
+          <PromptInput
+            value={input}
+            onValueChange={setInput}
+            isLoading={busy}
+            onSubmit={submit}
+            maxHeight={176}
+            className="border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]"
+          >
+            <PromptInputTextarea
+              placeholder="Find, draft, schedule, label, anything…"
+              className="text-[13px] leading-relaxed text-[var(--color-text)]"
             />
-            <PromptInputAction tooltip={busy ? 'Stop' : 'Send'}>
-              <Button
-                type="button"
-                size="icon-sm"
-                onClick={submit}
-                disabled={!busy && !input.trim() && !pendingFiles.length}
-                className="rounded-full"
-                aria-label={busy ? 'Stop' : 'Send'}
-              >
-                {busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
-              </Button>
-            </PromptInputAction>
-          </PromptInputActions>
-        </PromptInput>
+            {pendingFiles.length ? (
+              <div className="flex flex-wrap gap-1 px-1 pb-1">
+                {pendingFiles.map((file, index) => (
+                  <span
+                    key={`${file.name}-${file.size}-${file.lastModified}`}
+                    className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+                  >
+                    {file.name}
+                    <button
+                      type="button"
+                      onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
+                      className="hover:text-[var(--color-danger)]"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <PromptInputActions className="justify-end pt-1">
+              <PromptInputAction tooltip="Attach a file for the assistant">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={busy}
+                  className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                >
+                  <Paperclip className="size-3.5" />
+                  <span className="sr-only">Attach file</span>
+                </Button>
+              </PromptInputAction>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,application/pdf,text/plain,text/csv"
+                className="hidden"
+                onChange={(event) => {
+                  const picked = Array.from(event.target.files || []);
+                  if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
+                  event.target.value = '';
+                }}
+              />
+              <PromptInputAction tooltip={busy ? 'Stop' : 'Send'}>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  onClick={submit}
+                  disabled={!busy && !input.trim() && !pendingFiles.length}
+                  className="rounded-full"
+                  aria-label={busy ? 'Stop' : 'Send'}
+                >
+                  {busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
+                </Button>
+              </PromptInputAction>
+            </PromptInputActions>
+          </PromptInput>
+        </div>
       </div>
     </motion.section>
   );

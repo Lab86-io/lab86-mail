@@ -144,10 +144,16 @@ export async function generateDailyReport(input: {
   const connected = await listNylasAccounts(input.userId).catch(() => []);
   const authed = connected.filter((account) => account.authed);
   const accounts = input.accounts?.length ? input.accounts : authed.map((account) => account.accountId);
+  const selectedAccounts = new Set((input.accounts ?? []).map((value) => String(value).toLowerCase()));
   const serviceIds = [
     ...new Set(
       authed
-        .filter((account) => !input.accounts?.length || input.accounts.includes(account.accountId))
+        .filter(
+          (account) =>
+            !selectedAccounts.size ||
+            selectedAccounts.has(String(account.accountId).toLowerCase()) ||
+            selectedAccounts.has(String(account.email || '').toLowerCase()),
+        )
         .map((account) => briefServiceFromProvider(account.provider)),
     ),
   ];
@@ -162,10 +168,15 @@ export async function generateDailyReport(input: {
   // "Self" is the set of EMAIL ADDRESSES on this user's connected accounts.
   // `accounts` above are opaque accountIds used for transport, while sender
   // checks downstream compare against addresses.
-  const accountIdSet = new Set(accounts);
+  const accountIdSet = new Set(accounts.map((value) => String(value).toLowerCase()));
   const self = new Set<string>(
     authed
-      .filter((account) => !input.accounts?.length || accountIdSet.has(account.accountId))
+      .filter(
+        (account) =>
+          !input.accounts?.length ||
+          accountIdSet.has(String(account.accountId).toLowerCase()) ||
+          accountIdSet.has(String(account.email || '').toLowerCase()),
+      )
       .map((account) => String(account.email || '').toLowerCase())
       .filter(Boolean),
   );

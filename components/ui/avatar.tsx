@@ -30,7 +30,7 @@ export function Avatar({
   return (
     <div
       className={cn(
-        'shrink-0 overflow-hidden rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-avatar-bg)] shadow-[var(--shadow-control)]',
+        'shrink-0 overflow-hidden rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-control)] shadow-[var(--shadow-control)]',
         className,
       )}
       style={{ width: size, height: size }}
@@ -44,7 +44,7 @@ export function Avatar({
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setBroken(true)}
-          className="h-full w-full object-cover"
+          className="h-full w-full bg-[var(--color-control)] object-cover"
         />
       ) : (
         <span

@@ -1,7 +1,11 @@
 import { z } from 'zod';
-import { getPhotoFromCache, setPhotoCache } from '../store/photos';
-import { companyLogoUrl, resolvePhotoUrl } from './photo-resolution';
+import { getPhotoFromCache, PHOTO_CACHE_VERSION, setPhotoCache } from '../store/photos';
+import { companyLogoUrl, resolveProviderProfilePhoto } from './photo-resolution';
 import { defineTool } from './registry';
+
+const PROVIDER_LOOKUP_CAP = 24;
+const PROVIDER_LOOKUP_BUDGET_MS = 5_000;
+const PROVIDER_LOOKUP_TIMEOUT_MS = 900;
 
 export const resolvePhotos = defineTool({
   name: 'resolve_photos',
@@ -16,6 +20,8 @@ export const resolvePhotos = defineTool({
   async handler({ account, emails }, ctx) {
     const out: Record<string, string | null> = {};
     const seen = new Set<string>();
+    const providerStartedAt = Date.now();
+    let providerLookups = 0;
 
     for (const raw of emails) {
       const email = (raw || '').trim().toLowerCase();
@@ -24,18 +30,68 @@ export const resolvePhotos = defineTool({
 
       const logoUrl = companyLogoUrl(email);
       const cached = await getPhotoFromCache(email).catch(() => null);
-      out[email] = cached?.url || null;
-      if (!cached?.url && (!cached || logoUrl)) {
-        const url = await resolvePhotoUrl({
+      if (cached?.url && cached.version === PHOTO_CACHE_VERSION && cached.source !== 'provider') {
+        out[email] = cached.url;
+        continue;
+      }
+
+      if (logoUrl) {
+        out[email] = logoUrl;
+        await setPhotoCache(email, logoUrl, 'company').catch(() => undefined);
+        continue;
+      }
+
+      const freshMiss = cached?.version === PHOTO_CACHE_VERSION && cached.source === 'none' && !logoUrl;
+      if (freshMiss) {
+        out[email] = null;
+        continue;
+      }
+
+      const canLookupProvider =
+        providerLookups < PROVIDER_LOOKUP_CAP && Date.now() - providerStartedAt < PROVIDER_LOOKUP_BUDGET_MS;
+      if (!canLookupProvider) {
+        out[email] = null;
+        continue;
+      }
+
+      providerLookups += 1;
+      const providerUrl = await withTimeout(
+        resolveProviderProfilePhoto({
           userId: ctx.userId,
           account,
           email,
-        }).catch(() => logoUrl);
-        out[email] = url;
-        await setPhotoCache(email, url).catch(() => undefined);
-      }
+        }).catch(() => null),
+        PROVIDER_LOOKUP_TIMEOUT_MS,
+        null,
+      );
+      out[email] = providerUrl;
+      if (!providerUrl) await setPhotoCache(email, null, 'none').catch(() => undefined);
     }
 
     return { photos: out };
   },
 });
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, timeoutMs);
+    promise
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      });
+  });
+}

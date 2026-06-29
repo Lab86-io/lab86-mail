@@ -515,8 +515,8 @@ export function InlineComposer({
 
   const modeLabel: Record<ComposeMode, string> = {
     new: 'New message',
-    reply: replyToLabel ? `Reply to ${replyToLabel}` : 'Reply',
-    reply_all: replyToLabel ? `Reply-all (${replyToLabel})` : 'Reply-all',
+    reply: 'Reply',
+    reply_all: 'Reply all',
     forward: 'Forward',
   };
 
@@ -537,44 +537,48 @@ export function InlineComposer({
         </div>
       ) : null}
 
-      <header className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
-        <div className="grid h-6 w-6 place-items-center rounded-md bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
-          {composerMode === 'forward' ? (
-            <ForwardIcon className="h-3.5 w-3.5" />
-          ) : composerMode === 'new' ? (
-            <EditIcon className="h-3.5 w-3.5" />
-          ) : (
-            <ReplyIcon className="h-3.5 w-3.5" />
-          )}
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]">
+            {composerMode === 'forward' ? (
+              <ForwardIcon className="h-3.5 w-3.5" />
+            ) : composerMode === 'new' ? (
+              <EditIcon className="h-3.5 w-3.5" />
+            ) : (
+              <ReplyIcon className="h-3.5 w-3.5" />
+            )}
+          </div>
+          <span className="shrink-0 whitespace-nowrap text-[12.5px] font-medium text-[var(--color-text)]">
+            {modeLabel[composerMode]}
+          </span>
+          <span className="flex min-w-0 items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
+            <span className="shrink-0">from</span>
+            {fromOptions.length > 1 ? (
+              <Select value={fromAccount || account} onValueChange={setFromAccount}>
+                <SelectTrigger
+                  size="sm"
+                  className="h-7 max-w-[11rem] gap-1 border-[var(--color-control-border)] bg-[var(--color-control)] px-2 py-0 text-[11px] text-[var(--color-text)] shadow-[var(--shadow-control)]"
+                >
+                  <SelectValue placeholder={account} />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {fromOptions.map((accountId) => (
+                    <SelectItem key={accountId} value={accountId} className="text-[12px]">
+                      {accountAliasById[accountId] || accountId}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <span className="truncate text-[var(--color-text-muted)]">
+                {accountAliasById[fromAccount || account] || fromAccount || account}
+              </span>
+            )}
+          </span>
         </div>
-        <span className="text-[12.5px] font-medium text-[var(--color-text)]">{modeLabel[composerMode]}</span>
-        <span className="flex items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
-          <span>· from</span>
-          {fromOptions.length > 1 ? (
-            <Select value={fromAccount || account} onValueChange={setFromAccount}>
-              <SelectTrigger
-                size="sm"
-                className="h-6 gap-1 border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0 text-[11px] text-[var(--color-text)] shadow-none focus-visible:ring-0"
-              >
-                <SelectValue placeholder={account} />
-              </SelectTrigger>
-              <SelectContent align="start">
-                {fromOptions.map((accountId) => (
-                  <SelectItem key={accountId} value={accountId} className="text-[12px]">
-                    {accountAliasById[accountId] || accountId}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <span className="text-[var(--color-text-muted)]">
-              {accountAliasById[fromAccount || account] || fromAccount || account}
-            </span>
-          )}
-        </span>
 
         {isReply ? (
-          <div className="ml-3 flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5 text-[10.5px]">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] p-0.5 text-[10.5px] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)]">
             <ModeChip active={composerMode === 'reply'} onClick={() => setComposerMode('reply')}>
               Reply
             </ModeChip>
@@ -587,7 +591,7 @@ export function InlineComposer({
           </div>
         ) : null}
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           <TabButton
             active={tab === 'write'}
             onClick={() => setTab('write')}
@@ -606,7 +610,7 @@ export function InlineComposer({
             <button
               type="button"
               onClick={onClose}
-              className="ml-1 grid h-6 w-6 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+              className="ml-1 grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-faint)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               title="Close"
             >
               <X className="h-3 w-3" />
@@ -695,12 +699,12 @@ export function InlineComposer({
         </div>
       ) : null}
 
-      <footer className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
+      <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={openFilePicker}
-            className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]"
+            className="flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
             title="Attach files"
           >
             <Paperclip className="h-3 w-3" />
@@ -711,7 +715,7 @@ export function InlineComposer({
               type="button"
               onClick={() => aiDraft.mutate()}
               disabled={aiDraft.isPending || !threadId}
-              className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
+              className="flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] disabled:opacity-50"
               title="Ask AI to draft a reply"
             >
               <PenLine className="h-3 w-3 text-[var(--color-accent)]" />
@@ -725,7 +729,7 @@ export function InlineComposer({
               <button
                 type="button"
                 disabled={!canSend}
-                className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+                className="grid h-8 w-8 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] disabled:opacity-50"
                 title="Schedule send"
               >
                 <CalendarClock className="h-3.5 w-3.5" />
@@ -936,10 +940,10 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] transition-colors',
+        'flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] shadow-[var(--shadow-control)] transition-colors',
         active
-          ? 'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]'
-          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+          ? 'bg-[var(--color-control-hover)] text-[var(--color-text)]'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
       )}
     >
       {icon}
@@ -962,10 +966,10 @@ function ModeChip({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded px-1.5 py-0.5 transition-colors',
+        'h-6 whitespace-nowrap rounded px-2 transition-colors focus-visible:outline-none focus-visible:ring-0',
         active
-          ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+          ? 'bg-[var(--color-control-hover)] text-[var(--color-text)]'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
       )}
     >
       {children}

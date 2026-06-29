@@ -60,11 +60,17 @@ function primaryEmail(data: any) {
 }
 
 function profileImageUrl(data: any) {
-  const customImage = String(data.image_url || data.profile_image_url || '').trim();
+  const customImage =
+    typeof data.image_url === 'string'
+      ? data.image_url.trim()
+      : typeof data.profile_image_url === 'string'
+        ? data.profile_image_url.trim()
+        : '';
   if (customImage && data.has_image) return customImage;
   const externalAccounts = Array.isArray(data.external_accounts) ? data.external_accounts : [];
   const oauthImage =
-    externalAccounts.find((account: any) => typeof account?.image_url === 'string' && account.image_url)
-      ?.image_url || '';
+    externalAccounts
+      .find((account: any) => typeof account?.image_url === 'string' && account.image_url.trim())
+      ?.image_url?.trim() || '';
   return oauthImage || undefined;
 }

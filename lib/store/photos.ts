@@ -4,7 +4,11 @@ export interface PhotoCacheEntry {
   email: string;
   url: string | null;
   at: number;
+  source?: 'provider' | 'company' | 'none';
+  version?: number;
 }
+
+export const PHOTO_CACHE_VERSION = 2;
 
 // 7-day TTL. Negative results (no photo found) are cached too, so the UI does
 // not keep retrying missing profile photos.
@@ -18,7 +22,11 @@ export async function getPhotoFromCache(email: string): Promise<PhotoCacheEntry 
   return entry;
 }
 
-export async function setPhotoCache(email: string, url: string | null): Promise<void> {
+export async function setPhotoCache(
+  email: string,
+  url: string | null,
+  source: PhotoCacheEntry['source'] = url ? 'provider' : 'none',
+): Promise<void> {
   const key = email.toLowerCase();
-  await kvUpsert('photo', key, { email: key, url, at: Date.now() });
+  await kvUpsert('photo', key, { email: key, url, source, version: PHOTO_CACHE_VERSION, at: Date.now() });
 }

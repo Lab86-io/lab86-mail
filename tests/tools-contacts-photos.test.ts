@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
+import { kvUpsert } from '../lib/store/kv';
+import { getPhotoFromCache } from '../lib/store/photos';
 import { contactLookup, expandAlias } from '../lib/tools/contacts';
 import {
   companyLogoUrl,
@@ -9,7 +11,7 @@ import {
   resolveProviderProfilePhoto,
 } from '../lib/tools/photo-resolution';
 import { resolvePhotos } from '../lib/tools/photos';
-import { runTool } from './tools/harness';
+import { runTool, withToolContext } from './tools/harness';
 
 describe('contact and photo tools', () => {
   test('contact_lookup and expand_alias remain stubbed', async () => {
@@ -39,12 +41,51 @@ describe('contact and photo tools', () => {
 
   test('resolve_photos falls back to company-domain logos for public domains', async () => {
     const result = await runTool(resolvePhotos.handler, {
-      account: 'jakob@example.test',
+      account: '__all__',
       emails: ['alerts@linear.app'],
     });
     expect(result.photos['alerts@linear.app']).toBe(
       'https://www.google.com/s2/favicons?sz=128&domain=linear.app',
     );
+  });
+
+  test('resolve_photos ignores legacy provider-scoped cache entries', async () => {
+    await withToolContext(() =>
+      kvUpsert('photo', 'friend@gmail.com', {
+        email: 'friend@gmail.com',
+        url: 'https://private.example/avatar.png',
+        source: 'provider',
+        version: 2,
+        at: Date.now(),
+      }),
+    );
+
+    const result = await runTool(resolvePhotos.handler, {
+      account: '__all__',
+      emails: ['friend@gmail.com'],
+    });
+    expect(result.photos['friend@gmail.com']).toBeNull();
+    const refreshed = await withToolContext(() => getPhotoFromCache('friend@gmail.com'));
+    expect(refreshed?.source).toBe('none');
+  });
+
+  test('resolve_photos retries legacy negative cache entries before falling back to initials', async () => {
+    await withToolContext(() =>
+      kvUpsert('photo', 'friend@gmail.com', {
+        email: 'friend@gmail.com',
+        url: null,
+        at: Date.now(),
+      }),
+    );
+
+    const result = await runTool(resolvePhotos.handler, {
+      account: '__all__',
+      emails: ['friend@gmail.com'],
+    });
+    expect(result.photos['friend@gmail.com']).toBeNull();
+    const refreshed = await withToolContext(() => getPhotoFromCache('friend@gmail.com'));
+    expect(refreshed?.version).toBe(2);
+    expect(refreshed?.source).toBe('none');
   });
 
   test('photo resolution helpers keep initials fallback and public company logos distinct', async () => {

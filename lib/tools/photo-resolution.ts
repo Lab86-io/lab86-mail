@@ -1,6 +1,6 @@
 import { isNylasConfigured } from '../hosted/env';
 import { requireNylas } from '../nylas/client';
-import { resolveConnectedAccount } from '../nylas/provider';
+import { listNylasAccounts, type NylasAccountRow, resolveConnectedAccount } from '../nylas/provider';
 
 const PERSONAL_DOMAINS = new Set([
   'aol.com',
@@ -46,16 +46,55 @@ export async function resolveProviderProfilePhoto({
   account: string;
   email: string;
 }): Promise<string | null> {
-  if (!userId || !account || account === '__all__' || !isNylasConfigured()) return null;
-  const row = await resolveConnectedAccount(userId, account);
-  if (!row || row.status !== 'connected') return null;
+  if (!userId || !account || !isNylasConfigured()) return null;
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return null;
+  const rows = await photoCandidateAccounts(userId, account, normalizedEmail);
+  for (const row of rows) {
+    try {
+      const url = await resolveProviderPhotoFromAccount(row, normalizedEmail);
+      if (url) return url;
+    } catch {
+      // Contact photos are opportunistic; try the next connected provider.
+    }
+  }
+  return null;
+}
 
+async function photoCandidateAccounts(
+  userId: string,
+  account: string,
+  email: string,
+): Promise<NylasAccountRow[]> {
+  if (account !== '__all__') {
+    const row = await resolveConnectedAccount(userId, account);
+    return row?.status === 'connected' ? [row] : [];
+  }
+
+  const accounts = await listNylasAccounts(userId).catch(() => []);
+  const rows = (
+    await Promise.all(
+      accounts
+        .filter((item) => item.authed)
+        .map((item) => resolveConnectedAccount(userId, item.accountId).catch(() => null)),
+    )
+  ).filter((row): row is NylasAccountRow => Boolean(row && row.status === 'connected'));
+
+  return rows.sort((a, b) => providerPhotoPreference(a, email) - providerPhotoPreference(b, email));
+}
+
+async function resolveProviderPhotoFromAccount(row: NylasAccountRow, email: string): Promise<string | null> {
   const page = await requireNylas().contacts.list({
     identifier: row.grantId,
     queryParams: { email, limit: 5 },
   });
   const contact = (page.data || []).find((candidate: any) =>
-    (candidate.emails || []).some((item: any) => String(item.email || '').toLowerCase() === email),
+    (candidate.emails || []).some(
+      (item: any) =>
+        String(item.email || '')
+          .trim()
+          .toLowerCase() === email,
+    ),
   );
   const direct = photoUrlFromContact(contact);
   if (direct) return direct;
@@ -67,6 +106,22 @@ export async function resolveProviderProfilePhoto({
     queryParams: { profilePicture: true },
   });
   return photoUrlFromContact(detailed.data);
+}
+
+function providerPhotoPreference(row: Pick<NylasAccountRow, 'provider'>, email: string) {
+  const domain = email.split('@')[1] || '';
+  if ((domain === 'gmail.com' || domain === 'googlemail.com') && row.provider === 'google') return 0;
+  if (
+    ['outlook.com', 'hotmail.com', 'live.com', 'msn.com'].includes(domain) &&
+    row.provider === 'microsoft'
+  ) {
+    return 0;
+  }
+  if (['icloud.com', 'me.com', 'mac.com'].includes(domain) && row.provider === 'icloud') return 0;
+  if (row.provider === 'google') return 1;
+  if (row.provider === 'microsoft') return 2;
+  if (row.provider === 'icloud') return 3;
+  return 4;
 }
 
 export function photoUrlFromContact(contact: any): string | null {

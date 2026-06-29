@@ -246,7 +246,7 @@ export function ThreadView() {
       ? primaryAccount
       : account && account !== ALL_ACCOUNTS
         ? account
-        : '';
+        : ALL_ACCOUNTS;
   const photoEmails = useMemo(() => {
     const set = new Set<string>();
     for (const m of messages) {
@@ -262,7 +262,7 @@ export function ThreadView() {
         account: photoAccount,
         emails: photoEmails,
       }),
-    enabled: !!photoAccount && photoEmails.length > 0,
+    enabled: photoEmails.length > 0,
     staleTime: 24 * 60 * 60_000,
   });
   const photos = photosQuery.data?.photos || {};
@@ -317,7 +317,7 @@ export function ThreadView() {
           <button
             type="button"
             onClick={() => closeCompose()}
-            className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
             title="Close"
           >
             <X className="h-3.5 w-3.5" />
@@ -416,7 +416,7 @@ export function ThreadView() {
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
             <Button
               type="button"
               variant="ghost"
@@ -461,7 +461,7 @@ export function ThreadView() {
             </Button>
           </div>
           {/* Utility cluster — one segmented group so the icons read as a set. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
             <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
               <RowIcon icon={ArchiveIcon} size={14} />
             </IconBtn>
