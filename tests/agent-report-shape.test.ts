@@ -186,11 +186,15 @@ describe('daily brief service metadata', () => {
   });
 
   test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
+    expect(HTML_ARTIFACT_BRIEF).toContain('MASTHEAD (signature element');
+    expect(HTML_ARTIFACT_BRIEF).toContain('The {data.weekday} Brief');
+    expect(HTML_ARTIFACT_BRIEF).toContain('newspaper spine');
     expect(HTML_ARTIFACT_BRIEF).toContain('SYSTEM THEME IS MANDATORY');
     expect(HTML_ARTIFACT_BRIEF).toContain('SYSTEM TYPOGRAPHY IS MANDATORY');
     expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-font-display)');
     expect(HTML_ARTIFACT_BRIEF).toContain('data.art.imageUrl');
     expect(HTML_ARTIFACT_BRIEF).toContain('required art header');
+    expect(HTML_ARTIFACT_BRIEF).toContain('CONTENT STRUCTURE');
   });
 });
 

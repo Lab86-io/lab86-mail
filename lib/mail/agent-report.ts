@@ -489,6 +489,13 @@ OUTPUT RULES (critical):
 - data-payload MUST be a valid JSON object string containing the exact ids/accounts for that action. Escape it correctly for HTML attributes. Prefer fewer buttons over guessed wiring.
 - Before final output, mentally validate every button: data-action is one VALID ACTION, data-payload is JSON, and every payload id/account exists in the data.
 
+MASTHEAD (signature element — required, first, and visually dominant):
+- Start with a full-bleed landscape art banner using data.art.imageUrl (object-fit: cover, ~38-46vh on desktop, never distorted). Use data.art.fallbacks only for image fallback behavior.
+- Overlay "The {data.weekday} Brief" directly on the art in var(--brief-font-display), centered or compositionally anchored, with a legibility scrim. Do NOT put the title below the image as a separate generic page heading.
+- Use data.localDate (e.g. "15 JUN 2026") and data.localTime (e.g. "9:54 AM") VERBATIM — they are already in the user's timezone. Place them along the left/right edges like a newspaper spine on desktop; on narrow screens they may collapse to a compact rail, but they must remain part of the masthead.
+- Put a small caption immediately under or inside the masthead using data.art.credit + " · " + data.art.source.
+- This masthead replaces any app header. Do not create a second app toolbar or generic "Your Daily Brief" title.
+
 THEME AND ASSETS:
 - Define these CSS custom properties on :root WITH fallbacks, and use them everywhere:
   --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc),
@@ -504,7 +511,15 @@ THEME AND ASSETS:
 DESIGN:
 - Editorial, confident, generous whitespace. Clear typographic hierarchy. Fully responsive from 360px to wide desktop. Use grid/flex, inline SVG charts, and tasteful micro-animations.
 - Avoid a generic stacked list. Use named sections, visual groupings, cards/tables/rails where useful, and compact dashboards for tool/calendar/task clusters.
+- Preserve the artifact/broadsheet feel from the masthead through the body: section rules, caption typography, spine/rail details, pull quotes, timelines, prep panels, and clear editorial rhythm. The page should feel designed, not like a default AI web page.
 - The design must work in light and dark because the host may override --brief-* variables. Do not hardcode large white panels, fixed black text, fixed white text, or isolated brand colors that will clash with the host theme.
+
+CONTENT STRUCTURE (compose from your analysis; omit only truly empty parts):
+- After the masthead, write an integrated narrative lede: 2-3 short paragraphs in body-sized text, with a clear through-line connecting mail, calendar, tasks, and connected tools. Do not make the lede a huge centered single paragraph.
+- "Needs you": the threads YOU judge as needing action — person/thread title, your one-line read of why from the body, how long it has sat, an open-thread button, and for reply-owed items a proposed draft via draft_reply.
+- "The week ahead": today through +7 days of calendar as a real timeline/table/agenda, not a loose list. For notable meetings, include prep context and offer a prep task when useful.
+- "Tasks / follow-through": due or overdue tasks and new tasks inferred from mail/meetings. Tasks are first-class, not a footnote.
+- Add other sections only if they improve this specific day: waiting on others, clear the noise, prep dossier, GitHub/tool digest, focus blocks, travel/logistics, or decision queue.
 
 DO NOT:
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
