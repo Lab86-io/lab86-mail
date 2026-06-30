@@ -159,6 +159,25 @@ export function isAlbatrossPrimaryView(view: unknown): view is AlbatrossPrimaryV
   return typeof view === 'string' && (ALBATROSS_PRIMARY_VIEWS as readonly string[]).includes(view);
 }
 
+export function isAnyPrimaryView(view: unknown): view is PrimaryView {
+  return isCorePrimaryView(view) || isAlbatrossPrimaryView(view);
+}
+
+export function persistedPrimaryViewFromStorage(raw: string | null): PrimaryView | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const view = parsed?.state?.primaryView;
+    return isAnyPrimaryView(view) ? view : null;
+  } catch {
+    return null;
+  }
+}
+
+export function hasPersistedPrimaryViewValue(raw: string | null): boolean {
+  return persistedPrimaryViewFromStorage(raw) !== null;
+}
+
 export function normalizePrimaryView(view: unknown, albatrossEnabled: boolean): PrimaryView {
   if (isCorePrimaryView(view)) return view;
   if (albatrossEnabled && isAlbatrossPrimaryView(view)) return view;

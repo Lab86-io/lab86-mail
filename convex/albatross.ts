@@ -55,6 +55,8 @@ const artifactKindValidator = v.union(
   v.literal('manual'),
 );
 const linkRoleValidator = v.union(v.literal('primary'), v.literal('secondary'), v.literal('supporting'));
+const ARTIFACT_ID_MAX = 200;
+const ACCOUNT_ID_MAX = 120;
 
 async function resolveUserId(
   ctx: QueryCtx | MutationCtx,
@@ -89,6 +91,14 @@ function normalizedRefs(input: {
   return {
     sourceRefs: normalizeSourceRefs(input.sourceRefs),
     confirmationRefs: normalizeConfirmationRefs(input.confirmationRefs),
+  };
+}
+
+function normalizedArtifactIdentity(input: { artifactId: string; accountId?: string }) {
+  const accountId = input.accountId ? normalizeText(input.accountId).slice(0, ACCOUNT_ID_MAX) : undefined;
+  return {
+    artifactId: normalizeText(input.artifactId).slice(0, ARTIFACT_ID_MAX),
+    accountId: accountId || undefined,
   };
 }
 
@@ -259,12 +269,13 @@ export const verifyAreaFact = mutation({
     const fact = await requireFact(ctx, args.factId, userId);
     assertFactTransitionAllowed(fact.status as AreaFactStatus, 'verified');
     const refs = normalizedRefs(args);
-    const confirmationRefs = [...fact.confirmationRefs, ...refs.confirmationRefs];
+    const sourceRefs = normalizeSourceRefs([...fact.sourceRefs, ...refs.sourceRefs]);
+    const confirmationRefs = normalizeConfirmationRefs([...fact.confirmationRefs, ...refs.confirmationRefs]);
     assertVerifiedFactAllowed({ kind: fact.kind, status: 'verified', confirmationRefs });
     const ts = now();
     await ctx.db.patch(args.factId, {
       status: 'verified',
-      sourceRefs: [...fact.sourceRefs, ...refs.sourceRefs],
+      sourceRefs,
       confirmationRefs,
       verifiedAt: ts,
       updatedAt: ts,
@@ -403,22 +414,34 @@ export const linkArtifactToArea = mutation({
     await requireArea(ctx, args.areaId, userId);
     const refs = normalizedRefs(args);
     const ts = now();
-    const artifactId = normalizeText(args.artifactId);
-    const existing = (
-      await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_artifact', (q) =>
-          q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', artifactId),
-        )
-        .collect()
-    ).find((link) => link.areaId === args.areaId);
+    const { artifactId, accountId } = normalizedArtifactIdentity(args);
+    const artifactLinks = accountId
+      ? await ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_account_artifact', (q) =>
+            q
+              .eq('userId', userId)
+              .eq('accountId', accountId)
+              .eq('artifactKind', args.artifactKind)
+              .eq('artifactId', artifactId),
+          )
+          .collect()
+      : await ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_artifact', (q) =>
+            q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', artifactId),
+          )
+          .collect();
+    const existing = artifactLinks.find(
+      (link) => link.areaId === args.areaId && (link.accountId || undefined) === accountId,
+    );
     const patch = {
       userId,
       areaId: args.areaId,
       externalId: args.externalId ? normalizeText(args.externalId) : undefined,
       artifactKind: args.artifactKind,
       artifactId,
-      accountId: args.accountId ? normalizeText(args.accountId) : undefined,
+      accountId,
       role: args.role || 'primary',
       status: (args.status || 'candidate') as AreaArtifactLinkStatus,
       confidence: args.confidence,
@@ -455,15 +478,35 @@ export const listAreaArtifactLinks = query({
 });
 
 export const listArtifactLinks = query({
-  args: { ...callerArgs, artifactKind: artifactKindValidator, artifactId: v.string() },
+  args: {
+    ...callerArgs,
+    artifactKind: artifactKindValidator,
+    artifactId: v.string(),
+    accountId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    return await ctx.db
-      .query('areaArtifactLinks')
-      .withIndex('by_user_artifact', (q) =>
-        q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', args.artifactId),
-      )
-      .collect();
+    const { artifactId, accountId } = normalizedArtifactIdentity(args);
+    if (accountId) {
+      return await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_account_artifact', (q) =>
+          q
+            .eq('userId', userId)
+            .eq('accountId', accountId)
+            .eq('artifactKind', args.artifactKind)
+            .eq('artifactId', artifactId),
+        )
+        .collect();
+    }
+    return (
+      await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_artifact', (q) =>
+          q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', artifactId),
+        )
+        .collect()
+    ).filter((link) => !link.accountId);
   },
 });
 

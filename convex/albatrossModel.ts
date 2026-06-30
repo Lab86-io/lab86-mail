@@ -35,8 +35,26 @@ export const SENSITIVE_FACT_KINDS = new Set([
   'company',
 ]);
 
+const REF_KIND_MAX = 80;
+const REF_ID_MAX = 200;
+const REF_LABEL_MAX = 200;
+const REF_ACCOUNT_ID_MAX = 120;
+const REF_URL_MAX = 500;
+const REF_CONFIRMED_BY_MAX = 120;
+const REF_PROMPT_MAX = 500;
+const REF_SOURCE_ID_MAX = 200;
+
 export function normalizeText(value: string, fallback = ''): string {
   return value.trim().replace(/\s+/g, ' ') || fallback;
+}
+
+function boundedText(value: string, max: number, fallback = ''): string {
+  return normalizeText(value, fallback).slice(0, max);
+}
+
+function optionalBoundedText(value: string | undefined, max: number): string | undefined {
+  if (!value) return undefined;
+  return boundedText(value, max) || undefined;
 }
 
 export function isSensitiveFactKind(kind: string): boolean {
@@ -79,11 +97,11 @@ export function assertFactTransitionAllowed(current: AreaFactStatus, next: AreaF
 export function normalizeSourceRefs(refs: AlbatrossSourceRef[] | undefined): AlbatrossSourceRef[] {
   return (refs || [])
     .map((ref) => ({
-      kind: normalizeText(ref.kind),
-      id: normalizeText(ref.id),
-      label: ref.label ? normalizeText(ref.label) : undefined,
-      accountId: ref.accountId ? normalizeText(ref.accountId) : undefined,
-      url: ref.url ? normalizeText(ref.url) : undefined,
+      kind: boundedText(ref.kind, REF_KIND_MAX),
+      id: boundedText(ref.id, REF_ID_MAX),
+      label: optionalBoundedText(ref.label, REF_LABEL_MAX),
+      accountId: optionalBoundedText(ref.accountId, REF_ACCOUNT_ID_MAX),
+      url: optionalBoundedText(ref.url, REF_URL_MAX),
     }))
     .filter((ref) => ref.kind && ref.id)
     .slice(0, 20);
@@ -94,12 +112,12 @@ export function normalizeConfirmationRefs(
 ): AlbatrossConfirmationRef[] {
   return (refs || [])
     .map((ref) => ({
-      kind: normalizeText(ref.kind),
-      id: normalizeText(ref.id),
+      kind: boundedText(ref.kind, REF_KIND_MAX),
+      id: boundedText(ref.id, REF_ID_MAX),
       confirmedAt: ref.confirmedAt,
-      confirmedBy: ref.confirmedBy ? normalizeText(ref.confirmedBy) : undefined,
-      prompt: ref.prompt ? normalizeText(ref.prompt).slice(0, 500) : undefined,
-      sourceRefId: ref.sourceRefId ? normalizeText(ref.sourceRefId) : undefined,
+      confirmedBy: optionalBoundedText(ref.confirmedBy, REF_CONFIRMED_BY_MAX),
+      prompt: optionalBoundedText(ref.prompt, REF_PROMPT_MAX),
+      sourceRefId: optionalBoundedText(ref.sourceRefId, REF_SOURCE_ID_MAX),
     }))
     .filter((ref) => ref.kind && ref.id && Number.isFinite(ref.confirmedAt))
     .slice(0, 20);

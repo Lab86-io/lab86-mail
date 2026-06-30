@@ -82,4 +82,42 @@ describe('Albatross context graph trust rules', () => {
       { ...userConfirmation, prompt: 'Store this as context.', sourceRefId: undefined },
     ]);
   });
+
+  test('ref normalization bounds every persisted string field and caps arrays', () => {
+    const long = 'x'.repeat(800);
+    const sources = normalizeSourceRefs(
+      Array.from({ length: 25 }, (_, index) => ({
+        kind: `kind-${index}-${long}`,
+        id: `id-${index}-${long}`,
+        label: `label-${index}-${long}`,
+        accountId: `account-${index}-${long}`,
+        url: `https://example.test/${index}/${long}`,
+      })),
+    );
+
+    expect(sources).toHaveLength(20);
+    expect(sources[0]!.kind.length).toBeLessThanOrEqual(80);
+    expect(sources[0]!.id.length).toBeLessThanOrEqual(200);
+    expect(sources[0]!.label!.length).toBeLessThanOrEqual(200);
+    expect(sources[0]!.accountId!.length).toBeLessThanOrEqual(120);
+    expect(sources[0]!.url!.length).toBeLessThanOrEqual(500);
+
+    const confirmations = normalizeConfirmationRefs(
+      Array.from({ length: 25 }, (_, index) => ({
+        kind: `kind-${index}-${long}`,
+        id: `id-${index}-${long}`,
+        confirmedAt: userConfirmation.confirmedAt + index,
+        confirmedBy: `user-${index}-${long}`,
+        prompt: `prompt-${index}-${long}`,
+        sourceRefId: `source-${index}-${long}`,
+      })),
+    );
+
+    expect(confirmations).toHaveLength(20);
+    expect(confirmations[0]!.kind.length).toBeLessThanOrEqual(80);
+    expect(confirmations[0]!.id.length).toBeLessThanOrEqual(200);
+    expect(confirmations[0]!.confirmedBy!.length).toBeLessThanOrEqual(120);
+    expect(confirmations[0]!.prompt!.length).toBeLessThanOrEqual(500);
+    expect(confirmations[0]!.sourceRefId!.length).toBeLessThanOrEqual(200);
+  });
 });

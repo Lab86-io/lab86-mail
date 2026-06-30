@@ -97,7 +97,7 @@ function basicAuthOrNext(req: Request) {
   });
 }
 
-function shouldRequireBasicAuth(req: Request, pathname: string) {
+export function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1' && isBasicAuthBypassAllowed(req)) return false;
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
@@ -118,17 +118,17 @@ function shouldRequireBasicAuth(req: Request, pathname: string) {
   return true;
 }
 
-function isBasicAuthBypassAllowed(req: Request) {
+export function isBasicAuthBypassAllowed(req: Request) {
   if (process.env.NODE_ENV === 'production' && process.env.RAILWAY_ENVIRONMENT_NAME !== 'development') {
     return false;
   }
   return isLocalBasicAuthBypassHost(req);
 }
 
-function isLocalBasicAuthBypassHost(req: Request) {
+export function isLocalBasicAuthBypassHost(req: Request) {
   const url = new URL(req.url);
   const host = req.headers.get('host') || url.host;
-  const hostname = host.replace(/:\d+$/, '').toLowerCase();
+  const hostname = hostnameWithoutPort(host);
   return (
     hostname === 'localhost' ||
     hostname === '127.0.0.1' ||
@@ -137,6 +137,17 @@ function isLocalBasicAuthBypassHost(req: Request) {
     hostname.endsWith('.localhost') ||
     hostname === 'albatross.lab86.io'
   );
+}
+
+function hostnameWithoutPort(host: string) {
+  const normalized = host.trim().toLowerCase();
+  if (normalized.startsWith('[')) {
+    const closeBracket = normalized.indexOf(']');
+    return closeBracket === -1 ? normalized : normalized.slice(0, closeBracket + 1);
+  }
+  const colonCount = [...normalized].filter((char) => char === ':').length;
+  if (colonCount > 1) return normalized;
+  return normalized.replace(/:\d+$/, '');
 }
 
 function decodeBase64(value: string) {
