@@ -485,7 +485,15 @@
         "role": "primary",
         "status": "verified",
         "confidence": 0.96,
-        "reason": "Verified CardHunt domain and sender match."
+        "reason": "Verified CardHunt domain and sender match.",
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_cardhunt_launch_link",
+            "confirmedAt": "2026-06-24T14:25:00.000Z",
+            "prompt": "Assign this launch thread to CardHunt as verified context."
+          }
+        ]
       },
       {
         "id": "link_cardhunt_demo_primary",
@@ -515,7 +523,15 @@
         "role": "primary",
         "status": "verified",
         "confidence": 0.93,
-        "reason": "User confirmed banjo belongs to Music To Learn."
+        "reason": "User confirmed banjo belongs to Music To Learn.",
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_banjo_music_link",
+            "confirmedAt": "2026-06-28T19:05:00.000Z",
+            "prompt": "Assign the banjo course thread to Music To Learn as verified context."
+          }
+        ]
       },
       {
         "id": "link_lease_relationship_secondary",

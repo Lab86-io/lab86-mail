@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { isAlbatrossEnabled } from '../lib/hosted/controls';
-import { isAlbatrossPrimaryView, normalizePrimaryView, resolveInitialPrimaryView } from '../lib/shared/types';
+import {
+  hasPersistedPrimaryViewValue,
+  isAlbatrossPrimaryView,
+  normalizePrimaryView,
+  persistedPrimaryViewFromStorage,
+  resolveInitialPrimaryView,
+} from '../lib/shared/types';
 
 describe('Albatross shell flag', () => {
   const previous = process.env.LAB86_ENABLE_ALBATROSS;
@@ -51,5 +57,25 @@ describe('Albatross primary view guards', () => {
   test('keeps the saved primary view authoritative after hydration', () => {
     expect(resolveInitialPrimaryView('daily_report', true, 'areas', true)).toBe('daily_report');
     expect(resolveInitialPrimaryView('mail', true, 'areas', true)).toBe('mail');
+  });
+
+  test('invalid persisted primary views do not suppress an explicit boot surface', () => {
+    const raw = JSON.stringify({ state: { primaryView: 'missing_surface' } });
+    const hasSavedPrimaryView = hasPersistedPrimaryViewValue(raw);
+
+    expect(hasSavedPrimaryView).toBe(false);
+    expect(persistedPrimaryViewFromStorage(raw)).toBeNull();
+    expect(persistedPrimaryViewFromStorage(null)).toBeNull();
+    expect(persistedPrimaryViewFromStorage('{not-json')).toBeNull();
+    expect(resolveInitialPrimaryView('daily_report', true, 'areas', hasSavedPrimaryView)).toBe('areas');
+  });
+
+  test('saved Albatross views remain valid persisted preferences while hidden by the flag', () => {
+    const raw = JSON.stringify({ state: { primaryView: 'areas' } });
+
+    expect(hasPersistedPrimaryViewValue(raw)).toBe(true);
+    expect(persistedPrimaryViewFromStorage(raw)).toBe('areas');
+    expect(resolveInitialPrimaryView('areas', true, 'mail', true)).toBe('areas');
+    expect(resolveInitialPrimaryView('areas', false, 'mail', true)).toBe('daily_report');
   });
 });

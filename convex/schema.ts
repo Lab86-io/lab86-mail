@@ -1,6 +1,23 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
+const albatrossSourceRef = v.object({
+  kind: v.string(),
+  id: v.string(),
+  label: v.optional(v.string()),
+  accountId: v.optional(v.string()),
+  url: v.optional(v.string()),
+});
+
+const albatrossConfirmationRef = v.object({
+  kind: v.string(),
+  id: v.string(),
+  confirmedAt: v.number(),
+  confirmedBy: v.optional(v.string()),
+  prompt: v.optional(v.string()),
+  sourceRefId: v.optional(v.string()),
+});
+
 export default defineSchema({
   users: defineTable({
     clerkUserId: v.string(),
@@ -302,6 +319,86 @@ export default defineSchema({
     .index('by_user_kind', ['userId', 'kind'])
     .index('by_user_kind_key', ['userId', 'kind', 'key'])
     .index('by_user_source', ['userId', 'source']),
+
+  areas: defineTable({
+    userId: v.string(),
+    externalId: v.optional(v.string()),
+    name: v.string(),
+    kind: v.string(),
+    status: v.union(v.literal('active'), v.literal('archived')),
+    description: v.optional(v.string()),
+    priority: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_kind', ['userId', 'kind'])
+    .index('by_user_external', ['userId', 'externalId']),
+
+  areaFacts: defineTable({
+    userId: v.string(),
+    areaId: v.id('areas'),
+    externalId: v.optional(v.string()),
+    kind: v.string(),
+    value: v.string(),
+    status: v.union(
+      v.literal('candidate'),
+      v.literal('verified'),
+      v.literal('rejected'),
+      v.literal('superseded'),
+    ),
+    sourceRefs: v.array(albatrossSourceRef),
+    confirmationRefs: v.array(albatrossConfirmationRef),
+    supersedesFactId: v.optional(v.id('areaFacts')),
+    supersededByFactId: v.optional(v.id('areaFacts')),
+    rejectedReason: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    verifiedAt: v.optional(v.number()),
+    rejectedAt: v.optional(v.number()),
+    supersededAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_area', ['areaId'])
+    .index('by_area_status', ['areaId', 'status'])
+    .index('by_user_area_status', ['userId', 'areaId', 'status'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_kind', ['userId', 'kind'])
+    .index('by_user_external', ['userId', 'externalId']),
+
+  areaArtifactLinks: defineTable({
+    userId: v.string(),
+    areaId: v.id('areas'),
+    externalId: v.optional(v.string()),
+    artifactKind: v.union(
+      v.literal('mailThread'),
+      v.literal('calendarEvent'),
+      v.literal('task'),
+      v.literal('mcpItem'),
+      v.literal('intent'),
+      v.literal('manual'),
+    ),
+    artifactId: v.string(),
+    accountId: v.optional(v.string()),
+    role: v.union(v.literal('primary'), v.literal('secondary'), v.literal('supporting')),
+    status: v.union(v.literal('candidate'), v.literal('verified'), v.literal('rejected')),
+    confidence: v.optional(v.number()),
+    reason: v.optional(v.string()),
+    sourceRefs: v.array(albatrossSourceRef),
+    confirmationRefs: v.array(albatrossConfirmationRef),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_area', ['areaId'])
+    .index('by_user_area', ['userId', 'areaId'])
+    .index('by_user_area_status', ['userId', 'areaId', 'status'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_artifact', ['userId', 'artifactKind', 'artifactId'])
+    .index('by_user_account_artifact', ['userId', 'accountId', 'artifactKind', 'artifactId'])
+    .index('by_user_external', ['userId', 'externalId']),
 
   mailSyncStates: defineTable({
     userId: v.string(),

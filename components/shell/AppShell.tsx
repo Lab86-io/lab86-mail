@@ -16,6 +16,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
 import {
+  hasPersistedPrimaryViewValue,
   isAlbatrossPrimaryView,
   normalizePrimaryView,
   type PrimaryView,
@@ -327,10 +328,7 @@ const noopLayoutStorage: Pick<Storage, 'getItem' | 'setItem'> = {
 function hasPersistedPrimaryView() {
   if (typeof window === 'undefined') return false;
   try {
-    const raw = window.localStorage.getItem('lab86-mail-ui');
-    if (!raw) return false;
-    const parsed = JSON.parse(raw);
-    return Boolean(parsed?.state && Object.hasOwn(parsed.state, 'primaryView'));
+    return hasPersistedPrimaryViewValue(window.localStorage.getItem('lab86-mail-ui'));
   } catch {
     return false;
   }

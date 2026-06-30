@@ -250,7 +250,10 @@ const ACCOUNT_BULK_TABLES = [
   'mailWebhookEvents',
   'calendarEvents',
   'calendarEventCorpus',
+  'areaArtifactLinks',
 ] as const;
+
+const USER_BULK_TABLES = [...ACCOUNT_BULK_TABLES, 'areaFacts'] as const;
 
 const PURGE_BATCH = 250;
 
@@ -261,7 +264,7 @@ export const purgeUserDataBatch = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     let deleted = 0;
-    for (const table of ACCOUNT_BULK_TABLES) {
+    for (const table of USER_BULK_TABLES) {
       if (deleted >= PURGE_BATCH) break;
       const rows = await ctx.db
         .query(table)
@@ -412,6 +415,7 @@ export const deleteUserCascade = mutation({
       'calendars',
       'calendarSyncStates',
       'albatrossDevRecords',
+      'areas',
       'mcpConnections',
       'mcpCredentials',
       'mcpItems',

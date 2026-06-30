@@ -577,14 +577,14 @@ describe('compliance readiness', () => {
     // is either added to the cascade or explicitly exempted here.
     const schema = readFileSync(path.join(process.cwd(), 'convex/schema.ts'), 'utf8');
     const accounts = readFileSync(path.join(process.cwd(), 'convex/accounts.ts'), 'utf8');
-    const cascadeSource = accounts.slice(accounts.indexOf('deleteUserCascade'));
+    const cleanupSource = accounts.slice(accounts.indexOf('ACCOUNT_BULK_TABLES'));
     const tables = [...schema.matchAll(/^\s{2}([a-zA-Z0-9]+): defineTable/gm)].map((match) => match[1]);
     const exempt = new Set<string>([]);
 
     expect(tables.length).toBeGreaterThan(10);
     for (const table of tables) {
       if (exempt.has(table)) continue;
-      expect(cascadeSource).toContain(`'${table}'`);
+      expect(cleanupSource).toContain(`'${table}'`);
     }
   });
 });
