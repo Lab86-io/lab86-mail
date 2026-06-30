@@ -65,6 +65,8 @@ describe('Albatross primary view guards', () => {
 
     expect(hasSavedPrimaryView).toBe(false);
     expect(persistedPrimaryViewFromStorage(raw)).toBeNull();
+    expect(persistedPrimaryViewFromStorage(null)).toBeNull();
+    expect(persistedPrimaryViewFromStorage('{not-json')).toBeNull();
     expect(resolveInitialPrimaryView('daily_report', true, 'areas', hasSavedPrimaryView)).toBe('areas');
   });
 
