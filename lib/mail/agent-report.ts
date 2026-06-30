@@ -497,6 +497,18 @@ MASTHEAD (signature element — required, first, and visually dominant):
 - Put a small caption immediately under or inside the masthead using data.art.credit + " · " + data.art.source.
 - This masthead replaces any app header. Do not create a second app toolbar or generic "Your Daily Brief" title.
 
+STYLIZED LEDE SYSTEM (required after the masthead):
+- The lede must be a designed editorial object, not a plain paragraph block. Implement it with your own CSS in the document; do not use external libraries.
+- Choose exactly ONE treatment from this internal lede treatment library, based on the day's content:
+  1. Illuminated brief: large drop initial, 2-3 short body paragraphs, and a narrow margin rail naming the day's main tension.
+  2. Dispatch deck: a compact headline/deck, a ruled side note, and 2-3 short paragraphs in a constrained measure.
+  3. Correspondence map: names/entities as small connected labels around the lede, showing who needs what.
+  4. Agenda score: a lede paired with a tiny inline timeline or beat marks for today's sequence.
+  5. Decision ledger: a lede split into "respond / wait / prepare" columns when the day is action-heavy.
+  6. Quiet bulletin: restrained paragraph stack with a pull quote and captioned rule for light days.
+- The lede must include 2-3 short paragraphs in body-sized text, but it must also have a typographic gesture: drop cap, side rail, pull quote, inline timeline, marginalia, connected labels, or another content-bearing device.
+- Never render the lede as one huge centered paragraph, a generic hero subtitle, or full-width body copy. If it looks like ordinary article text with a big top margin, redesign it.
+
 THEME AND ASSETS:
 - Define these CSS custom properties on :root WITH fallbacks, and use them everywhere:
   --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc),
@@ -508,6 +520,13 @@ THEME AND ASSETS:
 - SYSTEM TYPOGRAPHY IS MANDATORY: use var(--brief-font-display) for the masthead title, h1/h2/h3, section headers, major item titles, and editorial display moments. Use var(--brief-font-body) for paragraphs, metadata, controls, tables, and compact UI text. Apply var(--brief-display-tracking) to display/header text so the host-selected font is respected.
 - Include the daily art masthead as the first major visual element in the document using data.art.imageUrl, with data.art.fallbacks for image fallback if desired, and a small attribution using data.art.credit + " · " + data.art.source. This is a required art header, not optional decoration; never replace it with a gradient-only, icon-only, or text-only masthead.
 - The host will inject live theme variables after load. Include this listener if you use custom JS: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
+
+LIGHT AND DARK MODE REQUIREMENTS:
+- The artifact must be designed for both light and dark from the start. It is not acceptable to make a dark design and hope token injection fixes it.
+- Define usable :root fallbacks for light mode and include an @media (prefers-color-scheme: dark) fallback that remaps only the --brief-* tokens; the host may override both after load.
+- Every layer must be semantic: page background, elevated surfaces, subtle fills, hairlines, accent fills, muted text, and focus rings must derive from --brief-* tokens with color-mix/opacity.
+- Art scrims, captions, timeline connectors, chart strokes/fills, and action controls must remain legible in both light and dark. Avoid fixed black, fixed white, fixed opacity overlays that only work in one mode.
+- Before final output, mentally check contrast in both modes: body copy readable, muted text still visible, action controls obvious, chart marks distinguishable, and the masthead title legible over the image.
 
 DESIGN:
 - Editorial, confident, generous whitespace. Clear typographic hierarchy. Fully responsive from 360px to wide desktop. Use grid/flex, inline SVG charts, and tasteful micro-animations.
@@ -542,7 +561,7 @@ AI SLOP BAN LIST — before final output, ensure none of these twenty tells domi
 20. Any component that would still make sense if all real mail/calendar/task content were swapped out.
 
 CONTENT STRUCTURE (compose from your analysis; omit only truly empty parts):
-- After the masthead, write an integrated narrative lede: 2-3 short paragraphs in body-sized text, with a clear through-line connecting mail, calendar, tasks, and connected tools. Do not make the lede a huge centered single paragraph.
+- After the masthead, write the required stylized lede using the STYLIZED LEDE SYSTEM: 2-3 short paragraphs in body-sized text, with a clear through-line connecting mail, calendar, tasks, and connected tools, plus a content-bearing typographic/device treatment.
 - "Needs you": the threads YOU judge as needing action — person/thread title, your one-line read of why from the body, how long it has sat, an open-thread button, and for reply-owed items a proposed draft via draft_reply.
 - "The week ahead": today through +7 days of calendar as a real timeline/table/agenda, not a loose list. For notable meetings, include prep context and offer a prep task when useful.
 - "Tasks / follow-through": due or overdue tasks and new tasks inferred from mail/meetings. Tasks are first-class, not a footnote.

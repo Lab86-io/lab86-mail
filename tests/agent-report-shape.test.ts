@@ -192,6 +192,11 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('REQUIRED VISUAL MODULES');
     expect(HTML_ARTIFACT_BRIEF).toContain('TIMELINE STANDARD');
     expect(HTML_ARTIFACT_BRIEF).toContain('ACTION DESIGN');
+    expect(HTML_ARTIFACT_BRIEF).toContain('STYLIZED LEDE SYSTEM');
+    expect(HTML_ARTIFACT_BRIEF).toContain('internal lede treatment library');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Illuminated brief');
+    expect(HTML_ARTIFACT_BRIEF).toContain('LIGHT AND DARK MODE REQUIREMENTS');
+    expect(HTML_ARTIFACT_BRIEF).toContain('prefers-color-scheme: dark');
     expect(HTML_ARTIFACT_BRIEF).toContain('AI SLOP BAN LIST');
     expect(HTML_ARTIFACT_BRIEF).toContain('twenty tells');
     expect(HTML_ARTIFACT_BRIEF).toContain('The {data.weekday} Brief');
