@@ -293,6 +293,10 @@ describe('extractHtml', () => {
   test('rejects non-doc fragments', () => {
     expect(extractHtml('<div>not enough</div>')).toBeNull();
   });
+
+  test('rejects incomplete HTML documents', () => {
+    expect(extractHtml(`<!doctype html><html><body>${'ok '.repeat(80)}</body>`)).toBeNull();
+  });
 });
 
 function briefComposition(title: string) {

@@ -442,6 +442,7 @@ async function composeArtifactHtml(report: DailyReport, userId?: string | null):
   const { text } = await generateTextForCurrentUser({
     feature: 'daily_report_artifact', // tiered cap → 32k output
     speed: 'primary',
+    userId,
     system: HTML_ARTIFACT_BRIEF,
     prompt: buildDataPrompt(report, extras),
   });
@@ -458,7 +459,8 @@ export function extractHtml(raw: string): string | null {
   if (start === -1) return null;
   text = text.slice(start).trim();
   const end = text.toLowerCase().lastIndexOf('</html>');
-  if (end !== -1) text = text.slice(0, end + '</html>'.length);
+  if (end === -1) return null;
+  text = text.slice(0, end + '</html>'.length);
   return text.length > 200 ? text : null;
 }
 
