@@ -69,6 +69,56 @@ describe('BriefComposition', () => {
     expect(composition.blocks[0]).toMatchObject({ type: 'chart', title: 'Open loops by area' });
   });
 
+  test('repairs malformed optional source refs and actions from model output', () => {
+    const composition = parseBriefComposition({
+      version: 1,
+      title: 'Daily Brief',
+      services: ['gmail'],
+      blocks: [
+        {
+          type: 'needs_you',
+          title: 'Needs you',
+          items: [
+            {
+              account: 'me@example.test',
+              threadId: 'thread_1',
+              subject: 'Launch review',
+              person: 'Alex',
+              reason: 'Needs a decision.',
+              sourceRefs: [{ kind: 'email', threadId: 'thread_1' }, { kind: 'thread' }],
+              actions: [
+                { action: 'open_thread', payload: { account: 'me@example.test', threadId: 'thread_1' } },
+                { action: 'reply' },
+              ],
+            },
+          ],
+          sourceRefs: [{ kind: 'mail', id: 'thread_1' }],
+        },
+        {
+          type: 'chart',
+          title: 'Workload',
+          data: [{ label: 'Launch', value: 2 }],
+          sourceRefs: [{ kind: 'unknown' }],
+        },
+      ],
+    });
+
+    const needs = composition.blocks.find((block) => block.type === 'needs_you');
+    expect(needs).toMatchObject({
+      items: [
+        {
+          sourceRefs: [{ kind: 'thread', id: 'thread_1' }],
+          actions: [{ action: 'open_thread', label: 'Open' }],
+        },
+      ],
+      sourceRefs: [{ kind: 'thread', id: 'thread_1' }],
+    });
+    expect(composition.blocks[1]).toMatchObject({
+      type: 'chart',
+      sourceRefs: [{ kind: 'derived', id: 'block:chart:1' }],
+    });
+  });
+
   test('renders allowed custom widgets and falls back for unsafe widgets', () => {
     const safeHtml =
       '<button>Open</button><script>window.parent.postMessage({source:"lab86-brief-widget",action:"open_view",payload:{view:"mail"}},"*")</script>';

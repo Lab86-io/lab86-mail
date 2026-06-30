@@ -3,31 +3,35 @@ import type { DailyReport, DailyReportCalendarItem, DailyReportItem, DailyReport
 
 export const BRIEF_COMPOSITION_VERSION = 1;
 
+const BRIEF_SOURCE_REF_KINDS = ['thread', 'message', 'task', 'event', 'mcp', 'account', 'derived'] as const;
+const BRIEF_ACTION_TYPES = [
+  'open_thread',
+  'open_view',
+  'open_event',
+  'resolve_thread',
+  'dismiss_thread',
+  'toggle_task',
+  'dismiss_task',
+  'create_task',
+  'draft_reply',
+  'archive_thread',
+  'rsvp_event',
+  'create_event',
+] as const;
+const BRIEF_ACTION_STYLES = ['primary', 'secondary', 'danger', 'quiet'] as const;
+
 export const BriefSourceRefSchema = z.object({
-  kind: z.enum(['thread', 'message', 'task', 'event', 'mcp', 'account', 'derived']),
+  kind: z.enum(BRIEF_SOURCE_REF_KINDS),
   id: z.string().min(1),
   account: z.string().optional(),
   label: z.string().optional(),
 });
 
 export const BriefActionSchema = z.object({
-  action: z.enum([
-    'open_thread',
-    'open_view',
-    'open_event',
-    'resolve_thread',
-    'dismiss_thread',
-    'toggle_task',
-    'dismiss_task',
-    'create_task',
-    'draft_reply',
-    'archive_thread',
-    'rsvp_event',
-    'create_event',
-  ]),
+  action: z.enum(BRIEF_ACTION_TYPES),
   label: z.string().min(1).max(80),
   payload: z.record(z.string(), z.unknown()).default({}),
-  style: z.enum(['primary', 'secondary', 'danger', 'quiet']).default('secondary'),
+  style: z.enum(BRIEF_ACTION_STYLES).default('secondary'),
 });
 
 export const BriefBlockSchema = z.discriminatedUnion('type', [
@@ -192,7 +196,9 @@ export type BriefComposition = z.infer<typeof BriefCompositionSchema>;
 type BriefLaneItem = Omit<DailyReportItem, 'lane'> & { lane: string };
 
 export function parseBriefComposition(value: unknown): BriefComposition {
-  return BriefCompositionSchema.parse(value);
+  const parsed = BriefCompositionSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  return BriefCompositionSchema.parse(repairBriefComposition(value));
 }
 
 export function extractBriefCompositionJson(raw: string): unknown {
@@ -203,6 +209,149 @@ export function extractBriefCompositionJson(raw: string): unknown {
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end <= start) throw new Error('brief composition JSON not found');
   return JSON.parse(text.slice(start, end + 1));
+}
+
+function repairBriefComposition(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const composition = repairNestedCompositionValue(value) as Record<string, unknown>;
+  if (!Array.isArray(composition.blocks)) return composition;
+  composition.blocks = composition.blocks.map((block, index) => {
+    const repaired = repairNestedCompositionValue(block) as Record<string, unknown>;
+    if (
+      (repaired.type === 'chart' || repaired.type === 'custom_widget') &&
+      (!Array.isArray(repaired.sourceRefs) || !repaired.sourceRefs.length)
+    ) {
+      repaired.sourceRefs = [{ kind: 'derived', id: `block:${String(repaired.type)}:${index}` }];
+    }
+    return repaired;
+  });
+  return composition;
+}
+
+function repairNestedCompositionValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(repairNestedCompositionValue);
+  if (!isRecord(value)) return value;
+
+  const repaired: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'sourceRefs') {
+      repaired[key] = sanitizeSourceRefs(entry);
+    } else if (key === 'actions') {
+      repaired[key] = sanitizeActions(entry);
+    } else if (key === 'action' && isRecord(entry)) {
+      const [action] = sanitizeActions([entry]);
+      if (action) repaired[key] = action;
+    } else if (key === 'allowedActions') {
+      repaired[key] = sanitizeAllowedActions(entry);
+    } else {
+      repaired[key] = repairNestedCompositionValue(entry);
+    }
+  }
+  return repaired;
+}
+
+function sanitizeSourceRefs(value: unknown): BriefSourceRef[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const id = firstString(
+      entry.id,
+      entry.threadId,
+      entry.messageId,
+      entry.cardId,
+      entry.eventId,
+      entry.account,
+    );
+    if (!id) return [];
+    const ref: BriefSourceRef = {
+      kind: sourceRefKind(entry.kind, entry),
+      id,
+    };
+    const account = firstString(entry.account);
+    const label = firstString(entry.label, entry.subject, entry.title);
+    if (account) ref.account = account;
+    if (label) ref.label = label;
+    return [ref];
+  });
+}
+
+function sourceRefKind(value: unknown, entry: Record<string, unknown>): BriefSourceRef['kind'] {
+  if (isOneOf(value, BRIEF_SOURCE_REF_KINDS)) return value;
+  const text = typeof value === 'string' ? value.toLowerCase() : '';
+  if (text.includes('message')) return 'message';
+  if (text.includes('thread') || text.includes('mail') || text.includes('email')) return 'thread';
+  if (text.includes('task') || text.includes('todo')) return 'task';
+  if (text.includes('event') || text.includes('calendar')) return 'event';
+  if (text.includes('account')) return 'account';
+  if (entry.threadId) return 'thread';
+  if (entry.messageId) return 'message';
+  if (entry.cardId) return 'task';
+  if (entry.eventId) return 'event';
+  return 'derived';
+}
+
+function sanitizeActions(value: unknown): BriefAction[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || !isOneOf(entry.action, BRIEF_ACTION_TYPES)) return [];
+    const label = firstString(entry.label) || defaultActionLabel(entry.action);
+    const payload = isRecord(entry.payload) ? entry.payload : {};
+    const style = isOneOf(entry.style, BRIEF_ACTION_STYLES) ? entry.style : 'secondary';
+    return [
+      {
+        action: entry.action,
+        label: label.slice(0, 80),
+        payload,
+        style,
+      },
+    ];
+  });
+}
+
+function sanitizeAllowedActions(value: unknown): BriefAction['action'][] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is BriefAction['action'] => isOneOf(entry, BRIEF_ACTION_TYPES));
+}
+
+function defaultActionLabel(action: BriefAction['action']): string {
+  switch (action) {
+    case 'open_thread':
+    case 'open_event':
+    case 'open_view':
+      return 'Open';
+    case 'resolve_thread':
+      return 'Done';
+    case 'dismiss_thread':
+    case 'dismiss_task':
+      return 'Remove';
+    case 'toggle_task':
+      return 'Complete';
+    case 'create_task':
+      return 'Create task';
+    case 'draft_reply':
+      return 'Draft reply';
+    case 'archive_thread':
+      return 'Archive';
+    case 'rsvp_event':
+      return 'RSVP';
+    case 'create_event':
+      return 'Create event';
+  }
+}
+
+function firstString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function isOneOf<const T extends readonly string[]>(value: unknown, options: T): value is T[number] {
+  return typeof value === 'string' && (options as readonly string[]).includes(value);
 }
 
 export function compositionFromReport(report: DailyReport): BriefComposition {
