@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
-import type { PrimaryView } from './shared/types';
+import { isAlbatrossPrimaryView, isCorePrimaryView, type PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
   to?: string;
@@ -261,7 +261,7 @@ export const useClientStore = create<ClientState>()(
     }),
     {
       name: PERSIST_KEY,
-      version: 3,
+      version: 4,
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
@@ -273,6 +273,9 @@ export const useClientStore = create<ClientState>()(
         }
         // The Waiting smart category was removed; fold it into Review.
         if (persisted.smartCategory === 'waiting') persisted.smartCategory = 'review';
+        if (!isCorePrimaryView(persisted.primaryView) && !isAlbatrossPrimaryView(persisted.primaryView)) {
+          persisted.primaryView = 'daily_report';
+        }
         return persisted;
       },
       partialize: (s) => ({

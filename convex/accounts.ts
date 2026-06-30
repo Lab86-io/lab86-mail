@@ -411,6 +411,7 @@ export const deleteUserCascade = mutation({
       'suggestions',
       'calendars',
       'calendarSyncStates',
+      'albatrossDevRecords',
       'mcpConnections',
       'mcpCredentials',
       'mcpItems',

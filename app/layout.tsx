@@ -7,6 +7,7 @@ import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
 import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isClerkConfigured } from '@/lib/hosted/env';
 import './globals.css';
 
 // Warm editorial display serif — used for the Daily Report masthead, datelines,
@@ -69,12 +70,13 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const clerkEnabled = isClerkConfigured();
   const clerkProxyUrl =
-    process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isStagingRuntime() ? '/__clerk' : undefined;
+    clerkEnabled && process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isStagingRuntime() ? '/__clerk' : undefined;
   const content = (
     <>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-        <QueryProvider>
+        <QueryProvider clerkEnabled={clerkEnabled}>
           {children}
           <Toaster position="bottom-center" theme="system" closeButton richColors />
         </QueryProvider>
@@ -89,7 +91,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable} ${averia.variable} ${instrument.variable} ${hanken.variable}`}
     >
       <body>
-        {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
+        {clerkEnabled ? (
           <ClerkProvider
             {...(clerkProxyUrl ? { proxyUrl: clerkProxyUrl } : {})}
             appearance={{
