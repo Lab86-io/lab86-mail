@@ -350,7 +350,7 @@ describe('BriefComposition', () => {
         { action: { action: 'archive_thread', label: 'Archive' } },
         { action: { action: 'rsvp_event', label: 'RSVP' } },
         { action: { action: 'create_event', label: 'Create event' } },
-        {},
+        { label: 'Ignore bad action' },
       ],
     });
     if (composition.blocks[1].type !== 'prep_checklist') throw new Error('missing prep checklist');
