@@ -8,6 +8,7 @@ import {
   buildAreaLens,
   buildAreaLensCounts,
   buildAreaSummaries,
+  buildIntentContextPack,
   buildIntentWorkbench,
   buildNoiseRules,
   buildRecentCorrections,
@@ -23,6 +24,7 @@ import {
   draftSetupFact,
   intentsStats,
   looksLikeMultipleIntents,
+  parseIntent,
   pickIntentCaptureLabel,
   resolveArtifact,
   reviewDecisionOptions,
@@ -367,6 +369,124 @@ describe('Intent capture helpers', () => {
     expect(intent.classification).toBe('capture');
     expect(intent.likelyAreaId).toBe('');
     expect(intent.captured).toBe(true);
+  });
+});
+
+describe('Intent parser, context packs, and grounded plans', () => {
+  test('CardHunt new-job input becomes area setup context, not tasks', () => {
+    const parsed = parseIntent(
+      'I started a new job at CardHunt. My manager is Andrew and most of the work is buyer onboarding.',
+    );
+
+    expect(parsed.classification).toBe('area_setup');
+    expect(parsed.likelyAreaId).toBe('area_cardhunt');
+    expect(parsed.projectNeed).toBe('context_update');
+    expect(parsed.candidateFactIds).toContain('fact_cardhunt_manager_candidate');
+    expect(parsed.intent.questions.map((question) => question.id)).toContain('q_confirm_andrew');
+    expect(parsed.plan.digitalActions.every((action) => action.kind !== 'task')).toBe(true);
+    expect(parsed.plan.proposedArtifacts.some((artifact) => artifact.kind === 'email_draft')).toBe(true);
+    expect(parsed.contextPack.verified.some((item) => item.id === 'fact_cardhunt_domain_verified')).toBe(
+      true,
+    );
+    expect(
+      parsed.contextPack.candidate.find((item) => item.id === 'fact_cardhunt_manager_candidate')?.status,
+    ).toBe('candidate');
+  });
+
+  test('tax intent becomes a Money obligation with official source refs and progress questions', () => {
+    const parsed = parseIntent('Fuck, I need to file my taxes by April 15 and I have no idea what is done.');
+
+    expect(parsed.classification).toBe('obligation');
+    expect(parsed.likelyAreaId).toBe('area_money');
+    expect(parsed.projectNeed).toBe('project');
+    expect(parsed.intent.questions.map((question) => question.id)).toContain('q_tax_progress');
+    expect(parsed.candidateFactIds).toContain('fact_money_tax_deadline_candidate');
+    expect(parsed.plan.sourceRefs.some((ref) => ref.url?.includes('irs.gov'))).toBe(true);
+    expect(parsed.plan.proposedArtifacts.map((artifact) => artifact.kind)).toContain('calendar_event');
+  });
+
+  test('Passport alone asks for route details instead of assuming renewal or progress', () => {
+    const parsed = parseIntent('Passport');
+
+    expect(parsed.classification).toBe('obligation');
+    expect(parsed.likelyAreaId).toBe('area_trip');
+    expect(parsed.projectNeed).toBe('unknown');
+    expect(parsed.intent.questions.map((question) => question.id)).toContain('q_passport_goal');
+    expect(parsed.plan.status).toBe('blocked_on_questions');
+    expect(parsed.plan.digitalActions).toHaveLength(0);
+    expect(parsed.plan.physicalActions).toHaveLength(0);
+    expect(parsed.plan.sourceRefs.some((ref) => ref.url?.includes('travel.state.gov'))).toBe(true);
+    const assumedText = [
+      ...parsed.intent.assumptions,
+      ...parsed.plan.physicalActions,
+      ...parsed.plan.digitalActions.map((a) => a.title),
+    ].join(' ');
+    expect(assumedText.toLowerCase()).not.toContain('renewal');
+    expect(assumedText.toLowerCase()).not.toContain('expiration');
+    expect(assumedText.toLowerCase()).not.toContain('in hand');
+  });
+
+  test('context packs cover no-results, candidate-only, conflicts, and artifact search', () => {
+    const passport = buildIntentContextPack('Passport');
+    expect(
+      [...passport.verified, ...passport.candidate].some((item) => item.id === 'thread_passport_old'),
+    ).toBe(true);
+
+    const cardhunt = buildIntentContextPack('CardHunt Andrew buyer onboarding');
+    expect(cardhunt.verified.some((item) => item.id === 'fact_cardhunt_repo_verified')).toBe(true);
+    expect(cardhunt.candidate.some((item) => item.id === 'fact_cardhunt_manager_candidate')).toBe(true);
+
+    const candidateOnly = buildIntentContextPack('Lease decision with Alex');
+    expect(candidateOnly.verified).toHaveLength(0);
+    expect(candidateOnly.candidate.some((item) => item.id === 'fact_relationship_lease_candidate')).toBe(
+      true,
+    );
+
+    const conflict = buildIntentContextPack('CardHunt launch was finished on June 20');
+    expect(conflict.contradictions.some((item) => item.id === 'fact_cardhunt_old_status_rejected')).toBe(
+      true,
+    );
+    expect(conflict.questions).toHaveLength(0);
+
+    const noResults = buildIntentContextPack('Hydroponic tomatoes in the greenhouse');
+    expect(noResults.noResults).toBe(true);
+  });
+
+  test('a captured thought parses through the same pane contract as a seeded intent', () => {
+    // Issue #79: the Intent pane renders fresh captures through parseIntent rather
+    // than a dead raw panel, so a captured thought must yield the same parsed
+    // object (identity preserved, area/scope inferred, a draft plan, no project
+    // inflation for a habit) the pane reads from.
+    const captured = createCapturedIntent(
+      'I want to learn banjo without turning it into a lifestyle app',
+      'text',
+      'intent_capture_banjo',
+      '2026-06-30T12:00:00.000Z',
+    );
+    const parsed = parseIntent(captured);
+
+    expect(parsed.intent.id).toBe('intent_capture_banjo');
+    expect(parsed.classification).toBe('habit');
+    expect(parsed.likelyAreaId).toBe('area_music');
+    expect(parsed.projectNeed).toBe('task_only');
+    expect(parsed.plan.intentId).toBe('intent_capture_banjo');
+    expect(parsed.plan.proposedArtifacts.some((artifact) => artifact.kind === 'task')).toBe(true);
+    expect(parsed.plan.proposedArtifacts.every((artifact) => artifact.kind !== 'project')).toBe(true);
+    expect(parsed.plan.readyToApply).toBe(false);
+  });
+
+  test('every parsed intent creates a draft plan object without applying it', () => {
+    for (const raw of [
+      'Passport',
+      'Review the CardHunt buyer onboarding before tomorrow',
+      'I actually want to learn banjo this summer',
+      'Random loose thought that needs a next action',
+    ]) {
+      const parsed = parseIntent(raw);
+      expect(parsed.plan.intentId).toBe(parsed.intent.id);
+      expect(parsed.plan.status.length).toBeGreaterThan(0);
+      expect(parsed.plan.readyToApply).toBe(false);
+    }
   });
 });
 

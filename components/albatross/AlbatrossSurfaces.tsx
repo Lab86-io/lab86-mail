@@ -1,12 +1,14 @@
 'use client';
 
 import {
+  Archive,
   ArrowRight,
   AtSign,
   BellOff,
   CalendarDays,
   CalendarPlus,
   Check,
+  CheckCircle2,
   ChevronRight,
   CircleDot,
   FolderPlus,
@@ -18,7 +20,9 @@ import {
   type LucideIcon,
   Mail,
   Mic,
+  Pause,
   Pencil,
+  Play,
   Plus,
   Sparkles,
   Users,
@@ -77,12 +81,17 @@ import {
   draftedFactKey,
   draftSetupFact,
   type FactStatus,
+  type GeneratedIntentPlan,
   type Intent,
-  type IntentPlan,
+  type IntentContextItem,
   type IntentQuestion,
-  type IntentWorkbench,
   intents,
   looksLikeMultipleIntents,
+  type ParsedIntent,
+  type ParsedIntentKind,
+  type ProjectNeed,
+  type ProposedArtifact,
+  parseIntent,
   pickIntentCaptureLabel,
   type ReviewActionKind,
   type ReviewDecisionEffect,
@@ -964,25 +973,103 @@ function intentStatusTag(status: string) {
   return <Tag tone={meta.tone}>{meta.label}</Tag>;
 }
 
+type IntentLifecycle = 'active' | 'staged' | 'paused' | 'archived' | 'done';
+
+interface IntentCorrection {
+  areaId?: string;
+  classification?: ParsedIntentKind;
+  projectNeed?: ProjectNeed;
+  facts?: Record<string, 'confirmed' | 'dismissed'>;
+}
+
+const EMPTY_ANSWERS: Record<string, string> = {};
+const EMPTY_CORRECTION: IntentCorrection = {};
+
+const LIFECYCLE_META: Record<Exclude<IntentLifecycle, 'active'>, { label: string; tone: Tone }> = {
+  staged: { label: 'Staged', tone: 'accent' },
+  paused: { label: 'Paused', tone: 'neutral' },
+  archived: { label: 'Archived', tone: 'neutral' },
+  done: { label: 'Done', tone: 'success' },
+};
+
+const INTENT_KIND_LABEL: Record<ParsedIntentKind, string> = {
+  task: 'Task',
+  project: 'Project',
+  idea: 'Idea',
+  obligation: 'Obligation',
+  errand: 'Errand',
+  habit: 'Habit',
+  relationship: 'Relationship',
+  area_setup: 'Area setup',
+  replan: 'Replan',
+};
+
+const INTENT_KIND_OPTIONS = Object.keys(INTENT_KIND_LABEL) as ParsedIntentKind[];
+
+const PROJECT_NEED_LABEL: Record<ProjectNeed, string> = {
+  task_only: 'Just a task',
+  project: 'Project',
+  unknown: 'Not sure',
+  context_update: 'Context only',
+};
+
+const PROPOSED_KIND_META: Record<ProposedArtifact['kind'], { label: string; icon: LucideIcon }> = {
+  task: { label: 'Task', icon: ListChecks },
+  calendar_event: { label: 'Event', icon: CalendarPlus },
+  project: { label: 'Project', icon: Layers },
+  email_draft: { label: 'Email draft', icon: Mail },
+  area_fact: { label: 'Area fact', icon: AtSign },
+};
+
+const CONTEXT_TONE: Record<'verified' | 'candidate' | 'rejected', Tone> = {
+  verified: 'success',
+  candidate: 'warning',
+  rejected: 'danger',
+};
+
 function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
-  // Captures dumped this session sit on top of the seeded backlog. They carry a
-  // 'captured' status (raw, not yet classified) so the workbench can hold them
-  // as context instead of pretending a plan already exists.
+  // Captures dumped this session sit on top of the seeded backlog and run through
+  // the SAME parser as seeded intents, so a fresh thought is shown as a parsed
+  // object (area, plan, questions) - just flagged as a session capture - instead
+  // of a dead raw holding panel.
   const all = useMemo<Intent[]>(() => [...captured, ...intents], [captured]);
   const capturedIds = useMemo(() => new Set(captured.map((intent) => intent.id)), [captured]);
   const [filter, setFilter] = useState<'all' | 'captured' | 'needs_you' | 'ready'>('all');
   const [selectedId, setSelectedId] = useState(all[0]?.id ?? '');
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  // Corrections, answers, and lifecycle are session-local and keyed per intent so
+  // moving between intents keeps your in-flight work, and nothing touches Convex
+  // or the seed (issue #79: correct, answer, and apply are all local).
+  const [answersByIntent, setAnswersByIntent] = useState<Record<string, Record<string, string>>>({});
+  const [corrections, setCorrections] = useState<Record<string, IntentCorrection>>({});
+  const [lifecycle, setLifecycle] = useState<Record<string, IntentLifecycle>>({});
+  const capturedParsedById = useMemo(
+    () => new Map(captured.map((intent) => [intent.id, parseIntent(intent)] as const)),
+    [captured],
+  );
+
   const visible = all.filter((intent) => {
+    const parsedCapture = capturedParsedById.get(intent.id);
+    const status = parsedCapture?.intent.status ?? intent.status;
     if (filter === 'captured') return capturedIds.has(intent.id);
-    if (filter === 'needs_you')
-      return intent.status === 'needs_questions' || intent.status === 'needs_confirmation';
-    if (filter === 'ready') return intent.status === 'draft_plan_ready';
+    if (filter === 'needs_you') return status === 'needs_questions' || status === 'needs_confirmation';
+    if (filter === 'ready') return status === 'draft_plan_ready';
     return true;
   });
   const activeId = visible.some((intent) => intent.id === selectedId) ? selectedId : (visible[0]?.id ?? '');
   const activeCaptured = captured.find((intent) => intent.id === activeId) ?? null;
-  const bench = activeId && !activeCaptured ? buildIntentWorkbench(activeId) : null;
+
+  const bench = useMemo(
+    () => (activeId && !activeCaptured ? buildIntentWorkbench(activeId) : null),
+    [activeId, activeCaptured],
+  );
+  const parsed = useMemo<ParsedIntent | null>(
+    () =>
+      activeCaptured
+        ? (capturedParsedById.get(activeCaptured.id) ?? parseIntent(activeCaptured))
+        : (bench?.parsed ?? null),
+    [activeCaptured, bench, capturedParsedById],
+  );
+  const approvals = bench?.approvals ?? [];
 
   const filterOptions: { value: 'all' | 'captured' | 'needs_you' | 'ready'; label: string }[] = [
     { value: 'all', label: 'All' },
@@ -1002,6 +1089,10 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
           <div className="min-h-0 overflow-y-auto">
             {visible.map((intent) => {
               const isCaptured = capturedIds.has(intent.id);
+              const parsedCapture = capturedParsedById.get(intent.id);
+              const questionCount = parsedCapture?.intent.questions.length ?? intent.questions.length;
+              const status = lifecycle[intent.id] ?? 'active';
+              const lifeMeta = status === 'active' ? null : LIFECYCLE_META[status];
               return (
                 <button
                   key={intent.id}
@@ -1014,7 +1105,13 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
                       {intent.source === 'voice' ? 'Voice' : 'Text'}
                     </span>
                     <span className="ml-auto">
-                      {isCaptured ? <Tag tone="accent">Just captured</Tag> : intentStatusTag(intent.status)}
+                      {lifeMeta ? (
+                        <Tag tone={lifeMeta.tone}>{lifeMeta.label}</Tag>
+                      ) : isCaptured ? (
+                        <Tag tone="accent">Just captured</Tag>
+                      ) : (
+                        intentStatusTag(intent.status)
+                      )}
                     </span>
                   </div>
                   <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-[var(--color-text)]">
@@ -1022,11 +1119,13 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
                   </p>
                   <div className="mt-1 flex items-center gap-2 text-[11.5px] text-[var(--color-text-faint)]">
                     <span className="min-w-0 truncate">
-                      {isCaptured ? 'Held as context' : areaName(intent.likelyAreaId)}
+                      {isCaptured
+                        ? `Session capture / ${areaName(parsedCapture?.likelyAreaId)}`
+                        : areaName(intent.likelyAreaId)}
                     </span>
-                    {intent.questions.length ? (
+                    {questionCount ? (
                       <span className="ml-auto shrink-0 text-[var(--color-warning)]">
-                        {intent.questions.length} question{intent.questions.length === 1 ? '' : 's'}
+                        {questionCount} question{questionCount === 1 ? '' : 's'}
                       </span>
                     ) : null}
                   </div>
@@ -1036,74 +1135,101 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
           </div>
         </Panel>
 
-        {activeCaptured ? (
-          <CapturedIntentPanel intent={activeCaptured} />
-        ) : bench ? (
-          <IntentWorkbenchPanel bench={bench} answers={answers} setAnswers={setAnswers} />
-        ) : null}
+        {parsed ? (
+          <IntentPane
+            key={activeId}
+            parsed={parsed}
+            approvals={approvals}
+            isCaptured={Boolean(activeCaptured)}
+            answers={answersByIntent[activeId] ?? EMPTY_ANSWERS}
+            onAnswer={(questionId, value) =>
+              setAnswersByIntent((prev) => ({
+                ...prev,
+                [activeId]: { ...(prev[activeId] ?? {}), [questionId]: value },
+              }))
+            }
+            correction={corrections[activeId] ?? EMPTY_CORRECTION}
+            onCorrect={(patch) =>
+              setCorrections((prev) => ({ ...prev, [activeId]: { ...(prev[activeId] ?? {}), ...patch } }))
+            }
+            status={lifecycle[activeId] ?? 'active'}
+            onStatus={(next) => setLifecycle((prev) => ({ ...prev, [activeId]: next }))}
+          />
+        ) : (
+          <Panel>
+            <div className="px-4 py-3">
+              <Note>Select a captured thought to see how Albatross parsed it.</Note>
+            </div>
+          </Panel>
+        )}
       </div>
     </Surface>
   );
 }
 
-// A freshly captured thought, before any classification or planning. It is shown
-// verbatim and explicitly held as context - no invented plan, no fake area.
-function CapturedIntentPanel({ intent }: { intent: CapturedIntent }) {
+// The Intent pane is the operational object view: the raw capture stays close as
+// evidence, but the pane leads with how Albatross read it, what it would create,
+// and every place the user can correct or steer it. Nothing here executes - the
+// plan can only be staged for approval (issue #81 owns real apply semantics).
+function IntentPane({
+  parsed,
+  approvals,
+  isCaptured,
+  answers,
+  onAnswer,
+  correction,
+  onCorrect,
+  status,
+  onStatus,
+}: {
+  parsed: ParsedIntent;
+  approvals: Approval[];
+  isCaptured: boolean;
+  answers: Record<string, string>;
+  onAnswer: (questionId: string, value: string) => void;
+  correction: IntentCorrection;
+  onCorrect: (patch: Partial<IntentCorrection>) => void;
+  status: IntentLifecycle;
+  onStatus: (next: IntentLifecycle) => void;
+}) {
+  const { intent, plan, contextPack } = parsed;
+  const questions = intent.questions;
+  const effectiveArea = correction.areaId ?? parsed.likelyAreaId;
+  const effectiveClass = correction.classification ?? parsed.classification;
+  const effectiveNeed = correction.projectNeed ?? parsed.projectNeed;
+  const openQuestions = questions.filter((question) => !answers[question.id]?.trim());
+  const allAnswered = openQuestions.length === 0;
+  const hasStageableDraft =
+    plan.proposedArtifacts.some((artifact) => artifact.status !== 'blocked') ||
+    plan.digitalActions.length > 0 ||
+    plan.physicalActions.length > 0;
+  const canStage = allAnswered && hasStageableDraft;
+  const blocked = !canStage;
+
+  const questionsNode = questions.length ? (
+    <QuestionsSection questions={questions} answers={answers} onAnswer={onAnswer} />
+  ) : null;
+  const planNode = (
+    <ProposedPlanSection plan={plan} effectiveNeed={effectiveNeed} originalNeed={parsed.projectNeed} />
+  );
+
   return (
     <Panel>
       <div className="border-b border-[var(--color-border)] px-4 py-3">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-faint)]">
+          {isCaptured ? <Tag tone="accent">Session capture</Tag> : null}
           <span>{intent.source === 'voice' ? 'Voice capture' : 'Typed capture'}</span>
           <span aria-hidden>/</span>
           <span>{fmtDateTime(intent.capturedAt)}</span>
           <span className="ml-auto">
-            <Tag tone="accent">Just captured</Tag>
+            {status === 'active' ? (
+              intentStatusTag(intent.status)
+            ) : (
+              <Tag tone={LIFECYCLE_META[status].tone}>{LIFECYCLE_META[status].label}</Tag>
+            )}
           </span>
         </div>
-        <p className="mt-2 text-[14px] leading-relaxed text-[var(--color-text)]">{intent.rawInput}</p>
-      </div>
-      <div className="px-4 py-3">
-        <Note>
-          Held as raw context - not yet classified or planned. When you process intents, this becomes a plan
-          you approve before anything happens.
-        </Note>
-      </div>
-    </Panel>
-  );
-}
-
-function IntentWorkbenchPanel({
-  bench,
-  answers,
-  setAnswers,
-}: {
-  bench: IntentWorkbench;
-  answers: Record<string, string>;
-  setAnswers: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
-}) {
-  const { intent, plan, approvals } = bench;
-  const blocked =
-    plan?.status === 'blocked_on_questions' ||
-    intent.status === 'needs_questions' ||
-    intent.status === 'needs_confirmation';
-
-  const questionsNode = intent.questions.length ? (
-    <QuestionsSection questions={intent.questions} answers={answers} setAnswers={setAnswers} />
-  ) : null;
-  const planNode = plan ? <PlanSection plan={plan} /> : null;
-
-  return (
-    <Panel>
-      <div className="border-b border-[var(--color-border)] px-4 py-3">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-faint)]">
-          <span>{intent.source === 'voice' ? 'Voice capture' : 'Typed capture'}</span>
-          <span aria-hidden>/</span>
-          <span>{areaName(intent.likelyAreaId)}</span>
-          <span aria-hidden>/</span>
-          <span>{fmtDateTime(intent.capturedAt)}</span>
-          <span className="ml-auto">{intentStatusTag(intent.status)}</span>
-        </div>
-        <p className="mt-2 text-[14px] leading-relaxed text-[var(--color-text)]">{intent.rawInput}</p>
+        <RawCapture text={intent.rawInput} source={intent.source} />
         {intent.assumptions.length ? (
           <div className="mt-3">
             <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Understood</h3>
@@ -1119,8 +1245,29 @@ function IntentWorkbenchPanel({
         ) : null}
       </div>
 
-      {/* When something is blocked, the question the assistant needs answered
-          comes before the plan; otherwise the plan leads. */}
+      <IntentReadSection
+        effectiveArea={effectiveArea}
+        effectiveClass={effectiveClass}
+        effectiveNeed={effectiveNeed}
+        parsed={parsed}
+        correction={correction}
+        onCorrect={onCorrect}
+      />
+
+      <div className="border-b border-[var(--color-border)] px-4 py-3">
+        <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Outcome</h3>
+        <p className="mt-1 text-[13px] leading-snug text-[var(--color-text)]">{plan.outcome}</p>
+        {blocked ? (
+          <p className="mt-1 text-[12px] text-[var(--color-warning)]">
+            {openQuestions.length
+              ? `Blocked until you answer ${openQuestions.length} question${openQuestions.length === 1 ? '' : 's'} below.`
+              : 'Blocked until the draft has at least one action or object that can be staged.'}
+          </p>
+        ) : null}
+      </div>
+
+      {/* When blocked, the questions Albatross needs come before the plan;
+          otherwise the plan leads and questions sit underneath as refinements. */}
       {blocked ? (
         <>
           {questionsNode}
@@ -1133,34 +1280,215 @@ function IntentWorkbenchPanel({
         </>
       )}
 
+      <ContextSection contextPack={contextPack} correction={correction} onCorrect={onCorrect} />
+
+      <ReferencesSection plan={plan} />
+
       {approvals.length ? <ApprovalsSection approvals={approvals} /> : null}
 
-      {!planNode && !questionsNode && !approvals.length ? (
-        <div className="px-4 py-3">
-          <Note>No plan drafted yet - this capture is being held as context.</Note>
-        </div>
-      ) : null}
+      <LifecycleFooter
+        status={status}
+        onStatus={onStatus}
+        canApply={canStage}
+        openQuestionCount={openQuestions.length}
+      />
     </Panel>
+  );
+}
+
+// The raw dump is the source of truth, so it stays one click away as evidence -
+// collapsed by default with an inline preview so the pane can lead with the read.
+function RawCapture({ text, source }: { text: string; source: 'text' | 'voice' }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center gap-1.5 text-left"
+        aria-expanded={open}
+      >
+        <ChevronRight
+          className={cn(
+            'size-3.5 shrink-0 text-[var(--color-text-faint)] transition-transform',
+            open && 'rotate-90',
+          )}
+        />
+        <span className="shrink-0 text-[11px] font-medium text-[var(--color-text-muted)]">
+          {source === 'voice' ? 'Transcript' : 'Raw capture'}
+        </span>
+        {open ? null : (
+          <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--color-text-faint)]">{text}</span>
+        )}
+      </button>
+      {open ? (
+        <p className="mt-1.5 whitespace-pre-wrap rounded-md bg-[var(--color-bg-subtle)] px-3 py-2 text-[13px] leading-relaxed text-[var(--color-text)]">
+          {text}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// Every value Albatross inferred is shown with a correction control right beside
+// it - area, type, and the project-vs-task scope are the user's to override, all
+// session-local. This is the "keep the human steering" rule the issue calls for.
+function IntentReadSection({
+  effectiveArea,
+  effectiveClass,
+  effectiveNeed,
+  parsed,
+  correction,
+  onCorrect,
+}: {
+  effectiveArea: string;
+  effectiveClass: ParsedIntentKind;
+  effectiveNeed: ProjectNeed;
+  parsed: ParsedIntent;
+  correction: IntentCorrection;
+  onCorrect: (patch: Partial<IntentCorrection>) => void;
+}) {
+  const [pickingArea, setPickingArea] = useState(false);
+  const needOptions = useMemo(() => {
+    const base: { value: ProjectNeed; label: string }[] = [
+      { value: 'task_only', label: PROJECT_NEED_LABEL.task_only },
+      { value: 'project', label: PROJECT_NEED_LABEL.project },
+      { value: 'unknown', label: PROJECT_NEED_LABEL.unknown },
+    ];
+    if (parsed.projectNeed === 'context_update' || effectiveNeed === 'context_update') {
+      base.unshift({ value: 'context_update', label: PROJECT_NEED_LABEL.context_update });
+    }
+    return base;
+  }, [parsed.projectNeed, effectiveNeed]);
+
+  return (
+    <div className="border-b border-[var(--color-border)] px-4 py-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Albatross read</h3>
+        <span className="text-[11px] text-[var(--color-text-faint)]">/ correct anything wrong</span>
+      </div>
+
+      <dl className="mt-2 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]">
+          <dt className="w-16 shrink-0 text-[var(--color-text-faint)]">Area</dt>
+          <dd className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <span className="font-medium text-[var(--color-text)]">
+              {effectiveArea ? areaName(effectiveArea) : 'Unassigned'}
+            </span>
+            {correction.areaId ? (
+              <button
+                type="button"
+                onClick={() => onCorrect({ areaId: undefined })}
+                className="text-[11.5px] text-[var(--color-accent)] hover:underline"
+              >
+                Reset
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPickingArea((prev) => !prev)}
+                className="text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+              >
+                Change
+              </button>
+            )}
+          </dd>
+        </div>
+        {pickingArea ? (
+          <AreaPicker
+            excludeAreaId={effectiveArea || undefined}
+            onPick={(area) => {
+              onCorrect({ areaId: area.id });
+              setPickingArea(false);
+            }}
+            onCancel={() => setPickingArea(false)}
+          />
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]">
+          <dt className="w-16 shrink-0 text-[var(--color-text-faint)]">Type</dt>
+          <dd className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <select
+              value={effectiveClass}
+              onChange={(event) => onCorrect({ classification: event.target.value as ParsedIntentKind })}
+              aria-label="Intent type"
+              className="h-7 rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg-elevated)] px-2 text-[12px] text-[var(--color-text)] outline-none focus-visible:border-[var(--color-accent)]"
+            >
+              {INTENT_KIND_OPTIONS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {INTENT_KIND_LABEL[kind]}
+                </option>
+              ))}
+            </select>
+            {correction.classification ? (
+              <button
+                type="button"
+                onClick={() => onCorrect({ classification: undefined })}
+                className="text-[11.5px] text-[var(--color-accent)] hover:underline"
+              >
+                Reset to {INTENT_KIND_LABEL[parsed.classification]}
+              </button>
+            ) : null}
+          </dd>
+        </div>
+
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-1.5 text-[12.5px]">
+          <dt className="w-16 shrink-0 pt-1 text-[var(--color-text-faint)]">Scope</dt>
+          <dd className="flex min-w-0 flex-1 flex-col gap-1">
+            <Segmented<ProjectNeed>
+              value={effectiveNeed}
+              onChange={(value) => onCorrect({ projectNeed: value })}
+              options={needOptions}
+            />
+            <p className="text-[11.5px] text-[var(--color-text-muted)]">
+              {effectiveNeed === 'project'
+                ? 'Treated as a multi-step project.'
+                : effectiveNeed === 'task_only'
+                  ? 'Kept as a single task - no project is created.'
+                  : effectiveNeed === 'context_update'
+                    ? 'Updates area context before any task is created.'
+                    : 'Scope still open - apply keeps this lightweight until you decide.'}
+              {correction.projectNeed ? (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    onClick={() => onCorrect({ projectNeed: undefined })}
+                    className="text-[var(--color-accent)] hover:underline"
+                  >
+                    Reset to {PROJECT_NEED_LABEL[parsed.projectNeed]}
+                  </button>
+                </>
+              ) : null}
+            </p>
+          </dd>
+        </div>
+      </dl>
+    </div>
   );
 }
 
 function QuestionsSection({
   questions,
   answers,
-  setAnswers,
+  onAnswer,
 }: {
   questions: IntentQuestion[];
   answers: Record<string, string>;
-  setAnswers: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
+  onAnswer: (questionId: string, value: string) => void;
 }) {
-  const answered = questions.filter((question) => answers[question.id]).length;
+  const answered = questions.filter((question) => answers[question.id]?.trim()).length;
+  const done = answered === questions.length;
   return (
     <div className="border-b border-[var(--color-border)] px-4 py-3">
       <div className="flex items-center gap-2">
-        <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Needs your answer</h3>
+        <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Answer to unblock</h3>
         <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
           {answered}/{questions.length}
         </span>
+        {done ? (
+          <span className="ml-auto text-[11.5px] text-[var(--color-success)]">All answered</span>
+        ) : null}
       </div>
       <div className="mt-2 flex flex-col gap-3">
         {questions.map((question) => (
@@ -1168,7 +1496,7 @@ function QuestionsSection({
             key={question.id}
             question={question}
             value={answers[question.id]}
-            onAnswer={(value) => setAnswers((prev) => ({ ...prev, [question.id]: value }))}
+            onAnswer={(value) => onAnswer(question.id, value)}
           />
         ))}
       </div>
@@ -1244,29 +1572,60 @@ function QuestionRow({
   );
 }
 
-function PlanSection({ plan }: { plan: IntentPlan }) {
-  const blocked = plan.status === 'blocked_on_questions';
+function ProposedPlanSection({
+  plan,
+  effectiveNeed,
+  originalNeed,
+}: {
+  plan: GeneratedIntentPlan;
+  effectiveNeed: ProjectNeed;
+  originalNeed: ProjectNeed;
+}) {
+  const hasProjectDraft = plan.proposedArtifacts.some((artifact) => artifact.kind === 'project');
+  // The user can disagree with the project/task scope; reflect that honestly
+  // against the draft objects without regenerating the plan (issue #81 applies).
+  const scopeNote =
+    effectiveNeed !== originalNeed && hasProjectDraft
+      ? effectiveNeed === 'task_only'
+        ? 'You marked this as just a task - the project draft below would be dropped on apply.'
+        : effectiveNeed === 'project'
+          ? 'You marked this as a project - the task drafts below would roll up under it on apply.'
+          : null
+      : null;
+
+  const hasBody =
+    plan.digitalActions.length > 0 || plan.physicalActions.length > 0 || plan.proposedArtifacts.length > 0;
+
+  if (!hasBody) {
+    return (
+      <div className="border-b border-[var(--color-border)] px-4 py-3">
+        <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Proposed plan</h3>
+        <Note>No actions drafted yet - answer the questions and this fills in.</Note>
+      </div>
+    );
+  }
+
   return (
     <div className="border-b border-[var(--color-border)] px-4 py-3">
       <div className="flex items-center gap-2">
         <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Proposed plan</h3>
-        <span className="ml-auto">
-          <Tag tone={blocked ? 'warning' : 'neutral'}>{blocked ? 'Blocked' : titleCase(plan.status)}</Tag>
+        <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">
+          Drafts only / nothing runs yet
         </span>
       </div>
-      <p className="mt-1.5 text-[13px] leading-snug text-[var(--color-text)]">{plan.outcome}</p>
-      {blocked ? (
-        <p className="mt-1 text-[12px] text-[var(--color-warning)]">
-          Blocked until the questions above are answered.
-        </p>
-      ) : null}
+      {scopeNote ? <p className="mt-1 text-[12px] text-[var(--color-warning)]">{scopeNote}</p> : null}
 
       {plan.digitalActions.length ? (
         <div className="mt-3">
           <h4 className="text-[12px] font-medium text-[var(--color-text-muted)]">Digital actions</h4>
           <div className="mt-1 divide-y divide-[var(--color-border)]">
             {plan.digitalActions.map((action) => {
-              const Icon = action.kind === 'calendar_event' ? CalendarPlus : ListChecks;
+              const Icon =
+                action.kind === 'calendar_event'
+                  ? CalendarPlus
+                  : action.kind === 'email_draft'
+                    ? Mail
+                    : ListChecks;
               return (
                 <div key={`${action.kind}-${action.title}`} className="flex items-center gap-2 py-1.5">
                   <Icon className="size-4 shrink-0 text-[var(--color-text-faint)]" />
@@ -1302,12 +1661,342 @@ function PlanSection({ plan }: { plan: IntentPlan }) {
         </div>
       ) : null}
 
-      {plan.sourceRefs.length ? (
+      {plan.proposedArtifacts.length ? (
         <div className="mt-3">
-          <h4 className="mb-1 text-[12px] font-medium text-[var(--color-text-muted)]">Evidence</h4>
-          <Evidence refs={plan.sourceRefs} />
+          <h4 className="text-[12px] font-medium text-[var(--color-text-muted)]">Objects it would create</h4>
+          <div className="mt-1 divide-y divide-[var(--color-border)]">
+            {plan.proposedArtifacts.map((artifact) => (
+              <ProposedArtifactRow key={`${artifact.kind}-${artifact.title}`} artifact={artifact} />
+            ))}
+          </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ProposedArtifactRow({ artifact }: { artifact: ProposedArtifact }) {
+  const meta = PROPOSED_KIND_META[artifact.kind];
+  const Icon = meta.icon;
+  const blocked = artifact.status === 'blocked';
+  return (
+    <div className="py-2">
+      <div className="flex items-start gap-2">
+        <Icon className="mt-0.5 size-4 shrink-0 text-[var(--color-text-faint)]" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[var(--color-text)]">
+              {artifact.title}
+            </span>
+            <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">{meta.label}</span>
+            <Tag tone={blocked ? 'warning' : 'neutral'}>{blocked ? 'Blocked' : 'Proposed'}</Tag>
+          </div>
+          {artifact.areaId ? (
+            <p className="mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">{areaName(artifact.areaId)}</p>
+          ) : null}
+          {artifact.detail ? (
+            <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{artifact.detail}</p>
+          ) : null}
+          {artifact.sourceRefs.length ? (
+            <div className="mt-1">
+              <Evidence refs={artifact.sourceRefs} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// What Albatross already knows about this intent, split verified / candidate /
+// conflict so confidence is never blurred. Candidate area facts carry confirm or
+// dismiss controls - the same human boundary the rest of the app keeps; a person
+// or relationship never auto-promotes to a verified fact.
+function ContextSection({
+  contextPack,
+  correction,
+  onCorrect,
+}: {
+  contextPack: ParsedIntent['contextPack'];
+  correction: IntentCorrection;
+  onCorrect: (patch: Partial<IntentCorrection>) => void;
+}) {
+  const { verified, candidate, contradictions, noResults } = contextPack;
+  const factDecision = (id: string) => correction.facts?.[id];
+  const setFact = (id: string, decision: 'confirmed' | 'dismissed' | null) => {
+    const next = { ...(correction.facts ?? {}) };
+    if (decision) next[id] = decision;
+    else delete next[id];
+    onCorrect({ facts: next });
+  };
+
+  return (
+    <div className="border-b border-[var(--color-border)] px-4 py-3">
+      <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">What Albatross already knows</h3>
+      {noResults ? (
+        <Note>No related context found - nothing is being assumed about this yet.</Note>
+      ) : (
+        <div className="mt-2 flex flex-col gap-3">
+          {verified.length ? (
+            <ContextGroup
+              label="Verified"
+              tone="success"
+              items={verified}
+              factDecision={factDecision}
+              onFact={setFact}
+            />
+          ) : null}
+          {candidate.length ? (
+            <ContextGroup
+              label="Candidate / unconfirmed"
+              tone="warning"
+              items={candidate}
+              factDecision={factDecision}
+              onFact={setFact}
+            />
+          ) : null}
+          {contradictions.length ? (
+            <ContextGroup
+              label="Possible conflicts"
+              tone="danger"
+              items={contradictions}
+              factDecision={factDecision}
+              onFact={setFact}
+            />
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContextGroup({
+  label,
+  tone,
+  items,
+  factDecision,
+  onFact,
+}: {
+  label: string;
+  tone: Tone;
+  items: IntentContextItem[];
+  factDecision: (id: string) => 'confirmed' | 'dismissed' | undefined;
+  onFact: (id: string, decision: 'confirmed' | 'dismissed' | null) => void;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-1.5">
+        <Dot tone={tone} />
+        <h4 className="text-[12px] font-medium text-[var(--color-text-muted)]">{label}</h4>
+        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{items.length}</span>
+      </div>
+      <div className="mt-1 divide-y divide-[var(--color-border)]">
+        {items.map((item) => (
+          <ContextItemRow
+            key={`${item.kind}-${item.id}`}
+            item={item}
+            decision={factDecision(item.id)}
+            onFact={onFact}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ContextItemRow({
+  item,
+  decision,
+  onFact,
+}: {
+  item: IntentContextItem;
+  decision?: 'confirmed' | 'dismissed';
+  onFact: (id: string, decision: 'confirmed' | 'dismissed' | null) => void;
+}) {
+  const tone = CONTEXT_TONE[item.status as 'verified' | 'candidate' | 'rejected'] ?? 'neutral';
+  const correctable = item.kind === 'areaFact' && item.status === 'candidate';
+  return (
+    <div className="py-2">
+      <div className="flex items-start gap-2">
+        <span className="min-w-0 flex-1 text-[12.5px] font-medium leading-snug text-[var(--color-text)]">
+          {item.title}
+        </span>
+        <Tag tone={tone}>{titleCase(item.status)}</Tag>
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-[var(--color-text-faint)]">
+        <span className="min-w-0 truncate">{item.detail}</span>
+        <span aria-hidden>/</span>
+        <span>{confidenceLabel(item.confidence)}</span>
+      </div>
+      <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{item.reason}</p>
+      {item.sourceRefs.length ? (
+        <div className="mt-1">
+          <Evidence refs={item.sourceRefs} />
+        </div>
+      ) : null}
+      {correctable ? (
+        decision ? (
+          <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+            {decision === 'confirmed' ? 'Confirmed by you' : 'Dismissed by you'} /{' '}
+            <button
+              type="button"
+              onClick={() => onFact(item.id, null)}
+              className="text-[var(--color-accent)] hover:underline"
+            >
+              Undo
+            </button>
+          </p>
+        ) : (
+          <div className="mt-1.5 flex gap-1.5">
+            <Button type="button" size="xs" variant="outline" onClick={() => onFact(item.id, 'confirmed')}>
+              Confirm
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="text-[var(--color-danger)] hover:text-[var(--color-danger)]"
+              onClick={() => onFact(item.id, 'dismissed')}
+            >
+              Dismiss
+            </Button>
+          </div>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+// Source evidence stays close to the claims, and official references are shown as
+// real links when a URL exists (IRS, State Dept) so the grounding is checkable.
+function ReferencesSection({ plan }: { plan: GeneratedIntentPlan }) {
+  const officialIds = new Set(plan.officialSourceRefs.map((ref) => ref.id));
+  const otherRefs = plan.sourceRefs.filter((ref) => !officialIds.has(ref.id));
+  if (!plan.officialSourceRefs.length && !otherRefs.length) return null;
+  return (
+    <div className="border-b border-[var(--color-border)] px-4 py-3">
+      <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">References</h3>
+      {plan.officialSourceRefs.length ? (
+        <div className="mt-2">
+          <h4 className="text-[12px] font-medium text-[var(--color-text-muted)]">Official sources</h4>
+          <ul className="mt-1 flex flex-col gap-1">
+            {plan.officialSourceRefs.map((ref) => (
+              <li key={ref.id} className="text-[12.5px]">
+                {ref.url ? (
+                  <a
+                    href={ref.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[var(--color-accent)] hover:underline"
+                  >
+                    {ref.label ?? ref.url}
+                  </a>
+                ) : (
+                  <span className="text-[var(--color-text)]">{ref.label ?? ref.id}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {otherRefs.length ? (
+        <div className="mt-2">
+          <h4 className="mb-1 text-[12px] font-medium text-[var(--color-text-muted)]">Evidence</h4>
+          <Evidence refs={otherRefs} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Lifecycle controls: apply (stage for approval), pause, archive, done - all
+// session-local. Apply is disabled until every question is answered, and the copy
+// is explicit that staging does not execute anything (issue #81 owns real apply).
+function LifecycleFooter({
+  status,
+  onStatus,
+  canApply,
+  openQuestionCount,
+}: {
+  status: IntentLifecycle;
+  onStatus: (next: IntentLifecycle) => void;
+  canApply: boolean;
+  openQuestionCount: number;
+}) {
+  if (status !== 'active') {
+    const meta = LIFECYCLE_META[status];
+    const copy: Record<Exclude<IntentLifecycle, 'active'>, string> = {
+      staged: 'Staged for approval - nothing has been sent, scheduled, or created.',
+      paused: 'Paused - held out of your active intents. Nothing was executed.',
+      archived: 'Archived - hidden from the active list. Nothing was executed.',
+      done: 'Marked done - closed locally. Nothing was executed in this prototype.',
+    };
+    const revertLabel =
+      status === 'staged'
+        ? 'Unstage'
+        : status === 'done'
+          ? 'Reopen'
+          : status === 'paused'
+            ? 'Resume'
+            : 'Restore';
+    return (
+      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Tag tone={meta.tone}>{meta.label}</Tag>
+          <p className="min-w-0 flex-1 text-[12px] text-[var(--color-text-muted)]">{copy[status]}</p>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <Button type="button" size="sm" variant="outline" onClick={() => onStatus('active')}>
+            <Play className="size-3.5" />
+            {revertLabel}
+          </Button>
+          {status === 'staged' ? (
+            <Button type="button" size="sm" variant="ghost" onClick={() => onStatus('done')}>
+              <CheckCircle2 className="size-3.5" />
+              Mark done
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button type="button" size="sm" disabled={!canApply} onClick={() => onStatus('staged')}>
+                <ArrowRight className="size-3.5" />
+                Apply plan
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {canApply
+              ? 'Stage this plan for approval. Nothing executes yet.'
+              : `Answer ${openQuestionCount} more question${openQuestionCount === 1 ? '' : 's'} first.`}
+          </TooltipContent>
+        </Tooltip>
+        <Button type="button" size="sm" variant="ghost" onClick={() => onStatus('paused')}>
+          <Pause className="size-3.5" />
+          Pause
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => onStatus('archived')}>
+          <Archive className="size-3.5" />
+          Archive
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => onStatus('done')}>
+          <CheckCircle2 className="size-3.5" />
+          Done
+        </Button>
+      </div>
+      <p className="mt-1.5 text-[11.5px] text-[var(--color-text-faint)]">
+        {canApply
+          ? 'Applying only stages the plan for approval - issue #81 will run real actions.'
+          : 'Apply unlocks once every question above is answered. Nothing here has executed.'}
+      </p>
     </div>
   );
 }

@@ -14,6 +14,7 @@ export interface SourceRef {
   kind: string;
   id: string;
   label?: string;
+  url?: string;
   confirmedAt?: string;
   prompt?: string;
 }
@@ -317,22 +318,26 @@ export function buildAreaDetail(areaId: string): AreaDetail | null {
 
 export interface IntentWorkbench {
   intent: Intent;
-  plan: IntentPlan | null;
+  plan: GeneratedIntentPlan | null;
   approvals: Approval[];
   areaLabel: string;
   openQuestionCount: number;
+  parsed: ParsedIntent;
+  contextPack: IntentContextPack;
 }
 
 export function buildIntentWorkbench(intentId: string): IntentWorkbench | null {
   const intent = intents.find((item) => item.id === intentId);
   if (!intent) return null;
-  const plan = intentPlans.find((item) => item.intentId === intentId) ?? null;
+  const parsed = parseIntent(intent);
   return {
     intent,
-    plan,
+    plan: parsed.plan,
     approvals: approvalQueue.filter((approval) => approval.sourceIntentId === intentId),
     areaLabel: areaName(intent.likelyAreaId),
     openQuestionCount: intent.questions.length,
+    parsed,
+    contextPack: parsed.contextPack,
   };
 }
 
@@ -1240,6 +1245,14 @@ function titleCaseLocal(value: string): string {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function slugifyLocal(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 function fmtLensDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -1480,5 +1493,775 @@ export function createCapturedIntent(
     assumptions: [],
     questions: [],
     captured: true,
+  };
+}
+
+/* ================================================================== */
+/* Issues #77-#80 - Intent parsing, context packs, and draft plans      */
+/* ------------------------------------------------------------------ */
+/* Raw intent text is converted into a provisional object only after    */
+/* checking area-aware context. The generator never executes work and   */
+/* never promotes candidate facts; it returns a grounded draft object   */
+/* the UI can inspect, correct, and eventually apply in a later issue.  */
+
+export type ParsedIntentKind =
+  | 'task'
+  | 'project'
+  | 'idea'
+  | 'obligation'
+  | 'errand'
+  | 'habit'
+  | 'relationship'
+  | 'area_setup'
+  | 'replan';
+
+export type ProjectNeed = 'task_only' | 'project' | 'unknown' | 'context_update';
+export type ContextItemKind = ArtifactKind | 'areaFact' | 'task' | 'project';
+
+export interface IntentContextItem {
+  id: string;
+  kind: ContextItemKind;
+  title: string;
+  detail: string;
+  areaId?: string;
+  status: FactStatus | AssignmentStatus;
+  confidence: number;
+  reason: string;
+  sourceRefs: SourceRef[];
+}
+
+export interface IntentContextPack {
+  query: string;
+  likelyAreaId: string;
+  verified: IntentContextItem[];
+  candidate: IntentContextItem[];
+  contradictions: IntentContextItem[];
+  sourceRefs: SourceRef[];
+  questions: IntentQuestion[];
+  noResults: boolean;
+}
+
+export interface ProposedArtifact {
+  kind: 'task' | 'calendar_event' | 'project' | 'email_draft' | 'area_fact';
+  title: string;
+  areaId?: string;
+  status: 'proposed' | 'blocked';
+  detail?: string;
+  sourceRefs: SourceRef[];
+}
+
+export interface GeneratedIntentPlan extends IntentPlan {
+  questions: IntentQuestion[];
+  proposedArtifacts: ProposedArtifact[];
+  projectNeed: ProjectNeed;
+  readyToApply: boolean;
+  officialSourceRefs: SourceRef[];
+}
+
+export interface ParsedIntent {
+  intent: Intent;
+  classification: ParsedIntentKind;
+  likelyAreaId: string;
+  projectNeed: ProjectNeed;
+  contextPack: IntentContextPack;
+  plan: GeneratedIntentPlan;
+  candidateFactIds: string[];
+}
+
+const OFFICIAL_SOURCE_REFS = {
+  taxes: [
+    {
+      kind: 'official',
+      id: 'irs_when_to_file',
+      label: 'IRS: When to file',
+      url: 'https://www.irs.gov/filing/individuals/when-to-file',
+    },
+    {
+      kind: 'official',
+      id: 'irs_how_to_file',
+      label: 'IRS: File your tax return',
+      url: 'https://www.irs.gov/filing/individuals/how-to-file',
+    },
+  ],
+  passport: [
+    {
+      kind: 'official',
+      id: 'state_passport_renew_by_mail',
+      label: 'State Dept: Renew by mail',
+      url: 'https://travel.state.gov/en/passports/renew-replace/mail.html',
+    },
+    {
+      kind: 'official',
+      id: 'state_passport_forms',
+      label: 'State Dept: Passport forms',
+      url: 'https://travel.state.gov/content/travel/en/passports/how-apply/forms.html',
+    },
+    {
+      kind: 'official',
+      id: 'state_passport_renew_online',
+      label: 'State Dept: Renew online',
+      url: 'https://travel.state.gov/content/travel/en/passports/have-passport/renew-online.html',
+    },
+  ],
+} satisfies Record<string, SourceRef[]>;
+
+function intentText(input: Intent | string): string {
+  return typeof input === 'string' ? input : input.rawInput;
+}
+
+function sourceRef(kind: string, id: string, label: string, url?: string): SourceRef {
+  return url ? { kind, id, label, url } : { kind, id, label };
+}
+
+function containsAny(text: string, terms: string[]): boolean {
+  const lower = text.toLowerCase();
+  return terms.some((term) => lower.includes(term));
+}
+
+function createQuestion(
+  id: string,
+  text: string,
+  kind: IntentQuestion['kind'],
+  choices?: string[],
+): IntentQuestion {
+  return choices ? { id, text, kind, choices } : { id, text, kind };
+}
+
+function sourceRefsForContextItem(kind: ContextItemKind, id: string, title: string): SourceRef[] {
+  if (kind === 'areaFact') {
+    const fact = factById.get(id);
+    return fact?.sourceRefs.length ? fact.sourceRefs : [sourceRef('areaFact', id, title)];
+  }
+  return [sourceRef(kind, id, title)];
+}
+
+function contextItem(
+  kind: ContextItemKind,
+  id: string,
+  title: string,
+  detail: string,
+  options: {
+    areaId?: string;
+    status?: FactStatus | AssignmentStatus;
+    confidence?: number;
+    reason: string;
+    sourceRefs?: SourceRef[];
+  },
+): IntentContextItem {
+  return {
+    id,
+    kind,
+    title,
+    detail,
+    areaId: options.areaId,
+    status: options.status ?? 'candidate',
+    confidence: Math.round((options.confidence ?? 0.5) * 100) / 100,
+    reason: options.reason,
+    sourceRefs: options.sourceRefs ?? sourceRefsForContextItem(kind, id, title),
+  };
+}
+
+function scoreTextMatch(queryTokens: Set<string>, text: string): number {
+  const textTokens = tokenize(text);
+  if (!queryTokens.size || !textTokens.size) return 0;
+  let overlap = 0;
+  for (const token of queryTokens) {
+    if (textTokens.has(token)) overlap += 1;
+  }
+  return overlap / Math.max(2, queryTokens.size);
+}
+
+function bestAreaFromText(text: string): string {
+  const lower = text.toLowerCase();
+  if (containsAny(lower, ['tax', 'irs', '1099', 'w-2', 'w2', 'brokerage', 'deduction'])) return 'area_money';
+  if (containsAny(lower, ['passport', 'visa', 'flight', 'trip', 'travel document'])) return 'area_trip';
+  if (containsAny(lower, ['cardhunt', 'andrew', 'buyer onboarding'])) return 'area_cardhunt';
+  if (containsAny(lower, ['banjo', 'music', 'guitar', 'practice tracks'])) return 'area_music';
+  if (containsAny(lower, ['woke up', 'cooked', 'replan', 'schedule', 'calendar'])) return 'area_schedule';
+  for (const area of areas) {
+    if (tokenize(area.name).size && [...tokenize(area.name)].some((token) => tokenize(text).has(token))) {
+      return area.id;
+    }
+  }
+  return '';
+}
+
+function intentKindFor(text: string, likelyAreaId: string): ParsedIntentKind {
+  const lower = text.toLowerCase();
+  if (containsAny(lower, ['started a new job', 'manager is', 'new job at', 'work is buyer onboarding'])) {
+    return 'area_setup';
+  }
+  if (containsAny(lower, ['woke up', 'day is already cooked', 'replan', 'salvage'])) return 'replan';
+  if (containsAny(lower, ['tax', 'passport', 'deadline', 'need to file', 'renew', 'appointment'])) {
+    return 'obligation';
+  }
+  if (containsAny(lower, ['learn', 'practice', 'habit']) || likelyAreaId === 'area_music') return 'habit';
+  if (containsAny(lower, ['idea', 'maybe', 'someday'])) return 'idea';
+  if (containsAny(lower, ['project', 'launch', 'build'])) return 'project';
+  if (containsAny(lower, ['call', 'email', 'ask', 'reply'])) return 'task';
+  return 'task';
+}
+
+function projectNeedFor(kind: ParsedIntentKind, text: string): ProjectNeed {
+  const lower = text.toLowerCase();
+  if (kind === 'area_setup') return 'context_update';
+  if (kind === 'habit') return 'task_only';
+  if (kind === 'replan') return 'task_only';
+  if (kind === 'obligation' && containsAny(lower, ['passport'])) return 'unknown';
+  if (kind === 'obligation' && containsAny(lower, ['tax'])) return 'project';
+  if (kind === 'project' || containsAny(lower, ['make it real', 'launch', 'build'])) return 'project';
+  return 'unknown';
+}
+
+function officialRefsForIntent(text: string): SourceRef[] {
+  const refs: SourceRef[] = [];
+  if (containsAny(text, ['tax', 'irs', '1099', 'w-2', 'w2'])) refs.push(...OFFICIAL_SOURCE_REFS.taxes);
+  if (containsAny(text, ['passport'])) refs.push(...OFFICIAL_SOURCE_REFS.passport);
+  return refs;
+}
+
+function questionsForIntent(
+  kind: ParsedIntentKind,
+  text: string,
+  contextPack: IntentContextPack,
+): IntentQuestion[] {
+  const lower = text.toLowerCase();
+  const questions: IntentQuestion[] = [];
+  if (kind === 'area_setup') {
+    if (containsAny(lower, ['andrew', 'manager'])) {
+      questions.push(
+        createQuestion('q_confirm_andrew', 'Should I store Andrew as your CardHunt manager?', 'confirm'),
+      );
+    }
+    questions.push(
+      createQuestion(
+        'q_cardhunt_responsibility',
+        'What CardHunt responsibility should this context support?',
+        'choice',
+        ['buyer onboarding', 'launch risk', 'sales demo prep', 'not sure'],
+      ),
+    );
+  } else if (containsAny(lower, ['tax', 'irs', '1099', 'w-2', 'w2'])) {
+    questions.push(
+      createQuestion('q_tax_year', 'Which tax year are you trying to file?', 'short_text'),
+      createQuestion('q_tax_progress', 'What is already done?', 'choice', [
+        'nothing',
+        'documents gathered',
+        'return drafted',
+        'extension filed',
+        'not sure',
+      ]),
+      createQuestion('q_tax_remaining', 'What do you already know is missing?', 'short_text'),
+    );
+  } else if (containsAny(lower, ['passport'])) {
+    questions.push(
+      createQuestion('q_passport_goal', 'What do you need to do with your passport?', 'choice', [
+        'renew',
+        'apply first time',
+        'find it',
+        'check expiration',
+        'replace lost passport',
+        'not sure',
+      ]),
+      createQuestion('q_passport_trip', 'Is this tied to a specific trip or deadline?', 'short_text'),
+      createQuestion('q_passport_have_it', 'Do you currently have the passport in hand?', 'confirm'),
+    );
+  } else if (kind === 'habit') {
+    questions.push(
+      createQuestion('q_habit_frequency', 'How often should this happen?', 'choice', [
+        'daily',
+        'weekdays',
+        'two or three times a week',
+        'weekly',
+      ]),
+    );
+  } else if (kind === 'replan') {
+    questions.push(
+      createQuestion('q_energy', 'How much energy do you have left today?', 'choice', [
+        'low',
+        'medium',
+        'surprisingly fine',
+      ]),
+    );
+  } else if (contextPack.noResults) {
+    questions.push(createQuestion('q_intent_outcome', 'What outcome should this create?', 'short_text'));
+  }
+
+  for (const contradiction of contextPack.contradictions) {
+    questions.push(
+      createQuestion(
+        `q_contradiction_${contradiction.id}`,
+        `Earlier context says "${contradiction.title}" was rejected. Should I ignore that here?`,
+        'confirm',
+      ),
+    );
+  }
+
+  const seen = new Set<string>();
+  return questions.filter((question) => {
+    if (seen.has(question.id)) return false;
+    seen.add(question.id);
+    return true;
+  });
+}
+
+function intentStatusFor(kind: ParsedIntentKind, questions: IntentQuestion[]): string {
+  if (kind === 'area_setup') return 'needs_confirmation';
+  return questions.length ? 'needs_questions' : 'draft_plan_ready';
+}
+
+function intentAssumptions(kind: ParsedIntentKind, text: string, contextPack: IntentContextPack): string[] {
+  const lower = text.toLowerCase();
+  const assumptions: string[] = [];
+  if (kind === 'area_setup') assumptions.push('This updates area context before creating task cards.');
+  if (containsAny(lower, ['tax'])) {
+    assumptions.push(
+      'April 15 may be the relevant deadline, but the filing year and route need confirmation.',
+    );
+  }
+  if (kind === 'habit') assumptions.push('Keep this lightweight unless the user asks for a full project.');
+  if (kind === 'replan') assumptions.push('Move or defer commitments only after explicit approval.');
+  if (contextPack.candidate.length) {
+    assumptions.push('Candidate context is available but not treated as verified.');
+  }
+  return assumptions;
+}
+
+function collectCandidateFactIds(contextPack: IntentContextPack): string[] {
+  return contextPack.candidate
+    .filter((item) => item.kind === 'areaFact')
+    .map((item) => item.id)
+    .filter((id, index, all) => all.indexOf(id) === index);
+}
+
+/** Compact, area-aware context search for one intent. */
+export function buildIntentContextPack(input: Intent | string): IntentContextPack {
+  const query = intentText(input).trim();
+  const likelyAreaId = (typeof input === 'string' ? '' : input.likelyAreaId) || bestAreaFromText(query);
+  const queryTokens = tokenize(query);
+  const verified: IntentContextItem[] = [];
+  const candidate: IntentContextItem[] = [];
+  const contradictions: IntentContextItem[] = [];
+
+  const addItem = (item: IntentContextItem) => {
+    const bucket =
+      item.status === 'rejected' ? contradictions : item.status === 'verified' ? verified : candidate;
+    if (!bucket.some((existing) => existing.kind === item.kind && existing.id === item.id)) bucket.push(item);
+  };
+
+  for (const fact of areaFacts) {
+    const area = areaById.get(fact.areaId);
+    const score =
+      scoreTextMatch(queryTokens, `${area?.name ?? ''} ${fact.kind} ${fact.value}`) +
+      (likelyAreaId && fact.areaId === likelyAreaId ? 0.35 : 0);
+    if (score <= 0 && !containsAny(query, ['passport', 'tax', 'cardhunt', 'banjo'])) continue;
+    if (score >= 0.28 || fact.areaId === likelyAreaId) {
+      addItem(
+        contextItem(
+          'areaFact',
+          fact.id,
+          fact.value,
+          `${areaName(fact.areaId)} / ${titleCaseLocal(fact.kind)}`,
+          {
+            areaId: fact.areaId,
+            status: fact.status,
+            confidence:
+              fact.status === 'verified' ? Math.min(0.95, 0.62 + score) : Math.min(0.82, 0.48 + score),
+            reason:
+              fact.status === 'verified'
+                ? 'Verified area fact matched the intent or likely area.'
+                : fact.status === 'rejected'
+                  ? 'Previously rejected context matched this intent.'
+                  : 'Candidate area fact matched; use only as a question or assumption.',
+            sourceRefs: fact.sourceRefs,
+          },
+        ),
+      );
+    }
+  }
+
+  for (const thread of mailThreads) {
+    const classification = classifyThread(thread.id);
+    const primary = classification?.primary;
+    const score =
+      scoreTextMatch(queryTokens, `${thread.subject} ${thread.snippet} ${thread.from}`) +
+      (likelyAreaId && primary?.areaId === likelyAreaId ? 0.25 : 0);
+    if (score >= 0.28 || (likelyAreaId === 'area_trip' && containsAny(thread.subject, ['passport']))) {
+      addItem(
+        contextItem(
+          'mailThread',
+          thread.id,
+          thread.subject,
+          `${thread.from} / ${fmtLensDate(thread.lastDate)}`,
+          {
+            areaId: primary?.areaId,
+            status: primary?.status ?? 'candidate',
+            confidence: Math.min(0.9, Math.max(primary?.confidence ?? 0.45, 0.42 + score)),
+            reason: primary?.reason ?? 'Text matched the captured intent.',
+          },
+        ),
+      );
+    }
+  }
+
+  for (const event of calendarEvents) {
+    const score =
+      scoreTextMatch(queryTokens, `${event.title} ${event.attendees.join(' ')}`) +
+      (likelyAreaId && event.areaId === likelyAreaId ? 0.25 : 0);
+    if (score >= 0.28) {
+      addItem(
+        contextItem('calendarEvent', event.id, event.title, `${fmtLensDate(event.startsAt)} calendar event`, {
+          areaId: event.areaId,
+          status: event.areaId ? 'verified' : 'candidate',
+          confidence: event.areaId ? Math.min(0.9, 0.55 + score) : Math.min(0.7, 0.38 + score),
+          reason: event.areaId
+            ? 'Calendar event is already linked to the likely area.'
+            : 'Event text matched.',
+        }),
+      );
+    }
+  }
+
+  for (const item of mcpItems) {
+    const score =
+      scoreTextMatch(queryTokens, `${item.title} ${item.provider} ${item.kind} ${item.url}`) +
+      (likelyAreaId && item.areaId === likelyAreaId ? 0.25 : 0);
+    if (score >= 0.28) {
+      addItem(
+        contextItem('mcpItem', item.id, item.title, `${item.provider} / ${item.kind}`, {
+          areaId: item.areaId,
+          status: item.areaId ? 'verified' : 'candidate',
+          confidence: item.areaId ? Math.min(0.9, 0.55 + score) : Math.min(0.7, 0.38 + score),
+          reason: item.areaId
+            ? 'Integration item is linked to the likely area.'
+            : 'Integration title matched.',
+        }),
+      );
+    }
+  }
+
+  for (const task of tasks) {
+    const score =
+      scoreTextMatch(queryTokens, task.title) + (likelyAreaId && task.areaId === likelyAreaId ? 0.16 : 0);
+    if (score >= 0.32) {
+      addItem(
+        contextItem('task', task.id, task.title, titleCaseLocal(task.status), {
+          areaId: task.areaId,
+          status: task.areaId ? 'verified' : 'candidate',
+          confidence: Math.min(0.8, 0.42 + score),
+          reason: 'Existing task overlaps with the intent.',
+          sourceRefs: task.sourceRefs,
+        }),
+      );
+    }
+  }
+
+  for (const project of projects) {
+    const score =
+      scoreTextMatch(queryTokens, `${project.title ?? ''} ${project.outcome ?? ''}`) +
+      (likelyAreaId && project.areaId === likelyAreaId ? 0.16 : 0);
+    if (score >= 0.32) {
+      addItem(
+        contextItem('project', project.id, project.title ?? project.id, project.outcome ?? 'Project', {
+          areaId: project.areaId,
+          status: project.status === 'done' ? 'verified' : 'candidate',
+          confidence: Math.min(0.78, 0.42 + score),
+          reason: 'Existing project overlaps with the intent.',
+        }),
+      );
+    }
+  }
+
+  for (const previous of intents) {
+    if (typeof input !== 'string' && previous.id === input.id) continue;
+    const score = scoreTextMatch(queryTokens, previous.rawInput);
+    if (score >= 0.45) {
+      addItem(
+        contextItem('intent', previous.id, previous.rawInput, titleCaseLocal(previous.classification), {
+          areaId: previous.likelyAreaId,
+          status: previous.status === 'draft_plan_ready' ? 'verified' : 'candidate',
+          confidence: Math.min(0.78, 0.36 + score),
+          reason: 'Previous intent overlaps with this capture.',
+        }),
+      );
+    }
+  }
+
+  verified.sort((a, b) => b.confidence - a.confidence);
+  candidate.sort((a, b) => b.confidence - a.confidence);
+  contradictions.sort((a, b) => b.confidence - a.confidence);
+
+  const sourceRefs = [...verified, ...candidate, ...contradictions]
+    .flatMap((item) =>
+      item.sourceRefs.length ? item.sourceRefs : [sourceRef(item.kind, item.id, item.title)],
+    )
+    .filter((ref, index, refs) => refs.findIndex((candidateRef) => candidateRef.id === ref.id) === index)
+    .slice(0, 8);
+
+  return {
+    query,
+    likelyAreaId,
+    verified: verified.slice(0, 6),
+    candidate: candidate.slice(0, 6),
+    contradictions: contradictions.slice(0, 4),
+    sourceRefs,
+    questions: [],
+    noResults: verified.length === 0 && candidate.length === 0 && contradictions.length === 0,
+  };
+}
+
+function buildStructuredIntent(
+  input: Intent | string,
+  contextPack: IntentContextPack,
+  kind: ParsedIntentKind,
+  questions: IntentQuestion[],
+  assumptions: string[],
+): Intent {
+  if (typeof input !== 'string') {
+    return {
+      ...input,
+      classification: kind,
+      status: intentStatusFor(kind, questions),
+      likelyAreaId: contextPack.likelyAreaId,
+      assumptions,
+      questions,
+      candidateFactIds: collectCandidateFactIds(contextPack),
+    };
+  }
+  const id = `intent_parsed_${slugifyLocal(input).slice(0, 32) || 'capture'}`;
+  return {
+    id,
+    rawInput: input.trim(),
+    source: 'text',
+    capturedAt: new Date('2026-06-30T12:00:00.000-04:00').toISOString(),
+    classification: kind,
+    status: intentStatusFor(kind, questions),
+    likelyAreaId: contextPack.likelyAreaId,
+    assumptions,
+    questions,
+    candidateFactIds: collectCandidateFactIds(contextPack),
+  };
+}
+
+function officialAndContextRefs(text: string, contextPack: IntentContextPack): SourceRef[] {
+  const refs = [...contextPack.sourceRefs, ...officialRefsForIntent(text)];
+  return refs.filter((ref, index) => refs.findIndex((candidateRef) => candidateRef.id === ref.id) === index);
+}
+
+function proposedArtifact(
+  kind: ProposedArtifact['kind'],
+  title: string,
+  areaId: string | undefined,
+  detail: string,
+  sourceRefs: SourceRef[],
+  status: ProposedArtifact['status'] = 'proposed',
+): ProposedArtifact {
+  return { kind, title, areaId, detail, sourceRefs, status };
+}
+
+export function generateGroundedIntentPlan(
+  intent: Intent,
+  contextPack: IntentContextPack = buildIntentContextPack(intent),
+  projectNeed: ProjectNeed = projectNeedFor(intent.classification as ParsedIntentKind, intent.rawInput),
+): GeneratedIntentPlan {
+  const text = intent.rawInput.toLowerCase();
+  const refs = officialAndContextRefs(text, contextPack);
+  const officialSourceRefs = officialRefsForIntent(text);
+  const questions = intent.questions;
+  const areaId = intent.likelyAreaId || contextPack.likelyAreaId;
+  const proposedArtifacts: ProposedArtifact[] = [];
+  const digitalActions: DigitalAction[] = [];
+  const physicalActions: string[] = [];
+  let status = questions.length ? 'blocked_on_questions' : 'draft';
+  let outcome = 'Turn the raw intent into a concrete next action without applying anything yet.';
+  let readyToApply = questions.length === 0;
+
+  if (intent.classification === 'area_setup') {
+    status = 'blocked_on_questions';
+    outcome = `Confirm the CardHunt context that should be remembered before creating tasks.`;
+    readyToApply = false;
+    const verifiedFacts = contextPack.verified.filter((item) => item.areaId === 'area_cardhunt');
+    for (const fact of verifiedFacts.filter((item) => item.kind === 'areaFact').slice(0, 2)) {
+      proposedArtifacts.push(
+        proposedArtifact(
+          'area_fact',
+          fact.title,
+          fact.areaId,
+          'Already verified CardHunt context.',
+          fact.sourceRefs,
+        ),
+      );
+    }
+    if (containsAny(text, ['andrew', 'manager'])) {
+      proposedArtifacts.push(
+        proposedArtifact(
+          'area_fact',
+          'Andrew may be your CardHunt manager',
+          'area_cardhunt',
+          'Candidate relationship; requires confirmation before becoming a fact.',
+          refs,
+          'blocked',
+        ),
+      );
+      digitalActions.push({
+        kind: 'email_draft',
+        title: 'Draft a short context-check note for Andrew',
+        areaId: 'area_cardhunt',
+        priority: 2,
+      });
+      proposedArtifacts.push(
+        proposedArtifact(
+          'email_draft',
+          'Ask Andrew what buyer onboarding success should look like',
+          'area_cardhunt',
+          'Draft only; nothing sends without approval.',
+          refs,
+          'blocked',
+        ),
+      );
+    }
+  } else if (containsAny(text, ['tax', 'irs', '1099', 'w-2', 'w2'])) {
+    status = 'draft';
+    readyToApply = false;
+    outcome = 'Know what remains for taxes, confirm the filing route, and schedule the next work block.';
+    digitalActions.push(
+      { kind: 'task', title: 'List missing tax documents', areaId: 'area_money', priority: 1 },
+      {
+        kind: 'calendar_event',
+        title: 'Tax document cleanup',
+        durationMinutes: 90,
+        areaId: 'area_money',
+      },
+    );
+    physicalActions.push(
+      "Find last year's return.",
+      'Collect W-2, 1099, bank, brokerage, and donation records.',
+    );
+    proposedArtifacts.push(
+      proposedArtifact(
+        'project',
+        'Tax filing cleanup',
+        'area_money',
+        'Project only if multiple sessions remain.',
+        refs,
+      ),
+      proposedArtifact('task', 'List missing tax documents', 'area_money', 'First bounded task.', refs),
+      proposedArtifact('calendar_event', 'Tax document cleanup', 'area_money', '90 minute draft hold.', refs),
+    );
+  } else if (containsAny(text, ['passport'])) {
+    status = 'blocked_on_questions';
+    readyToApply = false;
+    outcome = 'Determine the passport route before creating tasks, calendar blocks, or assumptions.';
+    proposedArtifacts.push(
+      proposedArtifact(
+        'project',
+        'Passport route clarification',
+        'area_trip',
+        'Blocked until the user says renew, first-time apply, find, check expiration, or replace.',
+        refs,
+        'blocked',
+      ),
+    );
+  } else if (intent.classification === 'habit') {
+    status = questions.length ? 'blocked_on_questions' : 'draft';
+    readyToApply = questions.length === 0;
+    outcome = 'Make the habit real with the smallest repeatable commitment.';
+    digitalActions.push({
+      kind: 'task',
+      title: containsAny(text, ['banjo'])
+        ? 'Do first 20 minute banjo practice'
+        : 'Do the first practice block',
+      areaId,
+      priority: 3,
+      durationMinutes: 20,
+    });
+    proposedArtifacts.push(
+      proposedArtifact(
+        'task',
+        containsAny(text, ['banjo']) ? 'Do first 20 minute banjo practice' : 'Do the first practice block',
+        areaId,
+        'Task-only by default; no large project unless corrected.',
+        refs,
+      ),
+    );
+  } else if (intent.classification === 'replan') {
+    status = 'draft';
+    readyToApply = false;
+    outcome = 'Recover the rest of the day without pretending the missed morning did not happen.';
+    digitalActions.push(
+      { kind: 'calendar_event', title: 'Protect one realistic focus block', durationMinutes: 45, areaId },
+      { kind: 'task', title: 'Defer nonessential inbox cleanup', areaId, priority: 2 },
+    );
+    physicalActions.push(
+      'Eat something before opening the highest-pressure thread.',
+      'Put the phone away for the focus block.',
+    );
+    proposedArtifacts.push(
+      proposedArtifact(
+        'calendar_event',
+        'Protect one realistic focus block',
+        areaId,
+        'Draft hold only.',
+        refs,
+      ),
+      proposedArtifact(
+        'task',
+        'Defer nonessential inbox cleanup',
+        areaId,
+        'Requires approval if it moves commitments.',
+        refs,
+      ),
+    );
+  } else {
+    status = questions.length ? 'blocked_on_questions' : 'draft';
+    readyToApply = questions.length === 0;
+    proposedArtifacts.push(
+      proposedArtifact(
+        'task',
+        'Clarify the next action',
+        areaId,
+        'Default task draft until corrected.',
+        refs,
+      ),
+    );
+  }
+
+  return {
+    id: `plan_${intent.id}`,
+    intentId: intent.id,
+    status,
+    outcome,
+    digitalActions,
+    physicalActions,
+    sourceRefs: refs,
+    assumptions: intent.assumptions,
+    questions,
+    proposedArtifacts,
+    projectNeed,
+    readyToApply,
+    officialSourceRefs,
+  };
+}
+
+/** Parse raw or seeded intent text into a provisional object plus draft plan. */
+export function parseIntent(input: Intent | string): ParsedIntent {
+  const contextPack = buildIntentContextPack(input);
+  const text = intentText(input);
+  const classification = intentKindFor(text, contextPack.likelyAreaId);
+  const projectNeed = projectNeedFor(classification, text);
+  const questions = questionsForIntent(classification, text, contextPack);
+  const contextWithQuestions = { ...contextPack, questions } satisfies IntentContextPack;
+  const assumptions = intentAssumptions(classification, text, contextWithQuestions);
+  const intent = buildStructuredIntent(input, contextWithQuestions, classification, questions, assumptions);
+  const plan = generateGroundedIntentPlan(intent, contextWithQuestions, projectNeed);
+
+  return {
+    intent,
+    classification,
+    likelyAreaId: intent.likelyAreaId,
+    projectNeed,
+    contextPack: contextWithQuestions,
+    plan,
+    candidateFactIds: collectCandidateFactIds(contextWithQuestions),
   };
 }
