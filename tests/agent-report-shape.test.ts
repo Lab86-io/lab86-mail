@@ -4,6 +4,7 @@ import {
   buildDataPrompt,
   extractHtml,
   gatherBriefExtras,
+  HTML_ARTIFACT_BRIEF,
   settleMonthArtifactReport,
   settleMonthHtmlArtifactReport,
   toBriefEvent,
@@ -182,6 +183,14 @@ describe('daily brief service metadata', () => {
     expect(data.services.map((service: any) => service.id)).toEqual(['gmail', 'slack', 'github']);
     expect(data.services.map((service: any) => service.label)).toEqual(['Gmail', 'Slack', 'GitHub']);
     expect(data.services.every((service: any) => service.logoSvg.includes('footer-logo'))).toBe(true);
+  });
+
+  test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
+    expect(HTML_ARTIFACT_BRIEF).toContain('SYSTEM THEME IS MANDATORY');
+    expect(HTML_ARTIFACT_BRIEF).toContain('SYSTEM TYPOGRAPHY IS MANDATORY');
+    expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-font-display)');
+    expect(HTML_ARTIFACT_BRIEF).toContain('data.art.imageUrl');
+    expect(HTML_ARTIFACT_BRIEF).toContain('required art header');
   });
 });
 
