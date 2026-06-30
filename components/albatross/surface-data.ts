@@ -1033,8 +1033,17 @@ export interface AreaLensItem {
   canReassign: boolean;
 }
 
-function linksForArea(areaId: string, kind: ArtifactKind): AreaArtifactLink[] {
-  return areaArtifactLinks.filter((link) => link.areaId === areaId && link.artifactKind === kind);
+export interface AreaLensOptions {
+  /** Test seam for isolated link overlays; production uses the seed links. */
+  areaArtifactLinks?: AreaArtifactLink[];
+}
+
+function linksForArea(
+  areaId: string,
+  kind: ArtifactKind,
+  links: AreaArtifactLink[] = areaArtifactLinks,
+): AreaArtifactLink[] {
+  return links.filter((link) => link.areaId === areaId && link.artifactKind === kind);
 }
 
 function lensStatus(status: LinkStatus): AssignmentStatus | 'rejected' {
@@ -1042,12 +1051,17 @@ function lensStatus(status: LinkStatus): AssignmentStatus | 'rejected' {
 }
 
 /** Items for one lens of one area. Pure - drives the area inspector lens view. */
-export function buildAreaLens(areaId: string, lens: AreaLensKey): AreaLensItem[] {
+export function buildAreaLens(
+  areaId: string,
+  lens: AreaLensKey,
+  options: AreaLensOptions = {},
+): AreaLensItem[] {
   const area = areaById.get(areaId);
   if (!area) return [];
+  const lensLinks = options.areaArtifactLinks ?? areaArtifactLinks;
 
   if (lens === 'needs_reply') {
-    return linksForArea(areaId, 'mailThread')
+    return linksForArea(areaId, 'mailThread', lensLinks)
       .map((link) => ({ link, thread: threadById.get(link.artifactId) }))
       .filter(
         (row): row is { link: AreaArtifactLink; thread: MailThread } =>
@@ -1067,7 +1081,7 @@ export function buildAreaLens(areaId: string, lens: AreaLensKey): AreaLensItem[]
   }
 
   if (lens === 'open_loops') {
-    const candidateLinks = areaArtifactLinks
+    const candidateLinks = lensLinks
       .filter((link) => link.areaId === areaId && link.status === 'candidate')
       .map((link) => {
         const resolved = resolveArtifact(link.artifactKind, link.artifactId);
@@ -1123,7 +1137,7 @@ export function buildAreaLens(areaId: string, lens: AreaLensKey): AreaLensItem[]
 
   if (lens === 'events') {
     const linkedIds = new Set(
-      linksForArea(areaId, 'calendarEvent')
+      linksForArea(areaId, 'calendarEvent', lensLinks)
         .filter((link) => link.status !== 'rejected')
         .map((link) => link.artifactId),
     );
@@ -1189,7 +1203,7 @@ export function buildAreaLens(areaId: string, lens: AreaLensKey): AreaLensItem[]
       }));
     // Distinct correspondents drawn from this area's linked threads + events.
     const emails = new Set<string>();
-    for (const link of linksForArea(areaId, 'mailThread')) {
+    for (const link of linksForArea(areaId, 'mailThread', lensLinks)) {
       const thread = threadById.get(link.artifactId);
       if (thread && link.status !== 'rejected') emails.add(thread.from);
     }
@@ -1208,7 +1222,7 @@ export function buildAreaLens(areaId: string, lens: AreaLensKey): AreaLensItem[]
   }
 
   // noise
-  const rejectedLinks = areaArtifactLinks
+  const rejectedLinks = lensLinks
     .filter((link) => link.areaId === areaId && link.status === 'rejected')
     .map((link) => {
       const resolved = resolveArtifact(link.artifactKind, link.artifactId);
@@ -1235,9 +1249,12 @@ export function buildAreaLens(areaId: string, lens: AreaLensKey): AreaLensItem[]
   return [...rejectedLinks, ...senderRules];
 }
 
-export function buildAreaLensCounts(areaId: string): Record<AreaLensKey, number> {
+export function buildAreaLensCounts(
+  areaId: string,
+  options: AreaLensOptions = {},
+): Record<AreaLensKey, number> {
   const counts = {} as Record<AreaLensKey, number>;
-  for (const lens of AREA_LENSES) counts[lens.key] = buildAreaLens(areaId, lens.key).length;
+  for (const lens of AREA_LENSES) counts[lens.key] = buildAreaLens(areaId, lens.key, options).length;
   return counts;
 }
 

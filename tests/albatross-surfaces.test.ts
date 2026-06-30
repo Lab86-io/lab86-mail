@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   AREA_LENSES,
   applyReviewDecision,
-  areaArtifactLinks,
   areasStats,
   buildAreaDetail,
   buildAreaLens,
@@ -244,15 +243,11 @@ describe('Area lenses', () => {
       confidence: 0.1,
       reason: 'Rejected during test.',
     };
-    areaArtifactLinks.push(rejectedCalendarLink);
-    try {
-      const eventIds = buildAreaLens('area_music', 'events').map((item) => item.id);
-      expect(eventIds).toContain('cal_banjo_practice');
-      expect(eventIds).not.toContain('cal_cardhunt_demo');
-    } finally {
-      const index = areaArtifactLinks.findIndex((link) => link.id === rejectedCalendarLink.id);
-      if (index >= 0) areaArtifactLinks.splice(index, 1);
-    }
+    const eventIds = buildAreaLens('area_music', 'events', {
+      areaArtifactLinks: [rejectedCalendarLink],
+    }).map((item) => item.id);
+    expect(eventIds).toContain('cal_banjo_practice');
+    expect(eventIds).not.toContain('cal_cardhunt_demo');
   });
 });
 
