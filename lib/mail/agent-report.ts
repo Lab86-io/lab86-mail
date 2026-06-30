@@ -438,6 +438,7 @@ OUTPUT RULES (critical):
 - Every rich/generated claim outside a simple lede must include sourceRefs pointing to the source thread/message/task/event/mcp item. Charts and custom widgets require sourceRefs.
 - sourceRefs MUST be objects shaped exactly like { "kind": "thread"|"message"|"task"|"event"|"mcp"|"account"|"derived", "id": string, "account"?: string, "label"?: string }. Use the key "id" even when the source data field is threadId/cardId/eventId/messageId. Do not use kind values like "email", "mail", "todo", "calendar", "github", or "unknown"; map them to the allowed kind or omit the bad ref.
 - actions MUST be objects shaped exactly like { "action": one VALID ACTION name, "label": short button text, "payload": object, "style"?: "primary"|"secondary"|"danger"|"quiet" }. The action field is NEVER prose. The label field is REQUIRED. The payload field is REQUIRED and must contain the exact ids/accounts for that action.
+- lede.paragraphs MUST contain 1-4 strings, and each string must be 1200 characters or less. If you write a markdown-style lede with headings or bullets, split it into separate paragraph strings rather than one long blob.
 - For optional sourceRefs/actions, [] is valid. A clean valid composition with fewer buttons is better than an invalid composition with guessed wiring.
 - Before final output, mentally validate every block: type is one VALID BLOCK, every sourceRef has allowed kind + string id, every action has allowed action + label + payload, and no unknown keys are needed for behavior.
 
@@ -448,7 +449,7 @@ DO NOT:
 - Do NOT use action names outside VALID ACTIONS, including "reply", "open", "email", "schedule", "snooze", "complete", or "view". Pick the exact valid action name or omit the action.
 
 VALID BLOCKS:
-- lede: { type:"lede", title?, paragraphs:[string], sourceRefs? }. Use 2-3 short paragraphs when there is enough substance, otherwise 1. Make it narrative and specific, not a generic summary. No emoji.
+- lede: { type:"lede", title?, paragraphs:[string], sourceRefs? }. Use 2-3 short paragraphs when there is enough substance, otherwise 1. Each paragraph string must be <=1200 chars. Make it narrative and specific, not a generic summary. No emoji.
 - needs_you: { type:"needs_you", title?, items:[{ account, threadId, subject, person, reason, lane?, receivedAt?, trackedThreadId?, draftReply?, sourceRefs, actions? }], sourceRefs? }. Include only threads you judge action-worthy.
 - task_digest: { type:"task_digest", title?, tasks:[{ cardId, title, meta?, dueAt?, sourceRefs, actions? }], sourceRefs? }. Existing tasks only.
 - week_ahead: { type:"week_ahead", title?, events:[{ account, eventId, calendarId?, title, startAt, endAt, allDay?, location?, prep?, sourceRefs, actions? }], sourceRefs? }.

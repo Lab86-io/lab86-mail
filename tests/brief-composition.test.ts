@@ -50,6 +50,24 @@ describe('BriefComposition', () => {
     });
   });
 
+  test('keeps markdown deterministic ledes inside schema limits', () => {
+    const longBody = Array.from(
+      { length: 80 },
+      (_, index) => `Sentence ${index + 1} ties the mail thread to the calendar prep and the active task.`,
+    ).join(' ');
+    const report = {
+      ...reportFixture(),
+      narrative: `# Today\n\n${longBody}\n\n- Confirm the launch decision.\n- Prep the review notes.`,
+    };
+    const composition = compositionFromReport(report);
+    const lede = composition.blocks.find((block) => block.type === 'lede');
+
+    if (!lede || lede.type !== 'lede') throw new Error('missing lede');
+    expect(lede.paragraphs.length).toBeLessThanOrEqual(4);
+    expect(lede.paragraphs.every((paragraph) => paragraph.length <= 1200)).toBe(true);
+    expect(buildNativeDailyReportArtifact(report, composition)).toContain('<h1>Today</h1>');
+  });
+
   test('derives connected tool actions when MCP items have URLs', () => {
     const composition = compositionFromReport({
       ...reportFixture(),
@@ -146,6 +164,26 @@ describe('BriefComposition', () => {
       type: 'chart',
       sourceRefs: [{ kind: 'derived', id: 'block:chart:1' }],
     });
+  });
+
+  test('repairs overlong model-authored lede paragraphs', () => {
+    const overlong = Array.from(
+      { length: 80 },
+      (_, index) => `Observation ${index + 1} connects a thread, a meeting, and the task queue.`,
+    ).join(' ');
+    const composition = parseBriefComposition({
+      version: 1,
+      title: 'Daily Brief',
+      services: ['gmail'],
+      blocks: [{ type: 'lede', paragraphs: [`# Today\n\n${overlong}`], sourceRefs: [] }],
+    });
+    const lede = composition.blocks[0];
+
+    if (lede.type !== 'lede') throw new Error('missing lede');
+    expect(lede.paragraphs.length).toBeGreaterThan(1);
+    expect(lede.paragraphs.length).toBeLessThanOrEqual(4);
+    expect(lede.paragraphs.every((paragraph) => paragraph.length <= 1200)).toBe(true);
+    expect(lede.paragraphs[0]).toStartWith('# Today');
   });
 
   test('repairs broad model schema drift without losing creative blocks', () => {

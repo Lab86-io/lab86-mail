@@ -19,6 +19,9 @@ const BRIEF_ACTION_TYPES = [
   'create_event',
 ] as const;
 const BRIEF_ACTION_STYLES = ['primary', 'secondary', 'danger', 'quiet'] as const;
+const MAX_LEDE_PARAGRAPH_CHARS = 1200;
+const MAX_LEDE_PARAGRAPHS = 4;
+const DEFAULT_LEDE = 'A quiet brief today: nothing urgent is waiting.';
 
 export const BriefSourceRefSchema = z.object({
   kind: z.enum(BRIEF_SOURCE_REF_KINDS),
@@ -217,6 +220,9 @@ function repairBriefComposition(value: unknown): unknown {
   if (!Array.isArray(composition.blocks)) return composition;
   composition.blocks = composition.blocks.map((block, index) => {
     const repaired = repairNestedCompositionValue(block) as Record<string, unknown>;
+    if (repaired.type === 'lede') {
+      repaired.paragraphs = normalizeLedeParagraphsInput(repaired.paragraphs);
+    }
     if (
       (repaired.type === 'chart' || repaired.type === 'custom_widget') &&
       (!Array.isArray(repaired.sourceRefs) || !repaired.sourceRefs.length)
@@ -553,20 +559,130 @@ function fallbackNarrative(
 
 function ledeParagraphs(value: string): string[] {
   const raw = String(value || '').trim();
-  if (/^\s{0,3}#{1,3}\s+\S/m.test(raw) || /^\s*[-*]\s+\S/m.test(raw)) return [raw];
+  if (/^\s{0,3}#{1,3}\s+\S/m.test(raw) || /^\s*[-*]\s+\S/m.test(raw)) {
+    return schemaSafeLedeParagraphs(markdownLedeParts(raw));
+  }
   const normalized = String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!normalized) return ['A quiet brief today: nothing urgent is waiting.'];
+  if (!normalized) return [DEFAULT_LEDE];
   const explicit = String(value)
     .split(/\n{2,}/)
     .map((part) => part.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
-  if (explicit.length > 1) return explicit.slice(0, 4);
+  if (explicit.length > 1) return schemaSafeLedeParagraphs(explicit);
   const sentences = normalized.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)?.map((part) => part.trim()) || [
     normalized,
   ];
-  if (sentences.length < 3) return [normalized];
+  if (sentences.length < 3) return schemaSafeLedeParagraphs([normalized]);
   const first = Math.ceil(sentences.length / 2);
-  return [sentences.slice(0, first).join(' '), sentences.slice(first).join(' ')].filter(Boolean);
+  return schemaSafeLedeParagraphs([sentences.slice(0, first).join(' '), sentences.slice(first).join(' ')]);
+}
+
+function normalizeLedeParagraphsInput(value: unknown): string[] {
+  const paragraphs = Array.isArray(value)
+    ? value.flatMap((entry) => (typeof entry === 'string' ? [entry] : []))
+    : typeof value === 'string'
+      ? [value]
+      : [];
+  return schemaSafeLedeParagraphs(paragraphs.length ? paragraphs : [DEFAULT_LEDE]);
+}
+
+function markdownLedeParts(raw: string): string[] {
+  const parts = raw
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length ? parts : [raw];
+}
+
+function schemaSafeLedeParagraphs(parts: string[]): string[] {
+  const paragraphs: string[] = [];
+  for (const part of parts) {
+    for (const chunk of splitLedeChunk(part)) {
+      if (!chunk) continue;
+      paragraphs.push(chunk);
+      if (paragraphs.length >= MAX_LEDE_PARAGRAPHS) return paragraphs;
+    }
+  }
+  return paragraphs.length ? paragraphs : [DEFAULT_LEDE];
+}
+
+function splitLedeChunk(value: string): string[] {
+  const text = value.replace(/\r\n/g, '\n').trim();
+  if (!text) return [];
+  if (text.length <= MAX_LEDE_PARAGRAPH_CHARS) return [text];
+  if (!text.includes('\n')) return splitLedeText(text);
+
+  const chunks: string[] = [];
+  let current = '';
+  for (const line of text.split('\n')) {
+    for (const lineChunk of splitLedeText(line.trimEnd())) {
+      const next = current ? `${current}\n${lineChunk}` : lineChunk;
+      if (current && next.length > MAX_LEDE_PARAGRAPH_CHARS) {
+        chunks.push(current);
+        current = lineChunk;
+      } else {
+        current = next;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function splitLedeText(value: string): string[] {
+  const text = value.trim();
+  if (!text) return [];
+  const units = text
+    .match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)
+    ?.map((part) => part.trim())
+    .filter(Boolean) || [text];
+  return packLedeUnits(units);
+}
+
+function packLedeUnits(units: string[]): string[] {
+  const chunks: string[] = [];
+  let current = '';
+  for (const unit of units) {
+    const pieces = unit.length > MAX_LEDE_PARAGRAPH_CHARS ? splitLongLedeUnit(unit) : [unit];
+    for (const piece of pieces) {
+      const next = current ? `${current} ${piece}` : piece;
+      if (current && next.length > MAX_LEDE_PARAGRAPH_CHARS) {
+        chunks.push(current);
+        current = piece;
+      } else {
+        current = next;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function splitLongLedeUnit(value: string): string[] {
+  const chunks: string[] = [];
+  let current = '';
+  for (const word of value.split(/\s+/).filter(Boolean)) {
+    if (word.length > MAX_LEDE_PARAGRAPH_CHARS) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+      for (let index = 0; index < word.length; index += MAX_LEDE_PARAGRAPH_CHARS) {
+        chunks.push(word.slice(index, index + MAX_LEDE_PARAGRAPH_CHARS));
+      }
+      continue;
+    }
+    const next = current ? `${current} ${word}` : word;
+    if (current && next.length > MAX_LEDE_PARAGRAPH_CHARS) {
+      chunks.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
