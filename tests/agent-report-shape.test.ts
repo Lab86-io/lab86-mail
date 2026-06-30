@@ -82,6 +82,7 @@ describe('toBriefEvent', () => {
       account: 'me@example.test',
       eventId: 'evt_1',
       calendarId: 'cal_1',
+      canRsvp: true,
       calendarName: 'Primary',
       title: 'Sync',
       startAt: 1_700_000_000_000,
@@ -104,6 +105,7 @@ describe('toBriefEvent', () => {
     };
     const shaped = toBriefEvent(event);
     expect(shaped.calendarId).toBeNull();
+    expect(shaped.canRsvp).toBe(false);
     expect(shaped.calendarName).toBeNull();
     expect(shaped.location).toBeNull();
     expect(shaped.description).toBeNull();

@@ -1148,6 +1148,7 @@ async function loadMcpContext(userId: string | null | undefined): Promise<DailyR
     const rows = await convexQuery<any[]>((api as any).mcp.listItemsForBrief, { userId, limit: 25 });
     return (rows || []).map((row) => ({
       server: row.server,
+      externalId: row.externalId,
       kind: row.kind,
       title: row.title,
       state: row.state ?? null,

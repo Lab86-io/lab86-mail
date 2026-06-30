@@ -359,6 +359,7 @@ export interface DailyReportCalendarItem {
 
 export interface DailyReportMcpItem {
   server: 'github' | 'bitbucket' | 'jira' | 'slack';
+  externalId?: string;
   kind: string;
   title: string;
   state?: string | null;

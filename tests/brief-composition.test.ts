@@ -76,6 +76,7 @@ describe('BriefComposition', () => {
         mcp: [
           {
             server: 'github',
+            externalId: 'gh-pr-42',
             kind: 'pull_request',
             title: 'Review launch PR',
             state: 'open',
@@ -87,13 +88,21 @@ describe('BriefComposition', () => {
       },
     });
 
-    expect(composition.blocks.find((block) => block.type === 'tool_digest')).toMatchObject({
+    expect(composition.blocks.find((block) => block.type === 'tool_digest')).toEqual({
+      type: 'tool_digest',
+      title: 'Across your tools',
       items: [
         {
-          sourceRefs: [{ kind: 'mcp', id: 'github:pull_request:Review launch PR' }],
-          actions: [{ action: 'open_view', label: 'Open tools', payload: { view: 'mail' } }],
+          server: 'github',
+          title: 'Review launch PR',
+          state: 'open',
+          author: 'Alex',
+          url: 'https://github.com/acme/project/pull/42',
+          sourceRefs: [{ kind: 'mcp', id: 'gh-pr-42', label: 'Review launch PR' }],
+          actions: [{ action: 'open_view', label: 'Open tools', payload: { view: 'mail' }, style: 'quiet' }],
         },
       ],
+      sourceRefs: [{ kind: 'mcp', id: 'gh-pr-42', label: 'Review launch PR' }],
     });
   });
 
@@ -186,6 +195,43 @@ describe('BriefComposition', () => {
     expect(lede.paragraphs[0]).toStartWith('# Today');
   });
 
+  test('drops RSVP actions without a real calendar id', () => {
+    const composition = parseBriefComposition({
+      version: 1,
+      title: 'Daily Brief',
+      services: ['calendar'],
+      blocks: [
+        {
+          type: 'week_ahead',
+          title: 'The week ahead',
+          events: [
+            {
+              account: 'me@example.test',
+              eventId: 'event_1',
+              calendarId: null,
+              title: 'Launch review',
+              startAt: Date.parse('2026-06-11T15:00:00.000Z'),
+              endAt: Date.parse('2026-06-11T16:00:00.000Z'),
+              sourceRefs: [{ kind: 'event', id: 'event_1', account: 'me@example.test' }],
+              actions: [
+                {
+                  action: 'rsvp_event',
+                  label: 'RSVP',
+                  payload: { account: 'me@example.test', eventId: 'event_1', status: 'yes' },
+                },
+              ],
+            },
+          ],
+          sourceRefs: [{ kind: 'event', id: 'event_1', account: 'me@example.test' }],
+        },
+      ],
+    });
+    const week = composition.blocks[0];
+
+    if (week.type !== 'week_ahead') throw new Error('missing week block');
+    expect(week.events[0].actions).toEqual([]);
+  });
+
   test('repairs broad model schema drift without losing creative blocks', () => {
     const composition = parseBriefComposition({
       version: 1,
@@ -222,7 +268,18 @@ describe('BriefComposition', () => {
             { label: 'Create follow-up', action: { action: 'create_task', payload: {} } },
             { label: 'Draft response', action: { action: 'draft_reply', payload: {} } },
             { label: 'Archive noise', action: { action: 'archive_thread', payload: {} } },
-            { label: 'RSVP', action: { action: 'rsvp_event', payload: {} } },
+            {
+              label: 'RSVP',
+              action: {
+                action: 'rsvp_event',
+                payload: {
+                  account: 'me@example.test',
+                  calendarId: 'cal_1',
+                  eventId: 'event_1',
+                  status: 'yes',
+                },
+              },
+            },
             { label: 'Create focus hold', action: { action: 'create_event', payload: {} } },
             { label: 'Ignore bad action', action: { action: 'reply', payload: {} } },
           ],
@@ -280,6 +337,8 @@ describe('BriefComposition', () => {
         {},
       ],
     });
+    if (composition.blocks[1].type !== 'prep_checklist') throw new Error('missing prep checklist');
+    expect(composition.blocks[1].items[10]).not.toHaveProperty('action');
     expect(composition.blocks[2]).toMatchObject({
       type: 'custom_widget',
       allowedActions: ['open_view'],

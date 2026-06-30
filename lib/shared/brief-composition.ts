@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import type { DailyReport, DailyReportCalendarItem, DailyReportItem, DailyReportTaskItem } from './types';
+import type {
+  DailyReport,
+  DailyReportCalendarItem,
+  DailyReportItem,
+  DailyReportMcpItem,
+  DailyReportTaskItem,
+} from './types';
 
 export const BRIEF_COMPOSITION_VERSION = 1;
 
@@ -19,6 +25,7 @@ const BRIEF_ACTION_TYPES = [
   'create_event',
 ] as const;
 const BRIEF_ACTION_STYLES = ['primary', 'secondary', 'danger', 'quiet'] as const;
+const RSVP_STATUSES = ['yes', 'no', 'maybe'] as const;
 const MAX_LEDE_PARAGRAPH_CHARS = 1200;
 const MAX_LEDE_PARAGRAPHS = 4;
 const DEFAULT_LEDE = 'A quiet brief today: nothing urgent is waiting.';
@@ -30,11 +37,21 @@ export const BriefSourceRefSchema = z.object({
   label: z.string().optional(),
 });
 
-export const BriefActionSchema = z.object({
+const BriefActionBaseSchema = z.object({
   action: z.enum(BRIEF_ACTION_TYPES),
   label: z.string().min(1).max(80),
   payload: z.record(z.string(), z.unknown()).default({}),
   style: z.enum(BRIEF_ACTION_STYLES).default('secondary'),
+});
+
+export const BriefActionSchema = BriefActionBaseSchema.superRefine((action, ctx) => {
+  if (action.action !== 'rsvp_event') return;
+  if (isValidRsvpPayload(action.payload)) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ['payload'],
+    message: 'rsvp_event payload requires account, calendarId, eventId, and status',
+  });
 });
 
 export const BriefBlockSchema = z.discriminatedUnion('type', [
@@ -179,7 +196,7 @@ export const BriefBlockSchema = z.discriminatedUnion('type', [
     title: z.string().min(1).max(120),
     html: z.string().min(1).max(20_000),
     fallbackMarkdown: z.string().min(1).max(2000),
-    allowedActions: z.array(BriefActionSchema.shape.action).max(8).default([]),
+    allowedActions: z.array(BriefActionBaseSchema.shape.action).max(8).default([]),
     sourceRefs: z.array(BriefSourceRefSchema).min(1),
   }),
 ]);
@@ -302,6 +319,7 @@ function sanitizeActions(value: unknown): BriefAction[] {
     if (!isRecord(entry) || !isOneOf(entry.action, BRIEF_ACTION_TYPES)) return [];
     const label = firstString(entry.label) || defaultActionLabel(entry.action);
     const payload = isRecord(entry.payload) ? entry.payload : {};
+    if (entry.action === 'rsvp_event' && !isValidRsvpPayload(payload)) return [];
     const style = isOneOf(entry.style, BRIEF_ACTION_STYLES) ? entry.style : 'secondary';
     return [
       {
@@ -317,6 +335,16 @@ function sanitizeActions(value: unknown): BriefAction[] {
 function sanitizeAllowedActions(value: unknown): BriefAction['action'][] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is BriefAction['action'] => isOneOf(entry, BRIEF_ACTION_TYPES));
+}
+
+function isValidRsvpPayload(payload: unknown): payload is Record<string, unknown> {
+  return (
+    isRecord(payload) &&
+    Boolean(firstString(payload.account)) &&
+    Boolean(firstString(payload.calendarId)) &&
+    Boolean(firstString(payload.eventId)) &&
+    isOneOf(payload.status, RSVP_STATUSES)
+  );
 }
 
 function defaultActionLabel(action: BriefAction['action']): string {
@@ -403,30 +431,35 @@ export function compositionFromReport(report: DailyReport): BriefComposition {
     },
   ];
   if (mcp.length) {
+    const mcpSourceRefs = mcp.flatMap((item) => {
+      const ref = mcpSourceRef(item);
+      return ref ? [ref] : [];
+    });
     blocks.push({
       type: 'tool_digest',
       title: 'Across your tools',
-      items: mcp.map((item) => ({
-        server: item.server,
-        title: item.title,
-        state: item.state ?? null,
-        author: item.author ?? null,
-        url: item.url ?? null,
-        sourceRefs: [{ kind: 'mcp', id: `${item.server}:${item.kind}:${item.title}` }],
-        actions: item.url
-          ? [
-              {
-                action: 'open_view',
-                label: 'Open tools',
-                payload: { view: 'mail' },
-                style: 'quiet',
-              },
-            ]
-          : [],
-      })),
-      sourceRefs: mcp.map(
-        (item) => ({ kind: 'mcp', id: `${item.server}:${item.kind}:${item.title}` }) as BriefSourceRef,
-      ),
+      items: mcp.map((item) => {
+        const sourceRef = mcpSourceRef(item);
+        return {
+          server: item.server,
+          title: item.title,
+          state: item.state ?? null,
+          author: item.author ?? null,
+          url: item.url ?? null,
+          sourceRefs: sourceRef ? [sourceRef] : [],
+          actions: item.url
+            ? [
+                {
+                  action: 'open_view',
+                  label: 'Open tools',
+                  payload: { view: 'mail' },
+                  style: 'quiet',
+                },
+              ]
+            : [],
+        };
+      }),
+      sourceRefs: mcpSourceRefs,
     });
   }
   return {
@@ -520,6 +553,12 @@ function eventToComposition(event: DailyReportCalendarItem) {
       },
     ],
   } satisfies Extract<BriefBlock, { type: 'week_ahead' }>['events'][number];
+}
+
+function mcpSourceRef(item: DailyReportMcpItem): BriefSourceRef | null {
+  const id = firstString(item.externalId, item.url);
+  if (!id) return null;
+  return { kind: 'mcp', id, label: item.title };
 }
 
 function threadSourceRef(item: { account: string; threadId: string; subject?: string }): BriefSourceRef {

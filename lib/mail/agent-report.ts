@@ -426,7 +426,7 @@ TWO MODES, BOTH REQUIRED:
 ANALYZE, DON'T TRANSCRIBE:
 - Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view. Each thread also carries the app's own first-pass read (whyItMatters, nextAction, openLoops, surfacedBecause, isNewSender) — treat it as a STARTING POINT you can sharpen or overrule with what you find in the bodies, never as text to copy verbatim.
 - Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task"). Use the richer fields you're given — task descriptions/labels/assignees, event descriptions/locations — to make those connections concrete.
-- Be PROACTIVE, and you have real levers — propose AND wire them: to-dos (create_task), ready-to-send reply drafts in the user's voice (draft_reply), calendar holds for focus/prep/buffer (create_event), invite responses (rsvp_event), and clearing obvious noise (archive_thread). Nothing executes without a tap, so lean toward offering the action rather than just naming it.
+- Be PROACTIVE, and you have real levers — propose AND wire them: to-dos (create_task), ready-to-send reply drafts in the user's voice (draft_reply), calendar holds for focus/prep/buffer (create_event), invite responses only when the event has canRsvp:true (rsvp_event), and clearing obvious noise (archive_thread). Nothing executes without a tap, so lean toward offering the action rather than just naming it.
 - YOU HAVE FULL EDITORIAL CONTROL. Beyond the sections below, add whatever you judge genuinely useful for THIS person today and omit what isn't — e.g. a "Focus blocks" suggestion that proposes create_event holds around deep work, a "Waiting on others" list, a tight "Clear the noise" row of archivable FYIs, or a prep dossier for the day's most important meeting. Go deeper where it earns its space; stay calm and short on a light day. Never pad.
 - Adaptive density: short and calm on a light day, fuller when it's busy. Never pad.
 - DESIGN THE BRIEF, DON'T JUST SUMMARIZE. The rendered output should feel like an editorial artifact: lead with 2-3 short lede paragraphs when there is enough material, surface concrete decisions and next actions, and use charts/timelines/prep checklists/custom_widget when the shape of the day benefits from a visual or interactable view. If a specific visualization or tiny workflow would make the brief clearer, create it as a custom_widget with fallbackMarkdown.
@@ -437,6 +437,7 @@ OUTPUT RULES (critical):
 - Use real ids/accounts from the data only. Never invent ids.
 - Every rich/generated claim outside a simple lede must include sourceRefs pointing to the source thread/message/task/event/mcp item. Charts and custom widgets require sourceRefs.
 - sourceRefs MUST be objects shaped exactly like { "kind": "thread"|"message"|"task"|"event"|"mcp"|"account"|"derived", "id": string, "account"?: string, "label"?: string }. Use the key "id" even when the source data field is threadId/cardId/eventId/messageId. Do not use kind values like "email", "mail", "todo", "calendar", "github", or "unknown"; map them to the allowed kind or omit the bad ref.
+- For connected tool sourceRefs, use only mcp.externalId or mcp.url from the provided data as the id. Do not invent IDs from server, kind, title, or examples.
 - actions MUST be objects shaped exactly like { "action": one VALID ACTION name, "label": short button text, "payload": object, "style"?: "primary"|"secondary"|"danger"|"quiet" }. The action field is NEVER prose. The label field is REQUIRED. The payload field is REQUIRED and must contain the exact ids/accounts for that action.
 - lede.paragraphs MUST contain 1-4 strings, and each string must be 1200 characters or less. If you write a markdown-style lede with headings or bullets, split it into separate paragraph strings rather than one long blob.
 - For optional sourceRefs/actions, [] is valid. A clean valid composition with fewer buttons is better than an invalid composition with guessed wiring.
@@ -470,7 +471,7 @@ VALID ACTIONS:
 - { "action":"create_task", "label":"Create task", "payload":{ title, dueAt? } }
 - { "action":"draft_reply", "label":"Draft reply", "payload":{ account, threadId, body } }
 - { "action":"archive_thread", "label":"Archive", "payload":{ account, threadId, subject?, receivedAt? }, "style":"quiet" }
-- { "action":"rsvp_event", "label":"RSVP", "payload":{ account, calendarId, eventId, status:"yes"|"no"|"maybe" } }
+- { "action":"rsvp_event", "label":"RSVP", "payload":{ account, calendarId, eventId, status:"yes"|"no"|"maybe" } } Only use when the event has canRsvp:true and a non-empty calendarId.
 - { "action":"create_event", "label":"Create event", "payload":{ account, title, startAt, endAt, location?, description? } }
 
 SOURCE REF EXAMPLES:
@@ -478,7 +479,7 @@ SOURCE REF EXAMPLES:
 - Message source: { "kind":"message", "id": messageId, "account": account }
 - Task source: { "kind":"task", "id": cardId, "label": title }
 - Calendar source: { "kind":"event", "id": eventId, "account": account, "label": title }
-- Connected tool source: { "kind":"mcp", "id": "github:pull_request:123", "label": title }
+- Connected tool source: { "kind":"mcp", "id": externalId_or_url_from_the_mcp_item, "label": title }. Prefer mcp.externalId; otherwise use mcp.url; omit the ref if neither exists.
 - Inferred grouping/chart source only when no single source owns it: { "kind":"derived", "id":"chart:open-loops" }
 
 CUSTOM WIDGET RULES:
@@ -511,6 +512,7 @@ export function toBriefEvent(e: DailyReportCalendarItem) {
     account: e.account,
     eventId: e.eventId,
     calendarId: e.calendarId ?? null,
+    canRsvp: Boolean(e.calendarId),
     calendarName: e.calendarName ?? null,
     title: e.title,
     startAt: e.startAt,
@@ -571,7 +573,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
     `This is the "${report.kind}" edition.`,
     'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the Daily Brief composition JSON.',
-    'Backend contract: use exact ids/accounts from this JSON verbatim. For sourceRefs, copy ids into the field named "id" and use only allowed kind values. For actions, use only valid action enum strings, always include label and payload, and omit any action you cannot wire exactly.',
+    'Backend contract: use exact ids/accounts from this JSON verbatim. For sourceRefs, copy ids into the field named "id" and use only allowed kind values; for mcp sourceRefs use only externalId or url. For actions, use only valid action enum strings, always include label and payload, and omit any action you cannot wire exactly.',
     'Design contract: be editorial and component-minded. Choose the blocks, visual comparisons, timelines, checklists, or compact widgets that best fit the actual day, while keeping every object schema-valid.',
     '',
     '```json',
