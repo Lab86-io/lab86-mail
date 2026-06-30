@@ -519,6 +519,28 @@ DESIGN:
 - CARD RULE: cards are allowed for individual repeated items, but the report must not be a stack of similar cards. If a section can become a timeline, map, table, checklist, dossier, or annotated spread, use that stronger form.
 - The design must work in light and dark because the host may override --brief-* variables. Do not hardcode large white panels, fixed black text, fixed white text, or isolated brand colors that will clash with the host theme.
 
+AI SLOP BAN LIST — before final output, ensure none of these twenty tells dominate:
+1. Centered hero + generic subtitle + obvious CTA row.
+2. Purple/blue gradient SaaS palette, rainbow mesh, or decorative glow blobs.
+3. Warm cream + terracotta + serif broadsheet as a default unless the art/content justifies it.
+4. Near-black page with one neon accent and nothing else.
+5. Three or four equal feature cards with icons and similar copy length.
+6. Repeated bordered cards for every item when a timeline/table/map would encode more.
+7. Sharp default buttons or oversized rounded rectangles lined up in rows.
+8. Inter/Roboto/Arial-only typography or type that ignores --brief-font-display.
+9. Fake stats, decorative counters, or metrics that do not answer a real question.
+10. Placeholder-sounding copy: "stay on top", "streamline", "unlock", "seamless", "at a glance" without specifics.
+11. Generic section names that could fit any product instead of names grounded in today's content.
+12. Stock icon decoration, emoji decoration, or icon rows that do not add information.
+13. Glassmorphism/frosted panels, heavy shadows, or blur effects used as a substitute for hierarchy.
+14. Identical spacing rhythm from top to bottom; no editorial pacing, density shifts, or visual rests.
+15. Full-width text paragraphs masquerading as design.
+16. Tables that are just lists with borders.
+17. Timelines without time, sequence, connectors, or visual causality.
+18. Charts/diagrams that decorate instead of explaining relationships, volume, urgency, or sequence.
+19. Motion scattered everywhere instead of one purposeful moment.
+20. Any component that would still make sense if all real mail/calendar/task content were swapped out.
+
 CONTENT STRUCTURE (compose from your analysis; omit only truly empty parts):
 - After the masthead, write an integrated narrative lede: 2-3 short paragraphs in body-sized text, with a clear through-line connecting mail, calendar, tasks, and connected tools. Do not make the lede a huge centered single paragraph.
 - "Needs you": the threads YOU judge as needing action — person/thread title, your one-line read of why from the body, how long it has sat, an open-thread button, and for reply-owed items a proposed draft via draft_reply.
