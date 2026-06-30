@@ -52,8 +52,10 @@ export function getDailyArt(at: number = Date.now()): DailyArt {
     };
   }
 
-  const primary = ART_POOL[hash % ART_POOL.length];
-  const alternates = pickAlternates(primary, hash);
+  const chosen = ART_POOL[hash % ART_POOL.length];
+  const candidates = [chosen, ...pickAlternates(chosen, hash)].filter((piece) => piece.source !== 'aic');
+  const primary = candidates[0] ?? chosen;
+  const alternates = candidates.slice(1);
   return {
     imageUrl: highResolutionArtUrl(primary.imageUrl),
     fallbacks: [...alternates.map((a) => highResolutionArtUrl(a.imageUrl)), ...locals],

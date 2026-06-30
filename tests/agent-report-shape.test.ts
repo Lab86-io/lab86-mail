@@ -188,7 +188,7 @@ describe('daily brief service metadata', () => {
   test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('MASTHEAD (signature element');
     expect(HTML_ARTIFACT_BRIEF).toContain('Claude Artifact');
-    expect(HTML_ARTIFACT_BRIEF).toContain('CLAUDE ARTIFACT DESIGN SKILL');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Claude Artifact design skill');
     expect(HTML_ARTIFACT_BRIEF).toContain('REQUIRED VISUAL MODULES');
     expect(HTML_ARTIFACT_BRIEF).toContain('TIMELINE STANDARD');
     expect(HTML_ARTIFACT_BRIEF).toContain('ACTION DESIGN');
@@ -198,17 +198,17 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('LIGHT AND DARK MODE REQUIREMENTS');
     expect(HTML_ARTIFACT_BRIEF).toContain('prefers-color-scheme: dark');
     expect(HTML_ARTIFACT_BRIEF).toContain('AI SLOP BAN LIST');
-    expect(HTML_ARTIFACT_BRIEF).toContain('twenty tells');
+    expect(HTML_ARTIFACT_BRIEF).toContain('none of these dominate');
     expect(HTML_ARTIFACT_BRIEF).toContain('The {data.weekday} Brief');
-    expect(HTML_ARTIFACT_BRIEF).toContain('newspaper spine');
-    expect(HTML_ARTIFACT_BRIEF).toContain('SYSTEM THEME IS MANDATORY');
-    expect(HTML_ARTIFACT_BRIEF).toContain('SYSTEM TYPOGRAPHY IS MANDATORY');
+    expect(HTML_ARTIFACT_BRIEF).toContain("newspaper's spine");
+    expect(HTML_ARTIFACT_BRIEF).toContain('THEME — TWO fonts');
+    expect(HTML_ARTIFACT_BRIEF).toContain('LIGHT AND DARK MODE REQUIREMENTS');
     expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-font-display)');
     expect(HTML_ARTIFACT_BRIEF).toContain('data.art.imageUrl');
-    expect(HTML_ARTIFACT_BRIEF).toContain('required art header');
-    expect(HTML_ARTIFACT_BRIEF).toContain('CONTENT STRUCTURE');
-    expect(HTML_ARTIFACT_BRIEF).toContain('mostly bordered cards');
-    expect(HTML_ARTIFACT_BRIEF).toContain('Charts/diagrams that decorate');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Image fallback is REQUIRED');
+    expect(HTML_ARTIFACT_BRIEF).toContain('CONTENT (compose from your analysis');
+    expect(HTML_ARTIFACT_BRIEF).toContain('repeated bordered cards');
+    expect(HTML_ARTIFACT_BRIEF).toContain('charts that decorate');
   });
 });
 
