@@ -48,7 +48,7 @@ export const BriefActionSchema = BriefActionBaseSchema.superRefine((action, ctx)
   if (action.action !== 'rsvp_event') return;
   if (isValidRsvpPayload(action.payload)) return;
   ctx.addIssue({
-    code: z.ZodIssueCode.custom,
+    code: 'custom',
     path: ['payload'],
     message: 'rsvp_event payload requires account, calendarId, eventId, and status',
   });
