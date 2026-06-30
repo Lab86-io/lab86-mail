@@ -7,6 +7,7 @@ import {
   deleteDraftTool,
   forwardMessage,
   listDraftsTool,
+  recordSavedDraftOperation,
   replyAllMessage,
   replyMessage,
   saveDraftTool,
@@ -42,6 +43,73 @@ describe('compose tools', () => {
     const deleted = await runTool(deleteDraftTool.handler, { id: saved.draft._id });
     expect(deleted.ok).toBe(true);
     await expect(withToolContext(() => getDraft(saved.draft._id))).resolves.toBeNull();
+  });
+
+  test('save_draft operation metadata records an undoable draft target when hosted operations are configured', async () => {
+    const previousUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.NEXT_PUBLIC_CONVEX_URL = 'http://127.0.0.1:32123';
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'test-secret';
+    const operationInputs: any[] = [];
+    try {
+      const operationId = await recordSavedDraftOperation(
+        {
+          ctx: { userId: 'test_user_tools' },
+          args: { subject: 'Tracked draft' },
+          saved: { _id: 'draft_1', account: 'jakob@example.test' },
+        },
+        async (input: any) => {
+          operationInputs.push(input);
+          return 'operation_draft_1';
+        },
+      );
+      expect(operationId).toBe('operation_draft_1');
+      expect(operationInputs[0]).toMatchObject({
+        userId: 'test_user_tools',
+        tool: 'save_draft',
+        surface: 'mail',
+        summary: 'Saved draft "Tracked draft"',
+        inverse: { kind: 'compose.delete_draft' },
+      });
+      expect(operationInputs[0].target).toMatchObject({
+        kind: 'emailDraft',
+        id: 'draft_1',
+        accountId: 'jakob@example.test',
+      });
+    } finally {
+      if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_CONVEX_URL;
+      else process.env.NEXT_PUBLIC_CONVEX_URL = previousUrl;
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('save_draft skips operation metadata outside hosted operation mode', async () => {
+    const previousUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    delete process.env.NEXT_PUBLIC_CONVEX_URL;
+    delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    const operationInputs: any[] = [];
+    try {
+      const operationId = await recordSavedDraftOperation(
+        {
+          ctx: { userId: 'test_user_tools' },
+          args: { subject: 'Local draft' },
+          saved: { _id: 'draft_2', account: 'jakob@example.test' },
+        },
+        async (input: any) => {
+          operationInputs.push(input);
+          return 'operation_draft_2';
+        },
+      );
+      expect(operationId).toBeUndefined();
+      expect(operationInputs).toHaveLength(0);
+    } finally {
+      if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_CONVEX_URL;
+      else process.env.NEXT_PUBLIC_CONVEX_URL = previousUrl;
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
   });
 
   test('reply and reply_all require cached anchor messages', async () => {

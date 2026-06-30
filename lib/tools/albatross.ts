@@ -11,7 +11,38 @@ import { saveDraftTool, sendMessage } from './compose';
 import { type AnyTool, defineTool, invokeTool, type ToolContext } from './registry';
 import { tasksCreateCard } from './tasks';
 
-const albatrossApi = (api as any).albatrossWork;
+const defaultDeps = {
+  api,
+  convexMutation,
+  convexQuery,
+  recordOperation,
+  newOperationBatchId,
+  invokeTool,
+  tools: {
+    tasksCreateCard,
+    calendarCreateEvent,
+    calendarRsvpEvent,
+    saveDraftTool,
+    sendMessage,
+  },
+};
+
+let deps = defaultDeps;
+
+export function __setAlbatrossToolDepsForTest(overrides: Partial<typeof defaultDeps> = {}) {
+  deps = {
+    ...defaultDeps,
+    ...overrides,
+    tools: {
+      ...defaultDeps.tools,
+      ...(overrides.tools || {}),
+    },
+  };
+}
+
+function albatrossApi() {
+  return (deps.api as any).albatrossWork;
+}
 
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');
@@ -115,7 +146,7 @@ async function recordProjectOperation(input: {
   title: string;
   operationBatchId: string;
 }) {
-  return recordOperation({
+  return deps.recordOperation({
     userId: input.userId,
     tool: 'albatross_create_project',
     surface: 'albatross',
@@ -132,7 +163,7 @@ async function recordSprintOperation(input: {
   title: string;
   operationBatchId?: string;
 }) {
-  return recordOperation({
+  return deps.recordOperation({
     userId: input.userId,
     tool: 'albatross_create_sprint',
     surface: 'albatross',
@@ -157,7 +188,7 @@ async function linkToProject(
   },
 ) {
   if (!projectId || !link.artifactId) return;
-  await convexMutation(albatrossApi.linkArtifact, {
+  await deps.convexMutation(albatrossApi().linkArtifact, {
     userId,
     projectId,
     artifactKind: link.artifactKind,
@@ -180,17 +211,17 @@ async function executeToolStep(step: AlbatrossApplicationStep, ctx: ToolContext,
       projectId,
       intentId: args.source?.externalId,
     };
-    return invokeTool(tasksCreateCard, args, ctx);
+    return deps.invokeTool(deps.tools.tasksCreateCard, args, ctx);
   }
-  if (step.kind === 'calendar_event') return invokeTool(calendarCreateEvent, args, ctx);
-  if (step.kind === 'email_draft') return invokeTool(saveDraftTool, args, ctx);
+  if (step.kind === 'calendar_event') return deps.invokeTool(deps.tools.calendarCreateEvent, args, ctx);
+  if (step.kind === 'email_draft') return deps.invokeTool(deps.tools.saveDraftTool, args, ctx);
   throw new Error(`Unsupported executable Albatross step: ${step.kind}`);
 }
 
 function approvalToolFor(name: string): AnyTool {
-  if (name === 'send_message') return sendMessage;
-  if (name === 'calendar_create_event') return calendarCreateEvent;
-  if (name === 'calendar_rsvp_event') return calendarRsvpEvent;
+  if (name === 'send_message') return deps.tools.sendMessage;
+  if (name === 'calendar_create_event') return deps.tools.calendarCreateEvent;
+  if (name === 'calendar_rsvp_event') return deps.tools.calendarRsvpEvent;
   throw new Error(`Approval tool not allowed: ${name}`);
 }
 
@@ -222,7 +253,7 @@ export const albatrossApplyIntentPlan = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const operationBatchId = args.operationBatchId || ctx.operationBatchId || newOperationBatchId();
+    const operationBatchId = args.operationBatchId || ctx.operationBatchId || deps.newOperationBatchId();
     const plan = buildAlbatrossApplicationPlan({
       intentId: args.intentId,
       intentText: args.intentText,
@@ -241,7 +272,7 @@ export const albatrossApplyIntentPlan = defineTool({
 
     for (const step of plan.executableSteps) {
       if (step.kind === 'project') {
-        projectId = await convexMutation<string>(albatrossApi.createProject, {
+        projectId = await deps.convexMutation<string>(albatrossApi().createProject, {
           userId,
           externalId: `intent:${args.intentId}`,
           title: step.title,
@@ -312,7 +343,7 @@ export const albatrossApplyIntentPlan = defineTool({
     }
 
     for (const step of plan.approvalSteps) {
-      const approvalId = await convexMutation<string>(albatrossApi.enqueueApproval, {
+      const approvalId = await deps.convexMutation<string>(albatrossApi().enqueueApproval, {
         userId,
         kind: approvalKind(step),
         title: step.title,
@@ -345,7 +376,7 @@ export const albatrossApplyIntentPlan = defineTool({
       approvals,
       unresolved: plan.unresolved,
     });
-    const applicationId = await convexMutation<string>(albatrossApi.recordPlanApplication, {
+    const applicationId = await deps.convexMutation<string>(albatrossApi().recordPlanApplication, {
       userId,
       intentId: args.intentId,
       intentText: args.intentText,
@@ -385,7 +416,7 @@ export const albatrossListApprovalQueue = defineTool({
   output: z.object({ approvals: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const approvals = await convexQuery<any[]>(albatrossApi.listApprovals, {
+    const approvals = await deps.convexQuery<any[]>(albatrossApi().listApprovals, {
       userId,
       status: args.status,
       limit: args.limit,
@@ -408,22 +439,25 @@ export const albatrossApproveAction = defineTool({
   output: z.object({ ok: z.boolean(), result: z.any().optional(), approval: z.any().optional() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const approval = await convexQuery<any | null>(albatrossApi.getApproval, {
+    const approval = await deps.convexQuery<any | null>(albatrossApi().getApproval, {
       userId,
       approvalId: args.approvalId,
     });
     if (!approval) throw new Error('Approval not found.');
     if (approval.status !== 'pending') throw new Error(`Approval is already ${approval.status}.`);
     const tool = approvalToolFor(approval.toolName);
-    const result = await invokeTool(
+    const result = await deps.invokeTool(
       tool,
       { ...(approval.toolArgs || {}), ...(args.editedArgs || {}) },
       batchContext(
         ctx,
-        args.operationBatchId || approval.operationBatchId || ctx.operationBatchId || newOperationBatchId(),
+        args.operationBatchId ||
+          approval.operationBatchId ||
+          ctx.operationBatchId ||
+          deps.newOperationBatchId(),
       ),
     );
-    const decided = await convexMutation<any>(albatrossApi.decideApproval, {
+    const decided = await deps.convexMutation<any>(albatrossApi().decideApproval, {
       userId,
       approvalId: args.approvalId,
       status: 'approved',
@@ -442,7 +476,7 @@ export const albatrossRejectAction = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    await convexMutation(albatrossApi.decideApproval, {
+    await deps.convexMutation(albatrossApi().decideApproval, {
       userId,
       approvalId: args.approvalId,
       status: 'rejected',
@@ -462,7 +496,7 @@ export const albatrossUndoApproval = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const approval = await convexQuery<any | null>(albatrossApi.getApproval, {
+    const approval = await deps.convexQuery<any | null>(albatrossApi().getApproval, {
       userId,
       approvalId: args.approvalId,
     });
@@ -470,7 +504,7 @@ export const albatrossUndoApproval = defineTool({
     if (approval.undoExpiresAt && Date.now() > approval.undoExpiresAt) {
       throw new Error('Undo window expired.');
     }
-    await convexMutation(albatrossApi.decideApproval, {
+    await deps.convexMutation(albatrossApi().decideApproval, {
       userId,
       approvalId: args.approvalId,
       status: 'undone',
@@ -497,8 +531,8 @@ export const albatrossCreateProject = defineTool({
   output: z.object({ ok: z.boolean(), projectId: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const operationBatchId = args.operationBatchId || ctx.operationBatchId || newOperationBatchId();
-    const projectId = await convexMutation<string>(albatrossApi.createProject, {
+    const operationBatchId = args.operationBatchId || ctx.operationBatchId || deps.newOperationBatchId();
+    const projectId = await deps.convexMutation<string>(albatrossApi().createProject, {
       userId,
       externalId: args.externalId,
       title: args.title,
@@ -530,7 +564,7 @@ export const albatrossListProjects = defineTool({
   }),
   output: z.object({ projects: z.array(z.any()) }),
   async handler(args, ctx) {
-    const projects = await convexQuery<any[]>(albatrossApi.listProjects, {
+    const projects = await deps.convexQuery<any[]>(albatrossApi().listProjects, {
       userId: requireUserId(ctx.userId),
       status: args.status,
       areaId: args.areaId,
@@ -549,7 +583,7 @@ export const albatrossGetProjectPane = defineTool({
   input: z.object({ projectId: z.string() }),
   output: z.object({ pane: z.any() }),
   async handler(args, ctx) {
-    const pane = await convexQuery<any>(albatrossApi.getProjectPane, {
+    const pane = await deps.convexQuery<any>(albatrossApi().getProjectPane, {
       userId: requireUserId(ctx.userId),
       projectId: args.projectId,
     });
@@ -576,7 +610,7 @@ export const albatrossCreateSprint = defineTool({
   output: z.object({ ok: z.boolean(), sprintId: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const sprintId = await convexMutation<string>(albatrossApi.createSprint, {
+    const sprintId = await deps.convexMutation<string>(albatrossApi().createSprint, {
       userId,
       projectId: args.projectId,
       externalId: args.externalId,
@@ -609,7 +643,7 @@ export const albatrossListSprints = defineTool({
   }),
   output: z.object({ sprints: z.array(z.any()) }),
   async handler(args, ctx) {
-    const sprints = await convexQuery<any[]>(albatrossApi.listSprints, {
+    const sprints = await deps.convexQuery<any[]>(albatrossApi().listSprints, {
       userId: requireUserId(ctx.userId),
       projectId: args.projectId,
       status: args.status,
@@ -633,7 +667,7 @@ export const albatrossPreviewUndoUnresolved = defineTool({
 });
 
 registerUndoExecutor('albatross.archive_project', async (payload, ctx) => {
-  await convexMutation(albatrossApi.updateProject, {
+  await deps.convexMutation(albatrossApi().updateProject, {
     userId: ctx.userId,
     projectId: payload.projectId,
     status: 'archived',
@@ -641,7 +675,7 @@ registerUndoExecutor('albatross.archive_project', async (payload, ctx) => {
 });
 
 registerUndoExecutor('albatross.archive_sprint', async (payload, ctx) => {
-  await convexMutation(albatrossApi.updateSprint, {
+  await deps.convexMutation(albatrossApi().updateSprint, {
     userId: ctx.userId,
     sprintId: payload.sprintId,
     status: 'archived',

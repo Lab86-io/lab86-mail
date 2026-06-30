@@ -13,7 +13,26 @@ import {
   saveDraft as saveDraftRecord,
 } from '../store/drafts';
 import { getMessage as getMessageRecord, getThreadMessages } from '../store/messages';
-import { defineTool } from './registry';
+import { defineTool, type ToolContext } from './registry';
+
+export async function recordSavedDraftOperation(
+  input: {
+    ctx: Pick<ToolContext, 'userId'>;
+    args: Pick<Draft, 'subject'>;
+    saved: Pick<Draft, '_id' | 'account'>;
+  },
+  recorder = recordOperation,
+) {
+  if (!input.ctx.userId || !isConvexConfigured() || !convexInternalSecret()) return undefined;
+  return recorder({
+    userId: input.ctx.userId,
+    tool: 'save_draft',
+    surface: 'mail',
+    summary: `Saved draft "${input.args.subject || '(no subject)'}"`,
+    target: { kind: 'emailDraft', id: input.saved._id, accountId: input.saved.account },
+    inverse: { kind: 'compose.delete_draft', payload: { draftId: input.saved._id } },
+  });
+}
 
 // Attachment sources the agent can pull and send: a web url, or a file off
 // an existing email. Both resolve to bytes server-side at send time. Kept flat
@@ -327,17 +346,7 @@ export const saveDraftTool = defineTool({
   async handler(args, ctx) {
     const doc: Draft = { ...args, updatedAt: Date.now() };
     const saved = await saveDraftRecord(doc);
-    let operationId: string | undefined;
-    if (ctx.userId && isConvexConfigured() && convexInternalSecret()) {
-      operationId = await recordOperation({
-        userId: ctx.userId,
-        tool: 'save_draft',
-        surface: 'mail',
-        summary: `Saved draft "${args.subject || '(no subject)'}"`,
-        target: { kind: 'emailDraft', id: saved._id, accountId: saved.account },
-        inverse: { kind: 'compose.delete_draft', payload: { draftId: saved._id } },
-      });
-    }
+    const operationId = await recordSavedDraftOperation({ ctx, args, saved });
     return { ok: true, draft: saved, operationId };
   },
 });
