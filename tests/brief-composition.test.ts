@@ -50,6 +50,35 @@ describe('BriefComposition', () => {
     });
   });
 
+  test('derives connected tool actions when MCP items have URLs', () => {
+    const composition = compositionFromReport({
+      ...reportFixture(),
+      sections: {
+        ...reportFixture().sections,
+        mcp: [
+          {
+            server: 'github',
+            kind: 'pull_request',
+            title: 'Review launch PR',
+            state: 'open',
+            author: 'Alex',
+            url: 'https://github.com/acme/project/pull/42',
+            updatedAt: Date.parse('2026-06-10T10:00:00.000Z'),
+          },
+        ],
+      },
+    });
+
+    expect(composition.blocks.find((block) => block.type === 'tool_digest')).toMatchObject({
+      items: [
+        {
+          sourceRefs: [{ kind: 'mcp', id: 'github:pull_request:Review launch PR' }],
+          actions: [{ action: 'open_view', label: 'Open tools', payload: { view: 'mail' } }],
+        },
+      ],
+    });
+  });
+
   test('extracts and validates model-authored composition JSON', () => {
     const raw = `Here you go:\n\n\`\`\`json\n${JSON.stringify({
       version: 1,
@@ -116,6 +145,110 @@ describe('BriefComposition', () => {
     expect(composition.blocks[1]).toMatchObject({
       type: 'chart',
       sourceRefs: [{ kind: 'derived', id: 'block:chart:1' }],
+    });
+  });
+
+  test('repairs broad model schema drift without losing creative blocks', () => {
+    const composition = parseBriefComposition({
+      version: 1,
+      title: 'Daily Brief',
+      services: ['gmail'],
+      blocks: [
+        {
+          type: 'timeline',
+          title: 'Thread to meeting path',
+          items: [
+            {
+              label: 'Message arrived',
+              sourceRefs: [
+                { kind: 'message-ish', messageId: 'msg_1', account: 'me@example.test' },
+                { kind: 'todo', cardId: 'task_1', title: 'Prep launch notes' },
+                { kind: 'calendar', eventId: 'event_1', title: 'Launch review' },
+                { kind: 'account', id: 'me@example.test' },
+                { kind: 'mystery', id: 'inferred-group' },
+                'bad',
+              ],
+            },
+          ],
+          sourceRefs: 'bad',
+        },
+        {
+          type: 'prep_checklist',
+          title: 'Prep',
+          items: [
+            { label: 'Open the thread', action: { action: 'open_thread', payload: {} } },
+            { label: 'Resolve the thread', action: { action: 'resolve_thread', payload: {} } },
+            { label: 'Dismiss the thread', action: { action: 'dismiss_thread', payload: {} } },
+            { label: 'Complete the task', action: { action: 'toggle_task', payload: {} } },
+            { label: 'Dismiss the task', action: { action: 'dismiss_task', payload: {} } },
+            { label: 'Create follow-up', action: { action: 'create_task', payload: {} } },
+            { label: 'Draft response', action: { action: 'draft_reply', payload: {} } },
+            { label: 'Archive noise', action: { action: 'archive_thread', payload: {} } },
+            { label: 'RSVP', action: { action: 'rsvp_event', payload: {} } },
+            { label: 'Create focus hold', action: { action: 'create_event', payload: {} } },
+            { label: 'Ignore bad action', action: { action: 'reply', payload: {} } },
+          ],
+          sourceRefs: [{ kind: 'derived', id: 'prep' }],
+        },
+        {
+          type: 'custom_widget',
+          id: 'focus_widget',
+          title: 'Focus widget',
+          html: '<button>Open</button>',
+          fallbackMarkdown: 'Open mail.',
+          allowedActions: ['open_view', 'reply', 42],
+          sourceRefs: [{ kind: 'derived', id: 'widget:focus' }],
+        },
+        {
+          type: 'custom_widget',
+          id: 'quiet_widget',
+          title: 'Quiet widget',
+          html: '<button>Quiet</button>',
+          fallbackMarkdown: 'Quiet.',
+          allowedActions: 'open_view',
+          sourceRefs: [{ kind: 'derived', id: 'widget:quiet' }],
+        },
+      ],
+    });
+
+    expect(composition.blocks[0]).toMatchObject({
+      type: 'timeline',
+      sourceRefs: [],
+      items: [
+        {
+          sourceRefs: [
+            { kind: 'message', id: 'msg_1' },
+            { kind: 'task', id: 'task_1' },
+            { kind: 'event', id: 'event_1' },
+            { kind: 'account', id: 'me@example.test' },
+            { kind: 'derived', id: 'inferred-group' },
+          ],
+        },
+      ],
+    });
+    expect(composition.blocks[1]).toMatchObject({
+      type: 'prep_checklist',
+      items: [
+        { action: { action: 'open_thread', label: 'Open' } },
+        { action: { action: 'resolve_thread', label: 'Done' } },
+        { action: { action: 'dismiss_thread', label: 'Remove' } },
+        { action: { action: 'toggle_task', label: 'Complete' } },
+        { action: { action: 'dismiss_task', label: 'Remove' } },
+        { action: { action: 'create_task', label: 'Create task' } },
+        { action: { action: 'draft_reply', label: 'Draft reply' } },
+        { action: { action: 'archive_thread', label: 'Archive' } },
+        { action: { action: 'rsvp_event', label: 'RSVP' } },
+        { action: { action: 'create_event', label: 'Create event' } },
+        {},
+      ],
+    });
+    expect(composition.blocks[2]).toMatchObject({
+      type: 'custom_widget',
+      allowedActions: ['open_view'],
+    });
+    expect(composition.blocks[3]).toMatchObject({
+      type: 'custom_widget',
+      allowedActions: [],
     });
   });
 
