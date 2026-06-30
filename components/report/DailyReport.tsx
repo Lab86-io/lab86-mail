@@ -372,18 +372,6 @@ const FONT_FAMILIES: Record<string, string> = {
   news: "'Averia Serif Libre', Georgia, serif",
 };
 
-const REPORT_ARTIFACT_SAFETY_CSS = `<style id="lab86-report-safety-css">
-*,*::before,*::after{box-sizing:border-box}
-:root{--brief-display-tracking:0em}
-h1,h2,h3,.masthead,.brief-masthead,[class*="masthead" i],[class*="headline" i],[class*="header" i]{letter-spacing:var(--brief-display-tracking,0em)}
-[style*="Instrument Sans" i] h1,[style*="Instrument Sans" i] h2,[style*="Instrument Sans" i] h3,[style*="Instrument Sans" i] .masthead,h1[style*="Instrument Sans" i],h2[style*="Instrument Sans" i],h3[style*="Instrument Sans" i]{letter-spacing:max(var(--brief-display-tracking,0em),0.045em)}
-[class*="week" i],[id*="week" i],[class*="calendar" i],[id*="calendar" i],[class*="agenda" i],[id*="agenda" i],[class*="timeline" i],[id*="timeline" i]{grid-column:1/-1;width:100%;max-width:100%;min-width:0}
-[class*="week" i] *,[id*="week" i] *,[class*="calendar" i] *,[id*="calendar" i] *,[class*="agenda" i] *,[id*="agenda" i] *,[class*="timeline" i] *,[id*="timeline" i] *{min-width:0;overflow-wrap:anywhere}
-table{width:100%;max-width:100%;border-collapse:collapse}
-th,td{min-width:0;overflow-wrap:anywhere}
-@media (max-width:640px){[class*="week" i] table,[id*="week" i] table,[class*="calendar" i] table,[id*="calendar" i] table,[class*="agenda" i] table,[id*="agenda" i] table{table-layout:auto}}
-</style>`;
-
 const REPORT_ARTIFACT_RUNTIME_JS = `<script id="lab86-report-runtime-js">
 (function(){
 if(window.__lab86ReportRuntimeInstalled)return;
@@ -459,14 +447,9 @@ if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.c
 	})();
 	</script>`;
 
-function withReportArtifactSafetyCss(html: string): string {
+function withReportArtifactRuntime(html: string): string {
   if (!html) return html;
   let next = html;
-  if (!next.includes('id="lab86-report-safety-css"')) {
-    next = /<\/head>/i.test(next)
-      ? next.replace(/<\/head>/i, `${REPORT_ARTIFACT_SAFETY_CSS}</head>`)
-      : `${REPORT_ARTIFACT_SAFETY_CSS}${next}`;
-  }
   if (!next.includes('id="lab86-report-runtime-js"')) {
     next = /<\/body>/i.test(next)
       ? next.replace(/<\/body>/i, `${REPORT_ARTIFACT_RUNTIME_JS}</body>`)
@@ -747,7 +730,7 @@ function ReportArtifact({
     <iframe
       ref={frameRef}
       title="The Daily Brief"
-      srcDoc={withReportArtifactSafetyCss(html)}
+      srcDoc={withReportArtifactRuntime(html)}
       onLoad={() => {
         postTheme();
         postDismissedTasks();
