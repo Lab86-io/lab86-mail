@@ -195,6 +195,22 @@ describe('BriefComposition', () => {
     expect(lede.paragraphs[0]).toStartWith('# Today');
   });
 
+  test('repairs string ledes with oversized tokens', () => {
+    const longToken = 'x'.repeat(1305);
+    const composition = parseBriefComposition({
+      version: 1,
+      title: 'Daily Brief',
+      services: ['gmail'],
+      blocks: [{ type: 'lede', paragraphs: `Brief ${longToken} tail`, sourceRefs: [] }],
+    });
+    const lede = composition.blocks[0];
+
+    if (lede.type !== 'lede') throw new Error('missing lede');
+    expect(lede.paragraphs.length).toBeGreaterThan(1);
+    expect(lede.paragraphs.every((paragraph) => paragraph.length <= 1200)).toBe(true);
+    expect(lede.paragraphs.join(' ')).toContain('tail');
+  });
+
   test('drops RSVP actions without a real calendar id', () => {
     const composition = parseBriefComposition({
       version: 1,
