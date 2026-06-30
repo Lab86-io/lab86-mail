@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { highResolutionArtUrl } from '../lib/mail/daily-art';
+import { getDailyArt, highResolutionArtUrl } from '../lib/mail/daily-art';
 
 describe('daily art image URLs', () => {
   test('uses higher-resolution public museum derivatives when available', () => {
@@ -17,5 +17,11 @@ describe('daily art image URLs', () => {
         'https://www.artic.edu/iiif/2/1e452e34-3a2b-0dca-35c3-c7236c612985/full/1686,/0/default.jpg',
       ),
     ).toContain('/full/1686,/0/default.jpg');
+  });
+
+  test('does not use Art Institute IIIF URLs as primary art', () => {
+    const art = getDailyArt(Date.parse('2026-06-30T05:49:00.000Z'));
+    expect(art.imageUrl).not.toContain('artic.edu/iiif');
+    expect(art.fallbacks.some((url) => url.includes('/art/fallback-1.jpg'))).toBe(true);
   });
 });

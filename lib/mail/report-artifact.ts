@@ -55,6 +55,14 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .lede{margin:0;font-family:var(--brief-font-display);font-size:clamp(1.35rem,3.4vw,2.45rem);font-style:italic;line-height:1.15;text-wrap:balance}
 .lede-block .lede:first-of-type::first-letter{float:left;margin:.06em .12em 0 0;font-size:3.1em;font-style:normal;font-weight:700;line-height:.78;color:var(--brief-accent)}
 .lede + .lede{margin-top:1rem}
+.narrative{display:grid;max-width:820px;gap:.75rem}
+.narrative h1,.narrative h2{margin:.35rem 0 0;font-family:var(--brief-font-display);font-weight:650;line-height:1.08;letter-spacing:var(--brief-display-tracking);color:var(--brief-ink)}
+.narrative h1{font-size:clamp(1.55rem,3vw,2.15rem);font-style:italic}
+.narrative h2{font-size:clamp(1.12rem,2vw,1.48rem)}
+.narrative h3{margin:.45rem 0 0;font-size:.72rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:var(--brief-accent)}
+.narrative p,.narrative li{margin:0;color:var(--brief-muted);font-size:.94rem;line-height:1.58}
+.narrative ul{margin:.1rem 0 0;padding-left:1.1rem}
+.narrative strong{color:var(--brief-ink);font-weight:700}
 .section-title{display:flex;align-items:center;gap:.85rem;margin:0 0 1rem;font-family:var(--brief-font-display);font-size:.82rem;font-weight:700;letter-spacing:max(var(--brief-display-tracking),.12em);text-transform:uppercase;color:var(--brief-ink)}
 .section-title::after{content:"";height:1px;flex:1;background:var(--brief-hairline)}
 .needs{display:grid;gap:.8rem}
@@ -93,16 +101,14 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .widget-frame{width:100%;min-height:280px;border:1px solid var(--brief-hairline);border-radius:14px;background:var(--brief-bg)}
 .fallback{white-space:pre-wrap;color:var(--brief-muted);line-height:1.55}
 .empty{padding:1rem 0;color:var(--brief-muted);border-top:1px solid var(--brief-hairline)}
-.brief-footer{position:relative;margin-top:4.5rem;padding:4.4rem 1rem 5.5rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
+.brief-footer{position:relative;margin-top:4.5rem;padding:3.6rem 1rem 4rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
 .brief-footer::before{content:"";position:absolute;top:0;left:50%;width:min(920px,100%);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,var(--brief-hairline),transparent)}
-.brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.45;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
-.brief-footer-line{position:relative;z-index:1;max-width:1200px;margin:0 auto;font-family:var(--brief-font-display);font-size:clamp(1.32rem,2.35vw,2.15rem);font-weight:650;line-height:1.2;letter-spacing:var(--brief-display-tracking);text-wrap:balance}
+.brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.35;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
+.brief-footer-line{position:relative;z-index:1;max-width:100%;margin:0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--brief-font-display);font-size:clamp(.72rem,1.18vw,1rem);font-weight:650;line-height:1.25;letter-spacing:var(--brief-display-tracking)}
 .brief-footer-line .soft{color:var(--brief-muted)}
 .footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
 .footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
 .footer-sep{color:var(--brief-muted)}
-.brief-footer-love{position:relative;z-index:1;margin-top:1.25rem;font-family:var(--brief-font-display);font-size:clamp(.88rem,1.55vw,1.08rem);line-height:1.2;color:var(--brief-muted);opacity:.72}
-.footer-lab86{letter-spacing:.16em;text-transform:uppercase}
 	@media (max-width:640px){.masthead{padding:2.5rem}.masthead h1{font-size:clamp(3.35rem,20vw,6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.task{grid-template-columns:minmax(0,1fr) auto}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
 </style>
 </head>
@@ -139,7 +145,7 @@ function renderBlocks(blocks: BriefBlock[], timezone: string) {
 function renderBlock(block: BriefBlock, timezone: string): string {
   switch (block.type) {
     case 'lede':
-      return `<section class="block lede-block">${block.title ? `<h2 class="section-title">${escapeHtml(block.title)}</h2>` : ''}${block.paragraphs.map((paragraph) => `<p class="lede">${escapeHtml(paragraph)}</p>`).join('')}</section>`;
+      return renderLedeBlock(block);
     case 'needs_you':
       return renderNeedsBlock(block);
     case 'task_digest':
@@ -159,6 +165,83 @@ function renderBlock(block: BriefBlock, timezone: string): string {
     default:
       return '';
   }
+}
+
+function renderLedeBlock(block: Extract<BriefBlock, { type: 'lede' }>) {
+  const text = block.paragraphs.join('\n\n').trim();
+  const title = block.title ? `<h2 class="section-title">${escapeHtml(block.title)}</h2>` : '';
+  if (hasNarrativeMarkdown(text)) {
+    return `<section class="block lede-block">${title}<div class="narrative">${renderNarrativeMarkdown(text)}</div></section>`;
+  }
+  return `<section class="block lede-block">${title}${block.paragraphs
+    .map((paragraph) => `<p class="lede">${escapeHtml(paragraph)}</p>`)
+    .join('')}</section>`;
+}
+
+function hasNarrativeMarkdown(value: string) {
+  return /^\s{0,3}#{1,3}\s+\S/m.test(value) || /^\s*[-*]\s+\S/m.test(value);
+}
+
+function renderNarrativeMarkdown(value: string) {
+  const lines = String(value || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n');
+  const html: string[] = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(' '))}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (!list.length) return;
+    html.push(`<ul>${list.join('')}</ul>`);
+    list = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = Math.min(heading[1].length, 3);
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      list.push(`<li>${renderInlineMarkdown(bullet[1])}</li>`);
+      continue;
+    }
+    flushList();
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  return html.join('');
+}
+
+function renderInlineMarkdown(value: string) {
+  const codeSpans: string[] = [];
+  const withPlaceholders = escapeHtml(value).replace(/`([^`]+)`/g, (_match, code) => {
+    const index = codeSpans.push(`<code>${code}</code>`) - 1;
+    return `@@CODE_${index}@@`;
+  });
+
+  return withPlaceholders
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/@@CODE_(\d+)@@/g, (_match, index) => codeSpans[Number(index)] || '');
 }
 
 function renderNeedsBlock(block: Extract<BriefBlock, { type: 'needs_you' }>) {
@@ -379,7 +462,6 @@ function servicesForReport(report: DailyReport, composition: BriefComposition): 
 function renderBriefFooter(services: BriefService[]) {
   return `<footer class="brief-footer">
 <div class="brief-footer-line"><span class="soft">Made for you by</span> <span class="footer-brand">Lab86</span> <span class="soft">using your</span> ${renderServiceList(services)}<span class="footer-sep">.</span></div>
-<div class="brief-footer-love">With love from <span class="footer-lab86">LAB86</span></div>
 </footer>`;
 }
 

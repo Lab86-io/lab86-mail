@@ -18,7 +18,15 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState }
 import { ConnectionLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
+import { Markdown } from '@/components/ui/markdown';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { callTool } from '@/lib/api-client';
@@ -99,6 +107,12 @@ interface DailyReportMcpItem {
   updatedAt?: number | null;
 }
 
+interface DailyReportArtifactError {
+  stage: 'ai_availability' | 'week_artifact' | 'month_artifact' | 'month_enrichment';
+  message: string;
+  at: number;
+}
+
 interface DailyReportPayload {
   _id: string;
   kind: 'morning' | 'evening' | 'manual';
@@ -134,6 +148,7 @@ interface DailyReportPayload {
   html?: string;
   artifactStatus?: 'composing' | 'enriching' | 'rendered';
   artifactSource?: 'ai' | 'deterministic';
+  artifactErrors?: DailyReportArtifactError[];
 }
 
 interface ReportSummary {
@@ -223,24 +238,14 @@ function asEvents(value: DailyReportPayload['sections'][string]): DailyReportCal
   return Array.isArray(value) ? (value as DailyReportCalendarItem[]) : [];
 }
 
-function narrativeParagraphs(value: string): string[] {
-  const normalized = stripEmoji(value).replace(/\s+/g, ' ').trim();
-  if (!normalized) return [];
-  const explicit = stripEmoji(value)
-    .split(/\n{2,}/)
-    .map((part) => part.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-  if (explicit.length > 1) return explicit.slice(0, 4);
-  const sentences = normalized.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)?.map((part) => part.trim()) || [
-    normalized,
-  ];
-  if (sentences.length < 3) return [normalized];
-  const first = Math.ceil(sentences.length / 2);
-  return [sentences.slice(0, first).join(' '), sentences.slice(first).join(' ')].filter(Boolean);
-}
-
 function dailyReportThreadKey(account: string, threadId: string): string {
   return JSON.stringify([account, threadId]);
+}
+
+function stripEmojiPreservingMarkdown(value: string) {
+  return String(value || '')
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .trim();
 }
 
 function dailyReportItemThreadKey(item: DailyReportItem): string {
@@ -302,14 +307,11 @@ function asMcpItems(value: DailyReportPayload['sections'][string]): DailyReportM
 function BriefFooter({ report }: { report: DailyReportPayload }) {
   const services = servicesForReport(report);
   return (
-    <footer className="relative mt-16 overflow-hidden py-14 text-center text-[var(--color-text-muted)] before:absolute before:left-1/2 before:top-0 before:h-px before:w-full before:max-w-3xl before:-translate-x-1/2 before:bg-gradient-to-r before:from-transparent before:via-[var(--color-border)] before:to-transparent after:absolute after:inset-x-0 after:bottom-0 after:h-1/2 after:bg-[radial-gradient(var(--color-border)_0.65px,transparent_0.65px)] after:bg-[length:10px_10px] after:opacity-45 after:[mask-image:linear-gradient(to_bottom,transparent,black)]">
-      <div className="relative z-10 mx-auto max-w-6xl text-balance font-display text-[clamp(1.28rem,2.45vw,2.15rem)] font-semibold leading-[1.2]">
+    <footer className="relative mt-14 overflow-hidden py-10 text-center text-[var(--color-text-muted)] before:absolute before:left-1/2 before:top-0 before:h-px before:w-full before:max-w-3xl before:-translate-x-1/2 before:bg-gradient-to-r before:from-transparent before:via-[var(--color-border)] before:to-transparent after:absolute after:inset-x-0 after:bottom-0 after:h-1/2 after:bg-[radial-gradient(var(--color-border)_0.65px,transparent_0.65px)] after:bg-[length:10px_10px] after:opacity-35 after:[mask-image:linear-gradient(to_bottom,transparent,black)]">
+      <div className="relative z-10 mx-auto max-w-full overflow-hidden text-ellipsis whitespace-nowrap px-3 font-display text-[clamp(0.72rem,1.18vw,1rem)] font-semibold leading-[1.25]">
         <span>Made for you by</span> <span className="whitespace-nowrap text-[var(--color-text)]">Lab86</span>{' '}
         <span>using your</span> <ServiceList services={services} />
         <span>.</span>
-      </div>
-      <div className="relative z-10 mt-4 font-display text-[clamp(0.85rem,1.55vw,1.05rem)] opacity-70">
-        With love from <span className="tracking-[0.16em]">LAB86</span>
       </div>
     </footer>
   );
@@ -370,18 +372,6 @@ const FONT_FAMILIES: Record<string, string> = {
   news: "'Averia Serif Libre', Georgia, serif",
 };
 
-const REPORT_ARTIFACT_SAFETY_CSS = `<style id="lab86-report-safety-css">
-*,*::before,*::after{box-sizing:border-box}
-:root{--brief-display-tracking:0em}
-h1,h2,h3,.masthead,.brief-masthead,[class*="masthead" i],[class*="headline" i],[class*="header" i]{letter-spacing:var(--brief-display-tracking,0em)}
-[style*="Instrument Sans" i] h1,[style*="Instrument Sans" i] h2,[style*="Instrument Sans" i] h3,[style*="Instrument Sans" i] .masthead,h1[style*="Instrument Sans" i],h2[style*="Instrument Sans" i],h3[style*="Instrument Sans" i]{letter-spacing:max(var(--brief-display-tracking,0em),0.045em)}
-[class*="week" i],[id*="week" i],[class*="calendar" i],[id*="calendar" i],[class*="agenda" i],[id*="agenda" i],[class*="timeline" i],[id*="timeline" i]{grid-column:1/-1;width:100%;max-width:100%;min-width:0}
-[class*="week" i] *,[id*="week" i] *,[class*="calendar" i] *,[id*="calendar" i] *,[class*="agenda" i] *,[id*="agenda" i] *,[class*="timeline" i] *,[id*="timeline" i] *{min-width:0;overflow-wrap:anywhere}
-table{width:100%;max-width:100%;border-collapse:collapse}
-th,td{min-width:0;overflow-wrap:anywhere}
-@media (max-width:640px){[class*="week" i] table,[id*="week" i] table,[class*="calendar" i] table,[id*="calendar" i] table,[class*="agenda" i] table,[id*="agenda" i] table{table-layout:auto}}
-</style>`;
-
 const REPORT_ARTIFACT_RUNTIME_JS = `<script id="lab86-report-runtime-js">
 (function(){
 if(window.__lab86ReportRuntimeInstalled)return;
@@ -441,25 +431,33 @@ recordThreadDismissals(records);
 window.addEventListener('message',function(e){
 var d=e.data;
 if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.cardIds||[]);
-if(d&&d.source==='lab86-host'&&d.type==='dismissed_threads'){if(Array.isArray(d.dismissals)){recordThreadDismissals(d.dismissals);}else{hideDismissedThreads(d.threadKeys||[]);}}
-if(d&&d.source==='lab86-host'&&d.ok&&(d.action==='resolve_thread'||d.action==='dismiss_thread')){var payload=d.payload||{};var key=threadKeyFromPayload(payload);if(key)recordThreadDismissals([{threadKey:key,account:payload.account,threadId:payload.threadId,subject:payload.subject,receivedAt:typeof payload.receivedAt==='number'?payload.receivedAt:null,dismissedAt:Date.now(),action:d.action==='resolve_thread'?'resolved':'dismissed'}]);}
-});
-})();
-</script>`;
+	if(d&&d.source==='lab86-host'&&d.type==='dismissed_threads'){if(Array.isArray(d.dismissals)){recordThreadDismissals(d.dismissals);}else{hideDismissedThreads(d.threadKeys||[]);}}
+	if(d&&d.source==='lab86-host'&&d.ok&&(d.action==='resolve_thread'||d.action==='dismiss_thread')){var payload=d.payload||{};var key=threadKeyFromPayload(payload);if(key)recordThreadDismissals([{threadKey:key,account:payload.account,threadId:payload.threadId,subject:payload.subject,receivedAt:typeof payload.receivedAt==='number'?payload.receivedAt:null,dismissedAt:Date.now(),action:d.action==='resolve_thread'?'resolved':'dismissed'}]);}
+	});
+	document.addEventListener('click',function(e){
+	var el=e.target&&e.target.closest&&e.target.closest('[data-action]');
+	if(!el)return;
+	var action=el.getAttribute('data-action');
+	if(!action)return;
+	e.preventDefault();
+	var payload={};
+	try{payload=JSON.parse(el.getAttribute('data-payload')||'{}')||{};}catch(_){payload={};}
+	window.parent.postMessage({source:'lab86-daily-report',action:action,payload:payload},'*');
+	});
+	})();
+	</script>`;
 
-function withReportArtifactSafetyCss(html: string): string {
+function withReportArtifactRuntime(html: string): string {
   if (!html) return html;
-  let next = html;
-  if (!next.includes('id="lab86-report-safety-css"')) {
-    next = /<\/head>/i.test(next)
-      ? next.replace(/<\/head>/i, `${REPORT_ARTIFACT_SAFETY_CSS}</head>`)
-      : `${REPORT_ARTIFACT_SAFETY_CSS}${next}`;
-  }
-  if (!next.includes('id="lab86-report-runtime-js"')) {
-    next = /<\/body>/i.test(next)
-      ? next.replace(/<\/body>/i, `${REPORT_ARTIFACT_RUNTIME_JS}</body>`)
+  let next = html.replace(
+    /<script\b(?=[^>]*\bid=(["'])lab86-report-runtime-js\1)[^>]*>[\s\S]*?<\/script>/gi,
+    '',
+  );
+  const bodyClose = next.toLowerCase().lastIndexOf('</body>');
+  next =
+    bodyClose >= 0
+      ? `${next.slice(0, bodyClose)}${REPORT_ARTIFACT_RUNTIME_JS}${next.slice(bodyClose)}`
       : `${next}${REPORT_ARTIFACT_RUNTIME_JS}`;
-  }
   return next;
 }
 
@@ -735,7 +733,7 @@ function ReportArtifact({
     <iframe
       ref={frameRef}
       title="The Daily Brief"
-      srcDoc={withReportArtifactSafetyCss(html)}
+      srcDoc={withReportArtifactRuntime(html)}
       onLoad={() => {
         postTheme();
         postDismissedTasks();
@@ -857,6 +855,77 @@ function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
   );
 }
 
+function FullArtifactUnavailable({
+  artifactErrors,
+  retrying,
+  onRetry,
+  onShowFallback,
+}: {
+  artifactErrors?: DailyReportArtifactError[];
+  retrying: boolean;
+  onRetry: () => void;
+  onShowFallback: () => void;
+}) {
+  const failures = (artifactErrors || []).slice(-3).reverse();
+  return (
+    <Empty className="grid h-full place-items-center px-6 py-12 text-center">
+      <EmptyHeader>
+        <EmptyMedia>
+          <Ban className="h-4 w-4 text-[var(--color-danger)]" />
+        </EmptyMedia>
+        <EmptyTitle className="font-serif text-[18px] italic">Full artifact unavailable</EmptyTitle>
+        <EmptyDescription>
+          The AI artifact was not saved for this edition. The exact recorded failure is below.
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <div className="w-full space-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-left shadow-[var(--shadow-soft)]">
+          {failures.length ? (
+            failures.map((failure) => (
+              <div key={`${failure.stage}-${failure.at}`} className="space-y-1">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent)]">
+                  {artifactStageLabel(failure.stage)}
+                </div>
+                <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+                  {stripEmojiPreservingMarkdown(failure.message)}
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+              No artifact failure detail was saved for this older edition. Generate again to capture the exact
+              failure.
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Button type="button" size="sm" onClick={onRetry} disabled={retrying}>
+            {retrying ? <Ring className="size-3" /> : <RefreshCw className="size-3" />}
+            Generate again
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={onShowFallback}>
+            <FileText className="size-3" />
+            View structured fallback
+          </Button>
+        </div>
+      </EmptyContent>
+    </Empty>
+  );
+}
+
+function artifactStageLabel(stage: DailyReportArtifactError['stage']) {
+  switch (stage) {
+    case 'ai_availability':
+      return 'AI availability';
+    case 'week_artifact':
+      return 'Week artifact composition';
+    case 'month_artifact':
+      return 'Month artifact composition';
+    case 'month_enrichment':
+      return 'Month report enrichment';
+  }
+}
+
 export function DailyReport() {
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -870,6 +939,7 @@ export function DailyReport() {
   // report (the new one isn't saved yet), polling stops, and the fresh brief
   // never shows.
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
+  const [showStructuredFallback, setShowStructuredFallback] = useState(false);
   const [hiddenTaskIds, setHiddenTaskIds] = useState<Set<string>>(() => new Set());
   const [hiddenThreadDismissals, setHiddenThreadDismissals] = useState<
     Map<string, DailyReportThreadDismissalRecord>
@@ -916,18 +986,31 @@ export function DailyReport() {
     staleTime: 30_000,
   });
   const report = reportQuery.data?.report || null;
+  const reportArtifactKey = report ? [report._id, report.artifactSource ?? ''].join(':') : '';
   // A generation that errored partway leaves the stored edition stuck at
   // 'partial'/'composing'/'enriching' forever. Past this cutoff we treat such a
   // status as dead, so the in-progress UI clears and the Generate button is
   // clickable again to force a fresh run.
   const reportIsStale = !report || Date.now() - (report.generatedAt || 0) > STUCK_GENERATION_MS;
+  const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
+  const structuredArtifactHidden =
+    Boolean(report?.html) && artifactSource === 'deterministic' && !showStructuredFallback;
+  const waitingForAiArtifact =
+    structuredArtifactHidden &&
+    !reportIsStale &&
+    (report?.artifactStatus === 'composing' || report?.artifactStatus === 'enriching');
+  const structuredArtifactUnavailable =
+    structuredArtifactHidden && !waitingForAiArtifact && (reportIsStale || report?.status !== 'partial');
+  const displayArtifact = Boolean(report?.html && !structuredArtifactHidden);
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
   const generating =
     waitingForNew ||
+    waitingForAiArtifact ||
     (!reportIsStale && (report?.status === 'partial' || report?.artifactStatus === 'composing'));
   // The artifact is already shown; the broader month pass is filling in behind it.
   const enriching = !reportIsStale && report?.artifactStatus === 'enriching';
+  const showGeneratingState = generating && (!displayArtifact || waitingForNew || waitingForAiArtifact);
   const persistedHiddenTaskIds = useMemo(
     () => new Set(taskDismissalsQuery.data?.cardIds || []),
     [taskDismissalsQuery.data?.cardIds],
@@ -979,6 +1062,11 @@ export function DailyReport() {
     }
   }, [report, generatingSince]);
 
+  useEffect(() => {
+    if (!reportArtifactKey) return;
+    setShowStructuredFallback(false);
+  }, [reportArtifactKey]);
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['daily-report'] });
     queryClient.invalidateQueries({ queryKey: ['tracked-threads'] });
@@ -988,6 +1076,7 @@ export function DailyReport() {
     mutationFn: async () =>
       callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
+        wait: true,
       }),
     // Mark the moment so polling waits for the NEW edition, and jump to latest.
     onMutate: () => {
@@ -1130,7 +1219,7 @@ export function DailyReport() {
     <section className="report-paper relative flex h-full flex-col">
       {/* The agent-authored brief carries its own art masthead, so the app
           header is hidden for it and the controls move to a floating toolbar. */}
-      {!report?.html ? (
+      {!displayArtifact ? (
         <header className="@container border-b border-[var(--color-border)] px-5 py-4">
           <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
@@ -1231,9 +1320,9 @@ export function DailyReport() {
       ) : null}
 
       {/* Floating toolbar for the artifact view — fades until hovered. */}
-      {report?.html ? (
+      {displayArtifact ? (
         <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
-          {report.artifactSource === 'deterministic' ? (
+          {artifactSource === 'deterministic' ? (
             <span
               title="AI composition was unavailable, so this edition is using the structured artifact fallback."
               className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]"
@@ -1241,7 +1330,15 @@ export function DailyReport() {
               <FileText className="size-2.5" />
               <span className="hidden @[520px]:inline">Structured fallback</span>
             </span>
-          ) : null}
+          ) : (
+            <span
+              title="This edition is using the AI-composed artifact."
+              className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]"
+            >
+              <Newspaper className="size-2.5" />
+              <span className="hidden @[520px]:inline">AI rendered</span>
+            </span>
+          )}
           {enriching ? (
             <span className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]">
               <Ring className="size-2.5" />
@@ -1300,14 +1397,12 @@ export function DailyReport() {
       <div
         className={cn(
           'min-h-0 flex-1',
-          report?.html || (generating && (!report?.html || waitingForNew))
-            ? 'overflow-hidden'
-            : 'scrollable @container px-5 py-5',
+          displayArtifact || showGeneratingState ? 'overflow-hidden' : 'scrollable @container px-5 py-5',
         )}
       >
         {reportQuery.isLoading && !report ? (
           <ReportSkeleton />
-        ) : generating && (!report?.html || waitingForNew) ? (
+        ) : showGeneratingState ? (
           <ReportGenerating report={report} />
         ) : !report ? (
           <Empty className="grid h-full place-items-center px-6 py-12 text-center">
@@ -1322,34 +1417,31 @@ export function DailyReport() {
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
-        ) : report.html ? (
+        ) : displayArtifact && report.html ? (
           <ReportArtifact
             html={report.html}
             dismissedTaskIds={dismissedTaskIds}
             dismissedThreadRecords={dismissedThreadRecords}
             onChanged={invalidate}
           />
+        ) : structuredArtifactUnavailable ? (
+          <FullArtifactUnavailable
+            artifactErrors={report.artifactErrors}
+            retrying={generate.isPending}
+            onRetry={() => generate.mutate()}
+            onShowFallback={() => setShowStructuredFallback(true)}
+          />
         ) : (
           <div className="mx-auto flex max-w-5xl flex-col gap-7">
-            {/* Lede — the narrative as an editorial pull-quote. */}
+            {/* Narrative. */}
             {report.narrative ? (
               <section
                 className="blur-in rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-5 py-5 shadow-[var(--shadow-soft)]"
                 style={{ animationDelay: '60ms' }}
               >
-                {narrativeParagraphs(report.narrative).map((paragraph, index) => (
-                  <p
-                    key={paragraph}
-                    className={cn(
-                      'font-serif text-[clamp(16px,3.6cqi,20px)] leading-[1.55] text-[var(--color-text)]',
-                      index === 0 &&
-                        'first-letter:float-left first-letter:mr-2 first-letter:font-serif first-letter:text-[3.35em] first-letter:font-semibold first-letter:leading-[0.82] first-letter:text-[var(--color-accent)]',
-                      index > 0 && 'mt-3 text-[var(--color-text)]/90',
-                    )}
-                  >
-                    {paragraph}
-                  </p>
-                ))}
+                <Markdown className="space-y-3 text-[13px] leading-6 text-[var(--color-text-muted)] [&_h1]:font-serif [&_h1]:text-[20px] [&_h1]:font-semibold [&_h1]:italic [&_h1]:leading-tight [&_h1]:text-[var(--color-text)] [&_h2]:mt-4 [&_h2]:font-serif [&_h2]:text-[16px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:text-[var(--color-text)] [&_h3]:mt-3 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:uppercase [&_h3]:tracking-[0.12em] [&_h3]:text-[var(--color-accent)] [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_strong]:font-semibold [&_strong]:text-[var(--color-text)]">
+                  {stripEmojiPreservingMarkdown(report.narrative)}
+                </Markdown>
               </section>
             ) : null}
 

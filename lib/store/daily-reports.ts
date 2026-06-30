@@ -1,11 +1,16 @@
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
-import type {
-  DailyReport,
-  DailyReportCalendarItem,
-  DailyReportItem,
-  DailyReportMcpItem,
-  DailyReportTaskItem,
+import {
+  DAILY_REPORT_ARTIFACT_ERROR_STAGES,
+  type DailyReport,
+  type DailyReportArtifactError,
+  type DailyReportArtifactErrorStage,
+  type DailyReportCalendarItem,
+  type DailyReportItem,
+  type DailyReportMcpItem,
+  type DailyReportTaskItem,
+  MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
+  MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
 
@@ -54,6 +59,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   const bulkTail = items(sections.bulkTail);
 
   const stats = (raw.stats ?? {}) as Partial<DailyReport['stats']>;
+  const artifactErrors = sanitizeArtifactErrors((raw as any).artifactErrors);
   // Prefer stored counts; fall back to deriving them from the sections so a
   // legacy doc that predates a given stat still shows a truthful number.
   const replyOwedCount = stats.replyOwed ?? stats.needsReply ?? replyOwed.length;
@@ -74,6 +80,7 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
     artifactSource: raw.artifactSource,
+    artifactErrors: artifactErrors.length ? artifactErrors : undefined,
     sections: {
       replyOwed,
       followUpOwed,
@@ -114,4 +121,21 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
   }
 
   return migrated;
+}
+
+function sanitizeArtifactErrors(value: unknown): DailyReportArtifactError[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry: any) => ({
+      stage: entry?.stage,
+      message:
+        typeof entry?.message === 'string' ? entry.message.slice(0, MAX_ARTIFACT_ERROR_MESSAGE_CHARS) : '',
+      at: Number.isFinite(Number(entry?.at)) ? Number(entry.at) : 0,
+    }))
+    .filter(
+      (entry): entry is DailyReportArtifactError =>
+        DAILY_REPORT_ARTIFACT_ERROR_STAGES.includes(entry.stage as DailyReportArtifactErrorStage) &&
+        Boolean(entry.message),
+    )
+    .slice(-MAX_ARTIFACT_ERRORS);
 }

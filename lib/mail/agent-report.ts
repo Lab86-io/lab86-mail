@@ -1,22 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext } from '../ai/context';
-import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { listNylasAccounts } from '../nylas/provider';
-import {
-  BRIEF_COMPOSITION_VERSION,
-  type BriefComposition,
-  compositionFromReport,
-  extractBriefCompositionJson,
-  parseBriefComposition,
-} from '../shared/brief-composition';
+import { type BriefComposition, compositionFromReport } from '../shared/brief-composition';
 import { emailFromHeader } from '../shared/format';
-import type {
-  DailyReport,
-  DailyReportCalendarItem,
-  DailyReportItem,
-  DailyReportTaskItem,
-  Message,
+import {
+  type DailyReport,
+  type DailyReportArtifactError,
+  type DailyReportArtifactErrorStage,
+  type DailyReportCalendarItem,
+  type DailyReportItem,
+  type DailyReportTaskItem,
+  MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
+  MAX_ARTIFACT_ERRORS,
+  type Message,
 } from '../shared/types';
 import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
@@ -29,16 +27,15 @@ import { buildNativeDailyReportArtifact } from './report-artifact';
 //
 // Vision: the model is handed the full, already-grounded report data (mail
 // lanes, tasks, calendar, stats, narrative seed) plus a design brief and an
-// interaction contract, and it authors typed BriefComposition JSON. The app's
-// renderer owns all page chrome, typography, footer branding, action wiring,
-// and sandboxing. The model can still request richer blocks (charts, timelines,
-// checklists, or sandboxed custom widgets) when the data earns it.
+// interaction contract, and it authors a single self-contained HTML artifact.
+// The app owns sandboxing, theme injection, and the action bridge; the model
+// owns the editorial layout and component design.
 //
 // Two phases so the page never sits blank:
 //   1. generateDailyReport() produces the structured edition, then we attach a
-//      deterministic artifact from a default composition immediately.
-//   2. the agent tries to replace that composition with a richer one, then the
-//      month pass updates the same _id in place.
+//      deterministic artifact immediately so the page never goes blank.
+//   2. the agent replaces it with full HTML, then the month pass updates the
+//      same _id in place. The deterministic composition remains the fallback.
 
 const MAX_TASKS = 32;
 const MAX_EVENTS = 32;
@@ -173,6 +170,123 @@ export async function gatherBriefExtras(report: DailyReport, userId?: string | n
   return { digests, voiceSamples, services };
 }
 
+function artifactError(stage: DailyReportArtifactErrorStage, err: unknown): DailyReportArtifactError {
+  return { stage, message: artifactErrorText(err), at: Date.now() };
+}
+
+function artifactErrorText(err: unknown): string {
+  const limit = (text: string) => text.slice(0, MAX_ARTIFACT_ERROR_MESSAGE_CHARS);
+  const anyErr = err as any;
+  if (Array.isArray(anyErr?.issues)) {
+    const issues = anyErr.issues
+      .slice(0, 8)
+      .map((issue: any) => {
+        const path = Array.isArray(issue.path) && issue.path.length ? issue.path.join('.') : 'composition';
+        return `${path}: ${issue.message || 'invalid value'}`;
+      })
+      .join('; ');
+    return limit(`Composition schema validation failed: ${issues}`);
+  }
+  if (err instanceof SyntaxError) return limit(`Composition JSON parse failed: ${err.message}`);
+  if (err instanceof Error && err.message) return limit(err.message);
+  if (typeof err === 'string' && err.trim()) return limit(err.trim());
+  try {
+    const text = JSON.stringify(err);
+    if (text && text !== '{}') return limit(text);
+  } catch {
+    // ignored
+  }
+  return 'Unknown artifact generation failure.';
+}
+
+function withArtifactError(report: DailyReport, error: DailyReportArtifactError): DailyReport {
+  return {
+    ...report,
+    artifactErrors: [...(report.artifactErrors || []), error].slice(-MAX_ARTIFACT_ERRORS),
+  };
+}
+
+export function settleMonthArtifactReport(input: {
+  full: DailyReport;
+  phase1: DailyReport;
+  composition: BriefComposition | null;
+  failure?: DailyReportArtifactError;
+}): DailyReport {
+  const { full, phase1, composition, failure } = input;
+  if (composition) {
+    return {
+      ...full,
+      composition,
+      html: buildNativeDailyReportArtifact(full, composition),
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+      artifactErrors: phase1.artifactErrors,
+      model: describeProvider().primary || full.model,
+    };
+  }
+
+  if (phase1.artifactSource === 'ai') {
+    const settled: DailyReport = {
+      ...phase1,
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+    };
+    return failure ? withArtifactError(settled, failure) : settled;
+  }
+
+  const nativeFullComposition = compositionFromReport(full);
+  const fallback: DailyReport = {
+    ...full,
+    composition: nativeFullComposition,
+    html: buildNativeDailyReportArtifact(full, nativeFullComposition),
+    artifactStatus: 'rendered',
+    artifactSource: 'deterministic',
+    artifactErrors: phase1.artifactErrors,
+  };
+  return failure ? withArtifactError(fallback, failure) : fallback;
+}
+
+export function settleMonthHtmlArtifactReport(input: {
+  full: DailyReport;
+  phase1: DailyReport;
+  html: string | null;
+  failure?: DailyReportArtifactError;
+}): DailyReport {
+  const { full, phase1, html, failure } = input;
+  if (html) {
+    const settled: DailyReport = {
+      ...full,
+      html,
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+      artifactErrors: phase1.artifactErrors,
+      model: describeProvider().primary || full.model,
+    };
+    delete (settled as any).composition;
+    return settled;
+  }
+
+  if (phase1.artifactSource === 'ai') {
+    const settled: DailyReport = {
+      ...phase1,
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+    };
+    return failure ? withArtifactError(settled, failure) : settled;
+  }
+
+  const nativeFullComposition = compositionFromReport(full);
+  const fallback: DailyReport = {
+    ...full,
+    composition: nativeFullComposition,
+    html: buildNativeDailyReportArtifact(full, nativeFullComposition),
+    artifactStatus: 'rendered',
+    artifactSource: 'deterministic',
+    artifactErrors: phase1.artifactErrors,
+  };
+  return failure ? withArtifactError(fallback, failure) : fallback;
+}
+
 export async function generateAgentReport(input: {
   kind: DailyReport['kind'];
   userId?: string | null;
@@ -211,17 +325,31 @@ export async function generateAgentReport(input: {
   const nativeWeekComposition = compositionFromReport(week);
   const nativeWeekHtml = buildNativeDailyReportArtifact(week, nativeWeekComposition);
 
-  // No model -> still save the deterministic artifact. The legacy structured
-  // renderer is no longer the scheduled-edition fallback.
-  if (!(await hasAiForCurrentUser())) {
-    const nativeOnly: DailyReport = {
-      ...week,
-      composition: nativeWeekComposition,
-      html: nativeWeekHtml,
-      artifactStatus: 'rendered',
-      artifactSource: 'deterministic',
-    };
-    await saveDailyReport(nativeOnly).catch(() => undefined);
+  // No model -> still save the deterministic artifact, but persist the exact
+  // availability error so the UI can tell the user what blocked the artifact.
+  try {
+    await resolveAiRuntime({
+      userId: input.userId,
+      speed: 'primary',
+      feature: 'daily_report_artifact',
+    });
+  } catch (err) {
+    const nativeOnly = withArtifactError(
+      {
+        ...week,
+        composition: nativeWeekComposition,
+        html: nativeWeekHtml,
+        artifactStatus: 'rendered',
+        artifactSource: 'deterministic',
+      },
+      artifactError('ai_availability', err),
+    );
+    try {
+      await saveDailyReport(nativeOnly);
+    } catch (saveErr) {
+      console.error('[agent-report] AI availability fallback save failed:', saveErr);
+      throw saveErr;
+    }
     return nativeOnly;
   }
 
@@ -235,38 +363,33 @@ export async function generateAgentReport(input: {
 
   let phase1: DailyReport;
   try {
-    const composition = await composeComposition(week, input.userId);
+    const html = await composeArtifactHtml(week, input.userId);
     // 'enriching' (not 'rendered') keeps the page polling for the month pass.
-    phase1 = composition
-      ? {
-          ...week,
-          composition,
-          html: buildNativeDailyReportArtifact(week, composition),
-          artifactStatus: 'enriching',
-          artifactSource: 'ai',
-          model: describeProvider().primary || week.model,
-        }
-      : {
-          ...week,
-          composition: nativeWeekComposition,
-          html: nativeWeekHtml,
-          artifactStatus: 'enriching',
-          artifactSource: 'deterministic',
-        };
-  } catch (err) {
-    console.error('[agent-report] week artifact failed:', err);
     phase1 = {
       ...week,
-      composition: nativeWeekComposition,
-      html: nativeWeekHtml,
+      html,
       artifactStatus: 'enriching',
-      artifactSource: 'deterministic',
+      artifactSource: 'ai',
+      model: describeProvider().primary || week.model,
     };
+  } catch (err) {
+    console.error('[agent-report] week artifact failed:', err);
+    phase1 = withArtifactError(
+      {
+        ...week,
+        composition: nativeWeekComposition,
+        html: nativeWeekHtml,
+        artifactStatus: 'enriching',
+        artifactSource: 'deterministic',
+      },
+      artifactError('week_artifact', err),
+    );
   }
   await saveDailyReport(phase1).catch(() => undefined);
 
   // Phase 2 — broaden to the full month silently, then replace the edition in
   // place. Best-effort: if it fails (e.g. out of credits), keep the week brief.
+  let finalReport: DailyReport;
   try {
     const full = await generateDailyReport({
       kind: input.kind,
@@ -277,105 +400,155 @@ export async function generateAgentReport(input: {
       reportId,
       silent: true,
     });
-    const nativeFullComposition = compositionFromReport(full);
-    const nativeFullHtml = buildNativeDailyReportArtifact(full, nativeFullComposition);
-    let composition: BriefComposition | null = null;
+    let html: string | null = null;
+    let failure: DailyReportArtifactError | undefined;
     try {
-      composition = await composeComposition(full, input.userId);
+      html = await composeArtifactHtml(full, input.userId);
     } catch (err) {
       console.error('[agent-report] month artifact failed:', err);
+      failure = artifactError('month_artifact', err);
     }
-    const finalComposition = composition || nativeFullComposition || phase1.composition;
-    const finalReport: DailyReport = {
-      ...full,
-      composition: finalComposition,
-      html: finalComposition
-        ? buildNativeDailyReportArtifact(full, finalComposition)
-        : nativeFullHtml || phase1.html,
-      artifactStatus: 'rendered',
-      artifactSource: composition ? 'ai' : 'deterministic',
-      model: composition ? describeProvider().primary || full.model : full.model,
-    };
-    await saveDailyReport(finalReport);
-    return finalReport;
+    finalReport = settleMonthHtmlArtifactReport({ full, phase1, html, failure });
   } catch (err) {
     console.error('[agent-report] month enrichment failed:', err);
     // Settle on the week edition so the page stops polling.
-    const settled: DailyReport = { ...phase1, artifactStatus: 'rendered' };
-    await saveDailyReport(settled).catch(() => undefined);
+    const settled = withArtifactError(
+      { ...phase1, artifactStatus: 'rendered' },
+      artifactError('month_enrichment', err),
+    );
+    try {
+      await saveDailyReport(settled);
+    } catch (saveErr) {
+      console.error('[agent-report] month enrichment fallback save failed:', saveErr);
+      throw saveErr;
+    }
     return settled;
   }
+
+  try {
+    await saveDailyReport(finalReport);
+  } catch (err) {
+    console.error('[agent-report] month report save failed:', err);
+    throw err;
+  }
+
+  return finalReport;
 }
 
 // ---- Artifact composition --------------------------------------------------
 
-async function composeComposition(
-  report: DailyReport,
-  userId?: string | null,
-): Promise<BriefComposition | null> {
+async function composeArtifactHtml(report: DailyReport, userId?: string | null): Promise<string> {
   const extras = await gatherBriefExtras(report, userId);
   const { text } = await generateTextForCurrentUser({
     feature: 'daily_report_artifact', // tiered cap → 32k output
     speed: 'primary',
-    system: COMPOSITION_BRIEF,
+    userId,
+    system: HTML_ARTIFACT_BRIEF,
     prompt: buildDataPrompt(report, extras),
   });
-  return parseBriefComposition(extractBriefCompositionJson(text));
+  const html = extractHtml(text);
+  if (!html) throw new Error('AI did not return a complete HTML document.');
+  return html;
+}
+
+export function extractHtml(raw: string): string | null {
+  let text = (raw || '').trim();
+  const fence = text.match(/```(?:html)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  const start = text.search(/<!doctype html|<html[\s>]/i);
+  if (start === -1) return null;
+  text = text.slice(start).trim();
+  const end = text.toLowerCase().lastIndexOf('</html>');
+  if (end === -1) return null;
+  text = text.slice(0, end + '</html>'.length);
+  return text.length > 200 ? text : null;
 }
 
 // ---- Prompts ---------------------------------------------------------------
 
-const COMPOSITION_BRIEF = `You are the user's chief of staff and an expert information designer. You are handed the RAW material — actual email bodies, the calendar, tasks, and connected tool items — and you do your own analysis. Return ONLY typed JSON for a Lab86 Daily Brief composition. The application renders the HTML, typography, footer, logos, action wiring, and sandboxing.
+export const HTML_ARTIFACT_BRIEF = `You are the user's chief of staff AND a world-class editorial designer/front-end engineer. You are handed the RAW material — actual email bodies, the week's calendar, tasks, and connected tool items — and you do your OWN analysis: read the threads, judge what genuinely needs the user, connect the dots across mail/calendar/tasks/tools, and compose a single, self-contained, beautiful HTML "Daily Brief". Polish of a Claude Artifact × a finely-typeset broadsheet.
 
 ANALYZE, DON'T TRANSCRIBE:
-- Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view. Each thread also carries the app's own first-pass read (whyItMatters, nextAction, openLoops, surfacedBecause, isNewSender) — treat it as a STARTING POINT you can sharpen or overrule with what you find in the bodies, never as text to copy verbatim.
-- Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task"). Use the richer fields you're given — task descriptions/labels/assignees, event descriptions/locations — to make those connections concrete.
-- Be PROACTIVE, and you have real levers — propose AND wire them: to-dos (create_task), ready-to-send reply drafts in the user's voice (draft_reply), calendar holds for focus/prep/buffer (create_event), invite responses (rsvp_event), and clearing obvious noise (archive_thread). Nothing executes without a tap, so lean toward offering the action rather than just naming it.
-- YOU HAVE FULL EDITORIAL CONTROL. Beyond the sections below, add whatever you judge genuinely useful for THIS person today and omit what isn't — e.g. a "Focus blocks" suggestion that proposes create_event holds around deep work, a "Waiting on others" list, a tight "Clear the noise" row of archivable FYIs, or a prep dossier for the day's most important meeting. Go deeper where it earns its space; stay calm and short on a light day. Never pad.
+- Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view. Each thread may also carry the app's first-pass read (whyItMatters, nextAction, openLoops, surfacedBecause, isNewSender); treat that as a STARTING POINT you can sharpen or overrule with your own reading.
+- Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task").
+- Be PROACTIVE: propose to-dos, meeting prep, ready-to-send reply drafts, calendar holds, invite responses, and cleanup actions when the data supports them. Nothing mutates without a user tap and host confirmation.
 - Adaptive density: short and calm on a light day, fuller when it's busy. Never pad.
-- DESIGN THE BRIEF, DON'T JUST SUMMARIZE. The rendered output should feel like an editorial artifact: lead with 2-3 short lede paragraphs when there is enough material, surface concrete decisions and next actions, and use charts/timelines/prep checklists/custom_widget when the shape of the day benefits from a visual or interactable view. If a specific visualization or tiny workflow would make the brief clearer, create it as a custom_widget with fallbackMarkdown.
 
 OUTPUT RULES (critical):
-- Output ONLY JSON. No markdown fences, no commentary.
-- Top-level shape: { "version": ${BRIEF_COMPOSITION_VERSION}, "title": string, "summary"?: string, "services": string[], "blocks": BriefBlock[] }.
-- Use real ids/accounts from the data only. Never invent ids.
-- Every rich/generated claim outside a simple lede must include sourceRefs pointing to the source thread/message/task/event/mcp item. Charts and custom widgets require sourceRefs.
+- Output ONLY a complete HTML document, starting with <!doctype html>. No markdown fences, no commentary.
+- All CSS in one <style>, all JS in one <script>. The ONLY external resources allowed: (1) data.art.imageUrl and data.art.fallbacks, (2) ONE Google Fonts <link> for the families below. Everything else inline. Render with no console errors; degrade gracefully when a section is empty.
+- Use real ids/accounts from the data only. Never invent ids. If an item lacks the ids/accounts needed for an action, render it without that action.
+- Action controls MUST be regular clickable elements with data-action and data-payload attributes. The host-injected runtime posts messages for you. Do not invent action names.
+- data-payload MUST be a valid JSON object string containing exact ids/accounts from the JSON. Escape it correctly for HTML attributes.
 
 DO NOT:
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
-- Do NOT include page chrome, masthead, footer/signoff, source footer, logo SVG, global CSS, or JavaScript for standard actions. The renderer owns those.
-- Do NOT use a custom_widget when a standard block can express the idea.
+- Do NOT include "With love from Lab86".
+- Do NOT include a second app toolbar or app chrome.
+- Do NOT make the artifact mostly bordered cards, plain paragraphs, and generic buttons. That is a failed design unless the day is almost empty.
+- Do NOT use sharp-corner default web buttons or undifferentiated button rows. The action language should feel designed and native to the artifact.
+- Do NOT use action names outside VALID ACTIONS, including "reply", "open", "email", "schedule", "snooze", "complete", or "view".
 
-VALID BLOCKS:
-- lede: { type:"lede", title?, paragraphs:[string], sourceRefs? }. Use 2-3 short paragraphs when there is enough substance, otherwise 1. Make it narrative and specific, not a generic summary. No emoji.
-- needs_you: { type:"needs_you", title?, items:[{ account, threadId, subject, person, reason, lane?, receivedAt?, trackedThreadId?, draftReply?, sourceRefs, actions? }], sourceRefs? }. Include only threads you judge action-worthy.
-- task_digest: { type:"task_digest", title?, tasks:[{ cardId, title, meta?, dueAt?, sourceRefs, actions? }], sourceRefs? }. Existing tasks only.
-- week_ahead: { type:"week_ahead", title?, events:[{ account, eventId, calendarId?, title, startAt, endAt, allDay?, location?, prep?, sourceRefs, actions? }], sourceRefs? }.
-- tool_digest: { type:"tool_digest", title?, items:[{ server:"github"|"bitbucket"|"jira"|"slack", title, state?, author?, url?, reason?, sourceRefs, actions? }], sourceRefs? }. Never call this "MCP".
-- chart: { type:"chart", variant:"bar"|"stacked_bar"|"donut", title, description?, data:[{ label, value, group? }], sourceRefs }. Use for meaningful comparisons/trends, not vanity counts.
-- timeline: { type:"timeline", title, items:[{ label, at?, detail?, sourceRefs? }], sourceRefs? }. Use for sequences/deadlines.
-- prep_checklist: { type:"prep_checklist", title, items:[{ label, detail?, sourceRefs?, action? }], sourceRefs? }. Use for meeting/project prep.
-- custom_widget: { type:"custom_widget", id, title, html, fallbackMarkdown, allowedActions, sourceRefs }. Use when the brief needs an interactable widget or visualization the standard blocks cannot express.
+MASTHEAD (signature element — replaces any app header):
+- Full-bleed landscape banner using data.art.imageUrl (object-fit: cover, ~38–46vh, never distorted). Overlay "The {data.weekday} Brief" in the display face, centered, with a legibility scrim.
+- Use data.localDate (e.g. "15 JUN 2026") and data.localTime (e.g. "9:54 AM") VERBATIM — they are already in the user's timezone; do not recompute or reformat times yourself. Set them vertically along the left/right edges, like a newspaper's spine.
+- Small monospace caption beneath or inside the image: data.art.credit + " · " + data.art.source.
+- Image fallback is REQUIRED: use an <img> for the art with data.art.imageUrl as src and wire data.art.fallbacks through an onerror handler or equivalent inline JS so the masthead never shows a broken image. If all art URLs fail, hide the img and use a theme-token background.
+
+STYLIZED LEDE SYSTEM (required after the masthead):
+- The lede is a designed editorial object, not a plain paragraph block. Implement it with your own CSS in the document; do not use external libraries.
+- Choose exactly ONE treatment from this internal lede treatment library, based on the day's content:
+  1. Illuminated brief: large drop initial, 2-3 short body paragraphs, and a narrow margin rail naming the day's main tension.
+  2. Dispatch deck: a compact headline/deck, a ruled side note, and 2-3 short paragraphs in a constrained measure.
+  3. Correspondence map: names/entities as small connected labels around the lede, showing who needs what.
+  4. Agenda score: a lede paired with a tiny inline timeline or beat marks for today's sequence.
+  5. Decision ledger: a lede split into "respond / wait / prepare" columns when the day is action-heavy.
+  6. Quiet bulletin: restrained paragraph stack with a pull quote and captioned rule for light days.
+- The lede must still read cleanly as 2-3 short body paragraphs in the user's tone from data.voiceSamples. No emoji.
+
+THEME — TWO fonts, honoring the user's app theme (host injects live):
+- Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif), --brief-display-tracking (0em).
+- Headings/masthead use var(--brief-font-display); ALL body copy/UI uses var(--brief-font-body). Apply var(--brief-display-tracking) to display/header text.
+- ONE Google Fonts link covering every option so live font swaps resolve instantly:
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
+- Live restyle listener: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
+
+LIGHT AND DARK MODE REQUIREMENTS:
+- Design for both light and dark from the start; do not make a dark-only page and hope token injection fixes it.
+- Define usable :root fallbacks for light mode and include @media (prefers-color-scheme: dark) that remaps only --brief-* tokens; the host may override both.
+- Every layer must be semantic: page background, elevated surfaces, subtle fills, hairlines, accent fills, muted text, focus rings, chart strokes/fills, action controls, and art scrims derive from --brief-* tokens with color-mix/opacity.
+- Before final output, mentally check both modes: body copy readable, muted text visible, actions obvious, chart marks distinguishable, masthead title legible.
+
+DESIGN:
+- Editorial, generous whitespace, clear hierarchy, responsive 360→1100px, tasteful load animations. Use inline SVG only where a visual genuinely adds insight — e.g. a slim timeline of the week's meetings, a relationship map, a waiting-on matrix, a prep dossier, or a tool-workflow board. Never decorative number-counters.
+- Claude Artifact design skill: invent a visual grammar for THIS day. Use spatial relationships, sequencing, comparison, annotation, rhythm, and interaction. At least one component should be memorable by form ("the week rail", "the relationship map", "the prep dossier"), not just by content.
+- REQUIRED VISUAL MODULES: when there is enough data, include at least TWO custom visual modules beyond the masthead; one must be temporal if calendar/tasks exist.
+- TIMELINE STANDARD: "The week ahead" must be a designed timeline/agenda system with rhythm, connectors, time bands, day groupings, or swimlanes. Do not render it as loose repeated day cards.
+- ACTION DESIGN: action controls may be chips, tabs, stamps, margin actions, inline labels, or rail controls, but they must be integrated into the artifact. Avoid rows of large generic rectangles.
+
+AI SLOP BAN LIST — before final output, ensure none of these dominate:
+- Generic hero/subtitle/CTA formula; purple/blue gradient SaaS palette; decorative glow blobs; equal feature cards; repeated bordered cards for everything; fake stats; generic section names; stock icon/emoji decoration; glassmorphism as hierarchy; full-width paragraph blocks; timelines without time/connectors; charts that decorate instead of explaining; components that would still make sense if the real mail/calendar/task content were swapped out.
+
+CONTENT (compose from your analysis; omit empty parts):
+- A stylized integrated lede from the STYLIZED LEDE SYSTEM — the through-line of the day connecting mail, calendar, tasks, and connected tools.
+- "Needs you": the threads YOU judged as needing action — person, your one-line read of why from the body, how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via draft_reply.
+- "The week ahead": today → +7 days of calendar as a clean timeline/table/swimlane; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
+- Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from mail/meetings (create_task). Tasks are first-class, not a footnote.
+- Add other sections only if they improve this specific day: waiting on others, clear the noise, prep dossier, GitHub/tool digest, focus blocks, travel/logistics, or decision queue.
 
 VALID ACTIONS:
-- open_thread { account, threadId }
-- open_view { view:"mail"|"tasks"|"calendar" }
-- open_event { account, eventId }
-- resolve_thread { account, threadId, subject?, receivedAt?, trackedThreadId? }
-- dismiss_thread { account, threadId, subject?, receivedAt? }
-- toggle_task { cardId, completed, title? }
-- dismiss_task { cardId, title? }
-- create_task { title, dueAt? }
-- draft_reply { account, threadId, body }
-- archive_thread { account, threadId, subject?, receivedAt? }
-- rsvp_event { account, calendarId, eventId, status:"yes"|"no"|"maybe" }
-- create_event { account, title, startAt, endAt, location?, description? }
-
-CUSTOM WIDGET RULES:
-- html is placed inside a nested sandboxed iframe. No external resources, fetch, XMLHttpRequest, WebSocket, EventSource, storage, cookies, nested iframes, or remote src/href.
-- Keep HTML/CSS/JS self-contained and compact.
-- To request host actions, post: window.parent.postMessage({ source:"lab86-brief-widget", action, payload }, "*"). The action must appear in allowedActions and be one of VALID ACTIONS.
-- Always provide fallbackMarkdown that preserves the insight if the widget is rejected.`;
+- open_thread payload { account, threadId }
+- open_view payload { view:"mail"|"tasks"|"calendar" }
+- open_event payload { account, eventId }
+- resolve_thread payload { account, threadId, subject?, receivedAt?, trackedThreadId? }
+- dismiss_thread payload { account, threadId, subject?, receivedAt? }
+- toggle_task payload { cardId, completed, title? }
+- dismiss_task payload { cardId, title? }
+- create_task payload { title, dueAt? }
+- draft_reply payload { account, threadId, body }
+- archive_thread payload { account, threadId, subject?, receivedAt? }
+- rsvp_event payload { account, calendarId, eventId, status:"yes"|"no"|"maybe" }. Only use when the event has canRsvp:true and a non-empty calendarId.
+- create_event payload { account, title, startAt, endAt, allDay?, location?, description? }`;
 
 // The shapes handed to the agent for each task/event. Pure + exported so the
 // field mapping (everything the brief gets to act on) is unit-tested directly.
@@ -401,6 +574,7 @@ export function toBriefEvent(e: DailyReportCalendarItem) {
     account: e.account,
     eventId: e.eventId,
     calendarId: e.calendarId ?? null,
+    canRsvp: Boolean(e.calendarId),
     calendarName: e.calendarName ?? null,
     title: e.title,
     startAt: e.startAt,
@@ -460,7 +634,9 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   return [
     `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
     `This is the "${report.kind}" edition.`,
-    'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the Daily Brief composition JSON. Every id/account is real; use them verbatim and never fabricate ids.',
+    'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the complete Daily Brief HTML document.',
+    'Backend contract: use exact ids/accounts from this JSON verbatim. For action controls, use only valid data-action enum strings and valid data-payload JSON. Omit any action you cannot wire exactly.',
+    'Design contract: be editorial and component-minded. Create the layout, visual comparisons, timelines, checklists, or compact dashboards that best fit the actual day.',
     '',
     '```json',
     JSON.stringify(data, null, 2),

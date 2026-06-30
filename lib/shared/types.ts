@@ -359,12 +359,31 @@ export interface DailyReportCalendarItem {
 
 export interface DailyReportMcpItem {
   server: 'github' | 'bitbucket' | 'jira' | 'slack';
+  externalId?: string;
   kind: string;
   title: string;
   state?: string | null;
   author?: string | null;
   url?: string | null;
   updatedAt?: number | null;
+}
+
+export const DAILY_REPORT_ARTIFACT_ERROR_STAGES = [
+  'ai_availability',
+  'week_artifact',
+  'month_artifact',
+  'month_enrichment',
+] as const;
+
+export const MAX_ARTIFACT_ERRORS = 8;
+export const MAX_ARTIFACT_ERROR_MESSAGE_CHARS = 1200;
+
+export type DailyReportArtifactErrorStage = (typeof DAILY_REPORT_ARTIFACT_ERROR_STAGES)[number];
+
+export interface DailyReportArtifactError {
+  stage: DailyReportArtifactErrorStage;
+  message: string;
+  at: number;
 }
 
 export interface DailyReport {
@@ -378,9 +397,9 @@ export interface DailyReport {
   accounts: AccountEmail[];
   title: string;
   narrative: string;
-  // The self-contained HTML artifact for this edition. It is produced by the
-  // deterministic artifact renderer from `composition` so the app owns chrome,
-  // typography, logos, sandboxing, and action wiring.
+  // The self-contained HTML artifact for this edition. AI artifacts may be
+  // model-authored full HTML; deterministic artifacts are rendered from
+  // `composition`. The app owns sandboxing and the action bridge.
   html?: string;
   // Validated editorial plan used by deterministic brief renderers. The model
   // may author this JSON, but the app owns the rendering.
@@ -389,9 +408,13 @@ export interface DailyReport {
   // first (week) HTML, 'enriching' while the broader month pass runs in the
   // background over an already-rendered edition, 'rendered' once final.
   artifactStatus?: 'composing' | 'enriching' | 'rendered';
-  // Whether the artifact composition came from the model or the deterministic
-  // structured fallback. The renderer is deterministic in both cases.
+  // Whether the artifact came from the model or the deterministic structured
+  // fallback.
   artifactSource?: 'ai' | 'deterministic';
+  // Failures from the artifact generation pipeline. These are intentionally
+  // separate from source-gathering `errors` so the UI can explain exactly why
+  // the full AI artifact is unavailable.
+  artifactErrors?: DailyReportArtifactError[];
   // Source services used to compose this brief, normalized to ids such as
   // gmail, outlook, github, slack. Used for the branded footer.
   services?: string[];

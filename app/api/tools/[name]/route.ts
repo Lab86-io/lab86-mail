@@ -6,6 +6,9 @@ import { invokeTool, ToolValidationError } from '@/lib/tools/registry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Some direct UI tools, notably manual Daily Brief generation, intentionally
+// wait for a terminal saved result instead of spawning fragile background work.
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ name: string }> }) {
   const { name } = await ctx.params;
