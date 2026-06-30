@@ -1,6 +1,11 @@
 'use client';
 
-import { AppShell } from '@/components/shell/AppShell';
+import dynamic from 'next/dynamic';
+
+const AppShell = dynamic(() => import('@/components/shell/AppShell').then((mod) => mod.AppShell), {
+  ssr: false,
+  loading: () => <main className="app-paper h-dvh bg-[var(--color-bg)]" />,
+});
 
 export function ClientPage({
   albatrossEnabled,

@@ -169,9 +169,10 @@ export function resolveInitialPrimaryView(
   currentView: unknown,
   albatrossEnabled: boolean,
   initialView?: PrimaryView,
+  hasSavedPrimaryView = true,
 ): PrimaryView {
   const normalizedCurrent = normalizePrimaryView(currentView, albatrossEnabled);
-  if (!initialView || normalizedCurrent !== 'daily_report') return normalizedCurrent;
+  if (!initialView || hasSavedPrimaryView) return normalizedCurrent;
 
   const normalizedInitial = normalizePrimaryView(initialView, albatrossEnabled);
   return normalizedInitial === initialView ? normalizedInitial : normalizedCurrent;

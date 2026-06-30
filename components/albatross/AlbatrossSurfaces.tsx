@@ -775,13 +775,17 @@ function QuestionRow({
   value?: string;
   onAnswer: (value: string) => void;
 }) {
+  const labelId = `intent-question-${question.id}`;
   return (
     <div>
-      <p className="text-[12.5px] text-[var(--color-text)]">{question.text}</p>
+      <p id={labelId} className="text-[12.5px] text-[var(--color-text)]">
+        {question.text}
+      </p>
       <div className="mt-1.5">
         {question.kind === 'short_text' ? (
           <input
             type="text"
+            aria-labelledby={labelId}
             value={value ?? ''}
             onChange={(event) => onAnswer(event.target.value)}
             placeholder="Type an answer"

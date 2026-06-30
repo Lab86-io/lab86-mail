@@ -43,9 +43,13 @@ describe('Albatross primary view guards', () => {
     expect(normalizePrimaryView('unassigned', true)).toBe('unassigned');
   });
 
-  test('can boot an enabled Albatross preview into the first Albatross surface', () => {
-    expect(resolveInitialPrimaryView('daily_report', true, 'areas')).toBe('areas');
-    expect(resolveInitialPrimaryView('mail', true, 'areas')).toBe('mail');
-    expect(resolveInitialPrimaryView('daily_report', false, 'areas')).toBe('daily_report');
+  test('can boot an enabled Albatross preview into the first Albatross surface when no view is saved', () => {
+    expect(resolveInitialPrimaryView('daily_report', true, 'areas', false)).toBe('areas');
+    expect(resolveInitialPrimaryView('daily_report', false, 'areas', false)).toBe('daily_report');
+  });
+
+  test('keeps the saved primary view authoritative after hydration', () => {
+    expect(resolveInitialPrimaryView('daily_report', true, 'areas', true)).toBe('daily_report');
+    expect(resolveInitialPrimaryView('mail', true, 'areas', true)).toBe('mail');
   });
 });

@@ -40,8 +40,8 @@ async function upsertSeedUser(
     .query('users')
     .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', userId))
     .unique();
-  const email = seedUser.email || 'jakob@example.test';
-  const name = seedUser.name || 'Jakob Langtry';
+  const email = seedUser.email || 'albatross-dev@example.test';
+  const name = seedUser.name || 'Albatross Dev User';
   if (existing) {
     await ctx.db.patch(existing._id, { email, name, updatedAt: ts });
     return existing._id;
@@ -58,7 +58,7 @@ async function upsertSeedUser(
 export const seedFromFixture = mutation({
   args: {
     internalSecret: v.optional(v.string()),
-    userId: v.string(),
+    userId: v.optional(v.string()),
     fixture: v.any(),
   },
   handler: async (ctx, args) => {
@@ -71,8 +71,8 @@ export const seedFromFixture = mutation({
     await upsertSeedUser(ctx, userId, {
       ...seedUser,
       userId,
-      email: seedUser.email || 'jakob@lab86.io',
-      name: seedUser.name || 'Jakob Langtry',
+      email: seedUser.email || 'albatross-dev@example.test',
+      name: seedUser.name || 'Albatross Dev User',
     });
 
     const existing = await ctx.db
@@ -148,7 +148,8 @@ export const listByKind = query({
     requireInternalSecret(args.internalSecret);
     return await ctx.db
       .query('albatrossDevRecords')
-      .withIndex('by_user_kind', (q) => q.eq('userId', args.userId).eq('kind', args.kind))
+      .withIndex('by_user_source', (q) => q.eq('userId', args.userId).eq('source', SEED_SOURCE))
+      .filter((q) => q.eq(q.field('kind'), args.kind))
       .collect();
   },
 });

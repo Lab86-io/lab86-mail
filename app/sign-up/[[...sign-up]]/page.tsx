@@ -6,7 +6,7 @@ import { isPublicSignupDisabled } from '@/lib/hosted/controls';
 import { isClerkConfigured } from '@/lib/hosted/env';
 
 export default async function SignUpPage() {
-  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+  if (!isClerkConfigured()) {
     return (
       <main className="grid min-h-dvh place-items-center bg-[var(--color-bg)] px-4">
         <div className="max-w-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-center">
@@ -17,10 +17,8 @@ export default async function SignUpPage() {
     );
   }
 
-  if (isClerkConfigured()) {
-    const session = await auth();
-    if (session.userId) redirect('/');
-  }
+  const session = await auth();
+  if (session.userId) redirect('/');
 
   if (isPublicSignupDisabled()) {
     return (

@@ -3,9 +3,9 @@
   "generatedAt": "2026-06-30T06:35:00.000Z",
   "description": "Simulated Albatross 0.9 data for exercising areas, facts, unassigned review, intent capture, planning, approvals, daily report priority conflicts, projects, sprints, and completion reporting.",
   "seedUser": {
-    "userId": "user_3F2uuD9CIn4d6orJmNXmoVO3LLo",
-    "email": "jakob@lab86.io",
-    "name": "Jakob Langtry",
+    "userId": "user_albatross_dev_seed",
+    "email": "albatross-dev@example.test",
+    "name": "Albatross Dev User",
     "timezone": "America/New_York"
   },
   "tables": {

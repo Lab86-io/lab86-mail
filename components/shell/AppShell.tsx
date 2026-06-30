@@ -53,8 +53,14 @@ export function AppShell({
   const [panelResizing, setPanelResizing] = useState(false);
   const mobileHistoryThreadRef = useRef<string | null>(null);
   const initialViewAppliedRef = useRef(false);
+  const [hasSavedPrimaryView] = useState(() => hasPersistedPrimaryView());
   const normalizedPrimaryView = normalizePrimaryView(primaryView, albatrossEnabled);
-  const initialPrimaryView = resolveInitialPrimaryView(primaryView, albatrossEnabled, initialView);
+  const initialPrimaryView = resolveInitialPrimaryView(
+    primaryView,
+    albatrossEnabled,
+    initialView,
+    hasSavedPrimaryView,
+  );
   const [bootView, setBootView] = useState<PrimaryView | null>(() =>
     initialPrimaryView !== normalizedPrimaryView ? initialPrimaryView : null,
   );
@@ -84,7 +90,12 @@ export function AppShell({
     const timers = retryMs.map((delay, index) =>
       window.setTimeout(() => {
         const currentState = useClientStore.getState();
-        const nextView = resolveInitialPrimaryView(currentState.primaryView, albatrossEnabled, initialView);
+        const nextView = resolveInitialPrimaryView(
+          currentState.primaryView,
+          albatrossEnabled,
+          initialView,
+          hasSavedPrimaryView,
+        );
         if (nextView !== currentState.primaryView) currentState.setPrimaryView(nextView);
         if (index === retryMs.length - 1) {
           initialViewAppliedRef.current = true;
@@ -96,7 +107,7 @@ export function AppShell({
     return () => {
       for (const timer of timers) window.clearTimeout(timer);
     };
-  }, [albatrossEnabled, initialView]);
+  }, [albatrossEnabled, hasSavedPrimaryView, initialView]);
 
   useEffect(() => {
     if (!isMobile || !selectedThreadId || mobileHistoryThreadRef.current === selectedThreadId) return;
@@ -312,6 +323,18 @@ const noopLayoutStorage: Pick<Storage, 'getItem' | 'setItem'> = {
   getItem: () => null,
   setItem: () => undefined,
 };
+
+function hasPersistedPrimaryView() {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = window.localStorage.getItem('lab86-mail-ui');
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed?.state && Object.hasOwn(parsed.state, 'primaryView'));
+  } catch {
+    return false;
+  }
+}
 
 // Drag handle living between the sidebar and the main content. It nudges the
 // `--sidebar-width` CSS variable directly during the drag (so the resize is
