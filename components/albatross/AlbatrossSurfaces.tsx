@@ -296,7 +296,10 @@ function AreasSurface() {
   const [selectedId, setSelectedId] = useState(summaries[0]?.area.id ?? '');
   const visible =
     filter === 'all' ? summaries : summaries.filter((s) => s.factCounts.candidate > 0 || s.reviewCount > 0);
-  const detail = buildAreaDetail(selectedId) ?? buildAreaDetail(summaries[0]?.area.id ?? '');
+  const activeId = visible.some((summary) => summary.area.id === selectedId)
+    ? selectedId
+    : (visible[0]?.area.id ?? '');
+  const detail = activeId ? buildAreaDetail(activeId) : null;
 
   return (
     <Surface
@@ -323,7 +326,7 @@ function AreasSurface() {
                   key={area.id}
                   type="button"
                   onClick={() => setSelectedId(area.id)}
-                  className={selectRowClass(area.id === selectedId)}
+                  className={selectRowClass(area.id === activeId)}
                 >
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate font-display text-[13.5px] font-semibold text-[var(--color-text)]">
@@ -453,7 +456,15 @@ function FactsTab({ detail }: { detail: AreaDetail }) {
                   key={fact.id}
                   fact={fact}
                   decision={decided[fact.id]}
-                  onDecide={(next) => setDecided((prev) => ({ ...prev, [fact.id]: next }))}
+                  onDecide={(next) =>
+                    setDecided((prev) => {
+                      if (!next) {
+                        const { [fact.id]: _removed, ...rest } = prev;
+                        return rest;
+                      }
+                      return { ...prev, [fact.id]: next };
+                    })
+                  }
                 />
               ))}
             </div>
@@ -471,7 +482,7 @@ function FactRow({
 }: {
   fact: AreaFact;
   decision?: FactStatus;
-  onDecide: (status: FactStatus) => void;
+  onDecide: (status: FactStatus | null) => void;
 }) {
   const confirmation = fact.confirmationRefs[0];
   return (
@@ -501,7 +512,7 @@ function FactRow({
             {decision === 'verified' ? 'Verified by you' : 'Rejected by you'} ·{' '}
             <button
               type="button"
-              onClick={() => onDecide('candidate')}
+              onClick={() => onDecide(null)}
               className="text-[var(--color-accent)] hover:underline"
             >
               Undo
@@ -606,7 +617,8 @@ function IntentsSurface() {
     if (filter === 'ready') return intent.status === 'draft_plan_ready';
     return true;
   });
-  const bench = buildIntentWorkbench(selectedId) ?? buildIntentWorkbench(all[0]?.id ?? '');
+  const activeId = visible.some((intent) => intent.id === selectedId) ? selectedId : (visible[0]?.id ?? '');
+  const bench = activeId ? buildIntentWorkbench(activeId) : null;
 
   return (
     <Surface
@@ -632,7 +644,7 @@ function IntentsSurface() {
                 key={intent.id}
                 type="button"
                 onClick={() => setSelectedId(intent.id)}
-                className={selectRowClass(intent.id === selectedId)}
+                className={selectRowClass(intent.id === activeId)}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-[var(--color-text-faint)]">
@@ -777,10 +789,10 @@ function QuestionRow({
 }) {
   const labelId = `intent-question-${question.id}`;
   return (
-    <div>
-      <p id={labelId} className="text-[12.5px] text-[var(--color-text)]">
+    <fieldset className="border-0 p-0">
+      <legend id={labelId} className="text-[12.5px] text-[var(--color-text)]">
         {question.text}
-      </p>
+      </legend>
       <div className="mt-1.5">
         {question.kind === 'short_text' ? (
           <input
@@ -830,7 +842,7 @@ function QuestionRow({
           </div>
         )}
       </div>
-    </div>
+    </fieldset>
   );
 }
 

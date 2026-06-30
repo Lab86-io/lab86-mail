@@ -1,3 +1,5 @@
+# Pull Request
+
 ## Summary
 
 - 
@@ -7,6 +9,14 @@
 - Resolves #
 
 ## Albatross UI Research
+
+For every Albatross UI change, fill in:
+
+- Claude model used:
+- Claude prompt/run:
+- Mobbin references:
+- Browser-based research references:
+- Research/tooling constraints or unavailable tools:
 
 For Albatross UI changes, confirm:
 

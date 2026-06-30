@@ -98,7 +98,7 @@ function basicAuthOrNext(req: Request) {
 }
 
 function shouldRequireBasicAuth(req: Request, pathname: string) {
-  if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1' && isLocalBasicAuthBypassHost(req)) return false;
+  if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1' && isBasicAuthBypassAllowed(req)) return false;
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
   if (pathname === '/api/clerk/webhook') return false;
@@ -116,6 +116,13 @@ function shouldRequireBasicAuth(req: Request, pathname: string) {
   // Internal cron callbacks authenticate via the internal secret, not basic auth.
   if (pathname.startsWith('/api/cron')) return false;
   return true;
+}
+
+function isBasicAuthBypassAllowed(req: Request) {
+  if (process.env.NODE_ENV === 'production' && process.env.RAILWAY_ENVIRONMENT_NAME !== 'development') {
+    return false;
+  }
+  return isLocalBasicAuthBypassHost(req);
 }
 
 function isLocalBasicAuthBypassHost(req: Request) {
