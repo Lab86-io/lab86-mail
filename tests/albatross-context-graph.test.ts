@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   assertFactTransitionAllowed,
+  assertVerifiedArtifactLinkAllowed,
   assertVerifiedFactAllowed,
   hasUserConfirmation,
   isSensitiveFactKind,
@@ -64,6 +65,17 @@ describe('Albatross context graph trust rules', () => {
     expect(() => assertFactTransitionAllowed('candidate', 'superseded')).toThrow(/Invalid/);
     expect(() => assertFactTransitionAllowed('verified', 'rejected')).toThrow(/Invalid/);
     expect(() => assertFactTransitionAllowed('rejected', 'verified')).toThrow(/Invalid/);
+  });
+
+  test('verified artifact links require explicit user confirmation refs', () => {
+    expect(() => assertVerifiedArtifactLinkAllowed('candidate', [])).not.toThrow();
+    expect(() => assertVerifiedArtifactLinkAllowed('verified', [])).toThrow(/artifact links/);
+    expect(() =>
+      assertVerifiedArtifactLinkAllowed('verified', [
+        { kind: 'mailThread', id: 'thread_1', confirmedAt: userConfirmation.confirmedAt },
+      ]),
+    ).toThrow(/artifact links/);
+    expect(() => assertVerifiedArtifactLinkAllowed('verified', [userConfirmation])).not.toThrow();
   });
 
   test('refs normalize to bounded, queryable evidence shapes', () => {

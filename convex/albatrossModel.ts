@@ -84,6 +84,16 @@ export function assertVerifiedFactAllowed(input: {
   }
 }
 
+export function assertVerifiedArtifactLinkAllowed(
+  status: AreaArtifactLinkStatus,
+  confirmationRefs: AlbatrossConfirmationRef[],
+) {
+  if (status !== 'verified') return;
+  if (!hasUserConfirmation(confirmationRefs)) {
+    throw new Error('Verified area artifact links require explicit user confirmation.');
+  }
+}
+
 export function assertFactTransitionAllowed(current: AreaFactStatus, next: AreaFactStatus) {
   if (current === next) return;
   const allowed =

@@ -8,6 +8,7 @@ import {
   type AreaArtifactLinkStatus,
   type AreaFactStatus,
   assertFactTransitionAllowed,
+  assertVerifiedArtifactLinkAllowed,
   assertVerifiedFactAllowed,
   normalizeConfirmationRefs,
   normalizeSourceRefs,
@@ -415,6 +416,8 @@ export const linkArtifactToArea = mutation({
     const refs = normalizedRefs(args);
     const ts = now();
     const { artifactId, accountId } = normalizedArtifactIdentity(args);
+    const status = (args.status || 'candidate') as AreaArtifactLinkStatus;
+    assertVerifiedArtifactLinkAllowed(status, refs.confirmationRefs);
     const artifactLinks = accountId
       ? await ctx.db
           .query('areaArtifactLinks')
@@ -443,7 +446,7 @@ export const linkArtifactToArea = mutation({
       artifactId,
       accountId,
       role: args.role || 'primary',
-      status: (args.status || 'candidate') as AreaArtifactLinkStatus,
+      status,
       confidence: args.confidence,
       reason: args.reason ? normalizeText(args.reason).slice(0, 700) : undefined,
       sourceRefs: refs.sourceRefs,
@@ -608,6 +611,11 @@ export const seedContextGraphFromFixture = mutation({
     for (const link of tables.areaArtifactLinks || []) {
       const areaId = areaIds.get(String(link.areaId || ''));
       if (!areaId) continue;
+      const status = ['verified', 'rejected'].includes(link.status)
+        ? (link.status as AreaArtifactLinkStatus)
+        : 'candidate';
+      const confirmationRefs = normalizeConfirmationRefs(seedConfirmationRefs(link.confirmationRefs));
+      assertVerifiedArtifactLinkAllowed(status, confirmationRefs);
       await ctx.db.insert('areaArtifactLinks', {
         userId: args.userId,
         areaId,
@@ -620,11 +628,11 @@ export const seedContextGraphFromFixture = mutation({
         artifactId: normalizeText(String(link.artifactId || '')),
         accountId: typeof link.accountId === 'string' ? normalizeText(link.accountId) : undefined,
         role: ['primary', 'secondary', 'supporting'].includes(link.role) ? link.role : 'supporting',
-        status: ['verified', 'rejected'].includes(link.status) ? link.status : 'candidate',
+        status,
         confidence: typeof link.confidence === 'number' ? link.confidence : undefined,
         reason: typeof link.reason === 'string' ? normalizeText(link.reason).slice(0, 700) : undefined,
         sourceRefs: normalizeSourceRefs(link.sourceRefs || []),
-        confirmationRefs: normalizeConfirmationRefs(seedConfirmationRefs(link.confirmationRefs)),
+        confirmationRefs,
         createdAt: ts,
         updatedAt: ts,
       });
