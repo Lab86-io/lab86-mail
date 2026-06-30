@@ -432,11 +432,15 @@ OUTPUT RULES (critical):
 - Top-level shape: { "version": ${BRIEF_COMPOSITION_VERSION}, "title": string, "summary"?: string, "services": string[], "blocks": BriefBlock[] }.
 - Use real ids/accounts from the data only. Never invent ids.
 - Every rich/generated claim outside a simple lede must include sourceRefs pointing to the source thread/message/task/event/mcp item. Charts and custom widgets require sourceRefs.
+- sourceRefs MUST be objects shaped exactly like { "kind": "thread"|"message"|"task"|"event"|"mcp"|"account"|"derived", "id": string, "account"?: string, "label"?: string }. Use "id" even when the source data field is threadId/cardId/eventId/messageId. Do not use kind values like "email", "mail", "todo", "calendar", "github", or "unknown"; map them to the allowed kind or omit the bad ref.
+- actions MUST be objects shaped exactly like { "action": one VALID ACTION name, "label": short button text, "payload": object, "style"?: "primary"|"secondary"|"danger"|"quiet" }. The action field is NEVER prose. The label field is REQUIRED. If you are not sure an action is valid or cannot provide the required payload, omit that action instead of inventing one.
+- For optional sourceRefs/actions, [] is valid. A clean valid composition with fewer buttons is better than an invalid composition with guessed wiring.
 
 DO NOT:
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
 - Do NOT include page chrome, masthead, footer/signoff, source footer, logo SVG, global CSS, or JavaScript for standard actions. The renderer owns those.
 - Do NOT use a custom_widget when a standard block can express the idea.
+- Do NOT use action names outside VALID ACTIONS, including "reply", "open", "email", "schedule", "snooze", "complete", or "view". Pick the exact valid action name or omit the action.
 
 VALID BLOCKS:
 - lede: { type:"lede", title?, paragraphs:[string], sourceRefs? }. Use 2-3 short paragraphs when there is enough substance, otherwise 1. Make it narrative and specific, not a generic summary. No emoji.
