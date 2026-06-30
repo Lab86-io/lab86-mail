@@ -449,12 +449,15 @@ if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.c
 
 function withReportArtifactRuntime(html: string): string {
   if (!html) return html;
-  let next = html;
-  if (!next.includes('id="lab86-report-runtime-js"')) {
-    next = /<\/body>/i.test(next)
-      ? next.replace(/<\/body>/i, `${REPORT_ARTIFACT_RUNTIME_JS}</body>`)
+  let next = html.replace(
+    /<script\b(?=[^>]*\bid=(["'])lab86-report-runtime-js\1)[^>]*>[\s\S]*?<\/script>/gi,
+    '',
+  );
+  const bodyClose = next.toLowerCase().lastIndexOf('</body>');
+  next =
+    bodyClose >= 0
+      ? `${next.slice(0, bodyClose)}${REPORT_ARTIFACT_RUNTIME_JS}${next.slice(bodyClose)}`
       : `${next}${REPORT_ARTIFACT_RUNTIME_JS}`;
-  }
   return next;
 }
 
