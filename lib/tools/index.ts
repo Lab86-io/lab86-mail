@@ -10,6 +10,19 @@ import {
   translateThread,
   triageThread,
 } from './ai';
+import {
+  albatrossApplyIntentPlan,
+  albatrossApproveAction,
+  albatrossCreateProject,
+  albatrossCreateSprint,
+  albatrossGetProjectPane,
+  albatrossListApprovalQueue,
+  albatrossListProjects,
+  albatrossListSprints,
+  albatrossPreviewUndoUnresolved,
+  albatrossRejectAction,
+  albatrossUndoApproval,
+} from './albatross';
 import { listAuditEntries, logAction } from './audit-tools';
 import {
   calendarCountEvents,
@@ -248,6 +261,17 @@ const allTools: AnyTool[] = [
   undoOperationTool,
   tasksListBoards,
   tasksGetBoard,
+  albatrossApplyIntentPlan,
+  albatrossListApprovalQueue,
+  albatrossApproveAction,
+  albatrossRejectAction,
+  albatrossUndoApproval,
+  albatrossCreateProject,
+  albatrossListProjects,
+  albatrossGetProjectPane,
+  albatrossCreateSprint,
+  albatrossListSprints,
+  albatrossPreviewUndoUnresolved,
   tasksCreateBoard,
   tasksCreateCard,
   tasksUpdateCard,

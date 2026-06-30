@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import {
+  type AlbatrossDailyReportContext,
+  buildAlbatrossDailyReportContext,
+  summarizeAlbatrossDailyReportContext,
+} from '../albatross/daily-report';
 import { api, convexQuery } from '../hosted/convex';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
@@ -227,6 +232,7 @@ export async function generateDailyReport(input: {
     loadMemoryContext(),
     loadMcpContext(input.userId),
   ]);
+  const albatrossContext = buildAlbatrossDailyReportContext({ now });
 
   const byDateDesc = (a: Thread, b: Thread) => Number(b.lastDate || 0) - Number(a.lastDate || 0);
   const all = [...candidates.values()];
@@ -354,6 +360,7 @@ export async function generateDailyReport(input: {
         calendarContext,
         taskContext,
         memoryContext,
+        albatrossContext,
         errors,
         reportId,
         status: 'partial',
@@ -439,6 +446,7 @@ export async function generateDailyReport(input: {
     taskContext,
     memoryContext,
     mcpContext,
+    albatrossContext,
     errors,
     reportId,
   });
@@ -855,6 +863,7 @@ async function composeReport(input: {
   taskContext: DailyReportTaskItem[];
   memoryContext: string[];
   mcpContext?: DailyReportMcpItem[];
+  albatrossContext: AlbatrossDailyReportContext;
   errors: string[];
   reportId?: string;
   status?: DailyReport['status'];
@@ -963,6 +972,10 @@ async function composeReport(input: {
     reportCalendar,
     input.now,
   );
+  const albatrossSummary = summarizeAlbatrossDailyReportContext(input.albatrossContext);
+  if (albatrossSummary) {
+    narrative = `${narrative} ${albatrossSummary}`;
+  }
   let model = 'local';
 
   if (!input.skipNarrative && (await hasAiForCurrentUser())) {
@@ -970,12 +983,13 @@ async function composeReport(input: {
       const { text } = await generateTextForCurrentUser({
         feature: 'daily_report_narrative',
         speed: 'primary',
-        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from their email, tasks, calendar, memories, and tracked threads — like a sharp chief-of-staff briefing them over coffee. Tell the story of where things stand: open with the through-line of the day, then walk through replies owed, follow-ups, active tasks, and calendar commitments. Use the last week first, then fold in relevant month context. Name people, task titles, and event titles when useful. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 160-210 words.`,
+        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from their email, tasks, calendar, memories, tracked threads, and Albatross area/intent context — like a sharp chief-of-staff briefing them over coffee. Tell the story of where things stand: open with the through-line of the day, then walk through replies owed, follow-ups, active tasks, active intents/projects, and calendar commitments. Use the last week first, then fold in relevant month context. Name people, task titles, project titles, and event titles when useful. Loud Albatross areas marked ask_before_centering must be phrased as an explicit question, not treated as today's priority. Active declared intents should appear even if inbox volume is quiet. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 170-230 words.`,
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
           `Calendar context: ${reportCalendar.map(calendarContextLine).join(' | ') || 'none'}`,
           `Task context: ${reportTasks.map(taskContextLine).join(' | ') || 'none'}`,
+          `Albatross context: ${albatrossSummary || 'none'}`,
           `Memory context: ${input.memoryContext.join(' | ') || 'none'}`,
           `Reply owed: ${replyOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
           `Follow-up owed: ${followUpOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
@@ -1010,6 +1024,7 @@ async function composeReport(input: {
       tasks: reportTasks,
       calendar: reportCalendar,
       mcp: input.mcpContext ?? [],
+      albatross: input.albatrossContext,
       noiseSummary:
         'Bulk, subscribed, platform, and promo mail is collapsed into the tail below. Real people are never hidden there.',
     },
@@ -1024,6 +1039,9 @@ async function composeReport(input: {
       openTasks: reportTasks.filter((task) => !task.completedAt).length,
       completedTasks: reportTasks.filter((task) => task.completedAt).length,
       calendarEvents: reportCalendar.length,
+      albatrossActiveIntents: input.albatrossContext.activeIntents.length,
+      albatrossActiveProjects: input.albatrossContext.activeProjects.length,
+      albatrossQuestions: input.albatrossContext.askBeforeCentering.length,
     },
     model,
     errors: input.errors,

@@ -1,6 +1,8 @@
 import type { CreateAttachmentRequest } from 'nylas';
 import { z } from 'zod';
+import { recordOperation, registerUndoExecutor } from '../ai/operations';
 import { fetchEmailAttachment, fetchWebFile } from '../attachments/fetch-store';
+import { convexInternalSecret, isConvexConfigured } from '../hosted/env';
 import { listNylasScheduledMessages, sendNylasMessage, stopNylasScheduledMessage } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
 import type { Draft, Message } from '../shared/types';
@@ -321,11 +323,22 @@ export const saveDraftTool = defineTool({
     html: z.string().optional(),
     scheduledFor: z.number().optional(),
   }),
-  output: z.object({ ok: z.boolean(), draft: z.any() }),
-  async handler(args) {
+  output: z.object({ ok: z.boolean(), draft: z.any(), operationId: z.string().optional() }),
+  async handler(args, ctx) {
     const doc: Draft = { ...args, updatedAt: Date.now() };
     const saved = await saveDraftRecord(doc);
-    return { ok: true, draft: saved };
+    let operationId: string | undefined;
+    if (ctx.userId && isConvexConfigured() && convexInternalSecret()) {
+      operationId = await recordOperation({
+        userId: ctx.userId,
+        tool: 'save_draft',
+        surface: 'mail',
+        summary: `Saved draft "${args.subject || '(no subject)'}"`,
+        target: { kind: 'emailDraft', id: saved._id, accountId: saved.account },
+        inverse: { kind: 'compose.delete_draft', payload: { draftId: saved._id } },
+      });
+    }
+    return { ok: true, draft: saved, operationId };
   },
 });
 
@@ -379,6 +392,11 @@ export const listDraftsTool = defineTool({
   async handler({ account }) {
     return { drafts: await listDrafts(account) };
   },
+});
+
+registerUndoExecutor('compose.delete_draft', async (payload) => {
+  if (!payload?.draftId) throw new Error('draftId required.');
+  await deleteDraftRecord(payload.draftId);
 });
 
 export const scheduleSend = defineTool({

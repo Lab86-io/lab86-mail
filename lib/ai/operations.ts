@@ -9,7 +9,7 @@ import { getAiRequestContext } from './context';
 // the inverse kind. Surfaces register their executors at module load
 // (calendar in lib/calendar, tasks in lib/tasks).
 
-export type OperationSurface = 'mail' | 'calendar' | 'tasks';
+export type OperationSurface = 'mail' | 'calendar' | 'tasks' | 'albatross';
 
 export interface InverseOp {
   kind: string;

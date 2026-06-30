@@ -29,6 +29,7 @@ import {
 import { Markdown } from '@/components/ui/markdown';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
@@ -236,6 +237,13 @@ function asTasks(value: DailyReportPayload['sections'][string]): DailyReportTask
 
 function asEvents(value: DailyReportPayload['sections'][string]): DailyReportCalendarItem[] {
   return Array.isArray(value) ? (value as DailyReportCalendarItem[]) : [];
+}
+
+// The Albatross section is an object, not the array/string the other sections
+// carry, so it needs its own coercion before the brief reads it.
+function asAlbatrossContext(value: unknown): AlbatrossDailyReportContext | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as AlbatrossDailyReportContext;
 }
 
 function dailyReportThreadKey(account: string, threadId: string): string {
@@ -1492,6 +1500,8 @@ export function DailyReport() {
               dismissingTaskId={dismissTask.isPending ? dismissTask.variables?.cardId : undefined}
             />
 
+            <AlbatrossBrief context={asAlbatrossContext(report.sections.albatross)} delay={205} />
+
             {/* Sections. */}
             {SECTION_LABELS.map(([key, label, limit, roomy], i) => (
               <ReportSection
@@ -1755,6 +1765,97 @@ function TaskCalendarBrief({
         ) : (
           <p className="text-[12px] text-[var(--color-text-faint)]">No calendar context in the last month.</p>
         )}
+      </div>
+    </section>
+  );
+}
+
+// Issue #85: the brief carries active Albatross intents and projects even when
+// the inbox is quiet, and asks - rather than assumes - about loud-but-undeclared
+// areas. Kept compact: one operational strip in the report's voice, never a
+// second dashboard.
+function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportContext | null; delay: number }) {
+  if (!context) return null;
+  const { activeProjects, activeIntents, askBeforeCentering, monthlyPrompt } = context;
+  const hasActive = activeProjects.length > 0 || activeIntents.length > 0;
+  if (!hasActive && askBeforeCentering.length === 0 && !monthlyPrompt) return null;
+
+  return (
+    <section className="blur-in @container" style={{ animationDelay: `${delay}ms` }}>
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="font-serif text-[14px] font-semibold text-[var(--color-text)]">
+            Areas &amp; Intents
+          </h2>
+          <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+            {activeProjects.length + activeIntents.length || ''}
+          </span>
+        </div>
+
+        {monthlyPrompt ? (
+          <p className="mb-2.5 rounded-lg border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-3 py-2 text-[12px] leading-5 text-[var(--color-text)]">
+            {stripEmoji(monthlyPrompt)}
+          </p>
+        ) : null}
+
+        <div className="grid gap-x-5 gap-y-3 @[640px]:grid-cols-2">
+          <div className="min-w-0">
+            {hasActive ? (
+              <>
+                <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Active now</h3>
+                <ul className="mt-1.5 space-y-2">
+                  {activeProjects.map((project) => (
+                    <li key={project.id} className="min-w-0">
+                      <p className="truncate text-[12.5px] font-medium text-[var(--color-text)]">
+                        {stripEmoji(project.title)}
+                      </p>
+                      <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-5 text-[var(--color-text-muted)]">
+                        {project.outcome
+                          ? stripEmoji(project.outcome)
+                          : `Project / ${project.status ?? 'active'}`}
+                      </p>
+                    </li>
+                  ))}
+                  {activeIntents.map((intent) => (
+                    <li key={intent.id} className="flex min-w-0 items-baseline gap-2">
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--color-text)]">
+                        {stripEmoji(intent.text)}
+                      </span>
+                      {intent.status ? (
+                        <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">
+                          {intent.status.replace(/_/g, ' ')}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="text-[12px] text-[var(--color-text-faint)]">
+                No active intents or projects declared for today.
+              </p>
+            )}
+          </div>
+
+          {askBeforeCentering.length ? (
+            <div className="min-w-0">
+              <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Worth a check?</h3>
+              <ul className="mt-1.5 space-y-2">
+                {askBeforeCentering.map((area) => (
+                  <li key={area.areaId} className="min-w-0">
+                    <p className="text-[12.5px] leading-5 text-[var(--color-text-muted)]">
+                      {stripEmoji(area.prompt)}
+                    </p>
+                    <p className="mt-0.5 text-[10.5px] text-[var(--color-text-faint)]">
+                      {area.name}
+                      {typeof area.loudness === 'number' ? ` / loud in your inbox` : ''}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
       </div>
     </section>
   );

@@ -7,9 +7,13 @@ import {
   buildAreaLens,
   buildAreaLensCounts,
   buildAreaSummaries,
+  buildAreaTaskGroups,
   buildIntentContextPack,
   buildIntentWorkbench,
+  buildKanbanColumns,
   buildNoiseRules,
+  buildProjectPane,
+  buildProjectTaskGroups,
   buildRecentCorrections,
   buildReviewDetail,
   buildReviewQueue,
@@ -19,6 +23,7 @@ import {
   classifyThread,
   contextReviewItems,
   createCapturedIntent,
+  deriveActiveSprint,
   draftedFactKey,
   draftSetupFact,
   intentsStats,
@@ -29,6 +34,7 @@ import {
   reviewDecisionOptions,
   splitIntentText,
   summarizeSetupProgress,
+  type Task,
   toClassifierArtifact,
   unassignedStats,
 } from '../components/albatross/surface-data';
@@ -482,6 +488,72 @@ describe('Intent parser, context packs, and grounded plans', () => {
       expect(parsed.plan.status.length).toBeGreaterThan(0);
       expect(parsed.plan.readyToApply).toBe(false);
     }
+  });
+});
+
+describe('Work board read model (issues #83 + #84)', () => {
+  const mixed: Task[] = [
+    { id: 't_todo', title: 'Plan the thing', status: 'todo', areaId: 'area_cardhunt' },
+    { id: 't_doing', title: 'Build the thing', status: 'in_progress', areaId: 'area_cardhunt' },
+    { id: 't_review', title: 'Review the thing', status: 'review', areaId: 'area_money' },
+    { id: 't_done', title: 'Shipped', status: 'done' },
+    { id: 't_unknown', title: 'Loose card', status: 'weird_status' },
+  ];
+
+  test('kanban columns map every status into exactly one column', () => {
+    const columns = buildKanbanColumns(mixed);
+    expect(columns.map((column) => column.key)).toEqual(['todo', 'in_progress', 'review', 'done']);
+    const total = columns.reduce((sum, column) => sum + column.cards.length, 0);
+    expect(total).toBe(mixed.length);
+    // Unknown statuses fall back to To do rather than vanishing.
+    expect(columns[0].cards.map((card) => card.id)).toContain('t_unknown');
+    expect(columns[3].cards.map((card) => card.id)).toEqual(['t_done']);
+  });
+
+  test('seed kanban renders every standalone seed task', () => {
+    const columns = buildKanbanColumns();
+    const ids = columns.flatMap((column) => column.cards.map((card) => card.id));
+    expect(ids).toContain('task_banjo_first_practice');
+    expect(ids).toContain('task_tax_missing_docs');
+  });
+
+  test('project groups keep standalone tasks in their own group', () => {
+    const groups = buildProjectTaskGroups();
+    const cardhunt = groups.find((group) => group.project?.id === 'project_cardhunt_launch');
+    expect(cardhunt?.cards.length).toBe(2);
+    const standalone = groups.find((group) => group.project === null);
+    expect(standalone?.title).toBe('Standalone tasks');
+    expect(standalone?.cards.map((card) => card.id)).toContain('task_tax_missing_docs');
+  });
+
+  test('area groups resolve names and sort busiest first', () => {
+    const groups = buildAreaTaskGroups();
+    expect(groups[0].cards.length).toBeGreaterThanOrEqual(groups[groups.length - 1].cards.length);
+    const cardhunt = groups.find((group) => group.areaId === 'area_cardhunt');
+    expect(cardhunt?.areaName).toBe('CardHunt');
+    expect(cardhunt?.cards.length).toBe(2);
+  });
+
+  test('derived sprint is deterministic and excludes done work', () => {
+    // 2026-06-30 is a Tuesday; the week window is Mon 2026-06-29 .. Sun 2026-07-05.
+    const sprint = deriveActiveSprint(Date.UTC(2026, 5, 30, 12), mixed);
+    expect(sprint.id).toBe('sprint-week-2026-06-29');
+    expect(sprint.startLabel).toBe('Jun 29');
+    expect(sprint.endLabel).toBe('Jul 5');
+    expect(sprint.cards.every((card) => card.status !== 'done')).toBe(true);
+    expect(sprint.counts.total).toBe(mixed.length);
+    expect(sprint.counts.done).toBe(1);
+  });
+
+  test('project pane resolves outcome, tasks, intents, evidence, and approvals', () => {
+    const pane = buildProjectPane('project_cardhunt_launch');
+    expect(pane).not.toBeNull();
+    expect(pane?.project.outcome?.length).toBeGreaterThan(0);
+    expect(pane?.cards.length).toBe(2);
+    expect(pane?.intents.map((intent) => intent.id)).toContain('intent_cardhunt_new_job_context');
+    expect(pane?.evidence.some((item) => item.id === 'thread_cardhunt_launch')).toBe(true);
+    expect(pane?.counts.total).toBe(2);
+    expect(buildProjectPane('project_missing')).toBeNull();
   });
 });
 
