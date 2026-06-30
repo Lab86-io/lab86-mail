@@ -26,4 +26,38 @@ describe('Albatross seed fixture', () => {
       true,
     );
   });
+
+  test('contains enough simulated context for setup, lenses, and classifier testing', () => {
+    const tables = seed.tables;
+    const areaNames = new Set(tables.areas.map((area) => area.name));
+
+    expect(areaNames.has('CardHunt')).toBe(true);
+    expect(areaNames.has('StatPearls')).toBe(true);
+    expect(areaNames.has('Job Search')).toBe(true);
+    expect(tables.accounts.length).toBeGreaterThanOrEqual(3);
+    expect(tables.tasks.length).toBeGreaterThanOrEqual(4);
+    expect(tables.tasks.some((task) => task.areaId === 'area_cardhunt')).toBe(true);
+    expect(tables.tasks.some((task) => task.areaId === 'area_money')).toBe(true);
+
+    const cardhuntFacts = tables.areaFacts.filter((fact) => fact.areaId === 'area_cardhunt');
+    expect(cardhuntFacts.some((fact) => fact.kind === 'domain' && fact.status === 'verified')).toBe(true);
+    expect(cardhuntFacts.some((fact) => fact.kind === 'repo' && fact.status === 'verified')).toBe(true);
+    expect(
+      cardhuntFacts.some(
+        (fact) =>
+          fact.id === 'fact_cardhunt_manager_candidate' &&
+          fact.status === 'candidate' &&
+          fact.confirmationRefs.length === 0,
+      ),
+    ).toBe(true);
+
+    expect(
+      tables.areaArtifactLinks.some(
+        (link) =>
+          link.areaId === 'area_cardhunt' && link.artifactKind === 'mailThread' && link.status === 'verified',
+      ),
+    ).toBe(true);
+    expect(tables.mcpItems.some((item) => item.areaId === 'area_cardhunt')).toBe(true);
+    expect(tables.calendarEvents.some((event) => event.areaId === 'area_cardhunt')).toBe(true);
+  });
 });
