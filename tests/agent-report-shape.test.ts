@@ -187,6 +187,11 @@ describe('daily brief service metadata', () => {
 
   test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('MASTHEAD (signature element');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Claude Artifact');
+    expect(HTML_ARTIFACT_BRIEF).toContain('CLAUDE ARTIFACT DESIGN SKILL');
+    expect(HTML_ARTIFACT_BRIEF).toContain('REQUIRED VISUAL MODULES');
+    expect(HTML_ARTIFACT_BRIEF).toContain('TIMELINE STANDARD');
+    expect(HTML_ARTIFACT_BRIEF).toContain('ACTION DESIGN');
     expect(HTML_ARTIFACT_BRIEF).toContain('The {data.weekday} Brief');
     expect(HTML_ARTIFACT_BRIEF).toContain('newspaper spine');
     expect(HTML_ARTIFACT_BRIEF).toContain('SYSTEM THEME IS MANDATORY');
@@ -195,6 +200,7 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('data.art.imageUrl');
     expect(HTML_ARTIFACT_BRIEF).toContain('required art header');
     expect(HTML_ARTIFACT_BRIEF).toContain('CONTENT STRUCTURE');
+    expect(HTML_ARTIFACT_BRIEF).toContain('mostly bordered cards');
   });
 });
 
