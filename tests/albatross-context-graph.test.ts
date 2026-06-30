@@ -47,6 +47,13 @@ describe('Albatross context graph trust rules', () => {
     expect(isSensitiveFactKind('job')).toBe(true);
     expect(isSensitiveFactKind('finance_account')).toBe(true);
     expect(isSensitiveFactKind('repo')).toBe(false);
+    expect(() =>
+      assertVerifiedFactAllowed({
+        kind: 'finance_account',
+        status: 'verified',
+        confirmationRefs: [{ kind: 'mailThread', id: 'thread_1', confirmedAt: userConfirmation.confirmedAt }],
+      }),
+    ).toThrow(/Sensitive area facts/);
   });
 
   test('candidate to verified/rejected and verified to superseded are the only status transitions', () => {

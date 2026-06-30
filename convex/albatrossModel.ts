@@ -58,6 +58,9 @@ export function assertVerifiedFactAllowed(input: {
   if (!input.confirmationRefs.length) {
     throw new Error('Verified area facts require confirmation refs.');
   }
+  if (isSensitiveFactKind(input.kind) && !hasUserConfirmation(input.confirmationRefs)) {
+    throw new Error('Sensitive area facts require explicit user confirmation.');
+  }
   if (!hasUserConfirmation(input.confirmationRefs)) {
     throw new Error('Verified area facts require explicit user confirmation.');
   }
