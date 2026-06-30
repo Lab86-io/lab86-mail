@@ -3,13 +3,7 @@ import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { listNylasAccounts } from '../nylas/provider';
-import {
-  BRIEF_COMPOSITION_VERSION,
-  type BriefComposition,
-  compositionFromReport,
-  extractBriefCompositionJson,
-  parseBriefComposition,
-} from '../shared/brief-composition';
+import { type BriefComposition, compositionFromReport } from '../shared/brief-composition';
 import { emailFromHeader } from '../shared/format';
 import {
   type DailyReport,
@@ -33,16 +27,15 @@ import { buildNativeDailyReportArtifact } from './report-artifact';
 //
 // Vision: the model is handed the full, already-grounded report data (mail
 // lanes, tasks, calendar, stats, narrative seed) plus a design brief and an
-// interaction contract, and it authors typed BriefComposition JSON. The app's
-// renderer owns all page chrome, typography, footer branding, action wiring,
-// and sandboxing. The model can still request richer blocks (charts, timelines,
-// checklists, or sandboxed custom widgets) when the data earns it.
+// interaction contract, and it authors a single self-contained HTML artifact.
+// The app owns sandboxing, theme injection, and the action bridge; the model
+// owns the editorial layout and component design.
 //
 // Two phases so the page never sits blank:
 //   1. generateDailyReport() produces the structured edition, then we attach a
-//      deterministic artifact from a default composition immediately.
-//   2. the agent tries to replace that composition with a richer one, then the
-//      month pass updates the same _id in place.
+//      deterministic artifact immediately so the page never goes blank.
+//   2. the agent replaces it with full HTML, then the month pass updates the
+//      same _id in place. The deterministic composition remains the fallback.
 
 const MAX_TASKS = 32;
 const MAX_EVENTS = 32;
@@ -253,6 +246,47 @@ export function settleMonthArtifactReport(input: {
   return failure ? withArtifactError(fallback, failure) : fallback;
 }
 
+export function settleMonthHtmlArtifactReport(input: {
+  full: DailyReport;
+  phase1: DailyReport;
+  html: string | null;
+  failure?: DailyReportArtifactError;
+}): DailyReport {
+  const { full, phase1, html, failure } = input;
+  if (html) {
+    const settled: DailyReport = {
+      ...full,
+      html,
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+      artifactErrors: phase1.artifactErrors,
+      model: describeProvider().primary || full.model,
+    };
+    delete (settled as any).composition;
+    return settled;
+  }
+
+  if (phase1.artifactSource === 'ai') {
+    const settled: DailyReport = {
+      ...phase1,
+      artifactStatus: 'rendered',
+      artifactSource: 'ai',
+    };
+    return failure ? withArtifactError(settled, failure) : settled;
+  }
+
+  const nativeFullComposition = compositionFromReport(full);
+  const fallback: DailyReport = {
+    ...full,
+    composition: nativeFullComposition,
+    html: buildNativeDailyReportArtifact(full, nativeFullComposition),
+    artifactStatus: 'rendered',
+    artifactSource: 'deterministic',
+    artifactErrors: phase1.artifactErrors,
+  };
+  return failure ? withArtifactError(fallback, failure) : fallback;
+}
+
 export async function generateAgentReport(input: {
   kind: DailyReport['kind'];
   userId?: string | null;
@@ -329,12 +363,11 @@ export async function generateAgentReport(input: {
 
   let phase1: DailyReport;
   try {
-    const composition = await composeComposition(week, input.userId);
+    const html = await composeArtifactHtml(week, input.userId);
     // 'enriching' (not 'rendered') keeps the page polling for the month pass.
     phase1 = {
       ...week,
-      composition,
-      html: buildNativeDailyReportArtifact(week, composition),
+      html,
       artifactStatus: 'enriching',
       artifactSource: 'ai',
       model: describeProvider().primary || week.model,
@@ -367,15 +400,15 @@ export async function generateAgentReport(input: {
       reportId,
       silent: true,
     });
-    let composition: BriefComposition | null = null;
+    let html: string | null = null;
     let failure: DailyReportArtifactError | undefined;
     try {
-      composition = await composeComposition(full, input.userId);
+      html = await composeArtifactHtml(full, input.userId);
     } catch (err) {
       console.error('[agent-report] month artifact failed:', err);
       failure = artifactError('month_artifact', err);
     }
-    finalReport = settleMonthArtifactReport({ full, phase1, composition, failure });
+    finalReport = settleMonthHtmlArtifactReport({ full, phase1, html, failure });
   } catch (err) {
     console.error('[agent-report] month enrichment failed:', err);
     // Settle on the week edition so the page stops polling.
@@ -404,89 +437,91 @@ export async function generateAgentReport(input: {
 
 // ---- Artifact composition --------------------------------------------------
 
-async function composeComposition(report: DailyReport, userId?: string | null): Promise<BriefComposition> {
+async function composeArtifactHtml(report: DailyReport, userId?: string | null): Promise<string> {
   const extras = await gatherBriefExtras(report, userId);
   const { text } = await generateTextForCurrentUser({
     feature: 'daily_report_artifact', // tiered cap → 32k output
     speed: 'primary',
-    system: COMPOSITION_BRIEF,
+    system: HTML_ARTIFACT_BRIEF,
     prompt: buildDataPrompt(report, extras),
   });
-  return parseBriefComposition(extractBriefCompositionJson(text));
+  const html = extractHtml(text);
+  if (!html) throw new Error('AI did not return a complete HTML document.');
+  return html;
+}
+
+export function extractHtml(raw: string): string | null {
+  let text = (raw || '').trim();
+  const fence = text.match(/```(?:html)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  const start = text.search(/<!doctype html|<html[\s>]/i);
+  if (start === -1) return null;
+  text = text.slice(start).trim();
+  const end = text.toLowerCase().lastIndexOf('</html>');
+  if (end !== -1) text = text.slice(0, end + '</html>'.length);
+  return text.length > 200 ? text : null;
 }
 
 // ---- Prompts ---------------------------------------------------------------
 
-const COMPOSITION_BRIEF = `You are the user's chief of staff and an expert information designer. You are handed the RAW material — actual email bodies, the calendar, tasks, and connected tool items — and you do your own analysis. Return ONLY typed JSON for a Lab86 Daily Brief composition. The application renders the HTML, typography, footer, logos, action wiring, and sandboxing.
+const HTML_ARTIFACT_BRIEF = `You are the user's chief of staff, a world-class editorial designer, and a production front-end engineer. You are handed the RAW material — actual email bodies, the calendar, tasks, and connected tool items — and you do your own analysis. Return one complete, self-contained Lab86 Daily Brief HTML document. The app will sandbox it, inject live theme variables, and bridge actions to the host.
 
 TWO MODES, BOTH REQUIRED:
-- Backend contract mode: be exact, literal, and schema-valid. Use only the field names, enum strings, ids, accounts, and payload shapes below. Never improvise backend keys, sourceRef kinds, action names, ids, or action payload identifiers.
-- Design/composition mode: be creative inside that contract. Choose the best mix of lede, needs_you, task_digest, week_ahead, tool_digest, chart, timeline, prep_checklist, and custom_widget blocks. You can invent titles, grouping, narrative framing, chart labels, prep language, and compact widgets, as long as every object validates.
+- Backend contract mode: be exact, literal, and valid. Use only the ids, accounts, action enum strings, and payload shapes below. Never improvise backend keys, action names, ids, accounts, calendar ids, thread ids, task ids, or event ids.
+- Design/composition mode: be creative inside that contract. You own the visual design, layout, hierarchy, components, charts, timelines, prep panels, and microinteractions. Make the result feel like a polished editorial artifact, not a generic list.
 
 ANALYZE, DON'T TRANSCRIBE:
 - Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view. Each thread also carries the app's own first-pass read (whyItMatters, nextAction, openLoops, surfacedBecause, isNewSender) — treat it as a STARTING POINT you can sharpen or overrule with what you find in the bodies, never as text to copy verbatim.
 - Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task"). Use the richer fields you're given — task descriptions/labels/assignees, event descriptions/locations — to make those connections concrete.
-- Be PROACTIVE, and you have real levers — propose AND wire them: to-dos (create_task), ready-to-send reply drafts in the user's voice (draft_reply), calendar holds for focus/prep/buffer (create_event), invite responses only when the event has canRsvp:true (rsvp_event), and clearing obvious noise (archive_thread). Nothing executes without a tap, so lean toward offering the action rather than just naming it.
+- Be PROACTIVE, and you have real levers — propose AND wire them: to-dos (create_task), ready-to-send reply drafts in the user's voice (draft_reply), calendar holds for focus/prep/buffer (create_event), invite responses only when the event has canRsvp:true (rsvp_event), and clearing obvious noise (archive_thread). Nothing executes without a user tap and host confirmation for mutations, so lean toward offering the action rather than just naming it.
 - YOU HAVE FULL EDITORIAL CONTROL. Beyond the sections below, add whatever you judge genuinely useful for THIS person today and omit what isn't — e.g. a "Focus blocks" suggestion that proposes create_event holds around deep work, a "Waiting on others" list, a tight "Clear the noise" row of archivable FYIs, or a prep dossier for the day's most important meeting. Go deeper where it earns its space; stay calm and short on a light day. Never pad.
 - Adaptive density: short and calm on a light day, fuller when it's busy. Never pad.
-- DESIGN THE BRIEF, DON'T JUST SUMMARIZE. The rendered output should feel like an editorial artifact: lead with 2-3 short lede paragraphs when there is enough material, surface concrete decisions and next actions, and use charts/timelines/prep checklists/custom_widget when the shape of the day benefits from a visual or interactable view. If a specific visualization or tiny workflow would make the brief clearer, create it as a custom_widget with fallbackMarkdown.
+- DESIGN THE BRIEF, DON'T JUST SUMMARIZE. Lead with 2-3 short lede paragraphs when there is enough material, surface concrete decisions and next actions, and use charts/timelines/prep checklists/compact dashboards when the shape of the day benefits from visual structure.
 
 OUTPUT RULES (critical):
-- Output ONLY JSON. No markdown fences, no commentary.
-- Top-level shape: { "version": ${BRIEF_COMPOSITION_VERSION}, "title": string, "summary"?: string, "services": string[], "blocks": BriefBlock[] }.
-- Use real ids/accounts from the data only. Never invent ids.
-- Every rich/generated claim outside a simple lede must include sourceRefs pointing to the source thread/message/task/event/mcp item. Charts and custom widgets require sourceRefs.
-- sourceRefs MUST be objects shaped exactly like { "kind": "thread"|"message"|"task"|"event"|"mcp"|"account"|"derived", "id": string, "account"?: string, "label"?: string }. Use the key "id" even when the source data field is threadId/cardId/eventId/messageId. Do not use kind values like "email", "mail", "todo", "calendar", "github", or "unknown"; map them to the allowed kind or omit the bad ref.
-- For connected tool sourceRefs, use only mcp.externalId or mcp.url from the provided data as the id. Do not invent IDs from server, kind, title, or examples.
-- actions MUST be objects shaped exactly like { "action": one VALID ACTION name, "label": short button text, "payload": object, "style"?: "primary"|"secondary"|"danger"|"quiet" }. The action field is NEVER prose. The label field is REQUIRED. The payload field is REQUIRED and must contain the exact ids/accounts for that action.
-- lede.paragraphs MUST contain 1-4 strings, and each string must be 1200 characters or less. If you write a markdown-style lede with headings or bullets, split it into separate paragraph strings rather than one long blob.
-- For optional sourceRefs/actions, [] is valid. A clean valid composition with fewer buttons is better than an invalid composition with guessed wiring.
-- Before final output, mentally validate every block: type is one VALID BLOCK, every sourceRef has allowed kind + string id, every action has allowed action + label + payload, and no unknown keys are needed for behavior.
+- Output ONLY a complete HTML document, starting with <!doctype html>. No markdown fences, no commentary before or after.
+- All CSS must be inside one <style> tag. JS is optional; if used, keep it inside one <script> tag.
+- The ONLY permitted external resources are: data.art.imageUrl/fallback image URLs and the Google Fonts link shown below. No other network requests, remote scripts, fetch, XMLHttpRequest, WebSocket, EventSource, storage, cookies, or nested iframes.
+- Use real ids/accounts from the data only. Never invent ids. If an item lacks the ids/accounts needed for an action, render it without that action.
+- Action controls MUST be regular clickable elements with data-action and data-payload attributes. The host-injected runtime will postMessage for you. Do not invent action names.
+- data-payload MUST be a valid JSON object string containing the exact ids/accounts for that action. Escape it correctly for HTML attributes. Prefer fewer buttons over guessed wiring.
+- Before final output, mentally validate every button: data-action is one VALID ACTION, data-payload is JSON, and every payload id/account exists in the data.
+
+THEME AND ASSETS:
+- Define these CSS custom properties on :root WITH fallbacks, and use them everywhere:
+  --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc),
+  --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)),
+  --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif), --brief-display-tracking (0em).
+- Load fonts with exactly one Google Fonts link:
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
+- Include the daily art masthead using data.art.imageUrl, with data.art.fallbacks for image fallback if desired, and a small attribution using data.art.credit + " · " + data.art.source.
+- The host will inject live theme variables after load. Include this listener if you use custom JS: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
+
+DESIGN:
+- Editorial, confident, generous whitespace. Clear typographic hierarchy. Fully responsive from 360px to wide desktop. Use grid/flex, inline SVG charts, and tasteful micro-animations.
+- Avoid a generic stacked list. Use named sections, visual groupings, cards/tables/rails where useful, and compact dashboards for tool/calendar/task clusters.
+- The design should work in light and dark because the host may override --brief-* variables. Do not hardcode large white panels that will clash with a dark host theme.
 
 DO NOT:
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
-- Do NOT include page chrome, masthead, footer/signoff, source footer, logo SVG, global CSS, or JavaScript for standard actions. The renderer owns those.
-- Do NOT use a custom_widget when a standard block can express the idea.
+- Do NOT include "With love from Lab86".
+- Do NOT include a second app toolbar or app chrome.
+- Do NOT write standard action JavaScript; use data-action/data-payload. JS is only for local UI polish such as filtering, disclosure, or optimistic visual states.
 - Do NOT use action names outside VALID ACTIONS, including "reply", "open", "email", "schedule", "snooze", "complete", or "view". Pick the exact valid action name or omit the action.
 
-VALID BLOCKS:
-- lede: { type:"lede", title?, paragraphs:[string], sourceRefs? }. Use 2-3 short paragraphs when there is enough substance, otherwise 1. Each paragraph string must be <=1200 chars. Make it narrative and specific, not a generic summary. No emoji.
-- needs_you: { type:"needs_you", title?, items:[{ account, threadId, subject, person, reason, lane?, receivedAt?, trackedThreadId?, draftReply?, sourceRefs, actions? }], sourceRefs? }. Include only threads you judge action-worthy.
-- task_digest: { type:"task_digest", title?, tasks:[{ cardId, title, meta?, dueAt?, sourceRefs, actions? }], sourceRefs? }. Existing tasks only.
-- week_ahead: { type:"week_ahead", title?, events:[{ account, eventId, calendarId?, title, startAt, endAt, allDay?, location?, prep?, sourceRefs, actions? }], sourceRefs? }.
-- tool_digest: { type:"tool_digest", title?, items:[{ server:"github"|"bitbucket"|"jira"|"slack", title, state?, author?, url?, reason?, sourceRefs, actions? }], sourceRefs? }. Never call this "MCP".
-- chart: { type:"chart", variant:"bar"|"stacked_bar"|"donut", title, description?, data:[{ label, value, group? }], sourceRefs }. Use for meaningful comparisons/trends, not vanity counts.
-- timeline: { type:"timeline", title, items:[{ label, at?, detail?, sourceRefs? }], sourceRefs? }. Use for sequences/deadlines.
-- prep_checklist: { type:"prep_checklist", title, items:[{ label, detail?, sourceRefs?, action? }], sourceRefs? }. Use for meeting/project prep.
-- custom_widget: { type:"custom_widget", id, title, html, fallbackMarkdown, allowedActions, sourceRefs }. Use when the brief needs an interactable widget or visualization the standard blocks cannot express.
-
 VALID ACTIONS:
-- { "action":"open_thread", "label":"Open", "payload":{ account, threadId }, "style":"primary"|"secondary"|"quiet" }
-- { "action":"open_view", "label":"Open mail"|"Open tasks"|"Open calendar", "payload":{ view:"mail"|"tasks"|"calendar" } }
-- { "action":"open_event", "label":"Open", "payload":{ account, eventId } }
-- { "action":"resolve_thread", "label":"Done", "payload":{ account, threadId, subject?, receivedAt?, trackedThreadId? }, "style":"quiet" }
-- { "action":"dismiss_thread", "label":"Remove", "payload":{ account, threadId, subject?, receivedAt? }, "style":"quiet" }
-- { "action":"toggle_task", "label":"Complete", "payload":{ cardId, completed:true, title? }, "style":"quiet" }
-- { "action":"dismiss_task", "label":"Remove", "payload":{ cardId, title? }, "style":"quiet" }
-- { "action":"create_task", "label":"Create task", "payload":{ title, dueAt? } }
-- { "action":"draft_reply", "label":"Draft reply", "payload":{ account, threadId, body } }
-- { "action":"archive_thread", "label":"Archive", "payload":{ account, threadId, subject?, receivedAt? }, "style":"quiet" }
-- { "action":"rsvp_event", "label":"RSVP", "payload":{ account, calendarId, eventId, status:"yes"|"no"|"maybe" } } Only use when the event has canRsvp:true and a non-empty calendarId.
-- { "action":"create_event", "label":"Create event", "payload":{ account, title, startAt, endAt, location?, description? } }
-
-SOURCE REF EXAMPLES:
-- Thread/email source: { "kind":"thread", "id": threadId, "account": account, "label": subject }
-- Message source: { "kind":"message", "id": messageId, "account": account }
-- Task source: { "kind":"task", "id": cardId, "label": title }
-- Calendar source: { "kind":"event", "id": eventId, "account": account, "label": title }
-- Connected tool source: { "kind":"mcp", "id": externalId_or_url_from_the_mcp_item, "label": title }. Prefer mcp.externalId; otherwise use mcp.url; omit the ref if neither exists.
-- Inferred grouping/chart source only when no single source owns it: { "kind":"derived", "id":"chart:open-loops" }
-
-CUSTOM WIDGET RULES:
-- html is placed inside a nested sandboxed iframe. No external resources, fetch, XMLHttpRequest, WebSocket, EventSource, storage, cookies, nested iframes, or remote src/href.
-- Keep HTML/CSS/JS self-contained and compact.
-- To request host actions, post: window.parent.postMessage({ source:"lab86-brief-widget", action, payload }, "*"). The action must appear in allowedActions and be one of VALID ACTIONS.
-- Always provide fallbackMarkdown that preserves the insight if the widget is rejected.`;
+- open_thread payload { account, threadId }
+- open_view payload { view:"mail"|"tasks"|"calendar" }
+- open_event payload { account, eventId }
+- resolve_thread payload { account, threadId, subject?, receivedAt?, trackedThreadId? }
+- dismiss_thread payload { account, threadId, subject?, receivedAt? }
+- toggle_task payload { cardId, completed, title? }
+- dismiss_task payload { cardId, title? }
+- create_task payload { title, dueAt? }
+- draft_reply payload { account, threadId, body }
+- archive_thread payload { account, threadId, subject?, receivedAt? }
+- rsvp_event payload { account, calendarId, eventId, status:"yes"|"no"|"maybe" }. Only use when the event has canRsvp:true and a non-empty calendarId.
+- create_event payload { account, title, startAt, endAt, allDay?, location?, description? }`;
 
 // The shapes handed to the agent for each task/event. Pure + exported so the
 // field mapping (everything the brief gets to act on) is unit-tested directly.
@@ -572,9 +607,9 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   return [
     `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
     `This is the "${report.kind}" edition.`,
-    'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the Daily Brief composition JSON.',
-    'Backend contract: use exact ids/accounts from this JSON verbatim. For sourceRefs, copy ids into the field named "id" and use only allowed kind values; for mcp sourceRefs use only externalId or url. For actions, use only valid action enum strings, always include label and payload, and omit any action you cannot wire exactly.',
-    'Design contract: be editorial and component-minded. Choose the blocks, visual comparisons, timelines, checklists, or compact widgets that best fit the actual day, while keeping every object schema-valid.',
+    'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the complete Daily Brief HTML document.',
+    'Backend contract: use exact ids/accounts from this JSON verbatim. For action controls, use only valid data-action enum strings and valid data-payload JSON. Omit any action you cannot wire exactly.',
+    'Design contract: be editorial and component-minded. Create the layout, visual comparisons, timelines, checklists, or compact dashboards that best fit the actual day.',
     '',
     '```json',
     JSON.stringify(data, null, 2),

@@ -443,11 +443,21 @@ recordThreadDismissals(records);
 window.addEventListener('message',function(e){
 var d=e.data;
 if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.cardIds||[]);
-if(d&&d.source==='lab86-host'&&d.type==='dismissed_threads'){if(Array.isArray(d.dismissals)){recordThreadDismissals(d.dismissals);}else{hideDismissedThreads(d.threadKeys||[]);}}
-if(d&&d.source==='lab86-host'&&d.ok&&(d.action==='resolve_thread'||d.action==='dismiss_thread')){var payload=d.payload||{};var key=threadKeyFromPayload(payload);if(key)recordThreadDismissals([{threadKey:key,account:payload.account,threadId:payload.threadId,subject:payload.subject,receivedAt:typeof payload.receivedAt==='number'?payload.receivedAt:null,dismissedAt:Date.now(),action:d.action==='resolve_thread'?'resolved':'dismissed'}]);}
-});
-})();
-</script>`;
+	if(d&&d.source==='lab86-host'&&d.type==='dismissed_threads'){if(Array.isArray(d.dismissals)){recordThreadDismissals(d.dismissals);}else{hideDismissedThreads(d.threadKeys||[]);}}
+	if(d&&d.source==='lab86-host'&&d.ok&&(d.action==='resolve_thread'||d.action==='dismiss_thread')){var payload=d.payload||{};var key=threadKeyFromPayload(payload);if(key)recordThreadDismissals([{threadKey:key,account:payload.account,threadId:payload.threadId,subject:payload.subject,receivedAt:typeof payload.receivedAt==='number'?payload.receivedAt:null,dismissedAt:Date.now(),action:d.action==='resolve_thread'?'resolved':'dismissed'}]);}
+	});
+	document.addEventListener('click',function(e){
+	var el=e.target&&e.target.closest&&e.target.closest('[data-action]');
+	if(!el)return;
+	var action=el.getAttribute('data-action');
+	if(!action)return;
+	e.preventDefault();
+	var payload={};
+	try{payload=JSON.parse(el.getAttribute('data-payload')||'{}')||{};}catch(_){payload={};}
+	window.parent.postMessage({source:'lab86-daily-report',action:action,payload:payload},'*');
+	});
+	})();
+	</script>`;
 
 function withReportArtifactSafetyCss(html: string): string {
   if (!html) return html;
@@ -1080,6 +1090,7 @@ export function DailyReport() {
     mutationFn: async () =>
       callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
+        wait: true,
       }),
     // Mark the moment so polling waits for the NEW edition, and jump to latest.
     onMutate: () => {

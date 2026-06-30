@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import './tools/harness';
 import {
   buildDataPrompt,
+  extractHtml,
   gatherBriefExtras,
   settleMonthArtifactReport,
+  settleMonthHtmlArtifactReport,
   toBriefEvent,
   toBriefTask,
 } from '../lib/mail/agent-report';
@@ -232,6 +234,64 @@ describe('settleMonthArtifactReport', () => {
       { stage: 'week_artifact', message: 'week schema failed', at: 100 },
       { stage: 'month_artifact', message: 'month schema failed', at: 200 },
     ]);
+  });
+});
+
+describe('settleMonthHtmlArtifactReport', () => {
+  test('uses model-authored full HTML when month composition succeeds', () => {
+    const phase1 = reportFixture({
+      html: '<!doctype html><html><body>week</body></html>',
+      artifactStatus: 'enriching',
+      artifactSource: 'ai',
+    });
+    const full = reportFixture({
+      composition: briefComposition('Native fallback'),
+      narrative: 'Full month data.',
+    });
+
+    const settled = settleMonthHtmlArtifactReport({
+      phase1,
+      full,
+      html: '<!doctype html><html><body>month</body></html>',
+    });
+
+    expect(settled.artifactSource).toBe('ai');
+    expect(settled.artifactStatus).toBe('rendered');
+    expect(settled.html).toBe('<!doctype html><html><body>month</body></html>');
+    expect(settled.composition).toBeUndefined();
+  });
+
+  test('keeps a successful week HTML artifact when month HTML fails', () => {
+    const phase1 = reportFixture({
+      html: '<!doctype html><html><body>week</body></html>',
+      artifactStatus: 'enriching',
+      artifactSource: 'ai',
+    });
+
+    const settled = settleMonthHtmlArtifactReport({
+      phase1,
+      full: reportFixture(),
+      html: null,
+      failure: { stage: 'month_artifact', message: 'missing html', at: 456 },
+    });
+
+    expect(settled.artifactSource).toBe('ai');
+    expect(settled.artifactStatus).toBe('rendered');
+    expect(settled.html).toBe('<!doctype html><html><body>week</body></html>');
+    expect(settled.artifactErrors).toEqual([{ stage: 'month_artifact', message: 'missing html', at: 456 }]);
+  });
+});
+
+describe('extractHtml', () => {
+  test('extracts a fenced HTML document and trims trailing prose', () => {
+    const body = 'ok '.repeat(80);
+    expect(
+      extractHtml(`note\n\`\`\`html\n<!doctype html><html><body>${body}</body></html>\n\`\`\`\nextra`),
+    ).toBe(`<!doctype html><html><body>${body}</body></html>`);
+  });
+
+  test('rejects non-doc fragments', () => {
+    expect(extractHtml('<div>not enough</div>')).toBeNull();
   });
 });
 
