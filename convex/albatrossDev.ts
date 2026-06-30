@@ -68,12 +68,7 @@ export const seedFromFixture = mutation({
     const userId = args.userId || seedUser.userId;
     if (!userId) throw new Error('userId is required.');
 
-    await upsertSeedUser(ctx, userId, {
-      ...seedUser,
-      userId,
-      email: seedUser.email || 'albatross-dev@example.test',
-      name: seedUser.name || 'Albatross Dev User',
-    });
+    await upsertSeedUser(ctx, userId, { ...seedUser, userId });
 
     const existing = await ctx.db
       .query('albatrossDevRecords')
