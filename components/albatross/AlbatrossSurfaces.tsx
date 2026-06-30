@@ -74,6 +74,7 @@ import {
   classifyThread,
   createCapturedIntent,
   type DraftedFact,
+  draftedFactKey,
   draftSetupFact,
   type FactStatus,
   type Intent,
@@ -363,8 +364,13 @@ function AreasSurface() {
   // Setup writes are session-local: drafted facts keyed by area, plus any area
   // drafts the user creates/edits. Nothing pretends to persist (issue #72).
   const [setupDrafts, setSetupDrafts] = useState<DraftedFact[]>([]);
+  const [confirmedSetupFacts, setConfirmedSetupFacts] = useState<Set<string>>(() => new Set());
   const [areaDrafts, setAreaDrafts] = useState<AreaDraft[]>([]);
-  const progress = useMemo(() => summarizeSetupProgress(), []);
+  const setupOverlay = useMemo(
+    () => ({ drafts: setupDrafts, confirmedFactIds: confirmedSetupFacts }),
+    [setupDrafts, confirmedSetupFacts],
+  );
+  const progress = useMemo(() => summarizeSetupProgress(setupOverlay), [setupOverlay]);
   const visible =
     filter === 'all' ? summaries : summaries.filter((s) => s.factCounts.candidate > 0 || s.reviewCount > 0);
   const activeId = visible.some((summary) => summary.area.id === selectedId)
@@ -407,7 +413,16 @@ function AreasSurface() {
         onOpenChange={setSetupOpen}
         drafts={setupDrafts}
         onDraftFact={(draft) => setSetupDrafts((prev) => [...prev, draft])}
-        onRemoveDraft={(draft) => setSetupDrafts((prev) => prev.filter((entry) => entry !== draft))}
+        confirmedFacts={confirmedSetupFacts}
+        onConfirmFact={(factKey) => setConfirmedSetupFacts((prev) => new Set(prev).add(factKey))}
+        onRemoveDraft={(draft) => {
+          setSetupDrafts((prev) => prev.filter((entry) => entry !== draft));
+          setConfirmedSetupFacts((prev) => {
+            const next = new Set(prev);
+            next.delete(draftedFactKey(draft));
+            return next;
+          });
+        }}
         areaDrafts={areaDrafts}
         onAreaDraft={(draft) =>
           setAreaDrafts((prev) => {
@@ -763,6 +778,7 @@ function AreaLensView({ areaId, counts }: { areaId: string; counts: Record<AreaL
             {items.map((item) => (
               <LensRow
                 key={`${item.kind}-${item.id}`}
+                areaId={areaId}
                 item={item}
                 movedTo={moves[item.id]}
                 onMove={(areaName) => setMoves((prev) => ({ ...prev, [item.id]: areaName }))}
@@ -783,11 +799,13 @@ const LENS_STATUS_TONE: Record<'verified' | 'candidate' | 'rejected', Tone> = {
 };
 
 function LensRow({
+  areaId,
   item,
   movedTo,
   onMove,
   onUndo,
 }: {
+  areaId: string;
   item: AreaLensItem;
   movedTo?: string;
   onMove: (areaName: string) => void;
@@ -835,7 +853,7 @@ function LensRow({
             ) : picking ? (
               <div className="mt-1.5">
                 <AreaPicker
-                  excludeAreaId={undefined}
+                  excludeAreaId={areaId}
                   onPick={(area) => {
                     onMove(area.name);
                     setPicking(false);
@@ -1713,7 +1731,6 @@ function TriageDetail({
           <DecisionPreview
             effect={pendingEffect}
             item={item}
-            targetAreaId={targetAreaId}
             onPickArea={setTargetAreaId}
             onConfirm={() => {
               onCommit({ effect: pendingEffect, areaName: pendingEffect.targetAreaName });
@@ -1759,19 +1776,19 @@ const NEEDS_AREA = new Set<ReviewActionKind>(['assign_area', 'create_area', 'ver
 function DecisionPreview({
   effect,
   item,
-  targetAreaId,
   onPickArea,
   onConfirm,
   onCancel,
 }: {
   effect: ReviewDecisionEffect;
   item: ContextReviewItem;
-  targetAreaId?: string;
   onPickArea: (areaId: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const needsArea = NEEDS_AREA.has(effect.action);
+  const targetArea = effect.targetAreaId ? areas.find((area) => area.id === effect.targetAreaId) : null;
+  const canConfirm = !needsArea || Boolean(targetArea);
   const [reaiming, setReaiming] = useState(false);
   return (
     <div
@@ -1811,7 +1828,7 @@ function DecisionPreview({
           </div>
         ) : (
           <p className="mt-2 text-[11.5px] text-[var(--color-text-faint)]">
-            Routes to {targetAreaId ? areaName(targetAreaId) : 'a new area'} /{' '}
+            Routes to {targetArea ? targetArea.name : 'an area you pick'} /{' '}
             <button
               type="button"
               onClick={() => setReaiming(true)}
@@ -1829,6 +1846,7 @@ function DecisionPreview({
           size="sm"
           variant={effect.danger ? 'destructive' : 'default'}
           onClick={onConfirm}
+          disabled={!canConfirm}
         >
           <Check className="size-3.5" />
           Confirm
@@ -1881,6 +1899,8 @@ function AreaSetupDialog({
   drafts,
   onDraftFact,
   onRemoveDraft,
+  confirmedFacts,
+  onConfirmFact,
   areaDrafts,
   onAreaDraft,
 }: {
@@ -1889,22 +1909,31 @@ function AreaSetupDialog({
   drafts: DraftedFact[];
   onDraftFact: (draft: DraftedFact) => void;
   onRemoveDraft: (draft: DraftedFact) => void;
+  confirmedFacts: Set<string>;
+  onConfirmFact: (factKey: string) => void;
   areaDrafts: AreaDraft[];
   onAreaDraft: (draft: AreaDraft) => void;
 }) {
-  const plan = useMemo(() => buildSetupPlan(), []);
+  const setupOverlay = useMemo(
+    () => ({ drafts, confirmedFactIds: confirmedFacts }),
+    [drafts, confirmedFacts],
+  );
+  const plan = useMemo(() => buildSetupPlan(setupOverlay), [setupOverlay]);
   const progress = useMemo(() => summarizeSetupProgress(plan), [plan]);
   const [activeAreaId, setActiveAreaId] = useState(plan[0]?.area.id ?? '');
   const [creating, setCreating] = useState(false);
 
-  // Responsibility answers + Andrew-style relationship confirmations are local to
-  // the session; only the act of confirming flips a candidate person, never time.
+  // Responsibility answers are local to the dialog; confirmations are lifted so
+  // progress outside the dialog reflects the current setup session too.
   const [responses, setResponses] = useState<Record<string, string>>({});
-  const [confirmedFacts, setConfirmedFacts] = useState<Set<string>>(() => new Set());
 
   const allSteps = plan;
-  const activeStep = useMemo(() => (activeAreaId ? buildSetupStep(activeAreaId) : null), [activeAreaId]);
-  const activeDraftArea = areaDrafts.find((draft) => draft.id === activeAreaId) ?? null;
+  const activeStep = useMemo(
+    () => (activeAreaId ? buildSetupStep(activeAreaId, setupOverlay) : null),
+    [activeAreaId, setupOverlay],
+  );
+  const activeDraftArea =
+    areaDrafts.find((draft) => draft.id === activeAreaId || draft.sourceAreaId === activeAreaId) ?? null;
   const goNext = () => {
     const idx = allSteps.findIndex((step) => step.area.id === activeAreaId);
     const next = allSteps[idx + 1];
@@ -1989,6 +2018,7 @@ function AreaSetupDialog({
           <div className="min-h-0 overflow-y-auto px-5 py-4">
             {creating ? (
               <NewAreaForm
+                draftIndex={areaDrafts.filter((draft) => !draft.sourceAreaId).length + 1}
                 onCreate={(draft) => {
                   onAreaDraft(draft);
                   setActiveAreaId(draft.id);
@@ -2007,7 +2037,7 @@ function AreaSetupDialog({
                 onResponse={(value) => setResponses((prev) => ({ ...prev, [activeAreaId]: value }))}
                 onDraftFact={onDraftFact}
                 onRemoveDraft={onRemoveDraft}
-                onConfirmFact={(factId) => setConfirmedFacts((prev) => new Set(prev).add(factId))}
+                onConfirmFact={onConfirmFact}
                 onEditArea={(draft) => {
                   onAreaDraft(draft);
                 }}
@@ -2219,6 +2249,7 @@ function SetupSlotEditor({
   onConfirmFact: (factId: string) => void;
 }) {
   const [value, setValue] = useState('');
+  const inputId = useId();
   const Icon = SETUP_SLOT_ICON[slotKind];
   const add = () => {
     const draft = draftSetupFact(areaId, slotKind, value);
@@ -2269,29 +2300,46 @@ function SetupSlotEditor({
               </div>
             );
           })}
-          {drafts.map((draft) => (
-            <div key={`${draft.areaId}-${draft.kind}-${draft.value}`} className="flex items-start gap-2">
-              <span className="min-w-0 flex-1 text-[12px] leading-snug text-[var(--color-text)]">
-                {draft.value}
-              </span>
-              <Tag tone={draft.status === 'verified' ? 'success' : 'warning'}>
-                {draft.status === 'verified' ? 'Added' : 'Candidate'}
-              </Tag>
-              <button
-                type="button"
-                onClick={() => onRemoveDraft(draft)}
-                className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
-                aria-label="Remove"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          ))}
+          {drafts.map((draft) => {
+            const confirmed = confirmedFacts.has(draftedFactKey(draft));
+            const status: FactStatus = confirmed ? 'verified' : draft.status;
+            return (
+              <div key={`${draft.areaId}-${draft.kind}-${draft.value}`} className="flex items-start gap-2">
+                <span className="min-w-0 flex-1 text-[12px] leading-snug text-[var(--color-text)]">
+                  {draft.value}
+                </span>
+                <Tag tone={status === 'verified' ? 'success' : 'warning'}>
+                  {confirmed ? 'Confirmed' : draft.status === 'verified' ? 'Added' : 'Candidate'}
+                </Tag>
+                {draft.status === 'candidate' && !confirmed ? (
+                  <button
+                    type="button"
+                    onClick={() => onConfirmFact(draftedFactKey(draft))}
+                    className="shrink-0 text-[11px] text-[var(--color-accent)] hover:underline"
+                  >
+                    Confirm
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => onRemoveDraft(draft)}
+                  className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
+                  aria-label="Remove"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
       <div className="mt-1.5 flex items-center gap-1.5">
+        <label htmlFor={inputId} className="sr-only">
+          Add {label.toLowerCase()}
+        </label>
         <input
+          id={inputId}
           type="text"
           value={value}
           onChange={(event) => setValue(event.target.value)}
@@ -2318,7 +2366,15 @@ function SetupSlotEditor({
   );
 }
 
-function NewAreaForm({ onCreate, onCancel }: { onCreate: (draft: AreaDraft) => void; onCancel: () => void }) {
+function NewAreaForm({
+  draftIndex,
+  onCreate,
+  onCancel,
+}: {
+  draftIndex: number;
+  onCreate: (draft: AreaDraft) => void;
+  onCancel: () => void;
+}) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState<string>('work');
   const id = useId();
@@ -2365,7 +2421,11 @@ function NewAreaForm({ onCreate, onCancel }: { onCreate: (draft: AreaDraft) => v
           onClick={() => {
             const trimmed = name.trim();
             if (!trimmed) return;
-            onCreate({ id: `area-draft-${slugify(trimmed)}-${kind}`, name: trimmed, kind });
+            onCreate({
+              id: `area-draft-${slugify(trimmed) || 'area'}-${kind}-${draftIndex}`,
+              name: trimmed,
+              kind,
+            });
           }}
           disabled={!name.trim()}
         >
@@ -2393,15 +2453,24 @@ function EditAreaForm({
 }) {
   const [name, setName] = useState(area.name);
   const [description, setDescription] = useState(area.description);
+  const id = useId();
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3">
+      <label htmlFor={`${id}-name`} className="sr-only">
+        Area name
+      </label>
       <input
+        id={`${id}-name`}
         type="text"
         value={name}
         onChange={(event) => setName(event.target.value)}
         className="h-8 w-full rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[12.5px] text-[var(--color-text)] outline-none focus-visible:border-[var(--color-accent)]"
       />
+      <label htmlFor={`${id}-description`} className="sr-only">
+        Area description
+      </label>
       <Textarea
+        id={`${id}-description`}
         value={description}
         onChange={(event) => setDescription(event.target.value)}
         className="min-h-[2.5rem] text-[12px]"
@@ -2673,7 +2742,8 @@ function IntentCaptureDialog({
         <DialogHeader className="text-left">
           <DialogTitle className="font-display text-[18px]">{CAPTURE_PROMPT}</DialogTitle>
           <DialogDescription className="text-[12.5px]">
-            Dump it raw - a word or a paragraph. It's saved as-is and sorted later. Nothing leaves this app.
+            Dump it raw - a word or a paragraph. Typed text stays local to this app; browser speech services
+            may process audio for voice input.
           </DialogDescription>
         </DialogHeader>
 

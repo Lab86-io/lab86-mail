@@ -545,6 +545,24 @@ export interface SetupStep {
   complete: boolean;
 }
 
+export interface DraftedFact {
+  areaId: string;
+  kind: SetupFactKind;
+  value: string;
+  /** Candidate until the user confirms; people never start verified. */
+  status: FactStatus;
+  reason: string;
+}
+
+export interface SetupProgressOverlay {
+  drafts?: DraftedFact[];
+  /**
+   * Confirmed seeded fact ids plus draftedFactKey(draft) values for candidate
+   * drafts the user explicitly confirmed in this setup session.
+   */
+  confirmedFactIds?: Iterable<string>;
+}
+
 function responsibilityPromptFor(area: Area): string {
   if (area.kind === 'work') return `What are you responsible for in ${area.name}?`;
   if (area.kind === 'life_admin') return `What do you need to stay on top of in ${area.name}?`;
@@ -552,22 +570,47 @@ function responsibilityPromptFor(area: Area): string {
   return `What matters to you in ${area.name}?`;
 }
 
+export function draftedFactKey(draft: DraftedFact): string {
+  return `draft:${draft.areaId}:${draft.kind}:${draft.value.trim().toLowerCase()}`;
+}
+
+function setupConfirmationSet(overlay?: SetupProgressOverlay): Set<string> {
+  return new Set(overlay?.confirmedFactIds ?? []);
+}
+
+function setupFactVerified(fact: AreaFact, confirmed: Set<string>): boolean {
+  return fact.status === 'verified' || confirmed.has(fact.id);
+}
+
+function setupDraftVerified(draft: DraftedFact, confirmed: Set<string>): boolean {
+  return draft.status === 'verified' || confirmed.has(draftedFactKey(draft));
+}
+
 /** Per-area setup step: which context types are covered and which are open. */
-export function buildSetupStep(areaId: string): SetupStep | null {
+export function buildSetupStep(areaId: string, overlay?: SetupProgressOverlay): SetupStep | null {
   const area = areaById.get(areaId);
   if (!area) return null;
+  const confirmed = setupConfirmationSet(overlay);
+  const drafts = overlay?.drafts?.filter((draft) => draft.areaId === areaId) ?? [];
   const facts = areaFacts.filter((fact) => fact.areaId === areaId && fact.status !== 'rejected');
   const slots: SetupSlot[] = SETUP_FACT_KINDS.map((meta) => {
     const kinds = SETUP_KIND_TO_FACT_KINDS[meta.kind];
     const slotFacts = facts.filter((fact) => kinds.includes(fact.kind));
-    const verifiedCount = slotFacts.filter((fact) => fact.status === 'verified').length;
+    const slotDrafts = drafts.filter((draft) => draft.kind === meta.kind);
+    const verifiedCount =
+      slotFacts.filter((fact) => setupFactVerified(fact, confirmed)).length +
+      slotDrafts.filter((draft) => setupDraftVerified(draft, confirmed)).length;
+    const candidateCount =
+      slotFacts.filter((fact) => fact.status === 'candidate' && !confirmed.has(fact.id)).length +
+      slotDrafts.filter((draft) => draft.status === 'candidate' && !confirmed.has(draftedFactKey(draft)))
+        .length;
     return {
       kind: meta.kind,
       meta,
       facts: slotFacts,
-      filled: slotFacts.length > 0,
+      filled: verifiedCount > 0,
       verifiedCount,
-      candidateCount: slotFacts.length - verifiedCount,
+      candidateCount,
     } satisfies SetupSlot;
   });
   const filledSlots = slots.filter((slot) => slot.filled).length;
@@ -586,10 +629,10 @@ export function buildSetupStep(areaId: string): SetupStep | null {
 }
 
 /** Full setup plan across active areas, ordered by priority (job/work first). */
-export function buildSetupPlan(): SetupStep[] {
+export function buildSetupPlan(overlay?: SetupProgressOverlay): SetupStep[] {
   return areas
     .filter((area) => area.status === 'active')
-    .map((area) => buildSetupStep(area.id))
+    .map((area) => buildSetupStep(area.id, overlay))
     .filter((step): step is SetupStep => step !== null)
     .sort((a, b) => {
       if (a.isWork !== b.isWork) return a.isWork ? -1 : 1;
@@ -608,7 +651,8 @@ export interface SetupProgress {
   ratio: number;
 }
 
-export function summarizeSetupProgress(plan: SetupStep[] = buildSetupPlan()): SetupProgress {
+export function summarizeSetupProgress(planOrOverlay?: SetupStep[] | SetupProgressOverlay): SetupProgress {
+  const plan = Array.isArray(planOrOverlay) ? planOrOverlay : buildSetupPlan(planOrOverlay);
   const filledSlots = plan.reduce((sum, step) => sum + step.filledSlots, 0);
   const totalSlots = plan.reduce((sum, step) => sum + step.totalSlots, 0);
   return {
@@ -619,15 +663,6 @@ export function summarizeSetupProgress(plan: SetupStep[] = buildSetupPlan()): Se
     totalSlots,
     ratio: totalSlots === 0 ? 0 : filledSlots / totalSlots,
   };
-}
-
-export interface DraftedFact {
-  areaId: string;
-  kind: SetupFactKind;
-  value: string;
-  /** Candidate until the user confirms; people never start verified. */
-  status: FactStatus;
-  reason: string;
 }
 
 /**
@@ -748,6 +783,24 @@ function urlHost(url: string | undefined): string | null {
   return host || null;
 }
 
+function normalizeIdentityUrl(value: string): string {
+  return value
+    .replace(/^[a-z]+:\/\//i, '')
+    .replace(/\/+$/g, '')
+    .toLowerCase();
+}
+
+function urlIdentityMatches(fullUrl: string, factValue: string): boolean {
+  const normalized = normalizeIdentityUrl(factValue);
+  return (
+    normalized.length > 0 &&
+    (fullUrl === normalized ||
+      fullUrl.startsWith(`${normalized}/`) ||
+      fullUrl.startsWith(`${normalized}?`) ||
+      fullUrl.startsWith(`${normalized}#`))
+  );
+}
+
 function tokenize(text: string): Set<string> {
   return new Set(
     text
@@ -797,10 +850,10 @@ function scoreAreaSignals(area: Area, artifact: ClassifierArtifact): AreaSignal[
     if (fact.kind === 'domain') {
       identityMatch = [...hosts].some((h) => h === factValue || h.endsWith(`.${factValue}`));
     } else if (fact.kind === 'repo') {
-      identityMatch = fullUrl.length > 0 && fullUrl.includes(factValue);
+      identityMatch = urlIdentityMatches(fullUrl, factValue);
     } else if (fact.kind === 'website') {
       identityMatch =
-        (fullUrl.length > 0 && fullUrl.includes(factValue)) ||
+        urlIdentityMatches(fullUrl, factValue) ||
         [...hosts].some((h) => h === factValue || factValue.startsWith(h));
     }
     if (identityMatch) {
@@ -1064,7 +1117,11 @@ export function buildAreaLens(areaId: string, lens: AreaLensKey): AreaLensItem[]
   }
 
   if (lens === 'events') {
-    const linkedIds = new Set(linksForArea(areaId, 'calendarEvent').map((link) => link.artifactId));
+    const linkedIds = new Set(
+      linksForArea(areaId, 'calendarEvent')
+        .filter((link) => link.status !== 'rejected')
+        .map((link) => link.artifactId),
+    );
     return calendarEvents
       .filter((event) => event.areaId === areaId || linkedIds.has(event.id))
       .map((event) => ({

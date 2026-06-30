@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   AREA_LENSES,
   applyReviewDecision,
+  areaArtifactLinks,
   areasStats,
   buildAreaDetail,
   buildAreaLens,
@@ -18,6 +19,7 @@ import {
   classifyThread,
   contextReviewItems,
   createCapturedIntent,
+  draftedFactKey,
   draftSetupFact,
   intentsStats,
   looksLikeMultipleIntents,
@@ -102,6 +104,47 @@ describe('Area setup helpers', () => {
     expect(draftSetupFact('area_cardhunt', 'domain', 'cardhunt.example')?.status).toBe('verified');
     expect(draftSetupFact('area_cardhunt', 'repo', '   ')).toBeNull();
   });
+
+  test('setup progress counts verified or explicitly confirmed context only', () => {
+    const candidateOnly = buildSetupStep('area_relationship');
+    expect(candidateOnly).not.toBeNull();
+    expect(candidateOnly?.slots.find((slot) => slot.kind === 'person')?.candidateCount).toBeGreaterThan(0);
+    expect(candidateOnly?.slots.find((slot) => slot.kind === 'person')?.filled).toBe(false);
+    expect(candidateOnly?.started).toBe(false);
+
+    const confirmedSeed = buildSetupStep('area_relationship', {
+      confirmedFactIds: new Set(['fact_relationship_lease_candidate']),
+    });
+    expect(confirmedSeed?.slots.find((slot) => slot.kind === 'person')?.filled).toBe(true);
+    expect(confirmedSeed?.started).toBe(true);
+
+    const verifiedDraft = {
+      areaId: 'area_schedule',
+      kind: 'domain' as const,
+      value: 'calendar.example',
+      status: 'verified' as const,
+      reason: 'Added in setup.',
+    };
+    const candidateDraft = {
+      areaId: 'area_schedule',
+      kind: 'person' as const,
+      value: 'Morgan handles scheduling.',
+      status: 'candidate' as const,
+      reason: 'Held to confirm.',
+    };
+    const withDrafts = buildSetupStep('area_schedule', { drafts: [verifiedDraft, candidateDraft] });
+    expect(withDrafts?.slots.find((slot) => slot.kind === 'domain')?.filled).toBe(true);
+    expect(withDrafts?.slots.find((slot) => slot.kind === 'person')?.filled).toBe(false);
+
+    const withConfirmedDraft = buildSetupStep('area_schedule', {
+      drafts: [candidateDraft],
+      confirmedFactIds: new Set([draftedFactKey(candidateDraft)]),
+    });
+    expect(withConfirmedDraft?.slots.find((slot) => slot.kind === 'person')?.filled).toBe(true);
+
+    const progress = summarizeSetupProgress({ drafts: [verifiedDraft] });
+    expect(progress.startedAreas).toBeGreaterThan(buildSetupPlan().filter((step) => step.started).length);
+  });
 });
 
 describe('Area-aware classifier', () => {
@@ -121,6 +164,25 @@ describe('Area-aware classifier', () => {
     expect(result.primary?.areaId).toBe('area_cardhunt');
     expect(result.primary?.status).toBe('verified');
     expect(result.primary?.reason).toBe('Linked by a trusted source');
+  });
+
+  test('repo URL identity matching respects path boundaries', () => {
+    const matched = classifyArtifact({
+      kind: 'mcpItem',
+      id: 'mcp_boundary_positive',
+      text: 'Pull request',
+      url: 'https://github.com/cardhunt/app/pull/9',
+    });
+    expect(matched.primary?.areaId).toBe('area_cardhunt');
+    expect(matched.primary?.status).toBe('verified');
+
+    const siblingPath = classifyArtifact({
+      kind: 'mcpItem',
+      id: 'mcp_boundary_negative',
+      text: 'Pull request',
+      url: 'https://github.com/cardhunt/application/pull/9',
+    });
+    expect(siblingPath.primary?.areaId).not.toBe('area_cardhunt');
   });
 
   test('low-confidence and noisy artifacts route to Unassigned', () => {
@@ -167,6 +229,28 @@ describe('Area lenses', () => {
     expect(buildAreaLens('area_cardhunt', 'open_loops').some((item) => item.status === 'candidate')).toBe(
       true,
     );
+  });
+
+  test('events lens ignores rejected calendar links', () => {
+    const rejectedCalendarLink = {
+      id: 'link_test_rejected_calendar',
+      areaId: 'area_music',
+      artifactKind: 'calendarEvent' as const,
+      artifactId: 'cal_cardhunt_demo',
+      role: 'primary',
+      status: 'rejected' as const,
+      confidence: 0.1,
+      reason: 'Rejected during test.',
+    };
+    areaArtifactLinks.push(rejectedCalendarLink);
+    try {
+      const eventIds = buildAreaLens('area_music', 'events').map((item) => item.id);
+      expect(eventIds).toContain('cal_banjo_practice');
+      expect(eventIds).not.toContain('cal_cardhunt_demo');
+    } finally {
+      const index = areaArtifactLinks.findIndex((link) => link.id === rejectedCalendarLink.id);
+      if (index >= 0) areaArtifactLinks.splice(index, 1);
+    }
   });
 });
 
