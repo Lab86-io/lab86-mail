@@ -419,6 +419,10 @@ async function composeComposition(report: DailyReport, userId?: string | null): 
 
 const COMPOSITION_BRIEF = `You are the user's chief of staff and an expert information designer. You are handed the RAW material — actual email bodies, the calendar, tasks, and connected tool items — and you do your own analysis. Return ONLY typed JSON for a Lab86 Daily Brief composition. The application renders the HTML, typography, footer, logos, action wiring, and sandboxing.
 
+TWO MODES, BOTH REQUIRED:
+- Backend contract mode: be exact, literal, and schema-valid. Use only the field names, enum strings, ids, accounts, and payload shapes below. Never improvise backend keys, sourceRef kinds, action names, ids, or action payload identifiers.
+- Design/composition mode: be creative inside that contract. Choose the best mix of lede, needs_you, task_digest, week_ahead, tool_digest, chart, timeline, prep_checklist, and custom_widget blocks. You can invent titles, grouping, narrative framing, chart labels, prep language, and compact widgets, as long as every object validates.
+
 ANALYZE, DON'T TRANSCRIBE:
 - Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view. Each thread also carries the app's own first-pass read (whyItMatters, nextAction, openLoops, surfacedBecause, isNewSender) — treat it as a STARTING POINT you can sharpen or overrule with what you find in the bodies, never as text to copy verbatim.
 - Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task"). Use the richer fields you're given — task descriptions/labels/assignees, event descriptions/locations — to make those connections concrete.
@@ -432,9 +436,10 @@ OUTPUT RULES (critical):
 - Top-level shape: { "version": ${BRIEF_COMPOSITION_VERSION}, "title": string, "summary"?: string, "services": string[], "blocks": BriefBlock[] }.
 - Use real ids/accounts from the data only. Never invent ids.
 - Every rich/generated claim outside a simple lede must include sourceRefs pointing to the source thread/message/task/event/mcp item. Charts and custom widgets require sourceRefs.
-- sourceRefs MUST be objects shaped exactly like { "kind": "thread"|"message"|"task"|"event"|"mcp"|"account"|"derived", "id": string, "account"?: string, "label"?: string }. Use "id" even when the source data field is threadId/cardId/eventId/messageId. Do not use kind values like "email", "mail", "todo", "calendar", "github", or "unknown"; map them to the allowed kind or omit the bad ref.
-- actions MUST be objects shaped exactly like { "action": one VALID ACTION name, "label": short button text, "payload": object, "style"?: "primary"|"secondary"|"danger"|"quiet" }. The action field is NEVER prose. The label field is REQUIRED. If you are not sure an action is valid or cannot provide the required payload, omit that action instead of inventing one.
+- sourceRefs MUST be objects shaped exactly like { "kind": "thread"|"message"|"task"|"event"|"mcp"|"account"|"derived", "id": string, "account"?: string, "label"?: string }. Use the key "id" even when the source data field is threadId/cardId/eventId/messageId. Do not use kind values like "email", "mail", "todo", "calendar", "github", or "unknown"; map them to the allowed kind or omit the bad ref.
+- actions MUST be objects shaped exactly like { "action": one VALID ACTION name, "label": short button text, "payload": object, "style"?: "primary"|"secondary"|"danger"|"quiet" }. The action field is NEVER prose. The label field is REQUIRED. The payload field is REQUIRED and must contain the exact ids/accounts for that action.
 - For optional sourceRefs/actions, [] is valid. A clean valid composition with fewer buttons is better than an invalid composition with guessed wiring.
+- Before final output, mentally validate every block: type is one VALID BLOCK, every sourceRef has allowed kind + string id, every action has allowed action + label + payload, and no unknown keys are needed for behavior.
 
 DO NOT:
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
@@ -454,18 +459,26 @@ VALID BLOCKS:
 - custom_widget: { type:"custom_widget", id, title, html, fallbackMarkdown, allowedActions, sourceRefs }. Use when the brief needs an interactable widget or visualization the standard blocks cannot express.
 
 VALID ACTIONS:
-- open_thread { account, threadId }
-- open_view { view:"mail"|"tasks"|"calendar" }
-- open_event { account, eventId }
-- resolve_thread { account, threadId, subject?, receivedAt?, trackedThreadId? }
-- dismiss_thread { account, threadId, subject?, receivedAt? }
-- toggle_task { cardId, completed, title? }
-- dismiss_task { cardId, title? }
-- create_task { title, dueAt? }
-- draft_reply { account, threadId, body }
-- archive_thread { account, threadId, subject?, receivedAt? }
-- rsvp_event { account, calendarId, eventId, status:"yes"|"no"|"maybe" }
-- create_event { account, title, startAt, endAt, location?, description? }
+- { "action":"open_thread", "label":"Open", "payload":{ account, threadId }, "style":"primary"|"secondary"|"quiet" }
+- { "action":"open_view", "label":"Open mail"|"Open tasks"|"Open calendar", "payload":{ view:"mail"|"tasks"|"calendar" } }
+- { "action":"open_event", "label":"Open", "payload":{ account, eventId } }
+- { "action":"resolve_thread", "label":"Done", "payload":{ account, threadId, subject?, receivedAt?, trackedThreadId? }, "style":"quiet" }
+- { "action":"dismiss_thread", "label":"Remove", "payload":{ account, threadId, subject?, receivedAt? }, "style":"quiet" }
+- { "action":"toggle_task", "label":"Complete", "payload":{ cardId, completed:true, title? }, "style":"quiet" }
+- { "action":"dismiss_task", "label":"Remove", "payload":{ cardId, title? }, "style":"quiet" }
+- { "action":"create_task", "label":"Create task", "payload":{ title, dueAt? } }
+- { "action":"draft_reply", "label":"Draft reply", "payload":{ account, threadId, body } }
+- { "action":"archive_thread", "label":"Archive", "payload":{ account, threadId, subject?, receivedAt? }, "style":"quiet" }
+- { "action":"rsvp_event", "label":"RSVP", "payload":{ account, calendarId, eventId, status:"yes"|"no"|"maybe" } }
+- { "action":"create_event", "label":"Create event", "payload":{ account, title, startAt, endAt, location?, description? } }
+
+SOURCE REF EXAMPLES:
+- Thread/email source: { "kind":"thread", "id": threadId, "account": account, "label": subject }
+- Message source: { "kind":"message", "id": messageId, "account": account }
+- Task source: { "kind":"task", "id": cardId, "label": title }
+- Calendar source: { "kind":"event", "id": eventId, "account": account, "label": title }
+- Connected tool source: { "kind":"mcp", "id": "github:pull_request:123", "label": title }
+- Inferred grouping/chart source only when no single source owns it: { "kind":"derived", "id":"chart:open-loops" }
 
 CUSTOM WIDGET RULES:
 - html is placed inside a nested sandboxed iframe. No external resources, fetch, XMLHttpRequest, WebSocket, EventSource, storage, cookies, nested iframes, or remote src/href.
@@ -556,7 +569,9 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   return [
     `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
     `This is the "${report.kind}" edition.`,
-    'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the Daily Brief composition JSON. Every id/account is real; use them verbatim and never fabricate ids.',
+    'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the Daily Brief composition JSON.',
+    'Backend contract: use exact ids/accounts from this JSON verbatim. For sourceRefs, copy ids into the field named "id" and use only allowed kind values. For actions, use only valid action enum strings, always include label and payload, and omit any action you cannot wire exactly.',
+    'Design contract: be editorial and component-minded. Choose the blocks, visual comparisons, timelines, checklists, or compact widgets that best fit the actual day, while keeping every object schema-valid.',
     '',
     '```json',
     JSON.stringify(data, null, 2),
