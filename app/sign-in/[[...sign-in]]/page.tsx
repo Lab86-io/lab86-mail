@@ -2,6 +2,7 @@ import { SignIn } from '@clerk/nextjs';
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
+import { isClerkConfigured } from '@/lib/hosted/env';
 
 export default async function SignInPage() {
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
@@ -15,8 +16,10 @@ export default async function SignInPage() {
     );
   }
 
-  const session = await auth();
-  if (session.userId) redirect('/');
+  if (isClerkConfigured()) {
+    const session = await auth();
+    if (session.userId) redirect('/');
+  }
 
   return (
     <main className="app-paper relative grid min-h-dvh place-items-center px-4 py-10">

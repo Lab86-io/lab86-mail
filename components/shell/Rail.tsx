@@ -65,6 +65,7 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
+import { type AlbatrossPrimaryView, normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { SuggestionsTray } from './SuggestionsTray';
 import { ThemePanel } from './ThemePanel';
 
@@ -124,6 +125,12 @@ const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: stri
   { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
 ];
 
+const ALBATROSS_SURFACES: Array<{ view: AlbatrossPrimaryView; label: string; Icon: any }> = [
+  { view: 'areas', label: 'Areas', Icon: rowIcon(LayersIcon) },
+  { view: 'intents', label: 'Intents', Icon: rowIcon(SquarePenIcon) },
+  { view: 'unassigned', label: 'Unassigned', Icon: rowIcon(UserIcon) },
+];
+
 const SMART_CATEGORIES = [
   {
     id: 'main',
@@ -164,7 +171,15 @@ const SMART_CATEGORIES = [
   },
 ];
 
-export function Rail() {
+export function Rail({
+  albatrossEnabled = false,
+  clerkEnabled = false,
+  activeViewOverride,
+}: {
+  albatrossEnabled?: boolean;
+  clerkEnabled?: boolean;
+  activeViewOverride?: PrimaryView;
+}) {
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
   const accountFilter = useClientStore((s) => s.accountFilter);
@@ -172,6 +187,7 @@ export function Rail() {
   const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
   const primaryView = useClientStore((s) => s.primaryView);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const visiblePrimaryView = normalizePrimaryView(activeViewOverride ?? primaryView, albatrossEnabled);
   const query = useClientStore((s) => s.query);
   const setQuery = useClientStore((s) => s.setQuery);
   const smartCategory = useClientStore((s) => s.smartCategory);
@@ -344,7 +360,7 @@ export function Rail() {
               {SURFACES.map(({ view, label, Icon }) => (
                 <SidebarMenuItem key={view}>
                   <SidebarMenuButton
-                    isActive={primaryView === view}
+                    isActive={visiblePrimaryView === view}
                     tooltip={label}
                     onClick={() => {
                       setPrimaryView(view);
@@ -352,7 +368,7 @@ export function Rail() {
                     }}
                     className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                   >
-                    {primaryView === view ? (
+                    {visiblePrimaryView === view ? (
                       <ShineBorder
                         borderWidth={1}
                         duration={10}
@@ -371,6 +387,45 @@ export function Rail() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {albatrossEnabled ? (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-[10px] uppercase tracking-[0.09em]">
+              Albatross
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {ALBATROSS_SURFACES.map(({ view, label, Icon }) => (
+                  <SidebarMenuItem key={view}>
+                    <SidebarMenuButton
+                      isActive={visiblePrimaryView === view}
+                      tooltip={label}
+                      onClick={() => {
+                        setPrimaryView(view);
+                        closeMobileSidebar();
+                      }}
+                      className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                    >
+                      {visiblePrimaryView === view ? (
+                        <ShineBorder
+                          borderWidth={1}
+                          duration={10}
+                          shineColor={[
+                            'var(--color-accent-shine-1)',
+                            'var(--color-accent-shine-2)',
+                            'var(--color-accent-shine-3)',
+                          ]}
+                        />
+                      ) : null}
+                      <Icon />
+                      <span>{label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
 
         <Collapsible open={groupsOpen.smart} onOpenChange={(open) => setGroupOpen('smart', open)}>
           <SidebarGroup>
@@ -398,7 +453,7 @@ export function Rail() {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <SidebarMenuButton
-                            isActive={primaryView === 'mail' && smartCategory === id}
+                            isActive={visiblePrimaryView === 'mail' && smartCategory === id}
                             tooltip={label}
                             onClick={() => {
                               setSmartCategory(id);
@@ -406,7 +461,7 @@ export function Rail() {
                             }}
                             className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                           >
-                            {primaryView === 'mail' && smartCategory === id ? (
+                            {visiblePrimaryView === 'mail' && smartCategory === id ? (
                               <ShineBorder
                                 borderWidth={1}
                                 duration={10}
@@ -450,7 +505,7 @@ export function Rail() {
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <SidebarMenuButton
-                                  isActive={primaryView === 'mail' && smartCategory === id}
+                                  isActive={visiblePrimaryView === 'mail' && smartCategory === id}
                                   tooltip={label.name}
                                   onClick={() => {
                                     setSmartCategory(id);
@@ -458,7 +513,7 @@ export function Rail() {
                                   }}
                                   className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
                                 >
-                                  {primaryView === 'mail' && smartCategory === id ? (
+                                  {visiblePrimaryView === 'mail' && smartCategory === id ? (
                                     <ShineBorder
                                       borderWidth={1}
                                       duration={10}
@@ -509,7 +564,7 @@ export function Rail() {
                   {MAILBOXES.map(({ query: q, label, Icon }) => (
                     <SidebarMenuItem key={q}>
                       <SidebarMenuButton
-                        isActive={primaryView === 'mail' && q === query}
+                        isActive={visiblePrimaryView === 'mail' && q === query}
                         tooltip={label}
                         onClick={() => {
                           setQuery(q);
@@ -534,15 +589,24 @@ export function Rail() {
             account scope, and theme. Collapses to a vertical stack. */}
         <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
           <div className="grid h-7 w-7 place-items-center">
-            <UserButton appearance={{ elements: { avatarBox: 'size-6' } }}>
-              <UserButton.MenuItems>
-                <UserButton.Link
-                  label="Mail settings"
-                  href="/settings"
-                  labelIcon={<SettingsIcon size={14} />}
-                />
-              </UserButton.MenuItems>
-            </UserButton>
+            {clerkEnabled ? (
+              <UserButton appearance={{ elements: { avatarBox: 'size-6' } }}>
+                <UserButton.MenuItems>
+                  <UserButton.Link
+                    label="Mail settings"
+                    href="/settings"
+                    labelIcon={<SettingsIcon size={14} />}
+                  />
+                </UserButton.MenuItems>
+              </UserButton>
+            ) : (
+              <div
+                className="grid size-6 place-items-center rounded-full bg-[var(--color-avatar-bg)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]"
+                title="Local preview"
+              >
+                <UserIcon size={13} />
+              </div>
+            )}
           </div>
           <div className="mx-0.5 h-4 w-px bg-[var(--color-border)] group-data-[collapsible=icon]:hidden" />
           <AccountScopePopover

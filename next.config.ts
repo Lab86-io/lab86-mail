@@ -25,7 +25,7 @@ if (clerkProxyUrl.startsWith('http') && publicUrl.startsWith('http')) {
 
 const config: NextConfig = {
   reactStrictMode: true,
-  allowedDevOrigins: ['lab86.tail478321.ts.net'],
+  allowedDevOrigins: ['lab86.tail478321.ts.net', 'albatross.lab86.io'],
   experimental: {
     serverActions: {
       bodySizeLimit: '4mb',

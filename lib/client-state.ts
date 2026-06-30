@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
-import type { PrimaryView } from './shared/types';
+import { normalizePrimaryView, type PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
   to?: string;
@@ -273,6 +273,7 @@ export const useClientStore = create<ClientState>()(
         }
         // The Waiting smart category was removed; fold it into Review.
         if (persisted.smartCategory === 'waiting') persisted.smartCategory = 'review';
+        persisted.primaryView = normalizePrimaryView(persisted.primaryView, false);
         return persisted;
       },
       partialize: (s) => ({

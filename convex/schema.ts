@@ -285,6 +285,24 @@ export default defineSchema({
     .index('by_user_kind_ref', ['userId', 'kind', 'ref'])
     .index('by_user_kind_ref_updatedAt', ['userId', 'kind', 'ref', 'updatedAt']),
 
+  // Development-only Albatross fixture records. This intentionally stores the
+  // current 0.9 test corpus as typed-by-kind documents so issue #70 can be
+  // exercised without locking in issue #71's final area/intent schema.
+  albatrossDevRecords: defineTable({
+    userId: v.string(),
+    kind: v.string(),
+    key: v.string(),
+    ref: v.optional(v.string()),
+    source: v.string(),
+    doc: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_kind', ['userId', 'kind'])
+    .index('by_user_kind_key', ['userId', 'kind', 'key'])
+    .index('by_user_source', ['userId', 'source']),
+
   mailSyncStates: defineTable({
     userId: v.string(),
     accountId: v.string(),

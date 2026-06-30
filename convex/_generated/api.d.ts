@@ -11,6 +11,7 @@
 import type * as accounts from "../accounts.js";
 import type * as agentUploads from "../agentUploads.js";
 import type * as ai from "../ai.js";
+import type * as albatrossDev from "../albatrossDev.js";
 import type * as boards from "../boards.js";
 import type * as calendarData from "../calendarData.js";
 import type * as calendarSync from "../calendarSync.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   agentUploads: typeof agentUploads;
   ai: typeof ai;
+  albatrossDev: typeof albatrossDev;
   boards: typeof boards;
   calendarData: typeof calendarData;
   calendarSync: typeof calendarSync;

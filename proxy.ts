@@ -98,6 +98,7 @@ function basicAuthOrNext(req: Request) {
 }
 
 function shouldRequireBasicAuth(req: Request, pathname: string) {
+  if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1') return false;
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
   if (pathname === '/api/clerk/webhook') return false;

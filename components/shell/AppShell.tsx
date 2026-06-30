@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
@@ -14,7 +15,12 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
-import type { PrimaryView } from '@/lib/shared/types';
+import {
+  isAlbatrossPrimaryView,
+  normalizePrimaryView,
+  type PrimaryView,
+  resolveInitialPrimaryView,
+} from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
 import { AIBarSidebar, AIBarTrigger } from './AIBar';
 import { Rail } from './Rail';
@@ -25,7 +31,15 @@ import { ShortcutsSheet } from './ShortcutsSheet';
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
 // The navigation rail is no longer part of this group — it's a shadcn Sidebar
 // that collapses to an icon strip rather than unmounting.
-export function AppShell() {
+export function AppShell({
+  albatrossEnabled,
+  clerkEnabled,
+  initialView,
+}: {
+  albatrossEnabled: boolean;
+  clerkEnabled: boolean;
+  initialView?: PrimaryView;
+}) {
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const railOpen = useClientStore((s) => s.railOpen);
   const railWidth = useClientStore((s) => s.railWidth);
@@ -33,22 +47,56 @@ export function AppShell() {
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const primaryView = useClientStore((s) => s.primaryView);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const composeMode = useClientStore((s) => s.compose.mode);
   const isMobile = useIsMobile();
   const [panelResizing, setPanelResizing] = useState(false);
   const mobileHistoryThreadRef = useRef<string | null>(null);
+  const initialViewAppliedRef = useRef(false);
+  const normalizedPrimaryView = normalizePrimaryView(primaryView, albatrossEnabled);
+  const initialPrimaryView = resolveInitialPrimaryView(primaryView, albatrossEnabled, initialView);
+  const [bootView, setBootView] = useState<PrimaryView | null>(() =>
+    initialPrimaryView !== normalizedPrimaryView ? initialPrimaryView : null,
+  );
+  const visiblePrimaryView = normalizePrimaryView(bootView ?? primaryView, albatrossEnabled);
 
   // The thread reader rides along with the mail-ish surfaces; calendar and
   // tasks keep their pane to themselves. Compose stays available everywhere.
-  const mailish = primaryView === 'mail' || primaryView === 'daily_report';
+  const mailish = visiblePrimaryView === 'mail' || visiblePrimaryView === 'daily_report';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
   const permutation = `i${readerVisible ? 't' : ''}${aiBarOpen ? 'a' : ''}`;
   const panelIds = ['inbox', ...(readerVisible ? ['reader'] : []), ...(aiBarOpen ? ['ai'] : [])];
+  const layoutStorage = typeof window !== 'undefined' && !isMobile ? window.localStorage : noopLayoutStorage;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: `lab86-mail-shell-v2:${permutation}`,
     panelIds,
-    storage: typeof window !== 'undefined' && !isMobile ? window.localStorage : undefined,
+    storage: layoutStorage,
   });
+
+  useEffect(() => {
+    if (!bootView && visiblePrimaryView !== primaryView) setPrimaryView(visiblePrimaryView);
+  }, [bootView, primaryView, setPrimaryView, visiblePrimaryView]);
+
+  useEffect(() => {
+    if (!initialView || initialViewAppliedRef.current) return;
+
+    const retryMs = [0, 150, 600, 1500];
+    const timers = retryMs.map((delay, index) =>
+      window.setTimeout(() => {
+        const currentState = useClientStore.getState();
+        const nextView = resolveInitialPrimaryView(currentState.primaryView, albatrossEnabled, initialView);
+        if (nextView !== currentState.primaryView) currentState.setPrimaryView(nextView);
+        if (index === retryMs.length - 1) {
+          initialViewAppliedRef.current = true;
+          setBootView(null);
+        }
+      }, delay),
+    );
+
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [albatrossEnabled, initialView]);
 
   useEffect(() => {
     if (!isMobile || !selectedThreadId || mobileHistoryThreadRef.current === selectedThreadId) return;
@@ -84,7 +132,11 @@ export function AppShell() {
           style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
           className="h-dvh overflow-hidden bg-[var(--color-bg)]"
         >
-          <Rail />
+          <Rail
+            albatrossEnabled={albatrossEnabled}
+            clerkEnabled={clerkEnabled}
+            activeViewOverride={bootView ?? undefined}
+          />
           <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
             <SidebarTrigger
               title="Show sidebar"
@@ -99,7 +151,7 @@ export function AppShell() {
                 className="absolute inset-0 h-full w-full"
                 aria-hidden={readerVisible}
               >
-                <PrimarySurface view={primaryView} />
+                <PrimarySurface albatrossEnabled={albatrossEnabled} view={visiblePrimaryView} />
               </motion.div>
 
               <AnimatePresence initial={false}>
@@ -155,7 +207,11 @@ export function AppShell() {
         style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
         className="h-dvh overflow-hidden bg-[var(--color-bg)]"
       >
-        <Rail />
+        <Rail
+          albatrossEnabled={albatrossEnabled}
+          clerkEnabled={clerkEnabled}
+          activeViewOverride={bootView ?? undefined}
+        />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
         {railOpen ? <RailResizeHandle /> : null}
         <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
@@ -170,9 +226,9 @@ export function AppShell() {
               data-panel-resizing={panelResizing || undefined}
               className="h-full w-full"
             >
-              <Panel id="inbox" defaultSize="40%" minSize="280px">
+              <Panel id="inbox" defaultSize={panelIds.length === 1 ? '100%' : '40%'} minSize="280px">
                 <ReflowPanel>
-                  <PrimarySurface view={primaryView} />
+                  <PrimarySurface albatrossEnabled={albatrossEnabled} view={visiblePrimaryView} />
                 </ReflowPanel>
               </Panel>
 
@@ -216,7 +272,7 @@ export function AppShell() {
   );
 }
 
-function PrimarySurface({ view }: { view: PrimaryView }) {
+function PrimarySurface({ albatrossEnabled, view }: { albatrossEnabled: boolean; view: PrimaryView }) {
   switch (view) {
     case 'daily_report':
       return <DailyReport />;
@@ -224,6 +280,14 @@ function PrimarySurface({ view }: { view: PrimaryView }) {
       return <CalendarSurface />;
     case 'tasks':
       return <TasksSurface />;
+    case 'areas':
+    case 'intents':
+    case 'unassigned':
+      return albatrossEnabled && isAlbatrossPrimaryView(view) ? (
+        <AlbatrossSurface kind={view} />
+      ) : (
+        <DailyReport />
+      );
     default:
       return <Inbox />;
   }
@@ -244,6 +308,10 @@ function ReflowPanel({ children, className }: { children: ReactNode; className?:
 const RAIL_MIN = 200;
 const RAIL_MAX = 420;
 const RAIL_DEFAULT = 240;
+const noopLayoutStorage: Pick<Storage, 'getItem' | 'setItem'> = {
+  getItem: () => null,
+  setItem: () => undefined,
+};
 
 // Drag handle living between the sidebar and the main content. It nudges the
 // `--sidebar-width` CSS variable directly during the drag (so the resize is

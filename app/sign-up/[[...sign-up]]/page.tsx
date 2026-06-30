@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { isPublicSignupDisabled } from '@/lib/hosted/controls';
+import { isClerkConfigured } from '@/lib/hosted/env';
 
 export default async function SignUpPage() {
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
@@ -16,8 +17,10 @@ export default async function SignUpPage() {
     );
   }
 
-  const session = await auth();
-  if (session.userId) redirect('/');
+  if (isClerkConfigured()) {
+    const session = await auth();
+    if (session.userId) redirect('/');
+  }
 
   if (isPublicSignupDisabled()) {
     return (
