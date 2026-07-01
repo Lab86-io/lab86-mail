@@ -303,7 +303,14 @@ export const createSprint = mutation({
       updatedAt: ts,
     };
     if (existing) {
+      const previousProjectId = existing.projectId;
       await ctx.db.patch(existing._id, doc);
+      if (previousProjectId && (previousProjectId !== args.projectId || doc.status !== 'active')) {
+        const previousProject = await ctx.db.get(previousProjectId);
+        if (previousProject?.activeSprintId === existing._id) {
+          await ctx.db.patch(previousProjectId, { activeSprintId: undefined, updatedAt: ts });
+        }
+      }
       if (args.projectId && doc.status === 'active') {
         await ctx.db.patch(args.projectId, { activeSprintId: existing._id, updatedAt: ts });
       }
@@ -457,18 +464,21 @@ export const listApprovals = query({
             ? 'by_user_project'
             : args.intentId
               ? 'by_user_intent'
-              : 'by_user_status_created',
+              : 'by_user',
         (q) => {
           const byUser = q.eq('userId', userId);
           if (args.status) return byUser.eq('status', args.status);
           if (args.projectId) return byUser.eq('projectId', args.projectId);
           if (args.intentId) return byUser.eq('intentId', args.intentId);
-          return byUser.eq('status', 'pending');
+          return byUser;
         },
       )
       .collect();
+    const defaultQueueStatuses = new Set(['pending', 'claiming']);
     return rows
-      .filter((approval) => (args.status ? approval.status === args.status : approval.status === 'pending'))
+      .filter((approval) =>
+        args.status ? approval.status === args.status : defaultQueueStatuses.has(approval.status),
+      )
       .filter((approval) => (args.projectId ? approval.projectId === args.projectId : true))
       .filter((approval) => (args.intentId ? approval.intentId === args.intentId : true))
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -510,11 +520,13 @@ export const decideApproval = mutation({
       if (!approval.undoExpiresAt || now() > approval.undoExpiresAt) throw new Error('Undo window expired.');
     }
     const ts = now();
+    const undoExpiresAt =
+      args.undoExpiresAt !== undefined ? Math.min(args.undoExpiresAt, ts + 10_000) : undefined;
     const patch = {
       status: args.status,
       decisionNote: bounded(args.decisionNote, 800),
       ...(args.result !== undefined ? { result: args.result } : {}),
-      ...(args.undoExpiresAt !== undefined ? { undoExpiresAt: args.undoExpiresAt } : {}),
+      ...(undoExpiresAt !== undefined ? { undoExpiresAt } : {}),
       decidedAt: ts,
       updatedAt: ts,
     };

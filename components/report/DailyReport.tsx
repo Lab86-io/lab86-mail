@@ -1815,7 +1815,8 @@ function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportConte
             Areas &amp; Intents
           </h2>
           <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
-            {activeProjects.length + activeIntents.length + contextItems.length || ''}
+            {activeProjects.length + activeIntents.length + askBeforeCentering.length + contextItems.length ||
+              ''}
           </span>
         </div>
 

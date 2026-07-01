@@ -17,7 +17,7 @@ import { defineTool, type ToolContext } from './registry';
 
 export async function recordSavedDraftOperation(
   input: {
-    ctx: Pick<ToolContext, 'userId'>;
+    ctx: Pick<ToolContext, 'userId' | 'operationBatchId'>;
     args: Pick<Draft, 'subject'>;
     saved: Pick<Draft, '_id' | 'account'>;
   },
@@ -29,6 +29,7 @@ export async function recordSavedDraftOperation(
     tool: 'save_draft',
     surface: 'mail',
     summary: `Saved draft "${input.args.subject || '(no subject)'}"`,
+    batchId: input.ctx.operationBatchId,
     target: { kind: 'emailDraft', id: input.saved._id, accountId: input.saved.account },
     inverse: { kind: 'compose.delete_draft', payload: { draftId: input.saved._id } },
   });
@@ -36,7 +37,7 @@ export async function recordSavedDraftOperation(
 
 export async function saveDraftAndRecordOperation(
   input: {
-    ctx: Pick<ToolContext, 'userId'>;
+    ctx: Pick<ToolContext, 'userId' | 'operationBatchId'>;
     doc: Draft;
     args: Pick<Draft, 'subject'>;
   },

@@ -2544,6 +2544,8 @@ interface ApprovalView {
   projectId?: string;
   source: 'live' | 'seed';
   undoWindowSeconds: number;
+  status?: string;
+  undoExpiresAt?: number;
   toolName?: string;
   toolArgs?: Record<string, unknown>;
 }
@@ -2567,6 +2569,8 @@ function mapLiveApproval(row: Record<string, any>): ApprovalView {
     projectId: row.projectId,
     source: 'live',
     undoWindowSeconds: 10,
+    status: row.status,
+    undoExpiresAt: row.undoExpiresAt,
     toolName: row.toolName,
     toolArgs: row.toolArgs,
   };
@@ -2587,6 +2591,7 @@ type ApprovalDecision = 'approved' | 'rejected' | 'undone';
 
 function ApprovalQueuePanel() {
   const [live, setLive] = useState<ApprovalView[] | null>(null);
+  const [recentLive, setRecentLive] = useState<Record<string, ApprovalView>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ApprovalDecision>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -2595,10 +2600,19 @@ function ApprovalQueuePanel() {
   useEffect(() => {
     let active = true;
     const load = () => {
-      callTool<{ approvals: Record<string, any>[] }>('albatross_list_approval_queue', { status: 'pending' })
+      callTool<{ approvals: Record<string, any>[] }>('albatross_list_approval_queue', {})
         .then((res) => {
           if (!active) return;
-          setLive((res?.approvals ?? []).map(mapLiveApproval));
+          const nextLive = (res?.approvals ?? []).map(mapLiveApproval);
+          const liveIds = new Set(nextLive.map((view) => view.id));
+          setLive(nextLive);
+          setRecentLive((prev) =>
+            Object.fromEntries(
+              Object.entries(prev).filter(
+                ([id, view]) => !liveIds.has(id) && (view.undoExpiresAt ?? 0) > Date.now(),
+              ),
+            ),
+          );
           setLoadError(null);
         })
         .catch((error) => {
@@ -2614,14 +2628,40 @@ function ApprovalQueuePanel() {
   }, []);
 
   const decide = async (view: ApprovalView, action: ApprovalDecision) => {
+    const priorDecision = decisions[view.id];
+    if (view.source === 'live' && action === 'undone' && priorDecision !== 'approved') {
+      setCardError((prev) => ({
+        ...prev,
+        [view.id]: 'Rejected approvals cannot be reopened from this queue yet.',
+      }));
+      return;
+    }
     setBusy((prev) => ({ ...prev, [view.id]: true }));
     try {
+      let decidedApproval: Record<string, any> | undefined;
       if (view.source === 'live') {
-        if (action === 'approved') await callTool('albatross_approve_action', { approvalId: view.id });
-        else if (action === 'rejected') await callTool('albatross_reject_action', { approvalId: view.id });
-        else if (decisions[view.id] === 'approved') {
+        if (action === 'approved') {
+          const result = await callTool<{ approval?: Record<string, any> }>('albatross_approve_action', {
+            approvalId: view.id,
+          });
+          decidedApproval = result?.approval;
+        } else if (action === 'rejected') await callTool('albatross_reject_action', { approvalId: view.id });
+        else if (priorDecision === 'approved') {
           await callTool('albatross_undo_approval', { approvalId: view.id });
         }
+      }
+      if (view.source === 'live' && action === 'approved' && decidedApproval?.undoExpiresAt) {
+        setRecentLive((prev) => ({
+          ...prev,
+          [view.id]: {
+            ...view,
+            status: 'approved',
+            undoExpiresAt: decidedApproval.undoExpiresAt,
+          },
+        }));
+      }
+      if (view.source === 'live' && action === 'undone') {
+        setRecentLive((prev) => withoutKey(prev, view.id));
       }
       setDecisions((prev) =>
         action === 'undone' ? withoutKey(prev, view.id) : { ...prev, [view.id]: action },
@@ -2638,7 +2678,11 @@ function ApprovalQueuePanel() {
   };
 
   const liveViews = live ?? [];
-  const all = [...liveViews, ...SEED_APPROVAL_VIEWS];
+  const liveIds = new Set(liveViews.map((view) => view.id));
+  const recentViews = Object.values(recentLive).filter(
+    (view) => !liveIds.has(view.id) && (view.undoExpiresAt ?? 0) > Date.now(),
+  );
+  const all = [...liveViews, ...recentViews, ...SEED_APPROVAL_VIEWS];
   const pendingCount = all.filter((view) => !decisions[view.id]).length;
 
   return (
@@ -2769,13 +2813,15 @@ function ApprovalCard({
             ) : decision === 'rejected' ? (
               <>
                 <span className="text-[11.5px] text-[var(--color-text-muted)]">Rejected - nothing sent.</span>
-                <button
-                  type="button"
-                  onClick={() => onDecide('undone')}
-                  className="text-[11.5px] text-[var(--color-accent)] hover:underline"
-                >
-                  Undo
-                </button>
+                {view.source === 'seed' ? (
+                  <button
+                    type="button"
+                    onClick={() => onDecide('undone')}
+                    className="text-[11.5px] text-[var(--color-accent)] hover:underline"
+                  >
+                    Undo
+                  </button>
+                ) : null}
               </>
             ) : (
               <>
@@ -3183,11 +3229,30 @@ function ProjectPane({ pane }: { pane: ProjectPaneModel }) {
 function SprintsView() {
   const [now] = useState(() => Date.now());
   const sprint = useMemo(() => deriveActiveSprint(now), [now]);
-  const [closed, setClosed] = useState(false);
+  const [persistedStatus, setPersistedStatus] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const done = sprint.counts.done;
   const ratio = sprint.counts.total ? done / sprint.counts.total : 0;
+  const closed = persistedStatus === 'closed' || persistedStatus === 'archived';
+
+  useEffect(() => {
+    let active = true;
+    callTool<{ sprints: Array<{ externalId?: string; status?: string }> }>('albatross_list_sprints', {
+      limit: 50,
+    })
+      .then((res) => {
+        if (!active) return;
+        const persisted = (res?.sprints ?? []).find((row) => row.externalId === sprint.id);
+        setPersistedStatus(persisted?.status ?? null);
+      })
+      .catch(() => {
+        if (active) setPersistedStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [sprint.id]);
 
   const closeSprint = async () => {
     setClosing(true);
@@ -3202,7 +3267,7 @@ function SprintsView() {
         startAt: sprint.startAt,
         endAt: sprint.endAt,
       });
-      setClosed(true);
+      setPersistedStatus('closed');
     } catch (error) {
       setCloseError(error instanceof Error ? error.message : String(error));
     } finally {

@@ -55,7 +55,7 @@ describe('compose tools', () => {
     try {
       const operationId = await recordSavedDraftOperation(
         {
-          ctx: { userId: 'test_user_tools' },
+          ctx: { userId: 'test_user_tools', operationBatchId: 'batch_draft' },
           args: { subject: 'Tracked draft' },
           saved: { _id: 'draft_1', account: 'jakob@example.test' },
         },
@@ -71,6 +71,7 @@ describe('compose tools', () => {
         surface: 'mail',
         summary: 'Saved draft "Tracked draft"',
         inverse: { kind: 'compose.delete_draft' },
+        batchId: 'batch_draft',
       });
       expect(operationInputs[0].target).toMatchObject({
         kind: 'emailDraft',

@@ -34,6 +34,7 @@ const apiMock = {
 const mutationCalls: Array<{ fn: string; args: any }> = [];
 const operationCalls: any[] = [];
 const undoCalls: any[] = [];
+const approvalOrder: string[] = [];
 let approvalFixture: any = null;
 let sequence = 0;
 
@@ -45,6 +46,7 @@ async function convexMutationMock(fn: string, args: any) {
   if (fn === apiMock.albatrossWork.enqueueApproval) return `approval_${sequence}`;
   if (fn === apiMock.albatrossWork.recordPlanApplication) return `application_${sequence}`;
   if (fn === apiMock.albatrossWork.claimApproval) {
+    approvalOrder.push('claimApproval');
     approvalFixture = { ...approvalFixture, status: 'claiming' };
     return { ok: true, approval: approvalFixture };
   }
@@ -81,6 +83,7 @@ async function recordOperationMock(input: any) {
 
 async function invokeToolMock(tool: any, args: any) {
   sequence += 1;
+  approvalOrder.push(`tool:${tool.name}`);
   if (tool.name === 'tasks_create_card') {
     return { ok: true, cardId: `card_${sequence}`, operationId: `operation_card_${sequence}` };
   }
@@ -112,6 +115,7 @@ beforeEach(() => {
   mutationCalls.length = 0;
   operationCalls.length = 0;
   undoCalls.length = 0;
+  approvalOrder.length = 0;
   approvalFixture = null;
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
@@ -299,7 +303,8 @@ describe('Albatross tools', () => {
     expect(approved.result.messageId).toMatch(/^message_/);
     expect(approved.approval.status).toBe('approved');
     expect(mutationCalls.map((call) => call.fn)).toContain(apiMock.albatrossWork.claimApproval);
-    expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeGreaterThan(Date.now());
+    expect(approvalOrder.indexOf('claimApproval')).toBeLessThan(approvalOrder.indexOf('tool:send_message'));
+    expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeUndefined();
 
     await expect(
       runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_pending' }),
@@ -334,6 +339,7 @@ describe('Albatross tools', () => {
       approvalId: 'approval_rsvp',
     });
     expect(approvedRsvp.result.operationId).toMatch(/^operation_rsvp_/);
+    expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeGreaterThan(Date.now());
     const undone = await runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_rsvp' });
     expect(undone.ok).toBe(true);
     expect(undoCalls).toEqual([{ userId: 'test_user_tools', operationId: approvedRsvp.result.operationId }]);

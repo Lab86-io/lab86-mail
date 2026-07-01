@@ -555,6 +555,7 @@ describe('Work board read model (issues #83 + #84)', () => {
     expect(sprint.id).toBe('sprint-week-2026-06-29');
     expect(sprint.startLabel).toBe('Jun 29');
     expect(sprint.endLabel).toBe('Jul 5');
+    expect(sprint.endAt).toBe(Date.parse('2026-07-05T23:59:59.999Z'));
     expect(sprint.cards.every((card) => card.status !== 'done')).toBe(true);
     expect(sprint.counts.total).toBe(mixed.length);
     expect(sprint.counts.done).toBe(1);

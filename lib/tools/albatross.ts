@@ -415,7 +415,7 @@ export const albatrossListApprovalQueue = defineTool({
   category: 'tasks',
   mutating: false,
   input: z.object({
-    status: z.enum(['pending', 'approved', 'rejected', 'undone', 'expired']).default('pending'),
+    status: z.enum(['pending', 'claiming', 'approved', 'rejected', 'undone', 'expired']).optional(),
     limit: z.number().int().min(1).max(200).default(50),
   }),
   output: z.object({ approvals: z.array(z.any()) }),
@@ -423,7 +423,7 @@ export const albatrossListApprovalQueue = defineTool({
     const userId = requireUserId(ctx.userId);
     const approvals = await deps.convexQuery<any[]>(albatrossApi().listApprovals, {
       userId,
-      status: args.status,
+      ...(args.status ? { status: args.status } : {}),
       limit: args.limit,
     });
     return { approvals };
@@ -485,7 +485,7 @@ export const albatrossApproveAction = defineTool({
       status: 'approved',
       decisionNote: 'Approved from Albatross approval queue.',
       result,
-      undoExpiresAt: Date.now() + 10_000,
+      ...(result?.operationId ? { undoExpiresAt: Date.now() + 10_000 } : {}),
     });
     return { ok: true, result, approval: decided.approval };
   },

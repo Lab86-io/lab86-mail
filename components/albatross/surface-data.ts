@@ -2463,6 +2463,7 @@ function fmtSprintDate(date: Date): string {
 export function deriveActiveSprint(now: number, source: Task[] = tasks): SprintSummary {
   const monday = startOfWeekUtc(now);
   const sunday = new Date(monday.getTime() + 6 * 86_400_000);
+  const endOfSunday = sunday.getTime() + 86_400_000 - 1;
   const cards = source
     .filter((task) => columnFor(task.status) !== 'done')
     .map(toBoardCard)
@@ -2475,7 +2476,7 @@ export function deriveActiveSprint(now: number, source: Task[] = tasks): SprintS
     startLabel: fmtSprintDate(monday),
     endLabel: fmtSprintDate(sunday),
     startAt: monday.getTime(),
-    endAt: sunday.getTime(),
+    endAt: endOfSunday,
     cards,
     counts: countByColumn(source),
     derived: true,
