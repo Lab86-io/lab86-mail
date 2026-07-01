@@ -602,6 +602,39 @@ export const listPlanApplications = query({
   },
 });
 
+export const dailyReportContext = query({
+  args: { ...callerArgs, limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const limit = Math.min(Math.max(args.limit ?? 50, 1), 100);
+    const [projects, approvals, applications, sprints] = await Promise.all([
+      ctx.db
+        .query('albatrossProjects')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+      ctx.db
+        .query('albatrossApprovals')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+      ctx.db
+        .query('albatrossPlanApplications')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+      ctx.db
+        .query('albatrossSprints')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+    ]);
+
+    return {
+      projects: projects.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
+      approvals: approvals.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
+      applications: applications.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
+      sprints: sprints.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
+    };
+  },
+});
+
 export const getProjectPane = query({
   args: { ...callerArgs, projectId: v.id('albatrossProjects') },
   handler: async (ctx, args) => {

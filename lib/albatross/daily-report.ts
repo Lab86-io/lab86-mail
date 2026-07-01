@@ -37,6 +37,15 @@ interface BuildAlbatrossDailyReportInput {
   isFirstOpenOfMonth?: boolean;
 }
 
+interface BuildAlbatrossDailyReportFromLiveInput {
+  now?: number;
+  isFirstOpenOfMonth?: boolean;
+  projects?: any[];
+  approvals?: any[];
+  applications?: any[];
+  sprints?: any[];
+}
+
 function dayKey(ts: number) {
   return new Date(ts).toISOString().slice(0, 10);
 }
@@ -47,6 +56,20 @@ function table(seedData: any, key: string): any[] {
 
 function areaName(areasById: Map<string, any>, areaId: string) {
   return areasById.get(areaId)?.name || areaId;
+}
+
+function readableAreaName(areaId: string) {
+  return areaId
+    .replace(/^area_/, '')
+    .split(/[_-]+/g)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function completionTime(row: any): string | undefined {
+  const value = row.completedAt ?? row.closedAt ?? row.updatedAt ?? row.createdAt;
+  return typeof value === 'number' ? new Date(value).toISOString() : undefined;
 }
 
 export function buildAlbatrossDailyReportContext(
@@ -155,6 +178,108 @@ export function buildAlbatrossDailyReportContext(
     activeProjects,
     contextReview,
     completions,
+    monthlyPrompt:
+      input.isFirstOpenOfMonth === true
+        ? 'First report of the month: review active areas, paused projects, and stale context before prioritizing today.'
+        : undefined,
+  };
+}
+
+export function buildAlbatrossDailyReportContextFromLive(
+  input: BuildAlbatrossDailyReportFromLiveInput = {},
+): AlbatrossDailyReportContext {
+  const projects = input.projects ?? [];
+  const approvals = input.approvals ?? [];
+  const applications = input.applications ?? [];
+  const sprints = input.sprints ?? [];
+  const activeProjects = projects
+    .filter((project) => project.status === 'active')
+    .map((project) => ({
+      id: String(project._id ?? project.id ?? project.externalId ?? project.title),
+      title: project.title,
+      areaId: project.areaId,
+      status: project.status,
+      outcome: project.outcome,
+    }))
+    .slice(0, 5);
+
+  const activeIntentIds = new Set<string>();
+  const activeIntents = applications
+    .filter((application) => application.status === 'queued' || application.status === 'partially_applied')
+    .filter((application) => {
+      if (!application.intentId || activeIntentIds.has(application.intentId)) return false;
+      activeIntentIds.add(application.intentId);
+      return true;
+    })
+    .map((application) => ({
+      id: String(application.intentId),
+      text: application.intentText || application.intentId,
+      areaId: application.areaId,
+      status: application.status,
+    }))
+    .slice(0, 6);
+
+  const areaIds = new Set<string>();
+  for (const row of [...activeProjects, ...activeIntents, ...approvals]) {
+    if (row.areaId) areaIds.add(String(row.areaId));
+  }
+  const includedAreas = [...areaIds].slice(0, 6).map((areaId) => ({
+    areaId,
+    name: readableAreaName(areaId),
+    reason: 'Live Albatross work',
+  }));
+
+  const approvalReview = approvals
+    .filter((approval) => approval.status === 'pending' || approval.status === 'claiming')
+    .map((approval) => ({
+      id: String(approval._id ?? approval.id ?? approval.title),
+      areaId: approval.areaId,
+      title: approval.title,
+      reason: approval.risk || approval.detail || 'Waiting for approval',
+    }));
+  const unresolvedReview = applications.flatMap((application) =>
+    (application.unresolvedArtifacts ?? []).map((artifact: any, index: number) => ({
+      id: `${application._id ?? application.intentId}:unresolved:${index}`,
+      areaId: artifact.areaId ?? application.areaId,
+      title: artifact.title || artifact.kind || 'Unresolved Albatross artifact',
+      reason: artifact.blockedReason || 'Needs more information before applying',
+    })),
+  );
+
+  const projectCompletions = projects
+    .filter((project) => project.status === 'done')
+    .map((project) => ({
+      id: String(project._id ?? project.id ?? project.title),
+      areaId: project.areaId,
+      summary: `Completed project: ${project.title}`,
+      completedAt: completionTime(project),
+    }));
+  const sprintCompletions = sprints
+    .filter((sprint) => sprint.status === 'closed')
+    .map((sprint) => ({
+      id: String(sprint._id ?? sprint.id ?? sprint.title),
+      areaId: undefined,
+      summary: `Closed sprint: ${sprint.title}`,
+      completedAt: completionTime(sprint),
+    }));
+  const applicationCompletions = applications
+    .filter((application) => application.status === 'applied')
+    .map((application) => ({
+      id: String(application._id ?? application.intentId),
+      areaId: application.areaId,
+      summary: application.intentText ? `Applied plan: ${application.intentText}` : 'Applied Albatross plan',
+      completedAt: completionTime(application),
+    }));
+
+  return {
+    includedAreas,
+    askBeforeCentering: [],
+    activeIntents,
+    activeProjects,
+    contextReview: [...approvalReview, ...unresolvedReview].slice(0, 4),
+    completions: [...projectCompletions, ...sprintCompletions, ...applicationCompletions]
+      .sort((a, b) => (Date.parse(b.completedAt || '') || 0) - (Date.parse(a.completedAt || '') || 0))
+      .slice(0, 4),
     monthlyPrompt:
       input.isFirstOpenOfMonth === true
         ? 'First report of the month: review active areas, paused projects, and stale context before prioritizing today.'

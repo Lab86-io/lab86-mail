@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import seed from '../fixtures/albatross-0.9.seed.json';
-import { buildAlbatrossDailyReportContext } from '../lib/albatross/daily-report';
+import {
+  buildAlbatrossDailyReportContext,
+  buildAlbatrossDailyReportContextFromLive,
+} from '../lib/albatross/daily-report';
 import { buildAlbatrossApplicationPlan, unresolvedArtifactsAfterUndo } from '../lib/albatross/work-model';
 
 describe('Albatross plan application model', () => {
@@ -79,6 +82,16 @@ describe('Albatross plan application model', () => {
 });
 
 describe('Albatross Daily Report context', () => {
+  test('defaults to empty context instead of seed data', () => {
+    const context = buildAlbatrossDailyReportContext({
+      now: Date.parse('2026-06-30T14:00:00.000Z'),
+    });
+
+    expect(context.activeIntents).toHaveLength(0);
+    expect(context.activeProjects).toHaveLength(0);
+    expect(context.includedAreas).toHaveLength(0);
+  });
+
   test('asks before centering loud unknown areas while keeping declared intents visible', () => {
     const context = buildAlbatrossDailyReportContext({
       now: Date.parse('2026-06-30T14:00:00.000Z'),
@@ -120,5 +133,63 @@ describe('Albatross Daily Report context', () => {
     });
 
     expect(context.monthlyPrompt).toBeUndefined();
+  });
+
+  test('builds daily report context from live Albatross work rows', () => {
+    const context = buildAlbatrossDailyReportContextFromLive({
+      now: Date.parse('2026-06-30T14:00:00.000Z'),
+      projects: [
+        {
+          _id: 'project_live',
+          title: 'Passport rescue',
+          outcome: 'Renew without losing the trip.',
+          areaId: 'area_trip',
+          status: 'active',
+          updatedAt: Date.parse('2026-06-30T12:00:00.000Z'),
+        },
+        {
+          _id: 'project_done',
+          title: 'Old paperwork',
+          areaId: 'area_admin',
+          status: 'done',
+          completedAt: Date.parse('2026-06-29T12:00:00.000Z'),
+        },
+      ],
+      approvals: [
+        {
+          _id: 'approval_live',
+          title: 'Send passport appointment email',
+          areaId: 'area_trip',
+          status: 'pending',
+          risk: 'Human-facing email',
+        },
+      ],
+      applications: [
+        {
+          _id: 'application_live',
+          intentId: 'intent_passport',
+          intentText: 'Passport is a mess',
+          areaId: 'area_trip',
+          status: 'partially_applied',
+          unresolvedArtifacts: [{ title: 'Choose renewal route', blockedReason: 'Needs route answer' }],
+        },
+      ],
+      sprints: [
+        {
+          _id: 'sprint_live',
+          title: 'Week of Jun 29',
+          status: 'closed',
+          closedAt: Date.parse('2026-06-30T13:00:00.000Z'),
+        },
+      ],
+    });
+
+    expect(context.activeProjects.map((project) => project.id)).toEqual(['project_live']);
+    expect(context.activeIntents.map((intent) => intent.id)).toEqual(['intent_passport']);
+    expect(context.includedAreas.map((area) => area.areaId)).toContain('area_trip');
+    expect(context.contextReview.map((item) => item.id)).toContain('approval_live');
+    expect(context.contextReview.map((item) => item.title)).toContain('Choose renewal route');
+    expect(context.completions.map((event) => event.summary)).toContain('Closed sprint: Week of Jun 29');
+    expect(context.completions.map((event) => event.summary)).toContain('Completed project: Old paperwork');
   });
 });

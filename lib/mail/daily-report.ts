@@ -5,9 +5,11 @@ import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import {
   type AlbatrossDailyReportContext,
   buildAlbatrossDailyReportContext,
+  buildAlbatrossDailyReportContextFromLive,
   summarizeAlbatrossDailyReportContext,
 } from '../albatross/daily-report';
 import { api, convexQuery } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
@@ -227,16 +229,13 @@ export async function generateDailyReport(input: {
     }
   }
 
-  const [calendarContext, taskContext, memoryContext, mcpContext] = await Promise.all([
+  const [calendarContext, taskContext, memoryContext, mcpContext, albatrossContext] = await Promise.all([
     input.includeCalendar !== false ? loadCalendarContext(input.userId, now) : Promise.resolve([]),
     loadTaskContext(input.userId, now),
     loadMemoryContext(),
     loadMcpContext(input.userId),
+    loadAlbatrossDailyReportContext(input.userId, now, input.isFirstOpenOfMonth),
   ]);
-  const albatrossContext = buildAlbatrossDailyReportContext({
-    now,
-    isFirstOpenOfMonth: input.isFirstOpenOfMonth,
-  });
 
   const byDateDesc = (a: Thread, b: Thread) => Number(b.lastDate || 0) - Number(a.lastDate || 0);
   const all = [...candidates.values()];
@@ -1179,6 +1178,34 @@ async function loadMcpContext(userId: string | null | undefined): Promise<DailyR
     }));
   } catch {
     return [];
+  }
+}
+
+async function loadAlbatrossDailyReportContext(
+  userId: string | null | undefined,
+  now: number,
+  isFirstOpenOfMonth?: boolean,
+): Promise<AlbatrossDailyReportContext> {
+  const empty = buildAlbatrossDailyReportContext({ now, isFirstOpenOfMonth });
+  if (!userId || !isConvexConfigured()) return empty;
+  try {
+    const live = await convexQuery<{
+      projects?: any[];
+      approvals?: any[];
+      applications?: any[];
+      sprints?: any[];
+    }>((api as any).albatrossWork.dailyReportContext, { userId, limit: 50 });
+    return buildAlbatrossDailyReportContextFromLive({
+      now,
+      isFirstOpenOfMonth,
+      projects: live?.projects,
+      approvals: live?.approvals,
+      applications: live?.applications,
+      sprints: live?.sprints,
+    });
+  } catch (err: any) {
+    console.warn('Daily report Albatross context failed:', err?.message || err);
+    return empty;
   }
 }
 
