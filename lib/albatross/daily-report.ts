@@ -1,3 +1,6 @@
+import { api, convexQuery } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
+
 export interface AlbatrossDailyReportArea {
   areaId: string;
   name: string;
@@ -44,6 +47,13 @@ interface BuildAlbatrossDailyReportFromLiveInput {
   approvals?: any[];
   applications?: any[];
   sprints?: any[];
+}
+
+interface LoadLiveAlbatrossDailyReportInput {
+  userId?: string | null;
+  now?: number;
+  isFirstOpenOfMonth?: boolean;
+  query?: (args: { userId: string; limit: number }) => Promise<BuildAlbatrossDailyReportFromLiveInput>;
 }
 
 function dayKey(ts: number) {
@@ -285,6 +295,38 @@ export function buildAlbatrossDailyReportContextFromLive(
         ? 'First report of the month: review active areas, paused projects, and stale context before prioritizing today.'
         : undefined,
   };
+}
+
+export async function loadLiveAlbatrossDailyReportContext(
+  input: LoadLiveAlbatrossDailyReportInput = {},
+): Promise<AlbatrossDailyReportContext> {
+  const now = input.now || Date.now();
+  const empty = buildAlbatrossDailyReportContext({
+    now,
+    isFirstOpenOfMonth: input.isFirstOpenOfMonth,
+  });
+  if (!input.userId) return empty;
+  if (!input.query && !isConvexConfigured()) return empty;
+
+  try {
+    const live = await (input.query
+      ? input.query({ userId: input.userId, limit: 50 })
+      : convexQuery<BuildAlbatrossDailyReportFromLiveInput>((api as any).albatrossWork.dailyReportContext, {
+          userId: input.userId,
+          limit: 50,
+        }));
+    return buildAlbatrossDailyReportContextFromLive({
+      now,
+      isFirstOpenOfMonth: input.isFirstOpenOfMonth,
+      projects: live?.projects,
+      approvals: live?.approvals,
+      applications: live?.applications,
+      sprints: live?.sprints,
+    });
+  } catch (err: any) {
+    console.warn('Daily report Albatross context failed:', err?.message || err);
+    return empty;
+  }
 }
 
 export function summarizeAlbatrossDailyReportContext(context: AlbatrossDailyReportContext): string {

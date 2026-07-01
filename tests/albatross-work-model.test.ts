@@ -3,6 +3,7 @@ import seed from '../fixtures/albatross-0.9.seed.json';
 import {
   buildAlbatrossDailyReportContext,
   buildAlbatrossDailyReportContextFromLive,
+  loadLiveAlbatrossDailyReportContext,
 } from '../lib/albatross/daily-report';
 import { buildAlbatrossApplicationPlan, unresolvedArtifactsAfterUndo } from '../lib/albatross/work-model';
 
@@ -191,5 +192,36 @@ describe('Albatross Daily Report context', () => {
     expect(context.contextReview.map((item) => item.title)).toContain('Choose renewal route');
     expect(context.completions.map((event) => event.summary)).toContain('Closed sprint: Week of Jun 29');
     expect(context.completions.map((event) => event.summary)).toContain('Completed project: Old paperwork');
+  });
+
+  test('loads live daily report context through an injected query and falls back on errors', async () => {
+    const loaded = await loadLiveAlbatrossDailyReportContext({
+      userId: 'user_live',
+      now: Date.parse('2026-06-30T14:00:00.000Z'),
+      query: async (args) => {
+        expect(args).toEqual({ userId: 'user_live', limit: 50 });
+        return {
+          projects: [
+            {
+              _id: 'project_live',
+              title: 'Live project',
+              areaId: 'area_live',
+              status: 'active',
+            },
+          ],
+        };
+      },
+    });
+
+    expect(loaded.activeProjects.map((project) => project.title)).toEqual(['Live project']);
+
+    const fallback = await loadLiveAlbatrossDailyReportContext({
+      userId: 'user_live',
+      now: Date.parse('2026-06-30T14:00:00.000Z'),
+      query: async () => {
+        throw new Error('Convex unavailable');
+      },
+    });
+    expect(fallback.activeProjects).toHaveLength(0);
   });
 });
