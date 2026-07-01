@@ -82,6 +82,10 @@ function completionTime(row: any): string | undefined {
   return typeof value === 'number' ? new Date(value).toISOString() : undefined;
 }
 
+function plural(count: number, one: string, many = `${one}s`) {
+  return count === 1 ? one : many;
+}
+
 export function buildAlbatrossDailyReportContext(
   input: BuildAlbatrossDailyReportInput = {},
 ): AlbatrossDailyReportContext {
@@ -230,7 +234,7 @@ export function buildAlbatrossDailyReportContextFromLive(
     .slice(0, 6);
 
   const areaIds = new Set<string>();
-  for (const row of [...activeProjects, ...activeIntents, ...approvals]) {
+  for (const row of [...activeProjects, ...activeIntents]) {
     if (row.areaId) areaIds.add(String(row.areaId));
   }
   const includedAreas = [...areaIds].slice(0, 6).map((areaId) => ({
@@ -238,6 +242,43 @@ export function buildAlbatrossDailyReportContextFromLive(
     name: readableAreaName(areaId),
     reason: 'Live Albatross work',
   }));
+
+  const pressureByArea = new Map<string, { approvals: number; unresolved: number }>();
+  const addPressure = (areaId: unknown, kind: 'approvals' | 'unresolved') => {
+    if (!areaId) return;
+    const key = String(areaId);
+    const current = pressureByArea.get(key) ?? { approvals: 0, unresolved: 0 };
+    current[kind] += 1;
+    pressureByArea.set(key, current);
+  };
+  for (const approval of approvals) {
+    if (approval.status === 'pending' || approval.status === 'claiming')
+      addPressure(approval.areaId, 'approvals');
+  }
+  for (const application of applications) {
+    for (const artifact of application.unresolvedArtifacts ?? []) {
+      addPressure(artifact.areaId ?? application.areaId, 'unresolved');
+    }
+  }
+  const askBeforeCentering = [...pressureByArea.entries()]
+    .filter(([areaId]) => !areaIds.has(areaId))
+    .map(([areaId, pressure]) => {
+      const signalParts = [
+        pressure.approvals ? `${pressure.approvals} pending ${plural(pressure.approvals, 'approval')}` : null,
+        pressure.unresolved
+          ? `${pressure.unresolved} unresolved ${plural(pressure.unresolved, 'artifact')}`
+          : null,
+      ].filter(Boolean);
+      const name = readableAreaName(areaId);
+      return {
+        areaId,
+        name,
+        prompt: `${name} has ${signalParts.join(' and ')}. Include it in today's report?`,
+        loudness: Math.min(100, 45 + pressure.approvals * 20 + pressure.unresolved * 15),
+      };
+    })
+    .sort((a, b) => (b.loudness ?? 0) - (a.loudness ?? 0))
+    .slice(0, 4);
 
   const approvalReview = approvals
     .filter((approval) => approval.status === 'pending' || approval.status === 'claiming')
@@ -283,7 +324,7 @@ export function buildAlbatrossDailyReportContextFromLive(
 
   return {
     includedAreas,
-    askBeforeCentering: [],
+    askBeforeCentering,
     activeIntents,
     activeProjects,
     contextReview: [...approvalReview, ...unresolvedReview].slice(0, 4),

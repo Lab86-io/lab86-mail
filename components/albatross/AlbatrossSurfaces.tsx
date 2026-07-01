@@ -2589,6 +2589,13 @@ const SEED_APPROVAL_VIEWS: ApprovalView[] = approvalQueue.map((approval) => ({
 
 type ApprovalDecision = 'approved' | 'rejected' | 'undone';
 
+function decisionForApproval(view: ApprovalView, decisions: Record<string, ApprovalDecision>) {
+  if (view.source === 'live' && (view.status === 'approved' || view.status === 'rejected')) {
+    return view.status;
+  }
+  return decisions[view.id];
+}
+
 function ApprovalQueuePanel() {
   const [live, setLive] = useState<ApprovalView[] | null>(null);
   const [recentLive, setRecentLive] = useState<Record<string, ApprovalView>>({});
@@ -2628,7 +2635,7 @@ function ApprovalQueuePanel() {
   }, []);
 
   const decide = async (view: ApprovalView, action: ApprovalDecision) => {
-    const priorDecision = decisions[view.id];
+    const priorDecision = decisionForApproval(view, decisions);
     if (view.source === 'live' && action === 'undone' && priorDecision !== 'approved') {
       setCardError((prev) => ({
         ...prev,
@@ -2645,22 +2652,45 @@ function ApprovalQueuePanel() {
             approvalId: view.id,
           });
           decidedApproval = result?.approval;
-        } else if (action === 'rejected') await callTool('albatross_reject_action', { approvalId: view.id });
-        else if (priorDecision === 'approved') {
+        } else if (action === 'rejected') {
+          await callTool('albatross_reject_action', { approvalId: view.id });
+        } else if (priorDecision === 'approved') {
           await callTool('albatross_undo_approval', { approvalId: view.id });
         }
       }
-      if (view.source === 'live' && action === 'approved' && decidedApproval?.undoExpiresAt) {
-        setRecentLive((prev) => ({
-          ...prev,
-          [view.id]: {
-            ...view,
-            status: 'approved',
-            undoExpiresAt: decidedApproval.undoExpiresAt,
-          },
-        }));
+      if (view.source === 'live' && action === 'approved') {
+        const updatedView = {
+          ...view,
+          status: 'approved',
+          undoExpiresAt: decidedApproval?.undoExpiresAt,
+        };
+        setLive(
+          (prev) =>
+            prev?.map((item) =>
+              item.id === view.id
+                ? {
+                    ...item,
+                    status: 'approved',
+                    undoExpiresAt: decidedApproval?.undoExpiresAt,
+                  }
+                : item,
+            ) ?? prev,
+        );
+        if (decidedApproval?.undoExpiresAt) {
+          setRecentLive((prev) => ({
+            ...prev,
+            [view.id]: updatedView,
+          }));
+        }
+      }
+      if (view.source === 'live' && action === 'rejected') {
+        setLive(
+          (prev) =>
+            prev?.map((item) => (item.id === view.id ? { ...item, status: 'rejected' } : item)) ?? prev,
+        );
       }
       if (view.source === 'live' && action === 'undone') {
+        setLive((prev) => prev?.filter((item) => item.id !== view.id) ?? prev);
         setRecentLive((prev) => withoutKey(prev, view.id));
       }
       setDecisions((prev) =>
@@ -2683,7 +2713,7 @@ function ApprovalQueuePanel() {
     (view) => !liveIds.has(view.id) && (view.undoExpiresAt ?? 0) > Date.now(),
   );
   const all = [...liveViews, ...recentViews, ...SEED_APPROVAL_VIEWS];
-  const pendingCount = all.filter((view) => !decisions[view.id]).length;
+  const pendingCount = all.filter((view) => !decisionForApproval(view, decisions)).length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -2721,7 +2751,7 @@ function ApprovalQueuePanel() {
                 <ApprovalCard
                   key={`${view.source}-${view.id}`}
                   view={view}
-                  decision={decisions[view.id]}
+                  decision={decisionForApproval(view, decisions)}
                   busy={busy[view.id]}
                   error={cardError[view.id]}
                   onDecide={(action) => decide(view, action)}
@@ -2760,6 +2790,11 @@ function ApprovalCard({
     view.intentId ? `Intent ${view.intentId.replace(/^intent[_-]?/, '')}` : null,
     view.projectId ? 'Project' : null,
   ].filter(Boolean) as string[];
+  const liveUndoSeconds =
+    view.source === 'live' && view.undoExpiresAt && view.undoExpiresAt > Date.now()
+      ? Math.max(1, Math.ceil((view.undoExpiresAt - Date.now()) / 1000))
+      : 0;
+  const canUndoApproved = view.source === 'seed' || liveUndoSeconds > 0;
 
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2.5">
@@ -2799,16 +2834,20 @@ function ApprovalCard({
                   <Check className="size-3.5" />
                   Approved
                 </span>
-                <span className="text-[11px] text-[var(--color-text-faint)]">
-                  {view.undoWindowSeconds}s to undo
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onDecide('undone')}
-                  className="text-[11.5px] text-[var(--color-accent)] hover:underline"
-                >
-                  Undo
-                </button>
+                {canUndoApproved ? (
+                  <>
+                    <span className="text-[11px] text-[var(--color-text-faint)]">
+                      {view.source === 'live' ? liveUndoSeconds : view.undoWindowSeconds}s to undo
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onDecide('undone')}
+                      className="text-[11.5px] text-[var(--color-accent)] hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </>
+                ) : null}
               </>
             ) : decision === 'rejected' ? (
               <>

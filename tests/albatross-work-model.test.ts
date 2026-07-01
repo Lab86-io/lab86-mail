@@ -164,6 +164,13 @@ describe('Albatross Daily Report context', () => {
           status: 'pending',
           risk: 'Human-facing email',
         },
+        {
+          _id: 'approval_loud',
+          title: 'Reply to CardHunt launch thread',
+          areaId: 'area_cardhunt',
+          status: 'claiming',
+          risk: 'Human-facing reply',
+        },
       ],
       applications: [
         {
@@ -188,6 +195,9 @@ describe('Albatross Daily Report context', () => {
     expect(context.activeProjects.map((project) => project.id)).toEqual(['project_live']);
     expect(context.activeIntents.map((intent) => intent.id)).toEqual(['intent_passport']);
     expect(context.includedAreas.map((area) => area.areaId)).toContain('area_trip');
+    expect(context.askBeforeCentering.map((item) => item.areaId)).toContain('area_cardhunt');
+    expect(context.askBeforeCentering.map((item) => item.areaId)).not.toContain('area_trip');
+    expect(context.askBeforeCentering[0].prompt).toContain("Include it in today's report?");
     expect(context.contextReview.map((item) => item.id)).toContain('approval_live');
     expect(context.contextReview.map((item) => item.title)).toContain('Choose renewal route');
     expect(context.completions.map((event) => event.summary)).toContain('Closed sprint: Week of Jun 29');

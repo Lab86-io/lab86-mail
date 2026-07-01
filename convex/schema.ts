@@ -420,7 +420,8 @@ export default defineSchema({
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_area', ['userId', 'areaId'])
     .index('by_user_external', ['userId', 'externalId'])
-    .index('by_user_source_intent', ['userId', 'sourceIntentId']),
+    .index('by_user_source_intent', ['userId', 'sourceIntentId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
   albatrossProjectLinks: defineTable({
     userId: v.string(),
@@ -472,7 +473,8 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_project', ['userId', 'projectId'])
-    .index('by_user_external', ['userId', 'externalId']),
+    .index('by_user_external', ['userId', 'externalId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
   albatrossApprovals: defineTable({
     userId: v.string(),
@@ -514,7 +516,8 @@ export default defineSchema({
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_intent', ['userId', 'intentId'])
     .index('by_user_project', ['userId', 'projectId'])
-    .index('by_user_batch', ['userId', 'operationBatchId']),
+    .index('by_user_batch', ['userId', 'operationBatchId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
   albatrossPlanApplications: defineTable({
     userId: v.string(),
@@ -540,7 +543,8 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_intent', ['userId', 'intentId'])
     .index('by_user_project', ['userId', 'projectId'])
-    .index('by_user_batch', ['userId', 'operationBatchId']),
+    .index('by_user_batch', ['userId', 'operationBatchId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
   mailSyncStates: defineTable({
     userId: v.string(),

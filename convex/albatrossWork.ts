@@ -455,6 +455,21 @@ export const listApprovals = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
+    const defaultQueueStatuses = ['pending', 'claiming'] as const;
+    if (!args.status && !args.projectId && !args.intentId) {
+      const rows = (
+        await Promise.all(
+          defaultQueueStatuses.map((status) =>
+            ctx.db
+              .query('albatrossApprovals')
+              .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', status))
+              .order('desc')
+              .take(limit),
+          ),
+        )
+      ).flat();
+      return rows.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+    }
     const rows = await ctx.db
       .query('albatrossApprovals')
       .withIndex(
@@ -474,10 +489,10 @@ export const listApprovals = query({
         },
       )
       .collect();
-    const defaultQueueStatuses = new Set(['pending', 'claiming']);
+    const defaultQueueStatusSet = new Set<string>(defaultQueueStatuses);
     return rows
       .filter((approval) =>
-        args.status ? approval.status === args.status : defaultQueueStatuses.has(approval.status),
+        args.status ? approval.status === args.status : defaultQueueStatusSet.has(approval.status),
       )
       .filter((approval) => (args.projectId ? approval.projectId === args.projectId : true))
       .filter((approval) => (args.intentId ? approval.intentId === args.intentId : true))
@@ -622,27 +637,31 @@ export const dailyReportContext = query({
     const [projects, approvals, applications, sprints] = await Promise.all([
       ctx.db
         .query('albatrossProjects')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .collect(),
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(limit),
       ctx.db
         .query('albatrossApprovals')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .collect(),
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(limit),
       ctx.db
         .query('albatrossPlanApplications')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .collect(),
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(limit),
       ctx.db
         .query('albatrossSprints')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .collect(),
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(limit),
     ]);
 
     return {
-      projects: projects.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
-      approvals: approvals.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
-      applications: applications.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
-      sprints: sprints.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
+      projects,
+      approvals,
+      applications,
+      sprints,
     };
   },
 });
