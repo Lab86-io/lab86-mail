@@ -1776,9 +1776,36 @@ function TaskCalendarBrief({
 // second dashboard.
 function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportContext | null; delay: number }) {
   if (!context) return null;
-  const { activeProjects, activeIntents, askBeforeCentering, monthlyPrompt } = context;
+  const {
+    activeProjects,
+    activeIntents,
+    askBeforeCentering,
+    includedAreas,
+    contextReview,
+    completions,
+    monthlyPrompt,
+  } = context;
   const hasActive = activeProjects.length > 0 || activeIntents.length > 0;
-  if (!hasActive && askBeforeCentering.length === 0 && !monthlyPrompt) return null;
+  const contextItems = [
+    ...includedAreas.map((area) => ({
+      id: `area:${area.areaId}`,
+      title: area.name,
+      meta: area.reason,
+    })),
+    ...contextReview.map((item) => ({
+      id: `review:${item.id}`,
+      title: item.title,
+      meta: item.reason || 'Needs context review',
+    })),
+    ...completions.map((event) => ({
+      id: `completion:${event.id}`,
+      title: event.summary,
+      meta: event.completedAt ? formatDate(event.completedAt) : 'Completed',
+    })),
+  ].slice(0, 6);
+  if (!hasActive && askBeforeCentering.length === 0 && contextItems.length === 0 && !monthlyPrompt) {
+    return null;
+  }
 
   return (
     <section className="blur-in @container" style={{ animationDelay: `${delay}ms` }}>
@@ -1788,7 +1815,7 @@ function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportConte
             Areas &amp; Intents
           </h2>
           <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
-            {activeProjects.length + activeIntents.length || ''}
+            {activeProjects.length + activeIntents.length + contextItems.length || ''}
           </span>
         </div>
 
@@ -1856,6 +1883,22 @@ function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportConte
             </div>
           ) : null}
         </div>
+
+        {contextItems.length ? (
+          <div className="mt-3 border-t border-[var(--color-border)] pt-2.5">
+            <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Context carried in</h3>
+            <ul className="mt-1.5 grid gap-x-5 gap-y-1.5 @[640px]:grid-cols-2">
+              {contextItems.map((item) => (
+                <li key={item.id} className="min-w-0">
+                  <p className="truncate text-[12.5px] text-[var(--color-text)]">{stripEmoji(item.title)}</p>
+                  <p className="mt-0.5 truncate text-[10.5px] text-[var(--color-text-faint)]">
+                    {stripEmoji(item.meta)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </section>
   );

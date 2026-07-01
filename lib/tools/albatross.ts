@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { newOperationBatchId, recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
+import {
+  newOperationBatchId,
+  recordOperation,
+  registerUndoExecutor,
+  undoOperation,
+} from '@/lib/ai/operations';
 import {
   type AlbatrossApplicationStep,
   buildAlbatrossApplicationPlan,
@@ -17,6 +22,7 @@ const defaultDeps = {
   convexQuery,
   recordOperation,
   newOperationBatchId,
+  undoOperation,
   invokeTool,
   tools: {
     tasksCreateCard,
@@ -357,7 +363,6 @@ export const albatrossApplyIntentPlan = defineTool({
         toolName: step.toolName || 'external_action',
         toolArgs: step.toolArgs || {},
         risk: 'Human-facing action. Requires explicit approval before provider write.',
-        undoExpiresAt: Date.now() + 10_000,
       });
       approvalIds.push(String(approvalId));
       approvals.push({ approvalId, title: step.title, toolName: step.toolName, toolArgs: step.toolArgs });
@@ -446,22 +451,41 @@ export const albatrossApproveAction = defineTool({
     if (!approval) throw new Error('Approval not found.');
     if (approval.status !== 'pending') throw new Error(`Approval is already ${approval.status}.`);
     const tool = approvalToolFor(approval.toolName);
-    const result = await deps.invokeTool(
-      tool,
-      { ...(approval.toolArgs || {}), ...(args.editedArgs || {}) },
-      batchContext(
-        ctx,
-        args.operationBatchId ||
-          approval.operationBatchId ||
-          ctx.operationBatchId ||
-          deps.newOperationBatchId(),
-      ),
-    );
+    await deps.convexMutation(albatrossApi().claimApproval, {
+      userId,
+      approvalId: args.approvalId,
+    });
+    let result: any;
+    try {
+      result = await deps.invokeTool(
+        tool,
+        { ...(approval.toolArgs || {}), ...(args.editedArgs || {}) },
+        batchContext(
+          ctx,
+          args.operationBatchId ||
+            approval.operationBatchId ||
+            ctx.operationBatchId ||
+            deps.newOperationBatchId(),
+        ),
+      );
+    } catch (error) {
+      await deps
+        .convexMutation(albatrossApi().decideApproval, {
+          userId,
+          approvalId: args.approvalId,
+          status: 'rejected',
+          decisionNote: `Approval execution failed: ${error instanceof Error ? error.message : String(error)}`,
+        })
+        .catch(() => {});
+      throw error;
+    }
     const decided = await deps.convexMutation<any>(albatrossApi().decideApproval, {
       userId,
       approvalId: args.approvalId,
       status: 'approved',
       decisionNote: 'Approved from Albatross approval queue.',
+      result,
+      undoExpiresAt: Date.now() + 10_000,
     });
     return { ok: true, result, approval: decided.approval };
   },
@@ -501,9 +525,15 @@ export const albatrossUndoApproval = defineTool({
       approvalId: args.approvalId,
     });
     if (!approval) throw new Error('Approval not found.');
+    if (approval.status !== 'approved') throw new Error(`Only approved actions can be undone.`);
     if (approval.undoExpiresAt && Date.now() > approval.undoExpiresAt) {
       throw new Error('Undo window expired.');
     }
+    const operationId = approval.result?.operationId;
+    if (!operationId) {
+      throw new Error('This approval did not record an undoable provider operation.');
+    }
+    await deps.undoOperation(userId, operationId);
     await deps.convexMutation(albatrossApi().decideApproval, {
       userId,
       approvalId: args.approvalId,
@@ -610,6 +640,7 @@ export const albatrossCreateSprint = defineTool({
   output: z.object({ ok: z.boolean(), sprintId: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const operationBatchId = args.operationBatchId || ctx.operationBatchId || deps.newOperationBatchId();
     const sprintId = await deps.convexMutation<string>(albatrossApi().createSprint, {
       userId,
       projectId: args.projectId,
@@ -625,7 +656,7 @@ export const albatrossCreateSprint = defineTool({
       userId,
       sprintId,
       title: args.title,
-      operationBatchId: args.operationBatchId || ctx.operationBatchId,
+      operationBatchId,
     });
     return { ok: true, sprintId, operationId };
   },

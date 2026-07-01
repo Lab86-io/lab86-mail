@@ -34,6 +34,7 @@ const sprintStatusValidator = v.union(
 
 const approvalStatusValidator = v.union(
   v.literal('pending'),
+  v.literal('claiming'),
   v.literal('approved'),
   v.literal('rejected'),
   v.literal('undone'),
@@ -166,7 +167,12 @@ export const updateProject = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     await requireProject(ctx, args.projectId, userId);
-    if (args.activeSprintId) await requireSprint(ctx, args.activeSprintId, userId);
+    if (args.activeSprintId) {
+      const sprint = await requireSprint(ctx, args.activeSprintId, userId);
+      if (sprint.projectId !== args.projectId) {
+        throw new Error('Active sprint must belong to this project.');
+      }
+    }
     const ts = now();
     await ctx.db.patch(args.projectId, {
       ...(args.title !== undefined ? { title: bounded(args.title, 180, 'Untitled project') } : {}),
@@ -196,21 +202,20 @@ export const listProjects = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
-    const rows = args.status
-      ? await ctx.db
-          .query('albatrossProjects')
-          .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', args.status!))
-          .collect()
-      : args.areaId
-        ? await ctx.db
-            .query('albatrossProjects')
-            .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
-            .collect()
-        : await ctx.db
-            .query('albatrossProjects')
-            .withIndex('by_user', (q) => q.eq('userId', userId))
-            .collect();
-    return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit);
+    const rows = await ctx.db
+      .query('albatrossProjects')
+      .withIndex(args.status ? 'by_user_status' : args.areaId ? 'by_user_area' : 'by_user', (q) => {
+        const byUser = q.eq('userId', userId);
+        if (args.status) return byUser.eq('status', args.status);
+        if (args.areaId) return byUser.eq('areaId', args.areaId);
+        return byUser;
+      })
+      .collect();
+    return rows
+      .filter((project) => (args.status ? project.status === args.status : true))
+      .filter((project) => (args.areaId ? project.areaId === args.areaId : true))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit);
   },
 });
 
@@ -299,6 +304,9 @@ export const createSprint = mutation({
     };
     if (existing) {
       await ctx.db.patch(existing._id, doc);
+      if (args.projectId && doc.status === 'active') {
+        await ctx.db.patch(args.projectId, { activeSprintId: existing._id, updatedAt: ts });
+      }
       return existing._id;
     }
     const sprintId = await ctx.db.insert('albatrossSprints', {
@@ -341,8 +349,16 @@ export const updateSprint = mutation({
       ...(args.endAt !== undefined ? { endAt: args.endAt } : {}),
       updatedAt: ts,
     });
-    if (sprint.projectId && args.status === 'active') {
-      await ctx.db.patch(sprint.projectId, { activeSprintId: args.sprintId, updatedAt: ts });
+    if (sprint.projectId) {
+      if (args.status === 'active') {
+        await ctx.db.patch(sprint.projectId, { activeSprintId: args.sprintId, updatedAt: ts });
+      }
+      if (
+        (args.status === 'closed' || args.status === 'archived') &&
+        (await ctx.db.get(sprint.projectId))?.activeSprintId === args.sprintId
+      ) {
+        await ctx.db.patch(sprint.projectId, { activeSprintId: undefined, updatedAt: ts });
+      }
     }
     return { ok: true };
   },
@@ -358,21 +374,20 @@ export const listSprints = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
-    const rows = args.projectId
-      ? await ctx.db
-          .query('albatrossSprints')
-          .withIndex('by_user_project', (q) => q.eq('userId', userId).eq('projectId', args.projectId))
-          .collect()
-      : args.status
-        ? await ctx.db
-            .query('albatrossSprints')
-            .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', args.status!))
-            .collect()
-        : await ctx.db
-            .query('albatrossSprints')
-            .withIndex('by_user', (q) => q.eq('userId', userId))
-            .collect();
-    return rows.sort((a, b) => (a.startAt ?? b.updatedAt) - (b.startAt ?? a.updatedAt)).slice(0, limit);
+    const rows = await ctx.db
+      .query('albatrossSprints')
+      .withIndex(args.projectId ? 'by_user_project' : args.status ? 'by_user_status' : 'by_user', (q) => {
+        const byUser = q.eq('userId', userId);
+        if (args.projectId) return byUser.eq('projectId', args.projectId);
+        if (args.status) return byUser.eq('status', args.status);
+        return byUser;
+      })
+      .collect();
+    return rows
+      .filter((sprint) => (args.projectId ? sprint.projectId === args.projectId : true))
+      .filter((sprint) => (args.status ? sprint.status === args.status : true))
+      .sort((a, b) => (a.startAt ?? a.updatedAt) - (b.startAt ?? b.updatedAt))
+      .slice(0, limit);
   },
 });
 
@@ -433,30 +448,31 @@ export const listApprovals = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
-    const rows = args.status
-      ? await ctx.db
-          .query('albatrossApprovals')
-          .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', args.status!))
-          .order('desc')
-          .take(limit)
-      : args.projectId
-        ? await ctx.db
-            .query('albatrossApprovals')
-            .withIndex('by_user_project', (q) => q.eq('userId', userId).eq('projectId', args.projectId))
-            .order('desc')
-            .take(limit)
-        : args.intentId
-          ? await ctx.db
-              .query('albatrossApprovals')
-              .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', args.intentId))
-              .order('desc')
-              .take(limit)
-          : await ctx.db
-              .query('albatrossApprovals')
-              .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
-              .order('desc')
-              .take(limit);
-    return rows;
+    const rows = await ctx.db
+      .query('albatrossApprovals')
+      .withIndex(
+        args.status
+          ? 'by_user_status_created'
+          : args.projectId
+            ? 'by_user_project'
+            : args.intentId
+              ? 'by_user_intent'
+              : 'by_user_status_created',
+        (q) => {
+          const byUser = q.eq('userId', userId);
+          if (args.status) return byUser.eq('status', args.status);
+          if (args.projectId) return byUser.eq('projectId', args.projectId);
+          if (args.intentId) return byUser.eq('intentId', args.intentId);
+          return byUser.eq('status', 'pending');
+        },
+      )
+      .collect();
+    return rows
+      .filter((approval) => (args.status ? approval.status === args.status : approval.status === 'pending'))
+      .filter((approval) => (args.projectId ? approval.projectId === args.projectId : true))
+      .filter((approval) => (args.intentId ? approval.intentId === args.intentId : true))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit);
   },
 });
 
@@ -476,22 +492,47 @@ export const decideApproval = mutation({
     approvalId: v.id('albatrossApprovals'),
     status: v.union(v.literal('approved'), v.literal('rejected'), v.literal('undone')),
     decisionNote: v.optional(v.string()),
+    result: v.optional(v.any()),
+    undoExpiresAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const approval = await ctx.db.get(args.approvalId);
     if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
-    if (approval.status !== 'pending' && args.status !== 'undone') {
+    if (args.status === 'approved' && approval.status !== 'claiming' && approval.status !== 'pending') {
       throw new Error(`Approval is already ${approval.status}.`);
     }
+    if (args.status === 'rejected' && approval.status !== 'pending' && approval.status !== 'claiming') {
+      throw new Error(`Approval is already ${approval.status}.`);
+    }
+    if (args.status === 'undone') {
+      if (approval.status !== 'approved') throw new Error(`Only approved actions can be undone.`);
+      if (!approval.undoExpiresAt || now() > approval.undoExpiresAt) throw new Error('Undo window expired.');
+    }
     const ts = now();
-    await ctx.db.patch(args.approvalId, {
+    const patch = {
       status: args.status,
       decisionNote: bounded(args.decisionNote, 800),
+      ...(args.result !== undefined ? { result: args.result } : {}),
+      ...(args.undoExpiresAt !== undefined ? { undoExpiresAt: args.undoExpiresAt } : {}),
       decidedAt: ts,
       updatedAt: ts,
-    });
-    return { ok: true, approval: { ...approval, status: args.status, decidedAt: ts } };
+    };
+    await ctx.db.patch(args.approvalId, patch);
+    return { ok: true, approval: { ...approval, ...patch } };
+  },
+});
+
+export const claimApproval = mutation({
+  args: { ...callerArgs, approvalId: v.id('albatrossApprovals') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const approval = await ctx.db.get(args.approvalId);
+    if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
+    if (approval.status !== 'pending') throw new Error(`Approval is already ${approval.status}.`);
+    const ts = now();
+    await ctx.db.patch(args.approvalId, { status: 'claiming', updatedAt: ts });
+    return { ok: true, approval: { ...approval, status: 'claiming', updatedAt: ts } };
   },
 });
 
@@ -518,15 +559,19 @@ export const recordPlanApplication = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     if (args.projectId) await requireProject(ctx, args.projectId, userId);
+    const intentId = bounded(args.intentId, 160, '')!;
+    const operationBatchId = bounded(args.operationBatchId, 180, '')!;
+    if (!intentId) throw new Error('intentId required.');
+    if (!operationBatchId) throw new Error('operationBatchId required.');
     const ts = now();
     return ctx.db.insert('albatrossPlanApplications', {
       userId,
-      intentId: bounded(args.intentId, 160, 'intent')!,
+      intentId,
       intentText: bounded(args.intentText, 1600),
       planId: bounded(args.planId, 160),
       areaId: bounded(args.areaId, 160),
       projectId: args.projectId,
-      operationBatchId: bounded(args.operationBatchId, 180, 'batch')!,
+      operationBatchId,
       status: args.status,
       artifacts: args.artifacts,
       operationIds: args.operationIds,

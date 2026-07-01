@@ -485,6 +485,7 @@ export default defineSchema({
     ),
     status: v.union(
       v.literal('pending'),
+      v.literal('claiming'),
       v.literal('approved'),
       v.literal('rejected'),
       v.literal('undone'),
@@ -501,6 +502,7 @@ export default defineSchema({
     artifactId: v.optional(v.string()),
     toolName: v.string(),
     toolArgs: v.any(),
+    result: v.optional(v.any()),
     risk: v.optional(v.string()),
     undoExpiresAt: v.optional(v.number()),
     decidedAt: v.optional(v.number()),

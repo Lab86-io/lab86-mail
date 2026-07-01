@@ -2271,6 +2271,21 @@ function buildApplyInput(parsed: ParsedIntent, areaId: string, need: ProjectNeed
         areaId: action.areaId,
         priority: action.priority as 1 | 2 | 3 | undefined,
         durationMinutes: action.durationMinutes,
+        startIso: action.startIso,
+        endIso: action.endIso,
+        account: action.account,
+        to: action.to,
+        cc: action.cc,
+        bcc: action.bcc,
+        subject: action.subject,
+        body: action.body,
+        html: action.html,
+        attendees: action.attendees,
+        calendarId: action.calendarId,
+        eventId: action.eventId,
+        rsvpStatus: action.rsvpStatus,
+        description: action.description,
+        sourceRefs: action.sourceRefs,
       })),
       proposedArtifacts: plan.proposedArtifacts.map((artifact) => ({
         kind: artifact.kind as AlbatrossArtifactKind,
@@ -2579,15 +2594,22 @@ function ApprovalQueuePanel() {
 
   useEffect(() => {
     let active = true;
-    callTool<{ approvals: Record<string, any>[] }>('albatross_list_approval_queue', { status: 'pending' })
-      .then((res) => {
-        if (active) setLive((res?.approvals ?? []).map(mapLiveApproval));
-      })
-      .catch((error) => {
-        if (active) setLoadError(error instanceof Error ? error.message : String(error));
-      });
+    const load = () => {
+      callTool<{ approvals: Record<string, any>[] }>('albatross_list_approval_queue', { status: 'pending' })
+        .then((res) => {
+          if (!active) return;
+          setLive((res?.approvals ?? []).map(mapLiveApproval));
+          setLoadError(null);
+        })
+        .catch((error) => {
+          if (active) setLoadError(error instanceof Error ? error.message : String(error));
+        });
+    };
+    load();
+    const intervalId = window.setInterval(load, 5000);
     return () => {
       active = false;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -2597,7 +2619,9 @@ function ApprovalQueuePanel() {
       if (view.source === 'live') {
         if (action === 'approved') await callTool('albatross_approve_action', { approvalId: view.id });
         else if (action === 'rejected') await callTool('albatross_reject_action', { approvalId: view.id });
-        else await callTool('albatross_undo_approval', { approvalId: view.id });
+        else if (decisions[view.id] === 'approved') {
+          await callTool('albatross_undo_approval', { approvalId: view.id });
+        }
       }
       setDecisions((prev) =>
         action === 'undone' ? withoutKey(prev, view.id) : { ...prev, [view.id]: action },
@@ -3160,8 +3184,31 @@ function SprintsView() {
   const [now] = useState(() => Date.now());
   const sprint = useMemo(() => deriveActiveSprint(now), [now]);
   const [closed, setClosed] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
   const done = sprint.counts.done;
   const ratio = sprint.counts.total ? done / sprint.counts.total : 0;
+
+  const closeSprint = async () => {
+    setClosing(true);
+    setCloseError(null);
+    try {
+      await callTool('albatross_create_sprint', {
+        externalId: sprint.id,
+        title: sprint.title,
+        goal: 'Derived from open Albatross work.',
+        cadence: sprint.cadence,
+        status: 'closed',
+        startAt: sprint.startAt,
+        endAt: sprint.endAt,
+      });
+      setClosed(true);
+    } catch (error) {
+      setCloseError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClosing(false);
+    }
+  };
 
   return (
     <div className="grid gap-4 @[900px]:grid-cols-[minmax(0,1fr)_minmax(0,260px)] @[900px]:items-start">
@@ -3172,7 +3219,7 @@ function SprintsView() {
             <h2 className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold text-[var(--color-text)]">
               {sprint.title}
             </h2>
-            {closed ? <Tag tone="neutral">Closed locally</Tag> : <Tag tone="success">Active</Tag>}
+            {closed ? <Tag tone="neutral">Closed</Tag> : <Tag tone="success">Active</Tag>}
           </div>
           <p className="mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">
             {sprint.startLabel} – {sprint.endLabel} / derived from open work
@@ -3226,16 +3273,20 @@ function SprintsView() {
             type="button"
             size="sm"
             variant="outline"
-            disabled={closed}
-            onClick={() => setClosed(true)}
+            disabled={closed || closing}
+            onClick={closeSprint}
             className="gap-1.5"
           >
-            <Archive className="size-3.5" />
-            {closed ? 'Sprint closed' : 'Close sprint'}
+            {closing ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+            {closed ? 'Sprint closed' : closing ? 'Closing sprint' : 'Close sprint'}
           </Button>
-          <p className="text-[11px] text-[var(--color-text-faint)]">
-            Closing is local to this session; no backend sprint is archived yet.
-          </p>
+          {closeError ? (
+            <p className="text-[11px] text-[var(--color-danger)]">{closeError}</p>
+          ) : (
+            <p className="text-[11px] text-[var(--color-text-faint)]">
+              Closing writes this derived sprint into the Albatross work model.
+            </p>
+          )}
         </div>
       </Panel>
     </div>

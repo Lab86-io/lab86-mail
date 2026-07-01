@@ -143,6 +143,7 @@ export async function generateDailyReport(input: {
   // Skip the progressive partial saves (used by the silent background pass so
   // it doesn't churn an already-rendered edition back to a "generating" state).
   silent?: boolean;
+  isFirstOpenOfMonth?: boolean;
 }) {
   const now = input.now || Date.now();
   const profile = scopeProfile(input.scope);
@@ -232,7 +233,10 @@ export async function generateDailyReport(input: {
     loadMemoryContext(),
     loadMcpContext(input.userId),
   ]);
-  const albatrossContext = buildAlbatrossDailyReportContext({ now });
+  const albatrossContext = buildAlbatrossDailyReportContext({
+    now,
+    isFirstOpenOfMonth: input.isFirstOpenOfMonth,
+  });
 
   const byDateDesc = (a: Thread, b: Thread) => Number(b.lastDate || 0) - Number(a.lastDate || 0);
   const all = [...candidates.values()];

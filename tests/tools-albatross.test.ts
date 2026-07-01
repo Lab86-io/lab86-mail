@@ -14,6 +14,7 @@ const apiMock = {
     listApprovals: 'albatross.listApprovals',
     getApproval: 'albatross.getApproval',
     decideApproval: 'albatross.decideApproval',
+    claimApproval: 'albatross.claimApproval',
     recordPlanApplication: 'albatross.recordPlanApplication',
     listPlanApplications: 'albatross.listPlanApplications',
     getProjectPane: 'albatross.getProjectPane',
@@ -32,6 +33,7 @@ const apiMock = {
 
 const mutationCalls: Array<{ fn: string; args: any }> = [];
 const operationCalls: any[] = [];
+const undoCalls: any[] = [];
 let approvalFixture: any = null;
 let sequence = 0;
 
@@ -42,10 +44,21 @@ async function convexMutationMock(fn: string, args: any) {
   if (fn === apiMock.albatrossWork.createSprint) return `sprint_${sequence}`;
   if (fn === apiMock.albatrossWork.enqueueApproval) return `approval_${sequence}`;
   if (fn === apiMock.albatrossWork.recordPlanApplication) return `application_${sequence}`;
+  if (fn === apiMock.albatrossWork.claimApproval) {
+    approvalFixture = { ...approvalFixture, status: 'claiming' };
+    return { ok: true, approval: approvalFixture };
+  }
   if (fn === apiMock.albatrossWork.decideApproval) {
+    approvalFixture = {
+      ...approvalFixture,
+      status: args.status,
+      decisionNote: args.decisionNote,
+      result: args.result ?? approvalFixture?.result,
+      undoExpiresAt: args.undoExpiresAt ?? approvalFixture?.undoExpiresAt,
+    };
     return {
       ok: true,
-      approval: { ...approvalFixture, status: args.status, decisionNote: args.decisionNote },
+      approval: approvalFixture,
     };
   }
   return { ok: true };
@@ -79,13 +92,26 @@ async function invokeToolMock(tool: any, args: any) {
     };
   }
   if (tool.name === 'send_message') return { ok: true, messageId: `message_${sequence}` };
-  if (tool.name === 'calendar_rsvp_event') return { ok: true, eventId: args.eventId, status: args.status };
+  if (tool.name === 'calendar_rsvp_event') {
+    return {
+      ok: true,
+      eventId: args.eventId,
+      status: args.status,
+      operationId: `operation_rsvp_${sequence}`,
+    };
+  }
   return { ok: true };
+}
+
+async function undoOperationMock(userId: string, operationId: string) {
+  undoCalls.push({ userId, operationId });
+  return { undone: operationId, surface: 'calendar' };
 }
 
 beforeEach(() => {
   mutationCalls.length = 0;
   operationCalls.length = 0;
+  undoCalls.length = 0;
   approvalFixture = null;
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
@@ -94,6 +120,7 @@ beforeEach(() => {
     convexQuery: convexQueryMock as any,
     recordOperation: recordOperationMock as any,
     newOperationBatchId: () => 'batch_mocked',
+    undoOperation: undoOperationMock as any,
     invokeTool: invokeToolMock as any,
   });
 });
@@ -226,9 +253,14 @@ describe('Albatross tools', () => {
       'albatross.archive_project',
       'albatross.archive_sprint',
     ]);
+    await runTool(albatross.albatrossCreateSprint.handler, {
+      title: 'Fallback batch sprint',
+      status: 'planned',
+    });
+    expect(operationCalls.at(-1)?.batchId).toBe('batch_mocked');
   });
 
-  test('approval queue tools list, reject, undo, and protect expired or unsupported approvals', async () => {
+  test('approval queue tools claim before execution, reject, undo provider operations, and protect unsupported approvals', async () => {
     const listed = await runTool(albatross.albatrossListApprovalQueue.handler, {
       status: 'pending',
       limit: 5,
@@ -246,6 +278,7 @@ describe('Albatross tools', () => {
     await expect(
       runTool(albatross.albatrossApproveAction.handler, { approvalId: 'approval_pending' }),
     ).rejects.toThrow(/Approval tool not allowed/);
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.claimApproval)).toBe(false);
 
     approvalFixture = {
       approvalId: 'approval_pending',
@@ -265,16 +298,45 @@ describe('Albatross tools', () => {
     });
     expect(approved.result.messageId).toMatch(/^message_/);
     expect(approved.approval.status).toBe('approved');
+    expect(mutationCalls.map((call) => call.fn)).toContain(apiMock.albatrossWork.claimApproval);
+    expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeGreaterThan(Date.now());
 
+    await expect(
+      runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_pending' }),
+    ).rejects.toThrow(/did not record an undoable/);
+
+    approvalFixture = {
+      approvalId: 'approval_reject',
+      status: 'pending',
+      toolName: 'send_message',
+      toolArgs: {},
+    };
     const rejected = await runTool(albatross.albatrossRejectAction.handler, {
-      approvalId: 'approval_pending',
+      approvalId: 'approval_reject',
       reason: 'User rejected.',
     });
     expect(rejected.ok).toBe(true);
     expect(mutationCalls.at(-1)?.args).toMatchObject({ status: 'rejected', decisionNote: 'User rejected.' });
 
-    const undone = await runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_pending' });
+    approvalFixture = {
+      approvalId: 'approval_rsvp',
+      status: 'pending',
+      toolName: 'calendar_rsvp_event',
+      toolArgs: {
+        account: 'jakob@example.test',
+        calendarId: 'cal_1',
+        eventId: 'evt_1',
+        status: 'yes',
+      },
+      operationBatchId: 'batch_approval',
+    };
+    const approvedRsvp = await runTool(albatross.albatrossApproveAction.handler, {
+      approvalId: 'approval_rsvp',
+    });
+    expect(approvedRsvp.result.operationId).toMatch(/^operation_rsvp_/);
+    const undone = await runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_rsvp' });
     expect(undone.ok).toBe(true);
+    expect(undoCalls).toEqual([{ userId: 'test_user_tools', operationId: approvedRsvp.result.operationId }]);
     expect(mutationCalls.at(-1)?.args.status).toBe('undone');
 
     approvalFixture = {

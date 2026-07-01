@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import seed from '../fixtures/albatross-0.9.seed.json';
 import { buildAlbatrossDailyReportContext } from '../lib/albatross/daily-report';
 import { buildAlbatrossApplicationPlan, unresolvedArtifactsAfterUndo } from '../lib/albatross/work-model';
 
@@ -51,12 +52,37 @@ describe('Albatross plan application model', () => {
 
     expect(unresolved).toEqual([{ kind: 'task', id: 'card_1', title: 'List missing tax documents' }]);
   });
+
+  test('source refs dedupe by kind and id together', () => {
+    const plan = buildAlbatrossApplicationPlan({
+      intentId: 'intent_same_ref_id',
+      plan: {
+        digitalActions: [
+          {
+            kind: 'task',
+            title: 'Preserve both evidence refs',
+            sourceRefs: [{ kind: 'mailThread', id: 'same-id' }],
+          },
+        ],
+        sourceRefs: [
+          { kind: 'intent', id: 'same-id' },
+          { kind: 'mailThread', id: 'same-id' },
+        ],
+      },
+    });
+
+    expect(plan.executableSteps[0].sourceRefs).toEqual([
+      { kind: 'mailThread', id: 'same-id' },
+      { kind: 'intent', id: 'same-id' },
+    ]);
+  });
 });
 
 describe('Albatross Daily Report context', () => {
   test('asks before centering loud unknown areas while keeping declared intents visible', () => {
     const context = buildAlbatrossDailyReportContext({
       now: Date.parse('2026-06-30T14:00:00.000Z'),
+      seedData: seed,
     });
 
     expect(context.askBeforeCentering.map((item) => item.areaId)).toContain('area_cardhunt');
@@ -70,6 +96,7 @@ describe('Albatross Daily Report context', () => {
     const context = buildAlbatrossDailyReportContext({
       now: Date.parse('2026-06-30T14:00:00.000Z'),
       includeAreaIds: ['area_cardhunt'],
+      seedData: seed,
     });
 
     expect(context.askBeforeCentering.map((item) => item.areaId)).not.toContain('area_cardhunt');
@@ -79,8 +106,19 @@ describe('Albatross Daily Report context', () => {
   test('first report of the month asks for a broader context review', () => {
     const context = buildAlbatrossDailyReportContext({
       now: Date.parse('2026-07-01T14:00:00.000Z'),
+      seedData: seed,
+      isFirstOpenOfMonth: true,
     });
 
     expect(context.monthlyPrompt).toContain('First report of the month');
+  });
+
+  test('does not infer monthly prompt from the calendar date alone', () => {
+    const context = buildAlbatrossDailyReportContext({
+      now: Date.parse('2026-07-01T14:00:00.000Z'),
+      seedData: seed,
+    });
+
+    expect(context.monthlyPrompt).toBeUndefined();
   });
 });

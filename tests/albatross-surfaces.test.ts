@@ -35,6 +35,7 @@ import {
   splitIntentText,
   summarizeSetupProgress,
   type Task,
+  tasks,
   toClassifierArtifact,
   unassignedStats,
 } from '../components/albatross/surface-data';
@@ -524,6 +525,20 @@ describe('Work board read model (issues #83 + #84)', () => {
     const standalone = groups.find((group) => group.project === null);
     expect(standalone?.title).toBe('Standalone tasks');
     expect(standalone?.cards.map((card) => card.id)).toContain('task_tax_missing_docs');
+  });
+
+  test('project groups also honor project taskIds when task projectId is absent', () => {
+    const linkedIds = new Set(['task_cardhunt_review_onboarding', 'task_cardhunt_send_demo_notes']);
+    const withoutDirectProject = tasks.map((task) =>
+      linkedIds.has(task.id) ? { ...task, projectId: undefined } : task,
+    );
+
+    const groups = buildProjectTaskGroups(withoutDirectProject);
+    const cardhunt = groups.find((group) => group.project?.id === 'project_cardhunt_launch');
+    const standalone = groups.find((group) => group.project === null);
+
+    expect(cardhunt?.cards.map((card) => card.id).sort()).toEqual([...linkedIds].sort());
+    expect(standalone?.cards.map((card) => card.id)).not.toContain('task_cardhunt_review_onboarding');
   });
 
   test('area groups resolve names and sort busiest first', () => {

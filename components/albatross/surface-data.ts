@@ -135,6 +135,21 @@ export interface DigitalAction {
   areaId?: string;
   priority?: number;
   durationMinutes?: number;
+  startIso?: string;
+  endIso?: string;
+  account?: string;
+  to?: string;
+  cc?: string;
+  bcc?: string;
+  subject?: string;
+  body?: string;
+  html?: string;
+  attendees?: string[];
+  calendarId?: string;
+  eventId?: string;
+  rsvpStatus?: 'yes' | 'no' | 'maybe';
+  description?: string;
+  sourceRefs?: SourceRef[];
 }
 
 export interface IntentPlan {
@@ -2353,6 +2368,11 @@ function countByColumn(source: Task[]) {
   };
 }
 
+function tasksForProject(project: Project, source: Task[] = tasks): Task[] {
+  const linkedIds = new Set(project.taskIds ?? []);
+  return source.filter((task) => task.projectId === project.id || linkedIds.has(task.id));
+}
+
 export interface KanbanColumn {
   key: KanbanColumnKey;
   label: string;
@@ -2400,9 +2420,12 @@ export function buildProjectTaskGroups(source: Task[] = tasks): ProjectTaskGroup
   const groups: ProjectTaskGroup[] = projects.map((project) => ({
     project,
     title: project.title ?? titleCaseLocal(project.status),
-    cards: source.filter((task) => task.projectId === project.id).map(toBoardCard),
+    cards: tasksForProject(project, source).map(toBoardCard),
   }));
-  const standalone = source.filter((task) => !task.projectId).map(toBoardCard);
+  const projectTaskIds = new Set(projects.flatMap((project) => project.taskIds ?? []));
+  const standalone = source
+    .filter((task) => !task.projectId && !projectTaskIds.has(task.id))
+    .map(toBoardCard);
   if (standalone.length) groups.push({ project: null, title: 'Standalone tasks', cards: standalone });
   return groups;
 }
@@ -2414,6 +2437,8 @@ export interface SprintSummary {
   status: 'active';
   startLabel: string;
   endLabel: string;
+  startAt: number;
+  endAt: number;
   cards: BoardCard[];
   counts: ReturnType<typeof countByColumn>;
   derived: boolean;
@@ -2449,6 +2474,8 @@ export function deriveActiveSprint(now: number, source: Task[] = tasks): SprintS
     status: 'active',
     startLabel: fmtSprintDate(monday),
     endLabel: fmtSprintDate(sunday),
+    startAt: monday.getTime(),
+    endAt: sunday.getTime(),
     cards,
     counts: countByColumn(source),
     derived: true,
@@ -2483,7 +2510,7 @@ const ARTIFACT_KINDS: ArtifactKind[] = ['mailThread', 'calendarEvent', 'mcpItem'
 export function buildProjectPane(projectId: string): ProjectPaneModel | null {
   const project = projectById.get(projectId);
   if (!project) return null;
-  const projectTasks = tasks.filter((task) => task.projectId === projectId);
+  const projectTasks = tasksForProject(project);
   const cards = projectTasks.map(toBoardCard);
   const intentIds = new Set(project.intentIds ?? []);
   const projectIntents = intents.filter((intent) => intentIds.has(intent.id));

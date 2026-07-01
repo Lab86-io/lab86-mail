@@ -34,6 +34,29 @@ export async function recordSavedDraftOperation(
   });
 }
 
+export async function saveDraftAndRecordOperation(
+  input: {
+    ctx: Pick<ToolContext, 'userId'>;
+    doc: Draft;
+    args: Pick<Draft, 'subject'>;
+  },
+  helpers = {
+    saveDraft: saveDraftRecord,
+    deleteDraft: deleteDraftRecord,
+    recordOperation: recordSavedDraftOperation,
+  },
+) {
+  const saved = await helpers.saveDraft(input.doc);
+  let operationId: string | undefined;
+  try {
+    operationId = await helpers.recordOperation({ ctx: input.ctx, args: input.args, saved });
+  } catch (error) {
+    if (saved._id) await helpers.deleteDraft(saved._id).catch(() => undefined);
+    throw error;
+  }
+  return { saved, operationId };
+}
+
 // Attachment sources the agent can pull and send: a web url, or a file off
 // an existing email. Both resolve to bytes server-side at send time. Kept flat
 // (rather than a discriminated union) so the model doesn't need a type tag, but
@@ -345,8 +368,7 @@ export const saveDraftTool = defineTool({
   output: z.object({ ok: z.boolean(), draft: z.any(), operationId: z.string().optional() }),
   async handler(args, ctx) {
     const doc: Draft = { ...args, updatedAt: Date.now() };
-    const saved = await saveDraftRecord(doc);
-    const operationId = await recordSavedDraftOperation({ ctx, args, saved });
+    const { saved, operationId } = await saveDraftAndRecordOperation({ ctx, doc, args });
     return { ok: true, draft: saved, operationId };
   },
 });

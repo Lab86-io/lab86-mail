@@ -1,5 +1,3 @@
-import seed from '@/fixtures/albatross-0.9.seed.json';
-
 export interface AlbatrossDailyReportArea {
   areaId: string;
   name: string;
@@ -36,14 +34,11 @@ interface BuildAlbatrossDailyReportInput {
   now?: number;
   includeAreaIds?: string[];
   seedData?: any;
+  isFirstOpenOfMonth?: boolean;
 }
 
 function dayKey(ts: number) {
   return new Date(ts).toISOString().slice(0, 10);
-}
-
-function monthDay(ts: number) {
-  return new Date(ts).getUTCDate();
 }
 
 function table(seedData: any, key: string): any[] {
@@ -57,7 +52,7 @@ function areaName(areasById: Map<string, any>, areaId: string) {
 export function buildAlbatrossDailyReportContext(
   input: BuildAlbatrossDailyReportInput = {},
 ): AlbatrossDailyReportContext {
-  const seedData = input.seedData || seed;
+  const seedData = input.seedData || { tables: {} };
   const now = input.now || Date.now();
   const today = dayKey(now);
   const includeAreaIds = new Set(input.includeAreaIds || []);
@@ -161,7 +156,7 @@ export function buildAlbatrossDailyReportContext(
     contextReview,
     completions,
     monthlyPrompt:
-      monthDay(now) === 1
+      input.isFirstOpenOfMonth === true
         ? 'First report of the month: review active areas, paused projects, and stale context before prioritizing today.'
         : undefined,
   };
@@ -169,6 +164,14 @@ export function buildAlbatrossDailyReportContext(
 
 export function summarizeAlbatrossDailyReportContext(context: AlbatrossDailyReportContext): string {
   const parts: string[] = [];
+  if (context.includedAreas.length) {
+    parts.push(
+      `Included Albatross areas: ${context.includedAreas
+        .map((area) => `${area.name} (${area.reason})`)
+        .slice(0, 4)
+        .join(' | ')}`,
+    );
+  }
   if (context.activeIntents.length) {
     parts.push(
       `Active intents: ${context.activeIntents
@@ -187,6 +190,22 @@ export function summarizeAlbatrossDailyReportContext(context: AlbatrossDailyRepo
   }
   if (context.askBeforeCentering.length) {
     parts.push(context.askBeforeCentering.map((item) => item.prompt).join(' '));
+  }
+  if (context.contextReview.length) {
+    parts.push(
+      `Context review: ${context.contextReview
+        .map((item) => item.title)
+        .slice(0, 3)
+        .join(' | ')}`,
+    );
+  }
+  if (context.completions.length) {
+    parts.push(
+      `Recent Albatross completions: ${context.completions
+        .map((event) => event.summary)
+        .slice(0, 3)
+        .join(' | ')}`,
+    );
   }
   if (context.monthlyPrompt) parts.push(context.monthlyPrompt);
   return parts.join(' ');

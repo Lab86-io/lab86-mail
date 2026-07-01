@@ -10,6 +10,7 @@ import {
   recordSavedDraftOperation,
   replyAllMessage,
   replyMessage,
+  saveDraftAndRecordOperation,
   saveDraftTool,
   scheduleSend,
   sendMessage,
@@ -110,6 +111,40 @@ describe('compose tools', () => {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
     }
+  });
+
+  test('save_draft rolls back the local draft when operation recording fails', async () => {
+    const deleted: string[] = [];
+    let failed = false;
+    try {
+      await saveDraftAndRecordOperation(
+        {
+          ctx: { userId: 'test_user_tools' },
+          doc: {
+            _id: 'draft_rollback',
+            account: 'jakob@example.test',
+            to: 'alex@example.test',
+            subject: 'Rollback draft on operation failure',
+            body: 'Draft body',
+            updatedAt: 1,
+          },
+          args: { subject: 'Rollback draft on operation failure' },
+        },
+        {
+          saveDraft: async (draft) => draft,
+          deleteDraft: async (id) => {
+            deleted.push(id);
+          },
+          recordOperation: async () => {
+            throw new Error('record failed');
+          },
+        },
+      );
+    } catch {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    expect(deleted).toEqual(['draft_rollback']);
   });
 
   test('reply and reply_all require cached anchor messages', async () => {

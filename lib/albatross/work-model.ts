@@ -113,7 +113,9 @@ function stepId(kind: string, title: string, index: number): string {
 function refsFor(input: AlbatrossApplicationInput, action?: { sourceRefs?: AlbatrossSourceRef[] }) {
   return [...(action?.sourceRefs || []), ...(input.plan.sourceRefs || [])].filter(
     (ref, index, refs) =>
-      ref.kind && ref.id && refs.findIndex((candidate) => candidate.id === ref.id) === index,
+      ref.kind &&
+      ref.id &&
+      refs.findIndex((candidate) => candidate.kind === ref.kind && candidate.id === ref.id) === index,
   );
 }
 
