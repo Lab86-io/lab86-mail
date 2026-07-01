@@ -1,3 +1,4 @@
+import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import type { BriefComposition } from './brief-composition';
 
 export type AccountEmail = string;
@@ -482,6 +483,7 @@ export interface DailyReport {
     tasks?: DailyReportTaskItem[];
     calendar?: DailyReportCalendarItem[];
     mcp?: DailyReportMcpItem[];
+    albatross?: AlbatrossDailyReportContext;
     noiseSummary?: string;
   };
   stats: {
@@ -495,6 +497,9 @@ export interface DailyReport {
     openTasks?: number;
     completedTasks?: number;
     calendarEvents?: number;
+    albatrossActiveIntents?: number;
+    albatrossActiveProjects?: number;
+    albatrossQuestions?: number;
   };
   model?: string;
   errors?: string[];

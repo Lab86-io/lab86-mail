@@ -19,7 +19,7 @@ export const record = mutation({
     userId: v.string(),
     agent: v.union(v.literal('user'), v.literal('ai')),
     tool: v.string(),
-    surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks')),
+    surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks'), v.literal('albatross')),
     summary: v.string(),
     batchId: v.optional(v.string()),
     chatId: v.optional(v.string()),

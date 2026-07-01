@@ -400,6 +400,152 @@ export default defineSchema({
     .index('by_user_account_artifact', ['userId', 'accountId', 'artifactKind', 'artifactId'])
     .index('by_user_external', ['userId', 'externalId']),
 
+  albatrossProjects: defineTable({
+    userId: v.string(),
+    externalId: v.optional(v.string()),
+    title: v.string(),
+    outcome: v.optional(v.string()),
+    areaId: v.optional(v.string()),
+    status: v.union(v.literal('active'), v.literal('paused'), v.literal('done'), v.literal('archived')),
+    sourceIntentId: v.optional(v.string()),
+    sourceBatchId: v.optional(v.string()),
+    activeSprintId: v.optional(v.id('albatrossSprints')),
+    sourceRefs: v.optional(v.array(albatrossSourceRef)),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_area', ['userId', 'areaId'])
+    .index('by_user_external', ['userId', 'externalId'])
+    .index('by_user_source_intent', ['userId', 'sourceIntentId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
+
+  albatrossProjectLinks: defineTable({
+    userId: v.string(),
+    projectId: v.id('albatrossProjects'),
+    artifactKind: v.union(
+      v.literal('task'),
+      v.literal('calendarEvent'),
+      v.literal('mailThread'),
+      v.literal('mcpItem'),
+      v.literal('intent'),
+      v.literal('emailDraft'),
+      v.literal('areaFact'),
+      v.literal('sprint'),
+      v.literal('operationBatch'),
+    ),
+    artifactId: v.string(),
+    accountId: v.optional(v.string()),
+    areaId: v.optional(v.string()),
+    role: v.union(v.literal('primary'), v.literal('supporting'), v.literal('evidence')),
+    sourceIntentId: v.optional(v.string()),
+    operationBatchId: v.optional(v.string()),
+    title: v.optional(v.string()),
+    url: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_project', ['projectId'])
+    .index('by_user_project', ['userId', 'projectId'])
+    .index('by_user_artifact', ['userId', 'artifactKind', 'artifactId'])
+    .index('by_user_intent', ['userId', 'sourceIntentId'])
+    .index('by_user_batch', ['userId', 'operationBatchId']),
+
+  albatrossSprints: defineTable({
+    userId: v.string(),
+    projectId: v.optional(v.id('albatrossProjects')),
+    externalId: v.optional(v.string()),
+    title: v.string(),
+    goal: v.optional(v.string()),
+    cadence: v.union(v.literal('weekly'), v.literal('monthly'), v.literal('custom')),
+    status: v.union(v.literal('planned'), v.literal('active'), v.literal('closed'), v.literal('archived')),
+    startAt: v.optional(v.number()),
+    endAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    closedAt: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_project', ['userId', 'projectId'])
+    .index('by_user_external', ['userId', 'externalId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
+
+  albatrossApprovals: defineTable({
+    userId: v.string(),
+    kind: v.union(
+      v.literal('email_send'),
+      v.literal('calendar_invite'),
+      v.literal('calendar_rsvp'),
+      v.literal('provider_write'),
+      v.literal('external_action'),
+    ),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('claiming'),
+      v.literal('approved'),
+      v.literal('rejected'),
+      v.literal('undone'),
+      v.literal('expired'),
+    ),
+    title: v.string(),
+    detail: v.optional(v.string()),
+    areaId: v.optional(v.string()),
+    intentId: v.optional(v.string()),
+    projectId: v.optional(v.id('albatrossProjects')),
+    sprintId: v.optional(v.id('albatrossSprints')),
+    operationBatchId: v.optional(v.string()),
+    artifactKind: v.optional(v.string()),
+    artifactId: v.optional(v.string()),
+    toolName: v.string(),
+    toolArgs: v.any(),
+    result: v.optional(v.any()),
+    risk: v.optional(v.string()),
+    undoExpiresAt: v.optional(v.number()),
+    decidedAt: v.optional(v.number()),
+    decisionNote: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status_created', ['userId', 'status', 'createdAt'])
+    .index('by_user_intent', ['userId', 'intentId'])
+    .index('by_user_project', ['userId', 'projectId'])
+    .index('by_user_batch', ['userId', 'operationBatchId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
+
+  albatrossPlanApplications: defineTable({
+    userId: v.string(),
+    intentId: v.string(),
+    intentText: v.optional(v.string()),
+    planId: v.optional(v.string()),
+    areaId: v.optional(v.string()),
+    projectId: v.optional(v.id('albatrossProjects')),
+    operationBatchId: v.string(),
+    status: v.union(
+      v.literal('applied'),
+      v.literal('partially_applied'),
+      v.literal('queued'),
+      v.literal('undone'),
+    ),
+    artifacts: v.array(v.any()),
+    operationIds: v.array(v.string()),
+    pendingApprovalIds: v.array(v.string()),
+    unresolvedArtifacts: v.array(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_intent', ['userId', 'intentId'])
+    .index('by_user_project', ['userId', 'projectId'])
+    .index('by_user_batch', ['userId', 'operationBatchId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
+
   mailSyncStates: defineTable({
     userId: v.string(),
     accountId: v.string(),
@@ -756,7 +902,7 @@ export default defineSchema({
     userId: v.string(),
     agent: v.union(v.literal('user'), v.literal('ai')),
     tool: v.string(),
-    surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks')),
+    surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks'), v.literal('albatross')),
     summary: v.string(),
     batchId: v.optional(v.string()),
     chatId: v.optional(v.string()),

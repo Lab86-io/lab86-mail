@@ -14,6 +14,7 @@ import type * as ai from "../ai.js";
 import type * as albatross from "../albatross.js";
 import type * as albatrossDev from "../albatrossDev.js";
 import type * as albatrossModel from "../albatrossModel.js";
+import type * as albatrossWork from "../albatrossWork.js";
 import type * as boards from "../boards.js";
 import type * as calendarData from "../calendarData.js";
 import type * as calendarSync from "../calendarSync.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   albatross: typeof albatross;
   albatrossDev: typeof albatrossDev;
   albatrossModel: typeof albatrossModel;
+  albatrossWork: typeof albatrossWork;
   boards: typeof boards;
   calendarData: typeof calendarData;
   calendarSync: typeof calendarSync;

@@ -40,6 +40,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ name: stri
       userId: user.userId,
       userEmail: user.email,
       userName: user.name,
+      operationBatchId:
+        typeof body?.operationBatchId === 'string' ? body.operationBatchId.slice(0, 180) : undefined,
       userTimezone: timezone,
     });
     return NextResponse.json({ ok: true, result });

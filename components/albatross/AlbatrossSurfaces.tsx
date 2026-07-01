@@ -14,9 +14,11 @@ import {
   FolderPlus,
   GitPullRequest,
   Globe,
+  Inbox,
   Layers,
   Link2,
   ListChecks,
+  Loader2,
   type LucideIcon,
   Mail,
   Mic,
@@ -24,6 +26,7 @@ import {
   Pencil,
   Play,
   Plus,
+  ShieldCheck,
   Sparkles,
   Users,
   Wrench,
@@ -45,6 +48,15 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  type AlbatrossApplicationInput,
+  type AlbatrossApplicationPlan,
+  type AlbatrossApplicationStep,
+  type AlbatrossArtifactKind,
+  type AlbatrossProjectMode,
+  buildAlbatrossApplicationPlan,
+} from '@/lib/albatross/work-model';
+import { callTool } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import {
   type Approval,
@@ -59,14 +71,20 @@ import {
   type ArtifactClassification,
   type ArtifactKind,
   applyReviewDecision,
+  approvalQueue,
   areaName,
   areas,
+  type BoardCard,
   buildAreaDetail,
   buildAreaLens,
   buildAreaLensCounts,
   buildAreaSummaries,
+  buildAreaTaskGroups,
   buildIntentWorkbench,
+  buildKanbanColumns,
   buildNoiseRules,
+  buildProjectPane,
+  buildProjectTaskGroups,
   buildRecentCorrections,
   buildReviewDetail,
   buildReviewQueue,
@@ -78,6 +96,7 @@ import {
   classifyThread,
   createCapturedIntent,
   type DraftedFact,
+  deriveActiveSprint,
   draftedFactKey,
   draftSetupFact,
   type FactStatus,
@@ -90,9 +109,9 @@ import {
   type ParsedIntent,
   type ParsedIntentKind,
   type ProjectNeed,
+  type ProjectPaneModel,
   type ProposedArtifact,
   parseIntent,
-  pickIntentCaptureLabel,
   type ReviewActionKind,
   type ReviewDecisionEffect,
   type ReviewDetail,
@@ -114,21 +133,37 @@ type AlbatrossSurfaceKind = 'areas' | 'intents' | 'unassigned';
 // reset only when you leave Albatross entirely - they are session-local by design.
 export function AlbatrossSurface({ kind }: { kind: AlbatrossSurfaceKind }) {
   const [captured, setCaptured] = useState<CapturedIntent[]>([]);
+  // The capture dialog is owned here and shared by every entry point - the
+  // bottom-center floating button on all surfaces and the New Intent button in
+  // the Intents header - so there is one dialog, one open state, one capture path.
+  const [captureOpen, setCaptureOpen] = useState(false);
 
   const addCaptures = (next: CapturedIntent[]) => {
     if (next.length) setCaptured((prev) => [...next, ...prev]);
   };
 
+  const openCapture = () => setCaptureOpen(true);
+
   return (
     <div className="relative flex h-full min-w-0 flex-col">
       {kind === 'intents' ? (
-        <IntentsSurface captured={captured} />
+        <IntentsSurface captured={captured} onNewIntent={openCapture} />
       ) : kind === 'unassigned' ? (
         <UnassignedSurface />
       ) : (
         <AreasSurface />
       )}
-      <IntentCaptureFab captureCount={captured.length} onCapture={addCaptures} />
+      {/* New Intent is always one click away as a bottom-center floating button
+          on every Albatross surface - including Intents, where the header action
+          alone proved too easy to miss. Bottom-center keeps it clear of the
+          bottom-right Ask Assistant launcher. */}
+      <IntentCaptureFab onClick={openCapture} />
+      <IntentCaptureDialog
+        open={captureOpen}
+        onOpenChange={setCaptureOpen}
+        onCapture={addCaptures}
+        captureCount={captured.length}
+      />
     </div>
   );
 }
@@ -1027,21 +1062,41 @@ const CONTEXT_TONE: Record<'verified' | 'candidate' | 'rejected', Tone> = {
   rejected: 'danger',
 };
 
-function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
+type IntentsMode = 'intents' | 'board' | 'approvals';
+
+// Lifted apply state per intent (issue #81). The pane stays a dumb renderer; the
+// surface owns the async tool call so the application result survives switching
+// between intents and modes. Nothing here fakes success - a failed call keeps the
+// error and falls back to the locally computed preview.
+interface ApplyOutcome {
+  phase: 'applying' | 'applied' | 'failed';
+  result?: ApplyResult;
+  error?: string;
+}
+
+function IntentsSurface({
+  captured = [],
+  onNewIntent,
+}: {
+  captured?: CapturedIntent[];
+  onNewIntent?: () => void;
+}) {
   // Captures dumped this session sit on top of the seeded backlog and run through
   // the SAME parser as seeded intents, so a fresh thought is shown as a parsed
   // object (area, plan, questions) - just flagged as a session capture - instead
   // of a dead raw holding panel.
   const all = useMemo<Intent[]>(() => [...captured, ...intents], [captured]);
   const capturedIds = useMemo(() => new Set(captured.map((intent) => intent.id)), [captured]);
+  const [mode, setMode] = useState<IntentsMode>('intents');
   const [filter, setFilter] = useState<'all' | 'captured' | 'needs_you' | 'ready'>('all');
   const [selectedId, setSelectedId] = useState(all[0]?.id ?? '');
-  // Corrections, answers, and lifecycle are session-local and keyed per intent so
-  // moving between intents keeps your in-flight work, and nothing touches Convex
-  // or the seed (issue #79: correct, answer, and apply are all local).
+  // Corrections, answers, lifecycle, and apply results are session-local and keyed
+  // per intent so moving between intents keeps your in-flight work, and nothing
+  // touches Convex or the seed (issue #79: correct, answer, and apply are local).
   const [answersByIntent, setAnswersByIntent] = useState<Record<string, Record<string, string>>>({});
   const [corrections, setCorrections] = useState<Record<string, IntentCorrection>>({});
   const [lifecycle, setLifecycle] = useState<Record<string, IntentLifecycle>>({});
+  const [applyByIntent, setApplyByIntent] = useState<Record<string, ApplyOutcome>>({});
   const capturedParsedById = useMemo(
     () => new Map(captured.map((intent) => [intent.id, parseIntent(intent)] as const)),
     [captured],
@@ -1071,6 +1126,26 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
   );
   const approvals = bench?.approvals ?? [];
 
+  const applyPlan = async (intentId: string, input: AlbatrossApplicationInput) => {
+    setApplyByIntent((prev) => ({ ...prev, [intentId]: { phase: 'applying' } }));
+    try {
+      const result = await callTool<ApplyResult>('albatross_apply_intent_plan', {
+        intentId: input.intentId,
+        intentText: input.intentText,
+        areaId: input.areaId,
+        account: input.account,
+        projectMode: input.projectMode,
+        plan: input.plan,
+      });
+      setApplyByIntent((prev) => ({ ...prev, [intentId]: { phase: 'applied', result } }));
+    } catch (error) {
+      setApplyByIntent((prev) => ({
+        ...prev,
+        [intentId]: { phase: 'failed', error: error instanceof Error ? error.message : String(error) },
+      }));
+    }
+  };
+
   const filterOptions: { value: 'all' | 'captured' | 'needs_you' | 'ready'; label: string }[] = [
     { value: 'all', label: 'All' },
     ...(captured.length ? [{ value: 'captured' as const, label: 'Captured' }] : []),
@@ -1081,9 +1156,37 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
   return (
     <Surface
       title="Intents"
-      controls={<Segmented value={filter} onChange={setFilter} options={filterOptions} />}
+      controls={
+        <>
+          {mode === 'intents' && onNewIntent ? (
+            <Button type="button" size="sm" onClick={onNewIntent} className="gap-1.5">
+              <Plus className="size-4" />
+              New Intent
+            </Button>
+          ) : null}
+          {mode === 'intents' ? (
+            <Segmented value={filter} onChange={setFilter} options={filterOptions} />
+          ) : null}
+          <Segmented
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'intents', label: 'Intents' },
+              { value: 'board', label: 'Board' },
+              { value: 'approvals', label: 'Approvals' },
+            ]}
+          />
+        </>
+      }
     >
-      <div className="grid gap-4 @[900px]:grid-cols-[minmax(0,340px)_minmax(0,1fr)] @[900px]:items-start">
+      {mode === 'board' ? <WorkBoard /> : null}
+      {mode === 'approvals' ? <ApprovalQueuePanel /> : null}
+      <div
+        className={cn(
+          'grid gap-4 @[900px]:grid-cols-[minmax(0,340px)_minmax(0,1fr)] @[900px]:items-start',
+          mode !== 'intents' && 'hidden',
+        )}
+      >
         <Panel className="@[900px]:max-h-[calc(100vh-9.5rem)]">
           <PanelHeader title="Captured" count={visible.length} />
           <div className="min-h-0 overflow-y-auto">
@@ -1154,6 +1257,9 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
             }
             status={lifecycle[activeId] ?? 'active'}
             onStatus={(next) => setLifecycle((prev) => ({ ...prev, [activeId]: next }))}
+            application={applyByIntent[activeId]}
+            onApply={(input) => applyPlan(activeId, input)}
+            onResetApply={() => setApplyByIntent((prev) => withoutKey(prev, activeId))}
           />
         ) : (
           <Panel>
@@ -1169,8 +1275,9 @@ function IntentsSurface({ captured = [] }: { captured?: CapturedIntent[] }) {
 
 // The Intent pane is the operational object view: the raw capture stays close as
 // evidence, but the pane leads with how Albatross read it, what it would create,
-// and every place the user can correct or steer it. Nothing here executes - the
-// plan can only be staged for approval (issue #81 owns real apply semantics).
+// and every place the user can correct or steer it. The Apply plan section (issue
+// #81) runs safe artifacts through real tools and routes human-facing writes to
+// the approval queue - nothing here pretends to send.
 function IntentPane({
   parsed,
   approvals,
@@ -1181,6 +1288,9 @@ function IntentPane({
   onCorrect,
   status,
   onStatus,
+  application,
+  onApply,
+  onResetApply,
 }: {
   parsed: ParsedIntent;
   approvals: Approval[];
@@ -1191,6 +1301,9 @@ function IntentPane({
   onCorrect: (patch: Partial<IntentCorrection>) => void;
   status: IntentLifecycle;
   onStatus: (next: IntentLifecycle) => void;
+  application?: ApplyOutcome;
+  onApply: (input: AlbatrossApplicationInput) => void;
+  onResetApply: () => void;
 }) {
   const { intent, plan, contextPack } = parsed;
   const questions = intent.questions;
@@ -1205,6 +1318,14 @@ function IntentPane({
     plan.physicalActions.length > 0;
   const canStage = allAnswered && hasStageableDraft;
   const blocked = !canStage;
+
+  // The apply input mirrors what the tool will receive, so the local preview and
+  // the real call agree on what runs, what queues, and what stays unresolved.
+  const applyInput = useMemo<AlbatrossApplicationInput>(
+    () => buildApplyInput(parsed, effectiveArea, effectiveNeed),
+    [parsed, effectiveArea, effectiveNeed],
+  );
+  const applyPreview = useMemo(() => buildAlbatrossApplicationPlan(applyInput), [applyInput]);
 
   const questionsNode = questions.length ? (
     <QuestionsSection questions={questions} answers={answers} onAnswer={onAnswer} />
@@ -1285,6 +1406,15 @@ function IntentPane({
       <ReferencesSection plan={plan} />
 
       {approvals.length ? <ApprovalsSection approvals={approvals} /> : null}
+
+      <ApplyPlanSection
+        preview={applyPreview}
+        application={application}
+        canApply={canStage}
+        openQuestionCount={openQuestions.length}
+        onApply={() => onApply(applyInput)}
+        onReset={onResetApply}
+      />
 
       <LifecycleFooter
         status={status}
@@ -1929,7 +2059,7 @@ function LifecycleFooter({
       staged: 'Staged for approval - nothing has been sent, scheduled, or created.',
       paused: 'Paused - held out of your active intents. Nothing was executed.',
       archived: 'Archived - hidden from the active list. Nothing was executed.',
-      done: 'Marked done - closed locally. Nothing was executed in this prototype.',
+      done: 'Marked done for this session. Nothing was executed.',
     };
     const revertLabel =
       status === 'staged'
@@ -1964,21 +2094,6 @@ function LifecycleFooter({
   return (
     <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-3">
       <div className="flex flex-wrap items-center gap-1.5">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button type="button" size="sm" disabled={!canApply} onClick={() => onStatus('staged')}>
-                <ArrowRight className="size-3.5" />
-                Apply plan
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {canApply
-              ? 'Stage this plan for approval. Nothing executes yet.'
-              : `Answer ${openQuestionCount} more question${openQuestionCount === 1 ? '' : 's'} first.`}
-          </TooltipContent>
-        </Tooltip>
         <Button type="button" size="sm" variant="ghost" onClick={() => onStatus('paused')}>
           <Pause className="size-3.5" />
           Pause
@@ -1991,19 +2106,19 @@ function LifecycleFooter({
           <CheckCircle2 className="size-3.5" />
           Done
         </Button>
+        <span className="ml-auto text-[11.5px] text-[var(--color-text-faint)]">
+          {canApply
+            ? 'Pause or archive are local to this session.'
+            : `Answer ${openQuestionCount} question${openQuestionCount === 1 ? '' : 's'} above to apply.`}
+        </span>
       </div>
-      <p className="mt-1.5 text-[11.5px] text-[var(--color-text-faint)]">
-        {canApply
-          ? 'Applying only stages the plan for approval - issue #81 will run real actions.'
-          : 'Apply unlocks once every question above is answered. Nothing here has executed.'}
-      </p>
     </div>
   );
 }
 
 function ApprovalsSection({ approvals }: { approvals: Approval[] }) {
   // undefined = still awaiting a decision; the human gate is right next to the
-  // action it controls (HAX: explicit control + correction).
+  // action it controls: explicit control plus correction.
   const [decisions, setDecisions] = useState<Record<string, boolean>>({});
 
   return (
@@ -2082,6 +2197,1204 @@ function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T
   const next = { ...record };
   delete next[key];
   return next;
+}
+
+/* ------------------------------------------------------------------ */
+/* Issue #81 - Apply plan through real tools and operation batches     */
+/* ------------------------------------------------------------------ */
+/* The pane builds the same application input the tool receives, so the */
+/* local preview and the real call agree on what runs, what queues for  */
+/* approval, and what stays unresolved. The button calls the tool; the   */
+/* result is reported verbatim - operation batch, applied artifacts,     */
+/* queued approvals, unresolved reasons - with no fabricated success.    */
+
+interface ApplyResultOperation {
+  operationId?: string;
+  tool?: string;
+  title?: string;
+  artifactId?: string;
+  projectId?: string;
+}
+interface ApplyResultApproval {
+  approvalId?: string;
+  title?: string;
+  toolName?: string;
+}
+interface ApplyResult {
+  ok: boolean;
+  operationBatchId: string;
+  applicationId?: string;
+  projectId?: string;
+  operations: ApplyResultOperation[];
+  approvals: ApplyResultApproval[];
+  unresolved: AlbatrossApplicationStep[];
+}
+
+const STEP_KIND_META: Record<AlbatrossArtifactKind, { label: string; icon: LucideIcon }> = {
+  project: { label: 'Project', icon: Layers },
+  task: { label: 'Task', icon: ListChecks },
+  calendar_event: { label: 'Event', icon: CalendarPlus },
+  email_draft: { label: 'Draft', icon: Mail },
+  email_send: { label: 'Send email', icon: Mail },
+  calendar_rsvp: { label: 'RSVP', icon: CalendarDays },
+  area_fact: { label: 'Area fact', icon: AtSign },
+};
+
+function stepKindMeta(kind: string) {
+  return STEP_KIND_META[kind as AlbatrossArtifactKind] ?? { label: titleCase(kind), icon: Sparkles };
+}
+
+function shortBatch(id: string): string {
+  return id.length > 10 ? `…${id.slice(-8)}` : id;
+}
+
+function projectModeFor(need: ProjectNeed): AlbatrossProjectMode {
+  if (need === 'project') return 'project';
+  if (need === 'task_only' || need === 'context_update') return 'task_only';
+  return 'auto';
+}
+
+function buildApplyInput(parsed: ParsedIntent, areaId: string, need: ProjectNeed): AlbatrossApplicationInput {
+  const plan = parsed.plan;
+  return {
+    intentId: parsed.intent.id,
+    intentText: parsed.intent.rawInput,
+    areaId: areaId || undefined,
+    projectMode: projectModeFor(need),
+    plan: {
+      id: plan.id,
+      intentId: plan.intentId,
+      outcome: plan.outcome,
+      digitalActions: plan.digitalActions.map((action) => ({
+        kind: action.kind as AlbatrossArtifactKind,
+        title: action.title,
+        areaId: action.areaId,
+        priority: action.priority as 1 | 2 | 3 | undefined,
+        durationMinutes: action.durationMinutes,
+        startIso: action.startIso,
+        endIso: action.endIso,
+        account: action.account,
+        to: action.to,
+        cc: action.cc,
+        bcc: action.bcc,
+        subject: action.subject,
+        body: action.body,
+        html: action.html,
+        attendees: action.attendees,
+        calendarId: action.calendarId,
+        eventId: action.eventId,
+        rsvpStatus: action.rsvpStatus,
+        description: action.description,
+        sourceRefs: action.sourceRefs,
+      })),
+      proposedArtifacts: plan.proposedArtifacts.map((artifact) => ({
+        kind: artifact.kind as AlbatrossArtifactKind,
+        title: artifact.title,
+        areaId: artifact.areaId,
+        detail: artifact.detail,
+        status: artifact.status,
+        sourceRefs: artifact.sourceRefs,
+      })),
+      sourceRefs: plan.sourceRefs,
+    },
+  };
+}
+
+function StepLine({ title, kind, note, tone }: { title: string; kind: string; note?: string; tone?: Tone }) {
+  const meta = stepKindMeta(kind);
+  const Icon = meta.icon;
+  return (
+    <div className="flex items-start gap-2 py-1.5">
+      <Icon className="mt-0.5 size-3.5 shrink-0 text-[var(--color-text-faint)]" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--color-text)]">{title}</span>
+          <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">{meta.label}</span>
+        </div>
+        {note ? (
+          <p
+            className="mt-0.5 text-[11.5px] leading-snug"
+            style={{ color: tone ? `var(--color-${tone})` : 'var(--color-text-muted)' }}
+          >
+            {note}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function StepGroup({
+  label,
+  tone,
+  count,
+  children,
+}: {
+  label: string;
+  tone: Tone;
+  count: number;
+  children: ReactNode;
+}) {
+  if (!count) return null;
+  return (
+    <section>
+      <div className="flex items-center gap-1.5">
+        <Dot tone={tone} />
+        <h4 className="text-[12px] font-medium text-[var(--color-text-muted)]">{label}</h4>
+        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{count}</span>
+      </div>
+      <div className="mt-0.5 divide-y divide-[var(--color-border)]">{children}</div>
+    </section>
+  );
+}
+
+function ApplyPlanSection({
+  preview,
+  application,
+  canApply,
+  openQuestionCount,
+  onApply,
+  onReset,
+}: {
+  preview: AlbatrossApplicationPlan;
+  application?: ApplyOutcome;
+  canApply: boolean;
+  openQuestionCount: number;
+  onApply: () => void;
+  onReset: () => void;
+}) {
+  const { executableSteps, approvalSteps, unresolved } = preview;
+  const runnable = executableSteps.length + approvalSteps.length;
+  const phase = application?.phase;
+  const result = application?.result;
+
+  return (
+    <div className="border-b border-[var(--color-border)] px-4 py-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Apply plan</h3>
+        <span className="text-[11px] text-[var(--color-text-faint)]">
+          / safe actions run now, human-facing ones go to approvals
+        </span>
+      </div>
+
+      {phase === 'applied' && result ? (
+        <ApplyResultView result={result} onReset={onReset} />
+      ) : (
+        <>
+          <div className="mt-2 flex flex-col gap-2.5">
+            <StepGroup label="Will run now" tone="success" count={executableSteps.length}>
+              {executableSteps.map((step) => (
+                <StepLine key={step.id} title={step.title} kind={step.kind} />
+              ))}
+            </StepGroup>
+            <StepGroup label="Needs your approval" tone="warning" count={approvalSteps.length}>
+              {approvalSteps.map((step) => (
+                <StepLine
+                  key={step.id}
+                  title={step.title}
+                  kind={step.kind}
+                  note="Human-facing - queued for approval, not sent."
+                />
+              ))}
+            </StepGroup>
+            <StepGroup label="Can't run yet" tone="danger" count={unresolved.length}>
+              {unresolved.map((step) => (
+                <StepLine
+                  key={step.id}
+                  title={step.title}
+                  kind={step.kind}
+                  note={step.blockedReason}
+                  tone="danger"
+                />
+              ))}
+            </StepGroup>
+            {runnable + unresolved.length === 0 ? (
+              <Note>This plan has nothing to apply yet - it's drafts and context only.</Note>
+            ) : null}
+          </div>
+
+          {phase === 'failed' && application?.error ? (
+            <div className="mt-2 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger-soft)] px-3 py-2">
+              <p className="text-[12px] font-medium text-[var(--color-danger)]">
+                Apply failed - nothing was created.
+              </p>
+              <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
+                {application.error}
+              </p>
+              <p className="mt-0.5 text-[11px] text-[var(--color-text-faint)]">
+                The breakdown above is the local preview of what would have run.
+              </p>
+            </div>
+          ) : null}
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!canApply || runnable === 0 || phase === 'applying'}
+                    onClick={onApply}
+                    className="gap-1.5"
+                  >
+                    {phase === 'applying' ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <ArrowRight className="size-3.5" />
+                    )}
+                    {phase === 'failed' ? 'Try again' : phase === 'applying' ? 'Applying' : 'Apply plan'}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {!canApply
+                  ? `Answer ${openQuestionCount} question${openQuestionCount === 1 ? '' : 's'} above first.`
+                  : runnable === 0
+                    ? 'Every step is unresolved - fix the reasons above before applying.'
+                    : `Runs ${executableSteps.length} now and queues ${approvalSteps.length} for approval.`}
+              </TooltipContent>
+            </Tooltip>
+            <span className="text-[11px] text-[var(--color-text-faint)]">
+              One operation batch / approvals never auto-send.
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ApplyResultView({ result, onReset }: { result: ApplyResult; onReset: () => void }) {
+  const applied = result.operations.length;
+  const queued = result.approvals.length;
+  const unresolved = result.unresolved.length;
+  const statusTone: Tone = applied && (queued || unresolved) ? 'warning' : applied ? 'success' : 'neutral';
+  const statusLabel =
+    applied && (queued || unresolved) ? 'Partially applied' : applied ? 'Applied' : 'Queued';
+  return (
+    <div className="mt-2 flex flex-col gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Tag tone={statusTone}>{statusLabel}</Tag>
+        <span
+          className="text-[11px] tabular-nums text-[var(--color-text-faint)]"
+          title={result.operationBatchId}
+        >
+          Batch {shortBatch(result.operationBatchId)}
+        </span>
+        <button
+          type="button"
+          onClick={onReset}
+          className="ml-auto text-[11.5px] text-[var(--color-accent)] hover:underline"
+        >
+          Apply again
+        </button>
+      </div>
+
+      <StepGroup label="Applied" tone="success" count={applied}>
+        {result.operations.map((operation, index) => (
+          <StepLine
+            key={operation.operationId || operation.artifactId || `op-${index}`}
+            title={operation.title || operation.tool || 'Operation'}
+            kind={operation.tool === 'albatross_create_project' ? 'project' : 'task'}
+            note={operation.tool}
+          />
+        ))}
+      </StepGroup>
+      <StepGroup label="Queued for approval" tone="warning" count={queued}>
+        {result.approvals.map((approval, index) => (
+          <StepLine
+            key={approval.approvalId || `ap-${index}`}
+            title={approval.title || 'Approval'}
+            kind={approval.toolName === 'calendar_create_event' ? 'calendar_event' : 'email_send'}
+            note="Waiting in the approval queue."
+          />
+        ))}
+      </StepGroup>
+      <StepGroup label="Unresolved" tone="danger" count={unresolved}>
+        {result.unresolved.map((step, index) => (
+          <StepLine
+            key={step.id || `un-${index}`}
+            title={step.title}
+            kind={step.kind}
+            note={step.blockedReason}
+            tone="danger"
+          />
+        ))}
+      </StepGroup>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Issue #82 - Universal human approval queue                          */
+/* ------------------------------------------------------------------ */
+/* Everything Albatross wants to do to another human or provider waits  */
+/* here, not buried inside one intent. Live tool-returned approvals sit  */
+/* above the seeded ones; each card names where it came from and offers  */
+/* approve / reject / review with a short undo window after a decision.  */
+
+interface ApprovalView {
+  id: string;
+  title: string;
+  summary?: string;
+  kind: string;
+  areaId?: string;
+  intentId?: string;
+  projectId?: string;
+  source: 'live' | 'seed';
+  undoWindowSeconds: number;
+  status?: string;
+  undoExpiresAt?: number;
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
+}
+
+const APPROVAL_KIND_LABEL: Record<string, string> = {
+  email_draft: 'Email',
+  email_send: 'Send email',
+  calendar_invite: 'Calendar invite',
+  calendar_rsvp: 'RSVP',
+  external_action: 'External action',
+};
+
+function mapLiveApproval(row: Record<string, any>): ApprovalView {
+  return {
+    id: String(row._id ?? row.id ?? ''),
+    title: row.title ?? 'Approval',
+    summary: row.detail ?? row.risk,
+    kind: row.kind ?? 'external_action',
+    areaId: row.areaId,
+    intentId: row.intentId,
+    projectId: row.projectId,
+    source: 'live',
+    undoWindowSeconds: 10,
+    status: row.status,
+    undoExpiresAt: row.undoExpiresAt,
+    toolName: row.toolName,
+    toolArgs: row.toolArgs,
+  };
+}
+
+const SEED_APPROVAL_VIEWS: ApprovalView[] = approvalQueue.map((approval) => ({
+  id: approval.id,
+  title: approval.title,
+  summary: approval.summary,
+  kind: approval.kind,
+  areaId: approval.areaId,
+  intentId: approval.sourceIntentId,
+  source: 'seed',
+  undoWindowSeconds: approval.undoWindowSeconds,
+}));
+
+type ApprovalDecision = 'approved' | 'rejected' | 'undone';
+
+function decisionForApproval(view: ApprovalView, decisions: Record<string, ApprovalDecision>) {
+  if (view.source === 'live' && (view.status === 'approved' || view.status === 'rejected')) {
+    return view.status;
+  }
+  return decisions[view.id];
+}
+
+function ApprovalQueuePanel() {
+  const [live, setLive] = useState<ApprovalView[] | null>(null);
+  const [recentLive, setRecentLive] = useState<Record<string, ApprovalView>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [decisions, setDecisions] = useState<Record<string, ApprovalDecision>>({});
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [cardError, setCardError] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      callTool<{ approvals: Record<string, any>[] }>('albatross_list_approval_queue', {})
+        .then((res) => {
+          if (!active) return;
+          const nextLive = (res?.approvals ?? []).map(mapLiveApproval);
+          const liveIds = new Set(nextLive.map((view) => view.id));
+          setLive(nextLive);
+          setRecentLive((prev) =>
+            Object.fromEntries(
+              Object.entries(prev).filter(
+                ([id, view]) => !liveIds.has(id) && (view.undoExpiresAt ?? 0) > Date.now(),
+              ),
+            ),
+          );
+          setLoadError(null);
+        })
+        .catch((error) => {
+          if (active) setLoadError(error instanceof Error ? error.message : String(error));
+        });
+    };
+    load();
+    const intervalId = window.setInterval(load, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  const decide = async (view: ApprovalView, action: ApprovalDecision) => {
+    const priorDecision = decisionForApproval(view, decisions);
+    if (view.source === 'live' && action === 'undone' && priorDecision !== 'approved') {
+      setCardError((prev) => ({
+        ...prev,
+        [view.id]: 'Rejected approvals cannot be reopened from this queue yet.',
+      }));
+      return;
+    }
+    setBusy((prev) => ({ ...prev, [view.id]: true }));
+    try {
+      let decidedApproval: Record<string, any> | undefined;
+      if (view.source === 'live') {
+        if (action === 'approved') {
+          const result = await callTool<{ approval?: Record<string, any> }>('albatross_approve_action', {
+            approvalId: view.id,
+          });
+          decidedApproval = result?.approval;
+        } else if (action === 'rejected') {
+          await callTool('albatross_reject_action', { approvalId: view.id });
+        } else if (priorDecision === 'approved') {
+          await callTool('albatross_undo_approval', { approvalId: view.id });
+        }
+      }
+      if (view.source === 'live' && action === 'approved') {
+        const updatedView = {
+          ...view,
+          status: 'approved',
+          undoExpiresAt: decidedApproval?.undoExpiresAt,
+        };
+        setLive(
+          (prev) =>
+            prev?.map((item) =>
+              item.id === view.id
+                ? {
+                    ...item,
+                    status: 'approved',
+                    undoExpiresAt: decidedApproval?.undoExpiresAt,
+                  }
+                : item,
+            ) ?? prev,
+        );
+        if (decidedApproval?.undoExpiresAt) {
+          setRecentLive((prev) => ({
+            ...prev,
+            [view.id]: updatedView,
+          }));
+        }
+      }
+      if (view.source === 'live' && action === 'rejected') {
+        setLive(
+          (prev) =>
+            prev?.map((item) => (item.id === view.id ? { ...item, status: 'rejected' } : item)) ?? prev,
+        );
+      }
+      if (view.source === 'live' && action === 'undone') {
+        setLive((prev) => prev?.filter((item) => item.id !== view.id) ?? prev);
+        setRecentLive((prev) => withoutKey(prev, view.id));
+      }
+      setDecisions((prev) =>
+        action === 'undone' ? withoutKey(prev, view.id) : { ...prev, [view.id]: action },
+      );
+      setCardError((prev) => withoutKey(prev, view.id));
+    } catch (error) {
+      setCardError((prev) => ({
+        ...prev,
+        [view.id]: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      setBusy((prev) => withoutKey(prev, view.id));
+    }
+  };
+
+  const liveViews = live ?? [];
+  const liveIds = new Set(liveViews.map((view) => view.id));
+  const recentViews = Object.values(recentLive).filter(
+    (view) => !liveIds.has(view.id) && (view.undoExpiresAt ?? 0) > Date.now(),
+  );
+  const all = [...liveViews, ...recentViews, ...SEED_APPROVAL_VIEWS];
+  const pendingCount = all.filter((view) => !decisionForApproval(view, decisions)).length;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Panel>
+        <PanelHeader
+          title="Approval queue"
+          count={pendingCount}
+          trailing={
+            live === null && !loadError ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
+                <Loader2 className="size-3 animate-spin" />
+                Syncing
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
+                <ShieldCheck className="size-3" />
+                {liveViews.length} live / {SEED_APPROVAL_VIEWS.length} seeded
+              </span>
+            )
+          }
+        />
+        <div className="px-4 py-3">
+          <p className="text-[12px] text-[var(--color-text-muted)]">
+            Everything Albatross wants to do to another person or provider waits here. Nothing leaves the app
+            until you approve it.
+          </p>
+          {loadError ? (
+            <p className="mt-1.5 text-[11.5px] text-[var(--color-text-faint)]">
+              Live queue unavailable ({loadError}). Showing seeded approvals only.
+            </p>
+          ) : null}
+          <div className="mt-3 flex flex-col gap-2">
+            {all.length ? (
+              all.map((view) => (
+                <ApprovalCard
+                  key={`${view.source}-${view.id}`}
+                  view={view}
+                  decision={decisionForApproval(view, decisions)}
+                  busy={busy[view.id]}
+                  error={cardError[view.id]}
+                  onDecide={(action) => decide(view, action)}
+                />
+              ))
+            ) : (
+              <div className="flex items-center gap-2 py-4 text-[12px] text-[var(--color-text-faint)]">
+                <Inbox className="size-4" />
+                Nothing is waiting for your approval.
+              </div>
+            )}
+          </div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function ApprovalCard({
+  view,
+  decision,
+  busy,
+  error,
+  onDecide,
+}: {
+  view: ApprovalView;
+  decision?: ApprovalDecision;
+  busy?: boolean;
+  error?: string;
+  onDecide: (action: ApprovalDecision) => void;
+}) {
+  const [reviewing, setReviewing] = useState(false);
+  const Icon = view.kind === 'calendar_invite' || view.kind === 'calendar_rsvp' ? CalendarPlus : Mail;
+  const sourceBits = [
+    view.areaId ? areaName(view.areaId) : null,
+    view.intentId ? `Intent ${view.intentId.replace(/^intent[_-]?/, '')}` : null,
+    view.projectId ? 'Project' : null,
+  ].filter(Boolean) as string[];
+  const liveUndoSeconds =
+    view.source === 'live' && view.undoExpiresAt && view.undoExpiresAt > Date.now()
+      ? Math.max(1, Math.ceil((view.undoExpiresAt - Date.now()) / 1000))
+      : 0;
+  const canUndoApproved = view.source === 'seed' || liveUndoSeconds > 0;
+
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2.5">
+      <div className="flex items-start gap-2">
+        <Icon className="mt-0.5 size-4 shrink-0 text-[var(--color-text-muted)]" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 flex-1 text-[12.5px] font-medium text-[var(--color-text)]">
+              {view.title}
+            </span>
+            <Tag tone="neutral">{APPROVAL_KIND_LABEL[view.kind] ?? titleCase(view.kind)}</Tag>
+            <Tag tone={view.source === 'live' ? 'accent' : 'neutral'}>
+              {view.source === 'live' ? 'Live' : 'Seeded'}
+            </Tag>
+          </div>
+          {view.summary ? (
+            <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-muted)]">{view.summary}</p>
+          ) : null}
+          {sourceBits.length ? (
+            <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-faint)]">
+              {sourceBits.join(' / ')}
+            </p>
+          ) : null}
+
+          {reviewing && view.toolArgs ? (
+            <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-[var(--color-bg-elevated)] px-2 py-1.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
+              {JSON.stringify(view.toolArgs, null, 2)}
+            </pre>
+          ) : null}
+
+          {error ? <p className="mt-1 text-[11.5px] text-[var(--color-danger)]">{error}</p> : null}
+
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {decision === 'approved' ? (
+              <>
+                <span className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-success)]">
+                  <Check className="size-3.5" />
+                  Approved
+                </span>
+                {canUndoApproved ? (
+                  <>
+                    <span className="text-[11px] text-[var(--color-text-faint)]">
+                      {view.source === 'live' ? liveUndoSeconds : view.undoWindowSeconds}s to undo
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onDecide('undone')}
+                      className="text-[11.5px] text-[var(--color-accent)] hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </>
+                ) : null}
+              </>
+            ) : decision === 'rejected' ? (
+              <>
+                <span className="text-[11.5px] text-[var(--color-text-muted)]">Rejected - nothing sent.</span>
+                {view.source === 'seed' ? (
+                  <button
+                    type="button"
+                    onClick={() => onDecide('undone')}
+                    className="text-[11.5px] text-[var(--color-accent)] hover:underline"
+                  >
+                    Undo
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  size="xs"
+                  disabled={busy}
+                  onClick={() => onDecide('approved')}
+                  className="gap-1"
+                >
+                  {busy ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                  Approve
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  disabled={busy}
+                  className="text-[var(--color-danger)] hover:text-[var(--color-danger)]"
+                  onClick={() => onDecide('rejected')}
+                >
+                  Reject
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setReviewing((prev) => !prev)}
+                  className="text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                >
+                  {reviewing ? 'Hide details' : 'Review'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Issues #83 + #84 - Work board, sprints, and the project pane        */
+/* ------------------------------------------------------------------ */
+/* A GitHub/Linear-style operational board over seed tasks and projects: */
+/* Kanban columns, area and project groupings, a derived weekly sprint,  */
+/* and a project pane that reads more like an issue tracker than a       */
+/* dashboard. Standalone tasks render even without project/sprint data.  */
+
+type BoardView = 'kanban' | 'areas' | 'projects' | 'sprints';
+
+function WorkBoard() {
+  const [view, setView] = useState<BoardView>('kanban');
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Segmented
+          value={view}
+          onChange={setView}
+          options={[
+            { value: 'kanban', label: 'Kanban' },
+            { value: 'areas', label: 'Areas' },
+            { value: 'projects', label: 'Projects' },
+            { value: 'sprints', label: 'Sprints' },
+          ]}
+        />
+        <span className="text-[11.5px] text-[var(--color-text-faint)]">
+          Read model / your seeded tasks and projects
+        </span>
+      </div>
+      {view === 'kanban' ? <KanbanView /> : null}
+      {view === 'areas' ? <AreaBoardView /> : null}
+      {view === 'projects' ? <ProjectsView /> : null}
+      {view === 'sprints' ? <SprintsView /> : null}
+    </div>
+  );
+}
+
+function BoardTaskCard({ card }: { card: BoardCard }) {
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 shadow-[var(--shadow-soft)]">
+      <div className="flex items-start gap-2">
+        <span className="min-w-0 flex-1 text-[12.5px] font-medium leading-snug text-[var(--color-text)]">
+          {card.title}
+        </span>
+        {card.priority ? <Tag tone={priorityTone(card.priority)}>P{card.priority}</Tag> : null}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-[var(--color-text-faint)]">
+        <span className="min-w-0 truncate">{card.areaName}</span>
+        <span aria-hidden>/</span>
+        <span className="min-w-0 truncate">{card.projectTitle ?? 'Standalone'}</span>
+      </div>
+    </div>
+  );
+}
+
+function BoardTaskRow({ card, showArea = true }: { card: BoardCard; showArea?: boolean }) {
+  return (
+    <div className="py-2">
+      <div className="flex items-start gap-2">
+        <span className="min-w-0 flex-1 text-[12.5px] font-medium leading-snug text-[var(--color-text)]">
+          {card.title}
+        </span>
+        {card.priority ? <Tag tone={priorityTone(card.priority)}>P{card.priority}</Tag> : null}
+        <Tag tone="neutral">{card.statusLabel}</Tag>
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-[var(--color-text-faint)]">
+        {showArea ? (
+          <>
+            <span>{card.areaName}</span>
+            <span aria-hidden>/</span>
+          </>
+        ) : null}
+        <span className="min-w-0 truncate">{card.projectTitle ?? 'Standalone'}</span>
+      </div>
+    </div>
+  );
+}
+
+function KanbanView() {
+  const columns = useMemo(() => buildKanbanColumns(), []);
+  return (
+    <div className="grid gap-3 @[640px]:grid-cols-2 @[1100px]:grid-cols-4">
+      {columns.map((column) => (
+        <div
+          key={column.key}
+          className="flex min-w-0 flex-col gap-2 rounded-lg bg-[var(--color-bg-subtle)] p-2.5"
+        >
+          <div className="flex items-center gap-2 px-0.5">
+            <h3 className="text-[12px] font-semibold text-[var(--color-text)]">{column.label}</h3>
+            <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+              {column.cards.length}
+            </span>
+          </div>
+          {column.cards.length ? (
+            column.cards.map((card) => <BoardTaskCard key={card.id} card={card} />)
+          ) : (
+            <p className="px-0.5 py-1 text-[11.5px] text-[var(--color-text-faint)]">Nothing here.</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AreaBoardView() {
+  const groups = useMemo(() => buildAreaTaskGroups(), []);
+  return (
+    <div className="grid gap-4 @[800px]:grid-cols-2 @[800px]:items-start">
+      {groups.map((group) => (
+        <Panel key={group.areaId || 'unassigned'}>
+          <PanelHeader title={group.areaName} count={group.cards.length} />
+          <div className="divide-y divide-[var(--color-border)] px-3">
+            {group.cards.map((card) => (
+              <BoardTaskRow key={card.id} card={card} showArea={false} />
+            ))}
+          </div>
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+function CountChips({ counts }: { counts: ProjectPaneModel['counts'] }) {
+  const chips: { label: string; value: number; tone: Tone }[] = [
+    { label: 'To do', value: counts.todo, tone: 'neutral' },
+    { label: 'In progress', value: counts.inProgress, tone: 'accent' },
+    { label: 'In review', value: counts.review, tone: 'warning' },
+    { label: 'Done', value: counts.done, tone: 'success' },
+  ];
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {chips.map((chip) => (
+        <span
+          key={chip.label}
+          className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-bg-muted)] px-2 py-0.5 text-[11px] text-[var(--color-text-muted)]"
+        >
+          <Dot tone={chip.tone} />
+          {chip.label}
+          <span className="tabular-nums text-[var(--color-text-faint)]">{chip.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ProjectsView() {
+  const groups = useMemo(() => buildProjectTaskGroups(), []);
+  const realProjects = groups.filter((group) => group.project);
+  const [selectedId, setSelectedId] = useState(realProjects[0]?.project?.id ?? '');
+  const pane = useMemo(() => (selectedId ? buildProjectPane(selectedId) : null), [selectedId]);
+
+  return (
+    <div className="grid gap-4 @[900px]:grid-cols-[minmax(0,300px)_minmax(0,1fr)] @[900px]:items-start">
+      <Panel className="@[900px]:max-h-[calc(100vh-12rem)]">
+        <PanelHeader title="Projects" count={realProjects.length} />
+        <div className="min-h-0 overflow-y-auto">
+          {groups.map((group) => {
+            const project = group.project;
+            const selected = Boolean(project && project.id === selectedId);
+            return (
+              <button
+                key={project?.id ?? 'standalone'}
+                type="button"
+                disabled={!project}
+                onClick={() => project && setSelectedId(project.id)}
+                className={cn(selectRowClass(selected), !project && 'cursor-default opacity-80')}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--color-text)]">
+                    {group.title}
+                  </span>
+                  {project ? (
+                    <Tag tone={PROJECT_STATUS_TONE[project.status] ?? 'neutral'}>
+                      {titleCase(project.status)}
+                    </Tag>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 flex items-center gap-x-2 text-[11.5px] text-[var(--color-text-faint)]">
+                  <span>{project ? areaName(project.areaId) : 'No project'}</span>
+                  <span aria-hidden>/</span>
+                  <span>
+                    {group.cards.length} task{group.cards.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </Panel>
+
+      {pane ? (
+        <ProjectPane pane={pane} />
+      ) : (
+        <Panel>
+          <div className="px-4 py-3">
+            <Note>Select a project to open its pane.</Note>
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+const PROJECT_STATUS_TONE: Record<string, Tone> = {
+  active: 'success',
+  paused: 'neutral',
+  done: 'accent',
+  archived: 'neutral',
+};
+
+type ProjectAffordance = 'active' | 'paused' | 'archived' | 'done';
+
+function ProjectPane({ pane }: { pane: ProjectPaneModel }) {
+  const { project, cards, intents: linkedIntents, evidence, approvals, completions, counts } = pane;
+  // Status changes are a local affordance only - issue #83 explicitly says not to
+  // fake backend operations, so a moved status shows here and says so plainly.
+  const [localStatus, setLocalStatus] = useState<ProjectAffordance | null>(null);
+  const status = localStatus ?? (project.status as ProjectAffordance);
+
+  return (
+    <Panel>
+      <div className="border-b border-[var(--color-border)] px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h2 className="min-w-0 flex-1 truncate font-display text-[16px] font-semibold text-[var(--color-text)]">
+            {project.title ?? titleCase(project.status)}
+          </h2>
+          <Tag tone={PROJECT_STATUS_TONE[status] ?? 'neutral'}>{titleCase(status)}</Tag>
+        </div>
+        {project.outcome ? (
+          <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+            {project.outcome}
+          </p>
+        ) : null}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[var(--color-text-faint)]">
+          <span>{areaName(project.areaId)}</span>
+          <span aria-hidden>/</span>
+          <span>
+            {counts.total} task{counts.total === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div className="mt-2">
+          <CountChips counts={counts} />
+        </div>
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() => setLocalStatus(status === 'paused' ? 'active' : 'paused')}
+          >
+            <Pause className="size-3" />
+            {status === 'paused' ? 'Resume' : 'Pause'}
+          </Button>
+          <Button type="button" size="xs" variant="outline" onClick={() => setLocalStatus('done')}>
+            <CheckCircle2 className="size-3" />
+            Done
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => setLocalStatus('archived')}
+            className="text-[var(--color-text-muted)]"
+          >
+            <Archive className="size-3" />
+            Archive
+          </Button>
+        </div>
+        {localStatus ? (
+          <p className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">
+            Shown locally - project status isn't written back to the backend in this slice.
+          </p>
+        ) : null}
+      </div>
+
+      {linkedIntents.length ? (
+        <div className="border-b border-[var(--color-border)] px-4 py-3">
+          <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Linked intents</h3>
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {linkedIntents.map((intent) => (
+              <li key={intent.id} className="flex gap-2 text-[12.5px] text-[var(--color-text)]">
+                <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[var(--color-text-faint)]" />
+                <span className="min-w-0 flex-1">{intent.rawInput}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="border-b border-[var(--color-border)] px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Tasks</h3>
+          <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{cards.length}</span>
+        </div>
+        {cards.length ? (
+          <div className="mt-1 divide-y divide-[var(--color-border)]">
+            {cards.map((card) => (
+              <BoardTaskRow key={card.id} card={card} showArea={false} />
+            ))}
+          </div>
+        ) : (
+          <Note>No tasks linked to this project yet.</Note>
+        )}
+      </div>
+
+      {evidence.length ? (
+        <div className="border-b border-[var(--color-border)] px-4 py-3">
+          <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Evidence</h3>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {evidence.map((item) => (
+              <span
+                key={`${item.kind}-${item.id}`}
+                className="max-w-full truncate rounded bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-muted)]"
+                title={`${item.detail}`}
+              >
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {approvals.length ? (
+        <div className="border-b border-[var(--color-border)] px-4 py-3">
+          <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Approvals</h3>
+          <div className="mt-1.5 divide-y divide-[var(--color-border)]">
+            {approvals.map((approval) => (
+              <div key={approval.id} className="flex items-center gap-2 py-1.5">
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--color-text)]">
+                  {approval.title}
+                </span>
+                <Tag tone="neutral">{APPROVAL_KIND_LABEL[approval.kind] ?? titleCase(approval.kind)}</Tag>
+                <Tag tone={approval.status === 'pending' ? 'warning' : 'neutral'}>
+                  {titleCase(approval.status)}
+                </Tag>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {completions.length ? (
+        <div className="px-4 py-3">
+          <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Recent activity</h3>
+          <ol className="mt-1.5 flex flex-col gap-2">
+            {completions.map((event) => (
+              <li key={event.id} className="flex gap-2">
+                <span className="mt-1.5">
+                  <Dot tone="success" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12.5px] text-[var(--color-text)]">{event.summary}</p>
+                  <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+                    {fmtDateTime(event.completedAt)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+    </Panel>
+  );
+}
+
+function SprintsView() {
+  const [now] = useState(() => Date.now());
+  const sprint = useMemo(() => deriveActiveSprint(now), [now]);
+  const [persistedStatus, setPersistedStatus] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
+  const done = sprint.counts.done;
+  const ratio = sprint.counts.total ? done / sprint.counts.total : 0;
+  const closed = persistedStatus === 'closed' || persistedStatus === 'archived';
+
+  useEffect(() => {
+    let active = true;
+    callTool<{ sprints: Array<{ externalId?: string; status?: string }> }>('albatross_list_sprints', {
+      limit: 50,
+    })
+      .then((res) => {
+        if (!active) return;
+        const persisted = (res?.sprints ?? []).find((row) => row.externalId === sprint.id);
+        setPersistedStatus(persisted?.status ?? null);
+      })
+      .catch(() => {
+        if (active) setPersistedStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [sprint.id]);
+
+  const closeSprint = async () => {
+    setClosing(true);
+    setCloseError(null);
+    try {
+      await callTool('albatross_create_sprint', {
+        externalId: sprint.id,
+        title: sprint.title,
+        goal: 'Derived from open Albatross work.',
+        cadence: sprint.cadence,
+        status: 'closed',
+        startAt: sprint.startAt,
+        endAt: sprint.endAt,
+      });
+      setPersistedStatus('closed');
+    } catch (error) {
+      setCloseError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-4 @[900px]:grid-cols-[minmax(0,1fr)_minmax(0,260px)] @[900px]:items-start">
+      <Panel>
+        <PanelHeader title="Active sprint" trailing={<Tag tone="accent">Weekly</Tag>} />
+        <div className="border-b border-[var(--color-border)] px-4 py-3">
+          <div className="flex items-center gap-2">
+            <h2 className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold text-[var(--color-text)]">
+              {sprint.title}
+            </h2>
+            {closed ? <Tag tone="neutral">Closed</Tag> : <Tag tone="success">Active</Tag>}
+          </div>
+          <p className="mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">
+            {sprint.startLabel} – {sprint.endLabel} / derived from open work
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+              <div
+                className="h-full rounded-full bg-[var(--color-accent)] transition-[width]"
+                style={{ width: `${Math.round(ratio * 100)}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-faint)]">
+              {done}/{sprint.counts.total} done
+            </span>
+          </div>
+        </div>
+        <div className="px-4 py-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-[12.5px] font-semibold text-[var(--color-text)]">Sprint backlog</h3>
+            <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+              {sprint.cards.length}
+            </span>
+          </div>
+          {sprint.cards.length ? (
+            <div className="mt-1 divide-y divide-[var(--color-border)]">
+              {sprint.cards.map((card) => (
+                <BoardTaskRow key={card.id} card={card} />
+              ))}
+            </div>
+          ) : (
+            <Note>No open work in this sprint window.</Note>
+          )}
+        </div>
+      </Panel>
+
+      <Panel>
+        <PanelHeader title="Sprint summary" />
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <CountChips counts={sprint.counts} />
+          <Separator />
+          <div className="flex flex-col gap-1 text-[12px] text-[var(--color-text-muted)]">
+            <p>
+              <span className="text-[var(--color-text-faint)]">Cadence:</span> Weekly, resets Monday.
+            </p>
+            <p>
+              <span className="text-[var(--color-text-faint)]">Monthly:</span> closed sprints roll up into
+              each area's history.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={closed || closing}
+            onClick={closeSprint}
+            className="gap-1.5"
+          >
+            {closing ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+            {closed ? 'Sprint closed' : closing ? 'Closing sprint' : 'Close sprint'}
+          </Button>
+          {closeError ? (
+            <p className="text-[11px] text-[var(--color-danger)]">{closeError}</p>
+          ) : (
+            <p className="text-[11px] text-[var(--color-text-faint)]">
+              Closing writes this derived sprint into the Albatross work model.
+            </p>
+          )}
+        </div>
+      </Panel>
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -3199,11 +4512,11 @@ function slugify(value: string): string {
 /* ------------------------------------------------------------------ */
 /* Issue #76 - New Intent capture                                      */
 /* ------------------------------------------------------------------ */
-/* A friction-free way to get a thought out of your head, from anywhere */
-/* in Albatross. The button floats with a soft hand-drawn border and a   */
-/* rotating label; the dialog leads with text, offers voice where the    */
-/* browser supports it, saves the raw dump immediately, and asks before  */
-/* splitting one capture into several. It never touches the AI bar.      */
+/* A friction-free way to get a thought out of your head. The primary path */
+/* is the bottom-center New Intent button, with a matching header action on */
+/* Intents. Both open the same dialog, which leads with text, offers voice  */
+/* where the browser supports it, saves the raw dump immediately, and asks  */
+/* before splitting one capture into several. It never touches the AI bar.  */
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -3224,98 +4537,23 @@ type SpeechWindow = Window & {
 
 const CAPTURE_PROMPT = 'What are you trying to get out of your head?';
 
-function IntentCaptureFab({
-  captureCount,
-  onCapture,
-}: {
-  captureCount: number;
-  onCapture: (intents: CapturedIntent[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [tick, setTick] = useState(0);
-  const [reducedMotion, setReducedMotion] = useState(false);
-
-  // Detect reduced-motion once so the border jiggle and label rotation respect it.
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReducedMotion(mq.matches);
-    const handler = () => setReducedMotion(mq.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
-
-  // Rotate the label while idle; freeze it while the dialog is open.
-  useEffect(() => {
-    if (open || reducedMotion) return;
-    const id = window.setInterval(() => setTick((value) => value + 1), 3600);
-    return () => window.clearInterval(id);
-  }, [open, reducedMotion]);
-
-  const label = pickIntentCaptureLabel(tick + captureCount);
-
+// Fixed viewport placement keeps this visible even when an Albatross pane has
+// its own scroll region. Centered placement keeps it clear of the bottom-right
+// Ask Assistant launcher, so neither covers the other.
+function IntentCaptureFab({ onClick }: { onClick: () => void }) {
   return (
-    <>
+    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center">
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={onClick}
         aria-haspopup="dialog"
-        aria-label="Capture a new thought"
-        className="group absolute bottom-4 left-4 z-30 inline-flex items-center gap-2 rounded-full bg-[var(--color-bg-elevated)] px-4 py-2 text-[12.5px] font-medium text-[var(--color-accent)] shadow-[var(--shadow-pop)] transition-transform duration-[var(--duration-fast)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40"
+        aria-label="New Intent"
+        className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-[13px] font-medium text-[var(--color-accent-foreground)] shadow-[var(--shadow-pop)] transition-transform duration-[var(--duration-fast)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
       >
-        <HandDrawnBorder animate={!reducedMotion} />
         <Plus className="size-4" />
-        <span key={label} className="relative duration-200 animate-in fade-in-0 slide-in-from-bottom-1">
-          {label}
-        </span>
+        New Intent
       </button>
-      <IntentCaptureDialog
-        open={open}
-        onOpenChange={setOpen}
-        onCapture={onCapture}
-        captureCount={captureCount}
-      />
-    </>
-  );
-}
-
-// A wobbly, slightly irregular stroke laid over the pill. The displacement filter
-// makes a clean rounded-rect read as hand-drawn; animating the noise seed gives a
-// gentle living jiggle (skipped under reduced-motion).
-function HandDrawnBorder({ animate }: { animate: boolean }) {
-  return (
-    <svg
-      aria-hidden
-      viewBox="0 0 200 56"
-      preserveAspectRatio="none"
-      className="pointer-events-none absolute inset-0 size-full overflow-visible"
-    >
-      <title>Decorative intent capture border</title>
-      <defs>
-        <filter id="albatross-fab-wobble" x="-20%" y="-20%" width="140%" height="140%">
-          <feTurbulence type="turbulence" baseFrequency="0.018 0.045" numOctaves="2" seed="4" result="noise">
-            {animate ? (
-              <animate attributeName="seed" values="4;9;4" dur="7s" repeatCount="indefinite" />
-            ) : null}
-          </feTurbulence>
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" />
-        </filter>
-      </defs>
-      <rect
-        x="3"
-        y="3"
-        width="194"
-        height="50"
-        rx="26"
-        ry="26"
-        fill="none"
-        stroke="var(--color-accent)"
-        strokeWidth="1.3"
-        strokeOpacity="0.85"
-        vectorEffect="non-scaling-stroke"
-        filter="url(#albatross-fab-wobble)"
-      />
-    </svg>
+    </div>
   );
 }
 

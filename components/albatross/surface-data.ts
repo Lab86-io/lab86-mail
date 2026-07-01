@@ -135,6 +135,21 @@ export interface DigitalAction {
   areaId?: string;
   priority?: number;
   durationMinutes?: number;
+  startIso?: string;
+  endIso?: string;
+  account?: string;
+  to?: string;
+  cc?: string;
+  bcc?: string;
+  subject?: string;
+  body?: string;
+  html?: string;
+  attendees?: string[];
+  calendarId?: string;
+  eventId?: string;
+  rsvpStatus?: 'yes' | 'no' | 'maybe';
+  description?: string;
+  sourceRefs?: SourceRef[];
 }
 
 export interface IntentPlan {
@@ -176,6 +191,8 @@ export interface Project {
   status: string;
   title?: string;
   outcome?: string;
+  intentIds?: string[];
+  taskIds?: string[];
 }
 
 interface SeedTables {
@@ -2282,3 +2299,259 @@ export function parseIntent(input: Intent | string): ParsedIntent {
     candidateFactIds: collectCandidateFactIds(contextWithQuestions),
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Issues #83 + #84 - Project board, sprint, and project-pane model    */
+/* ------------------------------------------------------------------ */
+/* A pure, seed-derived read model for the work board. Live project and */
+/* approval data layers on top of this in the surface; the seed keeps    */
+/* the board populated and standalone tasks render even with no project, */
+/* area, or sprint metadata (issue #84, story 1).                        */
+
+export interface BoardCard {
+  id: string;
+  title: string;
+  status: string;
+  statusLabel: string;
+  areaId?: string;
+  areaName: string;
+  projectId?: string;
+  projectTitle?: string;
+  priority?: number;
+  sourceRefs: SourceRef[];
+}
+
+// One ordered set of columns drives Kanban, the sprint roll-up, and every count,
+// so a task lands in exactly one column no matter which view is reading it.
+const KANBAN_COLUMNS = [
+  { key: 'todo', label: 'To do', match: ['todo', 'backlog', 'open', 'captured', 'planned'] },
+  { key: 'in_progress', label: 'In progress', match: ['in_progress', 'doing', 'active', 'started'] },
+  { key: 'review', label: 'In review', match: ['review', 'in_review', 'blocked', 'needs_review'] },
+  { key: 'done', label: 'Done', match: ['done', 'complete', 'completed', 'closed', 'archived'] },
+] as const;
+
+export type KanbanColumnKey = (typeof KANBAN_COLUMNS)[number]['key'];
+
+function columnFor(status: string): KanbanColumnKey {
+  const lower = status.toLowerCase();
+  for (const column of KANBAN_COLUMNS) {
+    if ((column.match as readonly string[]).includes(lower)) return column.key;
+  }
+  return 'todo';
+}
+
+const projectById = new Map(projects.map((project) => [project.id, project] as const));
+
+export function toBoardCard(task: Task): BoardCard {
+  const project = task.projectId ? projectById.get(task.projectId) : undefined;
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    statusLabel: titleCaseLocal(task.status),
+    areaId: task.areaId,
+    areaName: areaName(task.areaId),
+    projectId: task.projectId,
+    projectTitle: project?.title,
+    priority: task.priority,
+    sourceRefs: task.sourceRefs ?? [],
+  };
+}
+
+function countByColumn(source: Task[]) {
+  return {
+    total: source.length,
+    todo: source.filter((task) => columnFor(task.status) === 'todo').length,
+    inProgress: source.filter((task) => columnFor(task.status) === 'in_progress').length,
+    review: source.filter((task) => columnFor(task.status) === 'review').length,
+    done: source.filter((task) => columnFor(task.status) === 'done').length,
+  };
+}
+
+function tasksForProject(project: Project, source: Task[] = tasks): Task[] {
+  const linkedIds = new Set(project.taskIds ?? []);
+  return source.filter((task) => task.projectId === project.id || linkedIds.has(task.id));
+}
+
+export interface KanbanColumn {
+  key: KanbanColumnKey;
+  label: string;
+  cards: BoardCard[];
+}
+
+/** Group tasks into the four board columns, preserving seed order within each. */
+export function buildKanbanColumns(source: Task[] = tasks): KanbanColumn[] {
+  return KANBAN_COLUMNS.map((column) => ({
+    key: column.key,
+    label: column.label,
+    cards: source.filter((task) => columnFor(task.status) === column.key).map(toBoardCard),
+  }));
+}
+
+export interface AreaTaskGroup {
+  areaId: string;
+  areaName: string;
+  cards: BoardCard[];
+}
+
+/** Tasks grouped by area, busiest first; tasks with no area fall under Unassigned. */
+export function buildAreaTaskGroups(source: Task[] = tasks): AreaTaskGroup[] {
+  const byArea = new Map<string, BoardCard[]>();
+  for (const task of source) {
+    const card = toBoardCard(task);
+    const key = card.areaId ?? '';
+    const list = byArea.get(key) ?? [];
+    list.push(card);
+    byArea.set(key, list);
+  }
+  return [...byArea.entries()]
+    .map(([areaId, cards]) => ({ areaId, areaName: areaId ? areaName(areaId) : 'Unassigned', cards }))
+    .sort((a, b) => b.cards.length - a.cards.length || a.areaName.localeCompare(b.areaName));
+}
+
+export interface ProjectTaskGroup {
+  project: Project | null;
+  title: string;
+  cards: BoardCard[];
+}
+
+/** Tasks grouped by project; standalone tasks keep their own group (issue #84). */
+export function buildProjectTaskGroups(source: Task[] = tasks): ProjectTaskGroup[] {
+  const groups: ProjectTaskGroup[] = projects.map((project) => ({
+    project,
+    title: project.title ?? titleCaseLocal(project.status),
+    cards: tasksForProject(project, source).map(toBoardCard),
+  }));
+  const projectTaskIds = new Set(projects.flatMap((project) => project.taskIds ?? []));
+  const standalone = source
+    .filter((task) => !task.projectId && !projectTaskIds.has(task.id))
+    .map(toBoardCard);
+  if (standalone.length) groups.push({ project: null, title: 'Standalone tasks', cards: standalone });
+  return groups;
+}
+
+export interface SprintSummary {
+  id: string;
+  title: string;
+  cadence: 'weekly' | 'monthly';
+  status: 'active';
+  startLabel: string;
+  endLabel: string;
+  startAt: number;
+  endAt: number;
+  cards: BoardCard[];
+  counts: ReturnType<typeof countByColumn>;
+  derived: boolean;
+}
+
+function startOfWeekUtc(now: number): Date {
+  const date = new Date(now);
+  const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - daysSinceMonday));
+}
+
+function fmtSprintDate(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+/**
+ * Derive the current weekly sprint from open work. The 0.9 seed has no sprint
+ * table, so this is an honest read-model rather than fabricated history: every
+ * not-done task becomes the backlog for the current Mon-Sun window. Pure and
+ * deterministic for a given `now` so it can be tested without a clock.
+ */
+export function deriveActiveSprint(now: number, source: Task[] = tasks): SprintSummary {
+  const monday = startOfWeekUtc(now);
+  const sunday = new Date(monday.getTime() + 6 * 86_400_000);
+  const endOfSunday = sunday.getTime() + 86_400_000 - 1;
+  const cards = source
+    .filter((task) => columnFor(task.status) !== 'done')
+    .map(toBoardCard)
+    .sort((a, b) => (a.priority ?? 9) - (b.priority ?? 9));
+  return {
+    id: `sprint-week-${monday.toISOString().slice(0, 10)}`,
+    title: `Week of ${fmtSprintDate(monday)}`,
+    cadence: 'weekly',
+    status: 'active',
+    startLabel: fmtSprintDate(monday),
+    endLabel: fmtSprintDate(sunday),
+    startAt: monday.getTime(),
+    endAt: endOfSunday,
+    cards,
+    counts: countByColumn(source),
+    derived: true,
+  };
+}
+
+export interface ProjectEvidence {
+  kind: string;
+  id: string;
+  label: string;
+  detail: string;
+}
+
+export interface ProjectPaneModel {
+  project: Project;
+  cards: BoardCard[];
+  intents: Intent[];
+  evidence: ProjectEvidence[];
+  approvals: Approval[];
+  completions: CompletionEvent[];
+  counts: ReturnType<typeof countByColumn>;
+}
+
+const ARTIFACT_KINDS: ArtifactKind[] = ['mailThread', 'calendarEvent', 'mcpItem', 'intent'];
+
+/**
+ * Seed-derived project pane (issue #83). Pulls the project's tasks, the intents
+ * that spawned it, evidence resolved from task sources, the approvals it queued,
+ * and recent completions in its area. Live `albatross_get_project_pane` data can
+ * replace this for real Convex projects; seed ids fall back here.
+ */
+export function buildProjectPane(projectId: string): ProjectPaneModel | null {
+  const project = projectById.get(projectId);
+  if (!project) return null;
+  const projectTasks = tasksForProject(project);
+  const cards = projectTasks.map(toBoardCard);
+  const intentIds = new Set(project.intentIds ?? []);
+  const projectIntents = intents.filter((intent) => intentIds.has(intent.id));
+
+  const evidence: ProjectEvidence[] = [];
+  const seen = new Set<string>();
+  for (const task of projectTasks) {
+    for (const ref of task.sourceRefs ?? []) {
+      const dedupeKey = `${ref.kind}:${ref.id}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      const resolved = ARTIFACT_KINDS.includes(ref.kind as ArtifactKind)
+        ? resolveArtifact(ref.kind as ArtifactKind, ref.id)
+        : null;
+      evidence.push({
+        kind: ref.kind,
+        id: ref.id,
+        label: resolved?.title ?? ref.label ?? ref.id,
+        detail: resolved?.detail ?? SOURCE_KIND_LABEL[ref.kind] ?? ref.kind,
+      });
+    }
+  }
+
+  const approvals = approvalQueue.filter((approval) => intentIds.has(approval.sourceIntentId));
+  const completions = completionEvents.filter((event) => event.areaId === project.areaId).slice(0, 4);
+
+  return {
+    project,
+    cards,
+    intents: projectIntents,
+    evidence,
+    approvals,
+    completions,
+    counts: countByColumn(projectTasks),
+  };
+}
+
+const SOURCE_KIND_LABEL: Record<string, string> = {
+  mailThread: 'Email',
+  calendarEvent: 'Calendar',
+  mcpItem: 'Integration',
+  intent: 'Intent',
+};
