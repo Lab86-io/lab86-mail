@@ -1,7 +1,6 @@
 'use client';
 
 import { motion, useReducedMotion } from 'motion/react';
-import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -118,10 +117,6 @@ export function orbScaleAt(elapsedMs: number): number {
 
 /* ------------------------------------------------------------- rendering */
 
-// three.js nebula stays out of the bundle until the vortex actually renders
-// with motion allowed; a plain CSS radial gradient covers the load gap.
-const Nebula = dynamic(() => import('@/components/nebula'), { ssr: false });
-
 const LANE_COUNT = 7;
 // Lanes are stable identities (each lane recycles its own card forever).
 const LANES = Array.from({ length: LANE_COUNT }, (_, i) => i);
@@ -229,25 +224,13 @@ export function ContextVortex({
       role="status"
       aria-live="polite"
     >
-      {/* Backdrop: always-on CSS radial fallback under the (optional) nebula. */}
+      {/* Backdrop: pure CSS — a dark accent-tinted radial. No shader layers
+          (they read gray, cost three.js, and die on context loss). */}
       <div
         className="absolute inset-0 z-0"
         style={{
           background:
             'radial-gradient(120% 100% at 50% 42%, color-mix(in oklab, var(--color-accent) 13%, #05060a) 0%, #05060a 52%, #020308 100%)',
-        }}
-      />
-      {reducedMotion === false ? (
-        <div className="absolute inset-0 z-[1] opacity-35">
-          <Nebula speed={0.8} />
-        </div>
-      ) : null}
-      {/* Scrim keeps cards and copy readable over the nebula. */}
-      <div
-        className="absolute inset-0 z-[2]"
-        style={{
-          background:
-            'radial-gradient(circle at 50% 50%, rgba(3,4,8,0.2) 0%, rgba(3,4,8,0.5) 58%, rgba(2,3,6,0.82) 100%)',
         }}
       />
 

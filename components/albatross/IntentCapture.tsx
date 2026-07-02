@@ -5,7 +5,7 @@
  * Threads glowing compose border + Cosmos blob wash + Jitter full-bleed prompt (takeover tone).
  * Built from fully-designed registry pieces: SmoothUI Dot Morph Button (squish spring 600/22)
  * + SmoothUI Siri Orb as the "dot", @victorwelander's 21st.dev Gooey Text Morphing for the
- * cycling label, and Chamaac UI AstralFlow (three.js, lazy-loaded) + DancingLetters for the
+ * cycling label, and Chamaac UI DancingLetters for the
  * capture takeover. Buttons stay text-only — no decorative icons. */
 
 import { useMutation } from 'convex/react';
@@ -17,15 +17,15 @@ import { GooeyMorphText } from '@/components/albatross/GooeyMorphText';
 import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
+import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { api } from '@/convex/_generated/api';
 import { cn } from '@/lib/utils';
 
 export { looksLikeMultipleIntents, splitIntentText };
 
-// Lazy Chamaac pieces: AstralFlow pulls in three.js and DancingLetters pulls in
+// Lazy Chamaac piece: DancingLetters pulls in
 // next/font, so neither may sit on the button's initial bundle path. They only
 // download the first time the takeover opens.
-const AstralFlow = dynamic(() => import('@/components/astral-flow'), { ssr: false });
 const DancingLetters = dynamic(() => import('@/components/dancing-letters'), { ssr: false });
 
 /* ------------------------------------------------------------------ */
@@ -346,7 +346,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           onMouseLeave={() => setHovered(false)}
           aria-haspopup="dialog"
           aria-label="New Intent"
-          className="group pointer-events-auto flex h-12 cursor-pointer items-center gap-2.5 rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)]/80 pr-6 pl-4 shadow-[var(--shadow-pop)] backdrop-blur-md transition-[transform,border-color] duration-150 ease-out hover:border-[var(--color-accent)]/70 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
+          className="group pointer-events-auto flex h-12 cursor-pointer items-center gap-2.5 rounded-full bg-[var(--color-accent)] pr-6 pl-3.5 text-[var(--color-accent-foreground)] shadow-[var(--shadow-pop)] transition-transform duration-150 ease-out hover:-translate-y-0.5 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
         >
           <motion.span
             aria-hidden
@@ -355,14 +355,16 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
             animate={squished ? { scaleX: 0.68, scaleY: 1.32 } : { scaleX: 1, scaleY: 1 }}
             transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 600, damping: 22 }}
           >
+            {/* The orb blends into the accent pill: colors are derived from the
+                live accent (relative OKLCH), so any theme keeps it coherent. */}
             <SiriOrb
-              size="22px"
+              size="24px"
               animationDuration={26}
               colors={{
-                bg: 'var(--color-bg-elevated)',
-                c1: 'var(--color-accent-shine-1)',
-                c2: 'var(--color-accent-shine-2)',
-                c3: 'var(--color-accent-shine-3)',
+                bg: 'var(--color-accent)',
+                c1: 'oklch(from var(--color-accent) calc(l + 0.25) calc(c * 0.6) h)',
+                c2: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h + 50))',
+                c3: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h - 50))',
               }}
             />
           </motion.span>
@@ -370,7 +372,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
             texts={CAPTURE_BUTTON_LABELS}
             morphTime={1.2}
             cooldownTime={4}
-            className="text-[13.5px] leading-5 font-medium text-[var(--color-text)]"
+            className="text-[13.5px] leading-5 font-medium"
           />
         </button>
       </div>
@@ -385,31 +387,15 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
             exit={{ opacity: 0 }}
             transition={{ duration: reduceMotion ? 0 : 0.22 }}
           >
-            {/* Backdrop: Chamaac AstralFlow breathing shader (lazy three.js)
-                dimmed under a scrim so the dump text stays readable. Reduced
-                motion keeps the old still blur wash instead. */}
+            {/* Backdrop: the app's own paper + dot grid, near-opaque so the
+                dump text sits on a clean page (no shader washes — they read
+                gray and die with the WebGL context). */}
             <div
               aria-hidden
-              className="absolute inset-0 overflow-hidden"
+              className="absolute inset-0 overflow-hidden bg-[var(--color-bg)]/97"
               onClick={() => send({ type: 'dismiss', hasText: text.trim().length > 0 })}
             >
-              {reduceMotion ? (
-                <>
-                  <div className="absolute inset-0 bg-[var(--color-bg)]/78 backdrop-blur-xl" />
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      background:
-                        'radial-gradient(58% 46% at 50% 32%, var(--color-accent-soft), transparent 75%)',
-                    }}
-                  />
-                </>
-              ) : (
-                <>
-                  <AstralFlow speed={0.55} flowMin={2} flowMax={4.5} />
-                  <div className="absolute inset-0 bg-[var(--color-bg)]/55 backdrop-blur-[2px]" />
-                </>
-              )}
+              <DotGridGlow />
             </div>
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
               <motion.div

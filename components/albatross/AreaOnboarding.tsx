@@ -199,7 +199,10 @@ export function AreaOnboardingWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] gap-0 overflow-y-auto p-0 sm:max-w-2xl">
+      <DialogContent
+        aria-describedby={undefined}
+        className="max-h-[85vh] gap-0 overflow-y-auto p-0 sm:max-w-2xl"
+      >
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
           <DialogTitle className="text-[16px] font-semibold tracking-tight">
             {state.rerun ? 'Teach Albatross more' : 'Teach Albatross your life'}
