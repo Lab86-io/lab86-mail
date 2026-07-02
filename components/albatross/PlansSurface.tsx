@@ -589,7 +589,9 @@ function IntentStage({
 
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
-          key={`${intent.status}-${plan?._id ?? 'none'}`}
+          // Keyed by plan, not status: the ready->applied flip must NOT remount
+          // PlanReveal, or the apply response (created-things checklist) is lost.
+          key={plan?._id ?? intent.status}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
