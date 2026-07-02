@@ -248,7 +248,7 @@ function toolMeta(name: string) {
 // ---------- Trigger: the "Ask Assistant" launcher, bottom-right of the shell ----------
 // Text-only (no icon), anchored bottom-right, with an animated Magic UI glow
 // around the border so it reads as the live AI entry point.
-export function AIBarTrigger() {
+export function AIBarTrigger({ buttonHidden = false }: { buttonHidden?: boolean }) {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
@@ -268,7 +268,9 @@ export function AIBarTrigger() {
   // When the sidebar is open it owns its own pane and Close button, so we
   // only render this floating trigger while it's closed. The fullscreen
   // reader popout owns the whole window — no floating chrome above it.
-  if (aiBarOpen || threadFullscreen) return null;
+  // With Albatross on, New Intent owns the bottom-right slot and the
+  // assistant stays reachable via Cmd+K — keep the hook, skip the button.
+  if (buttonHidden || aiBarOpen || threadFullscreen) return null;
 
   return (
     <motion.button

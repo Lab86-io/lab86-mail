@@ -642,6 +642,8 @@ export default defineSchema({
     artifactHtml: v.optional(v.string()),
     artifactTitle: v.optional(v.string()),
     model: v.optional(v.string()),
+    // Model-declared place for the plan's map column ("Penn Yan DMV, NY").
+    mapQuery: v.optional(v.string()),
     appliedApplicationId: v.optional(v.string()),
     appliedAt: v.optional(v.number()),
     createdAt: v.number(),

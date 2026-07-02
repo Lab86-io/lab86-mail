@@ -97,6 +97,7 @@ export const planGenerationSchema = z.object({
   physicalActions: z.array(physicalActionSchema).max(12).default([]),
   assumptions: z.array(z.string().max(500)).max(10).default([]),
   sourceRefIds: z.array(z.string()).max(20).default([]),
+  mapQuery: z.string().max(200).nullish(),
 });
 
 export type PlanGeneration = z.infer<typeof planGenerationSchema>;
@@ -192,7 +193,8 @@ Respond with ONE JSON object, no prose, matching:
   "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "sourceRefIds"?: string[]}],
   "physicalActions": [{"title": string, "detail"?: string, "url"?: string}],
   "assumptions": [string],
-  "sourceRefIds": [string]            // refIds from the provided evidence you actually used
+  "sourceRefIds": [string],           // refIds from the provided evidence you actually used
+  "mapQuery": string|null             // when the plan involves ONE specific real-world place, its map search string ("Penn Yan DMV, Penn Yan NY") copied/derived from evidence or the user's words — never invented; else null
 }
 
 Question options:
@@ -501,6 +503,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       sourceRefs: resolveSourceRefs(generation.sourceRefIds, refs),
       artifactHtml,
       artifactTitle: generation.title,
+      mapQuery: generation.mapQuery ?? undefined,
     });
 
     return { planId, projectTitle: generation.projectTitle ?? undefined };

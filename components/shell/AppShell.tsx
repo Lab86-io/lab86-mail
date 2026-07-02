@@ -223,7 +223,7 @@ export function AppShell({
                 ) : null}
               </AnimatePresence>
             </div>
-            <AIBarTrigger />
+            <AIBarTrigger buttonHidden={albatrossEnabled} />
             {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
           </main>
         </SidebarProvider>
@@ -303,7 +303,7 @@ export function AppShell({
               ) : null}
             </Group>
           </TooltipProvider>
-          <AIBarTrigger />
+          <AIBarTrigger buttonHidden={albatrossEnabled} />
           {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
         </main>
       </SidebarProvider>

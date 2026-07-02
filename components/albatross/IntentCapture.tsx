@@ -334,10 +334,11 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
 
   return (
     <>
-      {/* Bottom-center keeps the launcher clear of the bottom-right Ask
-          Assistant orb. Dot-morph pill: the "dot" is a slow Siri orb that
-          squishes on hover (SmoothUI spring), the label morphs gooily. */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center">
+      {/* Bottom-right, where Ask Assistant used to live (that pill hides when
+          Albatross is on; the assistant stays on Cmd+K). Ghost until hovered:
+          transparent pill that fills with the accent on hover/focus. The orb
+          is a still gradient pearl — its rotation is paused by request. */}
+      <div className="pointer-events-none fixed bottom-6 right-6 z-50">
         <button
           ref={launcherRef}
           type="button"
@@ -346,22 +347,23 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           onMouseLeave={() => setHovered(false)}
           aria-haspopup="dialog"
           aria-label="New Intent"
-          className="group pointer-events-auto flex h-12 cursor-pointer items-center gap-2.5 rounded-full bg-[var(--color-accent)] pr-6 pl-3.5 text-[var(--color-accent-foreground)] shadow-[var(--shadow-pop)] transition-transform duration-150 ease-out hover:-translate-y-0.5 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
+          className="group pointer-events-auto flex h-10 cursor-pointer items-center gap-2 rounded-full border border-transparent bg-transparent pr-4 pl-2.5 text-[var(--color-text-muted)] transition-colors duration-150 ease-out hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] hover:shadow-[var(--shadow-pop)] focus-visible:border-[var(--color-accent)] focus-visible:bg-[var(--color-accent)] focus-visible:text-[var(--color-accent-foreground)] focus-visible:outline-none active:scale-[0.97]"
         >
           <motion.span
             aria-hidden
-            className="flex shrink-0 items-center justify-center"
+            className="flex shrink-0 items-center justify-center [&_.siri-orb::before]:[animation-play-state:paused]"
             initial={false}
             animate={squished ? { scaleX: 0.68, scaleY: 1.32 } : { scaleX: 1, scaleY: 1 }}
             transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 600, damping: 22 }}
           >
-            {/* The orb blends into the accent pill: colors are derived from the
-                live accent (relative OKLCH), so any theme keeps it coherent. */}
+            {/* Orb colors derive from the live accent (relative OKLCH) so any
+                theme keeps it coherent; bg transparent so it sits on both the
+                ghost and the hovered accent fill. */}
             <SiriOrb
-              size="24px"
+              size="18px"
               animationDuration={26}
               colors={{
-                bg: 'var(--color-accent)',
+                bg: 'transparent',
                 c1: 'oklch(from var(--color-accent) calc(l + 0.25) calc(c * 0.6) h)',
                 c2: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h + 50))',
                 c3: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h - 50))',
@@ -372,7 +374,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
             texts={CAPTURE_BUTTON_LABELS}
             morphTime={1.2}
             cooldownTime={4}
-            className="text-[13.5px] leading-5 font-medium"
+            className="text-[13px] leading-5 font-medium"
           />
         </button>
       </div>

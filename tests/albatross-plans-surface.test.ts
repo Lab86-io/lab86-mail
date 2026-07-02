@@ -412,3 +412,55 @@ describe('getGeo', () => {
     expect(await getGeo(10)).toBeUndefined();
   });
 });
+
+describe('mapQueryForIntent plan.mapQuery preference', () => {
+  const { mapQueryForIntent } = require('../components/albatross/PlansSurface');
+  const basePlan = { status: 'ready' as const, mapQuery: 'Penn Yan DMV, Penn Yan NY' };
+
+  test('plan-declared mapQuery lights the map without options or addresses', () => {
+    expect(mapQueryForIntent({ status: 'ready' }, basePlan)).toBe('Penn Yan DMV, Penn Yan NY');
+  });
+
+  test('a chosen option still beats the plan mapQuery; preview beats both', () => {
+    const intent = {
+      status: 'ready' as const,
+      questions: [
+        {
+          id: 'q1',
+          prompt: 'Which?',
+          answer: 'Parkway',
+          answeredOptionId: 'o1',
+          options: [{ id: 'o1', title: 'Parkway Music', address: '99 Route 9' }],
+        },
+      ],
+    };
+    expect(mapQueryForIntent(intent, basePlan)).toBe('Parkway Music, 99 Route 9');
+    expect(mapQueryForIntent(intent, basePlan, { id: 'p', title: 'Other Spot' })).toBe('Other Spot');
+  });
+
+  test('blank mapQuery falls through to heuristics', () => {
+    expect(mapQueryForIntent({ status: 'ready' }, { status: 'ready', mapQuery: '  ' })).toBeNull();
+  });
+});
+
+describe('vortexSourcesForIntent', () => {
+  const { vortexSourcesForIntent } = require('../components/albatross/PlansSurface');
+
+  test('shows the real search terms, area names, and web detail', () => {
+    const sources = vortexSourcesForIntent(
+      { status: 'planning', rawText: 'I have to go to the guitar store this weekend for strings' },
+      ['CardHunt', 'Money', 'Music', 'Habits'],
+    );
+    const byId = Object.fromEntries(sources.map((s: any) => [s.id, s]));
+    expect(byId.mail.detail).toBe('search: I have to go to');
+    expect(byId.areas.detail).toBe('CardHunt, Money, Music');
+    expect(byId.web.detail).toBe('places near you');
+    expect(sources).toHaveLength(5);
+  });
+
+  test('empty intent and no areas degrade to plain labels', () => {
+    const sources = vortexSourcesForIntent(null, []);
+    expect(sources.every((s: any) => s.label)).toBe(true);
+    expect(sources.find((s: any) => s.id === 'areas').detail).toBeUndefined();
+  });
+});

@@ -254,6 +254,7 @@ export const savePlan = mutation({
     artifactHtml: v.optional(v.string()),
     artifactTitle: v.optional(v.string()),
     model: v.optional(v.string()),
+    mapQuery: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -287,6 +288,7 @@ export const savePlan = mutation({
       artifactHtml: args.artifactHtml ? args.artifactHtml.slice(0, ARTIFACT_HTML_MAX) : undefined,
       artifactTitle: bounded(args.artifactTitle, 180),
       model: bounded(args.model, 120),
+      mapQuery: bounded(args.mapQuery, 200),
       createdAt: ts,
       updatedAt: ts,
     });

@@ -131,6 +131,7 @@ describe('generateIntentPlan orchestration', () => {
     physicalActions: [{ title: 'Find the paper W-2' }],
     assumptions: ['Payment already went through'],
     sourceRefIds: ['ref1'],
+    mapQuery: 'NYS Tax Department, Albany NY',
   };
 
   function wire(overrides: {
@@ -196,6 +197,7 @@ describe('generateIntentPlan orchestration', () => {
     expect(save).toBeTruthy();
     expect(save!.args.areaId).toBe('area_money');
     expect(save!.args.proposedProjectTitle).toBe('Tax season wrap-up');
+    expect(save!.args.mapQuery).toBe('NYS Tax Department, Albany NY');
     expect(save!.args.artifactHtml).toContain('<!doctype html>');
     // Hallucinated 'bogus' ref dropped; real corpus ref kept with account id.
     expect(save!.args.digitalActions[0].sourceRefs).toEqual([

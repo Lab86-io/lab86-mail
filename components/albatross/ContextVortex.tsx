@@ -14,6 +14,8 @@ export interface VortexSource {
   id: string;
   label: string;
   kind: 'mail' | 'calendar' | 'tasks' | 'areas' | 'web' | 'notes';
+  /** What is actually being read from this source ("search: passport…"). */
+  detail?: string;
 }
 
 export const DEFAULT_VORTEX_SOURCES: VortexSource[] = [
@@ -169,10 +171,17 @@ function FlyingCard({
       }}
       onAnimationComplete={() => setCycle((c) => c + 1)}
     >
-      <div className="flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-white/15 bg-[var(--color-bg-elevated)] py-1 pl-2 pr-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.45)]">
-        <span className="size-1 shrink-0 rounded-full bg-[var(--color-accent)]" />
-        <span className="text-[11px] font-medium leading-none text-[var(--color-text-muted)]">
-          {source.label}
+      <div className="flex max-w-[240px] -translate-x-1/2 -translate-y-1/2 items-start gap-2 whitespace-nowrap rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 shadow-[var(--shadow-pop)]">
+        <span className="mt-1 size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
+        <span className="min-w-0">
+          <span className="block text-[12.5px] font-medium leading-tight text-[var(--color-text)]">
+            {source.label}
+          </span>
+          {source.detail ? (
+            <span className="block max-w-[200px] truncate text-[11px] leading-tight text-[var(--color-text-muted)]">
+              {source.detail}
+            </span>
+          ) : null}
         </span>
       </div>
     </motion.div>
@@ -210,9 +219,9 @@ export function ContextVortex({
       className={cn('size-[88px] rounded-full', reducedMotion && 'animate-pulse [animation-duration:3s]')}
       style={{
         background:
-          'radial-gradient(circle at 40% 34%, color-mix(in oklab, var(--color-accent) 92%, white) 0%, var(--color-accent) 16%, color-mix(in oklab, var(--color-accent) 34%, black) 42%, #05060a 68%, #000 82%)',
+          'radial-gradient(circle at 40% 34%, color-mix(in oklab, var(--color-accent) 88%, white) 0%, var(--color-accent) 20%, color-mix(in oklab, var(--color-accent) 45%, var(--color-text)) 48%, color-mix(in oklab, var(--color-accent) 22%, var(--color-text)) 74%)',
         boxShadow:
-          '0 0 44px 10px color-mix(in oklab, var(--color-accent) 38%, transparent), 0 0 120px 34px color-mix(in oklab, var(--color-accent) 14%, transparent), inset 0 0 22px 6px rgba(0,0,0,0.85)',
+          '0 0 44px 10px color-mix(in oklab, var(--color-accent) 32%, transparent), 0 0 120px 34px color-mix(in oklab, var(--color-accent) 12%, transparent), inset 0 -6px 22px 4px color-mix(in oklab, var(--color-text) 45%, transparent)',
       }}
     />
   );
@@ -224,13 +233,13 @@ export function ContextVortex({
       role="status"
       aria-live="polite"
     >
-      {/* Backdrop: pure CSS — a dark accent-tinted radial. No shader layers
-          (they read gray, cost three.js, and die on context loss). */}
+      {/* Backdrop: pure CSS, built from theme vars so it has a real light and
+          dark mode — an accent-tinted radial over the app's own background. */}
       <div
         className="absolute inset-0 z-0"
         style={{
           background:
-            'radial-gradient(120% 100% at 50% 42%, color-mix(in oklab, var(--color-accent) 13%, #05060a) 0%, #05060a 52%, #020308 100%)',
+            'radial-gradient(120% 100% at 50% 42%, color-mix(in oklab, var(--color-accent) 14%, var(--color-bg)) 0%, color-mix(in oklab, var(--color-accent) 5%, var(--color-bg)) 52%, var(--color-bg) 100%)',
         }}
       />
 
@@ -285,12 +294,14 @@ export function ContextVortex({
       {title || subtitle ? (
         <div className="absolute inset-x-0 top-[calc(50%+96px)] z-[5] px-8 text-center">
           {title ? (
-            <p className="mx-auto max-w-[520px] truncate font-serif text-[17px] italic leading-snug text-white/90">
+            <p className="mx-auto max-w-[520px] truncate font-serif text-[17px] italic leading-snug text-[var(--color-text)]">
               {title}
             </p>
           ) : null}
           {subtitle ? (
-            <p className="mx-auto mt-1.5 max-w-[440px] truncate text-[12px] text-white/55">{subtitle}</p>
+            <p className="mx-auto mt-1.5 max-w-[440px] truncate text-[12px] text-[var(--color-text-muted)]">
+              {subtitle}
+            </p>
           ) : null}
         </div>
       ) : null}

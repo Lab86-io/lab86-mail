@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { ContextVortex } from '@/components/albatross/ContextVortex';
+import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { cn } from '@/lib/utils';
@@ -93,6 +93,7 @@ export interface PlanLike {
   assumptions?: string[];
   sourceRefs?: { kind: string; id: string; label?: string; url?: string }[];
   artifactHtml?: string;
+  mapQuery?: string;
 }
 
 export interface IntentLike {
@@ -220,11 +221,35 @@ export function mapQueryForIntent(
   if (previewOption) return optionQuery(previewOption);
   const chosen = chosenQuestionOption(intent);
   if (chosen) return optionQuery(chosen);
+  if (plan?.mapQuery?.trim()) return plan.mapQuery.trim();
   for (const action of plan?.physicalActions ?? []) {
     if (looksLikeAddress(action.detail)) return `${action.title}, ${action.detail}`;
     if (action.url && MAPS_URL_RE.test(action.url)) return action.title;
   }
   return null;
+}
+
+// The vortex shows what planning actually reads: mail/calendar/tasks searched
+// around the dump's words, the user's real area names, and the web when
+// location is available. Pure and testable.
+export function vortexSourcesForIntent(
+  intent: IntentLike | null | undefined,
+  areaNames: string[],
+): VortexSource[] {
+  const keywords = (intent?.rawText ?? '').trim().split(/\s+/).slice(0, 5).join(' ');
+  const detail = keywords ? `search: ${keywords}` : undefined;
+  return [
+    { id: 'mail', label: 'Mail', kind: 'mail', detail },
+    { id: 'calendar', label: 'Calendar', kind: 'calendar', detail },
+    { id: 'tasks', label: 'Tasks', kind: 'tasks', detail: undefined },
+    {
+      id: 'areas',
+      label: 'Areas',
+      kind: 'areas',
+      detail: areaNames.length ? areaNames.slice(0, 3).join(', ') : undefined,
+    },
+    { id: 'web', label: 'Web', kind: 'web', detail: 'places near you' },
+  ];
 }
 
 // Best-effort browser location for plan generation (nearby-place research).
@@ -677,6 +702,10 @@ function IntentStage({
   onSetStatus: (status: 'done' | 'archived') => void;
 }) {
   const meta = intentStatusMeta(intent.status);
+  const { isAuthenticated } = useConvexAuth();
+  const liveAreas = useQuery(api.albatross.listAreas, isAuthenticated ? { status: 'active' } : 'skip') as
+    | { name: string }[]
+    | undefined;
   const source = SOURCE_META[intent.source] ?? SOURCE_META.text;
   const failure = intent.planError || requestError;
 
@@ -729,6 +758,10 @@ function IntentStage({
           <ContextVortex
             title={vortexTitle.length > 96 ? `${vortexTitle.slice(0, 96).trimEnd()}…` : vortexTitle}
             subtitle="Reading your mail, calendar, areas, and the web…"
+            sources={vortexSourcesForIntent(
+              intent,
+              (liveAreas ?? []).map((area) => area.name),
+            )}
           />
         </motion.div>
       ) : (
