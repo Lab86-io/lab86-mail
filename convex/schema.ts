@@ -546,6 +546,96 @@ export default defineSchema({
     .index('by_user_batch', ['userId', 'operationBatchId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
+  // A raw user-declared intent (issue #76/#77 made durable). The raw dump is
+  // preserved verbatim; parse/plan output layers on top without replacing it.
+  albatrossIntents: defineTable({
+    userId: v.string(),
+    externalId: v.optional(v.string()),
+    rawText: v.string(),
+    transcript: v.optional(v.string()),
+    source: v.union(v.literal('text'), v.literal('voice'), v.literal('chat'), v.literal('import')),
+    title: v.optional(v.string()),
+    status: v.union(
+      v.literal('captured'),
+      v.literal('planning'),
+      v.literal('needs_answers'),
+      v.literal('ready'),
+      v.literal('applied'),
+      v.literal('done'),
+      v.literal('archived'),
+    ),
+    kind: v.optional(v.string()),
+    areaId: v.optional(v.string()),
+    priority: v.optional(v.number()),
+    questions: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          prompt: v.string(),
+          answer: v.optional(v.string()),
+          answeredAt: v.optional(v.number()),
+        }),
+      ),
+    ),
+    planError: v.optional(v.string()),
+    latestPlanId: v.optional(v.id('albatrossIntentPlans')),
+    appliedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_external', ['userId', 'externalId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
+
+  // A generated plan for one intent. digitalActions match the work-model
+  // contract so albatross_apply_intent_plan can execute the plan as stored.
+  // artifactHtml is the self-contained HTML plan brief rendered in a sandbox.
+  albatrossIntentPlans: defineTable({
+    userId: v.string(),
+    intentId: v.id('albatrossIntents'),
+    status: v.union(
+      v.literal('draft'),
+      v.literal('needs_answers'),
+      v.literal('ready'),
+      v.literal('applied'),
+      v.literal('superseded'),
+    ),
+    outcome: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    // When the generator judges the intent multi-step, this becomes the
+    // albatross project created at apply time (projectMode 'auto').
+    proposedProjectTitle: v.optional(v.string()),
+    digitalActions: v.array(v.any()),
+    physicalActions: v.array(
+      v.object({
+        title: v.string(),
+        detail: v.optional(v.string()),
+        url: v.optional(v.string()),
+      }),
+    ),
+    assumptions: v.array(v.string()),
+    sourceRefs: v.array(
+      v.object({
+        kind: v.string(),
+        id: v.string(),
+        label: v.optional(v.string()),
+        accountId: v.optional(v.string()),
+        url: v.optional(v.string()),
+      }),
+    ),
+    artifactHtml: v.optional(v.string()),
+    artifactTitle: v.optional(v.string()),
+    model: v.optional(v.string()),
+    appliedApplicationId: v.optional(v.string()),
+    appliedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_intent', ['userId', 'intentId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
+
   mailSyncStates: defineTable({
     userId: v.string(),
     accountId: v.string(),
