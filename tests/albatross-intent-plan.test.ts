@@ -242,3 +242,145 @@ describe('generateIntentPlan orchestration', () => {
     expect(calls.generations[0].prompt).toContain('voice transcript: upload en why ess taxes');
   });
 });
+
+describe('generateIntentPlan nearby options (geo)', () => {
+  const { __setIntentPlanDepsForTest, generateIntentPlan } = require('../lib/albatross/intent-plan');
+
+  test('geo triggers reverse geocode, local search, and option-bearing questions', async () => {
+    const calls: { mutations: any[]; generations: any[]; searches: any[] } = {
+      mutations: [],
+      generations: [],
+      searches: [],
+    };
+    const generationWithOptions = {
+      title: 'Get guitar strings',
+      kind: 'errand',
+      priority: 2,
+      areaName: null,
+      projectTitle: null,
+      outcome: 'New strings bought and on the guitar.',
+      summary: 'Two well-reviewed shops are nearby.',
+      questions: [
+        {
+          id: 'q1',
+          prompt: 'Which store should the plan use?',
+          options: [
+            { title: 'Parkway Music', address: '99 Route 9, Clifton Park', website: 'https://parkwaymusic.com', hoursText: 'Mon-Sat 10-6' },
+            { title: 'Guitar Center Albany', address: '1 Crossgates Mall Rd' },
+          ],
+        },
+      ],
+      digitalActions: [{ kind: 'task', title: 'Buy strings' }],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefIds: [],
+    };
+    __setIntentPlanDepsForTest({
+      api: {
+        albatross: { listAreas: 'q:listAreas', listVerifiedFacts: 'q:listVerifiedFacts' },
+        albatrossIntents: {
+          getIntentWorkbench: 'q:getIntentWorkbench',
+          updateIntent: 'm:updateIntent',
+          savePlan: 'm:savePlan',
+        },
+      },
+      convexQuery: async (fn: string) => {
+        if (fn === 'q:getIntentWorkbench') {
+          return { intent: { _id: 'intent_1', rawText: 'I have to go to the guitar store', questions: [] }, plan: null };
+        }
+        return [];
+      },
+      convexMutation: async (fn: string, args: any) => {
+        calls.mutations.push({ fn, args });
+        return fn === 'm:savePlan' ? 'plan_1' : null;
+      },
+      invokeTool: async (tool: any, args: any) => {
+        if (tool.name === 'browserbase_search') {
+          calls.searches.push(args);
+          return {
+            results: [
+              { title: 'Parkway Music', url: 'https://parkwaymusic.com', snippet: '99 Route 9 · Mon-Sat 10-6' },
+              { title: 'Guitar Center Albany', url: 'https://gc.example', snippet: 'Crossgates Mall' },
+            ],
+          };
+        }
+        return { items: [] };
+      },
+      httpGetJson: async (url: string) => {
+        expect(url).toContain('nominatim.openstreetmap.org/reverse');
+        return { address: { city: 'Albany', state: 'New York' } };
+      },
+      generateTextForCurrentUser: async (options: any) => {
+        calls.generations.push(options);
+        if (options.feature === 'albatross_local') return { text: '{"query": "guitar stores"}' };
+        if (options.feature === 'albatross_plan') return { text: JSON.stringify(generationWithOptions) };
+        return { text: '<!doctype html><html><body>' + 'b'.repeat(300) + '</body></html>' };
+      },
+    });
+
+    await generateIntentPlan({
+      userId: 'user_1',
+      intentId: 'intent_1',
+      geo: { latitude: 42.65, longitude: -73.75 },
+    });
+
+    expect(calls.searches[0].query).toBe('guitar stores near Albany, New York hours address');
+    const planGen = calls.generations.find((g) => g.feature === 'albatross_plan');
+    expect(planGen.prompt).toContain('user is near Albany, New York');
+    expect(planGen.prompt).toContain('## Nearby places');
+    expect(planGen.prompt).toContain('Parkway Music');
+
+    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
+    const question = save!.args.questions[0];
+    expect(question.options).toHaveLength(2);
+    expect(question.options[0].id).toBe('q1o1');
+    expect(question.options[0].address).toContain('Route 9');
+  });
+
+  test('no geo skips geocode, local pre-pass, and nearby search entirely', async () => {
+    const calls: string[] = [];
+    __setIntentPlanDepsForTest({
+      api: {
+        albatross: { listAreas: 'q:listAreas', listVerifiedFacts: 'q:listVerifiedFacts' },
+        albatrossIntents: {
+          getIntentWorkbench: 'q:getIntentWorkbench',
+          updateIntent: 'm:updateIntent',
+          savePlan: 'm:savePlan',
+        },
+      },
+      convexQuery: async (fn: string) =>
+        fn === 'q:getIntentWorkbench'
+          ? { intent: { _id: 'intent_1', rawText: 'go to the guitar store', questions: [] }, plan: null }
+          : [],
+      convexMutation: async (fn: string) => (fn === 'm:savePlan' ? 'plan_1' : null),
+      invokeTool: async (tool: any) => {
+        calls.push(tool.name);
+        return { items: [], results: [] };
+      },
+      httpGetJson: async () => {
+        throw new Error('should not geocode without geo');
+      },
+      generateTextForCurrentUser: async (options: any) => {
+        calls.push(options.feature);
+        if (options.feature === 'albatross_plan') {
+          return {
+            text: JSON.stringify({
+              title: 'Guitar store',
+              kind: 'errand',
+              outcome: 'Done.',
+              questions: [],
+              digitalActions: [],
+              physicalActions: [],
+              assumptions: [],
+              sourceRefIds: [],
+            }),
+          };
+        }
+        return { text: '<!doctype html><html><body>' + 'b'.repeat(300) + '</body></html>' };
+      },
+    });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    expect(calls).not.toContain('albatross_local');
+    expect(calls.filter((c) => c === 'browserbase_search')).toHaveLength(0);
+  });
+});

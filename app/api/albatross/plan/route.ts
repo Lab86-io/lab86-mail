@@ -16,7 +16,11 @@ function json(status: number, body: Record<string, unknown>) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { intentId?: string; timezone?: string };
+  let body: {
+    intentId?: string;
+    timezone?: string;
+    geo?: { latitude?: number; longitude?: number };
+  };
   try {
     body = await req.json();
   } catch {
@@ -25,6 +29,13 @@ export async function POST(req: NextRequest) {
   if (!body.intentId || typeof body.intentId !== 'string') {
     return json(400, { ok: false, error: 'intentId required' });
   }
+  const geo =
+    typeof body.geo?.latitude === 'number' &&
+    Number.isFinite(body.geo.latitude) &&
+    typeof body.geo?.longitude === 'number' &&
+    Number.isFinite(body.geo.longitude)
+      ? { latitude: body.geo.latitude, longitude: body.geo.longitude }
+      : undefined;
   try {
     const user = await requireCurrentUser();
     await enforceUserRateLimit({
@@ -39,6 +50,7 @@ export async function POST(req: NextRequest) {
       userName: user.name,
       timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
       intentId: body.intentId,
+      geo,
     });
     return json(200, { ok: true, planId: result.planId });
   } catch (err: any) {

@@ -34,6 +34,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_plan: 8000,
   albatross_plan_artifact: 16000,
   albatross_place: 2000,
+  albatross_local: 300,
   agent: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;

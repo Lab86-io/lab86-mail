@@ -23,10 +23,21 @@ const intentStatusValidator = v.union(
   v.literal('archived'),
 );
 
+const questionOptionValidator = v.object({
+  id: v.string(),
+  title: v.string(),
+  detail: v.optional(v.string()),
+  address: v.optional(v.string()),
+  hoursText: v.optional(v.string()),
+  website: v.optional(v.string()),
+});
+
 const questionValidator = v.object({
   id: v.string(),
   prompt: v.string(),
+  options: v.optional(v.array(questionOptionValidator)),
   answer: v.optional(v.string()),
+  answeredOptionId: v.optional(v.string()),
   answeredAt: v.optional(v.number()),
 });
 
@@ -189,16 +200,31 @@ export const answerQuestions = mutation({
   args: {
     ...callerArgs,
     intentId: v.id('albatrossIntents'),
-    answers: v.array(v.object({ id: v.string(), answer: v.string() })),
+    answers: v.array(
+      v.object({ id: v.string(), answer: v.string(), answeredOptionId: v.optional(v.string()) }),
+    ),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
     const ts = now();
-    const byId = new Map(args.answers.map((entry) => [entry.id, preserveRaw(entry.answer, 2000)]));
-    const questions = (intent.questions || []).map((question) =>
-      byId.has(question.id) ? { ...question, answer: byId.get(question.id), answeredAt: ts } : question,
+    const byId = new Map(
+      args.answers.map((entry) => [
+        entry.id,
+        { answer: preserveRaw(entry.answer, 2000), answeredOptionId: entry.answeredOptionId },
+      ]),
     );
+    const questions = (intent.questions || []).map((question) => {
+      const entry = byId.get(question.id);
+      return entry
+        ? {
+            ...question,
+            answer: entry.answer,
+            answeredOptionId: entry.answeredOptionId,
+            answeredAt: ts,
+          }
+        : question;
+    });
     const unanswered = questions.some((question) => !question.answer);
     await ctx.db.patch(args.intentId, {
       questions,

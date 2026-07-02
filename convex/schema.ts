@@ -572,7 +572,22 @@ export default defineSchema({
         v.object({
           id: v.string(),
           prompt: v.string(),
+          // Choosable answers (e.g. real nearby places found on the web).
+          // Free-text answering stays available even when options exist.
+          options: v.optional(
+            v.array(
+              v.object({
+                id: v.string(),
+                title: v.string(),
+                detail: v.optional(v.string()),
+                address: v.optional(v.string()),
+                hoursText: v.optional(v.string()),
+                website: v.optional(v.string()),
+              }),
+            ),
+          ),
           answer: v.optional(v.string()),
+          answeredOptionId: v.optional(v.string()),
           answeredAt: v.optional(v.number()),
         }),
       ),

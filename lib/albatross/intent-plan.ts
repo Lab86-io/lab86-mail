@@ -4,15 +4,25 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { extractHtml } from '@/lib/mail/agent-report';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { invokeTool } from '@/lib/tools/registry';
+import { browserbaseSearch } from '@/lib/tools/web';
 
 // Dependency seam mirroring lib/tools/albatross.ts: tests swap the network
 // edges (Convex, gateway, tool invocation) and exercise the real orchestration.
+async function httpGetJson(url: string): Promise<any> {
+  const response = await fetch(url, {
+    headers: { 'user-agent': 'lab86-mail/0.9 (albatross planner)' },
+  });
+  if (!response.ok) throw new Error(`GET ${url} failed (${response.status})`);
+  return response.json();
+}
+
 const defaultDeps = {
   api: api as any,
   convexQuery,
   convexMutation,
   generateTextForCurrentUser,
   invokeTool,
+  httpGetJson,
 };
 
 let deps = defaultDeps;
@@ -53,9 +63,19 @@ const digitalActionSchema = z.object({
   sourceRefIds: z.array(z.string()).optional(),
 });
 
+const questionOptionSchema = z.object({
+  id: z.string().max(60).optional(),
+  title: z.string().min(1).max(160),
+  detail: z.string().max(300).optional(),
+  address: z.string().max(300).optional(),
+  hoursText: z.string().max(300).optional(),
+  website: z.string().max(500).optional(),
+});
+
 const questionSchema = z.object({
   id: z.string().min(1).max(60).optional(),
   prompt: z.string().min(1).max(400),
+  options: z.array(questionOptionSchema).max(5).optional(),
 });
 
 const physicalActionSchema = z.object({
@@ -144,6 +164,8 @@ interface GenerateIntentPlanInput {
   userName?: string | null;
   timezone?: string;
   intentId: string;
+  // Browser geolocation, sent per-request with the user's consent. Never stored.
+  geo?: { latitude: number; longitude: number };
 }
 
 const PLAN_SYSTEM = `You are Albatross, the verified-intent planner inside Lab86 Mail. A user dumped a raw thought. Turn it into a realistic, grounded plan.
@@ -166,12 +188,16 @@ Respond with ONE JSON object, no prose, matching:
   "projectTitle": string|null,        // only when this is genuinely multi-step over weeks
   "outcome": string,                  // one sentence: what done looks like
   "summary": string,                  // 2-4 sentences of your reasoning, user-facing
-  "questions": [{"id": string, "prompt": string}],   // empty when nothing blocks the plan
+  "questions": [{"id": string, "prompt": string, "options"?: [{"id": string, "title": string, "detail"?: string, "address"?: string, "hoursText"?: string, "website"?: string}]}],
   "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "sourceRefIds"?: string[]}],
   "physicalActions": [{"title": string, "detail"?: string, "url"?: string}],
   "assumptions": [string],
   "sourceRefIds": [string]            // refIds from the provided evidence you actually used
-}`;
+}
+
+Question options:
+- When a "## Nearby places" evidence section is provided AND the intent involves visiting or choosing a real-world business, ask ONE question offering 2-4 options built STRICTLY from that evidence (copy titles/addresses/websites/hours from it; one-line "detail" saying why this one). Never invent places, addresses, or hours.
+- When the user's earlier answer already chose an option, do NOT re-ask: fold the chosen place into the plan — name it in the relevant task, and add a physicalAction with its address (detail) and website (url).`;
 
 const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer. Compose a single self-contained HTML document: a compact, beautiful "Plan Brief" for one personal plan. Think finely-typeset field notes, not a dashboard.
 
@@ -239,12 +265,96 @@ async function buildContextPack(userId: string, rawText: string) {
   return { refs, contextText: lines.join('\n'), areas };
 }
 
-function answersBlock(questions: Array<{ id: string; prompt: string; answer?: string }>) {
+function answersBlock(
+  questions: Array<{
+    id: string;
+    prompt: string;
+    answer?: string;
+    answeredOptionId?: string;
+    options?: Array<{ id: string; title: string; address?: string; website?: string; hoursText?: string }>;
+  }>,
+) {
   const answered = (questions || []).filter((question) => question.answer);
   if (!answered.length) return '';
   return `\n## The user answered your earlier questions\n${answered
-    .map((question) => `- Q: ${question.prompt}\n  A: ${question.answer}`)
+    .map((question) => {
+      const chosen = question.answeredOptionId
+        ? question.options?.find((option) => option.id === question.answeredOptionId)
+        : undefined;
+      const chosenDetail = chosen
+        ? ` (chose: ${chosen.title}${chosen.address ? `, ${chosen.address}` : ''}${chosen.website ? `, ${chosen.website}` : ''}${chosen.hoursText ? `, hours: ${chosen.hoursText}` : ''})`
+        : '';
+      return `- Q: ${question.prompt}\n  A: ${question.answer}${chosenDetail}`;
+    })
     .join('\n')}\nDo not re-ask these. Fold the answers into the plan.`;
+}
+
+/** Coarse "city, region" via OpenStreetMap Nominatim — enough for near-me search. */
+async function reverseGeocode(geo: { latitude: number; longitude: number }): Promise<string | null> {
+  try {
+    const data = await deps.httpGetJson(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${geo.latitude}&lon=${geo.longitude}&zoom=10`,
+    );
+    const address = data?.address || {};
+    const city = address.city || address.town || address.village || address.county;
+    const region = address.state || address.region;
+    if (!city && !region) return null;
+    return [city, region].filter(Boolean).join(', ');
+  } catch {
+    return null;
+  }
+}
+
+/** Cheap pre-pass: does this intent need a local business search? Returns the category query or null. */
+async function detectLocalQuery(input: GenerateIntentPlanInput, rawText: string): Promise<string | null> {
+  try {
+    const { text } = await deps.generateTextForCurrentUser({
+      feature: 'albatross_local',
+      speed: 'fast',
+      userId: input.userId,
+      system:
+        'Does this thought involve visiting, calling, or buying from a nearby business or venue? Respond with ONE JSON object: {"query": string|null} — a short web-search category like "guitar stores" or "passport photo services", or null when nothing local is involved.',
+      prompt: rawText.slice(0, 500),
+    });
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start === -1 || end <= start) return null;
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    const query = typeof parsed?.query === 'string' ? parsed.query.trim() : '';
+    return query && query.toLowerCase() !== 'null' ? query.slice(0, 80) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Search the web for options near the user; snippets carry names/addresses/hours. */
+async function nearbyEvidence(
+  input: GenerateIntentPlanInput,
+  rawText: string,
+): Promise<{ block: string; place: string | null }> {
+  if (!input.geo) return { block: '', place: null };
+  const [place, query] = await Promise.all([
+    reverseGeocode(input.geo),
+    detectLocalQuery(input, rawText),
+  ]);
+  if (!place || !query) return { block: '', place };
+  const search: any = await deps
+    .invokeTool(
+      browserbaseSearch,
+      { query: `${query} near ${place} hours address`, limit: 6 },
+      { agent: 'ai', userId: input.userId },
+    )
+    .catch(() => null);
+  const results: any[] = (search?.results || []).filter((result: any) => result?.url);
+  if (!results.length) return { block: '', place };
+  const lines = results.map(
+    (result, index) =>
+      `${index + 1}. ${result.title || 'Untitled'} — ${result.url}${result.snippet ? `\n   ${String(result.snippet).slice(0, 240)}` : ''}`,
+  );
+  return {
+    block: `\n## Nearby places (web search for "${query}" near ${place} — build question options ONLY from these)\n${lines.join('\n')}`,
+    place,
+  };
 }
 
 export async function generateIntentPlan(input: GenerateIntentPlanInput) {
@@ -263,10 +373,13 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
   });
 
   try {
-    const { refs, contextText, areas } = await buildContextPack(input.userId, intent.rawText);
+    const [{ refs, contextText, areas }, nearby] = await Promise.all([
+      buildContextPack(input.userId, intent.rawText),
+      nearbyEvidence(input, intent.rawText),
+    ]);
     const nowIso = new Date().toISOString();
     const prompt = [
-      `Today: ${nowIso}${input.timezone ? ` (user timezone: ${input.timezone})` : ''}`,
+      `Today: ${nowIso}${input.timezone ? ` (user timezone: ${input.timezone})` : ''}${nearby.place ? ` — user is near ${nearby.place}` : ''}`,
       '',
       "## Raw intent (preserve the user's meaning, not their phrasing)",
       intent.rawText,
@@ -276,6 +389,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       answersBlock(intent.questions || []),
       '',
       contextText,
+      nearby.block,
     ]
       .filter(Boolean)
       .join('\n');
@@ -303,7 +417,16 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       return {
         id: question.id || `q${index + 1}`,
         prompt: question.prompt,
+        options: question.options?.map((option, optionIndex) => ({
+          id: option.id || `q${index + 1}o${optionIndex + 1}`,
+          title: option.title,
+          detail: option.detail,
+          address: option.address,
+          hoursText: option.hoursText,
+          website: option.website,
+        })),
         answer: existing?.answer,
+        answeredOptionId: existing?.answeredOptionId,
         answeredAt: existing?.answeredAt,
       };
     });
