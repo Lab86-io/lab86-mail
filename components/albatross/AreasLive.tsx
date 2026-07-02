@@ -10,7 +10,7 @@
 // - NN/g wizard guidelines (nngroup.com/articles/wizards): setup must be re-enterable; the
 //   surface stays usable without it.
 
-import { useMutation, useQuery } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { Check, Inbox, Link2, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
@@ -37,7 +37,12 @@ interface AreaLike {
 }
 
 export function AreasLive({ openSetup }: { openSetup?: boolean }) {
-  const areas = useQuery(api.albatross.listAreas, { status: 'active' }) as AreaLike[] | undefined;
+  // Skip until the Clerk token has reached the Convex client — first-paint
+  // queries otherwise run unauthenticated and throw server-side.
+  const { isAuthenticated } = useConvexAuth();
+  const areas = useQuery(api.albatross.listAreas, isAuthenticated ? { status: 'active' } : 'skip') as
+    | AreaLike[]
+    | undefined;
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const [selectedId, setSelectedId] = useState<Id<'areas'> | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -141,7 +146,10 @@ function EmptyHero({ onStart }: { onStart: () => void }) {
 }
 
 function AreaDetail({ area }: { area: AreaLike }) {
-  const facts = useQuery(api.albatross.listAreaFacts, { areaId: area._id }) as AreaFactLike[] | undefined;
+  const { isAuthenticated } = useConvexAuth();
+  const facts = useQuery(api.albatross.listAreaFacts, isAuthenticated ? { areaId: area._id } : 'skip') as
+    | AreaFactLike[]
+    | undefined;
   const verifyFact = useMutation(api.albatross.verifyAreaFact);
   const rejectFact = useMutation(api.albatross.rejectAreaFact);
   const [busyFactId, setBusyFactId] = useState<string | null>(null);

@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'motion/react';
-import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
+import { Component, type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
 import { AreasLive } from '@/components/albatross/AreasLive';
@@ -337,11 +337,23 @@ function PrimarySurface({
     case 'intents':
       // Plans: the live intent → plan loop. The legacy seed-driven surface in
       // AlbatrossSurfaces is no longer routed here.
-      return albatrossEnabled ? <PlansSurface initialIntentId={capturedIntentId} /> : <DailyReport />;
+      return albatrossEnabled ? (
+        <SurfaceErrorBoundary surface="Plans">
+          <PlansSurface initialIntentId={capturedIntentId} />
+        </SurfaceErrorBoundary>
+      ) : (
+        <DailyReport />
+      );
     case 'areas':
       // Live areas + the setup wizard. No pre-seeded life: the empty state IS
       // the onboarding entry, and /?setup=areas re-opens the wizard.
-      return albatrossEnabled ? <AreasLive openSetup={openAreaSetup} /> : <DailyReport />;
+      return albatrossEnabled ? (
+        <SurfaceErrorBoundary surface="Areas">
+          <AreasLive openSetup={openAreaSetup} />
+        </SurfaceErrorBoundary>
+      ) : (
+        <DailyReport />
+      );
     case 'unassigned':
       return albatrossEnabled && isAlbatrossPrimaryView(view) ? (
         <AlbatrossSurface kind={view} />
@@ -350,6 +362,40 @@ function PrimarySurface({
       );
     default:
       return <Inbox />;
+  }
+}
+
+// A live-data surface must never take the whole shell down with it (a thrown
+// Convex query error propagates as a render error). Catch, explain, offer retry.
+class SurfaceErrorBoundary extends Component<
+  { surface: string; children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-center">
+          <p className="text-[14px] font-medium">{this.props.surface} hit an error.</p>
+          <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+            {this.state.error.message.slice(0, 300)}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ error: null })}
+            className="mt-4 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-[12.5px] hover:bg-[var(--color-bg-subtle)]"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
   }
 }
 

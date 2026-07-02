@@ -12,7 +12,7 @@
 // - motion.dev/docs/react-animation: stagger via per-child delays; delays derive from
 //   planRevealSequence indexes (deterministic, testable); useReducedMotion -> fade-only.
 
-import { useMutation, useQuery } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import {
   Archive,
   ArrowRight,
@@ -353,9 +353,13 @@ function QuietButton({ onClick, children }: { onClick: () => void; children: Rea
 
 export function PlansSurface({ initialIntentId }: { initialIntentId?: string | null }) {
   const reduced = useReducedMotion() ?? false;
-  const intents = useQuery(api.albatrossIntents.listIntents, { includeArchived: true }) as
-    | IntentRow[]
-    | undefined;
+  // Queries fire before the Clerk token reaches the Convex client on first
+  // load; running them unauthenticated throws server-side. Skip until ready.
+  const { isAuthenticated } = useConvexAuth();
+  const intents = useQuery(
+    api.albatrossIntents.listIntents,
+    isAuthenticated ? { includeArchived: true } : 'skip',
+  ) as IntentRow[] | undefined;
   const [filter, setFilter] = useState<IntentFilter>('all');
   const [showArchived, setShowArchived] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(initialIntentId ?? null);
@@ -374,7 +378,7 @@ export function PlansSurface({ initialIntentId }: { initialIntentId?: string | n
 
   const workbench = useQuery(
     api.albatrossIntents.getIntentWorkbench,
-    selectedId ? { intentId: selectedId as Id<'albatrossIntents'> } : 'skip',
+    isAuthenticated && selectedId ? { intentId: selectedId as Id<'albatrossIntents'> } : 'skip',
   ) as { intent: IntentRow; plan: PlanRow | null } | undefined;
 
   const answerQuestionsMutation = useMutation(api.albatrossIntents.answerQuestions);
