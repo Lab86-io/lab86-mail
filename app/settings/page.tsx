@@ -9,6 +9,7 @@ import {
   Check,
   CreditCard,
   KeyRound,
+  Layers,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -69,6 +70,7 @@ export default function SettingsPage() {
         <div className="space-y-10">
           <MailboxesSection />
           <ConnectionsSection />
+          <AlbatrossSection />
           <SendingSection />
           <AiSection />
           <ShortcutsSection />
@@ -136,6 +138,45 @@ function ShortcutsSection() {
 // ---------------------------------------------------------------------------
 // Sending
 // ---------------------------------------------------------------------------
+
+function AlbatrossSection() {
+  const { data } = useQuery({
+    queryKey: ['albatross-areas'],
+    queryFn: async () =>
+      (await fetchJson('/api/albatross/areas')) as {
+        areas: Array<{ _id: string; name: string }>;
+        onboarding: { completedAt?: number | null } | null;
+      },
+  });
+  const areaCount = data?.areas?.length ?? 0;
+
+  return (
+    <section>
+      <SectionHeading
+        title="Albatross"
+        blurb="The parts of your life the planner knows about. Re-run setup anytime — it only adds, never wipes."
+      />
+      <div className="flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
+        <div className="flex items-center gap-3">
+          <Layers className="size-4 text-[var(--color-text-muted)]" />
+          <div>
+            <div className="text-[13px] font-medium">Life areas</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">
+              {data
+                ? areaCount
+                  ? `${areaCount} area${areaCount === 1 ? '' : 's'} set up${data.onboarding?.completedAt ? '' : ' — setup not finished'}`
+                  : 'No areas yet. Teach Albatross your life.'
+                : 'Loading…'}
+            </div>
+          </div>
+        </div>
+        <Button asChild size="sm" variant="outline">
+          <Link href="/?setup=areas">{areaCount ? 'Re-run setup' : 'Set up areas'}</Link>
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 function SendingSection() {
   const qc = useQueryClient();

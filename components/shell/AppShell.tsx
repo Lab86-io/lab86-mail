@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
+import { AreasLive } from '@/components/albatross/AreasLive';
 import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
 import { PlansSurface } from '@/components/albatross/PlansSurface';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
@@ -71,10 +72,20 @@ export function AppShell({
   // A fresh capture lands the user on Plans with that intent selected, so the
   // dump→plan moment is never lost behind navigation.
   const [capturedIntentId, setCapturedIntentId] = useState<string | null>(null);
+  // Settings deep-links back into the area setup wizard via /?setup=areas.
+  const [openAreaSetup] = useState<boolean>(
+    () =>
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('setup') === 'areas',
+  );
   const handleIntentCaptured = (intentId: string) => {
     setCapturedIntentId(intentId);
     setPrimaryView('intents');
   };
+
+  useEffect(() => {
+    // The deep link must win over whatever view was persisted.
+    if (openAreaSetup && albatrossEnabled) setPrimaryView('areas');
+  }, [openAreaSetup, albatrossEnabled, setPrimaryView]);
 
   // The thread reader rides along with the mail-ish surfaces; calendar and
   // tasks keep their pane to themselves. Compose stays available everywhere.
@@ -176,6 +187,7 @@ export function AppShell({
                   albatrossEnabled={albatrossEnabled}
                   view={visiblePrimaryView}
                   capturedIntentId={capturedIntentId}
+                  openAreaSetup={openAreaSetup}
                 />
               </motion.div>
 
@@ -258,6 +270,7 @@ export function AppShell({
                     albatrossEnabled={albatrossEnabled}
                     view={visiblePrimaryView}
                     capturedIntentId={capturedIntentId}
+                    openAreaSetup={openAreaSetup}
                   />
                 </ReflowPanel>
               </Panel>
@@ -307,10 +320,12 @@ function PrimarySurface({
   albatrossEnabled,
   view,
   capturedIntentId,
+  openAreaSetup,
 }: {
   albatrossEnabled: boolean;
   view: PrimaryView;
   capturedIntentId?: string | null;
+  openAreaSetup?: boolean;
 }) {
   switch (view) {
     case 'daily_report':
@@ -324,6 +339,9 @@ function PrimarySurface({
       // AlbatrossSurfaces is no longer routed here.
       return albatrossEnabled ? <PlansSurface initialIntentId={capturedIntentId} /> : <DailyReport />;
     case 'areas':
+      // Live areas + the setup wizard. No pre-seeded life: the empty state IS
+      // the onboarding entry, and /?setup=areas re-opens the wizard.
+      return albatrossEnabled ? <AreasLive openSetup={openAreaSetup} /> : <DailyReport />;
     case 'unassigned':
       return albatrossEnabled && isAlbatrossPrimaryView(view) ? (
         <AlbatrossSurface kind={view} />
