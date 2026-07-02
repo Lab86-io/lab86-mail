@@ -125,10 +125,13 @@ const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: stri
   { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
 ];
 
+// Two entries on purpose: Plans is where captured intents become work, Areas is
+// the verified life context behind them. Unassigned stays routable (persisted
+// views, review-queue affordance inside Areas) but earns no rail slot — the
+// nav should gain at most one habit, not three.
 const ALBATROSS_SURFACES: Array<{ view: AlbatrossPrimaryView; label: string; Icon: any }> = [
+  { view: 'intents', label: 'Plans', Icon: rowIcon(SquarePenIcon) },
   { view: 'areas', label: 'Areas', Icon: rowIcon(LayersIcon) },
-  { view: 'intents', label: 'Intents', Icon: rowIcon(SquarePenIcon) },
-  { view: 'unassigned', label: 'Unassigned', Icon: rowIcon(UserIcon) },
 ];
 
 const SMART_CATEGORIES = [

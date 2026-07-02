@@ -31,6 +31,8 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   daily_report_insight: 1500,
   daily_report_narrative: 4000,
   daily_report_artifact: 32000,
+  albatross_plan: 8000,
+  albatross_plan_artifact: 16000,
   agent: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;

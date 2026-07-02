@@ -420,6 +420,8 @@ export const deleteUserCascade = mutation({
       'albatrossSprints',
       'albatrossApprovals',
       'albatrossPlanApplications',
+      'albatrossIntents',
+      'albatrossIntentPlans',
       'areas',
       'mcpConnections',
       'mcpCredentials',

@@ -21,7 +21,6 @@ import {
   Loader2,
   type LucideIcon,
   Mail,
-  Mic,
   Pause,
   Pencil,
   Play,
@@ -32,7 +31,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useState } from 'react';
 import {
   Confirmation,
   ConfirmationAccepted,
@@ -57,6 +56,7 @@ import {
   buildAlbatrossApplicationPlan,
 } from '@/lib/albatross/work-model';
 import { callTool } from '@/lib/api-client';
+import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 import {
   type Approval,
@@ -94,7 +94,6 @@ import {
   type ContextReviewItem,
   classifyArtifact,
   classifyThread,
-  createCapturedIntent,
   type DraftedFact,
   deriveActiveSprint,
   draftedFactKey,
@@ -105,7 +104,6 @@ import {
   type IntentContextItem,
   type IntentQuestion,
   intents,
-  looksLikeMultipleIntents,
   type ParsedIntent,
   type ParsedIntentKind,
   type ProjectNeed,
@@ -120,50 +118,27 @@ import {
   type SetupFactKind,
   type SetupStep,
   type SourceRef,
-  splitIntentText,
   summarizeSetupProgress,
   toClassifierArtifact,
 } from './surface-data';
 
 type AlbatrossSurfaceKind = 'areas' | 'intents' | 'unassigned';
 
-// The surface wrapper keeps capture state (issue #76) alive across area/intents/
-// unassigned switches: AppShell keeps this component mounted and only swaps the
-// `kind` prop, so a thought dumped from Areas is still there in Intents. Captures
-// reset only when you leave Albatross entirely - they are session-local by design.
+// Capture moved out of this wrapper: the global IntentCaptureLauncher in
+// AppShell owns the New Intent button on every surface, and the live intent →
+// plan loop renders in PlansSurface. This wrapper keeps Areas and the
+// Unassigned review queue; the legacy seed-driven Intents surface stays
+// reachable for the 'intents' kind but is no longer routed by the shell.
 export function AlbatrossSurface({ kind }: { kind: AlbatrossSurfaceKind }) {
-  const [captured, setCaptured] = useState<CapturedIntent[]>([]);
-  // The capture dialog is owned here and shared by every entry point - the
-  // bottom-center floating button on all surfaces and the New Intent button in
-  // the Intents header - so there is one dialog, one open state, one capture path.
-  const [captureOpen, setCaptureOpen] = useState(false);
-
-  const addCaptures = (next: CapturedIntent[]) => {
-    if (next.length) setCaptured((prev) => [...next, ...prev]);
-  };
-
-  const openCapture = () => setCaptureOpen(true);
-
   return (
     <div className="relative flex h-full min-w-0 flex-col">
       {kind === 'intents' ? (
-        <IntentsSurface captured={captured} onNewIntent={openCapture} />
+        <IntentsSurface captured={[]} />
       ) : kind === 'unassigned' ? (
         <UnassignedSurface />
       ) : (
         <AreasSurface />
       )}
-      {/* New Intent is always one click away as a bottom-center floating button
-          on every Albatross surface - including Intents, where the header action
-          alone proved too easy to miss. Bottom-center keeps it clear of the
-          bottom-right Ask Assistant launcher. */}
-      <IntentCaptureFab onClick={openCapture} />
-      <IntentCaptureDialog
-        open={captureOpen}
-        onOpenChange={setCaptureOpen}
-        onCapture={addCaptures}
-        captureCount={captured.length}
-      />
     </div>
   );
 }
@@ -400,6 +375,26 @@ function selectRowClass(selected: boolean): string {
 /* Areas - the context graph as an index + inspector                   */
 /* ------------------------------------------------------------------ */
 
+// Unassigned lost its rail slot in the nav collapse; this is its front door.
+// The count keeps the review habit honest without demanding a daily visit.
+function ReviewQueueButton() {
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const pending = buildReviewQueue().length;
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      onClick={() => setPrimaryView('unassigned')}
+      className="gap-1.5"
+    >
+      <Inbox className="size-3.5" />
+      Review queue
+      {pending ? <span className="ml-0.5 tabular-nums text-[var(--color-text-faint)]">{pending}</span> : null}
+    </Button>
+  );
+}
+
 function AreasSurface() {
   const summaries = buildAreaSummaries();
   const [filter, setFilter] = useState<'all' | 'review'>('all');
@@ -441,6 +436,7 @@ function AreasSurface() {
               {progress.completeAreas}/{progress.totalAreas}
             </span>
           </Button>
+          <ReviewQueueButton />
           <Segmented
             value={filter}
             onChange={setFilter}
@@ -4507,281 +4503,4 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 32);
-}
-
-/* ------------------------------------------------------------------ */
-/* Issue #76 - New Intent capture                                      */
-/* ------------------------------------------------------------------ */
-/* A friction-free way to get a thought out of your head. The primary path */
-/* is the bottom-center New Intent button, with a matching header action on */
-/* Intents. Both open the same dialog, which leads with text, offers voice  */
-/* where the browser supports it, saves the raw dump immediately, and asks  */
-/* before splitting one capture into several. It never touches the AI bar.  */
-
-type SpeechRecognitionLike = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult: ((event: SpeechResultEvent) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-};
-type SpeechResultEvent = { results: ArrayLike<ArrayLike<{ transcript: string }>> };
-type SpeechWindow = Window & {
-  SpeechRecognition?: new () => SpeechRecognitionLike;
-  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-};
-
-const CAPTURE_PROMPT = 'What are you trying to get out of your head?';
-
-// Fixed viewport placement keeps this visible even when an Albatross pane has
-// its own scroll region. Centered placement keeps it clear of the bottom-right
-// Ask Assistant launcher, so neither covers the other.
-function IntentCaptureFab({ onClick }: { onClick: () => void }) {
-  return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center">
-      <button
-        type="button"
-        onClick={onClick}
-        aria-haspopup="dialog"
-        aria-label="New Intent"
-        className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-[13px] font-medium text-[var(--color-accent-foreground)] shadow-[var(--shadow-pop)] transition-transform duration-[var(--duration-fast)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
-      >
-        <Plus className="size-4" />
-        New Intent
-      </button>
-    </div>
-  );
-}
-
-function IntentCaptureDialog({
-  open,
-  onOpenChange,
-  onCapture,
-  captureCount,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCapture: (intents: CapturedIntent[]) => void;
-  captureCount: number;
-}) {
-  const [text, setText] = useState('');
-  const [listening, setListening] = useState(false);
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  const [source, setSource] = useState<'text' | 'voice'>('text');
-  const [askSplit, setAskSplit] = useState(false);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const seqRef = useRef(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const speechWindow = window as SpeechWindow;
-    setVoiceSupported(Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition));
-  }, []);
-
-  // Reset everything whenever the dialog closes, and tear down any live mic.
-  useEffect(() => {
-    if (open) {
-      // Defer focus until the dialog content is mounted.
-      const id = window.setTimeout(() => textareaRef.current?.focus(), 60);
-      return () => window.clearTimeout(id);
-    }
-    recognitionRef.current?.abort();
-    recognitionRef.current = null;
-    setListening(false);
-    setAskSplit(false);
-    setText('');
-    setSource('text');
-  }, [open]);
-
-  const stopListening = () => {
-    recognitionRef.current?.stop();
-    setListening(false);
-  };
-
-  const startListening = () => {
-    const speechWindow = window as SpeechWindow;
-    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
-    if (!Recognition) return;
-    const recognition = new Recognition();
-    recognition.lang = 'en-US';
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    // Anchor to whatever was already typed, then live-replace the spoken tail as
-    // interim results grow - so updates never duplicate the running transcript.
-    const base = text.trim();
-    const joiner = base ? ' ' : '';
-    recognition.onresult = (event) => {
-      let transcript = '';
-      for (let i = 0; i < event.results.length; i += 1) {
-        transcript += event.results[i][0]?.transcript ?? '';
-      }
-      setSource('voice');
-      setText(`${base}${joiner}${transcript}`);
-    };
-    recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
-    recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
-  };
-
-  const makeIntents = (pieces: string[]): CapturedIntent[] => {
-    const stamp = new Date().toISOString();
-    return pieces.map((piece, index) => {
-      seqRef.current += 1;
-      return createCapturedIntent(
-        piece,
-        source,
-        `intent-capture-${captureCount}-${seqRef.current}-${index}`,
-        stamp,
-      );
-    });
-  };
-
-  const commit = (pieces: string[]) => {
-    const intents = makeIntents(pieces);
-    if (intents.length) onCapture(intents);
-    onOpenChange(false);
-  };
-
-  const handleSave = () => {
-    if (listening) stopListening();
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    // One capture by default; only ask to split when the dump clearly holds several.
-    if (looksLikeMultipleIntents(trimmed)) {
-      setAskSplit(true);
-      return;
-    }
-    commit([trimmed]);
-  };
-
-  const pieces = askSplit ? splitIntentText(text.trim()) : [];
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-3 sm:max-w-lg">
-        <DialogHeader className="text-left">
-          <DialogTitle className="font-display text-[18px]">{CAPTURE_PROMPT}</DialogTitle>
-          <DialogDescription className="text-[12.5px]">
-            Dump it raw - a word or a paragraph. Typed text stays local to this app; browser speech services
-            may process audio for voice input.
-          </DialogDescription>
-        </DialogHeader>
-
-        {askSplit ? (
-          <div className="flex flex-col gap-3">
-            <p className="text-[12.5px] text-[var(--color-text)]">
-              This looks like {pieces.length} separate things. Want them as separate intents?
-            </p>
-            <ul className="flex flex-col gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-2">
-              {pieces.map((piece, index) => (
-                <li key={piece} className="flex gap-2 text-[12.5px] text-[var(--color-text)]">
-                  <span className="text-[var(--color-text-faint)] tabular-nums">{index + 1}.</span>
-                  <span className="min-w-0 flex-1">{piece}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" onClick={() => commit(pieces)}>
-                Split into {pieces.length}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => commit([text.trim()])}>
-                Keep as one
-              </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setAskSplit(false)}>
-                Back to editing
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="relative">
-              <Textarea
-                ref={textareaRef}
-                value={text}
-                onChange={(event) => {
-                  setText(event.target.value);
-                  if (source !== 'text') setSource('text');
-                }}
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                    event.preventDefault();
-                    handleSave();
-                  }
-                }}
-                placeholder="e.g. I need to sort out the passport thing before the trip..."
-                className="min-h-28 pr-11 text-[13.5px] leading-relaxed"
-              />
-              <div className="absolute right-2 top-2">
-                {voiceSupported ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={() => (listening ? stopListening() : startListening())}
-                        aria-pressed={listening}
-                        aria-label={listening ? 'Stop voice capture' : 'Capture with voice'}
-                        className={cn(
-                          'inline-flex size-8 items-center justify-center rounded-full border transition-colors',
-                          listening
-                            ? 'border-[var(--color-danger)] bg-[var(--color-danger-soft)] text-[var(--color-danger)]'
-                            : 'border-[var(--color-control-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]',
-                        )}
-                      >
-                        {listening ? (
-                          <span className="size-2 rounded-[2px] bg-[var(--color-danger)]" />
-                        ) : (
-                          <Mic className="size-4" />
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>{listening ? 'Listening - tap to stop' : 'Speak instead'}</TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex size-8 items-center justify-center rounded-full border border-[var(--color-control-border)] text-[var(--color-text-faint)]">
-                        <Mic className="size-4 opacity-40" />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      Voice input isn't supported in this browser - type instead.
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
-            </div>
-
-            {listening ? (
-              <p className="flex items-center gap-1.5 text-[11.5px] text-[var(--color-danger)]">
-                <span className="size-1.5 animate-pulse rounded-full bg-[var(--color-danger)]" />
-                Listening... speak now, then review before saving.
-              </p>
-            ) : null}
-
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] text-[var(--color-text-faint)]">
-                {source === 'voice' ? 'Voice' : 'Text'} / Cmd+Enter to save
-              </span>
-              <div className="flex items-center gap-2">
-                <Button type="button" size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-                  Cancel
-                </Button>
-                <Button type="button" size="sm" onClick={handleSave} disabled={!text.trim()}>
-                  Save thought
-                  <ArrowRight className="size-3.5" />
-                </Button>
-              </div>
-            </div>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
 }

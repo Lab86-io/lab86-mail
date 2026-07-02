@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
+import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
+import { PlansSurface } from '@/components/albatross/PlansSurface';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
@@ -66,6 +68,13 @@ export function AppShell({
     initialPrimaryView !== normalizedPrimaryView ? initialPrimaryView : null,
   );
   const visiblePrimaryView = normalizePrimaryView(bootView ?? primaryView, albatrossEnabled);
+  // A fresh capture lands the user on Plans with that intent selected, so the
+  // dump→plan moment is never lost behind navigation.
+  const [capturedIntentId, setCapturedIntentId] = useState<string | null>(null);
+  const handleIntentCaptured = (intentId: string) => {
+    setCapturedIntentId(intentId);
+    setPrimaryView('intents');
+  };
 
   // The thread reader rides along with the mail-ish surfaces; calendar and
   // tasks keep their pane to themselves. Compose stays available everywhere.
@@ -163,7 +172,11 @@ export function AppShell({
                 className="absolute inset-0 h-full w-full"
                 aria-hidden={readerVisible}
               >
-                <PrimarySurface albatrossEnabled={albatrossEnabled} view={visiblePrimaryView} />
+                <PrimarySurface
+                  albatrossEnabled={albatrossEnabled}
+                  view={visiblePrimaryView}
+                  capturedIntentId={capturedIntentId}
+                />
               </motion.div>
 
               <AnimatePresence initial={false}>
@@ -199,6 +212,7 @@ export function AppShell({
               </AnimatePresence>
             </div>
             <AIBarTrigger />
+            {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
           </main>
         </SidebarProvider>
 
@@ -240,7 +254,11 @@ export function AppShell({
             >
               <Panel id="inbox" defaultSize={panelIds.length === 1 ? '100%' : '40%'} minSize="280px">
                 <ReflowPanel>
-                  <PrimarySurface albatrossEnabled={albatrossEnabled} view={visiblePrimaryView} />
+                  <PrimarySurface
+                    albatrossEnabled={albatrossEnabled}
+                    view={visiblePrimaryView}
+                    capturedIntentId={capturedIntentId}
+                  />
                 </ReflowPanel>
               </Panel>
 
@@ -273,6 +291,7 @@ export function AppShell({
             </Group>
           </TooltipProvider>
           <AIBarTrigger />
+          {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
         </main>
       </SidebarProvider>
 
@@ -284,7 +303,15 @@ export function AppShell({
   );
 }
 
-function PrimarySurface({ albatrossEnabled, view }: { albatrossEnabled: boolean; view: PrimaryView }) {
+function PrimarySurface({
+  albatrossEnabled,
+  view,
+  capturedIntentId,
+}: {
+  albatrossEnabled: boolean;
+  view: PrimaryView;
+  capturedIntentId?: string | null;
+}) {
   switch (view) {
     case 'daily_report':
       return <DailyReport />;
@@ -292,8 +319,11 @@ function PrimarySurface({ albatrossEnabled, view }: { albatrossEnabled: boolean;
       return <CalendarSurface />;
     case 'tasks':
       return <TasksSurface />;
-    case 'areas':
     case 'intents':
+      // Plans: the live intent → plan loop. The legacy seed-driven surface in
+      // AlbatrossSurfaces is no longer routed here.
+      return albatrossEnabled ? <PlansSurface initialIntentId={capturedIntentId} /> : <DailyReport />;
+    case 'areas':
     case 'unassigned':
       return albatrossEnabled && isAlbatrossPrimaryView(view) ? (
         <AlbatrossSurface kind={view} />
