@@ -11,7 +11,7 @@
 //   surface stays usable without it.
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
-import { Check, Inbox, Link2, ShieldCheck, X } from 'lucide-react';
+import { Check, Link2, ShieldCheck, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
 import {
@@ -65,7 +65,6 @@ export function AreasLive({ openSetup }: { openSetup?: boolean }) {
         </div>
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => setPrimaryView('unassigned')}>
-            <Inbox className="size-3.5" />
             Review queue
           </Button>
           <Button type="button" size="sm" onClick={() => setWizardOpen(true)}>
@@ -192,9 +191,7 @@ function AreaDetail({ area }: { area: AreaLike }) {
         <>
           {candidates.length > 0 ? (
             <section className="mt-5">
-              <h4 className="text-[11px] font-semibold tracking-wide text-[var(--color-text-muted)] uppercase">
-                Found — keep it?
-              </h4>
+              <h4 className="text-[12px] font-medium text-[var(--color-text-muted)]">Found — keep it?</h4>
               <div className="mt-2 space-y-2">
                 {candidates.map((fact) => (
                   <FactRow key={fact._id} fact={fact} busy={busyFactId === fact._id}>
@@ -225,9 +222,7 @@ function AreaDetail({ area }: { area: AreaLike }) {
           ) : null}
 
           <section className="mt-5">
-            <h4 className="text-[11px] font-semibold tracking-wide text-[var(--color-text-muted)] uppercase">
-              Verified
-            </h4>
+            <h4 className="text-[12px] font-medium text-[var(--color-text-muted)]">Verified</h4>
             {verified.length > 0 ? (
               <div className="mt-2 space-y-2">
                 {verified.map((fact) => (

@@ -677,7 +677,6 @@ function IntentStage({
   onSetStatus: (status: 'done' | 'archived') => void;
 }) {
   const meta = intentStatusMeta(intent.status);
-  const StatusIcon = STATUS_ICONS[meta.icon] ?? CircleDot;
   const source = SOURCE_META[intent.source] ?? SOURCE_META.text;
   const failure = intent.planError || requestError;
 
@@ -747,12 +746,12 @@ function IntentStage({
                 {intentDisplayTitle(intent)}
               </h1>
               <Tag tone={meta.tone}>
-                <StatusIcon className="size-3" />
+                <span className="size-1.5 rounded-full bg-current opacity-70" />
                 {meta.label}
               </Tag>
             </header>
 
-            <RawDump intent={intent} sourceLabel={source.label} SourceIcon={source.icon} />
+            <RawDump intent={intent} sourceLabel={source.label} />
 
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
@@ -786,7 +785,7 @@ function IntentStage({
                       Albatross will read your mail, calendar, and areas, then turn this into a plan.
                     </p>
                     <PrimaryButton reduced={reduced} onClick={onRequestPlan}>
-                      Make a plan
+                      Generate plan
                     </PrimaryButton>
                   </div>
                 ) : intent.status === 'needs_answers' ? (
@@ -862,9 +861,7 @@ function MapColumn({
     <aside className="sticky top-0 w-[360px] shrink-0 self-start py-5 pr-6">
       <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
-            Location
-          </span>
+          <span className="text-[12px] font-medium text-[var(--color-text-faint)]">Location</span>
           <button
             type="button"
             onClick={onToggle}
@@ -907,22 +904,13 @@ function MapColumn({
 }
 
 // The raw dump is the user's own words: verbatim, quote-styled, never editable.
-function RawDump({
-  intent,
-  sourceLabel,
-  SourceIcon,
-}: {
-  intent: IntentRow;
-  sourceLabel: string;
-  SourceIcon: LucideIcon;
-}) {
+function RawDump({ intent, sourceLabel }: { intent: IntentRow; sourceLabel: string }) {
   return (
     <figure className="rounded-lg border-l-2 border-[var(--color-accent)] bg-[var(--color-bg-subtle)] px-4 py-3">
       <blockquote className="whitespace-pre-wrap font-display text-[15px] leading-relaxed text-[var(--color-text)]">
         {intent.rawText}
       </blockquote>
       <figcaption className="mt-2 flex items-center gap-2 text-[11px] text-[var(--color-text-faint)]">
-        <SourceIcon className="size-3" />
         <span>{sourceLabel}</span>
         <span>·</span>
         <span>{relativeTime(intent.createdAt)}</span>
@@ -1188,7 +1176,7 @@ function PlanReveal({ intent, plan, reduced }: { intent: IntentRow; plan: PlanRo
       ) : (
         <motion.div {...reveal(sequence.length)} className="mt-1 flex flex-wrap items-center gap-3">
           <PrimaryButton reduced={reduced} disabled={Boolean(disabledReason) || applying} onClick={apply}>
-            {applying ? 'Creating…' : 'Make it real'}
+            {applying ? 'Applying…' : 'Apply plan'}
           </PrimaryButton>
           {(plan.digitalActions?.length ?? 0) >= 4 ? (
             <Segmented
@@ -1239,16 +1227,15 @@ function RevealBlock({
     );
   }
   if (item.kind === 'action' && item.action) {
-    const Icon = ACTION_ICONS[item.action.kind] ?? ListChecks;
     const detail = actionDetailLine(item.action);
+    // One indicator per row: the trailing kind tag carries the type; no
+    // leading icon chip (the icon-in-a-pale-chip repeated per row is exactly
+    // the generated-UI signature Jakob banned).
     return (
       <motion.div
         {...motionProps}
         className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
       >
-        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <Icon className="size-4" />
-        </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13.5px] font-medium text-[var(--color-text)]">
             {item.action.kind === 'email_draft' && item.action.subject
@@ -1266,9 +1253,7 @@ function RevealBlock({
   if (item.kind === 'physical') {
     return (
       <motion.div {...motionProps} className="rounded-lg border border-[var(--color-border)] p-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
-          In the real world
-        </p>
+        <p className="mb-2 text-[12px] font-medium text-[var(--color-text-faint)]">Real world</p>
         <ul className="flex flex-col gap-1.5">
           {(plan.physicalActions ?? []).map((step) => (
             <li key={step.title} className="flex items-start gap-2 text-[13px] text-[var(--color-text)]">
@@ -1331,9 +1316,7 @@ function RevealBlock({
     return (
       <motion.div {...motionProps} className="overflow-hidden rounded-lg border border-[var(--color-border)]">
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
-            Plan brief
-          </span>
+          <span className="text-[12px] font-medium text-[var(--color-text-faint)]">Plan brief</span>
           <a
             href={`/api/albatross/plan/${plan._id}/artifact`}
             target="_blank"
@@ -1378,9 +1361,7 @@ function AppliedSummary({ plan, applied }: { plan: PlanRow; applied: ApplyRespon
           </ul>
           {applied.approvals.length ? (
             <div className="mt-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
-                Waiting for your OK
-              </p>
+              <p className="text-[12px] font-medium text-[var(--color-text-faint)]">Needs your approval</p>
               <ul className="mt-1 flex flex-col gap-1">
                 {applied.approvals.map((approval) => (
                   <li

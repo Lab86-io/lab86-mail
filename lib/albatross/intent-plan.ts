@@ -187,7 +187,7 @@ Respond with ONE JSON object, no prose, matching:
   "areaName": string|null,            // exact name of one provided area, or null
   "projectTitle": string|null,        // only when this is genuinely multi-step over weeks
   "outcome": string,                  // one sentence: what done looks like
-  "summary": string,                  // 2-4 sentences of your reasoning, user-facing
+  "summary": string,                  // 2-4 sentences, user-facing. Plain and factual. NEVER first person ("I've set...", "I'll...") — describe the plan, not yourself: "A task and a reminder cover the deadline." No exclamation marks, no filler.
   "questions": [{"id": string, "prompt": string, "options"?: [{"id": string, "title": string, "detail"?: string, "address"?: string, "hoursText"?: string, "website"?: string}]}],
   "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "sourceRefIds"?: string[]}],
   "physicalActions": [{"title": string, "detail"?: string, "url"?: string}],
@@ -199,12 +199,15 @@ Question options:
 - When a "## Nearby places" evidence section is provided AND the intent involves visiting or choosing a real-world business, ask ONE question offering 2-4 options built STRICTLY from that evidence (copy titles/addresses/websites/hours from it; one-line "detail" saying why this one). Never invent places, addresses, or hours.
 - When the user's earlier answer already chose an option, do NOT re-ask: fold the chosen place into the plan — name it in the relevant task, and add a physicalAction with its address (detail) and website (url).`;
 
-const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer. Compose a single self-contained HTML document: a compact, beautiful "Plan Brief" for one personal plan. Think finely-typeset field notes, not a dashboard.
+const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer. Compose a single self-contained HTML document: the working brief for one personal plan. Think finely-typeset field notes, not a dashboard.
+
+This document is embedded DIRECTLY BELOW a surface that already shows the plan title, outcome sentence, summary, and action list. Do not restate any of those. The brief earns its place by carrying what the surface cannot: step-by-step working detail, addresses and hours, document checklists, phone scripts, source links with what each says, caveats.
 
 Rules:
-- One complete HTML document, inline CSS only, no external requests, no JS frameworks. Small tasteful inline SVG accents are welcome.
+- One complete HTML document, inline CSS only, no external requests, no JS frameworks.
 - System font stack. Respect prefers-color-scheme for dark/light.
-- Structure: masthead with the plan title and outcome sentence; a checklist of the digital actions (mark drafts/events with small labels); real-world steps with their links; assumptions in a quieter aside; evidence/sources as footnotes.
+- Voice: plain and factual. Never first person. No exclamation marks. No sparkle/emoji glyphs.
+- Headings: sentence case, no ALL-CAPS letter-spaced labels, no "Plan Brief" masthead label (the surface chrome already says what this is). Open with the most useful working detail, not a restatement.
 - Dense but calm. No hero images, no lorem, no invented content: render ONLY the data provided.
 - Total under 500 lines. Output ONLY the HTML document.`;
 

@@ -3604,9 +3604,7 @@ function AssignmentRow({
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-2">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
-          {assignmentRole}
-        </span>
+        <span className="text-[12px] text-[var(--color-text-faint)]">{assignmentRole}</span>
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--color-text)]">
           {assignment.areaName}
         </span>
@@ -3961,9 +3959,7 @@ function AreaSetupDialog({
 
         <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden sm:grid-cols-[200px_minmax(0,1fr)]">
           <div className="hidden min-h-0 flex-col overflow-y-auto border-r border-[var(--color-border)] sm:flex">
-            <p className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-faint)]">
-              Areas
-            </p>
+            <p className="px-3 pb-1 pt-3 text-[12px] font-medium text-[var(--color-text-faint)]">Areas</p>
             {allSteps.map((step) => (
               <SetupStepRow
                 key={step.area.id}
@@ -3979,7 +3975,7 @@ function AreaSetupDialog({
               />
             ))}
             {areaDrafts.filter((d) => !d.sourceAreaId).length ? (
-              <p className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-faint)]">
+              <p className="px-3 pb-1 pt-3 text-[12px] font-medium text-[var(--color-text-faint)]">
                 New (draft)
               </p>
             ) : null}
@@ -4181,9 +4177,7 @@ function SetupStepEditor({
       <Separator />
 
       <div className="flex flex-col gap-3">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-faint)]">
-          Context for this area
-        </p>
+        <p className="text-[12px] font-medium text-[var(--color-text-faint)]">Context for this area</p>
         {slots.map((slot) => (
           <SetupSlotEditor
             key={slot.kind}
