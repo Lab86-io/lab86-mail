@@ -11,7 +11,7 @@
 //   surface stays usable without it.
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
-import { Check, Inbox, Link2, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { Check, Inbox, Link2, ShieldCheck, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
 import {
@@ -69,7 +69,6 @@ export function AreasLive({ openSetup }: { openSetup?: boolean }) {
             Review queue
           </Button>
           <Button type="button" size="sm" onClick={() => setWizardOpen(true)}>
-            <Sparkles className="size-3.5" />
             Set up areas
           </Button>
         </div>
@@ -126,10 +125,7 @@ function EmptyHero({ onStart }: { onStart: () => void }) {
         transition={{ duration: 0.25 }}
         className="max-w-md text-center"
       >
-        <div className="mx-auto grid size-12 place-items-center rounded-full bg-[var(--color-accent-soft)]">
-          <Sparkles className="size-5 text-[var(--color-accent)]" />
-        </div>
-        <h3 className="mt-4 text-[17px] font-semibold tracking-tight">
+        <h3 className="text-[17px] font-semibold tracking-tight">
           Albatross doesn&apos;t know your life yet. Teach it.
         </h3>
         <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
@@ -137,7 +133,6 @@ function EmptyHero({ onStart }: { onStart: () => void }) {
           Albatross starts sorting everything against them. A couple of minutes, skippable anytime.
         </p>
         <Button type="button" size="lg" className="mt-5" onClick={onStart}>
-          <Sparkles className="size-4" />
           Teach me your life
         </Button>
       </motion.div>

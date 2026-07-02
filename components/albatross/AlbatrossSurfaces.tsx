@@ -26,7 +26,6 @@ import {
   Play,
   Plus,
   ShieldCheck,
-  Sparkles,
   Users,
   Wrench,
   X,
@@ -153,7 +152,7 @@ const ARTIFACT_ICON: Record<ArtifactKind, LucideIcon> = {
   mailThread: Mail,
   calendarEvent: CalendarDays,
   mcpItem: GitPullRequest,
-  intent: Sparkles,
+  intent: CircleDot,
 };
 
 const FACT_META: Record<FactStatus, { label: string; tone: Tone }> = {
@@ -750,7 +749,7 @@ const LENS_ITEM_ICON: Record<AreaLensItemKind, LucideIcon> = {
   mailThread: Mail,
   calendarEvent: CalendarDays,
   mcpItem: GitPullRequest,
-  intent: Sparkles,
+  intent: CircleDot,
   task: ListChecks,
   fact: AtSign,
   person: Users,
@@ -852,7 +851,7 @@ function LensRow({
   onUndo: () => void;
 }) {
   const [picking, setPicking] = useState(false);
-  const Icon = LENS_ITEM_ICON[item.kind] ?? Sparkles;
+  const Icon = LENS_ITEM_ICON[item.kind] ?? CircleDot;
   return (
     <div className="py-2.5">
       <div className="flex items-start gap-2">
@@ -2237,7 +2236,7 @@ const STEP_KIND_META: Record<AlbatrossArtifactKind, { label: string; icon: Lucid
 };
 
 function stepKindMeta(kind: string) {
-  return STEP_KIND_META[kind as AlbatrossArtifactKind] ?? { label: titleCase(kind), icon: Sparkles };
+  return STEP_KIND_META[kind as AlbatrossArtifactKind] ?? { label: titleCase(kind), icon: CircleDot };
 }
 
 function shortBatch(id: string): string {
@@ -3177,7 +3176,7 @@ function ProjectPane({ pane }: { pane: ProjectPaneModel }) {
           <ul className="mt-1.5 flex flex-col gap-1">
             {linkedIntents.map((intent) => (
               <li key={intent.id} className="flex gap-2 text-[12.5px] text-[var(--color-text)]">
-                <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[var(--color-text-faint)]" />
+                <CircleDot className="mt-0.5 size-3.5 shrink-0 text-[var(--color-text-faint)]" />
                 <span className="min-w-0 flex-1">{intent.rawInput}</span>
               </li>
             ))}
@@ -3434,7 +3433,7 @@ function UnassignedSurface() {
           <PanelHeader title="Review queue" count={queue.length} />
           <div className="min-h-0 overflow-y-auto">
             {queue.map(({ item, artifact, thread, candidateAreas }) => {
-              const Icon = ARTIFACT_ICON[item.artifactKind] ?? Sparkles;
+              const Icon = ARTIFACT_ICON[item.artifactKind] ?? CircleDot;
               const decision = committed[item.id];
               return (
                 <button
@@ -3636,7 +3635,7 @@ function TriageDetail({
   onUndo: () => void;
 }) {
   const { item, artifact, thread, candidateAreas, candidateFacts } = detail;
-  const Icon = ARTIFACT_ICON[item.artifactKind] ?? Sparkles;
+  const Icon = ARTIFACT_ICON[item.artifactKind] ?? CircleDot;
   const options = useMemo(() => reviewDecisionOptions(item), [item]);
   // Two-step: pick an action to preview its effect, then confirm to commit.
   const [pendingAction, setPendingAction] = useState<ReviewActionKind | null>(null);

@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import SmoothButton from "@/components/smoothui/smooth-button";
-import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useState } from "react";
+import { motion, useReducedMotion } from 'motion/react';
+import { useEffect, useState } from 'react';
+import SmoothButton from '@/components/smoothui/smooth-button';
 
 export interface DotMorphButtonProps {
   className?: string;
@@ -10,25 +10,21 @@ export interface DotMorphButtonProps {
   onClick?: () => void;
 }
 
-export function DotMorphButton({
-  label,
-  className = "",
-  onClick,
-}: DotMorphButtonProps) {
+export function DotMorphButton({ label, className = '', onClick }: DotMorphButtonProps) {
   const [isHovered, setIsHovered] = useState(false);
   const shouldReduceMotion = useReducedMotion();
   const [isHoverDevice, setIsHoverDevice] = useState(false);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const mediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
     setIsHoverDevice(mediaQuery.matches);
 
     const handleChange = (e: MediaQueryListEvent) => {
       setIsHoverDevice(e.matches);
     };
 
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
   return (
@@ -60,23 +56,21 @@ export function DotMorphButton({
         className="flex items-center justify-center"
         initial={false}
         style={{
-          background: "var(--color-brand)",
-          display: "inline-block",
+          background: 'var(--color-brand)',
+          display: 'inline-block',
         }}
         transition={
           shouldReduceMotion
             ? { duration: 0 }
             : {
-                type: "spring" as const,
+                type: 'spring' as const,
                 stiffness: 600,
                 damping: 22,
                 duration: 0.25,
               }
         }
       />
-      <span className="select-none font-medium text-2xl text-foreground">
-        {label}
-      </span>
+      <span className="select-none font-medium text-2xl text-foreground">{label}</span>
     </SmoothButton>
   );
 }

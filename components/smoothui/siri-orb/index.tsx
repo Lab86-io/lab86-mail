@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { cn } from "@/lib/utils";
+import { cn } from '@/lib/utils';
 
 const SIZE_THRESHOLD_SMALL = 50;
 const SIZE_THRESHOLD_TINY = 30;
@@ -21,10 +21,10 @@ const SHADOW_MULTIPLIER_SMALL = 0.004;
 const SHADOW_MIN_SMALL = 0.5;
 const SHADOW_MULTIPLIER_LARGE = 0.008;
 const SHADOW_MIN_LARGE = 2;
-const MASK_RADIUS_TINY = "0%";
-const MASK_RADIUS_SMALL = "5%";
-const MASK_RADIUS_MEDIUM = "15%";
-const MASK_RADIUS_LARGE = "25%";
+const MASK_RADIUS_TINY = '0%';
+const MASK_RADIUS_SMALL = '5%';
+const MASK_RADIUS_MEDIUM = '15%';
+const MASK_RADIUS_LARGE = '25%';
 const CONTRAST_TINY = 1.1;
 const CONTRAST_MULTIPLIER_FINAL = 1.2;
 const CONTRAST_MIN_FINAL = 1.3;
@@ -41,23 +41,18 @@ export interface SiriOrbProps {
   size?: string;
 }
 
-const SiriOrb: React.FC<SiriOrbProps> = ({
-  size = "192px",
-  className,
-  colors,
-  animationDuration = 20,
-}) => {
+const SiriOrb: React.FC<SiriOrbProps> = ({ size = '192px', className, colors, animationDuration = 20 }) => {
   const defaultColors = {
-    bg: "oklch(95% 0.02 264.695)",
-    c1: "oklch(75% 0.15 350)", // Pastel pink
-    c2: "oklch(80% 0.12 200)", // Pastel blue
-    c3: "oklch(78% 0.14 280)", // Pastel purple/lavender
+    bg: 'oklch(95% 0.02 264.695)',
+    c1: 'oklch(75% 0.15 350)', // Pastel pink
+    c2: 'oklch(80% 0.12 200)', // Pastel blue
+    c3: 'oklch(78% 0.14 280)', // Pastel purple/lavender
   };
 
   const finalColors = { ...defaultColors, ...colors };
 
   // Extract numeric value from size for calculations
-  const sizeValue = Number.parseInt(size.replace("px", ""), 10);
+  const sizeValue = Number.parseInt(size.replace('px', ''), 10);
 
   // Responsive calculations based on size
   const blurAmount =
@@ -102,10 +97,7 @@ const SiriOrb: React.FC<SiriOrbProps> = ({
       return CONTRAST_TINY; // Very subtle contrast for tiny sizes
     }
     if (value < SIZE_THRESHOLD_SMALL) {
-      return Math.max(
-        contrastAmount * CONTRAST_MULTIPLIER_FINAL,
-        CONTRAST_MIN_FINAL
-      ); // Reduced contrast for small sizes
+      return Math.max(contrastAmount * CONTRAST_MULTIPLIER_FINAL, CONTRAST_MIN_FINAL); // Reduced contrast for small sizes
     }
     return contrastAmount;
   };
@@ -114,21 +106,21 @@ const SiriOrb: React.FC<SiriOrbProps> = ({
 
   return (
     <div
-      className={cn("siri-orb", className)}
+      className={cn('siri-orb', className)}
       style={
         {
           width: size,
           height: size,
-          "--bg": finalColors.bg,
-          "--c1": finalColors.c1,
-          "--c2": finalColors.c2,
-          "--c3": finalColors.c3,
-          "--animation-duration": `${animationDuration}s`,
-          "--blur-amount": `${blurAmount}px`,
-          "--contrast-amount": finalContrast,
-          "--dot-size": `${dotSize}px`,
-          "--shadow-spread": `${shadowSpread}px`,
-          "--mask-radius": maskRadius,
+          '--bg': finalColors.bg,
+          '--c1': finalColors.c1,
+          '--c2': finalColors.c2,
+          '--c3': finalColors.c3,
+          '--animation-duration': `${animationDuration}s`,
+          '--blur-amount': `${blurAmount}px`,
+          '--contrast-amount': finalContrast,
+          '--dot-size': `${dotSize}px`,
+          '--shadow-spread': `${shadowSpread}px`,
+          '--mask-radius': maskRadius,
         } as React.CSSProperties
       }
     >

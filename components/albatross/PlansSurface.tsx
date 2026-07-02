@@ -1,15 +1,15 @@
 'use client';
 
 // Research (Albatross contract - research before code):
-// - Mobbin/Lightfield "tasks created from doc" cascade (5b5f4b9f-5940-47a0-845d-f6c74bac4de8):
-//   generated artifacts cascade in beneath the source content -> staggered card reveal.
-// - Mobbin/Grok Tasks (83c6a6f4-9a04-43d8-a2af-f1eae69e9eee): created items as flat dense
-//   cards with metadata -> applied-state checklist tone.
+// - Mobbin/Lightfield cascade (5b5f4b9f): generated artifacts stagger in beneath the source.
+// - Mobbin/Grok Tasks (83c6a6f4): created items as flat dense cards -> applied checklist tone.
 // - Mobbin/Cosmos (e5adf3d5), Indeed (ace777b6), Juicebox (04c29067): one-question-at-a-time
 //   with big prompt, single input, "n of m" progress, quiet skip.
-// - Mobbin/Skillshare (88c2216e), Relevance AI (0fb61e3e), ElevenLabs (560e2903): generating
-//   states are calm status text center stage, never spinner-first.
-// - motion.dev/docs/react-animation: stagger via per-child delays; delays derive from
+// - Mobbin/Turo web search (16067ed9): selectable result cards synced to a live map panel on
+//   the right -> option cards + inline map column pairing.
+// - Mobbin/Vercel marketplace (fc8114d7): "We found some options" AI-suggested choice cards
+//   with one affirm action -> option card + "Use this one" pattern.
+// - motion.dev/docs/react-animation: stagger via per-child delays derived from
 //   planRevealSequence indexes (deterministic, testable); useReducedMotion -> fade-only.
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
@@ -28,14 +28,12 @@ import {
   Mail,
   MessageCircleQuestion,
   Mic,
-  RefreshCw,
-  Sparkles,
   TriangleAlert,
   Type,
-  WandSparkles,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { ContextVortex } from '@/components/albatross/ContextVortex';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { cn } from '@/lib/utils';
@@ -55,10 +53,23 @@ export type IntentStatus =
 
 export type Tone = 'success' | 'warning' | 'danger' | 'neutral' | 'accent';
 
+// A choosable answer for a question - usually a real nearby place found on
+// the web during planning. Free-text answering stays available alongside.
+export interface QuestionOption {
+  id: string;
+  title: string;
+  detail?: string;
+  address?: string;
+  hoursText?: string;
+  website?: string;
+}
+
 export interface IntentQuestion {
   id: string;
   prompt: string;
+  options?: QuestionOption[];
   answer?: string;
+  answeredOptionId?: string;
   answeredAt?: number;
 }
 
@@ -101,9 +112,9 @@ export interface IntentStatusMeta {
 
 const STATUS_META: Record<IntentStatus, IntentStatusMeta> = {
   captured: { label: 'Captured', tone: 'neutral', icon: 'circle-dot', pulse: false },
-  planning: { label: 'Planning', tone: 'accent', icon: 'sparkles', pulse: true },
+  planning: { label: 'Planning', tone: 'accent', icon: 'hourglass', pulse: true },
   needs_answers: { label: 'Needs you', tone: 'warning', icon: 'message-circle-question', pulse: false },
-  ready: { label: 'Ready', tone: 'accent', icon: 'wand-sparkles', pulse: false },
+  ready: { label: 'Ready', tone: 'accent', icon: 'list-checks', pulse: false },
   applied: { label: 'Applied', tone: 'success', icon: 'check-circle', pulse: false },
   done: { label: 'Done', tone: 'success', icon: 'check', pulse: false },
   archived: { label: 'Archived', tone: 'neutral', icon: 'archive', pulse: false },
@@ -123,6 +134,7 @@ export interface RevealItem {
 
 // Deterministic action ordering inside the reveal: tasks land first (the plan's
 // backbone), then time commitments, then outbound words, then anything new.
+// The map lives in its own persistent side column, not in the cascade.
 const ACTION_KIND_ORDER = ['task', 'calendar_event', 'email_draft'];
 
 export function planRevealSequence(plan: PlanLike | null | undefined): RevealItem[] {
@@ -147,6 +159,10 @@ export function openQuestions(intent: IntentLike | null | undefined): IntentQues
   return (intent?.questions ?? []).filter((question) => !question.answer);
 }
 
+export function nextUnansweredQuestion(intent: IntentLike | null | undefined): IntentQuestion | null {
+  return (intent?.questions ?? []).find((question) => !question.answer) ?? null;
+}
+
 export function applyDisabledReason(
   intent: IntentLike | null | undefined,
   plan: PlanLike | null | undefined,
@@ -161,6 +177,78 @@ export function applyDisabledReason(
   }
   if (plan.status !== 'ready') return 'This plan is not ready yet.';
   return null;
+}
+
+// True when every question carries an answer - the signal that answering the
+// last question should immediately regenerate the plan (no extra button).
+export function answersReadyForRegen(intent: IntentLike | null | undefined): boolean {
+  const questions = intent?.questions ?? [];
+  return questions.length > 0 && questions.every((question) => Boolean(question.answer));
+}
+
+// The most recently answered option-question whose chosen option still exists.
+export function chosenQuestionOption(intent: IntentLike | null | undefined): QuestionOption | null {
+  const questions = intent?.questions ?? [];
+  for (let i = questions.length - 1; i >= 0; i--) {
+    const question = questions[i];
+    if (!question.answeredOptionId || !question.options?.length) continue;
+    const option = question.options.find((entry) => entry.id === question.answeredOptionId);
+    if (option) return option;
+  }
+  return null;
+}
+
+// "123 Main St"-shaped: a street number, up to four words, then a street token.
+const STREET_RE =
+  /\b\d{1,6}\s+(?:[\w.'-]+\s+){0,4}(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|hwy|highway|plaza|pkwy|parkway|ct|court|sq|square)\b/i;
+const MAPS_URL_RE = /(?:google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps)/i;
+
+export function looksLikeAddress(text: string | null | undefined): boolean {
+  return Boolean(text && STREET_RE.test(text));
+}
+
+// What the inline map should show: a hovered/selected option wins, then the
+// answered option, then the first address-bearing physical step. Null hides
+// the map column entirely.
+export function mapQueryForIntent(
+  intent: IntentLike | null | undefined,
+  plan: PlanLike | null | undefined,
+  previewOption?: QuestionOption | null,
+): string | null {
+  const optionQuery = (option: QuestionOption) =>
+    option.address ? `${option.title}, ${option.address}` : option.title;
+  if (previewOption) return optionQuery(previewOption);
+  const chosen = chosenQuestionOption(intent);
+  if (chosen) return optionQuery(chosen);
+  for (const action of plan?.physicalActions ?? []) {
+    if (looksLikeAddress(action.detail)) return `${action.title}, ${action.detail}`;
+    if (action.url && MAPS_URL_RE.test(action.url)) return action.title;
+  }
+  return null;
+}
+
+// Best-effort browser location for plan generation (nearby-place research).
+// Silently resolves undefined on SSR, denial, or timeout - never throws.
+export function getGeo(timeoutMs = 2500): Promise<{ latitude: number; longitude: number } | undefined> {
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      resolve(undefined);
+      return;
+    }
+    // A promise settles once, so the timeout and callbacks may race freely.
+    const timer = setTimeout(() => resolve(undefined), timeoutMs);
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        clearTimeout(timer);
+        resolve({ latitude: coords.latitude, longitude: coords.longitude });
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      },
+      { timeout: timeoutMs, maximumAge: 300_000 },
+    );
+  });
 }
 
 export type IntentFilter = 'all' | 'needs_you' | 'ready' | 'done';
@@ -210,6 +298,12 @@ interface PlanRow extends PlanLike {
   appliedAt?: number;
 }
 
+interface AnswerEntry {
+  id: string;
+  answer: string;
+  answeredOptionId?: string;
+}
+
 interface ApplyResponse {
   ok: boolean;
   operationBatchId: string;
@@ -232,15 +326,23 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data;
 }
 
+function websiteLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Small local atoms (reimplemented per contract - no AlbatrossSurfaces import)
 // ---------------------------------------------------------------------------
 
 const STATUS_ICONS: Record<string, LucideIcon> = {
   'circle-dot': CircleDot,
-  sparkles: Sparkles,
+  hourglass: Hourglass,
   'message-circle-question': MessageCircleQuestion,
-  'wand-sparkles': WandSparkles,
+  'list-checks': ListChecks,
   'check-circle': CheckCircle2,
   check: Check,
   archive: Archive,
@@ -310,6 +412,7 @@ function Segmented<T extends string>({
   );
 }
 
+// Buttons stay text-only across this surface (no icons on buttons).
 function PrimaryButton({
   reduced,
   disabled,
@@ -328,7 +431,7 @@ function PrimaryButton({
       onClick={onClick}
       whileTap={reduced || disabled ? undefined : { scale: 0.96 }}
       transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-      className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--color-accent)] px-5 text-[14px] font-semibold text-[var(--color-accent-foreground)] shadow-sm hover:bg-[var(--color-accent-hover)] disabled:opacity-40"
+      className="inline-flex h-10 items-center rounded-lg bg-[var(--color-accent)] px-5 text-[14px] font-semibold text-[var(--color-accent-foreground)] shadow-sm hover:bg-[var(--color-accent-hover)] disabled:opacity-40"
     >
       {children}
     </motion.button>
@@ -340,7 +443,7 @@ function QuietButton({ onClick, children }: { onClick: () => void; children: Rea
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
+      className="text-[12px] font-medium text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
     >
       {children}
     </button>
@@ -388,9 +491,12 @@ export function PlansSurface({ initialIntentId }: { initialIntentId?: string | n
   const requestPlan = useCallback(async (intentId: string) => {
     setRequestErrors((prev) => ({ ...prev, [intentId]: '' }));
     try {
+      // Geo lets planning find real nearby places for option questions.
+      const geo = await getGeo();
       await postJson('/api/albatross/plan', {
         intentId,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        geo,
       });
     } catch (error) {
       setRequestErrors((prev) => ({
@@ -566,7 +672,7 @@ function IntentStage({
   reduced: boolean;
   requestError: string;
   onRequestPlan: () => void;
-  onAnswerAll: (answers: { id: string; answer: string }[]) => Promise<void>;
+  onAnswerAll: (answers: AnswerEntry[]) => Promise<void>;
   onAnswerLater: () => void;
   onSetStatus: (status: 'done' | 'archived') => void;
 }) {
@@ -575,89 +681,228 @@ function IntentStage({
   const source = SOURCE_META[intent.source] ?? SOURCE_META.text;
   const failure = intent.planError || requestError;
 
-  if (intent.status === 'planning') return <PlanningStage intent={intent} reduced={reduced} />;
+  // Answering the last question regenerates immediately; the vortex shows
+  // optimistically instead of waiting for Convex to flip status to planning
+  // (answerQuestions briefly parks the intent back on `captured`).
+  const [optimisticPlanning, setOptimisticPlanning] = useState(false);
+  // Map column: hovered/selected option preview beats persisted state.
+  const [previewOption, setPreviewOption] = useState<QuestionOption | null>(null);
+  const [mapCollapsed, setMapCollapsed] = useState(false);
+
+  useEffect(() => {
+    // Real status arrived (planning) or planning finished (ready/applied):
+    // either way the optimistic cover is no longer needed.
+    if (intent.status !== 'needs_answers' && intent.status !== 'captured') setOptimisticPlanning(false);
+    if (intent.status !== 'needs_answers') setPreviewOption(null);
+  }, [intent.status]);
+  useEffect(() => {
+    if (requestError) setOptimisticPlanning(false);
+  }, [requestError]);
+
+  const submitAnswers = useCallback(
+    async (answers: AnswerEntry[]) => {
+      setOptimisticPlanning(true);
+      try {
+        await onAnswerAll(answers);
+      } catch {
+        setOptimisticPlanning(false);
+      }
+    },
+    [onAnswerAll],
+  );
+
+  const planningVisible = intent.status === 'planning' || optimisticPlanning;
+  const mapQuery = mapQueryForIntent(intent, plan, previewOption);
+  const mapOption = previewOption ?? chosenQuestionOption(intent);
+  const vortexTitle = (intent.rawText || intentDisplayTitle(intent)).replace(/\s+/g, ' ').trim();
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-5">
-      <header className="flex items-center gap-2">
-        <h1 className="min-w-0 flex-1 truncate font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
-          {intentDisplayTitle(intent)}
-        </h1>
-        <Tag tone={meta.tone}>
-          <StatusIcon className="size-3" />
-          {meta.label}
-        </Tag>
-      </header>
-
-      <RawDump intent={intent} sourceLabel={source.label} SourceIcon={source.icon} />
-
-      <AnimatePresence mode="wait" initial={false}>
+    <AnimatePresence mode="wait" initial={false}>
+      {planningVisible ? (
         <motion.div
-          // Keyed by plan, not status: the ready->applied flip must NOT remount
-          // PlanReveal, or the apply response (created-things checklist) is lost.
-          key={plan?._id ?? intent.status}
+          key="planning"
+          className="relative h-full min-h-[420px]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: reduced ? 0 : 0.2 }}
-          className="flex flex-col gap-5"
+          exit={{ opacity: 0, scale: reduced ? 1 : 1.02 }}
+          transition={{ duration: reduced ? 0 : 0.25 }}
         >
-          {failure && intent.status === 'captured' ? (
-            <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger-soft)] p-4">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-danger)]">
-                <TriangleAlert className="size-4" />
-                Planning hit a wall
-              </div>
-              <p className="text-[12.5px] leading-relaxed text-[var(--color-text)]">{failure}</p>
-              <button
-                type="button"
-                onClick={onRequestPlan}
-                className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--color-text)] hover:bg-[var(--color-hover-soft)]"
-              >
-                <RefreshCw className="size-3.5" />
-                Try again
-              </button>
-            </div>
-          ) : intent.status === 'captured' ? (
-            <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] p-5">
-              <p className="text-[13px] text-[var(--color-text-muted)]">
-                Albatross will read your mail, calendar, and areas, then turn this into a plan.
-              </p>
-              <PrimaryButton reduced={reduced} onClick={onRequestPlan}>
-                <Sparkles className="size-4" />
-                Make a plan
-              </PrimaryButton>
-            </div>
-          ) : intent.status === 'needs_answers' ? (
-            <QuestionStepper
-              intent={intent}
-              reduced={reduced}
-              onAnswerAll={onAnswerAll}
-              onAnswerLater={onAnswerLater}
-            />
-          ) : plan ? (
-            <PlanReveal intent={intent} plan={plan} reduced={reduced} />
-          ) : (
-            <p className="text-[13px] text-[var(--color-text-muted)]">No plan recorded for this intent.</p>
-          )}
+          <ContextVortex
+            title={vortexTitle.length > 96 ? `${vortexTitle.slice(0, 96).trimEnd()}…` : vortexTitle}
+            subtitle="Reading your mail, calendar, areas, and the web…"
+          />
         </motion.div>
-      </AnimatePresence>
+      ) : (
+        <motion.div
+          key="stage"
+          initial={{ opacity: 0, scale: reduced ? 1 : 0.97, y: reduced ? 0 : 6 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          transition={reduced ? { duration: 0.15 } : { type: 'spring', stiffness: 260, damping: 26 }}
+          className="flex min-h-full items-start"
+        >
+          <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-5 px-6 py-5">
+            <header className="flex items-center gap-2">
+              <h1 className="min-w-0 flex-1 truncate font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
+                {intentDisplayTitle(intent)}
+              </h1>
+              <Tag tone={meta.tone}>
+                <StatusIcon className="size-3" />
+                {meta.label}
+              </Tag>
+            </header>
 
-      {intent.status !== 'archived' ? (
-        <footer className="mt-2 flex items-center gap-3 border-t border-[var(--color-border)] pt-3">
-          {intent.status !== 'done' ? (
-            <QuietButton onClick={() => onSetStatus('done')}>
-              <Check className="size-3.5" />
-              Done
-            </QuietButton>
+            <RawDump intent={intent} sourceLabel={source.label} SourceIcon={source.icon} />
+
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                // Keyed by plan, not status: the ready->applied flip must NOT remount
+                // PlanReveal, or the apply response (created-things checklist) is lost.
+                key={plan?._id ?? intent.status}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: reduced ? 0 : 0.2 }}
+                className="flex flex-col gap-5"
+              >
+                {failure && intent.status === 'captured' ? (
+                  <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger-soft)] p-4">
+                    <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-danger)]">
+                      <TriangleAlert className="size-4" />
+                      Planning hit a wall
+                    </div>
+                    <p className="text-[12.5px] leading-relaxed text-[var(--color-text)]">{failure}</p>
+                    <button
+                      type="button"
+                      onClick={onRequestPlan}
+                      className="mt-1 inline-flex w-fit items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--color-text)] hover:bg-[var(--color-hover-soft)]"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : intent.status === 'captured' ? (
+                  <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] p-5">
+                    <p className="text-[13px] text-[var(--color-text-muted)]">
+                      Albatross will read your mail, calendar, and areas, then turn this into a plan.
+                    </p>
+                    <PrimaryButton reduced={reduced} onClick={onRequestPlan}>
+                      Make a plan
+                    </PrimaryButton>
+                  </div>
+                ) : intent.status === 'needs_answers' ? (
+                  <QuestionStepper
+                    intent={intent}
+                    reduced={reduced}
+                    onAnswerAll={submitAnswers}
+                    onAnswerLater={onAnswerLater}
+                    onPreviewOption={setPreviewOption}
+                  />
+                ) : plan ? (
+                  <PlanReveal intent={intent} plan={plan} reduced={reduced} />
+                ) : (
+                  <p className="text-[13px] text-[var(--color-text-muted)]">
+                    No plan recorded for this intent.
+                  </p>
+                )}
+              </motion.div>
+            </AnimatePresence>
+
+            {intent.status !== 'archived' ? (
+              <footer className="mt-2 flex items-center gap-3 border-t border-[var(--color-border)] pt-3">
+                {intent.status !== 'done' ? (
+                  <QuietButton onClick={() => onSetStatus('done')}>Done</QuietButton>
+                ) : null}
+                <QuietButton onClick={() => onSetStatus('archived')}>Archive</QuietButton>
+              </footer>
+            ) : null}
+          </div>
+
+          {mapQuery ? (
+            <MapColumn
+              query={mapQuery}
+              option={mapOption}
+              collapsed={mapCollapsed}
+              onToggle={() => setMapCollapsed((prev) => !prev)}
+            />
           ) : null}
-          <QuietButton onClick={() => onSetStatus('archived')}>
-            <Archive className="size-3.5" />
-            Archive
-          </QuietButton>
-        </footer>
-      ) : null}
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// Inline place context (Turo-style list+map pairing): a sticky ~360px column
+// with a keyless Google Maps embed for the previewed/chosen place, plus its
+// hours and website. Collapsible to a thin "Show map" rail.
+function MapColumn({
+  query,
+  option,
+  collapsed,
+  onToggle,
+}: {
+  query: string;
+  option: QuestionOption | null;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  if (collapsed) {
+    return (
+      <div className="sticky top-0 shrink-0 self-start py-5 pr-4">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
+        >
+          Show map
+        </button>
+      </div>
+    );
+  }
+  return (
+    <aside className="sticky top-0 w-[360px] shrink-0 self-start py-5 pr-6">
+      <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+        <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
+            Location
+          </span>
+          <button
+            type="button"
+            onClick={onToggle}
+            className="ml-auto text-[11px] font-medium text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
+          >
+            Hide
+          </button>
+        </div>
+        <iframe
+          // Keyless maps embed; Google's embed refuses to render without
+          // scripts + same-origin. The src is a fixed Google origin carrying
+          // only our URL-encoded place query.
+          src={`https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`}
+          sandbox="allow-scripts allow-same-origin"
+          title={`Map of ${query}`}
+          loading="lazy"
+          className="h-[320px] w-full bg-[var(--color-bg-muted)]"
+        />
+        <div className="flex flex-col gap-0.5 px-3 py-2.5">
+          <p className="text-[12.5px] font-medium text-[var(--color-text)]">{option?.title ?? query}</p>
+          {[option?.address, option?.hoursText].filter(Boolean).map((line) => (
+            <p key={line} className="text-[12px] text-[var(--color-text-muted)]">
+              {line}
+            </p>
+          ))}
+          {option?.website ? (
+            <a
+              href={option.website}
+              target="_blank"
+              rel="noreferrer"
+              className="w-fit text-[12px] font-medium text-[var(--color-accent)] hover:underline"
+            >
+              {websiteLabel(option.website)}
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -686,124 +931,196 @@ function RawDump({
   );
 }
 
-// Planning keeps the user's own words center stage under a soft animated wash -
-// Skillshare/Relevance-style "calm working", not a spinner.
-function PlanningStage({ intent, reduced }: { intent: IntentRow; reduced: boolean }) {
-  return (
-    <div className="relative flex h-full min-h-[360px] items-center justify-center overflow-hidden px-8">
-      <motion.div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: 'radial-gradient(60% 50% at 50% 40%, var(--color-accent-soft) 0%, transparent 70%)',
-        }}
-        animate={reduced ? { opacity: 0.5 } : { opacity: [0.35, 0.75, 0.35] }}
-        transition={reduced ? undefined : { duration: 3.2, repeat: Infinity, ease: 'easeInOut' }}
-      />
-      <div className="relative flex max-w-xl flex-col items-center gap-4 text-center">
-        <blockquote className="whitespace-pre-wrap font-display text-[17px] leading-relaxed text-[var(--color-text)]">
-          {intent.rawText}
-        </blockquote>
-        <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--color-accent)]">
-          <Sparkles className={cn('size-4', !reduced && 'animate-pulse')} />
-          Reading your mail, calendar, and areas…
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// One-question-at-a-time stepper (Cosmos/Indeed/Juicebox pattern).
+// One-question-at-a-time stepper (Cosmos/Indeed/Juicebox pattern). Questions
+// with options render as choosable place cards (Vercel "we found some options"
+// affirm pattern); free text stays available beneath. Answering the LAST
+// question submits everything and regenerates immediately - no extra button.
 function QuestionStepper({
   intent,
   reduced,
   onAnswerAll,
   onAnswerLater,
+  onPreviewOption,
 }: {
   intent: IntentRow;
   reduced: boolean;
-  onAnswerAll: (answers: { id: string; answer: string }[]) => Promise<void>;
+  onAnswerAll: (answers: AnswerEntry[]) => Promise<void>;
   onAnswerLater: () => void;
+  onPreviewOption: (option: QuestionOption | null) => void;
 }) {
   const open = openQuestions(intent);
   const [step, setStep] = useState(0);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, AnswerEntry>>({});
+  const [texts, setTexts] = useState<Record<string, string>>({});
+  const [picked, setPicked] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const done = step >= open.length;
-  const current = done ? undefined : open[step];
+  const current = open[Math.min(step, Math.max(0, open.length - 1))];
 
-  const regenerate = async () => {
+  const advance = async (entry: AnswerEntry) => {
+    const nextDrafts = { ...drafts, [entry.id]: entry };
+    setDrafts(nextDrafts);
+    // Pure check: with this answer merged in, is every question answered?
+    const projected = (intent.questions ?? []).map((question) => ({
+      ...question,
+      answer: nextDrafts[question.id]?.answer || question.answer,
+    }));
+    if (!answersReadyForRegen({ ...intent, questions: projected })) {
+      setStep(step + 1);
+      return;
+    }
     setSubmitting(true);
     try {
-      await onAnswerAll(open.map((question) => ({ id: question.id, answer: drafts[question.id] ?? '' })));
+      await onAnswerAll(open.map((question) => nextDrafts[question.id] ?? { id: question.id, answer: '' }));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  if (!current) return null;
+  const options = current.options ?? [];
+  const pickedOption = options.find((option) => option.id === picked[current.id]);
+  const text = texts[current.id] ?? '';
+
+  const pick = (option: QuestionOption) => {
+    setPicked((prev) => ({ ...prev, [current.id]: option.id }));
+    onPreviewOption(option);
+  };
+  const confirmOption = (option: QuestionOption) => {
+    if (submitting) return;
+    onPreviewOption(option); // the map keeps showing the choice through regen
+    void advance({ id: current.id, answer: option.title, answeredOptionId: option.id });
+  };
+  const submitText = () => {
+    if (submitting || !text.trim()) return;
+    void advance({ id: current.id, answer: text.trim() });
   };
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 py-8">
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
-          key={done ? 'review' : current?.id}
+          key={current.id}
           initial={{ opacity: 0, y: reduced ? 0 : 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: reduced ? 0 : -8 }}
           transition={{ duration: reduced ? 0 : 0.18 }}
           className="flex flex-col gap-3"
         >
-          {done || !current ? (
-            <>
-              <p className="text-[12px] font-medium text-[var(--color-text-faint)]">All set</p>
-              <ul className="flex flex-col gap-1.5">
-                {open.map((question) => (
-                  <li key={question.id} className="text-[12.5px] leading-relaxed">
-                    <span className="text-[var(--color-text-muted)]">{question.prompt}</span>{' '}
-                    <span className="font-medium text-[var(--color-text)]">{drafts[question.id] || '—'}</span>
-                  </li>
-                ))}
-              </ul>
-              <PrimaryButton reduced={reduced} disabled={submitting} onClick={regenerate}>
-                <RefreshCw className="size-4" />
-                {submitting ? 'Regenerating…' : 'Regenerate plan'}
-              </PrimaryButton>
-            </>
-          ) : (
-            <>
-              <p className="text-[12px] font-medium tabular-nums text-[var(--color-text-faint)]">
-                {step + 1} of {open.length}
-              </p>
-              <p className="font-display text-[19px] font-semibold leading-snug text-[var(--color-text)]">
-                {current.prompt}
-              </p>
-              <input
-                // biome-ignore lint/a11y/noAutofocus: keyboard-first stepper - the input is the whole step and focus must follow each question
-                autoFocus
-                value={drafts[current.id] ?? ''}
-                onChange={(event) => setDrafts((prev) => ({ ...prev, [current.id]: event.target.value }))}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && (drafts[current.id] ?? '').trim()) {
-                    event.preventDefault();
-                    setStep(step + 1);
-                  }
-                }}
-                placeholder="Type your answer, press Enter"
-                className="h-10 w-full rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
-              />
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  disabled={!(drafts[current.id] ?? '').trim()}
-                  onClick={() => setStep(step + 1)}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--color-accent-foreground)] disabled:opacity-40"
-                >
-                  Continue
-                  <ArrowRight className="size-3.5" />
-                </button>
-                <QuietButton onClick={onAnswerLater}>Answer later</QuietButton>
-              </div>
-            </>
-          )}
+          <p className="text-[12px] font-medium tabular-nums text-[var(--color-text-faint)]">
+            {Math.min(step, open.length - 1) + 1} of {open.length}
+          </p>
+          <p className="font-display text-[19px] font-semibold leading-snug text-[var(--color-text)]">
+            {current.prompt}
+          </p>
+
+          {options.length ? (
+            <div role="radiogroup" aria-label={current.prompt} className="flex flex-col gap-2">
+              {options.map((option) => {
+                const isPicked = pickedOption?.id === option.id;
+                return (
+                  // biome-ignore lint/a11y/useSemanticElements: the card embeds a real <a> (website), which a native <input type="radio"> cannot contain
+                  <div
+                    key={option.id}
+                    role="radio"
+                    aria-checked={isPicked}
+                    tabIndex={0}
+                    onClick={() => pick(option)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        if (isPicked) confirmOption(option);
+                        else pick(option);
+                      }
+                      if (event.key === ' ') {
+                        event.preventDefault();
+                        pick(option);
+                      }
+                    }}
+                    onMouseEnter={() => onPreviewOption(option)}
+                    onMouseLeave={() => onPreviewOption(pickedOption ?? null)}
+                    className={cn(
+                      'cursor-pointer rounded-lg border p-3 transition-colors',
+                      isPicked
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                        : 'border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-strong)]',
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13.5px] font-semibold text-[var(--color-text)]">{option.title}</p>
+                        {[option.detail, option.address].filter(Boolean).map((line) => (
+                          <p
+                            key={line}
+                            className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]"
+                          >
+                            {line}
+                          </p>
+                        ))}
+                        {option.hoursText ? (
+                          <p className="mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">
+                            {option.hoursText}
+                          </p>
+                        ) : null}
+                        {option.website ? (
+                          <a
+                            href={option.website}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(event) => event.stopPropagation()}
+                            className="mt-1 inline-block text-[11.5px] font-medium text-[var(--color-accent)] hover:underline"
+                          >
+                            {websiteLabel(option.website)}
+                          </a>
+                        ) : null}
+                      </div>
+                      {isPicked ? (
+                        <button
+                          type="button"
+                          disabled={submitting}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            confirmOption(option);
+                          }}
+                          className="shrink-0 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[11.5px] font-semibold text-[var(--color-accent-foreground)] disabled:opacity-40"
+                        >
+                          Use this one
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <input
+            // biome-ignore lint/a11y/noAutofocus: keyboard-first stepper - the input is the whole step and focus must follow each question
+            autoFocus={!options.length}
+            value={text}
+            disabled={submitting}
+            onChange={(event) => setTexts((prev) => ({ ...prev, [current.id]: event.target.value }))}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && text.trim()) {
+                event.preventDefault();
+                submitText();
+              }
+            }}
+            placeholder={options.length ? 'None of these / something else…' : 'Type your answer, press Enter'}
+            className="h-10 w-full rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)] disabled:opacity-50"
+          />
+          <div className="flex items-center gap-3">
+            {!options.length ? (
+              <button
+                type="button"
+                disabled={submitting || !text.trim()}
+                onClick={submitText}
+                className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--color-accent-foreground)] disabled:opacity-40"
+              >
+                Continue
+              </button>
+            ) : null}
+            <QuietButton onClick={onAnswerLater}>Answer later</QuietButton>
+          </div>
         </motion.div>
       </AnimatePresence>
     </div>
@@ -871,7 +1188,6 @@ function PlanReveal({ intent, plan, reduced }: { intent: IntentRow; plan: PlanRo
       ) : (
         <motion.div {...reveal(sequence.length)} className="mt-1 flex flex-wrap items-center gap-3">
           <PrimaryButton reduced={reduced} disabled={Boolean(disabledReason) || applying} onClick={apply}>
-            <Sparkles className="size-4" />
             {applying ? 'Creating…' : 'Make it real'}
           </PrimaryButton>
           {(plan.digitalActions?.length ?? 0) >= 4 ? (

@@ -1,13 +1,13 @@
-"use client";
+'use client';
 
-import { LazyMotion, domAnimation, m } from "motion/react";
-import { useState, useCallback, useEffect } from "react";
-import { Outfit } from "next/font/google";
-import { cn } from "@/lib/utils";
+import { domAnimation, LazyMotion, m } from 'motion/react';
+import { Outfit } from 'next/font/google';
+import { useCallback, useEffect, useState } from 'react';
+import { cn } from '@/lib/utils';
 
 export const dancingFont = Outfit({
-  subsets: ["latin"],
-  variable: "--font-dancing",
+  subsets: ['latin'],
+  variable: '--font-dancing',
 });
 
 interface DancingLettersProps {
@@ -26,8 +26,8 @@ const letterAnimations = [
       scaleX: [1, 1.25, 0.75, 1.15, 0.95, 1.05, 1],
       scaleY: [1, 0.75, 1.25, 0.85, 1.05, 0.95, 1],
     },
-    transition: { duration: 0.8, ease: "easeInOut" },
-    transformOrigin: "center center",
+    transition: { duration: 0.8, ease: 'easeInOut' },
+    transformOrigin: 'center center',
   },
   // 2. The Hinge (Falling effect)
   {
@@ -38,7 +38,7 @@ const letterAnimations = [
       originY: 1,
     },
     transition: { duration: 1.2, ease: [0.175, 0.885, 0.32, 1.275] },
-    transformOrigin: "bottom left",
+    transformOrigin: 'bottom left',
   },
   // 3. Squash and Jump
   {
@@ -46,8 +46,8 @@ const letterAnimations = [
       scaleY: [1, 0.6, 1.2, 1],
       y: [0, 20, -40, 0],
     },
-    transition: { duration: 0.6, ease: "easeOut" },
-    transformOrigin: "bottom center",
+    transition: { duration: 0.6, ease: 'easeOut' },
+    transformOrigin: 'bottom center',
   },
   // 4. Falling (Requests)
   {
@@ -57,18 +57,18 @@ const letterAnimations = [
     },
     transition: {
       duration: 2,
-      ease: "easeOut",
+      ease: 'easeOut',
       times: [0, 0.12, 0.24, 0.36, 0.48, 0.6, 0.85, 1],
     },
-    transformOrigin: "50% 80%",
+    transformOrigin: '50% 80%',
   },
   // 5. Elastic Slide
   {
     active: {
       x: [0, -20, 15, -10, 5, 0],
     },
-    transition: { duration: 0.8, ease: "easeInOut" },
-    transformOrigin: "center center",
+    transition: { duration: 0.8, ease: 'easeInOut' },
+    transformOrigin: 'center center',
   },
   // 6. Impact Shake
   {
@@ -77,40 +77,32 @@ const letterAnimations = [
       y: [0, -2, 2, -1, 1, 0],
       rotate: [0, -1, 1, -0.5, 0.5, 0],
     },
-    transition: { duration: 0.5, ease: "linear" },
-    transformOrigin: "center center",
+    transition: { duration: 0.5, ease: 'linear' },
+    transformOrigin: 'center center',
   },
   // 7. Pop (Scale)
   {
     active: {
       scale: [1, 1.4, 1],
     },
-    transition: { duration: 0.5, ease: "easeInOut" },
-    transformOrigin: "center center",
+    transition: { duration: 0.5, ease: 'easeInOut' },
+    transformOrigin: 'center center',
   },
   // 8. Levitate
   {
     active: {
       y: [0, -30, 0],
       scale: [1, 1.1, 1],
-      textShadow: [
-        "0px 0px 0px rgba(0,0,0,0)",
-        "0px 20px 20px rgba(0,0,0,0.2)",
-        "0px 0px 0px rgba(0,0,0,0)",
-      ],
+      textShadow: ['0px 0px 0px rgba(0,0,0,0)', '0px 20px 20px rgba(0,0,0,0.2)', '0px 0px 0px rgba(0,0,0,0)'],
     },
-    transition: { duration: 1.2, ease: "easeInOut" },
-    transformOrigin: "center center",
+    transition: { duration: 1.2, ease: 'easeInOut' },
+    transformOrigin: 'center center',
   },
 ];
 
-const DancingLetters = ({
-  text = "ANIMATE",
-  className = "",
-  letterClassName = "",
-}: DancingLettersProps) => {
+const DancingLetters = ({ text = 'ANIMATE', className = '', letterClassName = '' }: DancingLettersProps) => {
   const [activeIndices, setActiveIndices] = useState<Set<number>>(new Set());
-  const letters = text.split("");
+  const letters = text.split('');
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -148,12 +140,8 @@ const DancingLetters = ({
   return (
     <LazyMotion features={domAnimation}>
       <m.div
-        className={cn(
-          "flex items-center justify-center select-none",
-          dancingFont.variable,
-          className
-        )}
-        style={{ perspective: "1000px" }}
+        className={cn('flex items-center justify-center select-none', dancingFont.variable, className)}
+        style={{ perspective: '1000px' }}
         initial="hidden"
         animate="visible"
         variants={{
@@ -174,6 +162,7 @@ const DancingLetters = ({
 
           return (
             <m.span
+              // biome-ignore lint/suspicious/noArrayIndexKey: letters repeat within a word; the index suffix is the only stable identity.
               key={`${letter}-${id}`}
               variants={{
                 hidden: { opacity: 0, y: 20, scale: 0.8 },
@@ -187,8 +176,8 @@ const DancingLetters = ({
                   rotateY: 0,
                   scaleX: 1,
                   scaleY: 1,
-                  textShadow: "0px 0px 0px rgba(0,0,0,0)",
-                  transition: { type: "spring", stiffness: 300, damping: 20 },
+                  textShadow: '0px 0px 0px rgba(0,0,0,0)',
+                  transition: { type: 'spring', stiffness: 300, damping: 20 },
                 },
                 active: {
                   ...anim.active,
@@ -197,22 +186,22 @@ const DancingLetters = ({
                   transition: anim.transition,
                 },
               }}
-              animate={isActive ? "active" : isLoaded ? "visible" : undefined}
+              animate={isActive ? 'active' : isLoaded ? 'visible' : undefined}
               onHoverStart={() => {
                 if (!isActive) handleClick(id);
               }}
               onClick={() => handleClick(id)}
               onAnimationComplete={(definition) => {
-                if (definition === "active") handleAnimationComplete(id);
+                if (definition === 'active') handleAnimationComplete(id);
               }}
               className={cn(
-                "relative inline-block text-5xl md:text-7xl lg:text-8xl font-bold text-neutral-900 dark:text-neutral-100 cursor-pointer",
+                'relative inline-block text-5xl md:text-7xl lg:text-8xl font-bold text-neutral-900 dark:text-neutral-100 cursor-pointer',
                 letterClassName,
-                isActive ? "z-10" : "z-0"
+                isActive ? 'z-10' : 'z-0',
               )}
               style={{
                 transformOrigin: anim.transformOrigin,
-                transformStyle: "preserve-3d",
+                transformStyle: 'preserve-3d',
               }}
             >
               {letter}

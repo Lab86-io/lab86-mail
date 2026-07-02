@@ -333,10 +333,7 @@ async function nearbyEvidence(
   rawText: string,
 ): Promise<{ block: string; place: string | null }> {
   if (!input.geo) return { block: '', place: null };
-  const [place, query] = await Promise.all([
-    reverseGeocode(input.geo),
-    detectLocalQuery(input, rawText),
-  ]);
+  const [place, query] = await Promise.all([reverseGeocode(input.geo), detectLocalQuery(input, rawText)]);
   if (!place || !query) return { block: '', place };
   const search: any = await deps
     .invokeTool(

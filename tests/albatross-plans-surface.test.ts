@@ -1,12 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  answersReadyForRegen,
   applyDisabledReason,
+  chosenQuestionOption,
+  getGeo,
   intentDisplayTitle,
   intentMatchesFilter,
   intentStatusMeta,
+  looksLikeAddress,
+  mapQueryForIntent,
+  nextUnansweredQuestion,
   openQuestions,
   type PlanLike,
   planRevealSequence,
+  type QuestionOption,
   relativeTime,
 } from '../components/albatross/PlansSurface';
 
@@ -36,16 +43,19 @@ describe('intentStatusMeta', () => {
     });
     expect(intentStatusMeta('needs_answers').tone).toBe('warning');
     expect(intentStatusMeta('ready').tone).toBe('accent');
+    // No star icons anywhere (sparkles/wand-sparkles banned).
+    expect(intentStatusMeta('ready').icon).toBe('list-checks');
     expect(intentStatusMeta('applied').tone).toBe('success');
     expect(intentStatusMeta('done').icon).toBe('check');
     expect(intentStatusMeta('archived').icon).toBe('archive');
   });
 
   test('planning is the only pulsing (in-flight) state', () => {
+    // Consciously updated: star icons (sparkles/wand-sparkles) are banned.
     expect(intentStatusMeta('planning')).toEqual({
       label: 'Planning',
       tone: 'accent',
-      icon: 'sparkles',
+      icon: 'hourglass',
       pulse: true,
     });
     const rest = ['captured', 'needs_answers', 'ready', 'applied', 'done', 'archived'];
@@ -208,5 +218,197 @@ describe('relativeTime', () => {
 
   test('older than a week falls back to a date', () => {
     expect(relativeTime(now - 30 * 86_400_000, now)).toMatch(/Jun/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Option questions, auto-regen, and the inline map
+// ---------------------------------------------------------------------------
+
+const coffeeOption: QuestionOption = {
+  id: 'o1',
+  title: 'Blue Bottle Coffee',
+  detail: 'Quiet third-wave cafe',
+  address: '76 N 4th St, Brooklyn, NY',
+  hoursText: 'Open until 6pm',
+  website: 'https://bluebottle.com',
+};
+
+const bareOption: QuestionOption = { id: 'o2', title: 'Devoción' };
+
+describe('nextUnansweredQuestion', () => {
+  test('returns the first question without an answer', () => {
+    const intent = {
+      status: 'needs_answers' as const,
+      questions: [
+        { id: 'a', prompt: 'A?', answer: 'yes', answeredAt: 1 },
+        { id: 'b', prompt: 'B?' },
+        { id: 'c', prompt: 'C?' },
+      ],
+    };
+    expect(nextUnansweredQuestion(intent)?.id).toBe('b');
+  });
+
+  test('null when everything is answered or there are no questions', () => {
+    expect(
+      nextUnansweredQuestion({
+        status: 'ready',
+        questions: [{ id: 'a', prompt: 'A?', answer: 'yes' }],
+      }),
+    ).toBeNull();
+    expect(nextUnansweredQuestion({ status: 'captured' })).toBeNull();
+    expect(nextUnansweredQuestion(null)).toBeNull();
+  });
+});
+
+describe('answersReadyForRegen', () => {
+  test('true when every question carries an answer (drives auto-regen)', () => {
+    const intent = {
+      status: 'needs_answers' as const,
+      questions: [
+        { id: 'a', prompt: 'A?', answer: 'yes' },
+        { id: 'b', prompt: 'B?', answer: 'Blue Bottle Coffee', answeredOptionId: 'o1' },
+      ],
+    };
+    expect(answersReadyForRegen(intent)).toBe(true);
+  });
+
+  test('false while any question is open', () => {
+    const intent = {
+      status: 'needs_answers' as const,
+      questions: [
+        { id: 'a', prompt: 'A?', answer: 'yes' },
+        { id: 'b', prompt: 'B?' },
+      ],
+    };
+    expect(answersReadyForRegen(intent)).toBe(false);
+  });
+
+  test('empty-string answers do not count as answered', () => {
+    expect(
+      answersReadyForRegen({ status: 'needs_answers', questions: [{ id: 'a', prompt: 'A?', answer: '' }] }),
+    ).toBe(false);
+  });
+
+  test('false with no questions at all (nothing to regen from)', () => {
+    expect(answersReadyForRegen({ status: 'captured' })).toBe(false);
+    expect(answersReadyForRegen({ status: 'captured', questions: [] })).toBe(false);
+    expect(answersReadyForRegen(null)).toBe(false);
+  });
+});
+
+describe('chosenQuestionOption', () => {
+  test('returns the most recently answered option that still exists', () => {
+    const intent = {
+      status: 'ready' as const,
+      questions: [
+        {
+          id: 'q1',
+          prompt: 'Where?',
+          options: [coffeeOption],
+          answer: 'Blue Bottle Coffee',
+          answeredOptionId: 'o1',
+        },
+        { id: 'q2', prompt: 'Backup?', options: [bareOption], answer: 'Devoción', answeredOptionId: 'o2' },
+      ],
+    };
+    expect(chosenQuestionOption(intent)?.id).toBe('o2');
+  });
+
+  test('ignores free-text answers and dangling option ids', () => {
+    expect(
+      chosenQuestionOption({
+        status: 'ready',
+        questions: [{ id: 'q1', prompt: 'Where?', options: [coffeeOption], answer: 'somewhere else' }],
+      }),
+    ).toBeNull();
+    expect(
+      chosenQuestionOption({
+        status: 'ready',
+        questions: [
+          { id: 'q1', prompt: 'Where?', options: [coffeeOption], answer: 'gone', answeredOptionId: 'nope' },
+        ],
+      }),
+    ).toBeNull();
+    expect(chosenQuestionOption(null)).toBeNull();
+  });
+});
+
+describe('looksLikeAddress', () => {
+  test('matches street-address shapes', () => {
+    expect(looksLikeAddress('76 N 4th St, Brooklyn, NY')).toBe(true);
+    expect(looksLikeAddress('Drop off at 120 Court Street')).toBe(true);
+    expect(looksLikeAddress('2500 Grand Boulevard, Kansas City')).toBe(true);
+  });
+
+  test('rejects plain prose and empties', () => {
+    expect(looksLikeAddress('Drop passport photos at the post office')).toBe(false);
+    expect(looksLikeAddress('Buy 2 tickets for the show')).toBe(false);
+    expect(looksLikeAddress('')).toBe(false);
+    expect(looksLikeAddress(undefined)).toBe(false);
+  });
+});
+
+describe('mapQueryForIntent', () => {
+  const intentWithChoice = {
+    status: 'ready' as const,
+    questions: [
+      {
+        id: 'q1',
+        prompt: 'Where?',
+        options: [coffeeOption],
+        answer: 'Blue Bottle Coffee',
+        answeredOptionId: 'o1',
+      },
+    ],
+  };
+
+  test('a hovered/selected preview option wins over everything', () => {
+    expect(mapQueryForIntent(intentWithChoice, readyPlan, bareOption)).toBe('Devoción');
+  });
+
+  test('falls back to the chosen option: title + address', () => {
+    expect(mapQueryForIntent(intentWithChoice, null)).toBe('Blue Bottle Coffee, 76 N 4th St, Brooklyn, NY');
+  });
+
+  test('chosen option without an address maps by title alone', () => {
+    const intent = {
+      status: 'ready' as const,
+      questions: [
+        { id: 'q1', prompt: 'Where?', options: [bareOption], answer: 'Devoción', answeredOptionId: 'o2' },
+      ],
+    };
+    expect(mapQueryForIntent(intent, null)).toBe('Devoción');
+  });
+
+  test('address-looking physical action detail maps as title + detail', () => {
+    const plan: PlanLike = {
+      status: 'ready',
+      physicalActions: [
+        { title: 'Drop passport photos at the post office' },
+        { title: 'Pick up the visa', detail: '120 Court St, Brooklyn, NY' },
+      ],
+    };
+    expect(mapQueryForIntent({ status: 'ready' }, plan)).toBe('Pick up the visa, 120 Court St, Brooklyn, NY');
+  });
+
+  test('maps-url physical action maps by its title', () => {
+    const plan: PlanLike = {
+      status: 'ready',
+      physicalActions: [{ title: 'Visit the DMV', url: 'https://www.google.com/maps/place/DMV' }],
+    };
+    expect(mapQueryForIntent({ status: 'ready' }, plan)).toBe('Visit the DMV');
+  });
+
+  test('null when nothing is mappable', () => {
+    expect(mapQueryForIntent({ status: 'ready' }, readyPlan)).toBeNull();
+    expect(mapQueryForIntent(null, null)).toBeNull();
+  });
+});
+
+describe('getGeo', () => {
+  test('silently resolves undefined without geolocation support', async () => {
+    // bun's navigator has no geolocation; getGeo must not throw or hang.
+    expect(await getGeo(10)).toBeUndefined();
   });
 });

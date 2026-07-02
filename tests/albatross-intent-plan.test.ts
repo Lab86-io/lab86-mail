@@ -265,7 +265,12 @@ describe('generateIntentPlan nearby options (geo)', () => {
           id: 'q1',
           prompt: 'Which store should the plan use?',
           options: [
-            { title: 'Parkway Music', address: '99 Route 9, Clifton Park', website: 'https://parkwaymusic.com', hoursText: 'Mon-Sat 10-6' },
+            {
+              title: 'Parkway Music',
+              address: '99 Route 9, Clifton Park',
+              website: 'https://parkwaymusic.com',
+              hoursText: 'Mon-Sat 10-6',
+            },
             { title: 'Guitar Center Albany', address: '1 Crossgates Mall Rd' },
           ],
         },
@@ -286,7 +291,10 @@ describe('generateIntentPlan nearby options (geo)', () => {
       },
       convexQuery: async (fn: string) => {
         if (fn === 'q:getIntentWorkbench') {
-          return { intent: { _id: 'intent_1', rawText: 'I have to go to the guitar store', questions: [] }, plan: null };
+          return {
+            intent: { _id: 'intent_1', rawText: 'I have to go to the guitar store', questions: [] },
+            plan: null,
+          };
         }
         return [];
       },
@@ -299,7 +307,11 @@ describe('generateIntentPlan nearby options (geo)', () => {
           calls.searches.push(args);
           return {
             results: [
-              { title: 'Parkway Music', url: 'https://parkwaymusic.com', snippet: '99 Route 9 · Mon-Sat 10-6' },
+              {
+                title: 'Parkway Music',
+                url: 'https://parkwaymusic.com',
+                snippet: '99 Route 9 · Mon-Sat 10-6',
+              },
               { title: 'Guitar Center Albany', url: 'https://gc.example', snippet: 'Crossgates Mall' },
             ],
           };
@@ -314,7 +326,7 @@ describe('generateIntentPlan nearby options (geo)', () => {
         calls.generations.push(options);
         if (options.feature === 'albatross_local') return { text: '{"query": "guitar stores"}' };
         if (options.feature === 'albatross_plan') return { text: JSON.stringify(generationWithOptions) };
-        return { text: '<!doctype html><html><body>' + 'b'.repeat(300) + '</body></html>' };
+        return { text: `<!doctype html><html><body>${'b'.repeat(300)}</body></html>` };
       },
     });
 
@@ -376,7 +388,7 @@ describe('generateIntentPlan nearby options (geo)', () => {
             }),
           };
         }
-        return { text: '<!doctype html><html><body>' + 'b'.repeat(300) + '</body></html>' };
+        return { text: `<!doctype html><html><body>${'b'.repeat(300)}</body></html>` };
       },
     });
     await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });

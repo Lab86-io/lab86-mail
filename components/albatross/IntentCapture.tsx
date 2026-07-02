@@ -3,25 +3,37 @@
 /* Research refs — Mobbin: Superlist "Capture with voice" gradient card + pillowtalk transcribe
  * (calm full-screen wash, borderless input), Meta AI orb + Tolan glowing blob (listening state),
  * Threads glowing compose border + Cosmos blob wash + Jitter full-bleed prompt (takeover tone).
- * Techniques: 9elements fancy-border-radius (8-value blob morph), motion.dev useReducedMotion docs. */
+ * Built from fully-designed registry pieces: SmoothUI Dot Morph Button (squish spring 600/22)
+ * + SmoothUI Siri Orb as the "dot", @victorwelander's 21st.dev Gooey Text Morphing for the
+ * cycling label, and Chamaac UI AstralFlow (three.js, lazy-loaded) + DancingLetters for the
+ * capture takeover. Buttons stay text-only — no decorative icons. */
 
 import { useMutation } from 'convex/react';
-import { Mic, Sparkles } from 'lucide-react';
+import { Mic } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { GooeyMorphText } from '@/components/albatross/GooeyMorphText';
 import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
+import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import { cn } from '@/lib/utils';
 
 export { looksLikeMultipleIntents, splitIntentText };
 
+// Lazy Chamaac pieces: AstralFlow pulls in three.js and DancingLetters pulls in
+// next/font, so neither may sit on the button's initial bundle path. They only
+// download the first time the takeover opens.
+const AstralFlow = dynamic(() => import('@/components/astral-flow'), { ssr: false });
+const DancingLetters = dynamic(() => import('@/components/dancing-letters'), { ssr: false });
+
 /* ------------------------------------------------------------------ */
 /* Pure helpers (exported for bun:test - keep them DOM-free)           */
 /* ------------------------------------------------------------------ */
 
 /** Rotating button copy. The accessible name stays "New Intent" - this list
- *  only feeds the aria-hidden visible label so screen readers get stability. */
+ *  only feeds the aria-hidden gooey label so screen readers get stability. */
 export const CAPTURE_BUTTON_LABELS = [
   'New Intent',
   'New Idea',
@@ -110,17 +122,41 @@ type SpeechWindow = Window & {
 
 const CAPTURE_PROMPT = 'What are you trying to get out of your head?';
 
-/* Organic 8-value border-radius keyframes (9elements technique). First and
- * last match so the loop is seamless. */
-const BLOB_RADII = [
-  '46% 54% 55% 45% / 52% 46% 54% 48%',
-  '56% 44% 42% 58% / 45% 56% 44% 55%',
-  '48% 52% 58% 42% / 56% 47% 53% 44%',
-  '46% 54% 55% 45% / 52% 46% 54% 48%',
-];
+type CaptureGeo = { latitude: number; longitude: number };
 
-const SHEEN =
-  'linear-gradient(115deg, var(--color-accent-shine-1), var(--color-accent-shine-2) 40%, var(--color-accent-shine-3) 75%, var(--color-accent-shine-2))';
+/** Best-effort location for the plan kick. Resolves null on denial, error, or
+ *  after timeoutMs - it never rejects and never blocks the close beat. */
+function resolveGeo(timeoutMs = 2500): Promise<CaptureGeo | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    let settled = false;
+    const finish = (value: CaptureGeo | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = window.setTimeout(() => finish(null), timeoutMs);
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          window.clearTimeout(timer);
+          finish({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+        },
+        () => {
+          window.clearTimeout(timer);
+          finish(null);
+        },
+        { timeout: timeoutMs, maximumAge: 600_000 },
+      );
+    } catch {
+      window.clearTimeout(timer);
+      finish(null);
+    }
+  });
+}
 
 /* ------------------------------------------------------------------ */
 /* Launcher (button + full-screen capture takeover)                    */
@@ -131,12 +167,13 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   const createIntent = useMutation(api.albatrossIntents.createIntent);
 
   const [state, setState] = useState<CaptureState>('closed');
-  const [tick, setTick] = useState(0);
   const [text, setText] = useState('');
   const [source, setSource] = useState<'text' | 'voice'>('text');
   const [listening, setListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const [hoverDevice, setHoverDevice] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const textRef = useRef(text);
@@ -150,12 +187,14 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
 
   const overlayOpen = state !== 'closed';
 
-  // Rotate the button copy every ~6s; hold still under reduced motion.
+  // Dot-morph squish only makes sense on hover-capable pointers (SmoothUI).
   useEffect(() => {
-    if (reduceMotion || overlayOpen) return;
-    const id = window.setInterval(() => setTick((value) => value + 1), 6000);
-    return () => window.clearInterval(id);
-  }, [reduceMotion, overlayOpen]);
+    const query = window.matchMedia('(hover: hover) and (pointer: fine)');
+    setHoverDevice(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setHoverDevice(event.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -228,7 +267,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
 
   // Fire-and-forget plan kick. Never awaited before closing; the Plans surface
   // owns planError state if this request fails.
-  const kickPlan = (intentId: string) => {
+  const kickPlan = (intentId: string, geo: CaptureGeo | null) => {
     try {
       void fetch('/api/albatross/plan', {
         method: 'POST',
@@ -236,6 +275,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
         body: JSON.stringify({
           intentId,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          ...(geo ? { geo } : {}),
         }),
       }).catch(() => {});
     } catch {
@@ -244,6 +284,9 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   };
 
   const persist = async (pieces: string[], captureSource: 'text' | 'voice') => {
+    // Start the (bounded, silent) geo lookup in parallel with the save so it
+    // usually resolves before the kicks fire.
+    const geoPromise = resolveGeo();
     try {
       const ids: string[] = [];
       for (const piece of pieces) {
@@ -254,10 +297,13 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
         });
         ids.push(id as string);
       }
-      for (const id of ids) kickPlan(id);
       if (ids[0]) onCaptured(ids[0]);
       send({ type: 'saved' });
       window.setTimeout(() => send({ type: 'finish' }), 900);
+      // Kicks wait for geo (max 2.5s) but the close beat above never does.
+      void geoPromise.then((geo) => {
+        for (const id of ids) kickPlan(id, geo);
+      });
     } catch {
       setSaveError("Couldn't save that. It's still here - try again.");
       send({ type: 'error' });
@@ -284,68 +330,48 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   };
 
   const pieces = state === 'split' ? splitIntentText(text.trim()) : [];
+  const squished = hovered && hoverDevice && !reduceMotion;
 
   return (
     <>
       {/* Bottom-center keeps the launcher clear of the bottom-right Ask
-          Assistant orb; the fixed-size button keeps the hit target stable
-          while the visual inside it breathes and morphs. */}
+          Assistant orb. Dot-morph pill: the "dot" is a slow Siri orb that
+          squishes on hover (SmoothUI spring), the label morphs gooily. */}
       <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center">
         <button
           ref={launcherRef}
           type="button"
           onClick={() => send({ type: 'open' })}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
           aria-haspopup="dialog"
           aria-label="New Intent"
-          className="group pointer-events-auto relative h-12 w-56 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
+          className="group pointer-events-auto flex h-12 cursor-pointer items-center gap-2.5 rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)]/80 pr-6 pl-4 shadow-[var(--shadow-pop)] backdrop-blur-md transition-[transform,border-color] duration-150 ease-out hover:border-[var(--color-accent)]/70 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
         >
-          {/* Rotating conic aura - blurred, so a plain circle reads as a glow. */}
-          {reduceMotion ? null : (
-            <motion.span
-              aria-hidden
-              className="absolute left-1/2 top-1/2 -ml-32 -mt-32 size-64 rounded-full opacity-35 blur-2xl transition-opacity duration-300 group-hover:opacity-55"
-              style={{
-                background:
-                  'conic-gradient(from 0deg, var(--color-accent-shine-1), var(--color-accent-shine-2), var(--color-accent-shine-3), var(--color-accent-shine-1))',
+          <motion.span
+            aria-hidden
+            className="flex shrink-0 items-center justify-center"
+            initial={false}
+            animate={squished ? { scaleX: 0.68, scaleY: 1.32 } : { scaleX: 1, scaleY: 1 }}
+            transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 600, damping: 22 }}
+          >
+            <SiriOrb
+              size="22px"
+              animationDuration={26}
+              colors={{
+                bg: 'var(--color-bg-elevated)',
+                c1: 'var(--color-accent-shine-1)',
+                c2: 'var(--color-accent-shine-2)',
+                c3: 'var(--color-accent-shine-3)',
               }}
-              animate={{ rotate: 360 }}
-              transition={{ duration: 9, repeat: Number.POSITIVE_INFINITY, ease: 'linear' }}
             />
-          )}
-          {/* Morphing translucent blob body with an animated gradient sheen. */}
-          <span className="absolute inset-0 block transition-transform duration-300 group-hover:scale-[1.05]">
-            <motion.span
-              aria-hidden
-              className="absolute inset-0 overflow-hidden border border-[var(--color-accent)]/45 bg-[var(--color-bg-elevated)]/60 shadow-[var(--shadow-pop)] backdrop-blur-md"
-              style={reduceMotion ? { borderRadius: '9999px' } : undefined}
-              animate={reduceMotion ? undefined : { borderRadius: BLOB_RADII, scale: [1, 1.025, 1] }}
-              transition={{ duration: 9, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
-            >
-              <motion.span
-                className="absolute inset-0 opacity-25 transition-opacity duration-300 group-hover:opacity-45"
-                style={{ background: SHEEN, backgroundSize: '250% 250%' }}
-                animate={reduceMotion ? undefined : { backgroundPosition: ['0% 40%', '100% 60%', '0% 40%'] }}
-                transition={{ duration: 6, repeat: Number.POSITIVE_INFINITY, ease: 'linear' }}
-              />
-            </motion.span>
-          </span>
-          <span className="relative z-10 flex items-center justify-center gap-2 text-[13.5px] font-medium text-[var(--color-text)]">
-            <Sparkles className="size-4 text-[var(--color-accent)] transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110 group-hover:drop-shadow-[0_0_6px_var(--color-accent-shine-2)]" />
-            <span aria-hidden className="relative block h-5 overflow-hidden">
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.span
-                  key={reduceMotion ? 'static' : tick}
-                  initial={reduceMotion ? false : { opacity: 0, y: 7 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={reduceMotion ? undefined : { opacity: 0, y: -7 }}
-                  transition={{ duration: 0.35, ease: 'easeOut' }}
-                  className="block whitespace-nowrap leading-5"
-                >
-                  {reduceMotion ? rotatingLabelAt(0) : rotatingLabelAt(tick)}
-                </motion.span>
-              </AnimatePresence>
-            </span>
-          </span>
+          </motion.span>
+          <GooeyMorphText
+            texts={CAPTURE_BUTTON_LABELS}
+            morphTime={1.2}
+            cooldownTime={4}
+            className="text-[13.5px] leading-5 font-medium text-[var(--color-text)]"
+          />
         </button>
       </div>
 
@@ -359,19 +385,32 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
             exit={{ opacity: 0 }}
             transition={{ duration: reduceMotion ? 0 : 0.22 }}
           >
-            {/* Backdrop: app blurred under a soft radial accent wash. */}
+            {/* Backdrop: Chamaac AstralFlow breathing shader (lazy three.js)
+                dimmed under a scrim so the dump text stays readable. Reduced
+                motion keeps the old still blur wash instead. */}
             <div
               aria-hidden
-              className="absolute inset-0 bg-[var(--color-bg)]/78 backdrop-blur-xl"
+              className="absolute inset-0 overflow-hidden"
               onClick={() => send({ type: 'dismiss', hasText: text.trim().length > 0 })}
-            />
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0"
-              style={{
-                background: 'radial-gradient(58% 46% at 50% 32%, var(--color-accent-soft), transparent 75%)',
-              }}
-            />
+            >
+              {reduceMotion ? (
+                <>
+                  <div className="absolute inset-0 bg-[var(--color-bg)]/78 backdrop-blur-xl" />
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      background:
+                        'radial-gradient(58% 46% at 50% 32%, var(--color-accent-soft), transparent 75%)',
+                    }}
+                  />
+                </>
+              ) : (
+                <>
+                  <AstralFlow speed={0.55} flowMin={2} flowMax={4.5} />
+                  <div className="absolute inset-0 bg-[var(--color-bg)]/55 backdrop-blur-[2px]" />
+                </>
+              )}
+            </div>
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
               <motion.div
                 role="dialog"
@@ -450,8 +489,29 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
                   </div>
                 ) : (
                   <div className="flex flex-col gap-6">
-                    <h2 className="text-center font-display text-2xl text-[var(--color-text)] sm:text-3xl">
-                      {CAPTURE_PROMPT}
+                    {/* Chamaac DancingLetters heading, split per word so lines
+                        wrap on word boundaries. aria-label keeps the prompt
+                        readable as one sentence for screen readers. */}
+                    <h2 aria-label={CAPTURE_PROMPT} className="text-center">
+                      {reduceMotion ? (
+                        <span className="font-display text-2xl text-[var(--color-text)] sm:text-3xl">
+                          {CAPTURE_PROMPT}
+                        </span>
+                      ) : (
+                        <span
+                          aria-hidden
+                          className="flex flex-wrap items-baseline justify-center gap-x-[0.3em] gap-y-1"
+                        >
+                          {CAPTURE_PROMPT.split(' ').map((word, index) => (
+                            <DancingLetters
+                              // biome-ignore lint/suspicious/noArrayIndexKey: static prompt, order never changes
+                              key={`${word}-${index}`}
+                              text={word}
+                              letterClassName="font-display font-medium text-2xl sm:text-3xl md:text-3xl lg:text-3xl text-[var(--color-text)] dark:text-[var(--color-text)]"
+                            />
+                          ))}
+                        </span>
+                      )}
                     </h2>
                     {/* Borderless dump field: writing on the wash, not a form. */}
                     <textarea

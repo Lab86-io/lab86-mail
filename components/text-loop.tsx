@@ -1,14 +1,8 @@
-"use client";
+'use client';
 
-import React, { useEffect, useState } from "react";
-import {
-  LazyMotion,
-  domAnimation,
-  m,
-  AnimatePresence,
-  Transition,
-} from "motion/react";
-import { cn } from "@/lib/utils";
+import { AnimatePresence, domAnimation, LazyMotion, m, Transition } from 'motion/react';
+import React, { useEffect, useState } from 'react';
+import { cn } from '@/lib/utils';
 
 interface TextLoopProps {
   staticText?: string;
@@ -23,11 +17,11 @@ interface TextLoopProps {
 }
 
 export default function TextLoop({
-  staticText = "Design",
-  rotatingTexts = ["Limitless", "Timeless", "Flawless"],
+  staticText = 'Design',
+  rotatingTexts = ['Limitless', 'Timeless', 'Flawless'],
   className,
   interval = 3000,
-  transition = { duration: 0.8, ease: "easeInOut" },
+  transition = { duration: 0.8, ease: 'easeInOut' },
   staticTextClassName,
   rotatingTextClassName,
   backgroundClassName,
@@ -46,19 +40,17 @@ export default function TextLoop({
     <LazyMotion features={domAnimation}>
       <div
         className={cn(
-          "flex flex-row items-center justify-start w-fit text-4xl md:text-7xl font-medium tracking-tight",
-          className
+          'flex flex-row items-center justify-start w-fit text-4xl md:text-7xl font-medium tracking-tight',
+          className,
         )}
       >
-        <span className={cn("mr-3 whitespace-nowrap", staticTextClassName)}>
-          {staticText}
-        </span>
+        <span className={cn('mr-3 whitespace-nowrap', staticTextClassName)}>{staticText}</span>
         <div className="relative flex items-center">
           <AnimatePresence mode="wait">
             <m.div
               key={rotatingTexts[index]}
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: "auto", opacity: 1 }}
+              animate={{ width: 'auto', opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={transition}
               className="overflow-hidden whitespace-nowrap relative"
@@ -66,19 +58,19 @@ export default function TextLoop({
               {/* Background gradient box */}
               <div
                 className={cn(
-                  "absolute inset-0",
-                  "bg-gradient-to-r from-transparent via-purple-200/30 to-purple-200",
-                  "dark:from-transparent dark:via-violet-950/30 dark:to-violet-950/60",
-                  backgroundClassName
+                  'absolute inset-0',
+                  'bg-gradient-to-r from-transparent via-purple-200/30 to-purple-200',
+                  'dark:from-transparent dark:via-violet-950/30 dark:to-violet-950/60',
+                  backgroundClassName,
                 )}
               />
 
               <span
                 className={cn(
-                  "relative bg-clip-text text-transparent",
-                  "bg-gradient-to-r from-violet-400 to-violet-800",
-                  "dark:bg-gradient-to-r from-violet-400 to-violet-600 pr-1",
-                  rotatingTextClassName
+                  'relative bg-clip-text text-transparent',
+                  'bg-gradient-to-r from-violet-400 to-violet-800',
+                  'dark:bg-gradient-to-r from-violet-400 to-violet-600 pr-1',
+                  rotatingTextClassName,
                 )}
               >
                 {rotatingTexts[index]}
@@ -88,15 +80,12 @@ export default function TextLoop({
 
           {/* Cursor Line */}
           <m.div
-            className={cn(
-              "w-[3px] md:w-[4px] bg-violet-500 h-[1.10em] sm:h-[1em]",
-              cursorClassName
-            )}
+            className={cn('w-[3px] md:w-[4px] bg-violet-500 h-[1.10em] sm:h-[1em]', cursorClassName)}
             animate={{ opacity: [1, 0.5] }}
             transition={{
               duration: 0.8,
               repeat: Infinity,
-              repeatType: "reverse",
+              repeatType: 'reverse',
             }}
           />
         </div>

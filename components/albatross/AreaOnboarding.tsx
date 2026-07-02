@@ -25,7 +25,6 @@ import {
   MapPin,
   Plus,
   ShoppingBag,
-  Sparkles,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
@@ -726,10 +725,7 @@ function DoneStep({
   const counts = wizardCounts(state);
   return (
     <div className="py-2 text-center">
-      <div className="mx-auto grid size-11 place-items-center rounded-full bg-[var(--color-accent-soft)]">
-        <Sparkles className="size-5 text-[var(--color-accent)]" />
-      </div>
-      <h3 className="mt-3 text-[15px] font-semibold tracking-tight">Albatross is listening now</h3>
+      <h3 className="text-[15px] font-semibold tracking-tight">Albatross is listening now</h3>
       <p className="mx-auto mt-1 max-w-sm text-[12.5px] text-[var(--color-text-muted)]">
         {counts.areasCreated > 0
           ? `${counts.areasCreated} new ${counts.areasCreated === 1 ? 'area' : 'areas'} and ${counts.factsAdded} ${counts.factsAdded === 1 ? 'fact' : 'facts'} saved.`

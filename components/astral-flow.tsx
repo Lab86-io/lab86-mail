@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import { Canvas, useFrame } from "@react-three/fiber";
-import { useRef, useMemo, useEffect } from "react";
-import * as THREE from "three";
-import { cn } from "@/lib/utils";
+import { Canvas, useFrame } from '@react-three/fiber';
+import { useEffect, useMemo, useRef } from 'react';
+import * as THREE from 'three';
+import { cn } from '@/lib/utils';
 
 const vertexShader = `
   varying vec2 vUv;
@@ -150,9 +150,10 @@ const Effect = ({
   color3,
   flowMin,
   flowMax,
-}: Required<Omit<AstralFlowProps, "className">>) => {
+}: Required<Omit<AstralFlowProps, 'className'>>) => {
   const material = useRef<THREE.ShaderMaterial>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: three.js uniforms must stay referentially stable; live values update through useFrame, not by recreating the object.
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
@@ -163,7 +164,7 @@ const Effect = ({
       uFlowMin: { value: flowMin },
       uFlowMax: { value: flowMax },
     }),
-    [] // Initialize only once to prevent shader recreation
+    [], // Initialize only once to prevent shader recreation
   );
 
   // Smoothly update uniform values
@@ -179,11 +180,10 @@ const Effect = ({
 
   useFrame((state) => {
     if (material.current) {
-      material.current.uniforms.uTime.value =
-        (state.clock.getElapsedTime() * speed) % (40 * Math.PI);
+      material.current.uniforms.uTime.value = (state.clock.getElapsedTime() * speed) % (40 * Math.PI);
       material.current.uniforms.uResolution.value.set(
         state.size.width * state.viewport.dpr,
-        state.size.height * state.viewport.dpr
+        state.size.height * state.viewport.dpr,
       );
     }
   });
@@ -205,17 +205,17 @@ const Effect = ({
 export default function AstralFlow({
   className,
   speed = 1.5,
-  color1 = "#05070a", // Deep void blue-black
-  color2 = "#2e1a38", // Moody dark plum/purple
-  color3 = "#a0769a", // Glowing ethereal mauve/silver
+  color1 = '#05070a', // Deep void blue-black
+  color2 = '#2e1a38', // Moody dark plum/purple
+  color3 = '#a0769a', // Glowing ethereal mauve/silver
   flowMin = 3.0,
   flowMax = 7.0,
 }: AstralFlowProps) {
   return (
     <div
       className={cn(
-        "absolute inset-0 w-full h-full pointer-events-none overflow-hidden bg-[#05070a]",
-        className
+        'absolute inset-0 w-full h-full pointer-events-none overflow-hidden bg-[#05070a]',
+        className,
       )}
     >
       <Canvas camera={{ position: [0, 0, 1] }} dpr={1}>

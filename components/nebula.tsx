@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import React, { useRef, useMemo } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import * as THREE from "three";
-import { cn } from "@/lib/utils";
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import React, { useMemo, useRef } from 'react';
+import * as THREE from 'three';
+import { cn } from '@/lib/utils';
 
 const vertexShader = `
   varying vec2 vUv;
@@ -110,6 +110,7 @@ const NebulaMaterial = ({
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const lastTimeRef = useRef(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: three.js uniforms must stay referentially stable; live values update through useFrame, not by recreating the object.
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
@@ -119,7 +120,7 @@ const NebulaMaterial = ({
       uColor3: { value: new THREE.Color(color3) },
     }),
 
-    [] // Initialize once
+    [], // Initialize once
   );
 
   // Update uniforms when props change
@@ -165,28 +166,18 @@ interface NebulaProps {
 export default function Nebula({
   className,
   speed = 2.0,
-  color1 = "#5efff4", // Cyan (Highlight)
-  color2 = "#763b65", // Magenta-ish (Nebula)
-  color3 = "#1a0b2e", // Deep purple (Deep Space)
+  color1 = '#5efff4', // Cyan (Highlight)
+  color2 = '#763b65', // Magenta-ish (Nebula)
+  color3 = '#1a0b2e', // Deep purple (Deep Space)
 }: NebulaProps) {
   return (
-    <div
-      className={cn(
-        "absolute inset-0 w-full h-full pointer-events-none",
-        className
-      )}
-    >
+    <div className={cn('absolute inset-0 w-full h-full pointer-events-none', className)}>
       <Canvas
         camera={{ position: [0, 0, 1] }}
         dpr={[1, 2]}
-        gl={{ antialias: false, powerPreference: "high-performance" }}
+        gl={{ antialias: false, powerPreference: 'high-performance' }}
       >
-        <NebulaMaterial
-          speed={speed}
-          color3={color3}
-          color2={color2}
-          color1={color1}
-        />
+        <NebulaMaterial speed={speed} color3={color3} color2={color2} color1={color1} />
       </Canvas>
     </div>
   );

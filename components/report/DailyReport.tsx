@@ -9,12 +9,13 @@ import {
   FileText,
   Inbox,
   Newspaper,
-  Palette,
   RefreshCw,
   User,
   X,
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
 import { ConnectionLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
@@ -756,109 +757,32 @@ function ReportArtifact({
   );
 }
 
-const GENERATING_PHRASES = [
-  'Reading the last week of mail',
-  'Finding the threads that need a decision',
-  'Folding in tasks and calendar context',
-  "Choosing today's artwork",
-  'Composing the brief artifact',
-  'Laying out charts, actions, and widgets',
-];
-
-const GENERATION_STEPS = [
-  { label: 'Source scan', icon: Inbox },
-  { label: 'Editorial pass', icon: FileText },
-  { label: 'Artwork', icon: Palette },
-  { label: 'Artifact render', icon: Newspaper },
-];
-
 const STUCK_GENERATION_MS = 20 * 60_000;
 
-// The "we're working on it" state: a quiet, staged progress surface. Mobbin
-// references favored calm skeleton/progress cards over rapid typewriter motion.
+// Context the brief actually reads; the vortex swallows these while composing.
+const BRIEF_VORTEX_SOURCES: VortexSource[] = [
+  { id: 'mail', label: 'Mail', kind: 'mail' },
+  { id: 'calendar', label: 'Calendar', kind: 'calendar' },
+  { id: 'tasks', label: 'Tasks', kind: 'tasks' },
+  { id: 'areas', label: 'Areas', kind: 'areas' },
+  { id: 'notes', label: 'Notes', kind: 'notes' },
+];
+
+// The "we're working on it" state: the shared context-vortex treatment —
+// context cards fly into a growing singularity until the brief springs out.
 function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
-  const [phraseIdx, setPhraseIdx] = useState(0);
-
-  useEffect(() => {
-    const t = window.setInterval(() => setPhraseIdx((i) => (i + 1) % GENERATING_PHRASES.length), 1600);
-    return () => window.clearInterval(t);
-  }, []);
-
   const stage =
-    report?.artifactStatus === 'composing'
-      ? 'Designing the layout'
-      : report?.progress?.stage || 'Gathering the last week';
-  const pct = report?.progress?.total
-    ? Math.max(8, Math.min(100, (report.progress.done / report.progress.total) * 100))
-    : null;
-  const currentStep = pct == null ? 0 : Math.min(GENERATION_STEPS.length - 1, Math.floor(pct / 25));
+    report?.artifactStatus === 'composing' ? 'Designing the layout' : report?.progress?.stage || null;
+  const progressCount = report?.progress?.total
+    ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}`
+    : '';
+  const subtitle = stage
+    ? `${stripEmoji(stage)}${progressCount}…`
+    : 'Reading the week’s mail, calendar, and tasks…';
 
   return (
-    <div className="grid h-full place-items-center px-6">
-      <div className="@container w-full max-w-xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-left shadow-[var(--shadow-soft)]">
-        <div className="flex items-start gap-4">
-          <div className="relative grid size-12 shrink-0 place-items-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-accent)] shadow-[var(--shadow-control)]">
-            <Ring className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="font-serif text-[13px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Daily Brief
-            </p>
-            <h1 className="mt-1 font-serif text-[26px] font-semibold italic leading-none text-[var(--color-text)]">
-              Building your report
-            </h1>
-            <p className="mt-3 min-h-[1.45em] text-[14px] text-[var(--color-text-muted)] transition-opacity duration-150">
-              {GENERATING_PHRASES[phraseIdx % GENERATING_PHRASES.length]}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
-            {pct != null ? (
-              <div
-                className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                style={{ width: `${pct}%` }}
-              />
-            ) : (
-              <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--color-accent)]" />
-            )}
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-            <span>{stripEmoji(stage)}</span>
-            <span>
-              {report?.progress?.total
-                ? `${Math.min(report.progress.done, report.progress.total)}/${report.progress.total}`
-                : 'Queued'}
-            </span>
-          </div>
-        </div>
-
-        <div className="mt-5 grid grid-cols-2 gap-2 @[520px]:grid-cols-4">
-          {GENERATION_STEPS.map((step, index) => {
-            const Icon = step.icon;
-            const complete = pct != null && index < currentStep;
-            const active = index === currentStep;
-            return (
-              <div
-                key={step.label}
-                className={cn(
-                  'rounded-xl border px-3 py-3 text-[12px]',
-                  active || complete
-                    ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-subtle)] text-[var(--color-text)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]',
-                )}
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <Icon className="size-3.5" />
-                  {complete ? <CheckCircle2 className="size-3.5 text-[var(--color-accent)]" /> : null}
-                </div>
-                <div className="truncate font-medium">{step.label}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+    <div className="relative h-full min-h-[420px]">
+      <ContextVortex title="Composing your brief" subtitle={subtitle} sources={BRIEF_VORTEX_SOURCES} />
     </div>
   );
 }
@@ -1410,8 +1334,36 @@ export function DailyReport() {
       >
         {reportQuery.isLoading && !report ? (
           <ReportSkeleton />
-        ) : showGeneratingState ? (
-          <ReportGenerating report={report} />
+        ) : showGeneratingState || (displayArtifact && report?.html) ? (
+          // Vortex while composing; when the brief lands, the vortex collapses
+          // and the finished artifact springs out of it.
+          <AnimatePresence mode="wait" initial={false}>
+            {showGeneratingState || !report?.html ? (
+              <motion.div
+                key="vortex"
+                className="h-full"
+                exit={{ opacity: 0, scale: 1.05 }}
+                transition={{ duration: 0.25, ease: 'easeIn' }}
+              >
+                <ReportGenerating report={report} />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="artifact"
+                className="h-full"
+                initial={{ opacity: 0, scale: 0.92 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: 'spring', stiffness: 190, damping: 22, mass: 0.9 }}
+              >
+                <ReportArtifact
+                  html={report.html}
+                  dismissedTaskIds={dismissedTaskIds}
+                  dismissedThreadRecords={dismissedThreadRecords}
+                  onChanged={invalidate}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         ) : !report ? (
           <Empty className="grid h-full place-items-center px-6 py-12 text-center">
             <EmptyHeader>
@@ -1425,13 +1377,6 @@ export function DailyReport() {
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
-        ) : displayArtifact && report.html ? (
-          <ReportArtifact
-            html={report.html}
-            dismissedTaskIds={dismissedTaskIds}
-            dismissedThreadRecords={dismissedThreadRecords}
-            onChanged={invalidate}
-          />
         ) : structuredArtifactUnavailable ? (
           <FullArtifactUnavailable
             artifactErrors={report.artifactErrors}
