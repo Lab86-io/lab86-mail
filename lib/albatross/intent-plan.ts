@@ -5,6 +5,22 @@ import { extractHtml } from '@/lib/mail/agent-report';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { invokeTool } from '@/lib/tools/registry';
 
+// Dependency seam mirroring lib/tools/albatross.ts: tests swap the network
+// edges (Convex, gateway, tool invocation) and exercise the real orchestration.
+const defaultDeps = {
+  api: api as any,
+  convexQuery,
+  convexMutation,
+  generateTextForCurrentUser,
+  invokeTool,
+};
+
+let deps = defaultDeps;
+
+export function __setIntentPlanDepsForTest(overrides: Partial<typeof defaultDeps> = {}) {
+  deps = { ...defaultDeps, ...overrides };
+}
+
 /* The real brain behind New Intent (issues #77/#78/#80 made live). One
  * structured generation turns a raw dump plus verified area context and
  * artifact search evidence into a grounded plan; a second pass composes the
@@ -175,8 +191,8 @@ async function buildContextPack(userId: string, rawText: string) {
   const lines: string[] = [];
 
   const [areas, facts] = await Promise.all([
-    convexQuery<any[]>((api as any).albatross.listAreas, { userId, status: 'active' }).catch(() => []),
-    convexQuery<any[]>((api as any).albatross.listVerifiedFacts, { userId }).catch(() => []),
+    deps.convexQuery<any[]>(deps.api.albatross.listAreas, { userId, status: 'active' }).catch(() => []),
+    deps.convexQuery<any[]>(deps.api.albatross.listVerifiedFacts, { userId }).catch(() => []),
   ]);
 
   if (areas.length) {
@@ -191,11 +207,9 @@ async function buildContextPack(userId: string, rawText: string) {
     }
   }
 
-  const search = await invokeTool(
-    corpusSearch,
-    { query: rawText.slice(0, 200), max: 8 },
-    { agent: 'ai', userId },
-  ).catch(() => null);
+  const search = await deps
+    .invokeTool(corpusSearch, { query: rawText.slice(0, 200), max: 8 }, { agent: 'ai', userId })
+    .catch(() => null);
   const items: any[] = (search as any)?.items || [];
   if (items.length) {
     lines.push('');
@@ -235,13 +249,13 @@ function answersBlock(questions: Array<{ id: string; prompt: string; answer?: st
 
 export async function generateIntentPlan(input: GenerateIntentPlanInput) {
   const caller = { userId: input.userId };
-  const workbench = await convexQuery<any>((api as any).albatrossIntents.getIntentWorkbench, {
+  const workbench = await deps.convexQuery<any>(deps.api.albatrossIntents.getIntentWorkbench, {
     ...caller,
     intentId: input.intentId,
   });
   const intent = workbench.intent;
 
-  await convexMutation((api as any).albatrossIntents.updateIntent, {
+  await deps.convexMutation(deps.api.albatrossIntents.updateIntent, {
     ...caller,
     intentId: input.intentId,
     status: 'planning',
@@ -266,7 +280,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       .filter(Boolean)
       .join('\n');
 
-    const { text } = await generateTextForCurrentUser({
+    const { text } = await deps.generateTextForCurrentUser({
       feature: 'albatross_plan',
       speed: 'primary',
       userId: input.userId,
@@ -312,7 +326,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
 
     let artifactHtml: string | undefined;
     try {
-      const artifact = await generateTextForCurrentUser({
+      const artifact = await deps.generateTextForCurrentUser({
         feature: 'albatross_plan_artifact',
         speed: 'primary',
         userId: input.userId,
@@ -347,7 +361,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       console.warn('[albatross-plan] artifact composition failed:', err);
     }
 
-    const planId = await convexMutation<string>((api as any).albatrossIntents.savePlan, {
+    const planId = await deps.convexMutation<string>(deps.api.albatrossIntents.savePlan, {
       ...caller,
       intentId: input.intentId,
       outcome: generation.outcome,
@@ -368,12 +382,14 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
 
     return { planId, projectTitle: generation.projectTitle ?? undefined };
   } catch (err) {
-    await convexMutation((api as any).albatrossIntents.updateIntent, {
-      ...caller,
-      intentId: input.intentId,
-      status: 'captured',
-      planError: err instanceof Error ? err.message : String(err),
-    }).catch(() => {});
+    await deps
+      .convexMutation(deps.api.albatrossIntents.updateIntent, {
+        ...caller,
+        intentId: input.intentId,
+        status: 'captured',
+        planError: err instanceof Error ? err.message : String(err),
+      })
+      .catch(() => {});
     throw err;
   }
 }

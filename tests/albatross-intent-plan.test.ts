@@ -89,3 +89,156 @@ describe('resolveSourceRefs', () => {
     expect(resolveSourceRefs([], [])).toHaveLength(0);
   });
 });
+
+describe('generateIntentPlan orchestration', () => {
+  const { __setIntentPlanDepsForTest, generateIntentPlan } = require('../lib/albatross/intent-plan');
+
+  const fakeApi = {
+    albatross: { listAreas: 'q:listAreas', listVerifiedFacts: 'q:listVerifiedFacts' },
+    albatrossIntents: {
+      getIntentWorkbench: 'q:getIntentWorkbench',
+      updateIntent: 'm:updateIntent',
+      savePlan: 'm:savePlan',
+    },
+  };
+
+  const AREAS = [
+    { _id: 'area_money', name: 'Money Management', kind: 'admin', description: 'Taxes and money' },
+    { _id: 'area_apps', name: 'My Apps', kind: 'work' },
+  ];
+  const FACTS = [{ areaId: 'area_money', kind: 'website', value: 'tax.ny.gov', label: 'NYS taxes' }];
+  const CORPUS_ITEMS = [
+    {
+      source: 'mail',
+      threadId: 'thread-tax',
+      subject: 'Your NYS tax receipt',
+      from: 'tax@ny.gov',
+      account: 'acct1',
+      snippet: 'Payment received',
+    },
+  ];
+
+  const goodGeneration = {
+    title: 'Upload NYS taxes',
+    kind: 'obligation',
+    priority: 1,
+    areaName: 'money management',
+    projectTitle: 'Tax season wrap-up',
+    outcome: 'NYS taxes uploaded and confirmed.',
+    summary: 'The receipt thread suggests payment happened; upload remains.',
+    questions: [{ id: 'q1', prompt: 'Did you already file federal?' }],
+    digitalActions: [{ kind: 'task', title: 'Upload NYS tax PDF', sourceRefIds: ['ref1', 'bogus'] }],
+    physicalActions: [{ title: 'Find the paper W-2' }],
+    assumptions: ['Payment already went through'],
+    sourceRefIds: ['ref1'],
+  };
+
+  function wire(overrides: {
+    intent?: Record<string, unknown>;
+    planText?: string;
+    artifactText?: string | Error;
+  }) {
+    const calls: { mutations: Array<{ fn: string; args: any }>; generations: any[] } = {
+      mutations: [],
+      generations: [],
+    };
+    const intent = {
+      _id: 'intent_1',
+      rawText: 'make sure I upload my nys taxes',
+      transcript: undefined,
+      questions: [{ id: 'q1', prompt: 'Did you already file federal?', answer: 'yes', answeredAt: 5 }],
+      ...(overrides.intent || {}),
+    };
+    __setIntentPlanDepsForTest({
+      api: fakeApi,
+      convexQuery: async (fn: string) => {
+        if (fn === 'q:getIntentWorkbench') return { intent, plan: null };
+        if (fn === 'q:listAreas') return AREAS;
+        if (fn === 'q:listVerifiedFacts') return FACTS;
+        throw new Error(`unexpected query ${fn}`);
+      },
+      convexMutation: async (fn: string, args: any) => {
+        calls.mutations.push({ fn, args });
+        if (fn === 'm:savePlan') return 'plan_1';
+        return null;
+      },
+      invokeTool: async () => ({ items: CORPUS_ITEMS }),
+      generateTextForCurrentUser: async (options: any) => {
+        calls.generations.push(options);
+        if (options.feature === 'albatross_plan') {
+          return { text: overrides.planText ?? JSON.stringify(goodGeneration) };
+        }
+        if (overrides.artifactText instanceof Error) throw overrides.artifactText;
+        return {
+          text:
+            overrides.artifactText ??
+            `<!doctype html><html><body><h1>Plan brief</h1><p>${'brief '.repeat(60)}</p></body></html>`,
+        };
+      },
+    });
+    return { calls, intent };
+  }
+
+  test('happy path: saves a grounded plan with area match, clamped refs, artifact, and project title', async () => {
+    const { calls } = wire({});
+    const result = await generateIntentPlan({
+      userId: 'user_1',
+      intentId: 'intent_1',
+      timezone: 'America/New_York',
+    });
+    expect(result.planId).toBe('plan_1');
+    expect(result.projectTitle).toBe('Tax season wrap-up');
+
+    const planning = calls.mutations.find((m) => m.fn === 'm:updateIntent');
+    expect(planning?.args.status).toBe('planning');
+
+    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
+    expect(save).toBeTruthy();
+    expect(save!.args.areaId).toBe('area_money');
+    expect(save!.args.proposedProjectTitle).toBe('Tax season wrap-up');
+    expect(save!.args.artifactHtml).toContain('<!doctype html>');
+    // Hallucinated 'bogus' ref dropped; real corpus ref kept with account id.
+    expect(save!.args.digitalActions[0].sourceRefs).toEqual([
+      expect.objectContaining({ kind: 'mail_thread', id: 'thread-tax', accountId: 'acct1' }),
+    ]);
+    // Answered question carried over by matching prompt.
+    expect(save!.args.questions[0].answer).toBe('yes');
+    expect(save!.args.questions[0].answeredAt).toBe(5);
+
+    // Plan prompt included the raw dump, answers block, area facts, and evidence.
+    const planPrompt = calls.generations[0].prompt as string;
+    expect(planPrompt).toContain('make sure I upload my nys taxes');
+    expect(planPrompt).toContain('The user answered your earlier questions');
+    expect(planPrompt).toContain('Money Management');
+    expect(planPrompt).toContain('[ref1] (mail_thread)');
+    expect(planPrompt).toContain('America/New_York');
+  });
+
+  test('artifact composition failure still saves the plan without a brief', async () => {
+    const { calls } = wire({ artifactText: new Error('provider down') });
+    const result = await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    expect(result.planId).toBe('plan_1');
+    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
+    expect(save!.args.artifactHtml).toBeUndefined();
+  });
+
+  test('unparseable generation records planError and returns intent to captured', async () => {
+    const { calls } = wire({ planText: 'I refuse to answer in JSON.' });
+    await expect(generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' })).rejects.toThrow(
+      /no JSON object/,
+    );
+    const updates = calls.mutations.filter((m) => m.fn === 'm:updateIntent');
+    const last = updates[updates.length - 1];
+    expect(last.args.status).toBe('captured');
+    expect(last.args.planError).toContain('no JSON object');
+    expect(calls.mutations.some((m) => m.fn === 'm:savePlan')).toBe(false);
+  });
+
+  test('voice transcript differing from raw text is included in the prompt', async () => {
+    const { calls } = wire({
+      intent: { rawText: 'upload nys taxes', transcript: 'upload en why ess taxes', questions: [] },
+    });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    expect(calls.generations[0].prompt).toContain('voice transcript: upload en why ess taxes');
+  });
+});
