@@ -1115,7 +1115,15 @@ function humanizeTool(name: string, args: any, out: any): string {
       case 'tasks_create_card':
         return a.title ? `Created task “${a.title}”.` : 'Created a task.';
       case 'tasks_update_card':
+        if (a.completed === true && out?.card?.columnName) {
+          return `Marked “${out.card.title || 'the task'}” complete in ${out.card.columnName}.`;
+        }
+        if (out?.card?.columnName)
+          return `Updated “${out.card.title || 'the task'}” in ${out.card.columnName}.`;
         return 'Updated the task.';
+      case 'tasks_move_card':
+        if (out?.noOp) return `Task already in ${out?.card?.columnName || a.column || 'that column'}.`;
+        return out?.card?.columnName ? `Moved the task to ${out.card.columnName}.` : 'Moved the task.';
       case 'tasks_attach_link':
         return a.url ? `Attached ${a.url} to the task.` : 'Attached a link to the task.';
       case 'tasks_attach_file':

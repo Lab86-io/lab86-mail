@@ -52,12 +52,26 @@ export async function recordOperation(input: RecordOperationInput): Promise<stri
     throw new Error(`No undo executor registered for inverse kind "${input.inverse.kind}".`);
   }
   const ctx = getAiRequestContext();
-  return convexMutation<string>(api.operations.record, {
+  const payload = {
     ...input,
     agent: input.agent ?? (ctx.agent === 'user' ? 'user' : 'ai'),
     batchId: input.batchId ?? ctx.operationBatchId,
     chatId: input.chatId ?? ctx.chatId,
-  });
+  };
+  try {
+    return await convexMutation<string>(api.operations.record, payload);
+  } catch (err: any) {
+    // Operation rows power undo/review, but they are written after the real
+    // mutation. Do not report the primary action as failed just because this
+    // secondary log write had a transient Convex error; that causes the agent
+    // to retry work that already committed.
+    console.warn(
+      `[operations] failed to record ${input.tool}; primary mutation may already be applied: ${
+        err?.message || err
+      }`,
+    );
+    return '';
+  }
 }
 
 export async function listRecentOperations(userId: string, opts?: { batchId?: string; limit?: number }) {

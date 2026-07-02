@@ -518,11 +518,12 @@ export const updateCard = mutation({
     }
     await ctx.db.patch(args.cardId, patch);
     const changed = Object.keys(patch).filter((key) => key !== 'updatedAt');
+    let fresh = await ctx.db.get(args.cardId);
     if (changed.length) {
-      const fresh = await ctx.db.get(args.cardId);
       if (fresh) await appendActivity(ctx, fresh, userId, 'updated', changed.join(', '));
+      fresh = await ctx.db.get(args.cardId);
     }
-    return { previous: snapshotCard(card) };
+    return { previous: snapshotCard(card), card: await cardStatePayload(ctx, fresh || card) };
   },
 });
 
@@ -592,7 +593,19 @@ export const moveCard = mutation({
       const fresh = await ctx.db.get(args.cardId);
       if (fresh) await appendActivity(ctx, fresh, userId, 'moved', `to ${column.name}`);
     }
-    return { previous };
+    const fresh = await ctx.db.get(args.cardId);
+    return { previous, card: await cardStatePayload(ctx, fresh || card) };
+  },
+});
+
+export const getCardState = query({
+  args: { ...callerArgs, cardId: v.id('cards') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const card = await ctx.db.get(args.cardId);
+    if (!card) throw new Error('Card not found.');
+    await requireBoard(ctx, card.boardId, userId, 'viewer');
+    return cardStatePayload(ctx, card);
   },
 });
 
@@ -1002,5 +1015,17 @@ function snapshotCard(card: any) {
     sourceThreadId: card.sourceThreadId,
     sourceCalendarEventId: card.sourceCalendarEventId,
     sourceAccountId: card.sourceAccountId,
+  };
+}
+
+async function cardStatePayload(ctx: QueryCtx | MutationCtx, card: any) {
+  const [board, column] = (await Promise.all([ctx.db.get(card.boardId), ctx.db.get(card.columnId)])) as any[];
+  return {
+    cardId: card._id,
+    ...snapshotCard(card),
+    boardTitle: board?.title ?? null,
+    columnName: column?.name ?? null,
+    completed: Boolean(card.completedAt),
+    completedAt: card.completedAt ?? null,
   };
 }

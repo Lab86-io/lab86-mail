@@ -74,6 +74,23 @@ const sourceSchema = z.object({
   title: z.string().optional(),
 });
 
+const taskCardStateSchema = z.object({
+  cardId: z.string(),
+  boardId: z.string(),
+  boardTitle: z.string().nullable().optional(),
+  columnId: z.string(),
+  columnName: z.string().nullable().optional(),
+  title: z.string(),
+  completed: z.boolean(),
+  completedAt: z.number().nullable(),
+});
+
+type TaskCardState = z.infer<typeof taskCardStateSchema>;
+
+async function getTaskCardState(userId: string, cardId: string): Promise<TaskCardState> {
+  return convexQuery<TaskCardState>(boardsApi.getCardState, { userId, cardId });
+}
+
 export const tasksListBoards = defineTool({
   name: 'tasks_list_boards',
   description: 'List the user’s Kanban boards (owned and shared with them).',
@@ -182,7 +199,7 @@ export const tasksCreateCard = defineTool({
 export const tasksUpdateCard = defineTool({
   name: 'tasks_update_card',
   description:
-    'Update a card’s fields (title, description, labels, priority, due date, completed, source provenance). Pass dueIso:null to clear the due date. completed:true marks done.',
+    'Update a card’s fields (title, description, labels, priority, due date, completed, source provenance). Pass dueIso:null to clear the due date. completed:true marks done and automatically moves the card to the Done column when that column exists; do not call tasks_move_card afterward unless the returned card.columnName is not the desired column.',
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -197,10 +214,10 @@ export const tasksUpdateCard = defineTool({
     completed: z.boolean().optional(),
     source: sourceSchema.optional(),
   }),
-  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  output: z.object({ ok: z.boolean(), operationId: z.string(), card: taskCardStateSchema }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const result = await convexMutation<{ previous: any }>(boardsApi.updateCard, {
+    const result = await convexMutation<{ previous: any; card: TaskCardState }>(boardsApi.updateCard, {
       userId,
       cardId: args.cardId,
       title: args.title,
@@ -229,13 +246,14 @@ export const tasksUpdateCard = defineTool({
         payload: { cardId: args.cardId, fields: result.previous },
       },
     });
-    return { ok: true, operationId };
+    return { ok: true, operationId, card: result.card };
   },
 });
 
 export const tasksMoveCard = defineTool({
   name: 'tasks_move_card',
-  description: 'Move a card to another column on its board (by column name), appended at the end.',
+  description:
+    'Move a card to another column on its board (by column name), appended at the end. If boardId is omitted, the card’s current board is used. Moving to Done marks the card complete; moving out of Done reopens it.',
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -243,14 +261,27 @@ export const tasksMoveCard = defineTool({
     boardId: z.string().optional(),
     column: z.string().min(1),
   }),
-  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  output: z.object({
+    ok: z.boolean(),
+    operationId: z.string(),
+    noOp: z.boolean().optional(),
+    card: taskCardStateSchema,
+  }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const { board, column } = await resolveBoardAndColumn(userId, args.boardId, args.column);
-    const result = await convexMutation<{ previous: { columnId: string; order: number } }>(
-      boardsApi.moveCard,
-      { userId, cardId: args.cardId, columnId: column.columnId },
+    const current = await getTaskCardState(userId, args.cardId);
+    const { board, column } = await resolveBoardAndColumn(
+      userId,
+      args.boardId ?? current.boardId,
+      args.column,
     );
+    if (current.columnId === column.columnId) {
+      return { ok: true, operationId: '', noOp: true, card: current };
+    }
+    const result = await convexMutation<{
+      previous: { columnId: string; order: number };
+      card: TaskCardState;
+    }>(boardsApi.moveCard, { userId, cardId: args.cardId, columnId: column.columnId });
     const operationId = await recordOperation({
       userId,
       tool: 'tasks_move_card',
@@ -262,7 +293,7 @@ export const tasksMoveCard = defineTool({
         payload: { cardId: args.cardId, ...result.previous },
       },
     });
-    return { ok: true, operationId };
+    return { ok: true, operationId, card: result.card };
   },
 });
 
