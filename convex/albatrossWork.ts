@@ -80,6 +80,55 @@ function bounded(value: string | undefined, max: number, fallback = '') {
   return normalizeText(value, fallback).slice(0, max);
 }
 
+// --- completion events (issue #87/#18) ---------------------------------------
+
+// Pure early/late math for completion events. Exactly one side is set when a
+// due date exists ("done exactly on time" counts as 0ms early); both stay
+// unset when the artifact never had a due date, so reports can distinguish
+// "no deadline" from "on the deadline".
+export function completionDelta(
+  completedAt: number,
+  dueAt?: number,
+): { completedEarlyByMs?: number; completedLateByMs?: number } {
+  if (typeof dueAt !== 'number' || !Number.isFinite(dueAt) || !Number.isFinite(completedAt)) return {};
+  const delta = dueAt - completedAt;
+  return delta >= 0 ? { completedEarlyByMs: delta } : { completedLateByMs: -delta };
+}
+
+// Best-effort history insert shared by every completion hook (boards cards,
+// intents, intent plans, projects). History bookkeeping must never fail the
+// user-facing mutation that triggered it.
+export async function recordCompletionEvent(
+  ctx: MutationCtx,
+  event: {
+    userId: string;
+    artifactKind: 'task' | 'intent' | 'intent_plan' | 'project';
+    artifactId: string;
+    completedAt: number;
+    dueAt?: number;
+    areaId?: string;
+    intentId?: string;
+    projectId?: Id<'albatrossProjects'>;
+  },
+): Promise<void> {
+  try {
+    await ctx.db.insert('completionEvents', {
+      userId: event.userId,
+      areaId: event.areaId,
+      intentId: event.intentId,
+      projectId: event.projectId,
+      artifactKind: event.artifactKind,
+      artifactId: event.artifactId.slice(0, 240),
+      completedAt: event.completedAt,
+      dueAt: event.dueAt,
+      ...completionDelta(event.completedAt, event.dueAt),
+      createdAt: now(),
+    });
+  } catch {
+    // Non-fatal by design: completing the artifact matters more than logging it.
+  }
+}
+
 async function requireProject(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<'albatrossProjects'>,
@@ -166,7 +215,7 @@ export const updateProject = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireProject(ctx, args.projectId, userId);
+    const project = await requireProject(ctx, args.projectId, userId);
     if (args.activeSprintId) {
       const sprint = await requireSprint(ctx, args.activeSprintId, userId);
       if (sprint.projectId !== args.projectId) {
@@ -188,6 +237,18 @@ export const updateProject = mutation({
       ...(args.activeSprintId !== undefined ? { activeSprintId: args.activeSprintId } : {}),
       updatedAt: ts,
     });
+    // Completion history: only a real transition into 'done' records an event.
+    if (args.status === 'done' && project.status !== 'done') {
+      await recordCompletionEvent(ctx, {
+        userId,
+        artifactKind: 'project',
+        artifactId: String(args.projectId),
+        completedAt: ts,
+        areaId: args.areaId !== undefined ? bounded(args.areaId, 160) : project.areaId,
+        intentId: project.sourceIntentId,
+        projectId: args.projectId,
+      });
+    }
     return { ok: true };
   },
 });
@@ -662,6 +723,132 @@ export const dailyReportContext = query({
       approvals,
       applications,
       sprints,
+    };
+  },
+});
+
+// --- project progress (issue #87/#18, feeds the task-board progress UI) ------
+
+// Contract FROZEN for the progress UI: each row is
+// { _id, title, outcome, status, areaId, sourceIntentId, createdAt, updatedAt,
+//   taskCount, completedTaskCount, intentCount, eventCount }.
+// Counts come from albatrossProjectLinks; completedTaskCount resolves linked
+// cards (capped) and checks card.completedAt.
+const PROGRESS_PROJECT_CAP = 50;
+const PROGRESS_TASK_RESOLVE_CAP = 100;
+
+export const listProjectsWithProgress = query({
+  args: { ...callerArgs, status: v.optional(projectStatusValidator) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const rows = await ctx.db
+      .query('albatrossProjects')
+      .withIndex(args.status ? 'by_user_status' : 'by_user', (q) => {
+        const byUser = q.eq('userId', userId);
+        return args.status ? byUser.eq('status', args.status) : byUser;
+      })
+      .collect();
+    const projects = rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, PROGRESS_PROJECT_CAP);
+    return Promise.all(
+      projects.map(async (project) => {
+        const links = await ctx.db
+          .query('albatrossProjectLinks')
+          .withIndex('by_user_project', (q) => q.eq('userId', userId).eq('projectId', project._id))
+          .collect();
+        const taskLinks = links.filter((link) => link.artifactKind === 'task');
+        let completedTaskCount = 0;
+        for (const link of taskLinks.slice(0, PROGRESS_TASK_RESOLVE_CAP)) {
+          const cardId = ctx.db.normalizeId('cards', link.artifactId);
+          const card = cardId ? await ctx.db.get(cardId) : null;
+          if (card && card.userId === userId && card.completedAt) completedTaskCount += 1;
+        }
+        return {
+          _id: project._id,
+          title: project.title,
+          outcome: project.outcome,
+          status: project.status,
+          areaId: project.areaId,
+          sourceIntentId: project.sourceIntentId,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+          taskCount: taskLinks.length,
+          completedTaskCount,
+          intentCount: links.filter((link) => link.artifactKind === 'intent').length,
+          eventCount: links.filter((link) => link.artifactKind === 'calendarEvent').length,
+        };
+      }),
+    );
+  },
+});
+
+// Contract FROZEN for the progress UI: each row is
+// { cardId, boardId, title, completedAt, dueAt, updatedAt, columnName? } (≤100),
+// resolved from this project's task links; dead links are dropped.
+export const projectTasks = query({
+  args: { ...callerArgs, projectId: v.id('albatrossProjects') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireProject(ctx, args.projectId, userId);
+    const links = await ctx.db
+      .query('albatrossProjectLinks')
+      .withIndex('by_user_project', (q) => q.eq('userId', userId).eq('projectId', args.projectId))
+      .collect();
+    const taskLinks = links
+      .filter((link) => link.artifactKind === 'task')
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, PROGRESS_TASK_RESOLVE_CAP);
+    const cards = (
+      await Promise.all(
+        taskLinks.map(async (link) => {
+          const cardId = ctx.db.normalizeId('cards', link.artifactId);
+          const card = cardId ? await ctx.db.get(cardId) : null;
+          return card && card.userId === userId ? card : null;
+        }),
+      )
+    ).filter((card) => card !== null);
+    const columnIds = [...new Set(cards.map((card) => card.columnId))];
+    const columns = await Promise.all(columnIds.map((id) => ctx.db.get(id)));
+    const columnNames = new Map(
+      columns.filter(Boolean).map((column) => [column!._id, column!.name] as const),
+    );
+    return cards.map((card) => ({
+      cardId: card._id,
+      boardId: card.boardId,
+      title: card.title,
+      completedAt: card.completedAt,
+      dueAt: card.dueAt,
+      updatedAt: card.updatedAt,
+      columnName: columnNames.get(card.columnId),
+    }));
+  },
+});
+
+// Contract FROZEN for issue #18 reporting:
+// { completedThisPeriod, completedPriorPeriod, onTimeRate? }.
+// Simple, honest math over completionEvents: this period vs the period of the
+// same length before it; onTimeRate only over this period's events that had a
+// due date (undefined when none did — no fabricated rates).
+export const projectProgressSummary = query({
+  args: { ...callerArgs, sinceDays: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const days = Math.min(Math.max(Math.round(args.sinceDays ?? 7), 1), 90);
+    const ts = now();
+    const periodMs = days * 86_400_000;
+    const since = ts - periodMs;
+    const priorSince = ts - 2 * periodMs;
+    const events = await ctx.db
+      .query('completionEvents')
+      .withIndex('by_user_completedAt', (q) => q.eq('userId', userId).gte('completedAt', priorSince))
+      .collect();
+    const thisPeriod = events.filter((event) => event.completedAt >= since);
+    const priorPeriod = events.filter((event) => event.completedAt < since);
+    const withDue = thisPeriod.filter((event) => typeof event.dueAt === 'number');
+    const onTime = withDue.filter((event) => event.completedAt <= (event.dueAt as number));
+    return {
+      completedThisPeriod: thisPeriod.length,
+      completedPriorPeriod: priorPeriod.length,
+      onTimeRate: withDue.length ? onTime.length / withDue.length : undefined,
     };
   },
 });

@@ -41,6 +41,9 @@ export interface ClientState {
   primaryAccount: string;
   query: string;
   smartCategory: string | null;
+  // The area whose home page the 'areas' surface shows. Persisted like
+  // primaryView so a reload lands back on the same area; null = the chooser.
+  selectedAreaId: string | null;
   searchDraft: string;
   nlSearchIntent: string | null;
   translatedQuery: string | null;
@@ -89,6 +92,7 @@ export interface ClientState {
   setPrimaryAccount: (account: string) => void;
   setQuery: (query: string) => void;
   setSmartCategory: (category: string | null) => void;
+  setSelectedAreaId: (areaId: string | null) => void;
   setSearchDraft: (draft: string) => void;
   setTranslatedSearch: (
     intent: string | null,
@@ -150,6 +154,7 @@ export const useClientStore = create<ClientState>()(
       primaryAccount: '',
       query: DEFAULT_QUERY,
       smartCategory: 'main',
+      selectedAreaId: null,
       searchDraft: '',
       nlSearchIntent: null,
       translatedQuery: null,
@@ -205,6 +210,7 @@ export const useClientStore = create<ClientState>()(
           queryError: null,
           querySource: smartCategory ? 'category' : 'typed',
         }),
+      setSelectedAreaId: (selectedAreaId) => set({ selectedAreaId }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
         set({ nlSearchIntent, translatedQuery, querySource, queryError: null }),
@@ -283,6 +289,7 @@ export const useClientStore = create<ClientState>()(
         primaryView: s.primaryView,
         query: s.query,
         smartCategory: s.smartCategory,
+        selectedAreaId: s.selectedAreaId,
         rightRailOpen: s.rightRailOpen,
         railOpen: s.railOpen,
         railWidth: s.railWidth,

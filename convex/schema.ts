@@ -546,6 +546,37 @@ export default defineSchema({
     .index('by_user_batch', ['userId', 'operationBatchId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
+  // Completion history (issue #87/#18). Current card/intent/project state
+  // answers "what is open"; this table answers "what actually got done and
+  // when", so progress reports can compare completion behavior over time
+  // ("three months ago you completed 50%, on average 1.5 days early...").
+  // Rows are append-only: reopening an artifact does not erase its history.
+  completionEvents: defineTable({
+    userId: v.string(),
+    areaId: v.optional(v.string()),
+    intentId: v.optional(v.string()),
+    projectId: v.optional(v.id('albatrossProjects')),
+    artifactKind: v.union(
+      v.literal('task'),
+      v.literal('intent'),
+      v.literal('intent_plan'),
+      v.literal('project'),
+    ),
+    artifactId: v.string(),
+    completedAt: v.number(),
+    dueAt: v.optional(v.number()),
+    // Exactly one of these is set when dueAt exists (completionDelta in
+    // albatrossWork.ts); both stay unset for artifacts without a due date.
+    completedEarlyByMs: v.optional(v.number()),
+    completedLateByMs: v.optional(v.number()),
+    sourceRefs: v.optional(v.array(albatrossSourceRef)),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_completedAt', ['userId', 'completedAt'])
+    .index('by_user_project', ['userId', 'projectId'])
+    .index('by_user_artifact', ['userId', 'artifactKind', 'artifactId']),
+
   // A raw user-declared intent (issue #76/#77 made durable). The raw dump is
   // preserved verbatim; parse/plan output layers on top without replacing it.
   albatrossIntents: defineTable({

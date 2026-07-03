@@ -1,5 +1,11 @@
 'use client';
 
+// Two-column settings: a left rail of section tabs, one section in the pane.
+// Research (Albatross contract): Mobbin/Perplexity settings
+// (mobbin.com/screens/01930a76-50aa-48a9-bc02-b5eceefa17d0) and Mobbin/Melio
+// settings (mobbin.com/screens/ac45719a-952f-44c6-9bcc-ce8ce1580b36) — text-only
+// tab rails on the left, a single focused content pane on the right.
+
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -9,7 +15,6 @@ import {
   Check,
   CreditCard,
   KeyRound,
-  Layers,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -19,8 +24,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
-import { type ReactNode, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { type ReactNode, Suspense, useState } from 'react';
 import { toast } from 'sonner';
+import { TeachAreas } from '@/components/albatross/TeachAreas';
 import {
   type ModelOption,
   normalizeOpenRouterFastModel,
@@ -47,13 +54,42 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { SETTINGS_TABS, type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 
+// useSearchParams needs a Suspense boundary for static generation.
 export default function SettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsPageBody />
+    </Suspense>
+  );
+}
+
+const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
+  mailboxes: () => <MailboxesSection />,
+  connections: () => <ConnectionsSection />,
+  areas: () => <TeachAreas />,
+  sending: () => <SendingSection />,
+  ai: () => <AiSection />,
+  shortcuts: () => <ShortcutsSection />,
+  account: () => <AccountSection />,
+};
+
+function SettingsPageBody() {
+  const searchParams = useSearchParams();
+  // Local state owns the active tab; the URL mirrors it (replaceState, no
+  // navigation) so /settings?tab=areas deep-links and refresh keeps its place.
+  const [tab, setTab] = useState<SettingsTabId>(() => settingsTabFromSearch(searchParams.get('tab')));
+  const selectTab = (next: SettingsTabId) => {
+    setTab(next);
+    window.history.replaceState(null, '', `/settings?tab=${next}`);
+  };
+
   return (
     <main className="app-paper relative min-h-dvh text-[var(--color-text)]">
       <DotGridGlow />
-      <div className="relative z-10 mx-auto max-w-3xl px-5 py-8 sm:py-12">
+      <div className="relative z-10 mx-auto max-w-5xl px-5 py-8 sm:py-12">
         <header className="mb-8">
           <Link
             href="/"
@@ -67,14 +103,29 @@ export default function SettingsPage() {
             Your mailboxes, your models, your rules.
           </p>
         </header>
-        <div className="space-y-10">
-          <MailboxesSection />
-          <ConnectionsSection />
-          <AlbatrossSection />
-          <SendingSection />
-          <AiSection />
-          <ShortcutsSection />
-          <AccountSection />
+        <div className="flex flex-col gap-6 md:grid md:grid-cols-[180px_minmax(0,1fr)] md:gap-10">
+          {/* Mobile: a horizontal scroller above the pane; md+: a sticky left rail. */}
+          <nav
+            aria-label="Settings sections"
+            className="-mx-5 flex gap-1 overflow-x-auto px-5 md:sticky md:top-8 md:mx-0 md:flex-col md:self-start md:overflow-visible md:px-0"
+          >
+            {SETTINGS_TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectTab(item.id)}
+                aria-current={tab === item.id ? 'page' : undefined}
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-left text-[13px] transition-colors md:w-full ${
+                  tab === item.id
+                    ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="min-w-0">{TAB_SECTIONS[tab]()}</div>
         </div>
       </div>
     </main>
@@ -138,45 +189,6 @@ function ShortcutsSection() {
 // ---------------------------------------------------------------------------
 // Sending
 // ---------------------------------------------------------------------------
-
-function AlbatrossSection() {
-  const { data } = useQuery({
-    queryKey: ['albatross-areas'],
-    queryFn: async () =>
-      (await fetchJson('/api/albatross/areas')) as {
-        areas: Array<{ _id: string; name: string }>;
-        onboarding: { completedAt?: number | null } | null;
-      },
-  });
-  const areaCount = data?.areas?.length ?? 0;
-
-  return (
-    <section>
-      <SectionHeading
-        title="Albatross"
-        blurb="The parts of your life the planner knows about. Re-run setup anytime — it only adds, never wipes."
-      />
-      <div className="flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
-        <div className="flex items-center gap-3">
-          <Layers className="size-4 text-[var(--color-text-muted)]" />
-          <div>
-            <div className="text-[13px] font-medium">Life areas</div>
-            <div className="text-[12px] text-[var(--color-text-muted)]">
-              {data
-                ? areaCount
-                  ? `${areaCount} area${areaCount === 1 ? '' : 's'} set up${data.onboarding?.completedAt ? '' : ' — setup not finished'}`
-                  : 'No areas yet. Teach Albatross your life.'
-                : 'Loading…'}
-            </div>
-          </div>
-        </div>
-        <Button asChild size="sm" variant="outline">
-          <Link href="/?setup=areas">{areaCount ? 'Re-run setup' : 'Set up areas'}</Link>
-        </Button>
-      </div>
-    </section>
-  );
-}
 
 function SendingSection() {
   const qc = useQueryClient();

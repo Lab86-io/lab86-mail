@@ -3,6 +3,7 @@ import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { normalizeSourceRefs, normalizeText } from './albatrossModel';
+import { recordCompletionEvent } from './albatrossWork';
 import { now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -190,18 +191,31 @@ export const updateIntent = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireIntent(ctx, args.intentId, userId);
-    const patch: Record<string, unknown> = { updatedAt: now() };
+    const intent = await requireIntent(ctx, args.intentId, userId);
+    const ts = now();
+    const patch: Record<string, unknown> = { updatedAt: ts };
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
     if (args.kind !== undefined) patch.kind = bounded(args.kind, 40);
     if (args.areaId !== undefined) patch.areaId = bounded(args.areaId, 160) || undefined;
     if (args.priority !== undefined) patch.priority = Math.min(Math.max(Math.round(args.priority), 1), 3);
     if (args.status !== undefined) {
       patch.status = args.status;
-      if (args.status === 'applied') patch.appliedAt = now();
+      if (args.status === 'applied') patch.appliedAt = ts;
     }
     if (args.planError !== undefined) patch.planError = bounded(args.planError, 500) || undefined;
     await ctx.db.patch(args.intentId, patch);
+    // Completion history (issue #87/#18): only a real transition into 'done'
+    // records an event; re-saving an already-done intent does not.
+    if (args.status === 'done' && intent.status !== 'done') {
+      await recordCompletionEvent(ctx, {
+        userId,
+        artifactKind: 'intent',
+        artifactId: String(args.intentId),
+        completedAt: ts,
+        intentId: String(args.intentId),
+        areaId: args.areaId !== undefined ? bounded(args.areaId, 160) || undefined : intent.areaId,
+      });
+    }
     return args.intentId;
   },
 });
@@ -347,6 +361,19 @@ export const markPlanApplied = mutation({
       updatedAt: ts,
     });
     await ctx.db.patch(plan.intentId, { status: 'applied', appliedAt: ts, updatedAt: ts });
+    // Completion history (issue #87/#18): applying a plan is the completion of
+    // the intent_plan artifact. Only the first apply records an event.
+    if (plan.status !== 'applied') {
+      const intent = await ctx.db.get(plan.intentId);
+      await recordCompletionEvent(ctx, {
+        userId,
+        artifactKind: 'intent_plan',
+        artifactId: String(args.planId),
+        completedAt: ts,
+        intentId: String(plan.intentId),
+        areaId: intent?.areaId,
+      });
+    }
     return args.planId;
   },
 });

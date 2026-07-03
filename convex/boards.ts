@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { recordCompletionEvent } from './albatrossWork';
 import { now, requireInternalSecret } from './lib';
 
 // Kanban boards with sharing (spec M2). Every function resolves its caller
@@ -150,6 +151,21 @@ async function appendActivity(ctx: MutationCtx, card: any, userId: string, actio
   };
   const activity = [...(card.activity || []), entry].slice(-ACTIVITY_CAP);
   await ctx.db.patch(card._id, { activity });
+}
+
+// Completion history (issue #87/#18): the first flip of a card from open to
+// completed records a completionEvent, whether it happened via the completed
+// toggle (updateCard) or a drag into the Done column (moveCard). Reopening
+// does not erase history; recordCompletionEvent is best-effort and never
+// fails the card mutation.
+async function recordCardCompletion(ctx: MutationCtx, userId: string, card: any, completedAt: number) {
+  await recordCompletionEvent(ctx, {
+    userId,
+    artifactKind: 'task',
+    artifactId: String(card._id),
+    completedAt,
+    dueAt: typeof card.dueAt === 'number' ? card.dueAt : undefined,
+  });
 }
 
 function sourceIndexFields(source: any) {
@@ -498,6 +514,9 @@ export const updateCard = mutation({
       // column membership stay consistent on boards that have a Done column,
       // and the toggle still works on those that don't.
       patch.completedAt = completing ? args.completedAt : undefined;
+      if (completing && !card.completedAt) {
+        await recordCardCompletion(ctx, userId, card, args.completedAt as number);
+      }
       const columns = await columnsForBoard(ctx, card.boardId);
       if (completing) {
         const done = columns.find((column) => isDoneColumn(column.name));
@@ -584,7 +603,11 @@ export const moveCard = mutation({
     const movePatch: Record<string, unknown> = { columnId: args.columnId, order, updatedAt: now() };
     // Keep completion in sync with the Done column.
     if (isDoneColumn(column.name)) {
-      if (!card.completedAt) movePatch.completedAt = now();
+      if (!card.completedAt) {
+        const completedAt = now();
+        movePatch.completedAt = completedAt;
+        await recordCardCompletion(ctx, userId, card, completedAt);
+      }
     } else if (card.completedAt) {
       movePatch.completedAt = undefined; // leaving Done reopens the card
     }

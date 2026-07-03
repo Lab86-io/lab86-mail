@@ -2,7 +2,7 @@
 
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useQuery_experimental as useConvexQuery } from 'convex/react';
+import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
@@ -62,9 +62,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { UserIcon } from '@/components/ui/user';
 import { UsersIcon } from '@/components/ui/users';
 import { api } from '@/convex/_generated/api';
+import { railAreaRows } from '@/lib/albatross/area-home';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
+import { categoricalColor } from '@/lib/shared/format';
 import { type AlbatrossPrimaryView, normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { SuggestionsTray } from './SuggestionsTray';
 import { ThemePanel } from './ThemePanel';
@@ -125,27 +127,22 @@ const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: stri
   { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
 ];
 
-// Two entries on purpose: Plans is where captured intents become work, Areas is
-// the verified life context behind them. Unassigned stays routable (persisted
-// views, review-queue affordance inside Areas) but earns no rail slot — the
-// nav should gain at most one habit, not three.
+// One fixed entry (Plans) — the areas themselves render as live rows below it,
+// so the rail reflects the user's actual life instead of a generic 'Areas'
+// door. Unassigned stays routable (persisted views, review-queue affordance)
+// but earns no rail slot.
 const ALBATROSS_SURFACES: Array<{ view: AlbatrossPrimaryView; label: string; Icon: any }> = [
   { view: 'intents', label: 'Plans', Icon: rowIcon(SquarePenIcon) },
-  { view: 'areas', label: 'Areas', Icon: rowIcon(LayersIcon) },
 ];
 
+// Areas are becoming the primary sort of the inbox; only the mechanical
+// categories that no area should absorb keep a rail row.
 const SMART_CATEGORIES = [
   {
     id: 'main',
     label: 'Main',
     Icon: rowIcon(MailCheckIcon),
     help: 'Personal human conversations, plus only urgent unread automated exceptions.',
-  },
-  {
-    id: 'needs_reply',
-    label: 'Needs Reply',
-    Icon: rowIcon(MessageCircleIcon),
-    help: 'Human conversations likely worth a response.',
   },
   {
     id: 'codes',
@@ -159,13 +156,6 @@ const SMART_CATEGORIES = [
     Icon: rowIcon(ReceiptIcon),
     help: 'Receipts, shipping, refunds, returns, bookings, and order problems.',
   },
-  {
-    id: 'finance_admin',
-    label: 'Finance/Admin',
-    Icon: rowIcon(CreditCardIcon),
-    help: 'Billing, legal, contracts, tax, and admin.',
-  },
-  { id: 'review', label: 'Review', Icon: rowIcon(UserIcon), help: 'Uncertain mail that needs a decision.' },
   {
     id: 'noise',
     label: 'Noise',
@@ -195,6 +185,9 @@ export function Rail({
   const setQuery = useClientStore((s) => s.setQuery);
   const smartCategory = useClientStore((s) => s.smartCategory);
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
+  const selectedAreaId = useClientStore((s) => s.selectedAreaId);
+  const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const { isMobile, setOpenMobile } = useSidebar();
   const queryClient = useQueryClient();
@@ -278,6 +271,27 @@ export function Rail({
     liveCounts.status === 'success'
       ? (liveCounts.data?.counts as Record<string, { unread: number; attention: boolean }> | undefined)
       : undefined;
+  // Live areas for the Albatross section — one rail row per active area, so
+  // areas behave like first-class inboxes instead of hiding behind one door.
+  // Auth-gated: a first-paint query before the Clerk token lands would error.
+  const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const areasResult = useConvexQuery({
+    query: (api as any).albatross.listAreasOverview,
+    args: albatrossEnabled && convexAuthed ? { status: 'active' } : 'skip',
+  });
+  const railAreas =
+    areasResult.status === 'success'
+      ? ((areasResult.data as Array<{ _id: string; name: string; kind: string }> | undefined) ?? [])
+      : undefined;
+  const { rows: areaRows, overflow: areaOverflow } = railAreaRows(railAreas);
+  const openArea = (areaId: string | null) => {
+    // A fresh area context should not carry a stale open thread with it.
+    setSelectedThread(null);
+    setSelectedAreaId(areaId);
+    setPrimaryView('areas');
+    closeMobileSidebar();
+  };
+
   const { data: smartLabels } = useQuery({
     queryKey: ['smart-labels'],
     queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
@@ -425,6 +439,67 @@ export function Rail({
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
+                {areaRows.map((area) => {
+                  const active = visiblePrimaryView === 'areas' && selectedAreaId === area._id;
+                  return (
+                    <SidebarMenuItem key={area._id}>
+                      <SidebarMenuButton
+                        isActive={active}
+                        tooltip={area.name}
+                        onClick={() => openArea(area._id)}
+                        className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                      >
+                        {active ? (
+                          <ShineBorder
+                            borderWidth={1}
+                            duration={10}
+                            shineColor={[
+                              'var(--color-accent-shine-1)',
+                              'var(--color-accent-shine-2)',
+                              'var(--color-accent-shine-3)',
+                            ]}
+                          />
+                        ) : null}
+                        {/* Text-first rows: a small tone dot keys each area to the
+                            shared categorical palette, no per-area icon. */}
+                        <span className="grid size-4 shrink-0 place-items-center">
+                          <span
+                            className="size-2 rounded-full"
+                            style={{ backgroundColor: categoricalColor(area._id) }}
+                            aria-hidden
+                          />
+                        </span>
+                        <span className="truncate">{area.name}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+                {areaOverflow > 0 ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="All areas"
+                      onClick={() => openArea(null)}
+                      className="text-[var(--color-text-muted)]"
+                    >
+                      <span className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                      <span>{areaOverflow} more</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
+                {railAreas && railAreas.length === 0 ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      tooltip="Set up areas"
+                      className="text-[var(--color-text-muted)]"
+                    >
+                      <a href="/settings?tab=areas">
+                        <span className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                        <span>Set up areas</span>
+                      </a>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

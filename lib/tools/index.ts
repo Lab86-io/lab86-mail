@@ -111,6 +111,7 @@ import { forget, listMemories, recall, remember } from './memories';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
 import type { AnyTool } from './registry';
+import { salvageContext } from './salvage';
 import {
   applySmartCorrection,
   createSmartLabel,
@@ -280,6 +281,7 @@ const allTools: AnyTool[] = [
   albatrossCreateSprint,
   albatrossListSprints,
   albatrossPreviewUndoUnresolved,
+  salvageContext,
   areaList,
   areaCreate,
   areaArchive,

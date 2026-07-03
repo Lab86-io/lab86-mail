@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Component, type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
-import { AreasLive } from '@/components/albatross/AreasLive';
+import { AreaHome } from '@/components/albatross/AreaHome';
 import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
 import { IntentPip } from '@/components/albatross/IntentPip';
 import { PlansSurface } from '@/components/albatross/PlansSurface';
@@ -90,7 +90,10 @@ export function AppShell({
 
   // The thread reader rides along with the mail-ish surfaces; calendar and
   // tasks keep their pane to themselves. Compose stays available everywhere.
-  const mailish = visiblePrimaryView === 'mail' || visiblePrimaryView === 'daily_report';
+  // Areas count as mail-ish: opening a thread from an area home slides the
+  // reader in beside it instead of yanking the user back to the inbox.
+  const mailish =
+    visiblePrimaryView === 'mail' || visiblePrimaryView === 'daily_report' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
   const permutation = `i${readerVisible ? 't' : ''}${aiBarOpen ? 'a' : ''}`;
   const panelIds = ['inbox', ...(readerVisible ? ['reader'] : []), ...(aiBarOpen ? ['ai'] : [])];
@@ -188,7 +191,6 @@ export function AppShell({
                   albatrossEnabled={albatrossEnabled}
                   view={visiblePrimaryView}
                   capturedIntentId={capturedIntentId}
-                  openAreaSetup={openAreaSetup}
                 />
               </motion.div>
 
@@ -274,7 +276,6 @@ export function AppShell({
                     albatrossEnabled={albatrossEnabled}
                     view={visiblePrimaryView}
                     capturedIntentId={capturedIntentId}
-                    openAreaSetup={openAreaSetup}
                   />
                 </ReflowPanel>
               </Panel>
@@ -327,12 +328,10 @@ function PrimarySurface({
   albatrossEnabled,
   view,
   capturedIntentId,
-  openAreaSetup,
 }: {
   albatrossEnabled: boolean;
   view: PrimaryView;
   capturedIntentId?: string | null;
-  openAreaSetup?: boolean;
 }) {
   switch (view) {
     case 'daily_report':
@@ -352,11 +351,11 @@ function PrimarySurface({
         <DailyReport />
       );
     case 'areas':
-      // Live areas + the setup wizard. No pre-seeded life: the empty state IS
-      // the onboarding entry, and /?setup=areas re-opens the wizard.
+      // The area home page: mail, events, tasks, and context for the selected
+      // area. Management/teach flows live in /settings?tab=areas now.
       return albatrossEnabled ? (
         <SurfaceErrorBoundary surface="Areas">
-          <AreasLive openSetup={openAreaSetup} />
+          <AreaHome />
         </SurfaceErrorBoundary>
       ) : (
         <DailyReport />

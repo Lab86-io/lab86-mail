@@ -81,6 +81,7 @@ import { useClientStore } from '@/lib/client-state';
 import { taskSourceColor } from '@/lib/shared/task-colors';
 import { normalizeUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
+import { ProjectsLens } from './ProjectsLens';
 
 const boardsApi = (api as any).boards;
 
@@ -137,6 +138,11 @@ interface BoardPayload {
 
 type BoardViewMode = 'kanban' | 'list';
 type BoardColumnItem = { id: string; name: string; order: number };
+// Surface-level lens: the raw board, or the projects abstraction over it.
+type TasksLens = 'board' | 'projects';
+// One-shot "open this card" request from the projects lens; the nonce lets the
+// same card be requested again after its panel was closed.
+type OpenCardRequest = { cardId: string; nonce: number };
 
 // Lets BoardView render its toolbar controls into the parent header row.
 const BoardHeaderActionsSlot = createContext<HTMLElement | null>(null);
@@ -145,6 +151,17 @@ export function TasksSurface() {
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [newBoardOpen, setNewBoardOpen] = useState(false);
   const [renameBoardOpen, setRenameBoardOpen] = useState(false);
+  const [lens, setLens] = useState<TasksLens>(() => {
+    if (typeof window === 'undefined') return 'board';
+    return (window.localStorage.getItem('tasks-lens') as TasksLens) || 'board';
+  });
+  const switchLens = (next: TasksLens) => {
+    setLens(next);
+    try {
+      window.localStorage.setItem('tasks-lens', next);
+    } catch {}
+  };
+  const [openCardRequest, setOpenCardRequest] = useState<OpenCardRequest | null>(null);
   // BoardView portals its view/column/share controls up into this header slot
   // so they sit inline with the "Tasks" title instead of in a second toolbar row.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
@@ -180,7 +197,37 @@ export function TasksSurface() {
           <h1 className="shrink-0 font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
             Tasks
           </h1>
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+          {/* Surface lens: raw board vs. the projects abstraction (text-only,
+              house segmented style — see PlansSurface). */}
+          <div className="flex shrink-0 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+            {(
+              [
+                { value: 'board', label: 'Board' },
+                { value: 'projects', label: 'Projects' },
+              ] as const
+            ).map((option, index) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => switchLens(option.value)}
+                className={cn(
+                  'h-6 px-2 text-[11px] font-medium transition-colors',
+                  index > 0 && 'border-l border-[var(--color-border)]',
+                  lens === option.value
+                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-2 overflow-x-auto',
+              lens === 'projects' && 'invisible',
+            )}
+          >
             {boards.map((board) => (
               <button
                 key={board.boardId}
@@ -226,8 +273,18 @@ export function TasksSurface() {
           {/* BoardView portals its view/column/share controls in here. */}
           <div ref={setHeaderSlot} className="flex shrink-0 items-center gap-1.5" />
         </header>
-        {activeBoardId ? (
-          <BoardView key={activeBoardId} boardId={activeBoardId} />
+        {lens === 'projects' ? (
+          <ProjectsLens
+            onOpenTask={(boardId, cardId) => {
+              // Jump to the task where it lives: select its board, flip back to
+              // the board lens, and ask BoardView to open the card panel.
+              setSelectedBoardId(boardId);
+              switchLens('board');
+              setOpenCardRequest({ cardId, nonce: Date.now() });
+            }}
+          />
+        ) : activeBoardId ? (
+          <BoardView key={activeBoardId} boardId={activeBoardId} openCardRequest={openCardRequest} />
         ) : (
           <EmptyState loading={boardsQuery.status !== 'success'} />
         )}
@@ -282,7 +339,13 @@ function EmptyState({ loading }: { loading: boolean }) {
   );
 }
 
-function BoardView({ boardId }: { boardId: string }) {
+function BoardView({
+  boardId,
+  openCardRequest,
+}: {
+  boardId: string;
+  openCardRequest?: OpenCardRequest | null;
+}) {
   const headerSlot = useContext(BoardHeaderActionsSlot);
   const boardQuery = useConvexQuery({ query: boardsApi.getBoard, args: { boardId } });
   const board: BoardPayload | null = boardQuery.status === 'success' ? boardQuery.data : null;
@@ -328,6 +391,13 @@ function BoardView({ boardId }: { boardId: string }) {
   }, [board]);
 
   const [openCardId, setOpenCardId] = useState<string | null>(null);
+
+  // The projects lens can request a specific card panel (jump-to-task). The
+  // nonce keys the effect so re-requesting the same card works after closing.
+  useEffect(() => {
+    if (openCardRequest) setOpenCardId(openCardRequest.cardId);
+  }, [openCardRequest]);
+
   const [shareOpen, setShareOpen] = useState(false);
   const [newColumnOpen, setNewColumnOpen] = useState(false);
   const [renameColumn, setRenameColumn] = useState<{ columnId: string; name: string } | null>(null);

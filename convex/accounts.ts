@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { internalMutation, mutation, query } from './_generated/server';
@@ -420,6 +419,7 @@ export const deleteUserCascade = mutation({
       'albatrossSprints',
       'albatrossApprovals',
       'albatrossPlanApplications',
+      'completionEvents',
       'albatrossIntents',
       'albatrossIntentPlans',
       'areas',
