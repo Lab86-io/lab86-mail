@@ -644,6 +644,20 @@ export default defineSchema({
     model: v.optional(v.string()),
     // Model-declared place for the plan's map column ("Penn Yan DMV, NY").
     mapQuery: v.optional(v.string()),
+    // Every plan hunts for the real-world places it touches (grounded only).
+    places: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          detail: v.optional(v.string()),
+          address: v.optional(v.string()),
+          hoursText: v.optional(v.string()),
+          phone: v.optional(v.string()),
+          website: v.optional(v.string()),
+          mapsQuery: v.optional(v.string()),
+        }),
+      ),
+    ),
     appliedApplicationId: v.optional(v.string()),
     appliedAt: v.optional(v.number()),
     createdAt: v.number(),

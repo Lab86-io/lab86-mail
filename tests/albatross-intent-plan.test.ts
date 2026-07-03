@@ -262,6 +262,15 @@ describe('generateIntentPlan nearby options (geo)', () => {
       projectTitle: null,
       outcome: 'New strings bought and on the guitar.',
       summary: 'Two well-reviewed shops are nearby.',
+      places: [
+        {
+          name: 'Parkway Music',
+          address: '99 Route 9, Clifton Park',
+          website: 'https://parkwaymusic.com',
+          hoursText: 'Mon-Sat 10-6',
+          mapsQuery: 'Parkway Music, Clifton Park NY',
+        },
+      ],
       questions: [
         {
           id: 'q1',
@@ -349,6 +358,10 @@ describe('generateIntentPlan nearby options (geo)', () => {
     expect(question.options).toHaveLength(2);
     expect(question.options[0].id).toBe('q1o1');
     expect(question.options[0].address).toContain('Route 9');
+    expect(save!.args.places).toHaveLength(1);
+    expect(save!.args.places[0].hoursText).toBe('Mon-Sat 10-6');
+    // No explicit mapQuery in this generation: the first place's mapsQuery drives the map.
+    expect(save!.args.mapQuery).toBe('Parkway Music, Clifton Park NY');
   });
 
   test('no geo skips geocode, local pre-pass, and nearby search entirely', async () => {

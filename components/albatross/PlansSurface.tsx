@@ -180,6 +180,18 @@ export function applyDisabledReason(
   return null;
 }
 
+// The artifact IS the plan view when the model composed one (daily-brief
+// style, full pane). The cascade remains the fallback for artifact-less plans.
+export function planStageMode(
+  intent: IntentLike | null | undefined,
+  plan: PlanLike | null | undefined,
+): 'artifact' | 'cascade' {
+  if (!intent || !plan?.artifactHtml) return 'cascade';
+  if (intent.status === 'needs_answers') return 'cascade';
+  const status = plan.status;
+  return status === 'ready' || status === 'applied' ? 'artifact' : 'cascade';
+}
+
 // True when every question carries an answer - the signal that answering the
 // last question should immediately regenerate the plan (no extra button).
 export function answersReadyForRegen(intent: IntentLike | null | undefined): boolean {
@@ -743,6 +755,7 @@ function IntentStage({
   const mapQuery = mapQueryForIntent(intent, plan, previewOption);
   const mapOption = previewOption ?? chosenQuestionOption(intent);
   const vortexTitle = (intent.rawText || intentDisplayTitle(intent)).replace(/\s+/g, ' ').trim();
+  const artifactMode = plan ? planStageMode(intent, plan) === 'artifact' : false;
 
   return (
     <AnimatePresence mode="wait" initial={false}>
@@ -771,9 +784,14 @@ function IntentStage({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0 }}
           transition={reduced ? { duration: 0.15 } : { type: 'spring', stiffness: 260, damping: 26 }}
-          className="flex min-h-full items-start"
+          className={cn('flex min-h-full items-start', artifactMode && 'h-full items-stretch')}
         >
-          <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-5 px-6 py-5">
+          <div
+            className={cn(
+              'flex w-full min-w-0 flex-col',
+              artifactMode ? 'min-h-0 flex-1 gap-3 px-4 py-3' : 'mx-auto max-w-3xl gap-5 px-6 py-5',
+            )}
+          >
             <header className="flex items-center gap-2">
               <h1 className="min-w-0 flex-1 truncate font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
                 {intentDisplayTitle(intent)}
@@ -784,7 +802,7 @@ function IntentStage({
               </Tag>
             </header>
 
-            <RawDump intent={intent} sourceLabel={source.label} />
+            {artifactMode ? null : <RawDump intent={intent} sourceLabel={source.label} />}
 
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
@@ -795,7 +813,7 @@ function IntentStage({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: reduced ? 0 : 0.2 }}
-                className="flex flex-col gap-5"
+                className={cn('flex flex-col gap-5', artifactMode && 'min-h-0 flex-1')}
               >
                 {failure && intent.status === 'captured' ? (
                   <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger-soft)] p-4">
@@ -830,7 +848,7 @@ function IntentStage({
                     onPreviewOption={setPreviewOption}
                   />
                 ) : plan ? (
-                  <PlanReveal intent={intent} plan={plan} reduced={reduced} />
+                  <PlanReveal intent={intent} plan={plan} reduced={reduced} artifactMode={artifactMode} />
                 ) : (
                   <p className="text-[13px] text-[var(--color-text-muted)]">
                     No plan recorded for this intent.
@@ -1170,7 +1188,17 @@ function actionDetailLine(action: DigitalActionLike): string | null {
   return null;
 }
 
-function PlanReveal({ intent, plan, reduced }: { intent: IntentRow; plan: PlanRow; reduced: boolean }) {
+function PlanReveal({
+  intent,
+  plan,
+  reduced,
+  artifactMode = false,
+}: {
+  intent: IntentRow;
+  plan: PlanRow;
+  reduced: boolean;
+  artifactMode?: boolean;
+}) {
   const sequence = planRevealSequence(plan);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState('');
@@ -1197,6 +1225,50 @@ function PlanReveal({ intent, plan, reduced }: { intent: IntentRow; plan: PlanRo
     animate: { opacity: 1, y: 0 },
     transition: { duration: reduced ? 0.15 : 0.35, delay: reduced ? 0 : index * 0.08 },
   });
+
+  // Artifact mode: the model-composed document IS the plan view. It fills the
+  // pane (same sandboxed treatment as the Daily Brief); only the action row
+  // and applied/approval summaries render natively above it.
+  if (artifactMode && plan.artifactHtml) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-3">
+        {isApplied ? (
+          <AppliedSummary plan={plan} applied={applied} />
+        ) : (
+          <div className="flex flex-wrap items-center gap-3">
+            <PrimaryButton reduced={reduced} disabled={Boolean(disabledReason) || applying} onClick={apply}>
+              {applying ? 'Applying…' : 'Apply plan'}
+            </PrimaryButton>
+            {(plan.digitalActions?.length ?? 0) >= 4 ? (
+              <Segmented
+                value={projectMode}
+                onChange={setProjectMode}
+                options={[
+                  { value: 'auto', label: 'Auto' },
+                  { value: 'project', label: 'Project' },
+                  { value: 'task_only', label: 'Tasks only' },
+                ]}
+              />
+            ) : null}
+            {disabledReason ? (
+              <span className="text-[12px] text-[var(--color-text-faint)]">{disabledReason}</span>
+            ) : null}
+            {applyError ? <span className="text-[12px] text-[var(--color-danger)]">{applyError}</span> : null}
+          </div>
+        )}
+        <motion.iframe
+          key={plan._id}
+          initial={{ opacity: 0, y: reduced ? 0 : 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: reduced ? 0.15 : 0.3 }}
+          title="Plan"
+          srcDoc={plan.artifactHtml}
+          sandbox="allow-scripts allow-popups"
+          className="min-h-[420px] w-full flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

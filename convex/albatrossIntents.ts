@@ -47,6 +47,16 @@ const physicalActionValidator = v.object({
   url: v.optional(v.string()),
 });
 
+const placeValidator = v.object({
+  name: v.string(),
+  detail: v.optional(v.string()),
+  address: v.optional(v.string()),
+  hoursText: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  website: v.optional(v.string()),
+  mapsQuery: v.optional(v.string()),
+});
+
 const sourceRefValidator = v.object({
   kind: v.string(),
   id: v.string(),
@@ -255,6 +265,7 @@ export const savePlan = mutation({
     artifactTitle: v.optional(v.string()),
     model: v.optional(v.string()),
     mapQuery: v.optional(v.string()),
+    places: v.optional(v.array(placeValidator)),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -289,6 +300,15 @@ export const savePlan = mutation({
       artifactTitle: bounded(args.artifactTitle, 180),
       model: bounded(args.model, 120),
       mapQuery: bounded(args.mapQuery, 200),
+      places: args.places?.map((place) => ({
+        name: bounded(place.name, 160, 'Place')!,
+        detail: bounded(place.detail, 300),
+        address: bounded(place.address, 300),
+        hoursText: bounded(place.hoursText, 300),
+        phone: bounded(place.phone, 40),
+        website: bounded(place.website, 500),
+        mapsQuery: bounded(place.mapsQuery, 200),
+      })),
       createdAt: ts,
       updatedAt: ts,
     });

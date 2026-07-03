@@ -464,3 +464,20 @@ describe('vortexSourcesForIntent', () => {
     expect(sources.find((s: any) => s.id === 'areas').detail).toBeUndefined();
   });
 });
+
+describe('planStageMode', () => {
+  const { planStageMode } = require('../components/albatross/PlansSurface');
+  const artifactPlan = { status: 'ready' as const, artifactHtml: '<!doctype html><html></html>' };
+
+  test('artifact fills the stage for ready and applied plans', () => {
+    expect(planStageMode({ status: 'ready' }, artifactPlan)).toBe('artifact');
+    expect(planStageMode({ status: 'applied' }, { ...artifactPlan, status: 'applied' })).toBe('artifact');
+  });
+
+  test('cascade when there is no artifact, questions are open, or the plan is superseded', () => {
+    expect(planStageMode({ status: 'ready' }, { status: 'ready' })).toBe('cascade');
+    expect(planStageMode({ status: 'needs_answers' }, artifactPlan)).toBe('cascade');
+    expect(planStageMode({ status: 'ready' }, { ...artifactPlan, status: 'superseded' })).toBe('cascade');
+    expect(planStageMode(null, artifactPlan)).toBe('cascade');
+  });
+});

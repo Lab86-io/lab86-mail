@@ -78,6 +78,16 @@ const questionSchema = z.object({
   options: z.array(questionOptionSchema).max(5).optional(),
 });
 
+const placeSchema = z.object({
+  name: z.string().min(1).max(160),
+  detail: z.string().max(300).optional(),
+  address: z.string().max(300).nullish(),
+  hoursText: z.string().max(300).nullish(),
+  phone: z.string().max(40).nullish(),
+  website: z.string().max(500).nullish(),
+  mapsQuery: z.string().max(200).nullish(),
+});
+
 const physicalActionSchema = z.object({
   title: z.string().min(1).max(200),
   detail: z.string().max(1200).optional(),
@@ -98,6 +108,7 @@ export const planGenerationSchema = z.object({
   assumptions: z.array(z.string().max(500)).max(10).default([]),
   sourceRefIds: z.array(z.string()).max(20).default([]),
   mapQuery: z.string().max(200).nullish(),
+  places: z.array(placeSchema).max(6).default([]),
 });
 
 export type PlanGeneration = z.infer<typeof planGenerationSchema>;
@@ -194,24 +205,35 @@ Respond with ONE JSON object, no prose, matching:
   "physicalActions": [{"title": string, "detail"?: string, "url"?: string}],
   "assumptions": [string],
   "sourceRefIds": [string],           // refIds from the provided evidence you actually used
-  "mapQuery": string|null             // when the plan involves ONE specific real-world place, its map search string ("Penn Yan DMV, Penn Yan NY") copied/derived from evidence or the user's words — never invented; else null
+  "mapQuery": string|null,            // when the plan involves ONE specific real-world place, its map search string ("Penn Yan DMV, Penn Yan NY") copied/derived from evidence or the user's words — never invented; else null
+  "places": [{"name": string, "detail"?: string, "address"?: string|null, "hoursText"?: string|null, "phone"?: string|null, "website"?: string|null, "mapsQuery"?: string|null}]
 }
+
+Places — do this on EVERY plan:
+- Actively look for real-world locations, organizations, venues, and services the plan touches (offices, stores, agencies, studios) and attach them to "places" with everything you can ground: address, hours, phone, website, and a mapsQuery ("<name>, <city/state>").
+- Sources for place data, in order: the provided evidence (nearby search, mail, facts), then well-known canonical knowledge (an official website like dmv.ny.gov is fine). NEVER invent street addresses, hours, or phone numbers — omit a field you cannot ground.
+- The first place should be the plan's primary location when one exists (it drives the map).
 
 Question options:
 - When a "## Nearby places" evidence section is provided AND the intent involves visiting or choosing a real-world business, ask ONE question offering 2-4 options built STRICTLY from that evidence (copy titles/addresses/websites/hours from it; one-line "detail" saying why this one). Never invent places, addresses, or hours.
 - When the user's earlier answer already chose an option, do NOT re-ask: fold the chosen place into the plan — name it in the relevant task, and add a physicalAction with its address (detail) and website (url).`;
 
-const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer. Compose a single self-contained HTML document: the working brief for one personal plan. Think finely-typeset field notes, not a dashboard.
+const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer, composing the FULL plan document for one personal intent. This document IS the plan view — it fills the entire pane, like a finely-typeset one-page dossier. Same craft bar as a beautiful daily briefing: real typographic hierarchy, generous but purposeful whitespace, editorial rhythm.
 
-This document is embedded DIRECTLY BELOW a surface that already shows the plan title, outcome sentence, summary, and action list. Do not restate any of those. The brief earns its place by carrying what the surface cannot: step-by-step working detail, addresses and hours, document checklists, phone scripts, source links with what each says, caveats.
+Structure (adapt to the data, don't force empty sections):
+- Masthead: the plan title large, the outcome sentence beneath it, the summary as a short standfirst.
+- The work: digital actions as a clean checklist (tasks, calendar holds with their times, drafts with recipients), then real-world steps with their working detail.
+- Places, INLINE where they matter: every place gets a compact card in context — name, address, hours, phone, website link, and an "Open in Maps" link built as https://www.google.com/maps/search/?api=1&query=<url-encoded mapsQuery>. Place cards sit next to the step that uses them, not in an appendix.
+- Working detail: document checklists, what to bring, phone scripts, fees, deadlines — the stuff that makes the errand executable without another search.
+- Quieter footer: assumptions, then sources as footnote links with a word on what each supports.
 
 Rules:
-- One complete HTML document, inline CSS only, no external requests, no JS frameworks.
-- System font stack. Respect prefers-color-scheme for dark/light.
+- One complete HTML document, inline CSS only, no external network requests (links are fine; no external images/fonts/scripts). Tasteful inline SVG accents allowed.
+- System font stack. Respect prefers-color-scheme for dark/light. Design for a wide pane (~700-1000px) with a comfortable reading column.
 - Voice: plain and factual. Never first person. No exclamation marks. No sparkle/emoji glyphs.
-- Headings: sentence case, no ALL-CAPS letter-spaced labels, no "Plan Brief" masthead label (the surface chrome already says what this is). Open with the most useful working detail, not a restatement.
-- Dense but calm. No hero images, no lorem, no invented content: render ONLY the data provided.
-- Total under 500 lines. Output ONLY the HTML document.`;
+- Headings: sentence case, never ALL-CAPS letter-spaced labels.
+- Render ONLY the data provided — no invented content, no lorem, no placeholders.
+- Total under 700 lines. Output ONLY the HTML document.`;
 
 function packLine(ref: PlanContextRef, detail: string) {
   return `- [${ref.refId}] (${ref.kind}) ${detail}`;
@@ -472,6 +494,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
               subject: action.subject,
             })),
             physicalActions: generation.physicalActions,
+            places: generation.places,
             assumptions: generation.assumptions,
             sources: resolveSourceRefs(generation.sourceRefIds, refs),
             openQuestions: questions.filter((question) => !question.answer).map((q) => q.prompt),
@@ -503,7 +526,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       sourceRefs: resolveSourceRefs(generation.sourceRefIds, refs),
       artifactHtml,
       artifactTitle: generation.title,
-      mapQuery: generation.mapQuery ?? undefined,
+      mapQuery: generation.mapQuery ?? generation.places[0]?.mapsQuery ?? undefined,
+      places: generation.places,
     });
 
     return { planId, projectTitle: generation.projectTitle ?? undefined };
