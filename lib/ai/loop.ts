@@ -14,7 +14,7 @@ import { generateTextForCurrentUser, hasPlatformAi } from './gateway';
 import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
-const AGENT_TOOL_NAMES = new Set([
+export const AGENT_TOOL_NAMES = new Set([
   'list_accounts',
   'search_threads',
   'corpus_search',
@@ -96,6 +96,13 @@ const AGENT_TOOL_NAMES = new Set([
   'albatross_create_sprint',
   'albatross_list_sprints',
   'albatross_preview_undo_unresolved',
+  'area_list',
+  'area_create',
+  'area_archive',
+  'area_add_fact',
+  'area_fact_set_status',
+  'area_domain_activity',
+  'salvage_context',
   'tasks_add_comment',
   'tasks_attach_link',
   'tasks_attach_file',

@@ -149,6 +149,40 @@ describe('feature flag off regression guard (re-check)', () => {
   });
 });
 
+describe('agent loop tool belt exposure', () => {
+  // Registration in TOOLS is not enough: the agent loop only surfaces tools
+  // named in AGENT_TOOL_NAMES. A prompt that briefs a tool the loop withholds
+  // produces "tried to call unavailable tool" at runtime (seen live with
+  // area_domain_activity in the Teach chat).
+  test('every prompt-briefed albatross tool is in the loop allowlist', async () => {
+    const { AGENT_TOOL_NAMES } = await import('../lib/ai/loop');
+    const { TOOLS } = await import('../lib/tools/index');
+    const briefed = [
+      'area_list',
+      'area_create',
+      'area_archive',
+      'area_add_fact',
+      'area_fact_set_status',
+      'area_domain_activity',
+      'salvage_context',
+    ];
+    for (const name of briefed) {
+      expect(TOOLS[name as keyof typeof TOOLS]).toBeTruthy();
+      expect(AGENT_TOOL_NAMES.has(name)).toBe(true);
+    }
+  });
+
+  test('every tool name mentioned in the Teach prompt resolves to an exposed tool', async () => {
+    const { AGENT_TOOL_NAMES } = await import('../lib/ai/loop');
+    const { TEACH_SYSTEM_PROMPT } = await import('../lib/albatross/teach-prompt');
+    const mentioned = new Set(TEACH_SYSTEM_PROMPT.match(/\b(?:area|salvage)_[a-z_]+\b/g) ?? []);
+    expect(mentioned.size).toBeGreaterThan(0);
+    for (const name of mentioned) {
+      expect(AGENT_TOOL_NAMES.has(name)).toBe(true);
+    }
+  });
+});
+
 describe('salvage_context registration (issue #86/#17)', () => {
   test('salvage_context is registered as a read-only tool and briefed in the system prompt', async () => {
     const { TOOLS } = await import('../lib/tools/index');
