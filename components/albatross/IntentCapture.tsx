@@ -19,6 +19,7 @@ import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { api } from '@/convex/_generated/api';
+import { openPipWindow, pipSupported } from '@/lib/albatross/pip-window';
 import { cn } from '@/lib/utils';
 
 export { looksLikeMultipleIntents, splitIntentText };
@@ -315,6 +316,10 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     const trimmed = text.trim();
     if (!trimmed) return;
     setSaveError(null);
+    // Default to the real browser PiP: must be requested inside this click's
+    // transient activation, before any awaits. Planning then follows the user
+    // into other tabs (Dia/Chrome); unsupported browsers keep the in-app dock.
+    if (pipSupported()) void openPipWindow();
     // One intent per capture by default; only ask when the dump clearly splits.
     if (looksLikeMultipleIntents(trimmed)) {
       send({ type: 'submit', multi: true });

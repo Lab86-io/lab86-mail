@@ -9,7 +9,7 @@
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import {
   getGeo,
@@ -20,6 +20,7 @@ import {
 } from '@/components/albatross/PlansSurface';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { getPipWindow, openPipWindow, pipSupported, subscribePipWindow } from '@/lib/albatross/pip-window';
 import { cn } from '@/lib/utils';
 
 // Document Picture-in-Picture (Chromium). A real OS-level always-on-top
@@ -110,23 +111,8 @@ export function IntentPip({
   const [answerText, setAnswerText] = useState('');
   const [selectedOption, setSelectedOption] = useState<QuestionOption | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [pipWindow, setPipWindow] = useState<Window | null>(null);
-  const pipSupported = docPip() !== null;
-
-  const popOut = useCallback(async () => {
-    const host = docPip();
-    if (!host || pipWindow) return;
-    try {
-      const win = await host.requestWindow({ width: 340, height: 320 });
-      copyStylesInto(win);
-      win.addEventListener('pagehide', () => setPipWindow(null), { once: true });
-      setPipWindow(win);
-    } catch {
-      // Denied or unsupported gesture context - the in-app dock still works.
-    }
-  }, [pipWindow]);
-
-  useEffect(() => () => pipWindow?.close(), [pipWindow]);
+  const pipWindow = useSyncExternalStore(subscribePipWindow, getPipWindow, () => null);
+  const supported = pipSupported();
 
   useEffect(() => {
     for (const intent of intents ?? []) {
@@ -338,8 +324,18 @@ export function IntentPip({
   // portal live, so questions and status updates stream into it.
   if (pipWindow) {
     return createPortal(
-      <div className="flex min-h-screen flex-col bg-[var(--color-bg-elevated)] pb-2 font-sans text-[var(--color-text)]">
-        {card}
+      <div className="flex min-h-screen flex-col bg-[var(--color-bg)] font-sans text-[var(--color-text)]">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-2">
+          <span className="text-[12px] font-semibold tracking-tight">Albatross</span>
+          <span
+            className={cn('size-2 rounded-full', pip.mode === 'planning' && 'animate-pulse')}
+            style={{
+              background:
+                'radial-gradient(circle at 38% 32%, color-mix(in oklab, var(--color-accent) 80%, white), var(--color-accent))',
+            }}
+          />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg-elevated)] pb-2">{card}</div>
       </div>,
       pipWindow.document.body,
     );
