@@ -2,9 +2,9 @@
 
 /* Shared Document Picture-in-Picture window (Chromium: Chrome, Dia, Arc).
  * One always-on-top browser window owned by the app: capture opens it by
- * default (inside the click gesture, as the API requires), IntentPip portals
- * the live planning card into it, and closing it falls back to the in-app
- * dock. Theme is mirrored continuously — next-themes drives dark mode via a
+ * default (inside the click gesture, as the API requires) and IntentPip
+ * portals the live planning card into it — there is no in-app fallback.
+ * Theme is mirrored continuously — next-themes drives dark mode via a
  * class on :root, which a bare pip document would never receive. */
 
 interface DocumentPictureInPicture {
@@ -92,7 +92,10 @@ export async function openPipWindow(): Promise<Window | null> {
   if (!api) return null;
   if (pipWindow && !pipWindow.closed) return pipWindow;
   try {
-    const win = await api.requestWindow({ width: 340, height: 340 });
+    // Sized to the compact planning card; the browser lets the user drag it
+    // larger when a question needs more room. Resizing programmatically on
+    // mode change is not possible (requires a user gesture inside the pip).
+    const win = await api.requestWindow({ width: 360, height: 150 });
     adoptTheme(win);
     win.addEventListener(
       'pagehide',

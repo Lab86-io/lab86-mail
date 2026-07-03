@@ -266,20 +266,12 @@ export function IntentPip({ onOpenIntent }: { onOpenIntent: (intentId: string) =
 
   // Render into the always-on-top browser window (Chromium Document PiP -
   // visible from other tabs, e.g. in Dia). React keeps the portal live, so
-  // questions and status updates stream into it.
+  // questions and status updates stream into it. The window opens at the
+  // compact planning height; question mode scrolls within it and the user
+  // can drag the window larger.
   return createPortal(
-    <div className="flex min-h-screen flex-col bg-[var(--color-bg)] font-sans text-[var(--color-text)]">
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-2">
-        <span className="text-[12px] font-semibold tracking-tight">Albatross</span>
-        <span
-          className={cn('size-2 rounded-full', pip.mode === 'planning' && 'animate-pulse')}
-          style={{
-            background:
-              'radial-gradient(circle at 38% 32%, color-mix(in oklab, var(--color-accent) 80%, white), var(--color-accent))',
-          }}
-        />
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg-elevated)] pb-2">{card}</div>
+    <div className="flex h-screen flex-col overflow-y-auto bg-[var(--color-bg-elevated)] pb-2 font-sans text-[var(--color-text)]">
+      {card}
     </div>,
     pipWindow.document.body,
   );
