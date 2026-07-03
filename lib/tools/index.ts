@@ -23,6 +23,14 @@ import {
   albatrossRejectAction,
   albatrossUndoApproval,
 } from './albatross';
+import {
+  areaAddFact,
+  areaArchive,
+  areaCreate,
+  areaDomainActivity,
+  areaFactSetStatus,
+  areaList,
+} from './areas';
 import { listAuditEntries, logAction } from './audit-tools';
 import {
   calendarCountEvents,
@@ -272,6 +280,12 @@ const allTools: AnyTool[] = [
   albatrossCreateSprint,
   albatrossListSprints,
   albatrossPreviewUndoUnresolved,
+  areaList,
+  areaCreate,
+  areaArchive,
+  areaAddFact,
+  areaFactSetStatus,
+  areaDomainActivity,
   tasksCreateBoard,
   tasksCreateCard,
   tasksUpdateCard,

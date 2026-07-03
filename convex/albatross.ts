@@ -1,7 +1,8 @@
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
+import { internalAction, mutation, query } from './_generated/server';
 import {
   type AlbatrossConfirmationRef,
   type AlbatrossSourceRef,
@@ -14,7 +15,7 @@ import {
   normalizeSourceRefs,
   normalizeText,
 } from './albatrossModel';
-import { now, requireInternalSecret } from './lib';
+import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
@@ -513,6 +514,404 @@ export const listArtifactLinks = query({
   },
 });
 
+// ---------------------------------------------------------------------------
+// Areas-become-the-app: read models and classifier plumbing.
+// ---------------------------------------------------------------------------
+
+function emailFromAddress(raw: string): string {
+  const angled = raw.match(/<([^>]+)>/);
+  const candidate = (angled ? angled[1] : raw).trim().toLowerCase();
+  const token = candidate.split(/\s+/).find((part) => part.includes('@'));
+  return (token || candidate).replace(/^mailto:/, '').replace(/[<>,;"']/g, '');
+}
+
+// Areas plus per-area fact counts in one call — the Teach agent's first read.
+export const listAreasOverview = query({
+  args: { ...callerArgs, status: v.optional(areaStatusValidator) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const areas = args.status
+      ? await ctx.db
+          .query('areas')
+          .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', args.status!))
+          .collect()
+      : await ctx.db
+          .query('areas')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect();
+    const facts = await ctx.db
+      .query('areaFacts')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    const counts = new Map<string, { verified: number; candidate: number }>();
+    for (const fact of facts) {
+      if (fact.status !== 'verified' && fact.status !== 'candidate') continue;
+      const entry = counts.get(fact.areaId) || { verified: 0, candidate: 0 };
+      entry[fact.status as 'verified' | 'candidate'] += 1;
+      counts.set(fact.areaId, entry);
+    }
+    return areas
+      .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99) || a.name.localeCompare(b.name))
+      .map((area) => ({
+        ...area,
+        factCounts: counts.get(area._id) || { verified: 0, candidate: 0 },
+      }));
+  },
+});
+
+// All of one user's area facts, optionally by status — the classifier loads
+// verified and candidate facts across every area in two indexed reads.
+export const listUserAreaFacts = query({
+  args: { ...callerArgs, status: v.optional(factStatusValidator) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    return args.status
+      ? await ctx.db
+          .query('areaFacts')
+          .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', args.status!))
+          .collect()
+      : await ctx.db
+          .query('areaFacts')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect();
+  },
+});
+
+const DOMAIN_ACTIVITY_SCAN = 500;
+
+// Investigation read for the Teach conversation: who has been emailing from a
+// domain (or one address), how much, and about what. Index-friendly: one
+// bounded recency scan on by_user_lastDate, filtered in memory.
+export const domainActivity = query({
+  args: {
+    ...callerArgs,
+    domain: v.optional(v.string()),
+    senderEmail: v.optional(v.string()),
+    max: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const domain = args.domain ? normalizeText(args.domain).toLowerCase().replace(/^@/, '') : undefined;
+    const senderEmail = args.senderEmail ? normalizeText(args.senderEmail).toLowerCase() : undefined;
+    if (!domain && !senderEmail) throw new Error('Provide domain or senderEmail.');
+    const max = Math.min(Math.max(args.max ?? 10, 1), 25);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(DOMAIN_ACTIVITY_SCAN);
+    const bySender = new Map<
+      string,
+      { email: string; name?: string; threads: number; lastDate: number; recentSubjects: string[] }
+    >();
+    let matched = 0;
+    for (const row of rows) {
+      const email = emailFromAddress(row.fromAddress || '');
+      if (!email.includes('@')) continue;
+      const matches = senderEmail ? email === senderEmail : email.endsWith(`@${domain}`);
+      if (!matches) continue;
+      matched += 1;
+      const entry = bySender.get(email) || {
+        email,
+        name: row.fromAddress?.replace(/<.*?>/g, '').trim() || undefined,
+        threads: 0,
+        lastDate: 0,
+        recentSubjects: [],
+      };
+      entry.threads += 1;
+      entry.lastDate = Math.max(entry.lastDate, row.lastDate);
+      const subject = normalizeText(row.subject || '');
+      if (subject && entry.recentSubjects.length < 3 && !entry.recentSubjects.includes(subject)) {
+        entry.recentSubjects.push(subject);
+      }
+      bySender.set(email, entry);
+    }
+    return {
+      domain: domain ?? null,
+      senderEmail: senderEmail ?? null,
+      threadsScanned: rows.length,
+      threadsMatched: matched,
+      senders: [...bySender.values()].sort((a, b) => b.threads - a.threads).slice(0, max),
+    };
+  },
+});
+
+const AREA_HOME_MAIL_CAP = 30;
+const AREA_HOME_EVENT_CAP = 20;
+const AREA_HOME_TASK_CAP = 30;
+
+async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
+  if (!link.accountId) return null;
+  const thread = await ctx.db
+    .query('mailCorpusThreads')
+    .withIndex('by_user_account_thread', (q) =>
+      q.eq('userId', userId).eq('accountId', link.accountId).eq('providerThreadId', link.artifactId),
+    )
+    .first();
+  if (!thread) return null;
+  return {
+    providerThreadId: thread.providerThreadId,
+    accountId: thread.accountId,
+    subject: thread.subject,
+    fromAddress: thread.fromAddress,
+    lastDate: thread.lastDate,
+    snippet: thread.snippet,
+    unread: thread.unread,
+    linkStatus: link.status,
+    confidence: link.confidence ?? null,
+    reason: link.reason ?? null,
+  };
+}
+
+async function resolveEventLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
+  const docId = ctx.db.normalizeId('calendarEvents', link.artifactId);
+  let event = docId ? await ctx.db.get(docId) : null;
+  if (!event && link.accountId) {
+    event = await ctx.db
+      .query('calendarEvents')
+      .withIndex('by_account_event', (q) =>
+        q.eq('accountId', link.accountId).eq('providerEventId', link.artifactId),
+      )
+      .first();
+  }
+  if (!event || event.userId !== userId) return null;
+  return {
+    providerEventId: event.providerEventId,
+    accountId: event.accountId,
+    title: event.title,
+    startAt: event.startAt,
+    endAt: event.endAt,
+    allDay: event.allDay ?? false,
+    location: event.location ?? null,
+    linkStatus: link.status,
+    reason: link.reason ?? null,
+  };
+}
+
+async function resolveTaskLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
+  const cardId = ctx.db.normalizeId('cards', link.artifactId);
+  if (!cardId) return null;
+  const card = await ctx.db.get(cardId);
+  if (!card || card.userId !== userId) return null;
+  return {
+    cardId: card._id,
+    boardId: card.boardId,
+    title: card.title,
+    completedAt: card.completedAt ?? null,
+    dueAt: card.dueAt ?? null,
+    updatedAt: card.updatedAt,
+    linkStatus: link.status,
+    reason: link.reason ?? null,
+  };
+}
+
+// The Area home read model: the area, its facts by trust level, and its
+// linked artifacts resolved to real rows the UI can render directly.
+export const areaHome = query({
+  args: { ...callerArgs, areaId: v.id('areas') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const area = await requireArea(ctx, args.areaId, userId);
+    const [verified, candidate, links] = await Promise.all([
+      ctx.db
+        .query('areaFacts')
+        .withIndex('by_user_area_status', (q) =>
+          q.eq('userId', userId).eq('areaId', args.areaId).eq('status', 'verified'),
+        )
+        .collect(),
+      ctx.db
+        .query('areaFacts')
+        .withIndex('by_user_area_status', (q) =>
+          q.eq('userId', userId).eq('areaId', args.areaId).eq('status', 'candidate'),
+        )
+        .collect(),
+      ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
+        .collect(),
+    ]);
+    const activeLinks = links.filter((link) => link.status !== 'rejected');
+    const byKind = new Map<string, any[]>();
+    for (const link of activeLinks) {
+      const list = byKind.get(link.artifactKind) || [];
+      list.push(link);
+      byKind.set(link.artifactKind, list);
+    }
+
+    const mail = (
+      await Promise.all((byKind.get('mailThread') || []).map((link) => resolveMailLink(ctx, userId, link)))
+    )
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => b.lastDate - a.lastDate)
+      .slice(0, AREA_HOME_MAIL_CAP);
+
+    const ts = now();
+    const resolvedEvents = (
+      await Promise.all(
+        (byKind.get('calendarEvent') || []).map((link) => resolveEventLink(ctx, userId, link)),
+      )
+    ).filter((row): row is NonNullable<typeof row> => row !== null);
+    const upcoming = resolvedEvents
+      .filter((event) => event.endAt >= ts)
+      .sort((a, b) => a.startAt - b.startAt);
+    const past = resolvedEvents.filter((event) => event.endAt < ts).sort((a, b) => b.startAt - a.startAt);
+    const events = [...upcoming, ...past].slice(0, AREA_HOME_EVENT_CAP);
+
+    const tasks = (
+      await Promise.all((byKind.get('task') || []).map((link) => resolveTaskLink(ctx, userId, link)))
+    )
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort(
+        (a, b) =>
+          Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,
+      )
+      .slice(0, AREA_HOME_TASK_CAP);
+
+    return {
+      area,
+      facts: { verified, candidate },
+      mail,
+      events,
+      tasks,
+      counts: {
+        facts: { verified: verified.length, candidate: candidate.length },
+        links: {
+          mailThread: (byKind.get('mailThread') || []).length,
+          calendarEvent: (byKind.get('calendarEvent') || []).length,
+          task: (byKind.get('task') || []).length,
+          other: activeLinks.filter(
+            (link) => !['mailThread', 'calendarEvent', 'task'].includes(link.artifactKind),
+          ).length,
+        },
+        mail: mail.length,
+        events: events.length,
+        tasks: tasks.length,
+      },
+    };
+  },
+});
+
+const UNCLASSIFIED_SCAN = 200;
+const UNCLASSIFIED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Recent corpus threads that no area has claimed yet — the classifier's work
+// queue. Internal-secret-gated: only the cron/classifier path reads this.
+export const unclassifiedThreads = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(args.limit ?? 50, 1), 50);
+    const cutoff = now() - UNCLASSIFIED_WINDOW_MS;
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gte('lastDate', cutoff))
+      .order('desc')
+      .take(UNCLASSIFIED_SCAN);
+    const out: Array<{
+      providerThreadId: string;
+      accountId: string;
+      subject: string;
+      fromAddress: string;
+      lastDate: number;
+      snippet: string;
+    }> = [];
+    for (const row of rows) {
+      if (out.length >= limit) break;
+      const existing = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_artifact', (q) =>
+          q.eq('userId', args.userId).eq('artifactKind', 'mailThread').eq('artifactId', row.providerThreadId),
+        )
+        .first();
+      if (existing) continue;
+      out.push({
+        providerThreadId: row.providerThreadId,
+        accountId: row.accountId,
+        subject: row.subject,
+        fromAddress: row.fromAddress,
+        lastDate: row.lastDate,
+        snippet: row.snippet,
+      });
+    }
+    return out;
+  },
+});
+
+// Batch write for classifier verdicts. Dedupe on by_user_artifact + areaId:
+// an existing link for the same (thread, area) is left untouched — the
+// classifier never downgrades or churns prior decisions.
+export const recordAreaLinks = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    links: v.array(
+      v.object({
+        areaId: v.id('areas'),
+        artifactKind: v.optional(v.literal('mailThread')),
+        artifactId: v.string(),
+        accountId: v.optional(v.string()),
+        status: v.union(v.literal('candidate'), v.literal('verified')),
+        confidence: v.optional(v.number()),
+        reason: v.optional(v.string()),
+        sourceRefs: v.optional(v.array(sourceRefValidator)),
+        confirmationRefs: v.optional(v.array(confirmationRefValidator)),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const userId = args.userId;
+    const ts = now();
+    const areaCache = new Map<string, boolean>();
+    let inserted = 0;
+    let skipped = 0;
+    for (const link of args.links.slice(0, 100)) {
+      if (!areaCache.has(link.areaId)) {
+        const area = await ctx.db.get(link.areaId);
+        areaCache.set(link.areaId, Boolean(area && area.userId === userId && area.status === 'active'));
+      }
+      if (!areaCache.get(link.areaId)) {
+        skipped += 1;
+        continue;
+      }
+      const { artifactId, accountId } = normalizedArtifactIdentity(link);
+      const refs = normalizedRefs(link);
+      assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
+      const existing = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_artifact', (q) =>
+          q.eq('userId', userId).eq('artifactKind', 'mailThread').eq('artifactId', artifactId),
+        )
+        .collect();
+      if (existing.some((row) => row.areaId === link.areaId)) {
+        skipped += 1;
+        continue;
+      }
+      await ctx.db.insert('areaArtifactLinks', {
+        userId,
+        areaId: link.areaId,
+        artifactKind: 'mailThread',
+        artifactId,
+        accountId,
+        role: 'supporting',
+        status: link.status,
+        confidence: link.confidence,
+        reason: link.reason ? normalizeText(link.reason).slice(0, 700) : undefined,
+        sourceRefs: refs.sourceRefs,
+        confirmationRefs: refs.confirmationRefs,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      inserted += 1;
+    }
+    return { inserted, skipped };
+  },
+});
+
 type SeedFixture = {
   tables?: {
     areas?: any[];
@@ -647,5 +1046,28 @@ export const seedContextGraphFromFixture = mutation({
         areaArtifactLinks: linkCount,
       },
     };
+  },
+});
+
+// Periodic area classification. Mirrors convex/calendarSync.ts: AI + the
+// classifier live in the Next.js app, so the schedule fans out to the
+// internal-secret-gated route for every user with a connected account.
+export const classifyTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[area-classify cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
+    const ok = await fanOutInternalPost(
+      `${appUrl}/api/cron/area-classify`,
+      secret,
+      targets.map((target) => ({ userId: target.userId })),
+      { label: 'area-classify cron', timeoutMs: 60_000, concurrency: 4 },
+    );
+    console.log(`[area-classify cron] classified ${ok}/${targets.length} users`);
   },
 });

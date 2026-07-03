@@ -205,10 +205,10 @@ export function IntentPip({
             }}
           />
         ) : null}
-        {pipSupported && !pipWindow ? (
+        {supported && !pipWindow ? (
           <button
             type="button"
-            onClick={() => void popOut()}
+            onClick={() => void openPipWindow()}
             className="shrink-0 text-[11px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
           >
             Pop out

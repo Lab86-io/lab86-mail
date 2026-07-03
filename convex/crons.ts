@@ -19,6 +19,10 @@ crons.hourly('daily report editions', { minuteUTC: 0 }, internal.dailyReports.ti
 // safety net over the webhook-driven event deltas.
 crons.interval('calendar resync', { minutes: 15 }, internal.calendarSync.tick, {});
 
+// File new mail threads into the user's areas every 30 minutes: deterministic
+// fact matches first, then one nano-LLM verdict for the rest (candidate-only).
+crons.interval('area classify', { minutes: 30 }, internal.albatross.classifyTick, {});
+
 // Poll each user's connected tool servers/APIs every 20 minutes
 // so brief/search items stay current. Cast: the generated `internal` type only
 // gains `mcpSync` after codegen on deploy.
