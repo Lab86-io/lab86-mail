@@ -9,7 +9,8 @@
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   getGeo,
   type IntentQuestion,
@@ -20,6 +21,45 @@ import {
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { cn } from '@/lib/utils';
+
+// Document Picture-in-Picture (Chromium). A real OS-level always-on-top
+// window, so planning follows the user into other tabs and apps.
+interface DocumentPictureInPicture {
+  requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
+  window: Window | null;
+}
+
+function docPip(): DocumentPictureInPicture | null {
+  if (typeof window === 'undefined') return null;
+  return (
+    (window as Window & { documentPictureInPicture?: DocumentPictureInPicture }).documentPictureInPicture ??
+    null
+  );
+}
+
+/** Clone the app's stylesheets into the pip window so theme vars carry over. */
+function copyStylesInto(target: Window) {
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      const rules = Array.from(sheet.cssRules ?? [])
+        .map((rule) => rule.cssText)
+        .join('\n');
+      const style = target.document.createElement('style');
+      style.textContent = rules;
+      target.document.head.appendChild(style);
+    } catch {
+      const owner = sheet.ownerNode as HTMLLinkElement | null;
+      if (owner?.href) {
+        const link = target.document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = owner.href;
+        target.document.head.appendChild(link);
+      }
+    }
+  }
+  target.document.body.style.background = 'var(--color-bg)';
+  target.document.body.style.margin = '0';
+}
 
 interface PipIntent {
   _id: Id<'albatrossIntents'>;
@@ -70,6 +110,23 @@ export function IntentPip({
   const [answerText, setAnswerText] = useState('');
   const [selectedOption, setSelectedOption] = useState<QuestionOption | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [pipWindow, setPipWindow] = useState<Window | null>(null);
+  const pipSupported = docPip() !== null;
+
+  const popOut = useCallback(async () => {
+    const host = docPip();
+    if (!host || pipWindow) return;
+    try {
+      const win = await host.requestWindow({ width: 340, height: 320 });
+      copyStylesInto(win);
+      win.addEventListener('pagehide', () => setPipWindow(null), { once: true });
+      setPipWindow(win);
+    } catch {
+      // Denied or unsupported gesture context - the in-app dock still works.
+    }
+  }, [pipWindow]);
+
+  useEffect(() => () => pipWindow?.close(), [pipWindow]);
 
   useEffect(() => {
     for (const intent of intents ?? []) {
@@ -100,7 +157,10 @@ export function IntentPip({
     }
   }, [questionKey]);
 
-  if (suppressed || !pip || !intent) return null;
+  // A popped-out pip window follows the user everywhere - even onto the
+  // Plans surface and into other browser tabs; only the in-app dock defers.
+  if (!pip || !intent) return null;
+  if (suppressed && !pipWindow) return null;
 
   const words = (intent.title || intent.rawText).replace(/\s+/g, ' ').trim();
   const shortWords = words.length > 64 ? `${words.slice(0, 64).trimEnd()}…` : words;
@@ -137,6 +197,154 @@ export function IntentPip({
     }
   };
 
+  const card = (
+    <>
+      <div className="flex items-start gap-2 px-3.5 pt-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] text-[var(--color-text-faint)]">
+            {pip.mode === 'question'
+              ? 'Albatross needs an answer'
+              : pip.mode === 'planning'
+                ? 'Planning in the background'
+                : 'Plan ready'}
+          </p>
+          <p className="truncate text-[12.5px] font-medium text-[var(--color-text)]">{shortWords}</p>
+        </div>
+        {pip.mode === 'planning' ? (
+          <span
+            className={cn('mt-1 size-3 shrink-0 rounded-full', !reduced && 'animate-pulse')}
+            style={{
+              background:
+                'radial-gradient(circle at 38% 32%, color-mix(in oklab, var(--color-accent) 80%, white), var(--color-accent) 55%, color-mix(in oklab, var(--color-accent) 35%, var(--color-text)))',
+            }}
+          />
+        ) : null}
+        {pipSupported && !pipWindow ? (
+          <button
+            type="button"
+            onClick={() => void popOut()}
+            className="shrink-0 text-[11px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+          >
+            Pop out
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={dismiss}
+          aria-label="Dismiss"
+          className="rounded p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+        >
+          <svg viewBox="0 0 12 12" className="size-3" aria-hidden="true" role="presentation">
+            <title>Dismiss</title>
+            <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.4" />
+          </svg>
+        </button>
+      </div>
+
+      {pip.mode === 'question' && question ? (
+        <div className="flex flex-col gap-2 px-3.5 pb-3.5 pt-2">
+          <p className="text-[13px] leading-snug text-[var(--color-text)]">{question.prompt}</p>
+          {question.options?.length ? (
+            <div className="flex flex-col gap-1">
+              {question.options.slice(0, 4).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => {
+                    setSelectedOption(option);
+                    void submitAnswer(option, '');
+                  }}
+                  className={cn(
+                    'rounded-md border px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
+                    selectedOption?.id === option.id
+                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                      : 'border-[var(--color-border)] hover:bg-[var(--color-bg-muted)]',
+                  )}
+                >
+                  <span className="block font-medium text-[var(--color-text)]">{option.title}</span>
+                  {option.address ? (
+                    <span className="block truncate text-[11px] text-[var(--color-text-muted)]">
+                      {option.address}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <input
+            value={answerText}
+            onChange={(event) => setAnswerText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void submitAnswer(null, answerText);
+              }
+            }}
+            disabled={submitting}
+            placeholder={question.options?.length ? 'Or type something else…' : 'Type an answer…'}
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)] focus:outline-none"
+          />
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => onOpenIntent(pip.intentId)}
+              className="text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+            >
+              Open in Plans
+            </button>
+            {submitting ? (
+              <span className="text-[11.5px] text-[var(--color-text-faint)]">Saving…</span>
+            ) : null}
+          </div>
+        </div>
+      ) : pip.mode === 'ready' ? (
+        <div className="flex items-center justify-between gap-2 px-3.5 pb-3.5 pt-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setReadyIds((prev) => {
+                const next = new Set(prev);
+                next.delete(pip.intentId);
+                return next;
+              });
+              onOpenIntent(pip.intentId);
+            }}
+            className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--color-accent-foreground)] hover:opacity-90"
+          >
+            View plan
+          </button>
+          <span className="text-[11.5px] text-[var(--color-text-faint)]">Created in the background</span>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2 px-3.5 pb-3.5 pt-1.5">
+          <span className="text-[11.5px] text-[var(--color-text-muted)]">
+            Reading mail, calendar, areas, and the web…
+          </span>
+          <button
+            type="button"
+            onClick={() => onOpenIntent(pip.intentId)}
+            className="shrink-0 text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+          >
+            Watch
+          </button>
+        </div>
+      )}
+    </>
+  );
+
+  // Popped out: render into the always-on-top browser window (Chromium
+  // Document PiP - visible from other tabs, e.g. in Dia). React keeps the
+  // portal live, so questions and status updates stream into it.
+  if (pipWindow) {
+    return createPortal(
+      <div className="flex min-h-screen flex-col bg-[var(--color-bg-elevated)] pb-2 font-sans text-[var(--color-text)]">
+        {card}
+      </div>,
+      pipWindow.document.body,
+    );
+  }
+
   return (
     <AnimatePresence>
       <motion.aside
@@ -148,128 +356,7 @@ export function IntentPip({
         className="fixed bottom-6 left-6 z-40 w-[320px] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]"
         aria-live="polite"
       >
-        <div className="flex items-start gap-2 px-3.5 pt-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] text-[var(--color-text-faint)]">
-              {pip.mode === 'question'
-                ? 'Albatross needs an answer'
-                : pip.mode === 'planning'
-                  ? 'Planning in the background'
-                  : 'Plan ready'}
-            </p>
-            <p className="truncate text-[12.5px] font-medium text-[var(--color-text)]">{shortWords}</p>
-          </div>
-          {pip.mode === 'planning' ? (
-            <span
-              className={cn('mt-1 size-3 shrink-0 rounded-full', !reduced && 'animate-pulse')}
-              style={{
-                background:
-                  'radial-gradient(circle at 38% 32%, color-mix(in oklab, var(--color-accent) 80%, white), var(--color-accent) 55%, color-mix(in oklab, var(--color-accent) 35%, var(--color-text)))',
-              }}
-            />
-          ) : null}
-          <button
-            type="button"
-            onClick={dismiss}
-            aria-label="Dismiss"
-            className="rounded p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-          >
-            <svg viewBox="0 0 12 12" className="size-3" aria-hidden="true" role="presentation">
-              <title>Dismiss</title>
-              <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.4" />
-            </svg>
-          </button>
-        </div>
-
-        {pip.mode === 'question' && question ? (
-          <div className="flex flex-col gap-2 px-3.5 pb-3.5 pt-2">
-            <p className="text-[13px] leading-snug text-[var(--color-text)]">{question.prompt}</p>
-            {question.options?.length ? (
-              <div className="flex flex-col gap-1">
-                {question.options.slice(0, 4).map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => {
-                      setSelectedOption(option);
-                      void submitAnswer(option, '');
-                    }}
-                    className={cn(
-                      'rounded-md border px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
-                      selectedOption?.id === option.id
-                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                        : 'border-[var(--color-border)] hover:bg-[var(--color-bg-muted)]',
-                    )}
-                  >
-                    <span className="block font-medium text-[var(--color-text)]">{option.title}</span>
-                    {option.address ? (
-                      <span className="block truncate text-[11px] text-[var(--color-text-muted)]">
-                        {option.address}
-                      </span>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <input
-              value={answerText}
-              onChange={(event) => setAnswerText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  void submitAnswer(null, answerText);
-                }
-              }}
-              disabled={submitting}
-              placeholder={question.options?.length ? 'Or type something else…' : 'Type an answer…'}
-              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)] focus:outline-none"
-            />
-            <div className="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => onOpenIntent(pip.intentId)}
-                className="text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-              >
-                Open in Plans
-              </button>
-              {submitting ? (
-                <span className="text-[11.5px] text-[var(--color-text-faint)]">Saving…</span>
-              ) : null}
-            </div>
-          </div>
-        ) : pip.mode === 'ready' ? (
-          <div className="flex items-center justify-between gap-2 px-3.5 pb-3.5 pt-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setReadyIds((prev) => {
-                  const next = new Set(prev);
-                  next.delete(pip.intentId);
-                  return next;
-                });
-                onOpenIntent(pip.intentId);
-              }}
-              className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--color-accent-foreground)] hover:opacity-90"
-            >
-              View plan
-            </button>
-            <span className="text-[11.5px] text-[var(--color-text-faint)]">Created in the background</span>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-2 px-3.5 pb-3.5 pt-1.5">
-            <span className="text-[11.5px] text-[var(--color-text-muted)]">
-              Reading mail, calendar, areas, and the web…
-            </span>
-            <button
-              type="button"
-              onClick={() => onOpenIntent(pip.intentId)}
-              className="shrink-0 text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-            >
-              Watch
-            </button>
-          </div>
-        )}
+        {card}
       </motion.aside>
     </AnimatePresence>
   );

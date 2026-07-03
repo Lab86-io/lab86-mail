@@ -411,3 +411,33 @@ describe('generateIntentPlan nearby options (geo)', () => {
     expect(calls.filter((c) => c === 'browserbase_search')).toHaveLength(0);
   });
 });
+
+describe('normalizeArtifactLinks', () => {
+  const { normalizeArtifactLinks } = require('../lib/albatross/intent-plan');
+
+  test('adds https to bare-domain hrefs (the 0.0.0.0 bug) and leaves real URLs alone', () => {
+    const html =
+      '<head></head><a href="dmv.ny.gov/edl">EDL</a> <a href="https://ok.com/x">ok</a> <a href="mailto:a@b.c">m</a> <a href="#top">t</a>';
+    const out = normalizeArtifactLinks(html);
+    expect(out).toContain('href="https://dmv.ny.gov/edl"');
+    expect(out).toContain('href="https://ok.com/x"');
+    expect(out).toContain('href="mailto:a@b.c"');
+    expect(out).toContain('href="#top"');
+  });
+
+  test('injects base target so links open outside the sandbox', () => {
+    const out = normalizeArtifactLinks('<head></head><body></body>');
+    expect(out).toContain('<base target="_blank">');
+    // Never doubled when the model already emitted one.
+    const twice = normalizeArtifactLinks(out);
+    expect(twice.match(/<base /g)?.length).toBe(1);
+  });
+
+  test('fixes bare-domain iframe/img src but leaves data: and https: alone', () => {
+    const out = normalizeArtifactLinks(
+      '<head></head><iframe src="www.google.com/maps?q=x&output=embed"></iframe><img src="data:image/png;base64,x">',
+    );
+    expect(out).toContain('src="https://www.google.com/maps?q=x&output=embed"');
+    expect(out).toContain('src="data:image/png;base64,x"');
+  });
+});

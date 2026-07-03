@@ -156,6 +156,22 @@ export function parsePlanGeneration(raw: string): PlanGeneration {
   return result.data;
 }
 
+/** Sandboxed srcDoc has an opaque origin: scheme-less hrefs resolve to
+ * 0.0.0.0. Force https on bare-domain links and open everything in a new
+ * tab via <base> (the render sandbox only grants allow-popups). */
+export function normalizeArtifactLinks(html: string): string {
+  let out = html.replace(/href="(?!https?:|mailto:|tel:|#)([^"]+)"/gi, (match, target) =>
+    /^[\w.-]+\.[a-z]{2,}([/?#]|$)/i.test(target) ? `href="https://${target}"` : match,
+  );
+  out = out.replace(/src="(?!https?:|data:)([^"]+)"/gi, (match, target) =>
+    /^[\w.-]+\.[a-z]{2,}([/?#]|$)/i.test(target) ? `src="https://${target}"` : match,
+  );
+  if (!/<base\s/i.test(out)) {
+    out = out.replace(/<head(\s[^>]*)?>/i, (head) => `${head}\n<base target="_blank">`);
+  }
+  return out;
+}
+
 /** Only refs that exist in the context pack survive into the stored plan. */
 export function resolveSourceRefs(refIds: string[] | undefined, pack: PlanContextRef[]) {
   const byId = new Map(pack.map((ref) => [ref.refId, ref]));
@@ -224,12 +240,13 @@ Structure (adapt to the data, don't force empty sections):
 - Masthead: the plan title large, the outcome sentence beneath it, the summary as a short standfirst.
 - The work: digital actions as a clean checklist (tasks, calendar holds with their times, drafts with recipients), then real-world steps with their working detail.
 - Places, INLINE where they matter: every place gets a compact card in context — name, address, hours, phone, website link, and an "Open in Maps" link built as https://www.google.com/maps/search/?api=1&query=<url-encoded mapsQuery>. Place cards sit next to the step that uses them, not in an appendix.
+- The PRIMARY place also gets an embedded live map right in its card: <iframe src="https://www.google.com/maps?q=<url-encoded mapsQuery>&output=embed" style="width:100%;height:260px;border:0;border-radius:8px" loading="lazy"></iframe>. This is the ONE permitted external embed.
 - Working detail: document checklists, what to bring, phone scripts, fees, deadlines — the stuff that makes the errand executable without another search.
 - Quieter footer: assumptions, then sources as footnote links with a word on what each supports.
 
 Rules:
-- One complete HTML document, inline CSS only, no external network requests (links are fine; no external images/fonts/scripts). Tasteful inline SVG accents allowed.
-- System font stack. Respect prefers-color-scheme for dark/light. Design for a wide pane (~700-1000px) with a comfortable reading column.
+- One complete HTML document, inline CSS only. No external images/fonts/scripts — the ONLY external embed permitted is the Google Maps iframe above. Outbound links are encouraged and MUST be absolute (https://…) — never bare domains or relative paths.
+- System font stack. Respect prefers-color-scheme for dark/light. The document fills the ENTIRE pane edge-to-edge (no page margin hacks; use internal padding) and is designed for a wide pane (~800-1200px): use the width — two-column sections where it helps (work beside its place card, shopping list in columns).
 - Voice: plain and factual. Never first person. No exclamation marks. No sparkle/emoji glyphs.
 - Headings: sentence case, never ALL-CAPS letter-spaced labels.
 - Render ONLY the data provided — no invented content, no lorem, no placeholders.
@@ -503,7 +520,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
           2,
         ),
       });
-      artifactHtml = extractHtml(artifact.text) ?? undefined;
+      const extracted = extractHtml(artifact.text);
+      artifactHtml = extracted ? normalizeArtifactLinks(extracted) : undefined;
     } catch (err) {
       // The plan is still fully usable without its brief; don't fail the loop.
       console.warn('[albatross-plan] artifact composition failed:', err);

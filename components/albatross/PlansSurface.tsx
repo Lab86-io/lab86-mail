@@ -771,18 +771,20 @@ function IntentStage({
           <div
             className={cn(
               'flex w-full min-w-0 flex-col',
-              artifactMode ? 'min-h-0 flex-1 gap-3 px-4 py-3' : 'mx-auto max-w-3xl gap-5 px-6 py-5',
+              artifactMode ? 'min-h-0 flex-1' : 'mx-auto max-w-3xl gap-5 px-6 py-5',
             )}
           >
-            <header className="flex items-center gap-2">
-              <h1 className="min-w-0 flex-1 truncate font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
-                {intentDisplayTitle(intent)}
-              </h1>
-              <Tag tone={meta.tone}>
-                <span className="size-1.5 rounded-full bg-current opacity-70" />
-                {meta.label}
-              </Tag>
-            </header>
+            {artifactMode ? null : (
+              <header className="flex items-center gap-2">
+                <h1 className="min-w-0 flex-1 truncate font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
+                  {intentDisplayTitle(intent)}
+                </h1>
+                <Tag tone={meta.tone}>
+                  <span className="size-1.5 rounded-full bg-current opacity-70" />
+                  {meta.label}
+                </Tag>
+              </header>
+            )}
 
             {artifactMode ? null : <RawDump intent={intent} sourceLabel={source.label} />}
 
@@ -830,7 +832,13 @@ function IntentStage({
                     onPreviewOption={setPreviewOption}
                   />
                 ) : plan ? (
-                  <PlanReveal intent={intent} plan={plan} reduced={reduced} artifactMode={artifactMode} />
+                  <PlanReveal
+                    intent={intent}
+                    plan={plan}
+                    reduced={reduced}
+                    artifactMode={artifactMode}
+                    onSetStatus={onSetStatus}
+                  />
                 ) : (
                   <p className="text-[13px] text-[var(--color-text-muted)]">
                     No plan recorded for this intent.
@@ -839,7 +847,7 @@ function IntentStage({
               </motion.div>
             </AnimatePresence>
 
-            {intent.status !== 'archived' ? (
+            {intent.status !== 'archived' && !artifactMode ? (
               <footer className="mt-2 flex items-center gap-3 border-t border-[var(--color-border)] pt-3">
                 {intent.status !== 'done' ? (
                   <QuietButton onClick={() => onSetStatus('done')}>Done</QuietButton>
@@ -849,7 +857,7 @@ function IntentStage({
             ) : null}
           </div>
 
-          {mapQuery ? (
+          {mapQuery && !artifactMode ? (
             <MapColumn
               query={mapQuery}
               option={mapOption}
@@ -1175,11 +1183,13 @@ function PlanReveal({
   plan,
   reduced,
   artifactMode = false,
+  onSetStatus,
 }: {
   intent: IntentRow;
   plan: PlanRow;
   reduced: boolean;
   artifactMode?: boolean;
+  onSetStatus?: (status: 'done' | 'archived') => void;
 }) {
   const sequence = planRevealSequence(plan);
   const [applying, setApplying] = useState(false);
@@ -1213,41 +1223,56 @@ function PlanReveal({
   // and applied/approval summaries render natively above it.
   if (artifactMode && plan.artifactHtml) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        {isApplied ? (
-          <AppliedSummary plan={plan} applied={applied} />
-        ) : (
-          <div className="flex flex-wrap items-center gap-3">
-            <PrimaryButton reduced={reduced} disabled={Boolean(disabledReason) || applying} onClick={apply}>
-              {applying ? 'Applying…' : 'Apply plan'}
-            </PrimaryButton>
-            {(plan.digitalActions?.length ?? 0) >= 4 ? (
-              <Segmented
-                value={projectMode}
-                onChange={setProjectMode}
-                options={[
-                  { value: 'auto', label: 'Auto' },
-                  { value: 'project', label: 'Project' },
-                  { value: 'task_only', label: 'Tasks only' },
-                ]}
-              />
-            ) : null}
-            {disabledReason ? (
-              <span className="text-[12px] text-[var(--color-text-faint)]">{disabledReason}</span>
-            ) : null}
-            {applyError ? <span className="text-[12px] text-[var(--color-danger)]">{applyError}</span> : null}
-          </div>
-        )}
+      <div className="relative min-h-0 flex-1">
         <motion.iframe
           key={plan._id}
-          initial={{ opacity: 0, y: reduced ? 0 : 8 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           transition={{ duration: reduced ? 0.15 : 0.3 }}
           title="Plan"
           srcDoc={plan.artifactHtml}
           sandbox="allow-scripts allow-popups"
-          className="min-h-[420px] w-full flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]"
+          className="absolute inset-0 h-full w-full bg-[var(--color-bg)]"
         />
+        {/* Controls float over the document so the plan owns every pixel. */}
+        <div className="absolute right-4 top-3 flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 px-3 py-1.5 shadow-[var(--shadow-pop)] backdrop-blur-sm">
+          {isApplied ? (
+            <span className="text-[12px] font-medium text-[var(--color-success,#16a34a)]">Applied</span>
+          ) : (
+            <>
+              <PrimaryButton reduced={reduced} disabled={Boolean(disabledReason) || applying} onClick={apply}>
+                {applying ? 'Applying…' : 'Apply plan'}
+              </PrimaryButton>
+              {(plan.digitalActions?.length ?? 0) >= 4 ? (
+                <Segmented
+                  value={projectMode}
+                  onChange={setProjectMode}
+                  options={[
+                    { value: 'auto', label: 'Auto' },
+                    { value: 'project', label: 'Project' },
+                    { value: 'task_only', label: 'Tasks only' },
+                  ]}
+                />
+              ) : null}
+            </>
+          )}
+          <QuietButton onClick={() => onSetStatus?.('done')}>Done</QuietButton>
+          <QuietButton onClick={() => onSetStatus?.('archived')}>Archive</QuietButton>
+        </div>
+        {applyError || (disabledReason && !isApplied) ? (
+          <div className="absolute left-4 top-3 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 px-3 py-1.5 text-[12px] shadow-[var(--shadow-pop)]">
+            {applyError ? (
+              <span className="text-[var(--color-danger)]">{applyError}</span>
+            ) : (
+              <span className="text-[var(--color-text-faint)]">{disabledReason}</span>
+            )}
+          </div>
+        ) : null}
+        {isApplied && (applied?.approvals?.length || applied?.operations?.length) ? (
+          <div className="absolute inset-x-4 bottom-3 max-h-48 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 p-3 shadow-[var(--shadow-pop)] backdrop-blur-sm">
+            <AppliedSummary plan={plan} applied={applied} />
+          </div>
+        ) : null}
       </div>
     );
   }
