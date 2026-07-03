@@ -36,6 +36,7 @@ import { useClientStore } from '@/lib/client-state';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
 import { taskSourceColor } from '@/lib/shared/task-colors';
+import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
 interface DailyReportItem {
@@ -373,14 +374,6 @@ function ServiceLogo({ service }: { service: BriefService }) {
 // access (it cannot read cookies, storage, or the Convex client) — every
 // mutation flows through this allowlisted postMessage handler, which validates
 // the message source and the action before touching app state.
-const FONT_FAMILIES: Record<string, string> = {
-  sans: "'Geist', system-ui, sans-serif",
-  grotesk: "'Hanken Grotesk', system-ui, sans-serif",
-  serif: "'Fraunces', Georgia, serif",
-  instrument: "'Instrument Serif', Georgia, serif",
-  news: "'Averia Serif Libre', Georgia, serif",
-};
-
 const REPORT_ARTIFACT_RUNTIME_JS = `<script id="lab86-report-runtime-js">
 (function(){
 if(window.__lab86ReportRuntimeInstalled)return;
@@ -499,24 +492,7 @@ function ReportArtifact({
   // background, and light/dark) into the brief's --brief-* tokens. Posted on
   // iframe load and again whenever any customization slice changes.
   const postTheme = useCallback(() => {
-    const win = frameRef.current?.contentWindow;
-    if (!win) return;
-    const css = getComputedStyle(document.documentElement);
-    const v = (name: string) => css.getPropertyValue(name).trim();
-    const theme: Record<string, string> = {
-      '--brief-bg': v('--color-bg') || '#faf9f6',
-      '--brief-ink': v('--color-text') || '#1a1a1a',
-      '--brief-muted': v('--color-text-muted') || '#6b6b6b',
-      '--brief-hairline': v('--color-border') || '#e6e3dc',
-      '--brief-accent': v('--color-accent') || '#c2683c',
-      '--brief-accent-soft': v('--color-accent-soft') || 'rgba(194,104,60,0.14)',
-      // Two fonts, like the rest of the app: the picked face drives the display
-      // layer (headings/masthead); body copy stays sans.
-      '--brief-font-display': FONT_FAMILIES[appFont ?? 'serif'] ?? FONT_FAMILIES.serif,
-      '--brief-font-body': FONT_FAMILIES.sans,
-      '--brief-display-tracking': appFont === 'instrument' ? '0.045em' : '0em',
-    };
-    win.postMessage({ source: 'lab86-host', type: 'theme', theme }, '*');
+    postBriefTheme(frameRef.current?.contentWindow, appFont);
   }, [appFont]);
 
   const postDismissedTasks = useCallback(() => {

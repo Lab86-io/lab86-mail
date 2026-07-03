@@ -32,6 +32,8 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { useClientStore } from '@/lib/client-state';
+import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -1196,6 +1198,23 @@ function PlanReveal({
   const [applyError, setApplyError] = useState('');
   const [applied, setApplied] = useState<ApplyResponse | null>(null);
   const [projectMode, setProjectMode] = useState<'auto' | 'project' | 'task_only'>('auto');
+  const artifactFrameRef = useRef<HTMLIFrameElement>(null);
+
+  // Same theme contract as the Daily Brief: the artifact is --brief-* token
+  // HTML; the host mirrors the app's resolved fonts and colors into it on
+  // load and again whenever any customization slice moves.
+  const appFont = useClientStore((s) => s.appFont);
+  const accentHue = useClientStore((s) => s.accentHue);
+  const accentChroma = useClientStore((s) => s.accentChroma);
+  const bgHue = useClientStore((s) => s.bgHue);
+  const surfaceTint = useClientStore((s) => s.surfaceTint);
+  const postTheme = useCallback(() => {
+    postBriefTheme(artifactFrameRef.current?.contentWindow, appFont);
+  }, [appFont]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: color slices intentionally re-trigger the post; resolved values come from computed CSS.
+  useEffect(() => {
+    postTheme();
+  }, [postTheme, accentHue, accentChroma, bgHue, surfaceTint]);
   const disabledReason = applyDisabledReason(intent, plan);
   const isApplied = applied !== null || plan.status === 'applied';
 
@@ -1225,6 +1244,7 @@ function PlanReveal({
     return (
       <div className="relative min-h-0 flex-1">
         <motion.iframe
+          ref={artifactFrameRef}
           key={plan._id}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -1232,6 +1252,7 @@ function PlanReveal({
           title="Plan"
           srcDoc={plan.artifactHtml}
           sandbox="allow-scripts allow-popups"
+          onLoad={postTheme}
           className="absolute inset-0 h-full w-full bg-[var(--color-bg)]"
         />
         {/* Controls float over the document so the plan owns every pixel. */}

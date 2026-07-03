@@ -244,9 +244,17 @@ Structure (adapt to the data, don't force empty sections):
 - Working detail: document checklists, what to bring, phone scripts, fees, deadlines — the stuff that makes the errand executable without another search.
 - Quieter footer: assumptions, then sources as footnote links with a word on what each supports.
 
+THEME — the same contract as the Daily Brief, honoring the user's app theme (host injects live):
+- Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif), --brief-display-tracking (0em).
+- Headings/masthead use var(--brief-font-display); ALL body copy/UI uses var(--brief-font-body). Apply var(--brief-display-tracking) to display/header text.
+- ONE Google Fonts link covering every option so live font swaps resolve instantly:
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
+- Live restyle listener in one small inline <script>: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
+- Design for both light and dark from the start: usable :root fallbacks for light, plus @media (prefers-color-scheme: dark) that remaps only --brief-* tokens; the host may override both. Every layer — page background, elevated surfaces, subtle fills, hairlines, accent fills, muted text — derives from --brief-* tokens with color-mix/opacity.
+
 Rules:
-- One complete HTML document, inline CSS only. No external images/fonts/scripts — the ONLY external embed permitted is the Google Maps iframe above. Outbound links are encouraged and MUST be absolute (https://…) — never bare domains or relative paths.
-- System font stack. Respect prefers-color-scheme for dark/light. The document fills the ENTIRE pane edge-to-edge (no page margin hacks; use internal padding) and is designed for a wide pane (~800-1200px): use the width — two-column sections where it helps (work beside its place card, shopping list in columns).
+- One complete HTML document, all CSS in one <style>. The ONLY permitted external resources: the Google Fonts link above and the Google Maps iframe above. The ONLY permitted script is the theme listener above. Outbound links are encouraged and MUST be absolute (https://…) — never bare domains or relative paths.
+- The document fills the ENTIRE pane edge-to-edge (no page margin hacks; use internal padding) and is designed for a wide pane (~800-1200px): use the width — two-column sections where it helps (work beside its place card, shopping list in columns).
 - Voice: plain and factual. Never first person. No exclamation marks. No sparkle/emoji glyphs.
 - Headings: sentence case, never ALL-CAPS letter-spaced labels.
 - Render ONLY the data provided — no invented content, no lorem, no placeholders.

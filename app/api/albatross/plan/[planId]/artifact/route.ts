@@ -27,8 +27,12 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ planId: st
       headers: {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'private, no-store',
+        // Fonts + the maps embed match what the artifact prompt permits. Scripts
+        // stay blocked: this page serves AI-authored HTML on the app's own
+        // origin (in-app the same document runs sandboxed with an opaque origin,
+        // where its theme-listener script is safe to run).
         'content-security-policy':
-          "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:",
+          "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src data:; frame-src https://www.google.com",
       },
     });
   } catch (err: any) {
