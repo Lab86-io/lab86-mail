@@ -1,14 +1,15 @@
 'use client';
 
 /* Picture-in-picture planning: capture a thought, keep using the app. This
- * floating dock watches live intents — while one is planning it shows a small
- * feeding orb; when Albatross needs an answer the question appears RIGHT HERE
- * (options or free text) and answering regenerates in the background; when a
- * plan lands it offers one "View plan" jump. Suppressed on the Plans surface,
- * which already shows all of this at full size. */
+ * renders ONLY into the browser's Document Picture-in-Picture window (opened
+ * at capture, Chromium/Dia) — there is no in-app dock. While an intent is
+ * planning the window shows a small feeding orb; when Albatross needs an
+ * answer the question appears RIGHT THERE (options or free text) and
+ * answering regenerates in the background; when a plan lands it offers one
+ * "View plan" jump. */
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { useReducedMotion } from 'motion/react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -20,47 +21,8 @@ import {
 } from '@/components/albatross/PlansSurface';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
-import { getPipWindow, openPipWindow, pipSupported, subscribePipWindow } from '@/lib/albatross/pip-window';
+import { getPipWindow, subscribePipWindow } from '@/lib/albatross/pip-window';
 import { cn } from '@/lib/utils';
-
-// Document Picture-in-Picture (Chromium). A real OS-level always-on-top
-// window, so planning follows the user into other tabs and apps.
-interface DocumentPictureInPicture {
-  requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
-  window: Window | null;
-}
-
-function docPip(): DocumentPictureInPicture | null {
-  if (typeof window === 'undefined') return null;
-  return (
-    (window as Window & { documentPictureInPicture?: DocumentPictureInPicture }).documentPictureInPicture ??
-    null
-  );
-}
-
-/** Clone the app's stylesheets into the pip window so theme vars carry over. */
-function copyStylesInto(target: Window) {
-  for (const sheet of Array.from(document.styleSheets)) {
-    try {
-      const rules = Array.from(sheet.cssRules ?? [])
-        .map((rule) => rule.cssText)
-        .join('\n');
-      const style = target.document.createElement('style');
-      style.textContent = rules;
-      target.document.head.appendChild(style);
-    } catch {
-      const owner = sheet.ownerNode as HTMLLinkElement | null;
-      if (owner?.href) {
-        const link = target.document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = owner.href;
-        target.document.head.appendChild(link);
-      }
-    }
-  }
-  target.document.body.style.background = 'var(--color-bg)';
-  target.document.body.style.margin = '0';
-}
 
 interface PipIntent {
   _id: Id<'albatrossIntents'>;
@@ -89,13 +51,7 @@ export function pipStateFor(
   return null;
 }
 
-export function IntentPip({
-  suppressed,
-  onOpenIntent,
-}: {
-  suppressed: boolean;
-  onOpenIntent: (intentId: string) => void;
-}) {
+export function IntentPip({ onOpenIntent }: { onOpenIntent: (intentId: string) => void }) {
   const reduced = useReducedMotion() ?? false;
   const { isAuthenticated } = useConvexAuth();
   const intents = useQuery(api.albatrossIntents.listIntents, isAuthenticated ? {} : 'skip') as
@@ -112,7 +68,6 @@ export function IntentPip({
   const [selectedOption, setSelectedOption] = useState<QuestionOption | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const pipWindow = useSyncExternalStore(subscribePipWindow, getPipWindow, () => null);
-  const supported = pipSupported();
 
   useEffect(() => {
     for (const intent of intents ?? []) {
@@ -143,10 +98,9 @@ export function IntentPip({
     }
   }, [questionKey]);
 
-  // A popped-out pip window follows the user everywhere - even onto the
-  // Plans surface and into other browser tabs; only the in-app dock defers.
-  if (!pip || !intent) return null;
-  if (suppressed && !pipWindow) return null;
+  // Browser pip only: no window (closed, or unsupported browser) means the
+  // Plans surface is the sole home for questions and status.
+  if (!pipWindow || !pip || !intent) return null;
 
   const words = (intent.title || intent.rawText).replace(/\s+/g, ' ').trim();
   const shortWords = words.length > 64 ? `${words.slice(0, 64).trimEnd()}…` : words;
@@ -204,15 +158,6 @@ export function IntentPip({
                 'radial-gradient(circle at 38% 32%, color-mix(in oklab, var(--color-accent) 80%, white), var(--color-accent) 55%, color-mix(in oklab, var(--color-accent) 35%, var(--color-text)))',
             }}
           />
-        ) : null}
-        {supported && !pipWindow ? (
-          <button
-            type="button"
-            onClick={() => void openPipWindow()}
-            className="shrink-0 text-[11px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-          >
-            Pop out
-          </button>
         ) : null}
         <button
           type="button"
@@ -319,41 +264,23 @@ export function IntentPip({
     </>
   );
 
-  // Popped out: render into the always-on-top browser window (Chromium
-  // Document PiP - visible from other tabs, e.g. in Dia). React keeps the
-  // portal live, so questions and status updates stream into it.
-  if (pipWindow) {
-    return createPortal(
-      <div className="flex min-h-screen flex-col bg-[var(--color-bg)] font-sans text-[var(--color-text)]">
-        <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-2">
-          <span className="text-[12px] font-semibold tracking-tight">Albatross</span>
-          <span
-            className={cn('size-2 rounded-full', pip.mode === 'planning' && 'animate-pulse')}
-            style={{
-              background:
-                'radial-gradient(circle at 38% 32%, color-mix(in oklab, var(--color-accent) 80%, white), var(--color-accent))',
-            }}
-          />
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg-elevated)] pb-2">{card}</div>
-      </div>,
-      pipWindow.document.body,
-    );
-  }
-
-  return (
-    <AnimatePresence>
-      <motion.aside
-        key={`${pip.intentId}-${pip.mode}`}
-        initial={{ opacity: 0, y: reduced ? 0 : 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: reduced ? 0 : 8 }}
-        transition={reduced ? { duration: 0.1 } : { type: 'spring', stiffness: 320, damping: 28 }}
-        className="fixed bottom-6 left-6 z-40 w-[320px] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]"
-        aria-live="polite"
-      >
-        {card}
-      </motion.aside>
-    </AnimatePresence>
+  // Render into the always-on-top browser window (Chromium Document PiP -
+  // visible from other tabs, e.g. in Dia). React keeps the portal live, so
+  // questions and status updates stream into it.
+  return createPortal(
+    <div className="flex min-h-screen flex-col bg-[var(--color-bg)] font-sans text-[var(--color-text)]">
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-2">
+        <span className="text-[12px] font-semibold tracking-tight">Albatross</span>
+        <span
+          className={cn('size-2 rounded-full', pip.mode === 'planning' && 'animate-pulse')}
+          style={{
+            background:
+              'radial-gradient(circle at 38% 32%, color-mix(in oklab, var(--color-accent) 80%, white), var(--color-accent))',
+          }}
+        />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg-elevated)] pb-2">{card}</div>
+    </div>,
+    pipWindow.document.body,
   );
 }

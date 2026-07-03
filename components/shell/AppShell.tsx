@@ -228,9 +228,7 @@ export function AppShell({
             </div>
             <AIBarTrigger buttonHidden={albatrossEnabled} />
             {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
-            {albatrossEnabled ? (
-              <IntentPip suppressed={visiblePrimaryView === 'intents'} onOpenIntent={handleIntentCaptured} />
-            ) : null}
+            {albatrossEnabled ? <IntentPip onOpenIntent={handleIntentCaptured} /> : null}
           </main>
         </SidebarProvider>
 
@@ -310,9 +308,7 @@ export function AppShell({
           </TooltipProvider>
           <AIBarTrigger buttonHidden={albatrossEnabled} />
           {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
-          {albatrossEnabled ? (
-            <IntentPip suppressed={visiblePrimaryView === 'intents'} onOpenIntent={handleIntentCaptured} />
-          ) : null}
+          {albatrossEnabled ? <IntentPip onOpenIntent={handleIntentCaptured} /> : null}
         </main>
       </SidebarProvider>
 
