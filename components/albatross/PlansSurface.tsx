@@ -14,18 +14,14 @@
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import {
-  Archive,
   ArrowRight,
-  CalendarDays,
   Check,
   CheckCircle2,
   CircleDot,
   ExternalLink,
   Hourglass,
   Link2,
-  ListChecks,
   type LucideIcon,
-  Mail,
   MessageCircleQuestion,
   Mic,
   TriangleAlert,
@@ -374,22 +370,6 @@ function websiteLabel(url: string): string {
 // ---------------------------------------------------------------------------
 // Small local atoms (reimplemented per contract - no AlbatrossSurfaces import)
 // ---------------------------------------------------------------------------
-
-const STATUS_ICONS: Record<string, LucideIcon> = {
-  'circle-dot': CircleDot,
-  hourglass: Hourglass,
-  'message-circle-question': MessageCircleQuestion,
-  'list-checks': ListChecks,
-  'check-circle': CheckCircle2,
-  check: Check,
-  archive: Archive,
-};
-
-const ACTION_ICONS: Record<string, LucideIcon> = {
-  task: ListChecks,
-  calendar_event: CalendarDays,
-  email_draft: Mail,
-};
 
 const ACTION_LABELS: Record<string, string> = { task: 'Task', calendar_event: 'Event', email_draft: 'Draft' };
 
@@ -765,8 +745,10 @@ function IntentStage({
           className="relative h-full min-h-[420px]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0, scale: reduced ? 1 : 1.02 }}
-          transition={{ duration: reduced ? 0 : 0.25 }}
+          // The black hole detonates: a fast blur-scale burst, then the plan
+          // stage springs in behind it.
+          exit={{ opacity: 0, scale: reduced ? 1 : 2.3, filter: reduced ? 'none' : 'blur(12px)' }}
+          transition={{ duration: reduced ? 0 : 0.32, ease: [0.3, 0, 0.6, 1] }}
         >
           <ContextVortex
             title={vortexTitle.length > 96 ? `${vortexTitle.slice(0, 96).trimEnd()}…` : vortexTitle}

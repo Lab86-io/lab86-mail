@@ -6,6 +6,7 @@ import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panel
 import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
 import { AreasLive } from '@/components/albatross/AreasLive';
 import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
+import { IntentPip } from '@/components/albatross/IntentPip';
 import { PlansSurface } from '@/components/albatross/PlansSurface';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
@@ -225,6 +226,9 @@ export function AppShell({
             </div>
             <AIBarTrigger buttonHidden={albatrossEnabled} />
             {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
+            {albatrossEnabled ? (
+              <IntentPip suppressed={visiblePrimaryView === 'intents'} onOpenIntent={handleIntentCaptured} />
+            ) : null}
           </main>
         </SidebarProvider>
 
@@ -305,6 +309,9 @@ export function AppShell({
           </TooltipProvider>
           <AIBarTrigger buttonHidden={albatrossEnabled} />
           {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
+          {albatrossEnabled ? (
+            <IntentPip suppressed={visiblePrimaryView === 'intents'} onOpenIntent={handleIntentCaptured} />
+          ) : null}
         </main>
       </SidebarProvider>
 

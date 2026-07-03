@@ -32,8 +32,9 @@ export const SPAWN_SPACING_MS = 700;
 export const SPAWN_JITTER_MS = 320;
 export const CARD_MIN_DURATION_MS = 2_200;
 export const CARD_MAX_DURATION_MS = 3_200;
-export const ORB_GROWTH_MS = 25_000;
-export const ORB_GROWTH_SCALE = 0.6; // 1 -> 1.6
+export const ORB_START_SCALE = 0.45; // newborn singularity
+export const ORB_MEAL_SCALE = 0.07; // growth per swallowed card
+export const ORB_MAX_SCALE = 1.9;
 export const ORB_PULSE_MS = 3_000;
 export const ORB_PULSE_AMPLITUDE = 0.04;
 
@@ -109,12 +110,10 @@ export function spawnPlan(
   };
 }
 
-/** Singularity scale: slow growth to 1.6 over ~25s plus a gentle ~3s breath. */
-export function orbScaleAt(elapsedMs: number): number {
-  const t = Math.max(0, elapsedMs);
-  const growth = 1 + ORB_GROWTH_SCALE * Math.min(1, t / ORB_GROWTH_MS);
-  const pulse = ORB_PULSE_AMPLITUDE * Math.sin((t / ORB_PULSE_MS) * Math.PI * 2);
-  return growth + pulse;
+/** Singularity scale is FED, not timed: it starts small and grows a step for
+ *  every context card it swallows, clamped before it eats the pane. */
+export function orbScaleForMeals(meals: number): number {
+  return Math.min(ORB_START_SCALE + Math.max(0, meals) * ORB_MEAL_SCALE, ORB_MAX_SCALE);
 }
 
 /* ------------------------------------------------------------- rendering */
@@ -129,12 +128,14 @@ function FlyingCard({
   sources,
   width,
   height,
+  onSwallow,
 }: {
   lane: number;
   seed: number;
   sources: VortexSource[];
   width: number;
   height: number;
+  onSwallow: () => void;
 }) {
   const [cycle, setCycle] = useState(0);
   const index = lane + cycle * LANE_COUNT;
@@ -169,7 +170,10 @@ function FlyingCard({
         ease: [0.5, 0.05, 0.85, 0.4],
         opacity: { duration: plan.duration / 1000, delay: delayMs / 1000, times: [0, 0.18, 0.78, 1] },
       }}
-      onAnimationComplete={() => setCycle((c) => c + 1)}
+      onAnimationComplete={() => {
+        onSwallow();
+        setCycle((c) => c + 1);
+      }}
     >
       <div className="flex max-w-[240px] -translate-x-1/2 -translate-y-1/2 items-start gap-2 whitespace-nowrap rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 shadow-[var(--shadow-pop)]">
         <span className="mt-1 size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
@@ -203,6 +207,7 @@ export function ContextVortex({
   const frameRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [seed] = useState(() => Math.floor(Math.random() * 2 ** 31));
+  const [meals, setMeals] = useState(0);
 
   useEffect(() => {
     const el = frameRef.current;
@@ -252,6 +257,7 @@ export function ContextVortex({
               sources={sources}
               width={size.w}
               height={size.h}
+              onSwallow={() => setMeals((count) => count + 1)}
             />
           ))
         : null}
@@ -262,9 +268,10 @@ export function ContextVortex({
           orb
         ) : (
           <motion.div
-            initial={{ scale: 1 }}
-            animate={{ scale: 1 + ORB_GROWTH_SCALE }}
-            transition={{ duration: ORB_GROWTH_MS / 1000, ease: 'linear' }}
+            // Fed growth: a springy gulp on every swallowed card.
+            initial={{ scale: ORB_START_SCALE }}
+            animate={{ scale: orbScaleForMeals(meals) }}
+            transition={{ type: 'spring', stiffness: 260, damping: 13 }}
           >
             <motion.div
               className="relative"

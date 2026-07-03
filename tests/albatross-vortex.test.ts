@@ -4,10 +4,10 @@ import {
   CARD_MIN_DURATION_MS,
   DEFAULT_VORTEX_SOURCES,
   mulberry32,
-  ORB_GROWTH_MS,
-  ORB_GROWTH_SCALE,
-  ORB_PULSE_AMPLITUDE,
-  orbScaleAt,
+  ORB_MAX_SCALE,
+  ORB_MEAL_SCALE,
+  ORB_START_SCALE,
+  orbScaleForMeals,
   SPAWN_JITTER_MS,
   SPAWN_SPACING_MS,
   spawnPlan,
@@ -114,37 +114,16 @@ describe('spawnPlan', () => {
   });
 });
 
-describe('orbScaleAt', () => {
-  test('starts at exactly 1', () => {
-    expect(orbScaleAt(0)).toBe(1);
-    expect(orbScaleAt(-500)).toBe(1);
+describe('orbScaleForMeals', () => {
+  test('starts small and grows a step per swallowed card', () => {
+    expect(orbScaleForMeals(0)).toBe(ORB_START_SCALE);
+    expect(orbScaleForMeals(1)).toBeCloseTo(ORB_START_SCALE + ORB_MEAL_SCALE, 5);
+    expect(orbScaleForMeals(10)).toBeCloseTo(ORB_START_SCALE + 10 * ORB_MEAL_SCALE, 5);
   });
 
-  test('grows toward 1.6 over the growth window', () => {
-    const half = orbScaleAt(ORB_GROWTH_MS / 2);
-    expect(half).toBeGreaterThan(1.2);
-    expect(half).toBeLessThan(1.4);
-    const full = orbScaleAt(ORB_GROWTH_MS);
-    expect(Math.abs(full - (1 + ORB_GROWTH_SCALE))).toBeLessThanOrEqual(ORB_PULSE_AMPLITUDE);
-  });
-
-  test('clamps growth after 25s: only the breathing pulse remains', () => {
-    const a = orbScaleAt(ORB_GROWTH_MS + 1_000);
-    const b = orbScaleAt(ORB_GROWTH_MS + 60_000);
-    expect(Math.abs(a - b)).toBeLessThanOrEqual(2 * ORB_PULSE_AMPLITUDE);
-    for (const t of [30_000, 41_500, 90_000]) {
-      const v = orbScaleAt(t);
-      expect(v).toBeGreaterThanOrEqual(1 + ORB_GROWTH_SCALE - ORB_PULSE_AMPLITUDE);
-      expect(v).toBeLessThanOrEqual(1 + ORB_GROWTH_SCALE + ORB_PULSE_AMPLITUDE);
-    }
-  });
-
-  test('breathes on a ~3s cycle', () => {
-    // Pulse is sinusoidal: a quarter cycle after any time t, growth aside,
-    // the value shifts by roughly the pulse amplitude.
-    const t = 27_000; // exactly 9 pulse cycles, past the growth clamp
-    expect(orbScaleAt(t)).toBeCloseTo(1 + ORB_GROWTH_SCALE, 5);
-    expect(orbScaleAt(t + 750)).toBeCloseTo(1 + ORB_GROWTH_SCALE + ORB_PULSE_AMPLITUDE, 5);
+  test('clamps at the max and tolerates negatives', () => {
+    expect(orbScaleForMeals(1000)).toBe(ORB_MAX_SCALE);
+    expect(orbScaleForMeals(-5)).toBe(ORB_START_SCALE);
   });
 });
 

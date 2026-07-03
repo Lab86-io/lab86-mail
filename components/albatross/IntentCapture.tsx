@@ -347,7 +347,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           onMouseLeave={() => setHovered(false)}
           aria-haspopup="dialog"
           aria-label="New Intent"
-          className="group pointer-events-auto flex h-10 cursor-pointer items-center gap-2 rounded-full border border-transparent bg-transparent pr-4 pl-2.5 text-[var(--color-text-muted)] transition-colors duration-150 ease-out hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] hover:shadow-[var(--shadow-pop)] focus-visible:border-[var(--color-accent)] focus-visible:bg-[var(--color-accent)] focus-visible:text-[var(--color-accent-foreground)] focus-visible:outline-none active:scale-[0.97]"
+          className="group pointer-events-auto flex h-10 cursor-pointer items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 pr-4 pl-2.5 text-[var(--color-text)] shadow-[var(--shadow-soft)] backdrop-blur-sm transition-colors duration-150 ease-out hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] hover:shadow-[var(--shadow-pop)] focus-visible:border-[var(--color-accent)] focus-visible:bg-[var(--color-accent)] focus-visible:text-[var(--color-accent-foreground)] focus-visible:outline-none active:scale-[0.97]"
         >
           <motion.span
             aria-hidden
