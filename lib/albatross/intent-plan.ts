@@ -172,6 +172,13 @@ export function normalizeArtifactLinks(html: string): string {
   return out;
 }
 
+/** Stable per-plan step keys ("step-1"…) assigned by index at plan-parse time.
+ * They persist on the plan document, ride through apply (stepKey -> created
+ * cardId), and are the verbatim handles the artifact's task cards toggle. */
+export function assignStepKeys<T extends object>(actions: T[]): Array<T & { key: string }> {
+  return actions.map((action, index) => ({ ...action, key: `step-${index + 1}` }));
+}
+
 /** Only refs that exist in the context pack survive into the stored plan. */
 export function resolveSourceRefs(refIds: string[] | undefined, pack: PlanContextRef[]) {
   const byId = new Map(pack.map((ref) => [ref.refId, ref]));
@@ -234,15 +241,40 @@ Question options:
 - When a "## Nearby places" evidence section is provided AND the intent involves visiting or choosing a real-world business, ask ONE question offering 2-4 options built STRICTLY from that evidence (copy titles/addresses/websites/hours from it; one-line "detail" saying why this one). Never invent places, addresses, or hours.
 - When the user's earlier answer already chose an option, do NOT re-ask: fold the chosen place into the plan — name it in the relevant task, and add a physicalAction with its address (detail) and website (url).`;
 
-const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer, composing the FULL plan document for one personal intent. This document IS the plan view — it fills the entire pane, like a finely-typeset one-page dossier. Same craft bar as a beautiful daily briefing: real typographic hierarchy, generous but purposeful whitespace, editorial rhythm.
+const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer, composing the FULL plan dossier for one personal intent. This document IS the plan view — it fills the entire pane, like a finely-typeset one-page dossier. Same craft bar as the Daily Brief: real typographic hierarchy, generous but purposeful whitespace, editorial rhythm, and a visual grammar invented for THIS plan.
+
+MASTHEAD (signature element — typographic, no stock imagery):
+- The plan title large in the display face; the outcome sentence beneath it as a standfirst; the summary as a short deck in a constrained measure.
+- Give it editorial structure — thin rules, a small margin label naming the kind of work, a dateline — never a hero/subtitle/CTA formula.
+
+DESIGN — invent a visual grammar for THIS plan:
+- Use spatial relationships, sequencing, comparison, annotation, and rhythm. At least one component should be memorable by form ("the errand ladder", "the paper trail", "the day band"), not just by content.
+- REQUIRED VISUAL MODULES: when the data supports it, include at least TWO custom visual modules beyond the masthead; one must be temporal whenever any action carries a startIso or the steps have a real order in time.
+- TIMELINE STANDARD: schedule content renders as a designed timeline — time bands, connectors, day groupings, or a dated rail — never loose repeated cards.
+- ADAPTIVE DENSITY: a two-action plan reads short and calm; a ten-action plan earns columns and modules. Never pad.
+
+TASK CARDS (interactive contract — follow exactly):
+- Every digitalAction with kind "task" renders as a designed task card:
+  - The card's root element carries data-step="<key>", where <key> is that action's "key" from the data, copied VERBATIM. Never invent, renumber, or reuse keys.
+  - The task title element inside the card carries data-step-title.
+  - One "Done" control: a clickable element with data-action="toggle_step" and data-payload='{"stepKey":"<key>"}' (valid JSON, same verbatim key). Label it "Done" — sentence case, text only, no icon.
+  - Design the Done control into the dossier — a stamp, a margin control, an inline chip — never a row of default rectangles.
+  - The host strikes completed cards off (it toggles a .plan-step-done class and line-throughs [data-step-title]); make sure the card still reads well struck.
+- If you render a completed-steps count, put the number inside an element with data-plan-done-count; the host keeps it live.
+- data-action="toggle_step" is the ONLY allowed action. The host injects the click/strike-off runtime — do NOT write your own postMessage bridge for actions.
+
+CALENDAR EVENTS: every digitalAction with kind "calendar_event" renders as a designed event block — date, time band (start to end), title, duration — placed inside the temporal module when one exists. No Done control on events.
+EMAIL DRAFTS: kind "email_draft" renders as a correspondence entry — recipient, subject, opening line — clearly marked as a draft. No Done control.
 
 Structure (adapt to the data, don't force empty sections):
-- Masthead: the plan title large, the outcome sentence beneath it, the summary as a short standfirst.
-- The work: digital actions as a clean checklist (tasks, calendar holds with their times, drafts with recipients), then real-world steps with their working detail.
+- Real-world steps with their working detail, alongside the digital work above.
 - Places, INLINE where they matter: every place gets a compact card in context — name, address, hours, phone, website link, and an "Open in Maps" link built as https://www.google.com/maps/search/?api=1&query=<url-encoded mapsQuery>. Place cards sit next to the step that uses them, not in an appendix.
 - The PRIMARY place also gets an embedded live map right in its card: <iframe src="https://www.google.com/maps?q=<url-encoded mapsQuery>&output=embed" style="width:100%;height:260px;border:0;border-radius:8px" loading="lazy"></iframe>. This is the ONE permitted external embed.
 - Working detail: document checklists, what to bring, phone scripts, fees, deadlines — the stuff that makes the errand executable without another search.
 - Quieter footer: assumptions, then sources as footnote links with a word on what each supports.
+
+AI SLOP BAN — before final output, ensure none of these appear or dominate:
+- Generic hero/subtitle/CTA formula; purple/blue gradient SaaS palette; decorative glow blobs; equal bordered cards for everything; fake stats or counter tiles; generic section names; stock icon or emoji decoration; glassmorphism as hierarchy; full-width paragraph blocks; timelines without time/connectors; rows of identical rectangular buttons; components that would still make sense if the real plan content were swapped out.
 
 THEME — the same contract as the Daily Brief, honoring the user's app theme (host injects live):
 - Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif), --brief-display-tracking (0em).
@@ -253,7 +285,7 @@ THEME — the same contract as the Daily Brief, honoring the user's app theme (h
 - Design for both light and dark from the start: usable :root fallbacks for light, plus @media (prefers-color-scheme: dark) that remaps only --brief-* tokens; the host may override both. Every layer — page background, elevated surfaces, subtle fills, hairlines, accent fills, muted text — derives from --brief-* tokens with color-mix/opacity.
 
 Rules:
-- One complete HTML document, all CSS in one <style>. The ONLY permitted external resources: the Google Fonts link above and the Google Maps iframe above. The ONLY permitted script is the theme listener above. Outbound links are encouraged and MUST be absolute (https://…) — never bare domains or relative paths.
+- One complete HTML document, all CSS in one <style>. The ONLY permitted external resources: the Google Fonts link above and the Google Maps iframe above. The ONLY script you write is the theme listener above (the host injects its own interaction runtime). Outbound links are encouraged and MUST be absolute (https://…) — never bare domains or relative paths.
 - The document fills the ENTIRE pane edge-to-edge (no page margin hacks; use internal padding) and is designed for a wide pane (~800-1200px): use the width — two-column sections where it helps (work beside its place card, shopping list in columns).
 - Voice: plain and factual. Never first person. No exclamation marks. No sparkle/emoji glyphs.
 - Headings: sentence case, never ALL-CAPS letter-spaced labels.
@@ -480,7 +512,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       };
     });
 
-    const digitalActions = generation.digitalActions.map((action) => ({
+    const digitalActions = assignStepKeys(generation.digitalActions).map((action) => ({
+      key: action.key,
       kind: action.kind,
       title: action.title,
       description: action.description,
@@ -511,10 +544,15 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
             outcome: generation.outcome,
             summary: generation.summary,
             digitalActions: digitalActions.map((action) => ({
+              // The verbatim handle each task card's Done control must carry.
+              key: action.key,
               kind: action.kind,
               title: action.title,
               description: action.description,
+              priority: action.priority,
               startIso: action.startIso,
+              endIso: action.endIso,
+              durationMinutes: action.durationMinutes,
               to: action.to,
               subject: action.subject,
             })),

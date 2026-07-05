@@ -58,6 +58,15 @@ const placeValidator = v.object({
   mapsQuery: v.optional(v.string()),
 });
 
+// Recorded at apply time: which plan step ("step-1"…) became which artifact.
+// Card-backed steps carry the board cardId so the plan dossier's task cards
+// can toggle completion on the real board.
+const appliedStepValidator = v.object({
+  stepKey: v.string(),
+  kind: v.string(),
+  cardId: v.optional(v.string()),
+});
+
 const sourceRefValidator = v.object({
   kind: v.string(),
   id: v.string(),
@@ -349,6 +358,7 @@ export const markPlanApplied = mutation({
     ...callerArgs,
     planId: v.id('albatrossIntentPlans'),
     applicationId: v.optional(v.string()),
+    appliedSteps: v.optional(v.array(appliedStepValidator)),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -357,6 +367,15 @@ export const markPlanApplied = mutation({
     await ctx.db.patch(args.planId, {
       status: 'applied',
       appliedApplicationId: bounded(args.applicationId, 180),
+      ...(args.appliedSteps
+        ? {
+            appliedSteps: args.appliedSteps.slice(0, 60).map((step) => ({
+              stepKey: step.stepKey.slice(0, 80),
+              kind: step.kind.slice(0, 40),
+              cardId: step.cardId ? step.cardId.slice(0, 120) : undefined,
+            })),
+          }
+        : {}),
       appliedAt: ts,
       updatedAt: ts,
     });

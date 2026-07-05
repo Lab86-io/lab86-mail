@@ -149,6 +149,7 @@ describe('Albatross tools', () => {
         digitalActions: [
           {
             kind: 'task',
+            key: 'step-1',
             title: 'List missing tax docs',
             priority: 1,
             description: 'Find W-2, 1099, and brokerage records.',
@@ -161,6 +162,7 @@ describe('Albatross tools', () => {
           },
           {
             kind: 'email_send',
+            key: 'step-3',
             title: 'Send CPA note',
             to: 'cpa@example.test',
             body: 'I am collecting records and will send the missing list.',
@@ -184,6 +186,16 @@ describe('Albatross tools', () => {
     expect(result.operations.map((operation: any) => operation.tool)).toContain('save_draft');
     expect(result.approvals).toHaveLength(2);
     expect(result.unresolved).toHaveLength(1);
+
+    // Plan step keys ride through to created operations and approvals so the
+    // dossier can map its task cards back to real board cards.
+    const taskOperation = result.operations.find((operation: any) => operation.tool === 'tasks_create_card');
+    expect(taskOperation).toMatchObject({ stepKey: 'step-1', kind: 'task' });
+    expect(taskOperation.artifactId).toBeTruthy();
+    const draftOperation = result.operations.find((operation: any) => operation.tool === 'save_draft');
+    expect(draftOperation.stepKey).toBeUndefined();
+    const sendApproval = result.approvals.find((approval: any) => approval.stepKey === 'step-3');
+    expect(sendApproval).toMatchObject({ kind: 'email_send' });
 
     const createdProject = mutationCalls.find((call) => call.fn === apiMock.albatrossWork.createProject);
     expect(createdProject?.args).toMatchObject({

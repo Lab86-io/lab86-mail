@@ -75,7 +75,7 @@ export const areaList = defineTool({
 export const areaCreate = defineTool({
   name: 'area_create',
   description:
-    'Create an area — one part of life the user is responsible for. Create it as soon as the user names it, then investigate (area_domain_activity, corpus_search, sender_profile) before proposing facts.',
+    'Create an area — one part of life the user is responsible for. Create it as soon as the user names it, then investigate (area_domain_activity, corpus_search, sender_profile) before proposing facts. On success the area is active and appears in the sidebar rail immediately — tell the user it is there. If this tool errors, the area was NOT created; say so and retry instead of narrating success.',
   category: 'memory',
   mutating: true,
   input: z.object({
@@ -87,7 +87,12 @@ export const areaCreate = defineTool({
       .describe('Short category like job, family, property, project, community'),
     description: z.string().max(600).optional(),
   }),
-  output: z.object({ ok: z.boolean(), areaId: z.string() }),
+  output: z.object({
+    ok: z.boolean(),
+    areaId: z.string(),
+    name: z.string(),
+    status: z.literal('active'),
+  }),
   async handler(args, ctx) {
     const areaId = await deps.convexMutation<string>(areasApi().createArea, {
       userId: requireUserId(ctx.userId),
@@ -95,7 +100,9 @@ export const areaCreate = defineTool({
       kind: args.kind,
       description: args.description,
     });
-    return { ok: true, areaId: String(areaId) };
+    // Echo enough for the chat to confirm truthfully ("StatPearls is in your
+    // sidebar now") without a follow-up read.
+    return { ok: true, areaId: String(areaId), name: args.name, status: 'active' as const };
   },
 });
 

@@ -4,6 +4,7 @@ import {
   areaHomeSections,
   formatEventTime,
   RAIL_AREA_CAP,
+  railAreaBadge,
   railAreaRows,
   taskRowMeta,
 } from '../lib/albatross/area-home';
@@ -82,6 +83,28 @@ describe('railAreaRows', () => {
     const { rows, overflow } = railAreaRows(areas(5), 2);
     expect(rows).toHaveLength(2);
     expect(overflow).toBe(3);
+  });
+});
+
+describe('railAreaBadge', () => {
+  test('shows the candidate (awaiting confirmation) count', () => {
+    expect(railAreaBadge({ verified: 4, candidate: 3 } as any)).toBe('3');
+    expect(railAreaBadge({ candidate: 1 })).toBe('1');
+  });
+
+  test('zero, missing, or malformed counts render nothing', () => {
+    expect(railAreaBadge({ verified: 9, candidate: 0 } as any)).toBeNull();
+    expect(railAreaBadge({})).toBeNull();
+    expect(railAreaBadge(undefined)).toBeNull();
+    expect(railAreaBadge(null)).toBeNull();
+    expect(railAreaBadge({ candidate: Number.NaN })).toBeNull();
+    expect(railAreaBadge({ candidate: -2 })).toBeNull();
+  });
+
+  test('caps at 99+', () => {
+    expect(railAreaBadge({ candidate: 99 })).toBe('99');
+    expect(railAreaBadge({ candidate: 100 })).toBe('99+');
+    expect(railAreaBadge({ candidate: 4000 })).toBe('99+');
   });
 });
 

@@ -22,6 +22,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Fragment,
   type KeyboardEvent,
+  memo,
   startTransition,
   useCallback,
   useEffect,
@@ -70,8 +71,10 @@ import { ShineBorder } from '@/components/ui/shine-border';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { LIST_PREFETCH_MARGIN_PX, shouldRequestNextPage } from '@/lib/mail/list-pagination';
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
+import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
 import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
@@ -289,7 +292,9 @@ export function Inbox() {
     queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
     staleTime: 60_000,
   });
-  const customLabels = smartLabelsData?.custom || [];
+  // Stable reference: this feeds every memoized row, so a fresh [] each render
+  // would defeat the row memo entirely.
+  const customLabels = useMemo(() => smartLabelsData?.custom || [], [smartLabelsData]);
   const activeSmartLabel = smartCategory?.startsWith('custom:')
     ? customLabels.find((label) => label._id === smartCategory.slice('custom:'.length))?.name || smartCategory
     : smartCategory
@@ -501,20 +506,60 @@ export function Inbox() {
   // an empty live result alone must not flash "Nothing here" while the HTTP
   // page (which can still backfill brand-new accounts) is in flight.
   const showInitialLoading = !items.length && (isLoading || liveInbox.status === 'pending');
-  useEffect(() => {
+
+  // --- Infinite scroll: prefetch ahead + pipelined batches -----------------
+  // Fresh layout read instead of a cached observer entry, so the decision is
+  // correct even right after a page of rows pushes the sentinel further down.
+  const distanceToListEnd = useCallback(() => {
     const root = scrollRef.current;
     const target = loadMoreRef.current;
-    if (!root || !target || !hasNextPage || isFetchingNextPage) return;
+    if (!root || !target) return Number.POSITIVE_INFINITY;
+    return target.getBoundingClientRect().top - root.getBoundingClientRect().bottom;
+  }, []);
+  const maybeFetchNextPage = useCallback(() => {
+    if (
+      !shouldRequestNextPage({
+        inFlight: isFetchingNextPage,
+        hasMore: !!hasNextPage,
+        distanceToEnd: distanceToListEnd(),
+        lastError: isError,
+      })
+    ) {
+      return;
+    }
+    // cancelRefetch:false makes an already-running next-page request win, so
+    // rapid observer callbacks can never restart the same cursor fetch.
+    fetchNextPage({ cancelRefetch: false });
+  }, [distanceToListEnd, fetchNextPage, hasNextPage, isError, isFetchingNextPage]);
+  const maybeFetchNextPageRef = useRef(maybeFetchNextPage);
+  useEffect(() => {
+    maybeFetchNextPageRef.current = maybeFetchNextPage;
+  }, [maybeFetchNextPage]);
 
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry?.isIntersecting) fetchNextPage();
-      },
-      { root, rootMargin: '600px 0px 600px 0px' },
-    );
+  // The observer stays attached while pages load (tearing it down on every
+  // isFetching flip is what used to stall fast scrolls); it only triggers the
+  // shared decision helper. Re-attach when the list (and its sentinel) remounts.
+  const listMounted = !showInitialLoading && !isError && items.length > 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: account/smartCategory key the list's motion.div, so a view switch remounts the sentinel node and the observer must re-attach to it.
+  useEffect(() => {
+    if (!listMounted) return;
+    const root = scrollRef.current;
+    const target = loadMoreRef.current;
+    if (!root || !target) return;
+    const observer = new IntersectionObserver(() => maybeFetchNextPageRef.current(), {
+      root,
+      rootMargin: `${LIST_PREFETCH_MARGIN_PX}px 0px`,
+    });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+  }, [listMounted, account, smartCategory]);
+
+  // Pipelining: the moment a page lands (isFetchingNextPage flips false), ask
+  // again if the sentinel is still inside the prefetch window — fast scrollers
+  // get back-to-back batches instead of one round-trip per scroll pause.
+  useEffect(() => {
+    if (!isFetchingNextPage) maybeFetchNextPage();
+  }, [isFetchingNextPage, maybeFetchNextPage]);
 
   // Once we know the visible senders, resolve provider contact photos or
   // company-domain logos. Initials remain the fallback when no image exists.
@@ -712,6 +757,38 @@ export function Inbox() {
     },
     onError: (err: any) => toast.error(`Could not undo: ${err?.message || 'unknown error'}`),
   });
+
+  // Stable per-row handlers (react-query mutate fns and zustand setters keep
+  // their identity) so the memoized ThreadRowCard only re-renders when its own
+  // row data changes — cheap rows are what keep fast scrolling smooth.
+  const openThread = useCallback(
+    (rowAccount: string, threadId: string) => {
+      // Unified inbox stays put; just remember which mailbox this thread
+      // belongs to so the reader can load/reply correctly.
+      startTransition(() => {
+        setThreadAccount(rowAccount);
+        setSelectedThread(threadId);
+      });
+    },
+    [setSelectedThread, setThreadAccount],
+  );
+  const archiveRow = useCallback((key: string) => bulkArchive.mutate([key]), [bulkArchive.mutate]);
+  const trashRow = useCallback((key: string) => bulkTrash.mutate([key]), [bulkTrash.mutate]);
+  const correctRow = useCallback(
+    (item: ThreadRow, action: string, payload: Record<string, unknown> = {}) => {
+      applyCorrection.mutate({
+        account: item.account || account,
+        threadId: item._id,
+        action,
+        scope: 'sender',
+        ...payload,
+      });
+    },
+    [account, applyCorrection.mutate],
+  );
+  const undoLast = useCallback(() => undoLastRule.mutate(), [undoLastRule.mutate]);
+  const previewLabels = useCallback((item: ThreadRow) => setLabelPreview(item), []);
+
   return (
     <section className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
@@ -927,6 +1004,12 @@ export function Inbox() {
                 const senderEmail = emailFromHeader(it.from || it.fromAddress);
                 const key = rowKey(it);
                 const rowAccount = it.account || account;
+                // Provider contact photos pass straight through; company
+                // `/api/logos/...` URLs are ignored here because the row runs
+                // the validated client-side logo chain itself (which starts at
+                // that same proxy but never accepts a placeholder).
+                const rawPhoto = senderEmail ? (photos[senderEmail] ?? null) : null;
+                const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
                 // Editorial datelines: a serif group header whenever the day
                 // bucket changes (the list is already date-sorted).
                 const groupLabel = dateGroupLabel(Number(it.lastDate ?? it.date) || 0);
@@ -945,44 +1028,34 @@ export function Inbox() {
                     ) : null}
                     <ThreadRowCard
                       item={it}
-                      photoUrl={senderEmail ? (photos[senderEmail] ?? null) : null}
+                      rowId={key}
+                      rowAccount={rowAccount}
+                      senderEmail={senderEmail || ''}
+                      providerPhotoUrl={providerPhotoUrl}
                       showAccount={account === ALL_ACCOUNTS}
                       accountLabel={accountAliasById[rowAccount] || ''}
                       activeCategory={smartCategory}
                       selected={selectedIds.includes(key)}
                       active={selectedThreadId === it._id && threadAccount === rowAccount}
                       selecting={selectedIds.length > 0}
-                      onSelectRange={() => selectRangeTo(key)}
-                      onToggleSelect={() => toggleRowSelection(key)}
-                      onPrefetch={() => prefetchThread(it)}
-                      onApplyLabels={() => setLabelPreview(it)}
-                      onArchive={() => bulkArchive.mutate([key])}
-                      onTrash={() => bulkTrash.mutate([key])}
-                      onCorrect={(action, payload = {}) =>
-                        applyCorrection.mutate({
-                          account: rowAccount,
-                          threadId: it._id,
-                          action,
-                          scope: 'sender',
-                          ...payload,
-                        })
-                      }
-                      onUndoLast={() => undoLastRule.mutate()}
+                      onSelectRange={selectRangeTo}
+                      onToggleSelect={toggleRowSelection}
+                      onPrefetch={prefetchThread}
+                      onApplyLabels={previewLabels}
+                      onArchive={archiveRow}
+                      onTrash={trashRow}
+                      onCorrect={correctRow}
+                      onUndoLast={undoLast}
+                      onOpen={openThread}
                       customLabels={customLabels}
-                      onClick={() => {
-                        // Unified inbox stays put; just remember which mailbox this
-                        // thread belongs to so the reader can load/reply correctly.
-                        startTransition(() => {
-                          setThreadAccount(rowAccount);
-                          setSelectedThread(it._id);
-                        });
-                      }}
                     />
                   </Fragment>
                 );
               })}
               <div ref={loadMoreRef} className="min-h-1" aria-hidden />
-              {isFetchingNextPage ? <SkeletonRows count={4} /> : null}
+              {/* Lightweight placeholders keep the list alive (and scrollable)
+                  while the next batch is in flight instead of a dead stop. */}
+              {isFetchingNextPage ? <SkeletonRows count={6} /> : null}
             </motion.div>
           )}
         </div>
@@ -998,15 +1071,49 @@ export function Inbox() {
   );
 }
 
-function ThreadRowCard({
+// Company logo for a sender, resolved through the validated client-side
+// chain. Cached verdicts (module map + localStorage) return synchronously, so
+// rows re-mounted while scrolling render their final avatar on first paint —
+// no flicker, no re-probing. Unknown domains start as initials and upgrade
+// only once a candidate image actually decodes at logo quality; a placeholder
+// globe can never be accepted.
+function useSenderLogo(email: string): string | null {
+  const domain = useMemo(() => senderLogoDomain(email), [email]);
+  const [logo, setLogo] = useState<string | null>(() => (domain ? (peekSenderLogo(domain) ?? null) : null));
+  useEffect(() => {
+    if (!domain) {
+      setLogo(null);
+      return;
+    }
+    const settled = peekSenderLogo(domain);
+    if (settled !== undefined) {
+      setLogo(settled);
+      return;
+    }
+    setLogo(null);
+    let cancelled = false;
+    resolveSenderLogo(domain).then((url) => {
+      if (!cancelled && url) setLogo(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [domain]);
+  return logo;
+}
+
+const ThreadRowCard = memo(function ThreadRowCard({
   item,
-  photoUrl,
+  rowId,
+  rowAccount,
+  senderEmail,
+  providerPhotoUrl,
   selected,
   active,
   selecting,
   onSelectRange,
   onToggleSelect,
-  onClick,
+  onOpen,
   onPrefetch,
   onApplyLabels,
   onArchive,
@@ -1019,18 +1126,21 @@ function ThreadRowCard({
   activeCategory,
 }: {
   item: ThreadRow;
-  photoUrl?: string | null;
+  rowId: string;
+  rowAccount: string;
+  senderEmail: string;
+  providerPhotoUrl: string | null;
   selected: boolean;
   active: boolean;
   selecting: boolean;
-  onSelectRange: () => void;
-  onToggleSelect: () => void;
-  onClick: () => void;
-  onPrefetch: () => void;
-  onApplyLabels: () => void;
-  onArchive: () => void;
-  onTrash: () => void;
-  onCorrect: (action: string, payload?: Record<string, unknown>) => void;
+  onSelectRange: (rowId: string) => void;
+  onToggleSelect: (rowId: string) => void;
+  onOpen: (rowAccount: string, threadId: string) => void;
+  onPrefetch: (item: ThreadRow) => void;
+  onApplyLabels: (item: ThreadRow) => void;
+  onArchive: (rowId: string) => void;
+  onTrash: (rowId: string) => void;
+  onCorrect: (item: ThreadRow, action: string, payload?: Record<string, unknown>) => void;
   onUndoLast: () => void;
   customLabels: any[];
   showAccount?: boolean;
@@ -1055,15 +1165,23 @@ function ThreadRowCard({
   const accountColor = showAccount ? categoricalColor(item.account || '') : '';
   // Already-read threads recede so unread genuinely pops (shade inactive rows).
   const dim = !item.unread;
+  // A real contact photo always wins; otherwise the validated company logo;
+  // otherwise the designed initials avatar.
+  const companyLogo = useSenderLogo(providerPhotoUrl ? '' : senderEmail);
+  const avatarSrc = providerPhotoUrl || companyLogo;
+  const correct = useCallback(
+    (action: string, payload: Record<string, unknown> = {}) => onCorrect(item, action, payload),
+    [item, onCorrect],
+  );
   const prefetchTimer = useRef<number | null>(null);
 
   const schedulePrefetch = useCallback(() => {
     if (prefetchTimer.current != null) return;
     prefetchTimer.current = window.setTimeout(() => {
       prefetchTimer.current = null;
-      onPrefetch();
+      onPrefetch(item);
     }, 120);
-  }, [onPrefetch]);
+  }, [item, onPrefetch]);
 
   const cancelPrefetch = useCallback(() => {
     if (prefetchTimer.current == null) return;
@@ -1078,40 +1196,40 @@ function ThreadRowCard({
       onClick={(event) => {
         if (event.shiftKey) {
           event.preventDefault();
-          onSelectRange();
+          onSelectRange(rowId);
           return;
         }
         if (event.metaKey || event.ctrlKey || selecting) {
           event.preventDefault();
-          onToggleSelect();
+          onToggleSelect(rowId);
           return;
         }
-        onClick();
+        onOpen(rowAccount, item._id);
       }}
       onPointerEnter={schedulePrefetch}
       onPointerLeave={cancelPrefetch}
-      onFocus={onPrefetch}
+      onFocus={() => onPrefetch(item)}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === ' ') {
           event.preventDefault();
           if (event.shiftKey) {
-            onSelectRange();
+            onSelectRange(rowId);
             return;
           }
-          onToggleSelect();
+          onToggleSelect(rowId);
           return;
         }
         if (event.key === 'Enter') {
           event.preventDefault();
           if (event.shiftKey) {
-            onSelectRange();
+            onSelectRange(rowId);
             return;
           }
           if (event.metaKey || event.ctrlKey || selecting) {
-            onToggleSelect();
+            onToggleSelect(rowId);
             return;
           }
-          onClick();
+          onOpen(rowAccount, item._id);
         }
       }}
       role="button"
@@ -1129,7 +1247,7 @@ function ThreadRowCard({
         <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
       ) : null}
 
-      <Avatar name={senderLabel || item.account} src={photoUrl} size={28} />
+      <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
 
       {/* Two-line row: sender, then subject + preview inline. */}
       <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-90')}>
@@ -1181,7 +1299,7 @@ function ThreadRowCard({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onToggleSelect();
+                onToggleSelect(rowId);
               }}
               title={selected ? 'Deselect' : 'Select'}
               aria-pressed={selected}
@@ -1197,7 +1315,7 @@ function ThreadRowCard({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onArchive();
+                onArchive(rowId);
               }}
               title="Archive"
               className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-accent)]"
@@ -1209,7 +1327,7 @@ function ThreadRowCard({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onTrash();
+                onTrash(rowId);
               }}
               title="Delete"
               className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-danger)]"
@@ -1219,9 +1337,9 @@ function ThreadRowCard({
             </button>
             <QuickFixMenu
               customLabels={customLabels}
-              onApplyLabels={onApplyLabels}
-              onCorrect={onCorrect}
-              onCreateLabel={() => createLabelFromThread(item, onCorrect)}
+              onApplyLabels={() => onApplyLabels(item)}
+              onCorrect={correct}
+              onCreateLabel={() => createLabelFromThread(item, correct)}
               onUndoLast={onUndoLast}
             />
           </div>
@@ -1301,7 +1419,7 @@ function ThreadRowCard({
       </div>
     </div>
   );
-}
+});
 
 function QuickFixMenu({
   customLabels,
@@ -1401,18 +1519,24 @@ function createLabelFromThread(
   });
 }
 
+// Placeholder rows mirror the real ThreadRowCard geometry (same grid, padding,
+// 28px avatar, 40px meta column) so appending them during a fetch never shifts
+// scroll position. The shimmer is theme-neutral and pauses for reduced motion.
 function SkeletonRows({ count = 8 }: { count?: number }) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" aria-hidden>
       {SKELETON_ROW_KEYS.slice(0, count).map((key) => (
         <div
           key={key}
-          className="grid grid-cols-[28px_1fr] gap-3 border-b border-[var(--color-border)] px-3 py-3"
+          className="grid grid-cols-[30px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2"
         >
-          <div className="h-6 w-6 rounded-full shimmer" />
-          <div className="flex flex-col gap-1.5">
-            <div className="h-3 w-2/5 rounded shimmer" />
-            <div className="h-3 w-3/4 rounded shimmer" />
+          <div className="size-7 rounded-full shimmer motion-reduce:animate-none" />
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="h-3 w-2/5 rounded shimmer motion-reduce:animate-none" />
+            <div className="h-3 w-3/4 rounded shimmer motion-reduce:animate-none" />
+          </div>
+          <div className="flex min-h-[40px] flex-col items-end justify-center">
+            <div className="h-3 w-12 rounded shimmer motion-reduce:animate-none" />
           </div>
         </div>
       ))}

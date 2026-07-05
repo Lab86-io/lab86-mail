@@ -214,6 +214,32 @@ describe('generateIntentPlan orchestration', () => {
     expect(planPrompt).toContain('Money Management');
     expect(planPrompt).toContain('[ref1] (mail_thread)');
     expect(planPrompt).toContain('America/New_York');
+
+    // Stable step keys assigned by index and persisted on the plan document.
+    expect(save!.args.digitalActions[0].key).toBe('step-1');
+  });
+
+  test('artifact generation gets step keys verbatim plus the interaction contract', async () => {
+    const { calls } = wire({});
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const artifactGen = calls.generations.find((g: any) => g.feature === 'albatross_plan_artifact');
+    expect(artifactGen).toBeTruthy();
+
+    // Data pack: each digital action carries its assigned key.
+    const pack = JSON.parse(artifactGen.prompt);
+    expect(pack.digitalActions[0].key).toBe('step-1');
+
+    // The dossier prompt: theme contract intact, deterministic-bridge contract in.
+    const system = artifactGen.system as string;
+    expect(system).toContain('--brief-accent');
+    expect(system).toContain("d.source === 'lab86-host'");
+    expect(system).toContain('data-action="toggle_step"');
+    expect(system).toContain('data-step-title');
+    expect(system).toContain('data-plan-done-count');
+    expect(system).toContain('copied VERBATIM');
+    expect(system).toContain('AI SLOP BAN');
+    expect(system).toContain('TIMELINE STANDARD');
+    expect(system).toContain('do NOT write your own postMessage bridge');
   });
 
   test('artifact composition failure still saves the plan without a brief', async () => {
@@ -409,6 +435,23 @@ describe('generateIntentPlan nearby options (geo)', () => {
     await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
     expect(calls).not.toContain('albatross_local');
     expect(calls.filter((c) => c === 'browserbase_search')).toHaveLength(0);
+  });
+});
+
+describe('assignStepKeys', () => {
+  const { assignStepKeys } = require('../lib/albatross/intent-plan');
+
+  test('assigns stable index-based keys without touching action fields', () => {
+    const keyed = assignStepKeys([
+      { kind: 'task', title: 'A' },
+      { kind: 'calendar_event', title: 'B' },
+    ]);
+    expect(keyed.map((a: any) => a.key)).toEqual(['step-1', 'step-2']);
+    expect(keyed[0].title).toBe('A');
+  });
+
+  test('empty input stays empty', () => {
+    expect(assignStepKeys([])).toEqual([]);
   });
 });
 

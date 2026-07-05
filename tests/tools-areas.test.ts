@@ -91,11 +91,17 @@ describe('area_create', () => {
       kind: 'job',
       description: 'Day job at cardhunt.com',
     });
-    expect(result).toEqual({ ok: true, areaId: 'area_new' });
+    // The echo (name + active status) is what lets the Teach chat truthfully
+    // confirm "it's in your sidebar now" without a follow-up read.
+    expect(result).toEqual({ ok: true, areaId: 'area_new', name: 'Cardhunt job', status: 'active' });
     expect(mutationCalls[0]).toMatchObject({
       fn: apiMock.albatross.createArea,
       args: { userId: TEST_USER.userId, name: 'Cardhunt job', kind: 'job' },
     });
+  });
+
+  test('the tool contract promises immediate sidebar visibility', () => {
+    expect(areaCreate.description).toContain('sidebar');
   });
 });
 

@@ -199,8 +199,9 @@ export function companyLogoCandidatesForDomain(domain: string): string[] {
   if (brandfetchClientId) {
     out.push(`https://cdn.brandfetch.io/${encoded}/w/128/h/128?c=${encodeURIComponent(brandfetchClientId)}`);
   }
+  // logo.clearbit.com was removed 2026-07: the Clearbit Logo API is sunset and
+  // the hostname no longer resolves, so it only produced transient failures.
   out.push(
-    `https://logo.clearbit.com/${encoded}?size=128`,
     `https://icons.duckduckgo.com/ip3/${encoded}.ico`,
     `https://www.google.com/s2/favicons?sz=128&domain=${encoded}`,
   );

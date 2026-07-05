@@ -142,10 +142,15 @@ describe('senderCardsFromToolOutput', () => {
 });
 
 describe('factRowFromToolOutput', () => {
-  test('area_create becomes a created row', () => {
+  test('area_create becomes a created row that confirms the sidebar', () => {
     expect(factRowFromToolOutput('area_create', { name: 'CardHunt' }, { ok: true, areaId: 'a1' })).toEqual({
       tone: 'created',
-      text: 'CardHunt created',
+      text: 'CardHunt created — in your sidebar',
+    });
+    // Output-echoed name backstops a missing input echo in restored history.
+    expect(factRowFromToolOutput('area_create', {}, { ok: true, areaId: 'a1', name: 'StatPearls' })).toEqual({
+      tone: 'created',
+      text: 'StatPearls created — in your sidebar',
     });
   });
 

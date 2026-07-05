@@ -62,7 +62,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { UserIcon } from '@/components/ui/user';
 import { UsersIcon } from '@/components/ui/users';
 import { api } from '@/convex/_generated/api';
-import { railAreaRows } from '@/lib/albatross/area-home';
+import { railAreaBadge, railAreaRows } from '@/lib/albatross/area-home';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
@@ -281,7 +281,14 @@ export function Rail({
   });
   const railAreas =
     areasResult.status === 'success'
-      ? ((areasResult.data as Array<{ _id: string; name: string; kind: string }> | undefined) ?? [])
+      ? ((areasResult.data as
+          | Array<{
+              _id: string;
+              name: string;
+              kind: string;
+              factCounts?: { verified: number; candidate: number };
+            }>
+          | undefined) ?? [])
       : undefined;
   const { rows: areaRows, overflow: areaOverflow } = railAreaRows(railAreas);
   const openArea = (areaId: string | null) => {
@@ -333,7 +340,7 @@ export function Rail({
             column's center axis. Gap/padding both ease so the trigger glides
             into place instead of snapping. */}
         <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
-          <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0">
+          <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
           <SuggestionsTray />
@@ -441,6 +448,7 @@ export function Rail({
                 ))}
                 {areaRows.map((area) => {
                   const active = visiblePrimaryView === 'areas' && selectedAreaId === area._id;
+                  const pending = railAreaBadge(area.factCounts);
                   return (
                     <SidebarMenuItem key={area._id}>
                       <SidebarMenuButton
@@ -461,15 +469,24 @@ export function Rail({
                           />
                         ) : null}
                         {/* Text-first rows: a small tone dot keys each area to the
-                            shared categorical palette, no per-area icon. */}
-                        <span className="grid size-4 shrink-0 place-items-center">
+                            shared categorical palette, no per-area icon. The
+                            wrapper is a div on purpose — the menu button hides
+                            direct span children in icon mode, and the dot is
+                            all the collapsed rail shows for an area. */}
+                        <div className="grid size-4 shrink-0 place-items-center">
                           <span
                             className="size-2 rounded-full"
                             style={{ backgroundColor: categoricalColor(area._id) }}
                             aria-hidden
                           />
-                        </span>
+                        </div>
                         <span className="truncate">{area.name}</span>
+                        {/* One indicator per row: facts awaiting confirmation. */}
+                        {pending ? (
+                          <SidebarMenuBadge className="tabular-nums text-[var(--color-text-muted)] group-data-[collapsible=icon]:hidden">
+                            {pending}
+                          </SidebarMenuBadge>
+                        ) : null}
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   );
@@ -481,7 +498,7 @@ export function Rail({
                       onClick={() => openArea(null)}
                       className="text-[var(--color-text-muted)]"
                     >
-                      <span className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                      <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
                       <span>{areaOverflow} more</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -494,9 +511,23 @@ export function Rail({
                       className="text-[var(--color-text-muted)]"
                     >
                       <a href="/settings?tab=areas">
-                        <span className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                        <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
                         <span>Set up areas</span>
                       </a>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
+                {/* A failed query must not silently erase the section — say
+                    so and offer the one recovery that always works. */}
+                {areasResult.status === 'error' ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="Reload to retry"
+                      onClick={() => window.location.reload()}
+                      className="text-[var(--color-text-muted)]"
+                    >
+                      <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                      <span>Areas didn't load — reload</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ) : null}

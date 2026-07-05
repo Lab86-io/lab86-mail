@@ -19,6 +19,9 @@ export interface AlbatrossSourceRef {
 
 export interface AlbatrossDigitalAction {
   kind: AlbatrossArtifactKind;
+  // Stable per-plan step key assigned at plan-parse time ("step-1"…). Carried
+  // through apply so artifact task cards can address their created card.
+  key?: string;
   title: string;
   areaId?: string;
   priority?: 1 | 2 | 3;
@@ -70,6 +73,8 @@ export interface AlbatrossApplicationInput {
 
 export interface AlbatrossApplicationStep {
   id: string;
+  // The plan's stable step key ("step-1"…) when the source action carried one.
+  stepKey?: string;
   kind: AlbatrossArtifactKind;
   title: string;
   areaId?: string;
@@ -243,6 +248,7 @@ function actionStep(
   const requiresApproval = humanFacing(action);
   const base = {
     id: stepId(action.kind, action.title, index),
+    stepKey: action.key || undefined,
     kind: action.kind,
     title: clean(action.title) || 'Untitled action',
     areaId: action.areaId || input.areaId,

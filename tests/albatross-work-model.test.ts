@@ -40,6 +40,30 @@ describe('Albatross plan application model', () => {
     expect(plan.unresolved[0].blockedReason).toContain('Calendar start and end');
   });
 
+  test('plan step keys thread through to application steps (dossier card mapping)', () => {
+    const plan = buildAlbatrossApplicationPlan({
+      intentId: 'intent_tax',
+      projectMode: 'task_only',
+      account: 'jakob@example.test',
+      plan: {
+        digitalActions: [
+          { kind: 'task', key: 'step-1', title: 'List missing tax documents' },
+          {
+            kind: 'email_send',
+            key: 'step-2',
+            title: 'Send accountant update',
+            to: 'accountant@example.test',
+            body: 'I am gathering the docs.',
+          },
+          { kind: 'task', title: 'Legacy action without a key' },
+        ],
+      },
+    });
+    expect(plan.executableSteps.find((step) => step.title.includes('missing'))?.stepKey).toBe('step-1');
+    expect(plan.approvalSteps[0]?.stepKey).toBe('step-2');
+    expect(plan.executableSteps.find((step) => step.title.includes('Legacy'))?.stepKey).toBeUndefined();
+  });
+
   test('undone operations reappear as unresolved artifacts', () => {
     const unresolved = unresolvedArtifactsAfterUndo(
       {

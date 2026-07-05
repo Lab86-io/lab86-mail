@@ -118,10 +118,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // stepKey -> created-artifact mapping for the plan dossier's interactive
+    // task cards: card-backed steps carry the board cardId; approval-gated
+    // steps are recorded without one (nothing to toggle yet).
+    const appliedSteps = [
+      ...((result.operations || []) as any[])
+        .filter((operation) => operation.stepKey)
+        .map((operation) => ({
+          stepKey: String(operation.stepKey),
+          kind: String(operation.kind || ''),
+          ...(operation.tool === 'tasks_create_card' && operation.artifactId
+            ? { cardId: String(operation.artifactId) }
+            : {}),
+        })),
+      ...((result.approvals || []) as any[])
+        .filter((approval) => approval.stepKey)
+        .map((approval) => ({ stepKey: String(approval.stepKey), kind: String(approval.kind || '') })),
+    ];
+
     await convexMutation((api as any).albatrossIntents.markPlanApplied, {
       userId: user.userId,
       planId: body.planId,
       applicationId: result.applicationId,
+      appliedSteps,
     });
 
     return json(200, {
@@ -132,6 +151,7 @@ export async function POST(req: NextRequest) {
       operations: result.operations,
       approvals: result.approvals,
       unresolved: result.unresolved,
+      appliedSteps,
       artifactAttachedTo,
     });
   } catch (err: any) {

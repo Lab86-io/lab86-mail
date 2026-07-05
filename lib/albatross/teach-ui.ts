@@ -131,8 +131,10 @@ export function factRowFromToolOutput(toolName: string, input: any, output: any)
   if (!output || output.ok === false) return null;
   switch (toolName) {
     case 'area_create': {
-      const name = String(input?.name || '').trim();
-      return { tone: 'created', text: `${name || 'Area'} created` };
+      const name = String(input?.name || output?.name || '').trim();
+      // Close the loop the user actually cares about: the new area is live in
+      // the sidebar rail the moment this row renders.
+      return { tone: 'created', text: `${name || 'Area'} created — in your sidebar` };
     }
     case 'area_add_fact': {
       const value = String(input?.value || '').trim();

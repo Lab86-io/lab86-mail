@@ -632,6 +632,32 @@ export const getCardState = query({
   },
 });
 
+// Batch completion snapshot for the plan dossier's task cards: the artifact
+// iframe strikes steps off from this live query, so a card completed on the
+// board crosses off in the dossier too. Lenient by design — deleted cards,
+// malformed ids, and lost board access are skipped, never thrown, so one
+// stale mapping can't break the whole plan view.
+export const getCardStates = query({
+  args: { ...callerArgs, cardIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const states: Array<{ cardId: string; completedAt: number | null }> = [];
+    for (const raw of args.cardIds.slice(0, 60)) {
+      const cardId = ctx.db.normalizeId('cards', raw);
+      if (!cardId) continue;
+      const card = await ctx.db.get(cardId);
+      if (!card) continue;
+      try {
+        await requireBoard(ctx, card.boardId, userId, 'viewer');
+      } catch {
+        continue;
+      }
+      states.push({ cardId: String(cardId), completedAt: card.completedAt ?? null });
+    }
+    return states;
+  },
+});
+
 export const deleteCard = mutation({
   args: { ...callerArgs, cardId: v.id('cards') },
   handler: async (ctx, args) => {

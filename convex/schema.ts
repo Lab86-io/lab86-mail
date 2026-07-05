@@ -690,6 +690,17 @@ export default defineSchema({
       ),
     ),
     appliedApplicationId: v.optional(v.string()),
+    // stepKey -> created artifact mapping recorded at apply time; card-backed
+    // steps carry the board cardId for the dossier's interactive task cards.
+    appliedSteps: v.optional(
+      v.array(
+        v.object({
+          stepKey: v.string(),
+          kind: v.string(),
+          cardId: v.optional(v.string()),
+        }),
+      ),
+    ),
     appliedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),

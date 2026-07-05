@@ -51,6 +51,14 @@ export function railAreaRows<T>(
   return { rows: list.slice(0, cap), overflow: list.length - cap };
 }
 
+// One quiet number per rail area row: facts awaiting the user's confirmation.
+// Zero (or malformed counts) renders nothing — no ghost pill.
+export function railAreaBadge(factCounts?: { candidate?: number } | null): string | null {
+  const pending = Number(factCounts?.candidate ?? 0);
+  if (!Number.isFinite(pending) || pending <= 0) return null;
+  return pending >= 100 ? '99+' : String(Math.floor(pending));
+}
+
 const dayFormat = (locale: string) =>
   new Intl.DateTimeFormat(locale, { weekday: 'short', month: 'short', day: 'numeric' });
 const timeFormat = (locale: string) =>

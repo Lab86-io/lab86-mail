@@ -76,6 +76,7 @@ const digitalActionSchema = z
       'calendar_rsvp',
       'area_fact',
     ]),
+    key: z.string().optional(),
     title: z.string(),
     areaId: z.string().optional(),
     priority: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
@@ -320,6 +321,10 @@ export const albatrossApplyIntentPlan = defineTool({
         tool: step.toolName,
         artifactId,
         title: step.title,
+        // stepKey/kind let callers map plan steps back to created artifacts
+        // (the plan dossier's toggleable task cards).
+        stepKey: step.stepKey,
+        kind: step.kind,
         result,
       });
       artifacts.push({
@@ -365,7 +370,14 @@ export const albatrossApplyIntentPlan = defineTool({
         risk: 'Human-facing action. Requires explicit approval before provider write.',
       });
       approvalIds.push(String(approvalId));
-      approvals.push({ approvalId, title: step.title, toolName: step.toolName, toolArgs: step.toolArgs });
+      approvals.push({
+        approvalId,
+        title: step.title,
+        toolName: step.toolName,
+        toolArgs: step.toolArgs,
+        stepKey: step.stepKey,
+        kind: step.kind,
+      });
       await linkToProject(userId, projectId, {
         artifactKind: 'operationBatch',
         artifactId: String(approvalId),

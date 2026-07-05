@@ -11,6 +11,12 @@
 //   with one affirm action -> option card + "Use this one" pattern.
 // - motion.dev/docs/react-animation: stagger via per-child delays derived from
 //   planRevealSequence indexes (deterministic, testable); useReducedMotion -> fade-only.
+// - Mobbin/Things 3 Today (235f4304), Amie done divider (8651d9b8): identity left,
+//   metadata right, done = filled mark + faded title -> the hover rail rows.
+// - Mobbin/Transit trip timeline (56fe42c4), BlaBlaCar stops (1903ead2): time bands
+//   with connectors -> the dossier's temporal-module standard (see intent-plan.ts).
+// - Dia browser reports (Refero teardown of diabrowser.com): editorial masthead,
+//   condensed display type, whitespace as structure -> the plan dossier craft bar.
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import {
@@ -28,10 +34,26 @@ import {
   Type,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import {
+  intentInitials,
+  RAIL_COLLAPSED_PX,
+  RAIL_EXPANDED_PX,
+  railExpandTransition,
+  railLabelMotion,
+} from '@/lib/albatross/intent-rail';
+import {
+  type AppliedPlanStep,
+  injectPlanArtifactRuntime,
+  type PlanStepState,
+  parseToggleStepMessage,
+  type StepCardState,
+  stepStatesForArtifact,
+  toggleStepDecision,
+} from '@/lib/albatross/plan-artifact-runtime';
 import { useClientStore } from '@/lib/client-state';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
@@ -331,6 +353,9 @@ interface IntentRow extends IntentLike {
 interface PlanRow extends PlanLike {
   _id: string;
   appliedAt?: number;
+  // stepKey -> created artifact mapping recorded at apply time (card-backed
+  // steps carry the board cardId; the dossier's task cards toggle those).
+  appliedSteps?: AppliedPlanStep[];
 }
 
 interface AnswerEntry {
@@ -347,6 +372,7 @@ interface ApplyResponse {
   operations: { operationId: string; tool: string; artifactId: string; title: string }[];
   approvals: { approvalId: string; title: string; toolName?: string }[];
   unresolved: { title?: string; blockedReason?: string }[];
+  appliedSteps?: AppliedPlanStep[];
   artifactAttachedTo?: string;
 }
 
@@ -529,57 +555,20 @@ export function PlansSurface({ initialIntentId }: { initialIntentId?: string | n
 
   return (
     <div className="flex h-full min-h-0 min-w-0">
-      <aside className="flex w-[280px] shrink-0 flex-col border-r border-[var(--color-border)]">
-        <div className="flex flex-col gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[12.5px] font-semibold text-[var(--color-text)]">Intents</h2>
-            <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{visible.length}</span>
-            <button
-              type="button"
-              onClick={() => setShowArchived((prev) => !prev)}
-              className={cn(
-                'ml-auto text-[11px] font-medium transition-colors',
-                showArchived
-                  ? 'text-[var(--color-accent)]'
-                  : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]',
-              )}
-            >
-              Archived
-            </button>
-          </div>
-          <Segmented
-            value={filter}
-            onChange={setFilter}
-            options={[
-              { value: 'all', label: 'All' },
-              { value: 'needs_you', label: 'Needs you' },
-              { value: 'ready', label: 'Ready' },
-              { value: 'done', label: 'Done' },
-            ]}
-          />
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto py-1">
-          {intents === undefined ? (
-            <p className="px-3 py-4 text-[12px] text-[var(--color-text-faint)]">Loading…</p>
-          ) : visible.length === 0 ? (
-            <p className="px-3 py-4 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-              Nothing on your mind yet. Hit New Intent and dump one thing you&apos;ve been avoiding.
-            </p>
-          ) : (
-            visible.map((intent) => (
-              <IntentListRow
-                key={intent._id}
-                intent={intent}
-                selected={intent._id === selectedId}
-                onSelect={() => {
-                  userClearedRef.current = false;
-                  setSelectedId(intent._id);
-                }}
-              />
-            ))
-          )}
-        </div>
-      </aside>
+      <IntentRail
+        intents={intents}
+        visible={visible}
+        filter={filter}
+        onFilterChange={setFilter}
+        showArchived={showArchived}
+        onToggleArchived={() => setShowArchived((prev) => !prev)}
+        selectedId={selectedId}
+        onSelect={(intentId) => {
+          userClearedRef.current = false;
+          setSelectedId(intentId);
+        }}
+        reduced={reduced}
+      />
 
       <section className="min-w-0 flex-1 overflow-y-auto">
         {selectedId && selected ? (
@@ -621,53 +610,210 @@ export function PlansSurface({ initialIntentId }: { initialIntentId?: string | n
   );
 }
 
-function IntentListRow({
+// The intent rail: collapsed it is a slim column of typographic initials
+// tiles (one status-tone dot each); hovering or focusing anything inside
+// expands a floating overlay with titles and status lines, so the plan
+// dossier keeps its full width underneath (no layout thrash). Built with
+// plain divs + motion per the contract — no nested SidebarProvider.
+function IntentRail({
+  intents,
+  visible,
+  filter,
+  onFilterChange,
+  showArchived,
+  onToggleArchived,
+  selectedId,
+  onSelect,
+  reduced,
+}: {
+  intents: IntentRow[] | undefined;
+  visible: IntentRow[];
+  filter: IntentFilter;
+  onFilterChange: (filter: IntentFilter) => void;
+  showArchived: boolean;
+  onToggleArchived: () => void;
+  selectedId: string | null;
+  onSelect: (intentId: string) => void;
+  reduced: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const label = railLabelMotion(expanded, reduced);
+  return (
+    <div className="relative shrink-0" style={{ width: RAIL_COLLAPSED_PX }}>
+      <motion.aside
+        initial={false}
+        animate={{ width: expanded ? RAIL_EXPANDED_PX : RAIL_COLLAPSED_PX }}
+        transition={railExpandTransition(reduced)}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocusCapture={() => setExpanded(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setExpanded(false);
+        }}
+        aria-label="Intents"
+        className={cn(
+          'absolute inset-y-0 left-0 z-20 flex flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-bg)]',
+          expanded && 'shadow-[var(--shadow-pop)]',
+        )}
+      >
+        <div className="flex flex-col border-b border-[var(--color-border)] px-2 py-2.5">
+          <div className="flex h-6 items-center">
+            <span
+              className="w-10 shrink-0 text-center text-[11px] font-semibold tabular-nums text-[var(--color-text-faint)]"
+              title={`${visible.length} intents`}
+            >
+              {visible.length}
+            </span>
+            <motion.div
+              {...label}
+              aria-hidden={!expanded}
+              className={cn(
+                'flex min-w-0 flex-1 items-center gap-2 pl-1 pr-1',
+                !expanded && 'pointer-events-none',
+              )}
+            >
+              <h2 className="whitespace-nowrap text-[12.5px] font-semibold text-[var(--color-text)]">
+                Intents
+              </h2>
+              <button
+                type="button"
+                tabIndex={expanded ? 0 : -1}
+                onClick={onToggleArchived}
+                className={cn(
+                  'ml-auto text-[11px] font-medium transition-colors',
+                  showArchived
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]',
+                )}
+              >
+                Archived
+              </button>
+            </motion.div>
+          </div>
+          <motion.div
+            {...label}
+            aria-hidden={!expanded}
+            className={cn('mt-2 pl-1', !expanded && 'pointer-events-none')}
+            style={{ width: RAIL_EXPANDED_PX - 24 }}
+          >
+            {expanded ? (
+              <Segmented
+                value={filter}
+                onChange={onFilterChange}
+                options={[
+                  { value: 'all', label: 'All' },
+                  { value: 'needs_you', label: 'Needs you' },
+                  { value: 'ready', label: 'Ready' },
+                  { value: 'done', label: 'Done' },
+                ]}
+              />
+            ) : (
+              <div className="h-6" />
+            )}
+          </motion.div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
+          {intents === undefined ? (
+            <p className="px-3 py-4 text-center text-[12px] text-[var(--color-text-faint)]">…</p>
+          ) : visible.length === 0 ? (
+            expanded ? (
+              <p className="px-3 py-4 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                Nothing on your mind yet. Hit New Intent and dump one thing you&apos;ve been avoiding.
+              </p>
+            ) : null
+          ) : (
+            visible.map((intent) => (
+              <IntentRailRow
+                key={intent._id}
+                intent={intent}
+                selected={intent._id === selectedId}
+                expanded={expanded}
+                reduced={reduced}
+                onSelect={() => onSelect(intent._id)}
+              />
+            ))
+          )}
+        </div>
+      </motion.aside>
+    </div>
+  );
+}
+
+function IntentRailRow({
   intent,
   selected,
+  expanded,
+  reduced,
   onSelect,
 }: {
   intent: IntentRow;
   selected: boolean;
+  expanded: boolean;
+  reduced: boolean;
   onSelect: () => void;
 }) {
   const meta = intentStatusMeta(intent.status);
+  const title = intentDisplayTitle(intent);
+  const failed = Boolean(intent.planError) && intent.status !== 'planning';
+  const label = railLabelMotion(expanded, reduced);
   return (
     <button
       type="button"
       onClick={onSelect}
+      title={expanded ? undefined : title}
       className={cn(
-        'flex w-full flex-col gap-1 px-3 py-2 text-left transition-colors',
+        'relative flex w-full items-center px-2 py-1.5 text-left transition-colors',
         selected ? 'bg-[var(--color-selected-soft)]' : 'hover:bg-[var(--color-hover-soft)]',
       )}
     >
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--color-text)]">
-          {intentDisplayTitle(intent)}
+      {/* Selected intent: accent edge bar (the one selection mark). */}
+      {selected ? (
+        <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-r-full bg-[var(--color-accent)]" />
+      ) : null}
+      <span
+        className={cn(
+          'relative grid size-10 shrink-0 place-items-center rounded-lg border',
+          selected
+            ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)]'
+            : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
+        )}
+      >
+        <span className="font-display text-[13px] font-semibold tracking-tight text-[var(--color-text)]">
+          {intentInitials(title)}
         </span>
-        <span className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-faint)]">
-          {relativeTime(intent.updatedAt)}
-        </span>
-      </div>
-      <div className="flex items-center gap-1.5">
+        {/* One indicator per row: the status-tone dot. */}
         <span
-          className={cn('size-1.5 shrink-0 rounded-full', meta.pulse && 'animate-pulse')}
+          className={cn('absolute bottom-0.5 right-0.5 size-1.5 rounded-full', meta.pulse && 'animate-pulse')}
           style={{
-            backgroundColor:
-              meta.tone === 'neutral' ? 'var(--color-text-faint)' : `var(--color-${meta.tone})`,
+            backgroundColor: failed
+              ? 'var(--color-danger)'
+              : meta.tone === 'neutral'
+                ? 'var(--color-text-faint)'
+                : `var(--color-${meta.tone})`,
           }}
         />
-        <span
-          className={cn(
-            'text-[11px] font-medium text-[var(--color-text-muted)]',
-            meta.pulse && 'animate-pulse text-[var(--color-accent)]',
-          )}
-        >
-          {meta.label}
+      </span>
+      <motion.span
+        {...label}
+        aria-hidden={!expanded}
+        className={cn('ml-2.5 flex min-w-0 flex-col', !expanded && 'pointer-events-none')}
+        style={{ width: RAIL_EXPANDED_PX - RAIL_COLLAPSED_PX - 18 }}
+      >
+        <span className="truncate text-[13px] font-medium text-[var(--color-text)]">{title}</span>
+        <span className="flex items-center gap-1.5 text-[11px]">
+          <span
+            className={cn(
+              'font-medium text-[var(--color-text-muted)]',
+              meta.pulse && 'animate-pulse text-[var(--color-accent)]',
+            )}
+          >
+            {failed ? 'Plan failed' : meta.label}
+          </span>
+          <span className="tabular-nums text-[var(--color-text-faint)]">
+            {relativeTime(intent.updatedAt)}
+          </span>
         </span>
-        {intent.planError && intent.status !== 'planning' ? (
-          <span className="text-[11px] font-medium text-[var(--color-danger)]">Plan failed</span>
-        ) : null}
-      </div>
+      </motion.span>
     </button>
   );
 }
@@ -1218,6 +1364,95 @@ function PlanReveal({
   const disabledReason = applyDisabledReason(intent, plan);
   const isApplied = applied !== null || plan.status === 'applied';
 
+  // ---- Interactive task cards (deterministic bridge) ----------------------
+  // The dossier's Done controls post toggle_step; the host resolves the
+  // stepKey to the board card created at apply time and flips it through
+  // api.boards.updateCard (which records the completionEvent and ticks
+  // Projects progress — never bypassed). Completion state flows back as
+  // step_state, sourced from a live Convex query so a card completed on the
+  // task board strikes off here too.
+  const { isAuthenticated } = useConvexAuth();
+  const appliedSteps = useMemo<AppliedPlanStep[]>(
+    () => (plan.appliedSteps?.length ? plan.appliedSteps : (applied?.appliedSteps ?? [])),
+    [plan.appliedSteps, applied],
+  );
+  const stepCardIds = useMemo(
+    () => appliedSteps.filter((step) => step.cardId).map((step) => String(step.cardId)),
+    [appliedSteps],
+  );
+  const cardStates = useQuery(
+    api.boards.getCardStates,
+    isAuthenticated && stepCardIds.length ? { cardIds: stepCardIds } : 'skip',
+  ) as StepCardState[] | undefined;
+  const updateCardMutation = useMutation(api.boards.updateCard);
+  const artifactDoc = useMemo(
+    () => (plan.artifactHtml ? injectPlanArtifactRuntime(plan.artifactHtml) : undefined),
+    [plan.artifactHtml],
+  );
+
+  const postStepState = useCallback(
+    (states?: PlanStepState[]) => {
+      artifactFrameRef.current?.contentWindow?.postMessage(
+        {
+          source: 'lab86-host',
+          type: 'step_state',
+          steps: states ?? stepStatesForArtifact(appliedSteps, cardStates ?? []),
+        },
+        '*',
+      );
+    },
+    [appliedSteps, cardStates],
+  );
+  useEffect(() => {
+    postStepState();
+  }, [postStepState]);
+
+  useEffect(() => {
+    const onMessage = async (event: MessageEvent) => {
+      const frame = artifactFrameRef.current;
+      // Only trust messages from our own iframe document, and only the
+      // allowlisted toggle_step shape (parseToggleStepMessage rejects the rest).
+      if (!frame || event.source !== frame.contentWindow) return;
+      const message = parseToggleStepMessage(event.data);
+      if (!message) return;
+      const ack = (ok: boolean, error?: string) =>
+        frame.contentWindow?.postMessage(
+          {
+            source: 'lab86-host',
+            action: 'toggle_step',
+            ok,
+            ...(error ? { error } : {}),
+            payload: { stepKey: message.stepKey },
+          },
+          '*',
+        );
+      const decision = toggleStepDecision({
+        applied: isApplied,
+        steps: appliedSteps,
+        cardStates: cardStates ?? [],
+        stepKey: message.stepKey,
+      });
+      // Unapplied plans get a quiet inline hint inside the card, never an alert.
+      if (decision.kind !== 'toggle') return ack(false, decision.kind);
+      try {
+        // Optimistic strike so the card settles instantly; the live query
+        // confirms (or corrects) right after the mutation lands.
+        postStepState([{ stepKey: message.stepKey, completed: decision.nextCompletedAt !== null }]);
+        await updateCardMutation({
+          cardId: decision.cardId as Id<'cards'>,
+          completedAt: decision.nextCompletedAt,
+        });
+        ack(true);
+      } catch (error) {
+        postStepState();
+        ack(false, error instanceof Error ? error.message : 'update failed');
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [isApplied, appliedSteps, cardStates, updateCardMutation, postStepState]);
+  // --------------------------------------------------------------------------
+
   const apply = async () => {
     setApplying(true);
     setApplyError('');
@@ -1250,9 +1485,12 @@ function PlanReveal({
           animate={{ opacity: 1 }}
           transition={{ duration: reduced ? 0.15 : 0.3 }}
           title="Plan"
-          srcDoc={plan.artifactHtml}
+          srcDoc={artifactDoc}
           sandbox="allow-scripts allow-popups"
-          onLoad={postTheme}
+          onLoad={() => {
+            postTheme();
+            postStepState();
+          }}
           className="absolute inset-0 h-full w-full bg-[var(--color-bg)]"
         />
         {/* Controls float over the document so the plan owns every pixel. */}
