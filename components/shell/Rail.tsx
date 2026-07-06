@@ -189,7 +189,11 @@ export function Rail({
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, state: railState } = useSidebar();
+  // Collapsed desktop rows are dock tiles with their own floating name label;
+  // the richer help tooltips only augment the expanded list (one label
+  // mechanism at a time).
+  const railCollapsed = railState === 'collapsed' && !isMobile;
   const queryClient = useQueryClient();
   const [smartSettingsOpen, setSmartSettingsOpen] = useState(false);
   // Collapsible rail sections, persisted. Mailboxes start collapsed — the
@@ -505,15 +509,17 @@ export function Rail({
                 ) : null}
                 {railAreas && railAreas.length === 0 ? (
                   <SidebarMenuItem>
+                    {/* A real button (not asChild) so the collapsed rail can
+                        render it as a magnifying dock tile like its peers. */}
                     <SidebarMenuButton
-                      asChild
                       tooltip="Set up areas"
+                      onClick={() => {
+                        window.location.href = '/settings?tab=areas';
+                      }}
                       className="text-[var(--color-text-muted)]"
                     >
-                      <a href="/settings?tab=areas">
-                        <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
-                        <span>Set up areas</span>
-                      </a>
+                      <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                      <span>Set up areas</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ) : null}
@@ -586,7 +592,11 @@ export function Rail({
                             <SmartCountBadge stat={smartCounts?.[id]} />
                           </SidebarMenuButton>
                         </TooltipTrigger>
-                        <TooltipContent side="right" className="max-w-[240px] text-[11.5px]">
+                        <TooltipContent
+                          side="right"
+                          hidden={railCollapsed}
+                          className="max-w-[240px] text-[11.5px]"
+                        >
                           <div className="space-y-1">
                             <div>{help}</div>
                             {smartCounts?.[id]?.unread ? (
@@ -642,7 +652,11 @@ export function Rail({
                                   <SmartCountBadge stat={smartCounts?.[id]} />
                                 </SidebarMenuButton>
                               </TooltipTrigger>
-                              <TooltipContent side="right" className="max-w-[260px] text-[11.5px]">
+                              <TooltipContent
+                                side="right"
+                                hidden={railCollapsed}
+                                className="max-w-[260px] text-[11.5px]"
+                              >
                                 {label.description}
                               </TooltipContent>
                             </Tooltip>

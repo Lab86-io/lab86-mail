@@ -5,6 +5,7 @@ import {
   RAIL_EXPANDED_PX,
   railExpandTransition,
   railLabelMotion,
+  railTileLabel,
 } from '../lib/albatross/intent-rail';
 
 describe('intentInitials', () => {
@@ -33,6 +34,34 @@ describe('intentInitials', () => {
     expect(intentInitials(null)).toBe('·');
     expect(intentInitials(undefined)).toBe('·');
     expect(intentInitials('***')).toBe('·');
+  });
+});
+
+describe('railTileLabel', () => {
+  test('short titles pass through untouched', () => {
+    expect(railTileLabel('Renew passport')).toBe('Renew passport');
+  });
+
+  test('long titles truncate near 40 chars on a word boundary with an ellipsis', () => {
+    const title = 'Book the cabin for the long weekend and coordinate rides with everyone';
+    const label = railTileLabel(title);
+    expect(label.endsWith('…')).toBe(true);
+    expect(label.length).toBeLessThanOrEqual(41);
+    // Word-boundary cut: no half word before the ellipsis.
+    expect(label).toBe('Book the cabin for the long weekend and…');
+  });
+
+  test('a single unbroken token gets a hard cut', () => {
+    expect(railTileLabel('x'.repeat(60))).toBe(`${'x'.repeat(40)}…`);
+  });
+
+  test('collapses internal whitespace and trims', () => {
+    expect(railTileLabel('  fix\n  the   sink ')).toBe('fix the sink');
+  });
+
+  test('nullish titles become empty labels', () => {
+    expect(railTileLabel(null)).toBe('');
+    expect(railTileLabel(undefined)).toBe('');
   });
 });
 

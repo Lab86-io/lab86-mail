@@ -30,12 +30,14 @@ import {
   type LucideIcon,
   MessageCircleQuestion,
   Mic,
+  PanelLeft,
   TriangleAlert,
   Type,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
+import { DockRail, DockTile } from '@/components/ui/dock';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import {
@@ -44,6 +46,7 @@ import {
   RAIL_EXPANDED_PX,
   railExpandTransition,
   railLabelMotion,
+  railTileLabel,
 } from '@/lib/albatross/intent-rail';
 import {
   type AppliedPlanStep,
@@ -610,11 +613,13 @@ export function PlansSurface({ initialIntentId }: { initialIntentId?: string | n
   );
 }
 
-// The intent rail: collapsed it is a slim column of typographic initials
-// tiles (one status-tone dot each); hovering or focusing anything inside
-// expands a floating overlay with titles and status lines, so the plan
-// dossier keeps its full width underneath (no layout thrash). Built with
-// plain divs + motion per the contract — no nested SidebarProvider.
+// The intent rail: collapsed it is a vertical dock of typographic initials
+// tiles (MagicUI dock physics — tiles magnify near the cursor and a floating
+// name label appears beside the hovered/focused tile, over the content, no
+// reflow). Expansion is EXPLICIT only: the "Expand list" control opens the
+// 288px labeled overlay, which stays open until its own Collapse control —
+// no hover expansion anywhere. Built with plain divs + motion per the
+// contract — no nested SidebarProvider.
 function IntentRail({
   intents,
   visible,
@@ -637,130 +642,193 @@ function IntentRail({
   reduced: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const label = railLabelMotion(expanded, reduced);
   return (
     <div className="relative shrink-0" style={{ width: RAIL_COLLAPSED_PX }}>
       <motion.aside
         initial={false}
         animate={{ width: expanded ? RAIL_EXPANDED_PX : RAIL_COLLAPSED_PX }}
         transition={railExpandTransition(reduced)}
-        onMouseEnter={() => setExpanded(true)}
-        onMouseLeave={() => setExpanded(false)}
-        onFocusCapture={() => setExpanded(true)}
-        onBlurCapture={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setExpanded(false);
-        }}
         aria-label="Intents"
         className={cn(
           'absolute inset-y-0 left-0 z-20 flex flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-bg)]',
           expanded && 'shadow-[var(--shadow-pop)]',
         )}
       >
-        <div className="flex flex-col border-b border-[var(--color-border)] px-2 py-2.5">
-          <div className="flex h-6 items-center">
-            <span
-              className="w-10 shrink-0 text-center text-[11px] font-semibold tabular-nums text-[var(--color-text-faint)]"
-              title={`${visible.length} intents`}
-            >
-              {visible.length}
-            </span>
-            <motion.div
-              {...label}
-              aria-hidden={!expanded}
-              className={cn(
-                'flex min-w-0 flex-1 items-center gap-2 pl-1 pr-1',
-                !expanded && 'pointer-events-none',
-              )}
-            >
-              <h2 className="whitespace-nowrap text-[12.5px] font-semibold text-[var(--color-text)]">
-                Intents
-              </h2>
-              <button
-                type="button"
-                tabIndex={expanded ? 0 : -1}
-                onClick={onToggleArchived}
-                className={cn(
-                  'ml-auto text-[11px] font-medium transition-colors',
-                  showArchived
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]',
-                )}
-              >
-                Archived
-              </button>
-            </motion.div>
-          </div>
+        {expanded ? (
           <motion.div
-            {...label}
-            aria-hidden={!expanded}
-            className={cn('mt-2 pl-1', !expanded && 'pointer-events-none')}
-            style={{ width: RAIL_EXPANDED_PX - 24 }}
+            initial={{ opacity: 0 }}
+            {...railLabelMotion(true, reduced)}
+            className="flex min-h-0 flex-1 flex-col"
           >
-            {expanded ? (
-              <Segmented
-                value={filter}
-                onChange={onFilterChange}
-                options={[
-                  { value: 'all', label: 'All' },
-                  { value: 'needs_you', label: 'Needs you' },
-                  { value: 'ready', label: 'Ready' },
-                  { value: 'done', label: 'Done' },
-                ]}
-              />
-            ) : (
-              <div className="h-6" />
-            )}
+            <div className="flex flex-col border-b border-[var(--color-border)] px-3 py-2.5">
+              <div className="flex h-6 items-center gap-2">
+                <h2 className="whitespace-nowrap text-[12.5px] font-semibold text-[var(--color-text)]">
+                  Intents
+                </h2>
+                <span className="text-[11px] font-semibold tabular-nums text-[var(--color-text-faint)]">
+                  {visible.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={onToggleArchived}
+                  className={cn(
+                    'ml-auto text-[11px] font-medium transition-colors',
+                    showArchived
+                      ? 'text-[var(--color-accent)]'
+                      : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]',
+                  )}
+                >
+                  Archived
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  className="text-[11px] font-medium text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
+                >
+                  Collapse
+                </button>
+              </div>
+              <div className="mt-2">
+                <Segmented
+                  value={filter}
+                  onChange={onFilterChange}
+                  options={[
+                    { value: 'all', label: 'All' },
+                    { value: 'needs_you', label: 'Needs you' },
+                    { value: 'ready', label: 'Ready' },
+                    { value: 'done', label: 'Done' },
+                  ]}
+                />
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
+              {intents === undefined ? (
+                <p className="px-3 py-4 text-center text-[12px] text-[var(--color-text-faint)]">…</p>
+              ) : visible.length === 0 ? (
+                <p className="px-3 py-4 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                  Nothing on your mind yet. Hit New Intent and dump one thing you&apos;ve been avoiding.
+                </p>
+              ) : (
+                visible.map((intent) => (
+                  <IntentRailRow
+                    key={intent._id}
+                    intent={intent}
+                    selected={intent._id === selectedId}
+                    reduced={reduced}
+                    onSelect={() => onSelect(intent._id)}
+                  />
+                ))
+              )}
+            </div>
           </motion.div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
-          {intents === undefined ? (
-            <p className="px-3 py-4 text-center text-[12px] text-[var(--color-text-faint)]">…</p>
-          ) : visible.length === 0 ? (
-            expanded ? (
-              <p className="px-3 py-4 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                Nothing on your mind yet. Hit New Intent and dump one thing you&apos;ve been avoiding.
-              </p>
-            ) : null
-          ) : (
-            visible.map((intent) => (
-              <IntentRailRow
-                key={intent._id}
-                intent={intent}
-                selected={intent._id === selectedId}
-                expanded={expanded}
-                reduced={reduced}
-                onSelect={() => onSelect(intent._id)}
-              />
-            ))
-          )}
-        </div>
+        ) : (
+          <DockRail baseSize={40} magnifiedSize={52} range={110} className="flex min-h-0 flex-1 flex-col">
+            <div className="flex flex-col items-center gap-1 border-b border-[var(--color-border)] py-2">
+              <DockTile
+                label="Expand list"
+                onClick={() => setExpanded(true)}
+                className="rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]"
+              >
+                <PanelLeft className="size-4" />
+              </DockTile>
+              <span
+                className="text-[11px] font-semibold tabular-nums text-[var(--color-text-faint)]"
+                title={`${visible.length} intents`}
+              >
+                {visible.length}
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
+              {intents === undefined ? (
+                <p className="py-4 text-center text-[12px] text-[var(--color-text-faint)]">…</p>
+              ) : (
+                visible.map((intent) => (
+                  <IntentRailTile
+                    key={intent._id}
+                    intent={intent}
+                    selected={intent._id === selectedId}
+                    onSelect={() => onSelect(intent._id)}
+                  />
+                ))
+              )}
+            </div>
+          </DockRail>
+        )}
       </motion.aside>
     </div>
   );
 }
 
+// Collapsed-rail intent tile: initials identity, one status-tone corner dot,
+// accent edge bar for the selection. The floating dock label carries the
+// (truncated) title — no native title tooltip, one label mechanism.
+function IntentRailTile({
+  intent,
+  selected,
+  onSelect,
+}: {
+  intent: IntentRow;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const meta = intentStatusMeta(intent.status);
+  const title = intentDisplayTitle(intent);
+  const failed = Boolean(intent.planError) && intent.status !== 'planning';
+  return (
+    <div className="relative flex w-full justify-center py-1">
+      {/* Selected intent: accent edge bar (the one selection mark). */}
+      {selected ? (
+        <span className="absolute inset-y-1 left-0 w-0.5 rounded-r-full bg-[var(--color-accent)]" />
+      ) : null}
+      <DockTile
+        label={railTileLabel(title)}
+        onClick={onSelect}
+        aria-current={selected ? 'true' : undefined}
+        className={cn(
+          'rounded-lg border transition-colors',
+          selected
+            ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)]'
+            : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] hover:border-[var(--color-border-strong)]',
+        )}
+      >
+        <span className="font-display text-[13px] font-semibold tracking-tight text-[var(--color-text)]">
+          {intentInitials(title)}
+        </span>
+        {/* One indicator per row: the status-tone dot. */}
+        <span
+          className={cn('absolute bottom-0.5 right-0.5 size-1.5 rounded-full', meta.pulse && 'animate-pulse')}
+          style={{
+            backgroundColor: failed
+              ? 'var(--color-danger)'
+              : meta.tone === 'neutral'
+                ? 'var(--color-text-faint)'
+                : `var(--color-${meta.tone})`,
+          }}
+        />
+      </DockTile>
+    </div>
+  );
+}
+
+// Expanded-list row: identity tile plus always-visible title/status column.
 function IntentRailRow({
   intent,
   selected,
-  expanded,
   reduced,
   onSelect,
 }: {
   intent: IntentRow;
   selected: boolean;
-  expanded: boolean;
   reduced: boolean;
   onSelect: () => void;
 }) {
   const meta = intentStatusMeta(intent.status);
   const title = intentDisplayTitle(intent);
   const failed = Boolean(intent.planError) && intent.status !== 'planning';
-  const label = railLabelMotion(expanded, reduced);
   return (
     <button
       type="button"
       onClick={onSelect}
-      title={expanded ? undefined : title}
       className={cn(
         'relative flex w-full items-center px-2 py-1.5 text-left transition-colors',
         selected ? 'bg-[var(--color-selected-soft)]' : 'hover:bg-[var(--color-hover-soft)]',
@@ -794,10 +862,9 @@ function IntentRailRow({
         />
       </span>
       <motion.span
-        {...label}
-        aria-hidden={!expanded}
-        className={cn('ml-2.5 flex min-w-0 flex-col', !expanded && 'pointer-events-none')}
-        style={{ width: RAIL_EXPANDED_PX - RAIL_COLLAPSED_PX - 18 }}
+        initial={{ opacity: 0, x: reduced ? 0 : -6 }}
+        {...railLabelMotion(true, reduced)}
+        className="ml-2.5 flex min-w-0 flex-1 flex-col"
       >
         <span className="truncate text-[13px] font-medium text-[var(--color-text)]">{title}</span>
         <span className="flex items-center gap-1.5 text-[11px]">

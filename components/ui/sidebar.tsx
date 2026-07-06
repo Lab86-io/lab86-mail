@@ -5,13 +5,13 @@ import { PanelLeftIcon } from 'lucide-react';
 import { Slot } from 'radix-ui';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
+import { DockRail, DockTile, useDock } from '@/components/ui/dock';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { railHoverState } from '@/lib/rail-hover';
 import { cn } from '@/lib/utils';
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state';
@@ -29,11 +29,6 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
-  // Hover-expand: true while a collapsed icon rail is temporarily floated
-  // open by pointer hover or keyboard focus. Tooltips and other
-  // collapsed-only affordances read this to stand down during the peek.
-  peek: boolean;
-  setPeek: (peek: boolean) => void;
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
@@ -62,7 +57,6 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
-  const [peek, setPeek] = React.useState(false);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -114,12 +108,8 @@ function SidebarProvider({
       openMobile,
       setOpenMobile,
       toggleSidebar,
-      // Peek only ever applies to a collapsed desktop rail — pinning the rail
-      // open or going mobile always reads as not-peeking.
-      peek: peek && !open && !isMobile,
-      setPeek,
     }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar, peek],
+    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar],
   );
 
   return (
@@ -159,21 +149,7 @@ function Sidebar({
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
 }) {
-  const { isMobile, state, openMobile, setOpenMobile, setPeek } = useSidebar();
-
-  // Hover-expand for the icon rail: while collapsed, pointer-over (or focus
-  // inside, for keyboard users) floats the rail open OVER the content — the
-  // in-flow gap keeps its icon width, so nothing reflows. An explicitly
-  // expanded rail wins: hover state is ignored while pinned.
-  const [hovering, setHovering] = React.useState(false);
-  const [focused, setFocused] = React.useState(false);
-  const hoverExpand = collapsible === 'icon' && !isMobile;
-  const mode = hoverExpand ? railHoverState(state === 'expanded', hovering, focused) : null;
-  const peeking = mode === 'peek';
-  React.useEffect(() => {
-    setPeek(peeking);
-    return () => setPeek(false);
-  }, [peeking, setPeek]);
+  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
 
   if (collapsible === 'none') {
     return (
@@ -219,10 +195,7 @@ function Sidebar({
     <div
       className="group peer hidden text-sidebar-foreground md:block"
       data-state={state}
-      // During a peek the icon-collapse styling is lifted (labels, badges, and
-      // group headers come back) while data-peek keeps the layout gap narrow.
-      data-collapsible={state === 'collapsed' && !peeking ? collapsible : ''}
-      data-peek={peeking ? 'true' : undefined}
+      data-collapsible={state === 'collapsed' ? collapsible : ''}
       data-variant={variant}
       data-side={side}
       data-slot="sidebar"
@@ -235,22 +208,12 @@ function Sidebar({
           'group-data-[collapsible=offcanvas]:w-0',
           'group-data-[side=right]:rotate-180',
           variant === 'floating' || variant === 'inset'
-            ? 'group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))] group-data-[peek=true]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]!'
-            : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[peek=true]:w-(--sidebar-width-icon)!',
+            ? 'group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]'
+            : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon)',
         )}
       />
       <div
         data-slot="sidebar-container"
-        onMouseEnter={hoverExpand ? () => setHovering(true) : undefined}
-        onMouseLeave={hoverExpand ? () => setHovering(false) : undefined}
-        onFocusCapture={hoverExpand ? () => setFocused(true) : undefined}
-        onBlurCapture={
-          hoverExpand
-            ? (event: React.FocusEvent<HTMLDivElement>) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
-              }
-            : undefined
-        }
         className={cn(
           'fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:flex motion-reduce:transition-none',
           side === 'left'
@@ -260,20 +223,24 @@ function Sidebar({
           variant === 'floating' || variant === 'inset'
             ? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]'
             : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l',
-          // Peeking floats the full-width rail over the content instead of
-          // pushing it: raise it above the panels and give it lift.
-          'group-data-[peek=true]:z-40 group-data-[peek=true]:shadow-[var(--shadow-pop)]',
           className,
         )}
         {...props}
       >
-        <div
+        {/* The inner column doubles as the dock container: it tracks the
+            pointer across the whole rail so collapsed menu buttons magnify
+            with macOS dock physics (see SidebarMenuButton). While expanded
+            no DockTiles are mounted, so the tracking is inert. */}
+        <DockRail
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
+          baseSize={32}
+          magnifiedSize={44}
+          range={96}
           className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm"
         >
           {children}
-        </div>
+        </DockRail>
       </div>
     </div>
   );
@@ -490,14 +457,20 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
     <li
       data-slot="sidebar-menu-item"
       data-sidebar="menu-item"
-      className={cn('group/menu-item relative', className)}
+      // Icon mode centers each row: dock tiles grow past the group's content
+      // width, and a centered flex item overflows symmetrically (macOS-style
+      // spill) instead of hugging the left edge.
+      className={cn(
+        'group/menu-item relative group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center',
+        className,
+      )}
       {...props}
     />
   );
 }
 
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding,color,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>span]:max-w-[12rem] [&>span]:transition-[max-width,opacity,transform] [&>span]:duration-200 [&>span]:delay-150 [&>span]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>span]:transition-none group-data-[collapsible=icon]:[&>span]:max-w-0 group-data-[collapsible=icon]:[&>span]:translate-x-1 group-data-[collapsible=icon]:[&>span]:opacity-0 group-data-[collapsible=icon]:[&>span]:delay-0 [&>svg]:size-4 [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding,color,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-has-data-[sidebar=menu-action]/menu-item:pr-8 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>span]:max-w-[12rem] [&>span]:transition-[max-width,opacity,transform] [&>span]:duration-200 [&>span]:delay-150 [&>span]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>span]:transition-none group-data-[collapsible=icon]:[&>span]:max-w-0 group-data-[collapsible=icon]:[&>span]:translate-x-1 group-data-[collapsible=icon]:[&>span]:opacity-0 group-data-[collapsible=icon]:[&>span]:delay-0 [&>svg]:size-4 [&>svg]:shrink-0',
   {
     variants: {
       variant: {
@@ -532,7 +505,32 @@ function SidebarMenuButton({
   tooltip?: string | React.ComponentProps<typeof TooltipContent>;
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const Comp = asChild ? Slot.Root : 'button';
-  const { isMobile, state, peek } = useSidebar();
+  const { isMobile, state } = useSidebar();
+  const dock = useDock();
+
+  // Collapsed desktop rows are dock tiles: sized by cursor proximity (macOS
+  // dock physics via the rail's shared mouseY) and named by a floating label
+  // beside the tile — the tooltip stands down so exactly one label mechanism
+  // exists. Expanded (pinned) and mobile render the normal list row.
+  if (dock && !asChild && state === 'collapsed' && !isMobile) {
+    return (
+      <DockTile
+        data-slot="sidebar-menu-button"
+        data-sidebar="menu-button"
+        data-size={size}
+        data-active={isActive}
+        label={typeof tooltip === 'string' ? tooltip : undefined}
+        className={cn(
+          sidebarMenuButtonVariants({ variant, size }),
+          // The tile's width/height come from the dock spring (inline style);
+          // a CSS transition on them would double-smooth the physics.
+          'shrink-0 justify-center transition-[color,background-color,box-shadow]',
+          className,
+        )}
+        {...props}
+      />
+    );
+  }
 
   const button = (
     <Comp
@@ -540,7 +538,13 @@ function SidebarMenuButton({
       data-sidebar="menu-button"
       data-size={size}
       data-active={isActive}
-      className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
+      className={cn(
+        sidebarMenuButtonVariants({ variant, size }),
+        // Fallback icon-mode sizing (SSR first paint, asChild rows): fixed
+        // square tiles — the dock branch above owns interactive sizing.
+        'group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2!',
+        className,
+      )}
       {...props}
     />
   );
@@ -559,13 +563,8 @@ function SidebarMenuButton({
     <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       {/* Icon-row tooltips only make sense when the labels are hidden: never
-          on mobile, never expanded, and never while a hover-peek shows them. */}
-      <TooltipContent
-        side="right"
-        align="center"
-        hidden={state !== 'collapsed' || peek || isMobile}
-        {...tooltip}
-      />
+          on mobile, never expanded (collapsed rows use the dock label). */}
+      <TooltipContent side="right" align="center" hidden={state !== 'collapsed' || isMobile} {...tooltip} />
     </Tooltip>
   );
 }
