@@ -164,6 +164,19 @@ const SMART_CATEGORIES = [
   },
 ];
 
+// Icon-mode group separator: a short centered hairline (macOS-dock style)
+// with symmetric breathing room, so the collapsed tile column reads as
+// deliberate groups instead of one lumpy run. The expanded rail's group
+// labels carry this job, so it renders nothing there.
+function RailDivider() {
+  return (
+    <div
+      aria-hidden
+      className="mx-auto my-1 hidden h-px w-6 shrink-0 bg-[var(--color-border)] group-data-[collapsible=icon]:block"
+    />
+  );
+}
+
 export function Rail({
   albatrossEnabled = false,
   clerkEnabled = false,
@@ -418,6 +431,7 @@ export function Rail({
 
         {albatrossEnabled ? (
           <SidebarGroup>
+            <RailDivider />
             <SidebarGroupLabel className="text-[10px] uppercase tracking-[0.09em]">
               Albatross
             </SidebarGroupLabel>
@@ -561,6 +575,7 @@ export function Rail({
               </button>
             </SidebarGroupLabel>
             <CollapsibleContent>
+              <RailDivider />
               <SidebarGroupContent>
                 <SidebarMenu>
                   {SMART_CATEGORIES.map(({ id, label, Icon, help }) => (
@@ -682,6 +697,7 @@ export function Rail({
               </CollapsibleTrigger>
             </SidebarGroupLabel>
             <CollapsibleContent>
+              <RailDivider />
               <SidebarGroupContent>
                 <SidebarMenu>
                   {MAILBOXES.map(({ query: q, label, Icon }) => (
@@ -711,7 +727,9 @@ export function Rail({
         {/* One quiet control strip: profile (settings lives in its popout),
             account scope, and theme. Collapses to a vertical stack. */}
         <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
-          <div className="grid h-7 w-7 place-items-center">
+          {/* Icon mode: every footer control sits in the same 32px box as the
+              dock tiles above — one column, one axis, one size baseline. */}
+          <div className="grid h-7 w-7 place-items-center group-data-[collapsible=icon]:size-8">
             {clerkEnabled ? (
               <UserButton appearance={{ elements: { avatarBox: 'size-6' } }}>
                 <UserButton.MenuItems>
@@ -739,7 +757,7 @@ export function Rail({
             indexingCount={indexingAccounts.length}
           />
           <div className="ml-auto group-data-[collapsible=icon]:ml-0">
-            <ThemePanel />
+            <ThemePanel className="group-data-[collapsible=icon]:size-8" />
           </div>
         </div>
       </SidebarFooter>
@@ -1053,7 +1071,7 @@ function AccountScopePopover({
         <button
           type="button"
           title={label}
-          className="relative grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          className="relative grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:size-8"
         >
           <RowIcon icon={UsersIcon} size={15} />
           {!allSelected ? (

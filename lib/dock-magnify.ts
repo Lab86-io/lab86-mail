@@ -13,6 +13,12 @@
 // to `baseSize`). dockPointerDistance mirrors the registry's distanceCalc
 // (pointer minus tile center), reoriented for a vertical rail. No React, no
 // DOM — bun:test covers this directly; components/ui/dock.tsx consumes it.
+//
+// Scope note: this math belongs to the MagicUI-derived dock only. The
+// intents rail's Chamaac dock (components/ui/chamaac-dock.tsx) faithfully
+// does NOT magnify — the source component has no size curve at all, just a
+// 0.2s background fade — so it intentionally has no consumer here. The
+// hover treatment the two docks DO share lives in lib/dock-hover.ts.
 
 export interface DockTileSizeInput {
   /**

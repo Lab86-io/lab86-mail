@@ -37,6 +37,7 @@ export function ShineBorder({
 }: ShineBorderProps) {
   return (
     <div
+      data-slot="shine-border"
       style={
         {
           '--border-width': `${borderWidth}px`,

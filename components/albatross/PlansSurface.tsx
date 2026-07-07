@@ -37,7 +37,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
-import { DockRail, DockTile } from '@/components/ui/dock';
+import { ChamaacDock, ChamaacDockTile } from '@/components/ui/chamaac-dock';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import {
@@ -613,13 +613,15 @@ export function PlansSurface({ initialIntentId }: { initialIntentId?: string | n
   );
 }
 
-// The intent rail: collapsed it is a vertical dock of typographic initials
-// tiles (MagicUI dock physics — tiles magnify near the cursor and a floating
-// name label appears beside the hovered/focused tile, over the content, no
-// reflow). Expansion is EXPLICIT only: the "Expand list" control opens the
-// 288px labeled overlay, which stays open until its own Collapse control —
-// no hover expansion anywhere. Built with plain divs + motion per the
-// contract — no nested SidebarProvider.
+// The intent rail: collapsed it is the Chamaac dock, vertical — a floating
+// blurred pill of fixed-size rounded tiles with a 0.2s fill-fade hover (that
+// dock does not magnify; see components/ui/chamaac-dock.tsx for provenance).
+// Each intent is a typographic initials tile with one status-tone dot; a
+// floating name label appears beside the hovered/focused tile, over the
+// content, no reflow. Expansion is EXPLICIT only: the "Expand list" control
+// opens the 288px labeled overlay, which stays open until its own Collapse
+// control — no hover expansion anywhere. Built with plain divs + motion per
+// the contract — no nested SidebarProvider.
 function IntentRail({
   intents,
   visible,
@@ -722,37 +724,41 @@ function IntentRail({
             </div>
           </motion.div>
         ) : (
-          <DockRail baseSize={40} magnifiedSize={52} range={110} className="flex min-h-0 flex-1 flex-col">
-            <div className="flex flex-col items-center gap-1 border-b border-[var(--color-border)] py-2">
-              <DockTile
+          <div className="flex min-h-0 flex-1 flex-col items-center py-2">
+            {/* The pill is 52px wide: 40px tiles + Chamaac's 3px inner
+                padding + the hairline, leaving a 2px slack column inside for
+                the selection edge bar beside the selected tile. */}
+            <ChamaacDock className="min-h-0 w-[52px]">
+              <ChamaacDockTile
                 label="Expand list"
                 onClick={() => setExpanded(true)}
-                className="rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]"
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
               >
                 <PanelLeft className="size-4" />
-              </DockTile>
+              </ChamaacDockTile>
               <span
                 className="text-[11px] font-semibold tabular-nums text-[var(--color-text-faint)]"
                 title={`${visible.length} intents`}
               >
                 {visible.length}
               </span>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
-              {intents === undefined ? (
-                <p className="py-4 text-center text-[12px] text-[var(--color-text-faint)]">…</p>
-              ) : (
-                visible.map((intent) => (
-                  <IntentRailTile
-                    key={intent._id}
-                    intent={intent}
-                    selected={intent._id === selectedId}
-                    onSelect={() => onSelect(intent._id)}
-                  />
-                ))
-              )}
-            </div>
-          </DockRail>
+              <div aria-hidden className="h-px w-5 shrink-0 bg-[var(--color-border)]" />
+              <div className="flex w-full min-h-0 flex-col items-center gap-[3px] overflow-y-auto py-px [scrollbar-width:none]">
+                {intents === undefined ? (
+                  <p className="py-3 text-center text-[12px] text-[var(--color-text-faint)]">…</p>
+                ) : (
+                  visible.map((intent) => (
+                    <IntentRailTile
+                      key={intent._id}
+                      intent={intent}
+                      selected={intent._id === selectedId}
+                      onSelect={() => onSelect(intent._id)}
+                    />
+                  ))
+                )}
+              </div>
+            </ChamaacDock>
+          </div>
         )}
       </motion.aside>
     </div>
@@ -760,8 +766,9 @@ function IntentRail({
 }
 
 // Collapsed-rail intent tile: initials identity, one status-tone corner dot,
-// accent edge bar for the selection. The floating dock label carries the
-// (truncated) title — no native title tooltip, one label mechanism.
+// accent edge bar + held Chamaac fill for the selection. The floating dock
+// label carries the (truncated) title — no native title tooltip, one label
+// mechanism.
 function IntentRailTile({
   intent,
   selected,
@@ -775,28 +782,25 @@ function IntentRailTile({
   const title = intentDisplayTitle(intent);
   const failed = Boolean(intent.planError) && intent.status !== 'planning';
   return (
-    <div className="relative flex w-full justify-center py-1">
-      {/* Selected intent: accent edge bar (the one selection mark). */}
+    <div className="relative flex w-full shrink-0 justify-center">
+      {/* Selected intent: accent edge bar in the pill's slack column (the
+          one selection mark besides the held fill). */}
       {selected ? (
         <span className="absolute inset-y-1 left-0 w-0.5 rounded-r-full bg-[var(--color-accent)]" />
       ) : null}
-      <DockTile
+      <ChamaacDockTile
         label={railTileLabel(title)}
+        active={selected}
         onClick={onSelect}
         aria-current={selected ? 'true' : undefined}
-        className={cn(
-          'rounded-lg border transition-colors',
-          selected
-            ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)]'
-            : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] hover:border-[var(--color-border-strong)]',
-        )}
       >
         <span className="font-display text-[13px] font-semibold tracking-tight text-[var(--color-text)]">
           {intentInitials(title)}
         </span>
-        {/* One indicator per row: the status-tone dot. */}
+        {/* One indicator per row: the status-tone dot (bottom-1 keeps it
+            inside the round tile edge). */}
         <span
-          className={cn('absolute bottom-0.5 right-0.5 size-1.5 rounded-full', meta.pulse && 'animate-pulse')}
+          className={cn('absolute bottom-1 right-1 size-1.5 rounded-full', meta.pulse && 'animate-pulse')}
           style={{
             backgroundColor: failed
               ? 'var(--color-danger)'
@@ -805,7 +809,7 @@ function IntentRailTile({
                 : `var(--color-${meta.tone})`,
           }}
         />
-      </DockTile>
+      </ChamaacDockTile>
     </div>
   );
 }
@@ -838,9 +842,10 @@ function IntentRailRow({
       {selected ? (
         <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-r-full bg-[var(--color-accent)]" />
       ) : null}
+      {/* Same identity shape as the collapsed Chamaac tiles: a circle. */}
       <span
         className={cn(
-          'relative grid size-10 shrink-0 place-items-center rounded-lg border',
+          'relative grid size-10 shrink-0 place-items-center rounded-full border',
           selected
             ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)]'
             : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
@@ -851,7 +856,7 @@ function IntentRailRow({
         </span>
         {/* One indicator per row: the status-tone dot. */}
         <span
-          className={cn('absolute bottom-0.5 right-0.5 size-1.5 rounded-full', meta.pulse && 'animate-pulse')}
+          className={cn('absolute bottom-1 right-1 size-1.5 rounded-full', meta.pulse && 'animate-pulse')}
           style={{
             backgroundColor: failed
               ? 'var(--color-danger)'

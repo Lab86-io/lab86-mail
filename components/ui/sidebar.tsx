@@ -333,7 +333,12 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="sidebar-header"
       data-sidebar="header"
-      className={cn('flex flex-col gap-2 p-2', className)}
+      // Icon mode tightens to the same rhythm as the content groups: one
+      // centered tile column with even small gaps.
+      className={cn(
+        'flex flex-col gap-2 p-2 group-data-[collapsible=icon]:gap-1.5 group-data-[collapsible=icon]:px-1',
+        className,
+      )}
       {...props}
     />
   );
@@ -366,8 +371,11 @@ function SidebarContent({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="sidebar-content"
       data-sidebar="content"
+      // Icon mode: the groups' own (reduced) padding carries the rhythm, so
+      // the container gap goes to zero — between-group space stays constant
+      // instead of compounding (p + gap + p) into lumpy runs.
       className={cn(
-        'flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden',
+        'flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:overflow-hidden',
         className,
       )}
       {...props}
@@ -380,7 +388,9 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="sidebar-group"
       data-sidebar="group"
-      className={cn('relative flex w-full min-w-0 flex-col p-2', className)}
+      // Icon mode: half the padding — a 48px rail can't afford 8px gutters,
+      // and py-1 on each group gives every group boundary the same 8px.
+      className={cn('relative flex w-full min-w-0 flex-col p-2 group-data-[collapsible=icon]:p-1', className)}
       {...props}
     />
   );
@@ -525,6 +535,17 @@ function SidebarMenuButton({
           // The tile's width/height come from the dock spring (inline style);
           // a CSS transition on them would double-smooth the physics.
           'shrink-0 justify-center transition-[color,background-color,box-shadow]',
+          // One tile system for every collapsed row: the same radius on all
+          // tiles, overflow-visible so the shared hover glow can halo past
+          // the tile edge, and the elevated-surface hover (DockTile adds the
+          // accent ring + glow) instead of the expanded list's flat accent
+          // wash. Callers with a stronger identity (the accent compose tile)
+          // still win via their own classes.
+          'overflow-visible rounded-lg hover:bg-[var(--color-bg-elevated)]',
+          // An animated shine border inside a 32px tile reads as noise and
+          // makes those rows look like a different system — the shared hover
+          // glow carries the accent life in icon mode instead.
+          '[&_[data-slot=shine-border]]:hidden',
           className,
         )}
         {...props}

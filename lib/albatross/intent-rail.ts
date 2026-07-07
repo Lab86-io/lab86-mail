@@ -5,9 +5,12 @@
 //   pushed right, full-row selection wash — no per-row icon soup.
 // - Mobbin/Amie done divider (8651d9b8): status carried by one small colored
 //   mark next to a typographic label, not by icon stacks.
-// - MagicUI Dock (magicui.design/r/dock.json): collapsed tiles magnify with
-//   macOS dock physics; a floating name label appears beside the hovered
-//   tile (see components/ui/dock.tsx + lib/dock-magnify.ts).
+// - Chamaac Dock (chamaac.com/r/dock.json): the collapsed rail is that dock,
+//   vertical — a floating blurred pill of fixed-size rounded tiles with a
+//   0.2s fill-fade hover and NO magnification (see
+//   components/ui/chamaac-dock.tsx for provenance and adaptations). The
+//   floating name label beside the hovered tile is shared with the main
+//   rail's dock (components/ui/dock.tsx).
 //
 // The collapsed rail renders each intent as a typographic initials dock tile
 // plus one status-tone dot (one indicator per row). Expansion is EXPLICIT
@@ -15,8 +18,10 @@
 // open until its own collapse control is used (no hover expansion). These
 // helpers stay DOM-free so bun:test covers them directly.
 
-/** Collapsed rail width in px — one tile column plus gutters. */
-export const RAIL_COLLAPSED_PX = 56;
+/** Collapsed rail width in px — the 52px Chamaac pill plus 4px side margins
+ * (pill = 40px tiles + 3px inner padding + hairline border + a 2px slack
+ * column for the selection edge bar). */
+export const RAIL_COLLAPSED_PX = 60;
 
 /** Expanded overlay width in px — tile column plus a readable label column. */
 export const RAIL_EXPANDED_PX = 288;

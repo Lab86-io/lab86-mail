@@ -29,6 +29,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
+import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
@@ -51,6 +52,7 @@ import {
   TEACH_PANE_INITIAL,
   type TeachFactRow,
   teachPaneReducer,
+  toolActivityLine,
   toolPartName,
 } from '@/lib/albatross/teach-ui';
 import { cn } from '@/lib/utils';
@@ -362,14 +364,6 @@ function UserBubble({ message }: { message: any }) {
   );
 }
 
-// Progress lines for the read-only investigation tools.
-const TEACH_STEP_VERBS: Record<string, { working: string; done: string }> = {
-  area_domain_activity: { working: 'Checking recent senders', done: 'Checked recent senders.' },
-  corpus_search: { working: 'Searching your mail', done: 'Searched your mail.' },
-  sender_profile: { working: 'Looking up the sender', done: 'Looked up the sender.' },
-  area_list: { working: 'Checking saved areas', done: 'Checked saved areas.' },
-};
-
 function TeachPart({
   part,
   onAskAnswer,
@@ -393,7 +387,6 @@ function TeachPart({
 
   const name = toolPartName(part);
   const state = part.state || 'input-available';
-  const working = state !== 'output-available' && state !== 'output-error';
 
   if (name === 'ask_user') {
     if (state === 'input-streaming') return null;
@@ -411,42 +404,19 @@ function TeachPart({
     );
   }
 
-  if (state === 'output-error') {
-    return (
-      <div className="px-1 text-[11.5px] text-[var(--color-danger)]">
-        {part.errorText || 'That step ran into a problem.'}
-      </div>
-    );
+  // ONE grammar for every tool call: a quiet sentence with a running
+  // indicator, a completed line, or a visible danger-toned failure (including
+  // { ok: false } outputs — a failed write must never read as a success).
+  const activity = toolActivityLine(name, part.input, state, part.output, part.errorText);
+
+  if (activity.state === 'done') {
+    // Rich designed treatments where they exist — every time they succeed.
+    if (name === 'area_domain_activity') return <SenderCards input={part.input} output={part.output} />;
+    const factRow = factRowFromToolOutput(name, part.input, part.output);
+    if (factRow) return <FactConfirmationRow row={factRow} />;
   }
 
-  if (name === 'area_domain_activity') {
-    if (working) return <StepLine text="Checking recent senders…" working />;
-    return <SenderCards input={part.input} output={part.output} />;
-  }
-
-  const factRow = working ? null : factRowFromToolOutput(name, part.input, part.output);
-  if (factRow) return <FactConfirmationRow row={factRow} />;
-
-  const verbs = TEACH_STEP_VERBS[name];
-  if (working) return <StepLine text={`${verbs?.working || name.replaceAll('_', ' ')}…`} working />;
-  if (verbs) return <StepLine text={verbs.done} />;
-  // Mutating area tools with a failed/absent summary, plus any other tool:
-  // one quiet completed line, no JSON.
-  return <StepLine text="Done." />;
-}
-
-function StepLine({ text, working }: { text: string; working?: boolean }) {
-  return (
-    <div
-      className={cn(
-        'flex items-center gap-1.5 px-1 text-[11.5px] text-[var(--color-text-faint)]',
-        working && 'text-[var(--color-text-muted)]',
-      )}
-    >
-      {working ? <Loader variant="typing" /> : null}
-      <span>{text}</span>
-    </div>
-  );
+  return <ToolActivityRow activity={activity} />;
 }
 
 // area_domain_activity result: the evidence itself, as sender cards — initials
@@ -456,7 +426,14 @@ function SenderCards({ input, output }: { input: any; output: any }) {
   const cards = senderCardsFromToolOutput(output);
   const scope = input?.domain || input?.senderEmail || '';
   if (!cards.length) {
-    return <StepLine text={scope ? `No recent senders found for ${scope}.` : 'No recent senders found.'} />;
+    return (
+      <ToolActivityRow
+        activity={{
+          state: 'done',
+          text: scope ? `No recent senders found for ${scope}` : 'No recent senders found',
+        }}
+      />
+    );
   }
   return (
     <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">

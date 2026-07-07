@@ -27,7 +27,7 @@ import {
   resolveInitialPrimaryView,
 } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
-import { AIBarSidebar, AIBarTrigger } from './AIBar';
+import { AIBarTrigger, AssistantChat } from './AIBar';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
@@ -45,7 +45,6 @@ export function AppShell({
   clerkEnabled: boolean;
   initialView?: PrimaryView;
 }) {
-  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const railOpen = useClientStore((s) => s.railOpen);
   const railWidth = useClientStore((s) => s.railWidth);
   const setRailOpen = useClientStore((s) => s.setRailOpen);
@@ -95,8 +94,10 @@ export function AppShell({
   const mailish =
     visiblePrimaryView === 'mail' || visiblePrimaryView === 'daily_report' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
-  const permutation = `i${readerVisible ? 't' : ''}${aiBarOpen ? 'a' : ''}`;
-  const panelIds = ['inbox', ...(readerVisible ? ['reader'] : []), ...(aiBarOpen ? ['ai'] : [])];
+  // The assistant is a floating overlay now (AssistantChat), not a docked
+  // panel, so it no longer participates in the resizable layout.
+  const permutation = `i${readerVisible ? 't' : ''}`;
+  const panelIds = ['inbox', ...(readerVisible ? ['reader'] : [])];
   const layoutStorage = typeof window !== 'undefined' && !isMobile ? window.localStorage : noopLayoutStorage;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: `lab86-mail-shell-v2:${permutation}`,
@@ -208,25 +209,9 @@ export function AppShell({
                   </motion.div>
                 ) : null}
               </AnimatePresence>
-
-              <AnimatePresence initial={false}>
-                {aiBarOpen ? (
-                  <motion.div
-                    key="ai"
-                    initial={{ x: '100%' }}
-                    animate={{ x: 0 }}
-                    exit={{ x: '100%' }}
-                    transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute inset-0 z-40 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
-                  >
-                    <div className="h-full w-full overflow-hidden border-l border-[var(--color-border)]">
-                      <AIBarSidebar />
-                    </div>
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
             </div>
             <AIBarTrigger buttonHidden={albatrossEnabled} />
+            <AssistantChat />
             {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
             {albatrossEnabled ? <IntentPip onOpenIntent={handleIntentCaptured} /> : null}
           </main>
@@ -295,18 +280,10 @@ export function AppShell({
                   </ReflowPanel>
                 </Panel>
               ) : null}
-
-              {aiBarOpen ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
-              {aiBarOpen ? (
-                <Panel id="ai" defaultSize="360px" minSize="280px" maxSize="640px">
-                  <ReflowPanel className="border-l border-[var(--color-border)]">
-                    <AIBarSidebar />
-                  </ReflowPanel>
-                </Panel>
-              ) : null}
             </Group>
           </TooltipProvider>
           <AIBarTrigger buttonHidden={albatrossEnabled} />
+          <AssistantChat />
           {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
           {albatrossEnabled ? <IntentPip onOpenIntent={handleIntentCaptured} /> : null}
         </main>

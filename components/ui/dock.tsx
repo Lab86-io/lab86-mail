@@ -17,9 +17,16 @@
 //   macOS-style name label to the RIGHT of the tile; focus also applies the
 //   magnified size (accessibility parity with hover). The label renders in a
 //   body portal with position:fixed, so it floats over the main content —
-//   no layout shift, and no clipping by overflow/scroll ancestors.
+//   no layout shift, and no clipping by overflow/scroll ancestors. Labels
+//   align to one axis: a fixed gap past the RAIL's right edge (not the
+//   tile's), so they clear the rail cleanly and don't crowd the content.
+// - Hover/focus also mounts the shared strengthened treatment from
+//   lib/dock-hover.ts: an accent radial glow behind the tile (springing with
+//   the magnification) and an accent ring on its surface. The intents rail's
+//   Chamaac dock (components/ui/chamaac-dock.tsx) reuses DockTileGlow and
+//   DockTileLabel so both docks speak one hover language.
 // - useReducedMotion: no magnification (tiles stay at baseSize); the label
-//   still appears instantly on hover/focus.
+//   and glow still appear, instantly, on hover/focus.
 
 import {
   type MotionValue,
@@ -32,6 +39,13 @@ import {
 } from 'motion/react';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
+import {
+  type DockGlowCurve,
+  dockGlowMotion,
+  dockHoverGlow,
+  dockHoverRing,
+  dockLabelLeft,
+} from '@/lib/dock-hover';
 import { dockPointerDistance, dockTileSize } from '@/lib/dock-magnify';
 import { cn } from '@/lib/utils';
 
@@ -162,7 +176,11 @@ export function DockTile({
   const syncLabel = React.useCallback(() => {
     const bounds = ref.current?.getBoundingClientRect();
     if (!bounds) return;
-    labelLeft.set(bounds.right + 10);
+    // All labels share one left axis: a fixed gap past the rail's right
+    // edge, so the label clears the rail (and any magnified neighbor)
+    // instead of hugging the tile and crowding the content beside it.
+    const rail = ref.current?.closest('[data-slot="dock-rail"]')?.getBoundingClientRect();
+    labelLeft.set(dockLabelLeft(bounds.right, rail?.right));
     labelTop.set(bounds.top + bounds.height / 2);
   }, [labelLeft, labelTop]);
   useMotionValueEvent(springSize, 'change', () => {
@@ -175,6 +193,7 @@ export function DockTile({
   // Reduced motion: fixed size. Keyboard focus: pinned to the magnified size
   // (parity with a hovered tile). Otherwise the spring drives it.
   const sizeStyle: number | MotionValue<number> = reduced ? baseSize : focused ? magnifiedSize : springSize;
+  const highlighted = hovered || focused;
 
   return (
     <>
@@ -184,9 +203,25 @@ export function DockTile({
         {...(props as React.ComponentProps<typeof motion.button>)}
         ref={ref}
         data-slot="dock-tile"
-        style={{ ...style, width: sizeStyle, height: sizeStyle }}
-        className={cn('relative flex shrink-0 items-center justify-center', className)}
+        data-highlighted={highlighted || undefined}
+        style={{
+          ...style,
+          width: sizeStyle,
+          height: sizeStyle,
+          // Surface highlight (lib/dock-hover.ts): accent ring + lift shadow
+          // on the hovered/focused tile only. Inline so it wins over any
+          // caller shadow classes without a specificity fight.
+          ...(highlighted ? { boxShadow: dockHoverRing() } : null),
+        }}
+        // `isolate` keeps the -z glow layer inside this button's stacking
+        // context — without it the glow would paint underneath the rail's
+        // opaque background and vanish.
+        className={cn('relative isolate flex shrink-0 items-center justify-center', className)}
         onMouseEnter={(event) => {
+          // Synchronous first measure: the portal label mounts with the right
+          // position on its first frame (the spring listener keeps it synced
+          // from there as neighbors resize).
+          syncLabel();
           setHovered(true);
           onMouseEnter?.(event);
         }}
@@ -203,6 +238,7 @@ export function DockTile({
           } catch {
             keyboard = true;
           }
+          if (keyboard) syncLabel();
           setFocused(keyboard);
           onFocus?.(event);
         }}
@@ -211,23 +247,85 @@ export function DockTile({
           onBlur?.(event);
         }}
       >
+        <DockTileGlow visible={highlighted} reduced={reduced} />
         {children}
       </motion.button>
-      {labelVisible && typeof document !== 'undefined'
-        ? createPortal(
-            <motion.span
-              aria-hidden
-              initial={reduced ? false : { opacity: 0, x: -4 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={reduced ? { duration: 0 } : { duration: 0.12, ease: 'easeOut' }}
-              style={{ left: labelLeft, top: labelTop, y: '-50%' }}
-              className="pointer-events-none fixed z-[70] whitespace-nowrap rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[12px] font-medium text-[var(--color-text)] shadow-[var(--shadow-pop)]"
-            >
-              {label}
-            </motion.span>,
-            document.body,
-          )
-        : null}
+      <DockTileLabel visible={labelVisible} left={labelLeft} top={labelTop} reduced={reduced}>
+        {label}
+      </DockTileLabel>
     </>
+  );
+}
+
+/**
+ * The strengthened hover glow shared by both docks: a soft accent radial
+ * behind the tile (see lib/dock-hover.ts for the design references). Mounted
+ * on every tile but fully transparent unless `visible` — only the hovered or
+ * focused tile ever shows it, and it animates out instead of popping.
+ * `curve`: 'spring' rides the magnification spring (this dock); 'fade' is the
+ * Chamaac dock's 0.2s tween.
+ */
+export function DockTileGlow({
+  visible,
+  reduced,
+  curve = 'spring',
+  className,
+}: {
+  visible: boolean;
+  reduced: boolean;
+  curve?: DockGlowCurve;
+  className?: string;
+}) {
+  return (
+    <motion.span
+      aria-hidden
+      initial={false}
+      {...dockGlowMotion(visible, reduced, curve)}
+      style={{ background: dockHoverGlow() }}
+      className={cn('pointer-events-none absolute -inset-2 -z-10 rounded-full', className)}
+    />
+  );
+}
+
+/**
+ * The floating name label shared by both docks: a fixed-position body portal
+ * beside the rail (no layout shift, no clipping by scroll ancestors).
+ * `left`/`top` may be MotionValues (this dock tracks the magnification
+ * spring) or plain numbers (the Chamaac dock's tiles don't resize).
+ * `shape="pill"` matches the Chamaac dock's fully-rounded, blurred shell.
+ */
+export function DockTileLabel({
+  visible,
+  left,
+  top,
+  reduced,
+  shape = 'tag',
+  children,
+}: {
+  visible: boolean;
+  left: MotionValue<number> | number;
+  top: MotionValue<number> | number;
+  reduced: boolean;
+  shape?: 'tag' | 'pill';
+  children: React.ReactNode;
+}) {
+  if (!visible || typeof document === 'undefined') return null;
+  return createPortal(
+    <motion.span
+      aria-hidden
+      initial={reduced ? false : { opacity: 0, x: -4 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={reduced ? { duration: 0 } : { duration: 0.12, ease: 'easeOut' }}
+      style={{ left, top, y: '-50%' }}
+      className={cn(
+        'pointer-events-none fixed z-[70] whitespace-nowrap border border-[var(--color-border)] px-2 py-1 text-[12px] font-medium text-[var(--color-text)] shadow-[var(--shadow-pop)]',
+        shape === 'pill'
+          ? 'rounded-full bg-[color-mix(in_oklab,var(--color-bg-elevated)_86%,transparent)] px-2.5 backdrop-blur-md'
+          : 'rounded-md bg-[var(--color-bg-elevated)]',
+      )}
+    >
+      {children}
+    </motion.span>,
+    document.body,
   );
 }

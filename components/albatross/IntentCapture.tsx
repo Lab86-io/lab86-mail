@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { api } from '@/convex/_generated/api';
 import { openPipWindow, pipSupported } from '@/lib/albatross/pip-window';
+import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
 export { looksLikeMultipleIntents, splitIntentText };
@@ -165,6 +166,9 @@ function resolveGeo(timeoutMs = 2500): Promise<CaptureGeo | null> {
 
 export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: string) => void }) {
   const reduceMotion = useReducedMotion() ?? false;
+  // The floating assistant panel (Cmd+K) shares the bottom-right slot; the
+  // launcher yields while it is open, exactly like Ask Assistant used to.
+  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const createIntent = useMutation(api.albatrossIntents.createIntent);
 
   const [state, setState] = useState<CaptureState>('closed');
@@ -343,7 +347,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           Albatross is on; the assistant stays on Cmd+K). Ghost until hovered:
           transparent pill that fills with the accent on hover/focus. The orb
           is a still gradient pearl — its rotation is paused by request. */}
-      <div className="pointer-events-none fixed bottom-6 right-6 z-50">
+      <div className={cn('pointer-events-none fixed bottom-6 right-6 z-50', aiBarOpen && 'hidden')}>
         <button
           ref={launcherRef}
           type="button"
