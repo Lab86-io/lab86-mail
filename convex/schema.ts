@@ -627,6 +627,9 @@ export default defineSchema({
       ),
     ),
     planError: v.optional(v.string()),
+    // Auto-retry counter for the plan-reconcile cron: generations killed by a
+    // deploy/restart leave the intent stuck in 'planning' with no planError.
+    planAttempts: v.optional(v.number()),
     latestPlanId: v.optional(v.id('albatrossIntentPlans')),
     appliedAt: v.optional(v.number()),
     createdAt: v.number(),

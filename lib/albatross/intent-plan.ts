@@ -172,6 +172,21 @@ export function normalizeArtifactLinks(html: string): string {
   return out;
 }
 
+/** Turn an indefinite hang into a caught error: a generation that never
+ * resolves would otherwise leave its intent in 'planning' with no planError
+ * (the same wedge a mid-flight deploy causes — see the plan-reconcile cron). */
+export async function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Stable per-plan step keys ("step-1"…) assigned by index at plan-parse time.
  * They persist on the plan document, ride through apply (stepKey -> created
  * cardId), and are the verbatim handles the artifact's task cards toggle. */
@@ -377,8 +392,12 @@ function answersBlock(
 /** Coarse "city, region" via OpenStreetMap Nominatim — enough for near-me search. */
 async function reverseGeocode(geo: { latitude: number; longitude: number }): Promise<string | null> {
   try {
-    const data = await deps.httpGetJson(
-      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${geo.latitude}&lon=${geo.longitude}&zoom=10`,
+    const data = await withDeadline(
+      deps.httpGetJson(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${geo.latitude}&lon=${geo.longitude}&zoom=10`,
+      ),
+      10_000,
+      'Reverse geocode',
     );
     const address = data?.address || {};
     const city = address.city || address.town || address.village || address.county;
@@ -393,14 +412,18 @@ async function reverseGeocode(geo: { latitude: number; longitude: number }): Pro
 /** Cheap pre-pass: does this intent need a local business search? Returns the category query or null. */
 async function detectLocalQuery(input: GenerateIntentPlanInput, rawText: string): Promise<string | null> {
   try {
-    const { text } = await deps.generateTextForCurrentUser({
-      feature: 'albatross_local',
-      speed: 'fast',
-      userId: input.userId,
-      system:
-        'Does this thought involve visiting, calling, or buying from a nearby business or venue? Respond with ONE JSON object: {"query": string|null} — a short web-search category like "guitar stores" or "passport photo services", or null when nothing local is involved.',
-      prompt: rawText.slice(0, 500),
-    });
+    const { text } = await withDeadline(
+      deps.generateTextForCurrentUser({
+        feature: 'albatross_local',
+        speed: 'fast',
+        userId: input.userId,
+        system:
+          'Does this thought involve visiting, calling, or buying from a nearby business or venue? Respond with ONE JSON object: {"query": string|null} — a short web-search category like "guitar stores" or "passport photo services", or null when nothing local is involved.',
+        prompt: rawText.slice(0, 500),
+      }),
+      30_000,
+      'Local-query pre-pass',
+    );
     const start = text.indexOf('{');
     const end = text.lastIndexOf('}');
     if (start === -1 || end <= start) return null;
@@ -420,13 +443,15 @@ async function nearbyEvidence(
   if (!input.geo) return { block: '', place: null };
   const [place, query] = await Promise.all([reverseGeocode(input.geo), detectLocalQuery(input, rawText)]);
   if (!place || !query) return { block: '', place };
-  const search: any = await deps
-    .invokeTool(
+  const search: any = await withDeadline(
+    deps.invokeTool(
       browserbaseSearch,
       { query: `${query} near ${place} hours address`, limit: 6 },
       { agent: 'ai', userId: input.userId },
-    )
-    .catch(() => null);
+    ),
+    45_000,
+    'Nearby search',
+  ).catch(() => null);
   const results: any[] = (search?.results || []).filter((result: any) => result?.url);
   if (!results.length) return { block: '', place };
   const lines = results.map(
@@ -476,15 +501,19 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       .filter(Boolean)
       .join('\n');
 
-    const { text } = await deps.generateTextForCurrentUser({
-      feature: 'albatross_plan',
-      speed: 'primary',
-      userId: input.userId,
-      userEmail: input.userEmail,
-      userName: input.userName,
-      system: PLAN_SYSTEM,
-      prompt,
-    });
+    const { text } = await withDeadline(
+      deps.generateTextForCurrentUser({
+        feature: 'albatross_plan',
+        speed: 'primary',
+        userId: input.userId,
+        userEmail: input.userEmail,
+        userName: input.userName,
+        system: PLAN_SYSTEM,
+        prompt,
+      }),
+      150_000,
+      'Plan generation',
+    );
     const generation = parsePlanGeneration(text);
 
     const areaId =
@@ -532,41 +561,45 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
 
     let artifactHtml: string | undefined;
     try {
-      const artifact = await deps.generateTextForCurrentUser({
-        feature: 'albatross_plan_artifact',
-        speed: 'primary',
-        userId: input.userId,
-        userEmail: input.userEmail,
-        userName: input.userName,
-        system: ARTIFACT_SYSTEM,
-        prompt: JSON.stringify(
-          {
-            title: generation.title,
-            outcome: generation.outcome,
-            summary: generation.summary,
-            digitalActions: digitalActions.map((action) => ({
-              // The verbatim handle each task card's Done control must carry.
-              key: action.key,
-              kind: action.kind,
-              title: action.title,
-              description: action.description,
-              priority: action.priority,
-              startIso: action.startIso,
-              endIso: action.endIso,
-              durationMinutes: action.durationMinutes,
-              to: action.to,
-              subject: action.subject,
-            })),
-            physicalActions: generation.physicalActions,
-            places: generation.places,
-            assumptions: generation.assumptions,
-            sources: resolveSourceRefs(generation.sourceRefIds, refs),
-            openQuestions: questions.filter((question) => !question.answer).map((q) => q.prompt),
-          },
-          null,
-          2,
-        ),
-      });
+      const artifact = await withDeadline(
+        deps.generateTextForCurrentUser({
+          feature: 'albatross_plan_artifact',
+          speed: 'primary',
+          userId: input.userId,
+          userEmail: input.userEmail,
+          userName: input.userName,
+          system: ARTIFACT_SYSTEM,
+          prompt: JSON.stringify(
+            {
+              title: generation.title,
+              outcome: generation.outcome,
+              summary: generation.summary,
+              digitalActions: digitalActions.map((action) => ({
+                // The verbatim handle each task card's Done control must carry.
+                key: action.key,
+                kind: action.kind,
+                title: action.title,
+                description: action.description,
+                priority: action.priority,
+                startIso: action.startIso,
+                endIso: action.endIso,
+                durationMinutes: action.durationMinutes,
+                to: action.to,
+                subject: action.subject,
+              })),
+              physicalActions: generation.physicalActions,
+              places: generation.places,
+              assumptions: generation.assumptions,
+              sources: resolveSourceRefs(generation.sourceRefIds, refs),
+              openQuestions: questions.filter((question) => !question.answer).map((q) => q.prompt),
+            },
+            null,
+            2,
+          ),
+        }),
+        180_000,
+        'Artifact composition',
+      );
       const extracted = extractHtml(artifact.text);
       artifactHtml = extracted ? normalizeArtifactLinks(extracted) : undefined;
     } catch (err) {

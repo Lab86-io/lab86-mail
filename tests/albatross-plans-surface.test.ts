@@ -12,6 +12,7 @@ import {
   nextUnansweredQuestion,
   openQuestions,
   type PlanLike,
+  planningIsStale,
   planRevealSequence,
   type QuestionOption,
   relativeTime,
@@ -479,5 +480,23 @@ describe('planStageMode', () => {
     expect(planStageMode({ status: 'needs_answers' }, artifactPlan)).toBe('cascade');
     expect(planStageMode({ status: 'ready' }, { ...artifactPlan, status: 'superseded' })).toBe('cascade');
     expect(planStageMode(null, artifactPlan)).toBe('cascade');
+  });
+});
+
+describe('planningIsStale', () => {
+  test('fresh planning is not stale', () => {
+    const now = 1_000_000_000;
+    expect(planningIsStale(now - 60_000, now)).toBe(false);
+  });
+
+  test('planning past the threshold is stale', () => {
+    const now = 1_000_000_000;
+    expect(planningIsStale(now - 5 * 60_000, now)).toBe(true);
+  });
+
+  test('threshold is configurable and non-finite timestamps never read stale', () => {
+    const now = 1_000_000_000;
+    expect(planningIsStale(now - 3_000, now, 2_000)).toBe(true);
+    expect(planningIsStale(Number.NaN, now)).toBe(false);
   });
 });

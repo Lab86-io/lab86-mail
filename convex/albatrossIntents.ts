@@ -1,10 +1,11 @@
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
+import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { normalizeSourceRefs, normalizeText } from './albatrossModel';
 import { recordCompletionEvent } from './albatrossWork';
-import { now, requireInternalSecret } from './lib';
+import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
@@ -349,10 +350,103 @@ export const savePlan = mutation({
       questions: args.questions ?? intent.questions,
       latestPlanId: planId,
       planError: undefined,
+      planAttempts: 0,
       updatedAt: ts,
     });
 
     return planId;
+  },
+});
+
+// --- Plan reconcile: unstick generations killed by deploys/restarts. ---
+// A generation that dies between "status: planning" and savePlan leaves the
+// intent planning forever with no planError (SIGTERM skips the catch). The
+// cron re-kicks stale ones through the Next app, then gives up gracefully.
+
+export const PLAN_STALE_AFTER_MS = 5 * 60_000;
+export const PLAN_MAX_ATTEMPTS = 3;
+
+export const stalePlanningIntents = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = now() - PLAN_STALE_AFTER_MS;
+    // Cross-user scan; the intents table is small and 'planning' is a
+    // transient state, so a filtered take stays cheap.
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .filter((q) => q.eq(q.field('status'), 'planning'))
+      .take(100);
+    return rows
+      .filter((row) => row.updatedAt < cutoff)
+      .slice(0, 25)
+      .map((row) => ({
+        intentId: row._id,
+        userId: row.userId,
+        attempts: row.planAttempts ?? 0,
+      }));
+  },
+});
+
+// Marks one reconcile attempt (bumps the counter and refreshes updatedAt so
+// the next tick does not double-kick while a retry is still running).
+export const beginPlanReconcile = internalMutation({
+  args: { intentId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db.get(args.intentId);
+    if (!intent || intent.status !== 'planning') return null;
+    const attempts = (intent.planAttempts ?? 0) + 1;
+    await ctx.db.patch(args.intentId, { planAttempts: attempts, updatedAt: now() });
+    return attempts;
+  },
+});
+
+// Terminal give-up: surface the interruption instead of spinning forever.
+export const failStalePlan = internalMutation({
+  args: { intentId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db.get(args.intentId);
+    if (!intent || intent.status !== 'planning') return;
+    const unanswered = (intent.questions ?? []).some((question) => !question.answer);
+    await ctx.db.patch(args.intentId, {
+      status: unanswered ? 'needs_answers' : 'captured',
+      planError: 'Planning was interrupted. Regenerate to try again.',
+      updatedAt: now(),
+    });
+  },
+});
+
+export const planReconcileTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[plan-reconcile cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    const stale = await ctx.runQuery(internal.albatrossIntents.stalePlanningIntents, {});
+    if (!stale.length) return;
+    const retry: Array<{ userId: string; intentId: string }> = [];
+    for (const row of stale) {
+      if (row.attempts >= PLAN_MAX_ATTEMPTS) {
+        await ctx.runMutation(internal.albatrossIntents.failStalePlan, { intentId: row.intentId });
+        continue;
+      }
+      const attempts = await ctx.runMutation(internal.albatrossIntents.beginPlanReconcile, {
+        intentId: row.intentId,
+      });
+      if (attempts !== null) retry.push({ userId: row.userId, intentId: String(row.intentId) });
+    }
+    if (!retry.length) {
+      console.log(`[plan-reconcile cron] ${stale.length} stale, all past max attempts`);
+      return;
+    }
+    const ok = await fanOutInternalPost(`${appUrl}/api/cron/plan-reconcile`, secret, retry, {
+      label: 'plan-reconcile cron',
+      timeoutMs: 240_000,
+      concurrency: 2,
+    });
+    console.log(`[plan-reconcile cron] re-kicked ${ok}/${retry.length} stale plans`);
   },
 });
 

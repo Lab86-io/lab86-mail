@@ -491,3 +491,60 @@ describe('normalizeArtifactLinks', () => {
     expect(out).toContain('src="data:image/png;base64,x"');
   });
 });
+
+describe('withDeadline (stuck-planning guard)', () => {
+  test('resolves normally when the promise beats the deadline', async () => {
+    const { withDeadline } = await import('../lib/albatross/intent-plan');
+    await expect(withDeadline(Promise.resolve('ok'), 1_000, 'Fast op')).resolves.toBe('ok');
+  });
+
+  test('rejects with a labeled error when the promise hangs', async () => {
+    const { withDeadline } = await import('../lib/albatross/intent-plan');
+    const hang = new Promise(() => {});
+    await expect(withDeadline(hang, 10, 'Plan generation')).rejects.toThrow(
+      'Plan generation timed out after 0s',
+    );
+  });
+
+  test('propagates the underlying rejection unchanged', async () => {
+    const { withDeadline } = await import('../lib/albatross/intent-plan');
+    await expect(withDeadline(Promise.reject(new Error('boom')), 1_000, 'Op')).rejects.toThrow('boom');
+  });
+});
+
+describe('plan reconcile wiring (stuck-planning self-heal)', () => {
+  const read = (rel: string) =>
+    require('node:fs').readFileSync(require('node:path').join(process.cwd(), rel), 'utf8');
+
+  test('the reconcile cron is registered and the convex side exists', () => {
+    const crons = read('convex/crons.ts');
+    expect(crons).toContain('planReconcileTick');
+    const intents = read('convex/albatrossIntents.ts');
+    expect(intents).toContain('export const stalePlanningIntents');
+    expect(intents).toContain('export const failStalePlan');
+    expect(intents).toContain('export const beginPlanReconcile');
+    // Give-up path surfaces the interruption instead of spinning forever.
+    expect(intents).toContain('Planning was interrupted. Regenerate to try again.');
+    // A successful save resets the retry counter.
+    expect(intents).toContain('planAttempts: 0');
+  });
+
+  test('the Next route re-runs the full generation under cron auth', () => {
+    const route = read('app/api/cron/plan-reconcile/route.ts');
+    expect(route).toContain('isInternalCronRequest');
+    expect(route).toContain('generateIntentPlan({ userId, intentId })');
+  });
+
+  test('schema carries the retry counter', () => {
+    expect(read('convex/schema.ts')).toContain('planAttempts: v.optional(v.number())');
+  });
+
+  test('every gateway/search call in the generation path has a deadline', () => {
+    const src = read('lib/albatross/intent-plan.ts');
+    // No bare awaited gateway calls: each generateTextForCurrentUser call is
+    // wrapped so a hung provider becomes a caught, planError-writing failure.
+    const bare = src.match(/await deps\.generateTextForCurrentUser\(/g) ?? [];
+    expect(bare.length).toBe(0);
+    expect((src.match(/withDeadline\(/g) ?? []).length).toBeGreaterThanOrEqual(5);
+  });
+});

@@ -23,6 +23,11 @@ crons.interval('calendar resync', { minutes: 15 }, internal.calendarSync.tick, {
 // fact matches first, then one nano-LLM verdict for the rest (candidate-only).
 crons.interval('area classify', { minutes: 30 }, internal.albatross.classifyTick, {});
 
+// Unstick intent plans whose generation was killed mid-flight (deploys
+// replace the Next container; SIGTERM skips the planError catch). Re-kicks
+// stale 'planning' intents through the app, then fails them gracefully.
+crons.interval('plan reconcile', { minutes: 5 }, internal.albatrossIntents.planReconcileTick, {});
+
 // Poll each user's connected tool servers/APIs every 20 minutes
 // so brief/search items stay current. Cast: the generated `internal` type only
 // gains `mcpSync` after codegen on deploy.

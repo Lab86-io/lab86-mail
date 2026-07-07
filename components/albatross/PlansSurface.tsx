@@ -335,6 +335,13 @@ export function getGeo(timeoutMs = 2500): Promise<{ latitude: number; longitude:
 
 export type IntentFilter = 'all' | 'needs_you' | 'ready' | 'done';
 
+/** A 'planning' intent whose updatedAt stopped moving is likely orphaned (the
+ * generation died with the process — deploys do this). The cron reconciles it
+ * server-side; this powers the client's earlier "Retry" affordance. */
+export function planningIsStale(updatedAt: number, nowMs: number, thresholdMs = 4 * 60_000): boolean {
+  return Number.isFinite(updatedAt) && nowMs - updatedAt > thresholdMs;
+}
+
 export function intentMatchesFilter(intent: IntentLike, filter: IntentFilter): boolean {
   if (filter === 'needs_you') return intent.status === 'needs_answers' || Boolean(intent.planError);
   if (filter === 'ready') return intent.status === 'ready';
@@ -974,6 +981,16 @@ function IntentStage({
   );
 
   const planningVisible = intent.status === 'planning' || optimisticPlanning;
+
+  // Surface a quiet retry when planning has visibly stalled (orphaned by a
+  // deploy or a hang). Ticks only while the vortex is up.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!planningVisible) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [planningVisible]);
+  const planningStalled = intent.status === 'planning' && planningIsStale(intent.updatedAt, nowTick);
   const mapQuery = mapQueryForIntent(intent, plan, previewOption);
   const mapOption = previewOption ?? chosenQuestionOption(intent);
   const vortexTitle = (intent.rawText || intentDisplayTitle(intent)).replace(/\s+/g, ' ').trim();
@@ -1000,6 +1017,14 @@ function IntentStage({
               (liveAreas ?? []).map((area) => area.name),
             )}
           />
+          {planningStalled ? (
+            <div className="absolute inset-x-0 bottom-10 flex flex-col items-center gap-1.5">
+              <p className="text-[12.5px] text-[var(--color-text-muted)]">
+                This is taking longer than usual.
+              </p>
+              <QuietButton onClick={onRequestPlan}>Retry</QuietButton>
+            </div>
+          ) : null}
         </motion.div>
       ) : (
         <motion.div
