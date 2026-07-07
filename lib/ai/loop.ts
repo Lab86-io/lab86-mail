@@ -127,6 +127,27 @@ export const AGENT_TOOL_NAMES = new Set([
   'ui_toast',
   'ui_close_bar',
   'ui_switch_account',
+  // Display tools (lib/tools/display.ts) — rich tool-ui renderings in chat.
+  'show_weather',
+  'show_chart',
+  'show_stats',
+  'show_table',
+  'show_code',
+  'show_code_diff',
+  'show_terminal',
+  'show_plan',
+  'show_progress',
+  'show_citations',
+  'show_link_preview',
+  'show_image',
+  'show_image_gallery',
+  'show_video',
+  'show_audio',
+  'show_map',
+  'show_carousel',
+  'show_order_summary',
+  'show_social_post',
+  'show_message_draft',
 ]);
 
 const AGENT_TOOL_TIMEOUT_MS = 75_000;
@@ -171,12 +192,12 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
       },
     });
   }
-  // Human-in-the-loop question. Deliberately has NO execute: the stream pauses
-  // on this tool call until the client renders the choices and supplies the
+  // Human-in-the-loop tools. Deliberately have NO execute: the stream pauses
+  // on the tool call until the client renders the form and supplies the
   // answer via addToolResult, after which the agent continues with it.
   lifted.ask_user = aiTool({
     description:
-      "Ask the user up to 4 questions at once and WAIT for their answers before continuing. Each question MAY offer 2–4 quick options, but the user can ALWAYS also type a free-text answer — so include options only when there is a clear, finite set of choices, and OMIT options for open-ended questions (times, names, amounts). Never pack several distinct questions into one question's options — give each its own entry in `questions`. Reach for this whenever you are unsure, must choose between approaches, or want to offer to dive deeper.",
+      "Ask the user up to 4 questions at once and WAIT for their answers before continuing. Each question MAY offer 2–6 quick options, but the user can ALWAYS also type a free-text answer — so include options only when there is a clear, finite set of choices, and OMIT options for open-ended questions (times, names, amounts). Set multiSelect: true when several options can apply at once ('which of these?'); the user can then pick multiple (including shift-click ranges). Never pack several distinct questions into one question's options — give each its own entry in `questions`. Reach for this whenever you are unsure, must choose between approaches, or want to offer to dive deeper.",
     inputSchema: z.object({
       questions: z
         .array(
@@ -185,15 +206,124 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
             options: z
               .array(z.object({ label: z.string(), description: z.string().optional() }))
               .min(2)
-              .max(4)
+              .max(6)
               .optional()
-              .describe('Optional 2–4 quick choices. Omit entirely for a free-text question.'),
-            multiSelect: z.boolean().optional().describe('Allow choosing more than one option.'),
+              .describe('Optional 2–6 quick choices. Omit entirely for a free-text question.'),
+            multiSelect: z
+              .boolean()
+              .optional()
+              .describe('Allow choosing more than one option (answers arrive comma-separated).'),
+            minSelections: z.number().int().min(0).optional().describe('Multi-select only.'),
+            maxSelections: z.number().int().min(1).optional().describe('Multi-select only.'),
           }),
         )
         .min(1)
         .max(4)
         .describe('1–4 distinct questions, asked together. Each can be choice-based or free-text.'),
+    }),
+  });
+  // A yes/no gate for one consequential action. Renders an approval card and
+  // waits. Output: { decision: 'approved' | 'denied' }.
+  lifted.ask_approval = aiTool({
+    description:
+      "Ask the user to approve or deny ONE consequential action before you take it (send on their behalf, delete something, notify attendees). Renders an approval card and WAITS. Use ask_user for open questions; use this only for a binary go/no-go. State exactly what will happen in `description`; add metadata rows for the key facts (recipient, when, how many). Set intent: 'destructive' for irreversible actions.",
+    inputSchema: z.object({
+      title: z.string().describe("What you want to do, e.g. 'Send the reply to Sam'."),
+      description: z.string().optional().describe('One or two sentences on exactly what will happen.'),
+      metadata: z
+        .array(z.object({ label: z.string(), value: z.string() }))
+        .max(6)
+        .optional()
+        .describe('Key facts as label/value rows.'),
+      confirmLabel: z.string().optional().describe("Verb-first, e.g. 'Send it'. Defaults to 'Approve'."),
+      denyLabel: z.string().optional().describe("Defaults to 'Cancel'."),
+      intent: z.enum(['default', 'destructive']).optional(),
+    }),
+  });
+  // Numeric parameters via sliders. Output: { values: { [sliderId]: number } }.
+  lifted.ask_parameters = aiTool({
+    description:
+      'Ask the user to tune 1–4 NUMERIC parameters with sliders (budget, radius, count, duration) and WAIT for the confirmed values. Give each slider a sensible min/max/step and a starting value. Output arrives as { values: { [id]: number } }.',
+    inputSchema: z.object({
+      title: z.string().optional(),
+      sliders: z
+        .array(
+          z.object({
+            id: z.string().describe('Stable key for the value, e.g. "budget".'),
+            label: z.string(),
+            min: z.number(),
+            max: z.number(),
+            step: z.number().positive().optional(),
+            value: z.number().describe('Starting value, within min..max.'),
+            unit: z.string().optional().describe("e.g. '$', 'mi', 'min'."),
+          }),
+        )
+        .min(1)
+        .max(4),
+    }),
+  });
+  // A compact settings form (switches, toggles, selects). Output:
+  // { values: { [itemId]: string | boolean } }.
+  lifted.ask_preferences = aiTool({
+    description:
+      'Ask the user to set several related preferences at once in a compact settings panel and WAIT. Items are switches (boolean), toggles (2–4 exclusive options), or selects (5+ options). Use for "how do you want this to behave" batches — notification choices, defaults, filters. Output arrives as { values: { [itemId]: string | boolean } }.',
+    inputSchema: z.object({
+      title: z.string().optional(),
+      items: z
+        .array(
+          z.discriminatedUnion('type', [
+            z.object({
+              type: z.literal('switch'),
+              id: z.string(),
+              label: z.string(),
+              description: z.string().optional(),
+              defaultChecked: z.boolean().optional(),
+            }),
+            z.object({
+              type: z.literal('toggle'),
+              id: z.string(),
+              label: z.string(),
+              description: z.string().optional(),
+              options: z
+                .array(z.object({ value: z.string(), label: z.string() }))
+                .min(2)
+                .max(4),
+              defaultValue: z.string().optional(),
+            }),
+            z.object({
+              type: z.literal('select'),
+              id: z.string(),
+              label: z.string(),
+              description: z.string().optional(),
+              selectOptions: z.array(z.object({ value: z.string(), label: z.string() })).min(5),
+              defaultSelected: z.string().optional(),
+            }),
+          ]),
+        )
+        .min(1)
+        .max(8),
+    }),
+  });
+  // A guided multi-step choice flow (one question per screen, no free text).
+  // Output: { answers: [{ question, response }] } — same shape as ask_user.
+  lifted.ask_question_flow = aiTool({
+    description:
+      'Walk the user through 2–5 guided choice questions ONE STEP AT A TIME (a stepper with progress) and WAIT for all answers. Every step must have 2–6 options — there is NO free-text escape here, so use ask_user instead when an open answer is plausible. Best for setup/configuration sequences where each step is a clean pick.',
+    inputSchema: z.object({
+      steps: z
+        .array(
+          z.object({
+            title: z.string().describe('The question for this step.'),
+            description: z.string().optional(),
+            options: z
+              .array(z.object({ label: z.string(), description: z.string().optional() }))
+              .min(2)
+              .max(6),
+            multiSelect: z.boolean().optional(),
+          }),
+        )
+        .min(2)
+        .max(5),
     }),
   });
   return lifted;

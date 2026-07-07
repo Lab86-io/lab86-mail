@@ -75,7 +75,7 @@ export const areaList = defineTool({
 export const areaCreate = defineTool({
   name: 'area_create',
   description:
-    'Create an area — one part of life the user is responsible for. Create it as soon as the user names it, then investigate (area_domain_activity, corpus_search, sender_profile) before proposing facts. On success the area is active and appears in the sidebar rail immediately — tell the user it is there. If this tool errors, the area was NOT created; say so and retry instead of narrating success.',
+    'Create an area — one part of life the user is responsible for. Create it as soon as the user names it, then investigate (area_domain_activity, corpus_search, sender_profile) before proposing facts. On success the area is active, appears in the sidebar rail immediately, and has its own task board — tell the user both ("StatPearls is in your sidebar now, with its own task board"). Re-creating an existing or archived area revives it and reuses its board, never duplicates. If this tool errors, the area was NOT created; say so and retry instead of narrating success.',
   category: 'memory',
   mutating: true,
   input: z.object({
@@ -92,17 +92,31 @@ export const areaCreate = defineTool({
     areaId: z.string(),
     name: z.string(),
     status: z.literal('active'),
+    boardId: z.string().optional(),
   }),
   async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
     const areaId = await deps.convexMutation<string>(areasApi().createArea, {
-      userId: requireUserId(ctx.userId),
+      userId,
       name: args.name,
       kind: args.kind,
       description: args.description,
     });
+    // The mutation also created (or revived) the area's task board; read the
+    // linkage back so the chat can point at it truthfully. Best-effort — the
+    // area exists even when this read fails.
+    const area = await deps
+      .convexQuery<any>(areasApi().getArea, { userId, areaId: String(areaId) })
+      .catch(() => null);
     // Echo enough for the chat to confirm truthfully ("StatPearls is in your
-    // sidebar now") without a follow-up read.
-    return { ok: true, areaId: String(areaId), name: args.name, status: 'active' as const };
+    // sidebar now, with its own task board") without a follow-up read.
+    return {
+      ok: true,
+      areaId: String(areaId),
+      name: args.name,
+      status: 'active' as const,
+      ...(area?.boardId ? { boardId: String(area.boardId) } : {}),
+    };
   },
 });
 

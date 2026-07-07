@@ -23,6 +23,7 @@
     "@magicui": "https://magicui.design/r/{name}.json",
     "@kibo-ui": "https://www.kibo-ui.com/r/{name}.json",
     "@loading-ui": "https://loading-ui.com/r/{name}.json",
-    "@animated-icons": "https://lucide-animated.com/r/{name}.json"
+    "@animated-icons": "https://lucide-animated.com/r/{name}.json",
+    "@tool-ui": "https://www.tool-ui.com/r/{name}.json"
   }
 }

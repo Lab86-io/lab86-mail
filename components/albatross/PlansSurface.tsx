@@ -234,6 +234,28 @@ export function chosenQuestionOption(intent: IntentLike | null | undefined): Que
   return null;
 }
 
+// Every answered option-question, as receipt rows for the view-mode choice
+// display ("show options, not just ask"): the chosen option plus how many
+// alternatives it beat. Pure and testable.
+export interface AnsweredChoice {
+  prompt: string;
+  option: QuestionOption;
+  alternatives: number;
+}
+
+export function answeredOptionChoices(intent: IntentLike | null | undefined): AnsweredChoice[] {
+  const rows: AnsweredChoice[] = [];
+  for (const question of intent?.questions ?? []) {
+    if (!question.answer || !question.options?.length) continue;
+    const option = question.answeredOptionId
+      ? question.options.find((entry) => entry.id === question.answeredOptionId)
+      : undefined;
+    if (!option) continue;
+    rows.push({ prompt: question.prompt, option, alternatives: question.options.length - 1 });
+  }
+  return rows;
+}
+
 // "123 Main St"-shaped: a street number, up to four words, then a street token.
 const STREET_RE =
   /\b\d{1,6}\s+(?:[\w.'-]+\s+){0,4}(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|hwy|highway|plaza|pkwy|parkway|ct|court|sq|square)\b/i;
@@ -1008,6 +1030,13 @@ function IntentStage({
 
             {artifactMode ? null : <RawDump intent={intent} sourceLabel={source.label} />}
 
+            {/* Options are shown, not just asked about: once a choice question
+                is answered, the chosen option stays visible as a designed
+                receipt (tool-ui OptionList receipt grammar) in view mode. */}
+            {!artifactMode && intent.status !== 'needs_answers' ? (
+              <AnsweredChoicesReceipt intent={intent} />
+            ) : null}
+
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 // Keyed by plan, not status: the ready->applied flip must NOT remount
@@ -1180,6 +1209,53 @@ function RawDump({ intent, sourceLabel }: { intent: IntentRow; sourceLabel: stri
   );
 }
 
+// Answered option-questions in view mode — the tool-ui OptionList "receipt"
+// treatment: each choice question collapses to its chosen option (filled check,
+// title, detail, website) with a quiet count of the alternatives it beat, so
+// the plan page keeps SHOWING the options story instead of discarding it.
+function AnsweredChoicesReceipt({ intent }: { intent: IntentRow }) {
+  const rows = answeredOptionChoices(intent);
+  if (!rows.length) return null;
+  return (
+    <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+      {rows.map((row) => (
+        <div
+          key={row.option.id}
+          className="flex items-start gap-3 border-b border-[var(--color-border)] px-4 py-3 last:border-b-0"
+        >
+          <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-[var(--color-accent-foreground)]">
+            <Check className="size-3" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11.5px] text-[var(--color-text-faint)]">{row.prompt}</p>
+            <p className="mt-0.5 text-[13px] font-semibold text-[var(--color-text)]">{row.option.title}</p>
+            {[row.option.detail, row.option.address].filter(Boolean).map((line) => (
+              <p key={line} className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+                {line}
+              </p>
+            ))}
+            {row.option.website ? (
+              <a
+                href={row.option.website}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block text-[11.5px] font-medium text-[var(--color-accent)] hover:underline"
+              >
+                {websiteLabel(row.option.website)}
+              </a>
+            ) : null}
+          </div>
+          {row.alternatives > 0 ? (
+            <span className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-faint)]">
+              picked over {row.alternatives} other{row.alternatives === 1 ? '' : 's'}
+            </span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // One-question-at-a-time stepper (Cosmos/Indeed/Juicebox pattern). Questions
 // with options render as choosable place cards (Vercel "we found some options"
 // affirm pattern); free text stays available beneath. Answering the LAST
@@ -1295,6 +1371,20 @@ function QuestionStepper({
                     )}
                   >
                     <div className="flex items-start gap-3">
+                      {/* tool-ui OptionList selection grammar: a radio indicator
+                          that fills with the accent when picked. */}
+                      <span className="flex h-5 shrink-0 items-center">
+                        <span
+                          className={cn(
+                            'flex size-4 items-center justify-center rounded-full border-2 transition-colors',
+                            isPicked
+                              ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
+                              : 'border-[var(--color-border-strong)]',
+                          )}
+                        >
+                          {isPicked ? <span className="size-2 rounded-full bg-current" /> : null}
+                        </span>
+                      </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-[13.5px] font-semibold text-[var(--color-text)]">{option.title}</p>
                         {[option.detail, option.address].filter(Boolean).map((line) => (
@@ -1424,6 +1514,8 @@ function PlanReveal({
   const appFont = useClientStore((s) => s.appFont);
   const accentHue = useClientStore((s) => s.accentHue);
   const accentChroma = useClientStore((s) => s.accentChroma);
+  const accent2Hue = useClientStore((s) => s.accent2Hue);
+  const accent2Chroma = useClientStore((s) => s.accent2Chroma);
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
   const postTheme = useCallback(() => {
@@ -1432,7 +1524,7 @@ function PlanReveal({
   // biome-ignore lint/correctness/useExhaustiveDependencies: color slices intentionally re-trigger the post; resolved values come from computed CSS.
   useEffect(() => {
     postTheme();
-  }, [postTheme, accentHue, accentChroma, bgHue, surfaceTint]);
+  }, [postTheme, accentHue, accentChroma, accent2Hue, accent2Chroma, bgHue, surfaceTint]);
   const disabledReason = applyDisabledReason(intent, plan);
   const isApplied = applied !== null || plan.status === 'applied';
 

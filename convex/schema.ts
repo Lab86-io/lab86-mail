@@ -328,6 +328,9 @@ export default defineSchema({
     status: v.union(v.literal('active'), v.literal('archived')),
     description: v.optional(v.string()),
     priority: v.optional(v.number()),
+    // Every area gets its own task board at creation; archiving the area never
+    // deletes the board, and unarchiving reuses it (no duplicates).
+    boardId: v.optional(v.id('boards')),
     createdAt: v.number(),
     updatedAt: v.number(),
     archivedAt: v.optional(v.number()),
@@ -692,12 +695,15 @@ export default defineSchema({
     appliedApplicationId: v.optional(v.string()),
     // stepKey -> created artifact mapping recorded at apply time; card-backed
     // steps carry the board cardId for the dossier's interactive task cards.
+    // Calendar/draft steps record their created eventId/draftId for provenance.
     appliedSteps: v.optional(
       v.array(
         v.object({
           stepKey: v.string(),
           kind: v.string(),
           cardId: v.optional(v.string()),
+          eventId: v.optional(v.string()),
+          draftId: v.optional(v.string()),
         }),
       ),
     ),

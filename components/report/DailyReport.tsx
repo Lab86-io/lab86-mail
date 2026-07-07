@@ -485,6 +485,8 @@ function ReportArtifact({
   const appFont = useClientStore((s) => s.appFont);
   const accentHue = useClientStore((s) => s.accentHue);
   const accentChroma = useClientStore((s) => s.accentChroma);
+  const accent2Hue = useClientStore((s) => s.accent2Hue);
+  const accent2Chroma = useClientStore((s) => s.accent2Chroma);
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
 
@@ -524,6 +526,8 @@ function ReportArtifact({
     postDismissedThreads,
     accentHue,
     accentChroma,
+    accent2Hue,
+    accent2Chroma,
     bgHue,
     surfaceTint,
     html,

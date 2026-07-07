@@ -5,7 +5,11 @@ import {
   buildAlbatrossDailyReportContextFromLive,
   loadLiveAlbatrossDailyReportContext,
 } from '../lib/albatross/daily-report';
-import { buildAlbatrossApplicationPlan, unresolvedArtifactsAfterUndo } from '../lib/albatross/work-model';
+import {
+  appliedStepsFromApplyResult,
+  buildAlbatrossApplicationPlan,
+  unresolvedArtifactsAfterUndo,
+} from '../lib/albatross/work-model';
 
 describe('Albatross plan application model', () => {
   test('separates executable artifacts, approval-gated actions, and unresolved actions', () => {
@@ -64,6 +68,91 @@ describe('Albatross plan application model', () => {
     expect(plan.executableSteps.find((step) => step.title.includes('Legacy'))?.stepKey).toBeUndefined();
   });
 
+  test('auto mode derives a project (epic) from a multi-step plan: 3+ tasks', () => {
+    const plan = buildAlbatrossApplicationPlan({
+      intentId: 'intent_move',
+      intentText: 'we are moving to rochester in september',
+      intentTitle: 'Plan the Rochester move',
+      projectMode: 'auto',
+      plan: {
+        outcome: 'The move is planned end to end.',
+        digitalActions: [
+          { kind: 'task', key: 'step-1', title: 'Book movers' },
+          { kind: 'task', key: 'step-2', title: 'Give landlord notice' },
+          { kind: 'task', key: 'step-3', title: 'Change address everywhere' },
+        ],
+      },
+    });
+    expect(plan.projectRequired).toBe(true);
+    // The intent's short title names the derived epic — no model projectTitle needed.
+    expect(plan.projectTitle).toBe('Plan the Rochester move');
+    expect(plan.executableSteps[0]).toMatchObject({ kind: 'project', title: 'Plan the Rochester move' });
+    expect(plan.executableSteps.filter((step) => step.kind === 'task')).toHaveLength(3);
+  });
+
+  test('auto mode derives a project when any action is scheduled beyond a week out', () => {
+    const now = Date.parse('2026-07-07T12:00:00.000Z');
+    const plan = buildAlbatrossApplicationPlan({
+      intentId: 'intent_horizon',
+      intentText: 'renew passport before the fall trip',
+      projectMode: 'auto',
+      account: 'jakob@example.test',
+      now,
+      plan: {
+        digitalActions: [
+          { kind: 'task', title: 'Fill out DS-82' },
+          {
+            kind: 'calendar_event',
+            title: 'Passport photo appointment',
+            startIso: '2026-07-20T15:00:00.000Z',
+            endIso: '2026-07-20T15:30:00.000Z',
+          },
+        ],
+      },
+    });
+    expect(plan.projectRequired).toBe(true);
+    // No intentTitle: the raw intent text names the epic.
+    expect(plan.projectTitle).toBe('renew passport before the fall trip');
+  });
+
+  test('auto mode keeps single-errand plans task-only (1-2 near-term actions, no project)', () => {
+    const now = Date.parse('2026-07-07T12:00:00.000Z');
+    const plan = buildAlbatrossApplicationPlan({
+      intentId: 'intent_errand',
+      intentText: 'drop off the dry cleaning',
+      intentTitle: 'Drop off dry cleaning',
+      projectMode: 'auto',
+      account: 'jakob@example.test',
+      now,
+      plan: {
+        digitalActions: [
+          { kind: 'task', title: 'Drop off dry cleaning' },
+          {
+            kind: 'calendar_event',
+            title: 'Dry cleaning run',
+            startIso: '2026-07-08T15:00:00.000Z',
+            endIso: '2026-07-08T15:30:00.000Z',
+          },
+        ],
+      },
+    });
+    expect(plan.projectRequired).toBe(false);
+    expect(plan.projectTitle).toBeUndefined();
+    expect(plan.executableSteps.map((step) => step.kind)).toEqual(['task', 'calendar_event']);
+  });
+
+  test('projectMode "project" always creates the epic, even without any declared title', () => {
+    const plan = buildAlbatrossApplicationPlan({
+      intentId: 'intent_forced',
+      intentText: 'sort out the insurance mess',
+      projectMode: 'project',
+      plan: { digitalActions: [{ kind: 'task', title: 'Call the insurer' }] },
+    });
+    expect(plan.projectRequired).toBe(true);
+    expect(plan.projectTitle).toBe('sort out the insurance mess');
+    expect(plan.executableSteps[0].kind).toBe('project');
+  });
+
   test('undone operations reappear as unresolved artifacts', () => {
     const unresolved = unresolvedArtifactsAfterUndo(
       {
@@ -79,6 +168,44 @@ describe('Albatross plan application model', () => {
     );
 
     expect(unresolved).toEqual([{ kind: 'task', id: 'card_1', title: 'List missing tax documents' }]);
+  });
+
+  test('appliedSteps mapping records cardId for tasks, eventId for events, draftId for drafts, and bare keys for approvals', () => {
+    const steps = appliedStepsFromApplyResult({
+      operations: [
+        {
+          stepKey: 'step-1',
+          kind: 'task',
+          tool: 'tasks_create_card',
+          artifactId: 'card_1',
+        },
+        {
+          stepKey: 'step-2',
+          kind: 'calendar_event',
+          tool: 'calendar_create_event',
+          artifactId: 'evt_1',
+        },
+        { stepKey: 'step-3', kind: 'email_draft', tool: 'save_draft', artifactId: 'draft_1' },
+        // Legacy operation without a stepKey never produces a mapping row.
+        { kind: 'task', tool: 'tasks_create_card', artifactId: 'card_orphan' },
+      ],
+      approvals: [{ stepKey: 'step-4', kind: 'email_send' }],
+    });
+    expect(steps).toEqual([
+      { stepKey: 'step-1', kind: 'task', cardId: 'card_1' },
+      { stepKey: 'step-2', kind: 'calendar_event', eventId: 'evt_1' },
+      { stepKey: 'step-3', kind: 'email_draft', draftId: 'draft_1' },
+      { stepKey: 'step-4', kind: 'email_send' },
+    ]);
+  });
+
+  test('appliedSteps mapping tolerates missing artifact ids and empty results', () => {
+    expect(appliedStepsFromApplyResult({})).toEqual([]);
+    expect(
+      appliedStepsFromApplyResult({
+        operations: [{ stepKey: 'step-1', kind: 'task', tool: 'tasks_create_card' }],
+      }),
+    ).toEqual([{ stepKey: 'step-1', kind: 'task' }]);
   });
 
   test('source refs dedupe by kind and id together', () => {

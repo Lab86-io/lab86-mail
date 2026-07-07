@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dockPointerDistance, dockTileSize } from '../lib/dock-magnify';
+import { dockGlyphScale, dockPointerDistance, dockTileSize } from '../lib/dock-magnify';
 
 const geometry = { baseSize: 32, magnifiedSize: 44, range: 96 };
 
@@ -37,6 +37,21 @@ describe('dockTileSize', () => {
   test('supports a magnified size below base (shrink docks) with the same curve', () => {
     expect(dockTileSize({ baseSize: 40, magnifiedSize: 20, range: 100, distance: 0 })).toBe(20);
     expect(dockTileSize({ baseSize: 40, magnifiedSize: 20, range: 100, distance: 50 })).toBe(30);
+  });
+});
+
+describe('dockGlyphScale', () => {
+  test('rides the tile size: 1 at rest, magnified/base under the cursor', () => {
+    expect(dockGlyphScale(32, 32)).toBe(1);
+    expect(dockGlyphScale(44, 32)).toBe(44 / 32);
+    expect(dockGlyphScale(38, 32)).toBe(38 / 32); // mid-spring frame
+  });
+
+  test('degenerate inputs resolve to 1, never a collapsed or exploded glyph', () => {
+    expect(dockGlyphScale(Infinity, 32)).toBe(1);
+    expect(dockGlyphScale(NaN, 32)).toBe(1);
+    expect(dockGlyphScale(44, 0)).toBe(1);
+    expect(dockGlyphScale(44, -8)).toBe(1);
   });
 });
 

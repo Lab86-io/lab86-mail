@@ -27,6 +27,10 @@ export function briefThemeTokens(
     '--brief-hairline': v('--color-border') || '#e6e3dc',
     '--brief-accent': v('--color-accent') || '#c2683c',
     '--brief-accent-soft': v('--color-accent-soft') || 'rgba(194,104,60,0.14)',
+    // Second accent: the editorial header/line voice (section titles, tags,
+    // rules); accent-1 stays the action/emphasis voice. Fallback is a deep
+    // ochre picked against the brief's paper, distinct from the terracotta.
+    '--brief-accent-2': v('--color-accent-2') || '#774914',
     // Two fonts, like the rest of the app: the picked face drives the display
     // layer (headings/masthead); body copy stays sans.
     '--brief-font-display': BRIEF_FONT_FAMILIES[appFont ?? 'serif'] ?? BRIEF_FONT_FAMILIES.serif,

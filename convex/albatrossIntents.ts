@@ -60,11 +60,14 @@ const placeValidator = v.object({
 
 // Recorded at apply time: which plan step ("step-1"…) became which artifact.
 // Card-backed steps carry the board cardId so the plan dossier's task cards
-// can toggle completion on the real board.
+// can toggle completion on the real board; calendar/draft steps carry the
+// created eventId/draftId for provenance.
 const appliedStepValidator = v.object({
   stepKey: v.string(),
   kind: v.string(),
   cardId: v.optional(v.string()),
+  eventId: v.optional(v.string()),
+  draftId: v.optional(v.string()),
 });
 
 const sourceRefValidator = v.object({
@@ -373,6 +376,8 @@ export const markPlanApplied = mutation({
               stepKey: step.stepKey.slice(0, 80),
               kind: step.kind.slice(0, 40),
               cardId: step.cardId ? step.cardId.slice(0, 120) : undefined,
+              eventId: step.eventId ? step.eventId.slice(0, 240) : undefined,
+              draftId: step.draftId ? step.draftId.slice(0, 240) : undefined,
             })),
           }
         : {}),

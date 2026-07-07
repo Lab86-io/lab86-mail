@@ -75,6 +75,7 @@ import {
   listDailyReportTaskDismissalsTool,
   listDailyReportThreadDismissalsTool,
 } from './daily-report';
+import { DISPLAY_TOOLS } from './display';
 import {
   getMessage,
   getSmartCategoryStats,
@@ -310,6 +311,9 @@ const allTools: AnyTool[] = [
   uiToast,
   uiCloseBar,
   uiSwitchAccount,
+  // Display tools — validated payloads rendered as rich tool-ui components in
+  // chat (weather, charts, tables, code, media, maps, drafts…).
+  ...DISPLAY_TOOLS,
 ];
 
 export const TOOLS: Record<string, AnyTool> = Object.fromEntries(allTools.map((t) => [t.name, t]));

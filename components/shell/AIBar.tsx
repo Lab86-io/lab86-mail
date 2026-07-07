@@ -8,7 +8,9 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
+import { HitlPart } from '@/components/ai-elements/hitl-parts';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
+import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { BorderBeam } from '@/components/ui/border-beam';
@@ -38,7 +40,13 @@ import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
-import { toolActivityLine, toolPartName } from '@/lib/albatross/teach-ui';
+import {
+  isHitlToolName,
+  lastMessageAnsweredHitl,
+  toolActivityLine,
+  toolActivityState,
+  toolPartName,
+} from '@/lib/albatross/teach-ui';
 import { useClientStore } from '@/lib/client-state';
 import { formatDate } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
@@ -182,30 +190,20 @@ export function AssistantChat() {
   );
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
-    // Auto-continue ONLY after the user answers an ask_user question (its result
-    // becomes available). The built-in lastAssistantMessageIsCompleteWithToolCalls
-    // also fires after ordinary server-tool turns, which can resubmit in a loop —
-    // our server already runs server tools to completion in one response.
-    sendAutomaticallyWhen: ({ messages: msgs }) => {
-      const last = msgs[msgs.length - 1] as any;
-      if (!last || last.role !== 'assistant') return false;
-      return (last.parts || []).some((p: any) => {
-        const name =
-          p?.type === 'dynamic-tool'
-            ? p.toolName
-            : typeof p?.type === 'string' && p.type.startsWith('tool-')
-              ? p.type.slice(5)
-              : '';
-        return name === 'ask_user' && p.state === 'output-available';
-      });
-    },
+    // Auto-continue ONLY after the user answers a human-in-the-loop tool call
+    // (ask_user, ask_approval, ask_parameters, ask_preferences,
+    // ask_question_flow). The built-in
+    // lastAssistantMessageIsCompleteWithToolCalls also fires after ordinary
+    // server-tool turns, which can resubmit in a loop — our server already
+    // runs server tools to completion in one response.
+    sendAutomaticallyWhen: ({ messages: msgs }) => lastMessageAnsweredHitl(msgs as any),
   });
 
-  // Hand the ask_user answers back into the stream. Memoized so the context
-  // value is stable across renders.
-  const answerAskUser = useCallback(
-    (toolCallId: string, answers: AskAnswer[]) => {
-      void addToolResult({ tool: 'ask_user', toolCallId, output: { answers } });
+  // Hand human-in-the-loop answers back into the stream. Memoized so the
+  // context value is stable across renders.
+  const answerHitl = useCallback(
+    (tool: string, toolCallId: string, output: Record<string, unknown>) => {
+      void addToolResult({ tool: tool as any, toolCallId, output });
     },
     [addToolResult],
   );
@@ -645,7 +643,19 @@ export function AssistantChat() {
             ) : (
               <ChatContainerRoot className="relative flex-1">
                 <ChatContainerContent className="gap-4 px-3.5 py-4">
-                  <AskUserContext.Provider value={answerAskUser}>
+                  <ChatPartContext.Provider
+                    value={{
+                      answer: answerHitl,
+                      openDraft: (draft) =>
+                        openComposeNew({
+                          to: draft.to,
+                          cc: draft.cc,
+                          bcc: draft.bcc,
+                          subject: draft.subject,
+                          body: draft.body,
+                        }),
+                    }}
+                  >
                     {messages.map((m, i) => (
                       <MessageFloat
                         key={m.id}
@@ -655,7 +665,7 @@ export function AssistantChat() {
                         <MessageView message={m} />
                       </MessageFloat>
                     ))}
-                  </AskUserContext.Provider>
+                  </ChatPartContext.Provider>
                   {showLoader ? (
                     <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
                       <Loader variant="typing" />
@@ -850,14 +860,19 @@ function userTextFromMessage(message: any): string {
     .join('');
 }
 
-// Lets the deeply-nested Part renderer hand ask_user answers back to useChat.
-const AskUserContext = createContext<(toolCallId: string, answers: AskAnswer[]) => void>(() => {});
+// Lets the deeply-nested Part renderer hand human-in-the-loop answers back to
+// useChat, and route "open this draft" requests into the real composer.
+interface ChatPartHandlers {
+  answer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
+  openDraft?: (draft: { to?: string; cc?: string; bcc?: string; subject?: string; body?: string }) => void;
+}
+const ChatPartContext = createContext<ChatPartHandlers>({ answer: () => {} });
 
 // Renders the agent's questionnaire (the ask_user HITL tool) — up to four
 // questions, each choice-based or free-text. Answers go back via addToolResult,
 // which auto-continues the agent.
 function AskUserPart({ part }: { part: any }) {
-  const answer = useContext(AskUserContext);
+  const { answer } = useContext(ChatPartContext);
   const input = part.input || {};
   const questions = Array.isArray(input.questions) ? input.questions : [];
   const state = part.state;
@@ -870,7 +885,7 @@ function AskUserPart({ part }: { part: any }) {
       questions={questions}
       answered={answered}
       answers={answers}
-      onSubmit={(a) => answer(part.toolCallId, a)}
+      onSubmit={(a: AskAnswer[]) => answer('ask_user', part.toolCallId, { answers: a })}
     />
   );
 }
@@ -904,19 +919,44 @@ function Part({ part }: { part: any }) {
   if (type === 'dynamic-tool' || (typeof type === 'string' && type.startsWith('tool-'))) {
     const toolName = toolPartName(part);
     if (toolName === 'ask_user') return <AskUserPart part={part} />;
+    if (isHitlToolName(toolName)) return <HitlToolPart toolName={toolName} part={part} />;
+    // Successful display tools render their designed tool-ui component; the
+    // quiet activity row still covers running/failed states below.
+    const state = part.state || 'input-available';
+    if (
+      TOOL_UI_RENDERED_TOOLS.has(toolName) &&
+      toolActivityState(state, part.output) === 'done' &&
+      part.output?.ok
+    ) {
+      return <RichDisplayPart toolName={toolName} output={part.output} />;
+    }
     // One consistent tool-activity grammar — the same quiet sentence rows the
     // Teach chat renders (components/ai-elements/tool-activity.tsx).
     return (
       <ToolActivityRow
-        activity={toolActivityLine(
-          toolName,
-          part.input,
-          part.state || 'input-available',
-          part.output,
-          part.errorText,
-        )}
+        activity={toolActivityLine(toolName, part.input, state, part.output, part.errorText)}
       />
     );
   }
   return null;
+}
+
+// Non-ask_user human-in-the-loop forms (approval card, sliders, preferences,
+// question flow), wired to the same addToolResult continuation.
+function HitlToolPart({ toolName, part }: { toolName: string; part: any }) {
+  const { answer } = useContext(ChatPartContext);
+  return (
+    <HitlPart
+      toolName={toolName}
+      part={part}
+      onResult={(output) => answer(toolName, part.toolCallId, output)}
+    />
+  );
+}
+
+// A successful show_* tool output, rendered with its tool-ui component. Falls
+// back to null (→ activity row) when the payload is not renderable.
+function RichDisplayPart({ toolName, output }: { toolName: string; output: any }) {
+  const { openDraft } = useContext(ChatPartContext);
+  return <ToolUiDisplayPart toolName={toolName} output={output} onOpenDraft={openDraft} />;
 }

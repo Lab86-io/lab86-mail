@@ -29,7 +29,9 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
+import { HitlPart } from '@/components/ai-elements/hitl-parts';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
+import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
@@ -46,7 +48,9 @@ import type { Id } from '@/convex/_generated/dataModel';
 import { TEACH_SYSTEM_PROMPT } from '@/lib/albatross/teach-prompt';
 import {
   factRowFromToolOutput,
+  isHitlToolName,
   isTeachChatSession,
+  lastMessageAnsweredHitl,
   senderCardsFromToolOutput,
   TEACH_CHAT_TITLE,
   TEACH_PANE_INITIAL,
@@ -112,21 +116,15 @@ function TeachChat() {
 
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
-    // Auto-continue ONLY after the user answers an ask_user question — same
-    // rationale as AIBar: the server runs ordinary tools to completion in one
-    // response, so the built-in predicate would resubmit in a loop.
-    sendAutomaticallyWhen: ({ messages: msgs }) => {
-      const last = msgs[msgs.length - 1] as any;
-      if (!last || last.role !== 'assistant') return false;
-      return (last.parts || []).some(
-        (p: any) => toolPartName(p) === 'ask_user' && p.state === 'output-available',
-      );
-    },
+    // Auto-continue ONLY after the user answers a human-in-the-loop tool call
+    // — same rationale as AIBar: the server runs ordinary tools to completion
+    // in one response, so the built-in predicate would resubmit in a loop.
+    sendAutomaticallyWhen: ({ messages: msgs }) => lastMessageAnsweredHitl(msgs as any),
   });
 
-  const answerAskUser = useCallback(
-    (toolCallId: string, answers: AskAnswer[]) => {
-      void addToolResult({ tool: 'ask_user', toolCallId, output: { answers } });
+  const answerHitl = useCallback(
+    (tool: string, toolCallId: string, output: Record<string, unknown>) => {
+      void addToolResult({ tool: tool as any, toolCallId, output });
     },
     [addToolResult],
   );
@@ -271,7 +269,7 @@ function TeachChat() {
               <div key={message.id} className="flex w-full min-w-0 flex-col gap-2">
                 {(message.parts || []).map((part: any, i: number) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: streamed parts are append-only with no stable id
-                  <TeachPart key={`${message.id}-${i}`} part={part} onAskAnswer={answerAskUser} />
+                  <TeachPart key={`${message.id}-${i}`} part={part} onAnswer={answerHitl} />
                 ))}
               </div>
             ),
@@ -366,10 +364,10 @@ function UserBubble({ message }: { message: any }) {
 
 function TeachPart({
   part,
-  onAskAnswer,
+  onAnswer,
 }: {
   part: any;
-  onAskAnswer: (toolCallId: string, answers: AskAnswer[]) => void;
+  onAnswer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
 }) {
   const type = part?.type;
   if (type === 'text') {
@@ -399,8 +397,13 @@ function TeachPart({
         questions={questions}
         answered={answered}
         answers={answers}
-        onSubmit={(a) => onAskAnswer(part.toolCallId, a)}
+        onSubmit={(a: AskAnswer[]) => onAnswer('ask_user', part.toolCallId, { answers: a })}
       />
+    );
+  }
+  if (isHitlToolName(name)) {
+    return (
+      <HitlPart toolName={name} part={part} onResult={(output) => onAnswer(name, part.toolCallId, output)} />
     );
   }
 
@@ -414,6 +417,9 @@ function TeachPart({
     if (name === 'area_domain_activity') return <SenderCards input={part.input} output={part.output} />;
     const factRow = factRowFromToolOutput(name, part.input, part.output);
     if (factRow) return <FactConfirmationRow row={factRow} />;
+    if (TOOL_UI_RENDERED_TOOLS.has(name) && part.output?.ok) {
+      return <ToolUiDisplayPart toolName={name} output={part.output} />;
+    }
   }
 
   return <ToolActivityRow activity={activity} />;

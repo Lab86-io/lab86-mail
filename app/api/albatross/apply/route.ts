@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { newOperationBatchId } from '@/lib/ai/operations';
+import { appliedStepsFromApplyResult } from '@/lib/albatross/work-model';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -74,6 +75,9 @@ export async function POST(req: NextRequest) {
       {
         intentId: String(intent._id),
         intentText: intent.rawText,
+        // Preferred project name when 'auto' derives an epic from a
+        // multi-step plan that never declared projectTitle.
+        intentTitle: intent.title,
         areaId: intent.areaId,
         projectMode: body.projectMode || 'auto',
         projectTitle: plan.proposedProjectTitle,
@@ -119,22 +123,10 @@ export async function POST(req: NextRequest) {
     }
 
     // stepKey -> created-artifact mapping for the plan dossier's interactive
-    // task cards: card-backed steps carry the board cardId; approval-gated
-    // steps are recorded without one (nothing to toggle yet).
-    const appliedSteps = [
-      ...((result.operations || []) as any[])
-        .filter((operation) => operation.stepKey)
-        .map((operation) => ({
-          stepKey: String(operation.stepKey),
-          kind: String(operation.kind || ''),
-          ...(operation.tool === 'tasks_create_card' && operation.artifactId
-            ? { cardId: String(operation.artifactId) }
-            : {}),
-        })),
-      ...((result.approvals || []) as any[])
-        .filter((approval) => approval.stepKey)
-        .map((approval) => ({ stepKey: String(approval.stepKey), kind: String(approval.kind || '') })),
-    ];
+    // task cards: card-backed steps carry the board cardId; calendar/draft
+    // steps record their created eventId/draftId; approval-gated steps are
+    // recorded without an artifact (nothing to toggle yet).
+    const appliedSteps = appliedStepsFromApplyResult(result);
 
     await convexMutation((api as any).albatrossIntents.markPlanApplied, {
       userId: user.userId,

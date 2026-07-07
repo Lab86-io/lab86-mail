@@ -208,14 +208,21 @@ async function linkToProject(
   });
 }
 
-async function executeToolStep(step: AlbatrossApplicationStep, ctx: ToolContext, projectId?: string) {
+async function executeToolStep(
+  step: AlbatrossApplicationStep,
+  ctx: ToolContext,
+  options: { projectId?: string; boardId?: string } = {},
+) {
   const args = { ...(step.toolArgs || {}) } as Record<string, any>;
   if (step.kind === 'task') {
+    // Cards for an area-scoped intent land on the AREA's board (created with
+    // the area) instead of the generic default board.
+    if (options.boardId && !args.boardId) args.boardId = options.boardId;
     args.source = {
       ...(typeof args.source === 'object' && args.source ? args.source : {}),
       kind: 'chat',
       areaId: step.areaId,
-      projectId,
+      projectId: options.projectId,
       intentId: args.source?.externalId,
     };
     return deps.invokeTool(deps.tools.tasksCreateCard, args, ctx);
@@ -223,6 +230,33 @@ async function executeToolStep(step: AlbatrossApplicationStep, ctx: ToolContext,
   if (step.kind === 'calendar_event') return deps.invokeTool(deps.tools.calendarCreateEvent, args, ctx);
   if (step.kind === 'email_draft') return deps.invokeTool(deps.tools.saveDraftTool, args, ctx);
   throw new Error(`Unsupported executable Albatross step: ${step.kind}`);
+}
+
+// Calendar events and email drafts need a provider account; plans rarely name
+// one. Fall back to the user's first connected account so those steps execute
+// instead of silently landing in "unresolved".
+async function resolveDefaultAccount(userId: string): Promise<string | undefined> {
+  try {
+    const accounts = await deps.convexQuery<any[]>((deps.api as any).accounts?.listConnectedAccounts, {
+      userId,
+    });
+    const connected = (accounts || []).find((account) => account.status === 'connected');
+    return connected?.accountId ? String(connected.accountId) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// The area's linked task board (ASK: cards for an area go on that area's
+// board). Best-effort — a missing or foreign areaId simply means no routing.
+async function resolveAreaBoardId(userId: string, areaId: string | undefined): Promise<string | undefined> {
+  if (!areaId) return undefined;
+  try {
+    const area = await deps.convexQuery<any>((deps.api as any).albatross?.getArea, { userId, areaId });
+    return area?.boardId ? String(area.boardId) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function approvalToolFor(name: string): AnyTool {
@@ -241,6 +275,7 @@ export const albatrossApplyIntentPlan = defineTool({
   input: z.object({
     intentId: z.string(),
     intentText: z.string().optional(),
+    intentTitle: z.string().optional(),
     areaId: z.string().optional(),
     account: z.string().optional(),
     projectMode: z.enum(['auto', 'project', 'task_only', 'ask']).default('auto'),
@@ -261,13 +296,18 @@ export const albatrossApplyIntentPlan = defineTool({
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const operationBatchId = args.operationBatchId || ctx.operationBatchId || deps.newOperationBatchId();
+    const [account, areaBoardId] = await Promise.all([
+      args.account ? Promise.resolve(args.account) : resolveDefaultAccount(userId),
+      resolveAreaBoardId(userId, args.areaId),
+    ]);
     const plan = buildAlbatrossApplicationPlan({
       intentId: args.intentId,
       intentText: args.intentText,
+      intentTitle: args.intentTitle,
       areaId: args.areaId,
       projectMode: args.projectMode,
       projectTitle: args.projectTitle,
-      account: args.account,
+      account,
       plan: args.plan as any,
     });
 
@@ -308,7 +348,10 @@ export const albatrossApplyIntentPlan = defineTool({
         });
         continue;
       }
-      const result: any = await executeToolStep(step, batchContext(ctx, operationBatchId), projectId);
+      const result: any = await executeToolStep(step, batchContext(ctx, operationBatchId), {
+        projectId,
+        boardId: areaBoardId,
+      });
       const artifactId =
         result.cardId ||
         result.eventId ||

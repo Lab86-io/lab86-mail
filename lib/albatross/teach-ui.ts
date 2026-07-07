@@ -66,6 +66,69 @@ export function toolPartName(part: { type?: unknown; toolName?: unknown } | null
 }
 
 // ---------------------------------------------------------------------------
+// Human-in-the-loop tools — the calls that pause the stream for a user answer
+// (rendered as forms; results returned via addToolResult).
+// ---------------------------------------------------------------------------
+
+export const HITL_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'ask_user',
+  'ask_approval',
+  'ask_parameters',
+  'ask_preferences',
+  'ask_question_flow',
+]);
+
+export function isHitlToolName(name: string): boolean {
+  return HITL_TOOL_NAMES.has(name);
+}
+
+// sendAutomaticallyWhen predicate shared by both chat surfaces: continue the
+// run ONLY after the user answered a paused human-in-the-loop tool call.
+export function lastMessageAnsweredHitl(messages: Array<{ role?: string; parts?: unknown[] }>): boolean {
+  const last = messages[messages.length - 1] as { role?: string; parts?: any[] } | undefined;
+  if (!last || last.role !== 'assistant') return false;
+  return (last.parts || []).some(
+    (part: any) => isHitlToolName(toolPartName(part)) && part?.state === 'output-available',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select helpers (ask_user option lists)
+// ---------------------------------------------------------------------------
+
+// Which option id was toggled between two selections (added wins over removed).
+export function toggledOptionId(prev: string[], next: string[]): string | null {
+  const prevSet = new Set(prev);
+  const nextSet = new Set(next);
+  for (const id of next) if (!prevSet.has(id)) return id;
+  for (const id of prev) if (!nextSet.has(id)) return id;
+  return null;
+}
+
+// Shift-click range selection over an ordered option-id list: selects the
+// inclusive span between the anchor (last plain click) and the clicked id,
+// unioned with the previous selection. Falls back to the plain next selection
+// when there is no valid anchor.
+export function rangeSelection(
+  orderedIds: string[],
+  prevSelected: string[],
+  clickedId: string | null,
+  anchorId: string | null,
+): string[] {
+  if (!clickedId) return prevSelected;
+  const clickedIndex = orderedIds.indexOf(clickedId);
+  const anchorIndex = anchorId ? orderedIds.indexOf(anchorId) : -1;
+  if (clickedIndex === -1 || anchorIndex === -1) {
+    return prevSelected.includes(clickedId) ? prevSelected : [...prevSelected, clickedId];
+  }
+  const [from, to] = anchorIndex <= clickedIndex ? [anchorIndex, clickedIndex] : [clickedIndex, anchorIndex];
+  const span = orderedIds.slice(from, to + 1);
+  const union = new Set([...prevSelected, ...span]);
+  // Preserve the on-screen order for a predictable answer string.
+  return orderedIds.filter((id) => union.has(id));
+}
+
+// ---------------------------------------------------------------------------
 // Tool activity grammar — ONE quiet sentence per tool call, shared by every
 // chat surface (Teach + the floating assistant). Rendered by
 // components/ai-elements/tool-activity.tsx.
@@ -217,9 +280,69 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     'Recovered earlier context',
     'Recovering earlier context failed',
   ),
-  // ask_user renders as its own form; this line only covers transcripts where
-  // the form is not shown (e.g. streamed input).
+  // ask_* tools render as their own forms; these lines only cover transcripts
+  // where the form is not shown (e.g. streamed input).
   ask_user: fixed('Asking you a question', 'You answered', 'The question failed'),
+  ask_approval: fixed('Waiting for your approval', 'You decided', 'The approval failed'),
+  ask_parameters: fixed('Waiting for your numbers', 'You set the values', 'The parameter form failed'),
+  ask_preferences: fixed(
+    'Waiting for your preferences',
+    'You set your preferences',
+    'The preferences form failed',
+  ),
+  ask_question_flow: fixed(
+    'Walking you through the steps',
+    'You finished the steps',
+    'The guided steps failed',
+  ),
+
+  // --- Display tools (rich cards render on success; these cover running/failed) ---
+  show_weather: (a) => {
+    const place = str(a.place);
+    return {
+      running: place ? `Checking the weather in ${place}` : 'Checking the weather',
+      done: place ? `Fetched the weather for ${place}` : 'Fetched the weather',
+      failed: 'Weather lookup failed',
+    };
+  },
+  show_chart: (a) => {
+    const title = str(a.title);
+    return {
+      running: title ? `Drawing “${clip(title, 60)}”` : 'Drawing a chart',
+      done: title ? `Drew “${clip(title, 60)}”` : 'Drew the chart',
+      failed: 'Drawing the chart failed',
+    };
+  },
+  show_stats: fixed('Laying out the numbers', 'Laid out the numbers', 'Laying out the numbers failed'),
+  show_table: fixed('Building the table', 'Built the table', 'Building the table failed'),
+  show_code: fixed('Formatting the code', 'Formatted the code', 'Formatting the code failed'),
+  show_code_diff: fixed('Building the diff', 'Built the diff', 'Building the diff failed'),
+  show_terminal: fixed('Formatting the output', 'Formatted the output', 'Formatting the output failed'),
+  show_plan: fixed('Laying out the plan', 'Laid out the plan', 'Laying out the plan failed'),
+  show_progress: fixed(
+    'Summarizing the progress',
+    'Summarized the progress',
+    'Summarizing the progress failed',
+  ),
+  show_citations: fixed('Collecting the sources', 'Collected the sources', 'Collecting the sources failed'),
+  show_link_preview: fixed('Previewing the link', 'Previewed the link', 'Previewing the link failed'),
+  show_image: fixed('Preparing the image', 'Showed the image', 'Preparing the image failed'),
+  show_image_gallery: fixed('Preparing the gallery', 'Showed the gallery', 'Preparing the gallery failed'),
+  show_video: fixed('Preparing the video', 'Showed the video', 'Preparing the video failed'),
+  show_audio: fixed('Preparing the audio', 'Showed the audio', 'Preparing the audio failed'),
+  show_map: fixed('Placing the map markers', 'Placed the map markers', 'Placing the map markers failed'),
+  show_carousel: fixed(
+    'Laying out the collection',
+    'Laid out the collection',
+    'Laying out the collection failed',
+  ),
+  show_order_summary: fixed('Itemizing the order', 'Itemized the order', 'Itemizing the order failed'),
+  show_social_post: fixed('Rendering the post', 'Rendered the post', 'Rendering the post failed'),
+  show_message_draft: fixed(
+    'Preparing the draft',
+    'Prepared the draft for review',
+    'Preparing the draft failed',
+  ),
 
   // --- Mail reads ---
   search_threads: searchSentences('your mail', 'Mail search failed'),

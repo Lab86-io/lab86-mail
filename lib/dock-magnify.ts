@@ -43,6 +43,19 @@ export function dockTileSize({ distance, baseSize, magnifiedSize, range }: DockT
 }
 
 /**
+ * Scale factor for the glyph INSIDE a tile so it grows with the dock
+ * magnification instead of floating fixed-size in a swelling button: the
+ * glyph rides the same spring as the tile by scaling with size/baseSize
+ * (1 at rest, magnifiedSize/baseSize under the cursor). Degenerate inputs
+ * (a 0/negative base, non-finite size) resolve to 1 — never a collapsed or
+ * exploded glyph.
+ */
+export function dockGlyphScale(size: number, baseSize: number): number {
+  if (!Number.isFinite(size) || !Number.isFinite(baseSize) || baseSize <= 0) return 1;
+  return size / baseSize;
+}
+
+/**
  * Signed distance from a pointer coordinate to the center of a tile that
  * starts at `edge` and spans `extent` px (the registry's distanceCalc,
  * vertical: pointer = clientY, edge = rect.top, extent = rect.height).

@@ -15,6 +15,7 @@ import {
   normalizeSourceRefs,
   normalizeText,
 } from './albatrossModel';
+import { insertBoardWithColumns } from './boards';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -127,6 +128,23 @@ async function ensureExternalAreaIdAvailable(
     throw new Error(`Area externalId already exists: ${externalId}`);
 }
 
+// Every area owns a task board. Idempotent: reuses the area's linked board when
+// it still exists, creates one (named after the area) only when missing.
+// Archiving an area never deletes its board; unarchiving reuses it.
+async function ensureAreaBoard(
+  ctx: MutationCtx,
+  userId: string,
+  area: { _id: Id<'areas'>; name: string; boardId?: Id<'boards'> },
+): Promise<Id<'boards'>> {
+  if (area.boardId) {
+    const board = await ctx.db.get(area.boardId);
+    if (board) return area.boardId;
+  }
+  const boardId = await insertBoardWithColumns(ctx, userId, area.name);
+  await ctx.db.patch(area._id, { boardId, updatedAt: now() });
+  return boardId;
+}
+
 export const createArea = mutation({
   args: {
     ...callerArgs,
@@ -139,12 +157,35 @@ export const createArea = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const externalId = args.externalId ? normalizeText(args.externalId) : undefined;
-    await ensureExternalAreaIdAvailable(ctx, userId, externalId);
+    const name = normalizeText(args.name, 'Untitled area').slice(0, 120);
     const ts = now();
-    return await ctx.db.insert('areas', {
+    // Re-creating an area the user already named (active OR archived) revives
+    // the existing row instead of spawning a duplicate — and therefore reuses
+    // its existing board instead of creating a second one.
+    const mine = await ctx.db
+      .query('areas')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    const existing = mine.find((area) => area.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      await ensureExternalAreaIdAvailable(ctx, userId, externalId, existing._id);
+      await ctx.db.patch(existing._id, {
+        status: 'active',
+        archivedAt: undefined,
+        ...(externalId ? { externalId } : {}),
+        ...(args.kind ? { kind: normalizeText(args.kind, 'general').slice(0, 80) } : {}),
+        ...(args.description ? { description: normalizeText(args.description).slice(0, 600) } : {}),
+        ...(args.priority !== undefined ? { priority: args.priority } : {}),
+        updatedAt: ts,
+      });
+      await ensureAreaBoard(ctx, userId, existing);
+      return existing._id;
+    }
+    await ensureExternalAreaIdAvailable(ctx, userId, externalId);
+    const areaId = await ctx.db.insert('areas', {
       userId,
       externalId,
-      name: normalizeText(args.name, 'Untitled area').slice(0, 120),
+      name,
       kind: normalizeText(args.kind || 'general', 'general').slice(0, 80),
       status: 'active',
       description: args.description ? normalizeText(args.description).slice(0, 600) : undefined,
@@ -152,6 +193,8 @@ export const createArea = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
+    await ensureAreaBoard(ctx, userId, { _id: areaId, name });
+    return areaId;
   },
 });
 
@@ -167,7 +210,7 @@ export const updateArea = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
+    const area = await requireArea(ctx, args.areaId, userId);
     const ts = now();
     await ctx.db.patch(args.areaId, {
       ...(args.name !== undefined ? { name: normalizeText(args.name, 'Untitled area').slice(0, 120) } : {}),
@@ -181,6 +224,11 @@ export const updateArea = mutation({
         : {}),
       updatedAt: ts,
     });
+    // Unarchiving an area must not spawn a duplicate board: ensureAreaBoard
+    // reuses the linked board and only creates one when it never existed.
+    if (args.status === 'active') {
+      await ensureAreaBoard(ctx, userId, area);
+    }
     return { ok: true };
   },
 });
@@ -757,10 +805,31 @@ export const areaHome = query({
     const past = resolvedEvents.filter((event) => event.endAt < ts).sort((a, b) => b.startAt - a.startAt);
     const events = [...upcoming, ...past].slice(0, AREA_HOME_EVENT_CAP);
 
-    const tasks = (
+    // Tasks come from two places: classifier/apply links, plus every card on
+    // the area's own board (areas own a board from creation). Deduped by card.
+    const linkedTasks = (
       await Promise.all((byKind.get('task') || []).map((link) => resolveTaskLink(ctx, userId, link)))
-    )
-      .filter((row): row is NonNullable<typeof row> => row !== null)
+    ).filter((row): row is NonNullable<typeof row> => row !== null);
+    const boardCards = area.boardId
+      ? await ctx.db
+          .query('cards')
+          .withIndex('by_board', (q) => q.eq('boardId', area.boardId!))
+          .take(200)
+      : [];
+    const seenCardIds = new Set(linkedTasks.map((task) => String(task.cardId)));
+    const boardTasks = boardCards
+      .filter((card) => !seenCardIds.has(String(card._id)))
+      .map((card) => ({
+        cardId: card._id,
+        boardId: card.boardId,
+        title: card.title,
+        completedAt: card.completedAt ?? null,
+        dueAt: card.dueAt ?? null,
+        updatedAt: card.updatedAt,
+        linkStatus: 'verified',
+        reason: null,
+      }));
+    const tasks = [...linkedTasks, ...boardTasks]
       .sort(
         (a, b) =>
           Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,

@@ -535,18 +535,39 @@ function SidebarMenuButton({
           // The tile's width/height come from the dock spring (inline style);
           // a CSS transition on them would double-smooth the physics.
           'shrink-0 justify-center transition-[color,background-color,box-shadow]',
+          // Glyph dead-center: the expanded row's p-2/gap-2 stand down and
+          // the label span leaves the flow entirely (its icon-mode max-w-0
+          // still occupied a flex slot, so every gap-2 pushed the glyph left
+          // by half a gap — 4px per trailing span). A 32px tile with p-0,
+          // gap-0 and justify-center puts the 16px glyph at true center.
+          // DockTile's own glow layer is also a span — it stays.
+          'gap-0 p-0 [&>span:not([data-slot=dock-tile-glow])]:hidden',
+          // The glyph rides the magnification: scale with the tile's size
+          // spring (--dock-glyph-scale from DockTile) instead of floating
+          // fixed-size in a swelling button. Scale is paint-only, so the
+          // centering above holds at every size. The shine border is
+          // excluded — it already tracks the button bounds via inset-0.
+          '[&>svg]:scale-(--dock-glyph-scale) [&>div:not([data-slot=shine-border])]:scale-(--dock-glyph-scale)',
           // One tile system for every collapsed row: the same radius on all
-          // tiles, overflow-visible so the shared hover glow can halo past
-          // the tile edge, and the elevated-surface hover (DockTile adds the
-          // accent ring + glow) instead of the expanded list's flat accent
-          // wash. Callers with a stronger identity (the accent compose tile)
-          // still win via their own classes.
-          'overflow-visible rounded-lg hover:bg-[var(--color-bg-elevated)]',
-          // An animated shine border inside a 32px tile reads as noise and
-          // makes those rows look like a different system — the shared hover
-          // glow carries the accent life in icon mode instead.
-          '[&_[data-slot=shine-border]]:hidden',
+          // tiles, and the elevated-surface hover (DockTile adds the accent
+          // ring + glow) instead of the expanded list's flat accent wash.
+          // Callers with a stronger identity (the accent compose tile) still
+          // win via their own classes.
+          'rounded-lg hover:bg-[var(--color-bg-elevated)]',
           className,
+          // After the caller's classes on purpose — these adapt the expanded
+          // row identity (passed in one className for both modes) to the
+          // dock:
+          // - overflow-visible: the hover glow halos past the tile edge
+          //   (callers set overflow-hidden for the expanded truncate).
+          // - Selected shows as the animated shine border hugging the tile,
+          //   not the expanded row's accent wash — one indicator per tile.
+          'overflow-visible data-[active=true]:bg-transparent data-[active=true]:shadow-none dark:data-[active=true]:bg-transparent dark:data-[active=true]:shadow-none',
+          // The shine border marks the SELECTED tile only: Compose mounts a
+          // permanent decorative shine for its expanded CTA row, so inactive
+          // tiles hide theirs and the active row's shine is the one moving
+          // highlight in the dock.
+          '[&[data-active=false]_[data-slot=shine-border]]:hidden',
         )}
         {...props}
       />
@@ -562,8 +583,10 @@ function SidebarMenuButton({
       className={cn(
         sidebarMenuButtonVariants({ variant, size }),
         // Fallback icon-mode sizing (SSR first paint, asChild rows): fixed
-        // square tiles — the dock branch above owns interactive sizing.
-        'group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2!',
+        // square tiles — the dock branch above owns interactive sizing. Same
+        // centering contract as the dock tiles: no padding, no gap, and the
+        // label span out of flow so the glyph sits dead-center.
+        'group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:[&>span]:hidden',
         className,
       )}
       {...props}

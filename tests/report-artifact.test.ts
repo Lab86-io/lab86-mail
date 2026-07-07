@@ -69,6 +69,24 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toContain('class="icon-btn"');
   });
 
+  test('styles the editorial header/line voice with the second accent', () => {
+    const html = buildNativeDailyReportArtifact(sampleReport());
+    // Deterministic fallback for standalone rendering.
+    expect(html).toContain('--brief-accent-2:#774914');
+    // Header texts, tags, and the section rule speak in accent-2 with an
+    // accent-1 (or hairline) fallback.
+    expect(html).toMatch(/\.section-title\{[^}]*color:var\(--brief-accent-2,var\(--brief-ink\)\)/);
+    expect(html).toMatch(
+      /\.section-title::after\{[^}]*background:var\(--brief-accent-2,var\(--brief-hairline\)\)/,
+    );
+    expect(html).toMatch(/\.narrative h3\{[^}]*color:var\(--brief-accent-2,var\(--brief-accent\)\)/);
+    expect(html).toMatch(/\.tag\{[^}]*color:var\(--brief-accent-2,var\(--brief-accent\)\)/);
+    expect(html).toMatch(/\.caption\{[^}]*color:var\(--brief-accent-2,var\(--brief-muted\)\)/);
+    // Accent-1 stays the action/emphasis voice.
+    expect(html).toMatch(/\.btn\.primary\{[^}]*background:var\(--brief-accent\)/);
+    expect(html).toMatch(/\.lede-block \.lede:first-of-type::first-letter\{[^}]*color:var\(--brief-accent\)/);
+  });
+
   test('renders branded source footer with service logos', () => {
     const html = buildNativeDailyReportArtifact({
       ...sampleReport(),

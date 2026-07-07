@@ -140,6 +140,39 @@ describe('completionEvents storage contract', () => {
   });
 });
 
+describe('projects lens progress contract (frozen shape)', () => {
+  // listProjectsWithProgress counts albatrossProjectLinks by artifactKind.
+  // albatross_apply_intent_plan writes exactly these kinds for created
+  // artifacts (asserted behaviorally in tests/tools-albatross.test.ts); this
+  // pins the query side so a rename on either end fails a test instead of
+  // silently zeroing the Projects lens.
+  test('listProjectsWithProgress derives taskCount/completedTaskCount/intentCount/eventCount from project links', () => {
+    const work = read('convex/albatrossWork.ts');
+    const query = work.slice(
+      work.indexOf('export const listProjectsWithProgress'),
+      work.indexOf('export const projectTasks'),
+    );
+    expect(query).toContain("albatrossProjectLinks'");
+    expect(query).toContain("link.artifactKind === 'task'");
+    expect(query).toContain("link.artifactKind === 'intent'");
+    expect(query).toContain("link.artifactKind === 'calendarEvent'");
+    for (const field of ['taskCount', 'completedTaskCount', 'intentCount', 'eventCount']) {
+      expect(query).toContain(field);
+    }
+    // completedTaskCount resolves the linked board cards and checks completedAt.
+    expect(query).toContain("normalizeId('cards'");
+    expect(query).toContain('card.completedAt');
+  });
+
+  test('the apply tool links created artifacts under the kinds the progress query counts', () => {
+    const tool = read('lib/tools/albatross.ts');
+    expect(tool).toContain("? 'calendarEvent'");
+    expect(tool).toContain("? 'emailDraft'");
+    expect(tool).toContain(": 'task'");
+    expect(tool).toContain("artifactKind: 'intent'");
+  });
+});
+
 describe('feature flag off regression guard (re-check)', () => {
   test('albatross views fall back when the flag is off', async () => {
     const { normalizePrimaryView } = await import('../lib/shared/types');

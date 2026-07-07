@@ -15,6 +15,7 @@ describe('briefThemeTokens', () => {
       '--color-border': '#2a2a30',
       '--color-accent': 'oklch(70% 0.12 210)',
       '--color-accent-soft': 'rgba(20,120,200,0.14)',
+      '--color-accent-2': 'oklch(73% 0.09 70)',
     };
     const theme = briefThemeTokens((name) => vars[name] ?? '', 'news');
     expect(theme['--brief-bg']).toBe('#101014');
@@ -23,6 +24,7 @@ describe('briefThemeTokens', () => {
     expect(theme['--brief-hairline']).toBe('#2a2a30');
     expect(theme['--brief-accent']).toBe('oklch(70% 0.12 210)');
     expect(theme['--brief-accent-soft']).toBe('rgba(20,120,200,0.14)');
+    expect(theme['--brief-accent-2']).toBe('oklch(73% 0.09 70)');
     expect(theme['--brief-font-display']).toBe(BRIEF_FONT_FAMILIES.news);
     expect(theme['--brief-font-body']).toBe(BRIEF_FONT_FAMILIES.sans);
     expect(theme['--brief-display-tracking']).toBe('0em');
@@ -33,6 +35,10 @@ describe('briefThemeTokens', () => {
     expect(theme['--brief-bg']).toBe('#faf9f6');
     expect(theme['--brief-ink']).toBe('#1a1a1a');
     expect(theme['--brief-accent']).toBe('#c2683c');
+    // The second accent falls back to a warm editorial default distinct from
+    // the terracotta accent.
+    expect(theme['--brief-accent-2']).toBe('#774914');
+    expect(theme['--brief-accent-2']).not.toBe(theme['--brief-accent']);
     expect(theme['--brief-font-display']).toBe(BRIEF_FONT_FAMILIES.serif);
   });
 

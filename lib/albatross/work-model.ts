@@ -64,11 +64,16 @@ export interface AlbatrossPlanLike {
 export interface AlbatrossApplicationInput {
   intentId: string;
   intentText?: string;
+  // The intent's short imperative title — the preferred project name when a
+  // project is derived without an explicit title.
+  intentTitle?: string;
   areaId?: string;
   projectMode?: AlbatrossProjectMode;
   projectTitle?: string;
   account?: string;
   plan: AlbatrossPlanLike;
+  // Injectable clock for the multi-week-horizon heuristic (tests).
+  now?: number;
 }
 
 export interface AlbatrossApplicationStep {
@@ -131,10 +136,45 @@ function proposalProjectTitle(input: AlbatrossApplicationInput): string | undefi
   return undefined;
 }
 
+// Projects are epics. A plan earns one when it is genuinely multi-step: three
+// or more task actions, or any scheduled action landing beyond a week out.
+const AUTO_PROJECT_MIN_TASKS = 3;
+const AUTO_PROJECT_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
+
+function planIsMultiStep(input: AlbatrossApplicationInput): boolean {
+  const actions = input.plan.digitalActions || [];
+  const taskCount = actions.filter((action) => action.kind === 'task').length;
+  if (taskCount >= AUTO_PROJECT_MIN_TASKS) return true;
+  const horizon = (input.now ?? Date.now()) + AUTO_PROJECT_HORIZON_MS;
+  return actions.some((action) => {
+    const start = action.startIso ? Date.parse(action.startIso) : Number.NaN;
+    return Number.isFinite(start) && start > horizon;
+  });
+}
+
 function needsProject(input: AlbatrossApplicationInput) {
   if (input.projectMode === 'task_only') return false;
   if (input.projectMode === 'project') return true;
-  return Boolean(proposalProjectTitle(input));
+  // 'auto': an explicitly declared project always wins; otherwise a
+  // multi-step plan gets an epic so its tasks stay grouped and countable.
+  return Boolean(proposalProjectTitle(input)) || planIsMultiStep(input);
+}
+
+// A required project must always have a name: the declared title first, then
+// the intent's short title, then the raw intent text, then the outcome.
+function resolvedProjectTitle(
+  input: AlbatrossApplicationInput,
+  projectRequired: boolean,
+): string | undefined {
+  const declared = proposalProjectTitle(input);
+  if (declared) return declared;
+  if (!projectRequired) return undefined;
+  return (
+    clean(input.intentTitle).slice(0, 180) ||
+    clean(input.intentText).slice(0, 180) ||
+    clean(input.plan.outcome).slice(0, 180) ||
+    'Untitled project'
+  );
 }
 
 function actionDescription(input: AlbatrossDigitalAction) {
@@ -270,8 +310,8 @@ function actionStep(
 }
 
 export function buildAlbatrossApplicationPlan(input: AlbatrossApplicationInput): AlbatrossApplicationPlan {
-  const projectTitle = proposalProjectTitle(input);
   const projectRequired = needsProject(input);
+  const projectTitle = resolvedProjectTitle(input, projectRequired);
   const projectStep: AlbatrossApplicationStep[] =
     projectRequired && projectTitle
       ? [
@@ -309,6 +349,42 @@ export function buildAlbatrossApplicationPlan(input: AlbatrossApplicationInput):
     approvalSteps,
     executableSteps,
   };
+}
+
+// stepKey -> created-artifact mapping recorded on the plan at apply time. The
+// plan dossier's interactive Done buttons resolve task steps through cardId;
+// calendar and draft steps record their created eventId/draftId for
+// provenance. Approval-gated steps are recorded without an artifact (nothing
+// exists until the approval executes).
+export interface AlbatrossAppliedStep {
+  stepKey: string;
+  kind: string;
+  cardId?: string;
+  eventId?: string;
+  draftId?: string;
+}
+
+export function appliedStepsFromApplyResult(result: {
+  operations?: Array<{ stepKey?: unknown; kind?: unknown; tool?: unknown; artifactId?: unknown }>;
+  approvals?: Array<{ stepKey?: unknown; kind?: unknown }>;
+}): AlbatrossAppliedStep[] {
+  const fromOperations = (result.operations || [])
+    .filter((operation) => operation.stepKey)
+    .map((operation) => {
+      const kind = String(operation.kind || '');
+      const artifactId = operation.artifactId ? String(operation.artifactId) : undefined;
+      return {
+        stepKey: String(operation.stepKey),
+        kind,
+        ...(operation.tool === 'tasks_create_card' && artifactId ? { cardId: artifactId } : {}),
+        ...(kind === 'calendar_event' && artifactId ? { eventId: artifactId } : {}),
+        ...(kind === 'email_draft' && artifactId ? { draftId: artifactId } : {}),
+      };
+    });
+  const fromApprovals = (result.approvals || [])
+    .filter((approval) => approval.stepKey)
+    .map((approval) => ({ stepKey: String(approval.stepKey), kind: String(approval.kind || '') }));
+  return [...fromOperations, ...fromApprovals];
 }
 
 export function unresolvedArtifactsAfterUndo(

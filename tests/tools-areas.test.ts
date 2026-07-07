@@ -15,6 +15,7 @@ const apiMock = {
   albatross: {
     listAreasOverview: 'albatross.listAreasOverview',
     createArea: 'albatross.createArea',
+    getArea: 'albatross.getArea',
     archiveArea: 'albatross.archiveArea',
     addAreaFact: 'albatross.addAreaFact',
     verifyAreaFact: 'albatross.verifyAreaFact',
@@ -52,6 +53,9 @@ beforeEach(() => {
           },
         ];
       }
+      if (fn === apiMock.albatross.getArea) {
+        return { _id: args.areaId, name: 'Cardhunt job', status: 'active', boardId: 'board_new' };
+      }
       if (fn === apiMock.albatross.domainActivity) {
         return {
           domain: args.domain ?? null,
@@ -85,23 +89,49 @@ describe('area_list', () => {
 });
 
 describe('area_create', () => {
-  test('creates the area with name, kind, and description', async () => {
+  test('creates the area with name, kind, and description, and echoes its task board', async () => {
     const result: any = await runTool(areaCreate.handler, {
       name: 'Cardhunt job',
       kind: 'job',
       description: 'Day job at cardhunt.com',
     });
-    // The echo (name + active status) is what lets the Teach chat truthfully
-    // confirm "it's in your sidebar now" without a follow-up read.
-    expect(result).toEqual({ ok: true, areaId: 'area_new', name: 'Cardhunt job', status: 'active' });
+    // The echo (name + active status + board) is what lets the Teach chat
+    // truthfully confirm "it's in your sidebar now, with its own task board"
+    // without a follow-up read.
+    expect(result).toEqual({
+      ok: true,
+      areaId: 'area_new',
+      name: 'Cardhunt job',
+      status: 'active',
+      boardId: 'board_new',
+    });
     expect(mutationCalls[0]).toMatchObject({
       fn: apiMock.albatross.createArea,
       args: { userId: TEST_USER.userId, name: 'Cardhunt job', kind: 'job' },
     });
+    // The board linkage is read back from the created area, never invented.
+    expect(queryCalls[0]).toMatchObject({
+      fn: apiMock.albatross.getArea,
+      args: { userId: TEST_USER.userId, areaId: 'area_new' },
+    });
   });
 
-  test('the tool contract promises immediate sidebar visibility', () => {
+  test('a failed board read still reports the created area (boardId simply omitted)', async () => {
+    __setAreaToolDepsForTest({
+      api: apiMock as any,
+      convexMutation: (async () => 'area_new') as any,
+      convexQuery: (async () => {
+        throw new Error('getArea unavailable');
+      }) as any,
+    });
+    const result: any = await runTool(areaCreate.handler, { name: 'Cardhunt job' });
+    expect(result).toEqual({ ok: true, areaId: 'area_new', name: 'Cardhunt job', status: 'active' });
+  });
+
+  test('the tool contract promises immediate sidebar visibility and a task board', () => {
     expect(areaCreate.description).toContain('sidebar');
+    expect(areaCreate.description).toContain('task board');
+    expect(areaCreate.description).toContain('reuses its board');
   });
 });
 
@@ -207,6 +237,10 @@ describe('area_domain_activity', () => {
 });
 
 describe('teach prompt', () => {
+  test('mentions the task board that area_create gives every area', () => {
+    expect(TEACH_SYSTEM_PROMPT).toContain('with its own task board');
+  });
+
   test('encodes the conversation contract', () => {
     expect(TEACH_SYSTEM_PROMPT).toContain('confirmedByUser=true ONLY after the user explicitly said yes');
     expect(TEACH_SYSTEM_PROMPT).toContain('ask_user');

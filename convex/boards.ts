@@ -184,6 +184,37 @@ function sourceIndexFields(source: any) {
   };
 }
 
+// Shared board factory: one insert path for the default Personal board, user-
+// created boards, and per-area boards (convex/albatross.ts createArea), so
+// every board is born with real columns and the Done-column completion rule
+// applies everywhere.
+export async function insertBoardWithColumns(
+  ctx: MutationCtx,
+  ownerUserId: string,
+  title: string,
+  options: { columns?: string[]; isDefault?: boolean } = {},
+): Promise<Id<'boards'>> {
+  const ts = now();
+  const boardId = await ctx.db.insert('boards', {
+    ownerUserId,
+    title: title.trim() || 'Untitled board',
+    ...(options.isDefault ? { isDefault: true } : {}),
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  const columns = options.columns?.length ? options.columns : STARTER_COLUMNS;
+  for (let i = 0; i < columns.length; i += 1) {
+    await ctx.db.insert('boardColumns', {
+      boardId,
+      name: columns[i],
+      order: (i + 1) * ORDER_STEP,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  }
+  return boardId;
+}
+
 export const ensureDefaultBoard = mutation({
   args: { ...callerArgs },
   handler: async (ctx, args) => {
@@ -193,24 +224,7 @@ export const ensureDefaultBoard = mutation({
       .withIndex('by_owner', (q) => q.eq('ownerUserId', userId))
       .collect();
     if (owned.length) return owned[0]._id;
-    const ts = now();
-    const boardId = await ctx.db.insert('boards', {
-      ownerUserId: userId,
-      title: 'Personal',
-      isDefault: true,
-      createdAt: ts,
-      updatedAt: ts,
-    });
-    for (let i = 0; i < STARTER_COLUMNS.length; i += 1) {
-      await ctx.db.insert('boardColumns', {
-        boardId,
-        name: STARTER_COLUMNS[i],
-        order: (i + 1) * ORDER_STEP,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
-    return boardId;
+    return insertBoardWithColumns(ctx, userId, 'Personal', { isDefault: true });
   },
 });
 
@@ -218,24 +232,7 @@ export const createBoard = mutation({
   args: { ...callerArgs, title: v.string(), columns: v.optional(v.array(v.string())) },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    const ts = now();
-    const boardId = await ctx.db.insert('boards', {
-      ownerUserId: userId,
-      title: args.title.trim() || 'Untitled board',
-      createdAt: ts,
-      updatedAt: ts,
-    });
-    const columns = args.columns?.length ? args.columns : STARTER_COLUMNS;
-    for (let i = 0; i < columns.length; i += 1) {
-      await ctx.db.insert('boardColumns', {
-        boardId,
-        name: columns[i],
-        order: (i + 1) * ORDER_STEP,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
-    return boardId;
+    return insertBoardWithColumns(ctx, userId, args.title, { columns: args.columns });
   },
 });
 

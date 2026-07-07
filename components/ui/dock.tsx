@@ -29,6 +29,7 @@
 //   and glow still appear, instantly, on hover/focus.
 
 import {
+  type MotionStyle,
   type MotionValue,
   motion,
   useMotionValue,
@@ -46,7 +47,7 @@ import {
   dockHoverRing,
   dockLabelLeft,
 } from '@/lib/dock-hover';
-import { dockPointerDistance, dockTileSize } from '@/lib/dock-magnify';
+import { dockGlyphScale, dockPointerDistance, dockTileSize } from '@/lib/dock-magnify';
 import { cn } from '@/lib/utils';
 
 // The registry's spring, verbatim.
@@ -105,6 +106,11 @@ export function DockRail({
     <div
       data-slot="dock-rail"
       {...props}
+      // After the spread on purpose: callers pass their own data-slot (the
+      // sidebar passes "sidebar-inner" for its wash CSS), which would clobber
+      // data-slot="dock-rail" — this dedicated marker is what DockTile's
+      // label axis measurement anchors to.
+      data-dock-rail=""
       onMouseMove={(event) => {
         mouseY.set(event.clientY);
         onMouseMove?.(event);
@@ -179,7 +185,7 @@ export function DockTile({
     // All labels share one left axis: a fixed gap past the rail's right
     // edge, so the label clears the rail (and any magnified neighbor)
     // instead of hugging the tile and crowding the content beside it.
-    const rail = ref.current?.closest('[data-slot="dock-rail"]')?.getBoundingClientRect();
+    const rail = ref.current?.closest('[data-dock-rail]')?.getBoundingClientRect();
     labelLeft.set(dockLabelLeft(bounds.right, rail?.right));
     labelTop.set(bounds.top + bounds.height / 2);
   }, [labelLeft, labelTop]);
@@ -193,6 +199,20 @@ export function DockTile({
   // Reduced motion: fixed size. Keyboard focus: pinned to the magnified size
   // (parity with a hovered tile). Otherwise the spring drives it.
   const sizeStyle: number | MotionValue<number> = reduced ? baseSize : focused ? magnifiedSize : springSize;
+  // The glyph inside the tile grows with the same spring (a fixed-size icon
+  // floating in a swelling button reads as broken). Exposed as a CSS var so
+  // callers opt their glyph in with `scale-(--dock-glyph-scale)` — the tile
+  // can't scale `children` wholesale because absolutely-positioned layers
+  // (the selected shine border) must keep hugging the button bounds.
+  const glyphScaleValue = useTransform(springSize, (value: number) => dockGlyphScale(value, baseSize));
+  const glyphScale: number | MotionValue<number> = reduced
+    ? 1
+    : focused
+      ? dockGlyphScale(magnifiedSize, baseSize)
+      : glyphScaleValue;
+  // motion resolves MotionValues assigned to CSS custom properties at
+  // runtime, but MotionStyle's types don't model --vars — hence the cast.
+  const glyphScaleStyle = { '--dock-glyph-scale': glyphScale } as unknown as MotionStyle;
   const highlighted = hovered || focused;
 
   return (
@@ -208,6 +228,7 @@ export function DockTile({
           ...style,
           width: sizeStyle,
           height: sizeStyle,
+          ...glyphScaleStyle,
           // Surface highlight (lib/dock-hover.ts): accent ring + lift shadow
           // on the hovered/focused tile only. Inline so it wins over any
           // caller shadow classes without a specificity fight.
@@ -279,6 +300,7 @@ export function DockTileGlow({
   return (
     <motion.span
       aria-hidden
+      data-slot="dock-tile-glow"
       initial={false}
       {...dockGlowMotion(visible, reduced, curve)}
       style={{ background: dockHoverGlow() }}

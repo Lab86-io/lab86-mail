@@ -10,7 +10,8 @@
       "!next-env.d.ts",
       "!convex/_generated",
       "!apps",
-      "!src_*.tsx"
+      "!src_*.tsx",
+      "!components/tool-ui"
     ]
   },
   "formatter": {

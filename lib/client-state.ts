@@ -70,6 +70,11 @@ export interface ClientState {
   // accent family (see globals.css). null = the default forest green.
   accentHue: number | null;
   accentChroma: number | null;
+  // Second accent: the editorial pairing (headers, tags, hairline-accent
+  // lines). null = the default terracotta pair; presets write curated pairs
+  // from lib/theme/palette-presets.ts.
+  accent2Hue: number | null;
+  accent2Chroma: number | null;
   // Background hue is its own axis, decoupled from the accent.
   bgHue: number | null;
   // 0..1 how much of bgHue bleeds into the background surfaces.
@@ -123,6 +128,7 @@ export interface ClientState {
   setLastChatId: (id: string | null) => void;
   setPendingReplyBody: (body: string | null) => void;
   setAccent: (hue: number | null, chroma: number | null) => void;
+  setAccent2: (hue: number | null, chroma: number | null) => void;
   setBgHue: (hue: number | null) => void;
   setSurfaceTint: (tint: number) => void;
   setWashOpacity: (opacity: number) => void;
@@ -175,6 +181,8 @@ export const useClientStore = create<ClientState>()(
       pendingReplyBody: null,
       accentHue: null,
       accentChroma: null,
+      accent2Hue: null,
+      accent2Chroma: null,
       bgHue: null,
       surfaceTint: 0,
       washOpacity: 0,
@@ -257,6 +265,7 @@ export const useClientStore = create<ClientState>()(
       setLastChatId: (lastChatId) => set({ lastChatId, lastChatAt: lastChatId ? Date.now() : null }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
       setAccent: (accentHue, accentChroma) => set({ accentHue, accentChroma }),
+      setAccent2: (accent2Hue, accent2Chroma) => set({ accent2Hue, accent2Chroma }),
       setBgHue: (bgHue) => set({ bgHue }),
       setSurfaceTint: (surfaceTint) => set({ surfaceTint }),
       setWashOpacity: (washOpacity) => set({ washOpacity }),
@@ -297,6 +306,8 @@ export const useClientStore = create<ClientState>()(
         lastChatAt: s.lastChatAt,
         accentHue: s.accentHue,
         accentChroma: s.accentChroma,
+        accent2Hue: s.accent2Hue,
+        accent2Chroma: s.accent2Chroma,
         bgHue: s.bgHue,
         surfaceTint: s.surfaceTint,
         washOpacity: s.washOpacity,

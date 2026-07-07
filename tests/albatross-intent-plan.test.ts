@@ -217,6 +217,13 @@ describe('generateIntentPlan orchestration', () => {
 
     // Stable step keys assigned by index and persisted on the plan document.
     expect(save!.args.digitalActions[0].key).toBe('step-1');
+
+    // The planner's system prompt encodes the epic contract: multi-step work
+    // (3+ tasks or beyond a week) declares a projectTitle; errands stay null.
+    const planSystem = calls.generations[0].system as string;
+    expect(planSystem).toContain('Projects are epics that contain multiple tasks');
+    expect(planSystem).toContain('3 or more task actions, or work stretching beyond a week');
+    expect(planSystem).toContain('REQUIRED for multi-step work');
   });
 
   test('artifact generation gets step keys verbatim plus the interaction contract', async () => {

@@ -26,6 +26,12 @@ const apiMock = {
     getBoard: 'boards.getBoard',
     createCard: 'boards.createCard',
   },
+  accounts: {
+    listConnectedAccounts: 'accounts.listConnectedAccounts',
+  },
+  albatross: {
+    getArea: 'albatross.getArea',
+  },
   operations: {
     record: 'operations.record',
   },
@@ -35,7 +41,10 @@ const mutationCalls: Array<{ fn: string; args: any }> = [];
 const operationCalls: any[] = [];
 const undoCalls: any[] = [];
 const approvalOrder: string[] = [];
+const toolInvocations: Array<{ tool: string; args: any }> = [];
 let approvalFixture: any = null;
+let connectedAccountsFixture: any[] = [];
+let areaFixture: any = null;
 let sequence = 0;
 
 async function convexMutationMock(fn: string, args: any) {
@@ -67,6 +76,8 @@ async function convexMutationMock(fn: string, args: any) {
 }
 
 async function convexQueryMock(fn: string, args: any) {
+  if (fn === apiMock.accounts.listConnectedAccounts) return connectedAccountsFixture;
+  if (fn === apiMock.albatross.getArea) return areaFixture;
   if (fn === apiMock.albatrossWork.listApprovals)
     return [{ approvalId: 'approval_pending', status: args.status }];
   if (fn === apiMock.albatrossWork.getApproval) return approvalFixture;
@@ -84,8 +95,17 @@ async function recordOperationMock(input: any) {
 async function invokeToolMock(tool: any, args: any) {
   sequence += 1;
   approvalOrder.push(`tool:${tool.name}`);
+  toolInvocations.push({ tool: tool.name, args });
   if (tool.name === 'tasks_create_card') {
     return { ok: true, cardId: `card_${sequence}`, operationId: `operation_card_${sequence}` };
+  }
+  if (tool.name === 'calendar_create_event') {
+    return {
+      ok: true,
+      eventId: `event_${sequence}`,
+      calendarId: 'cal_primary',
+      operationId: `operation_event_${sequence}`,
+    };
   }
   if (tool.name === 'save_draft') {
     return {
@@ -116,7 +136,10 @@ beforeEach(() => {
   operationCalls.length = 0;
   undoCalls.length = 0;
   approvalOrder.length = 0;
+  toolInvocations.length = 0;
   approvalFixture = null;
+  connectedAccountsFixture = [];
+  areaFixture = null;
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
     api: apiMock as any,
@@ -215,6 +238,128 @@ describe('Albatross tools', () => {
       status: 'partially_applied',
     });
     expect(operationCalls.some((call) => call.inverse?.kind === 'albatross.archive_project')).toBe(true);
+  });
+
+  test('apply_intent_plan auto-derives a project from a 3-task plan and links every card so the Projects lens can count them', async () => {
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      intentText: 'we are moving to rochester in september',
+      intentTitle: 'Plan the Rochester move',
+      projectMode: 'auto',
+      plan: {
+        id: 'plan_move',
+        outcome: 'The move is planned end to end.',
+        digitalActions: [
+          { kind: 'task', key: 'step-1', title: 'Book movers' },
+          { kind: 'task', key: 'step-2', title: 'Give landlord notice' },
+          { kind: 'task', key: 'step-3', title: 'Change address everywhere' },
+        ],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    // No model-declared projectTitle — the multi-step heuristic still made an
+    // epic, named after the intent (root cause of invisible projects).
+    expect(result.projectId).toMatch(/^project_/);
+    const createdProject = mutationCalls.find((call) => call.fn === apiMock.albatrossWork.createProject);
+    expect(createdProject?.args.title).toBe('Plan the Rochester move');
+
+    // Every created card is linked to the project with the exact link shape
+    // listProjectsWithProgress counts (artifactKind 'task' + cardId), plus the
+    // source intent link — live n-of-m progress depends on these rows.
+    const links = mutationCalls.filter((call) => call.fn === apiMock.albatrossWork.linkArtifact);
+    const taskLinks = links.filter((call) => call.args.artifactKind === 'task');
+    expect(taskLinks).toHaveLength(3);
+    for (const link of taskLinks) {
+      expect(link.args.projectId).toBe(result.projectId);
+      expect(link.args.artifactId).toMatch(/^card_/);
+      expect(link.args.sourceIntentId).toBe('intent_move');
+    }
+    expect(links.filter((call) => call.args.artifactKind === 'intent')).toHaveLength(1);
+  });
+
+  test('apply_intent_plan falls back to the first connected account so calendar events and drafts execute instead of stalling unresolved', async () => {
+    connectedAccountsFixture = [
+      { accountId: 'acct_disconnected', status: 'disconnected' },
+      { accountId: 'acct_primary', status: 'connected', email: 'jakob@example.test' },
+    ];
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_trip',
+      intentTitle: 'Plan the fall trip',
+      projectMode: 'project',
+      plan: {
+        id: 'plan_trip',
+        outcome: 'Trip booked and confirmed.',
+        digitalActions: [
+          { kind: 'task', key: 'step-1', title: 'Compare flight prices' },
+          {
+            kind: 'calendar_event',
+            key: 'step-2',
+            title: 'Booking session',
+            startIso: '2026-07-09T15:00:00.000Z',
+            endIso: '2026-07-09T16:00:00.000Z',
+          },
+          {
+            kind: 'email_draft',
+            key: 'step-3',
+            title: 'Draft hotel inquiry',
+            to: 'frontdesk@example.test',
+            body: 'Do you have availability the second week of September?',
+          },
+        ],
+      },
+    });
+
+    // Nothing unresolved: the account gap used to silently drop events/drafts.
+    expect(result.unresolved).toHaveLength(0);
+    const eventInvocation = toolInvocations.find((call) => call.tool === 'calendar_create_event');
+    expect(eventInvocation?.args.account).toBe('acct_primary');
+    const draftInvocation = toolInvocations.find((call) => call.tool === 'save_draft');
+    expect(draftInvocation?.args.account).toBe('acct_primary');
+
+    // The event and draft link to the project under the kinds the progress
+    // query counts (calendarEvent feeds eventCount).
+    const links = mutationCalls.filter((call) => call.fn === apiMock.albatrossWork.linkArtifact);
+    const kinds = links.map((call) => call.args.artifactKind);
+    expect(kinds).toContain('calendarEvent');
+    expect(kinds).toContain('emailDraft');
+
+    // Step keys ride through per kind so appliedSteps can record
+    // cardId/eventId/draftId for the dossier.
+    const eventOperation = result.operations.find(
+      (operation: any) => operation.tool === 'calendar_create_event',
+    );
+    expect(eventOperation).toMatchObject({ stepKey: 'step-2', kind: 'calendar_event' });
+    expect(eventOperation.artifactId).toMatch(/^event_/);
+    const draftOperation = result.operations.find((operation: any) => operation.tool === 'save_draft');
+    expect(draftOperation).toMatchObject({ stepKey: 'step-3', kind: 'email_draft' });
+    expect(draftOperation.artifactId).toMatch(/^draft_/);
+  });
+
+  test('apply_intent_plan routes cards to the intent area’s linked board when one exists', async () => {
+    areaFixture = { _id: 'area_move', name: 'Rochester move', status: 'active', boardId: 'board_area_move' };
+    await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      areaId: 'area_move',
+      projectMode: 'task_only',
+      plan: {
+        digitalActions: [{ kind: 'task', key: 'step-1', title: 'Book movers' }],
+      },
+    });
+    const cardInvocation = toolInvocations.find((call) => call.tool === 'tasks_create_card');
+    expect(cardInvocation?.args.boardId).toBe('board_area_move');
+  });
+
+  test('apply_intent_plan leaves the board unset (default board) when the intent has no area board', async () => {
+    areaFixture = null;
+    await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_loose',
+      areaId: 'area_unknown',
+      projectMode: 'task_only',
+      plan: { digitalActions: [{ kind: 'task', key: 'step-1', title: 'One-off errand' }] },
+    });
+    const cardInvocation = toolInvocations.find((call) => call.tool === 'tasks_create_card');
+    expect(cardInvocation?.args.boardId).toBeUndefined();
   });
 
   test('apply_intent_plan records queued status when nothing can be executed yet', async () => {

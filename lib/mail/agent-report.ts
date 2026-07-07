@@ -18,6 +18,7 @@ import {
 } from '../shared/types';
 import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
+import { type BriefWeather, briefWeather, type FetchLike } from '../weather/open-meteo';
 import { briefServiceFromProvider, briefServicesFromIds } from './brief-services';
 import { getDailyArt } from './daily-art';
 import { generateDailyReport } from './daily-report';
@@ -70,6 +71,103 @@ interface BriefExtras {
   digests: ThreadDigest[];
   voiceSamples: string[];
   services: string[];
+  // Real local weather (Open-Meteo, keyless) for the brief's weather module.
+  // Null when no location can be resolved — the module is simply omitted.
+  weather?: BriefWeatherPack | null;
+}
+
+// The compact, prompt-ready weather shape handed to the artifact model.
+export interface BriefWeatherPack {
+  location: string;
+  unit: '°F' | '°C';
+  current: {
+    temp: number;
+    condition: string;
+    high: number;
+    low: number;
+    windSpeed?: number;
+    humidity?: number;
+  };
+  hourly: Array<{ hour: string; temp: number; condition: string }>;
+  daily: Array<{ day: string; condition: string; high: number; low: number; precipChance?: number }>;
+}
+
+function hourLabel(timeIso: string): string {
+  const match = /T(\d{2})/.exec(timeIso);
+  if (!match) return timeIso;
+  const hour = Number(match[1]);
+  if (hour === 0) return '12 AM';
+  if (hour === 12) return '12 PM';
+  return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
+}
+
+// BriefWeather → the compact pack the artifact prompt consumes. Pure + exported
+// so the shape the model sees is unit-tested directly.
+export function toBriefWeather(weather: BriefWeather): BriefWeatherPack {
+  return {
+    location: weather.locationName,
+    unit: weather.unit === 'fahrenheit' ? '°F' : '°C',
+    current: {
+      temp: Math.round(weather.current.temperature),
+      condition: weather.current.conditionLabel,
+      high: weather.current.tempMax,
+      low: weather.current.tempMin,
+      windSpeed: weather.current.windSpeed !== undefined ? Math.round(weather.current.windSpeed) : undefined,
+      humidity: weather.current.humidity,
+    },
+    hourly: weather.hourly.slice(0, 12).map((point) => ({
+      hour: hourLabel(point.timeIso),
+      temp: Math.round(point.temperature),
+      condition: point.conditionCode,
+    })),
+    daily: weather.daily.slice(0, 7).map((day) => ({
+      day: day.label,
+      condition: day.conditionCode,
+      high: Math.round(day.tempMax),
+      low: Math.round(day.tempMin),
+      precipChance: day.precipitationChance !== undefined ? Math.round(day.precipitationChance) : undefined,
+    })),
+  };
+}
+
+// Calendar locations that plausibly geocode (skip meeting links and rooms).
+const NON_PLACE_LOCATION = /https?:\/\/|zoom|meet\.|teams|webex|conference room|room \d|call|dial/i;
+
+export function weatherLocationCandidates(calendar: DailyReportCalendarItem[] | undefined): string[] {
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const event of calendar ?? []) {
+    const location = String(event.location || '').trim();
+    if (!location || location.length < 4 || NON_PLACE_LOCATION.test(location)) continue;
+    // Favor address-like strings: a comma ("Rochester, NY") or a digit+word mix.
+    if (!/,|\d/.test(location)) continue;
+    const key = location.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(location);
+    if (candidates.length >= 3) break;
+  }
+  return candidates;
+}
+
+async function gatherBriefWeather(
+  report: DailyReport,
+  fetchImpl?: FetchLike,
+): Promise<BriefWeatherPack | null> {
+  const timezone = getAiRequestContext().userTimezone;
+  try {
+    const weather = await Promise.race([
+      briefWeather(
+        { timezone, candidates: weatherLocationCandidates(report.sections.calendar) },
+        fetchImpl ? { fetchImpl } : {},
+      ),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+    ]);
+    return weather ? toBriefWeather(weather) : null;
+  } catch (err) {
+    console.warn('[agent-report] weather gathering failed (brief continues without it):', err);
+    return null;
+  }
 }
 
 function cleanBody(message: Message): string {
@@ -80,7 +178,11 @@ function cleanBody(message: Message): string {
 // Pulls the ACTUAL message bodies for the action-worthy threads (plus the
 // user's own outbound prose as a voice sample) so the agent analyzes real
 // content rather than pre-canned one-liners. Bounded for token cost.
-export async function gatherBriefExtras(report: DailyReport, userId?: string | null): Promise<BriefExtras> {
+export async function gatherBriefExtras(
+  report: DailyReport,
+  userId?: string | null,
+  opts: { weatherFetch?: FetchLike } = {},
+): Promise<BriefExtras> {
   const accounts = userId ? await listNylasAccounts(userId).catch(() => []) : [];
   const self = new Set(
     accounts
@@ -167,7 +269,9 @@ export async function gatherBriefExtras(report: DailyReport, userId?: string | n
   if ((s.tasks ?? []).length) services.push('tasks');
   if (!services.length) services.push('mail');
 
-  return { digests, voiceSamples, services };
+  const weather = await gatherBriefWeather(report, opts.weatherFetch);
+
+  return { digests, voiceSamples, services, weather };
 }
 
 function artifactError(stage: DailyReportArtifactErrorStage, err: unknown): DailyReportArtifactError {
@@ -495,6 +599,13 @@ MASTHEAD (signature element — replaces any app header):
 - Small monospace caption beneath or inside the image: data.art.credit + " · " + data.art.source.
 - Image fallback is REQUIRED: use an <img> for the art with data.art.imageUrl as src and wire data.art.fallbacks through an onerror handler or equivalent inline JS so the masthead never shows a broken image. If all art URLs fail, hide the img and use a theme-token background.
 
+WEATHER MODULE (required whenever data.weather is non-null; omit entirely when null):
+- Place it near the masthead/lede — in the lede's margin rail, as a slim band directly beneath the masthead, or docked beside the dateline. It is part of the paper's front matter, not a buried section.
+- Visual anatomy (a designed weather instrument, matching the polish of a native weather widget): ONE large temperature figure in the display face (data.weather.current.temp + data.weather.unit), a condition line beneath it (data.weather.current.condition, with high/low as "H 78° / L 61°"), then a compact strip — either the next hours (data.weather.hourly: hour label + small temp, 6–8 entries) or the week (data.weather.daily: day label + condition + high/low range), whichever better serves the day. Location name in small caps-free muted type.
+- Optional refinement when daily data is rich: render the 7-day span as slim horizontal range bars (min→max) on a shared temperature scale — hairline track in var(--brief-hairline), filled span in var(--brief-accent-2, var(--brief-accent)).
+- Style with theme tokens only: temperature figure in var(--brief-ink), condition and strip labels in var(--brief-muted), accents/rules on the module in var(--brief-accent-2, var(--brief-accent)). No weather clip-art, no emoji; a minimal inline-SVG glyph per condition (sun disc, cloud outline, rain strokes) drawn with token strokes is welcome.
+- Weave it into the lede when relevant ("rain by 3 PM argues for the morning errand"), and never invent weather — data.weather is real.
+
 STYLIZED LEDE SYSTEM (required after the masthead):
 - The lede is a designed editorial object, not a plain paragraph block. Implement it with your own CSS in the document; do not use external libraries.
 - Choose exactly ONE treatment from this internal lede treatment library, based on the day's content:
@@ -507,8 +618,9 @@ STYLIZED LEDE SYSTEM (required after the masthead):
 - The lede must still read cleanly as 2-3 short body paragraphs in the user's tone from data.voiceSamples. No emoji.
 
 THEME — TWO fonts, honoring the user's app theme (host injects live):
-- Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif), --brief-display-tracking (0em).
+- Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-accent-2 (#774914), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif), --brief-display-tracking (0em).
 - Headings/masthead use var(--brief-font-display); ALL body copy/UI uses var(--brief-font-body). Apply var(--brief-display-tracking) to display/header text.
+- TWO accent voices: --brief-accent is the ACTION voice (buttons, chips, emphasis fills). --brief-accent-2 is the EDITORIAL voice — use var(--brief-accent-2, var(--brief-accent)) for section header text, kicker/deck lines, hairline-accent rules under headers, margin-rail labels, and chart/strip accents (including the weather module). Every section header and its rule should carry the accent-2 voice; never use accent-2 for action fills.
 - ONE Google Fonts link covering every option so live font swaps resolve instantly:
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
 - Live restyle listener: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
@@ -521,6 +633,7 @@ LIGHT AND DARK MODE REQUIREMENTS:
 
 DESIGN:
 - Editorial, generous whitespace, clear hierarchy, responsive 360→1100px, tasteful load animations. Use inline SVG only where a visual genuinely adds insight — e.g. a slim timeline of the week's meetings, a relationship map, a waiting-on matrix, a prep dossier, or a tool-workflow board. Never decorative number-counters.
+- CHART STANDARD (inline SVG): charts follow the same restrained grammar as a modern component library — no chart junk. Hairline axes/gridlines in var(--brief-hairline) (horizontal only, skip verticals), small muted tick labels in var(--brief-muted), bars with a small corner radius or 2px-stroke lines in var(--brief-accent-2, var(--brief-accent)) (multi-series may add var(--brief-accent)), direct labels over a legend when there are ≤2 series, generous inner padding, no 3D, no drop shadows, no gradient fills. A chart earns its place only when it explains real data (meeting load by day, waiting-time by person) — never decoration.
 - Claude Artifact design skill: invent a visual grammar for THIS day. Use spatial relationships, sequencing, comparison, annotation, rhythm, and interaction. At least one component should be memorable by form ("the week rail", "the relationship map", "the prep dossier"), not just by content.
 - REQUIRED VISUAL MODULES: when there is enough data, include at least TWO custom visual modules beyond the masthead; one must be temporal if calendar/tasks exist.
 - TIMELINE STANDARD: "The week ahead" must be a designed timeline/agenda system with rhythm, connectors, time bands, day groupings, or swimlanes. Do not render it as loose repeated day cards.
@@ -620,6 +733,8 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     art,
     firstName: contextFirstName() || null,
     services: briefServicesFromIds(serviceIds),
+    // Real local weather (already fetched; render the weather module from it).
+    weather: extras.weather ?? null,
     // The user's own recent outbound prose — match this voice in any draft.
     voiceSamples: extras.voiceSamples,
     // RAW material to analyze yourself: real thread bodies (most recent last).

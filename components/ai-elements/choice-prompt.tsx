@@ -1,9 +1,10 @@
 'use client';
 
 import { Check } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { OptionList } from '@/components/tool-ui/option-list';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { rangeSelection, toggledOptionId } from '@/lib/albatross/teach-ui';
 
 export interface ChoiceOption {
   label: string;
@@ -14,6 +15,8 @@ export interface AskQuestion {
   question: string;
   options?: ChoiceOption[];
   multiSelect?: boolean;
+  minSelections?: number;
+  maxSelections?: number;
 }
 
 export interface AskAnswer {
@@ -22,9 +25,11 @@ export interface AskAnswer {
 }
 
 // The agent's in-chat questionnaire (the `ask_user` human-in-the-loop tool).
-// Renders up to four questions at once; each can offer quick choices AND always
-// accepts a free-text answer. One Confirm submits them all. Once answered it
-// collapses to a compact summary.
+// Renders up to four questions at once; choice questions use the tool-ui
+// OptionList (single or multi select — multi supports shift-click range
+// selection) and every question always accepts a free-text answer too. One
+// Confirm submits them all. Once answered it collapses to a compact summary,
+// which also keeps old transcripts rendering unchanged.
 export function AskUserForm({
   questions,
   answered = false,
@@ -40,6 +45,40 @@ export function AskUserForm({
   // changes after mount (missing entries just default to empty).
   const [picked, setPicked] = useState<Record<number, string[]>>({});
   const [typed, setTyped] = useState<Record<number, string>>({});
+  // Shift-click range selection: a live shift flag plus a per-question anchor
+  // (the last plainly-toggled option).
+  const shiftHeld = useRef(false);
+  const anchors = useRef<Record<number, string | null>>({});
+
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') shiftHeld.current = true;
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') shiftHeld.current = false;
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
+
+  // Stable option ids per question ("q0-opt-1") with a map back to labels.
+  const optionModel = useMemo(
+    () =>
+      questions.map((q, qi) => {
+        const options = (q.options ?? []).map((option, i) => ({
+          id: `q${qi}-opt-${i}`,
+          label: option.label,
+          description: option.description,
+        }));
+        const labelById = new Map(options.map((option) => [option.id, option.label]));
+        return { options, ids: options.map((option) => option.id), labelById };
+      }),
+    [questions],
+  );
 
   if (answered) {
     return (
@@ -59,84 +98,75 @@ export function AskUserForm({
     );
   }
 
-  const responseFor = (i: number): string => {
-    const labels = picked[i] ?? [];
-    const text = (typed[i] ?? '').trim();
+  const labelsFor = (qi: number): string[] => {
+    const model = optionModel[qi];
+    if (!model) return [];
+    return (picked[qi] ?? []).map((id) => model.labelById.get(id) ?? id);
+  };
+
+  const responseFor = (qi: number): string => {
+    const labels = labelsFor(qi);
+    const text = (typed[qi] ?? '').trim();
     if (labels.length && text) return `${labels.join(', ')} — ${text}`;
     if (labels.length) return labels.join(', ');
     return text;
   };
-  const allAnswered = questions.every((_, i) => responseFor(i).length > 0);
 
-  const toggle = (qi: number, label: string, multi: boolean) => {
+  const questionReady = (q: AskQuestion, qi: number): boolean => {
+    const count = (picked[qi] ?? []).length;
+    const text = (typed[qi] ?? '').trim();
+    if (q.multiSelect && q.minSelections && count > 0 && count < q.minSelections) return false;
+    return count > 0 || text.length > 0;
+  };
+  const allAnswered = questions.every((q, qi) => questionReady(q, qi));
+
+  const handleChange = (qi: number, q: AskQuestion, next: string[] | string | null) => {
+    const model = optionModel[qi];
+    const nextIds = next == null ? [] : typeof next === 'string' ? [next] : next;
     setPicked((prev) => {
-      const arr = prev[qi] ?? [];
-      const nextArr = multi
-        ? arr.includes(label)
-          ? arr.filter((x) => x !== label)
-          : [...arr, label]
-        : arr.includes(label)
-          ? []
-          : [label];
-      return { ...prev, [qi]: nextArr };
+      const prevIds = prev[qi] ?? [];
+      const clicked = toggledOptionId(prevIds, nextIds);
+      let resolved = nextIds;
+      if (q.multiSelect && shiftHeld.current && clicked && anchors.current[qi]) {
+        resolved = rangeSelection(model.ids, prevIds, clicked, anchors.current[qi]);
+        if (q.maxSelections && resolved.length > q.maxSelections) {
+          resolved = resolved.slice(0, q.maxSelections);
+        }
+      } else if (clicked && nextIds.includes(clicked)) {
+        anchors.current[qi] = clicked;
+      }
+      return { ...prev, [qi]: resolved };
     });
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] px-3 py-3">
-      {questions.map((q, qi) => (
-        <div key={qi} className="space-y-1.5">
-          <div className="text-[12.5px] font-medium text-[var(--color-text)]">{q.question}</div>
-          {q.options?.length ? (
-            <div className="grid gap-1.5">
-              {q.options.map((option) => {
-                const isPicked = (picked[qi] ?? []).includes(option.label);
-                return (
-                  <button
-                    key={option.label}
-                    type="button"
-                    onClick={() => toggle(qi, option.label, Boolean(q.multiSelect))}
-                    className={cn(
-                      'flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors',
-                      isPicked
-                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                        : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-hover-soft)]',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border',
-                        isPicked
-                          ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
-                          : 'border-[var(--color-border-strong)]',
-                      )}
-                    >
-                      {isPicked ? <Check className="size-3" /> : null}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[12.5px] font-medium text-[var(--color-text)]">
-                        {option.label}
-                      </span>
-                      {option.description ? (
-                        <span className="block text-[11.5px] leading-snug text-[var(--color-text-muted)]">
-                          {option.description}
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-          <input
-            type="text"
-            value={typed[qi] ?? ''}
-            onChange={(event) => setTyped((prev) => ({ ...prev, [qi]: event.target.value }))}
-            placeholder={q.options?.length ? 'Or type your own answer…' : 'Type your answer…'}
-            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
-          />
-        </div>
-      ))}
+    <div className="space-y-4 rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] px-3 py-3">
+      {questions.map((q, qi) => {
+        const model = optionModel[qi];
+        return (
+          <div key={qi} className="space-y-2">
+            <div className="text-[12.5px] font-medium text-[var(--color-text)]">{q.question}</div>
+            {model.options.length ? (
+              <OptionList
+                id={`ask-user-q${qi}`}
+                options={model.options}
+                selectionMode={q.multiSelect ? 'multi' : 'single'}
+                minSelections={q.multiSelect ? q.minSelections : undefined}
+                maxSelections={q.multiSelect ? q.maxSelections : undefined}
+                value={q.multiSelect ? (picked[qi] ?? []) : ((picked[qi] ?? [])[0] ?? null)}
+                onChange={(next) => handleChange(qi, q, next)}
+              />
+            ) : null}
+            <input
+              type="text"
+              value={typed[qi] ?? ''}
+              onChange={(event) => setTyped((prev) => ({ ...prev, [qi]: event.target.value }))}
+              placeholder={model.options.length ? 'Or type your own answer…' : 'Type your answer…'}
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
+            />
+          </div>
+        );
+      })}
       <Button
         type="button"
         size="sm"
