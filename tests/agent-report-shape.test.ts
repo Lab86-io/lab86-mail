@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import './tools/harness';
 import {
   buildDataPrompt,
@@ -323,6 +325,28 @@ describe('extractHtml', () => {
 
   test('rejects incomplete HTML documents', () => {
     expect(extractHtml(`<!doctype html><html><body>${'ok '.repeat(80)}</body>`)).toBeNull();
+  });
+});
+
+describe('brief pipeline hang/wedge guards', () => {
+  const src = readFileSync(path.join(import.meta.dir, '..', 'lib', 'mail', 'agent-report.ts'), 'utf8');
+
+  test('every unbounded await in the artifact path carries a deadline', () => {
+    // Weather fetch, extras gathering, both artifact LLM calls (shared helper),
+    // and the silent month pass — a hang must become a caught error that
+    // settles the edition, never a forever-'enriching' wedge.
+    expect((src.match(/withDeadline\(/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(src).toContain("from '../shared/deadline'");
+    // The compose LLM call itself is wrapped, not bare.
+    expect(src).not.toMatch(/const \{ text \} = await generateTextForCurrentUser\(/);
+  });
+
+  test('the pipeline re-resolves the user timezone from calendars', () => {
+    // The context timezone is whatever client triggered the run (a remote
+    // browser once datelined the brief "Chicago"); generation must run under
+    // the calendar-resolved zone instead.
+    expect(src).toContain('resolveBriefTimezone');
+    expect(src).toMatch(/runWithAiRequestContext\(\{ \.\.\.context, userTimezone \}/);
   });
 });
 

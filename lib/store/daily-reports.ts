@@ -34,8 +34,19 @@ export async function getLatestDailyReport(kind?: DailyReport['kind']) {
 export async function listDailyReports(limit = 20) {
   const reports = await kvList<DailyReport>('dailyReport', { limit: Math.max(limit, 1000) });
   reports.sort((a, b) => b.generatedAt - a.generatedAt);
-  return reports.slice(0, limit).map(migrateDailyReport);
+  // NB: explicit arg — a bare `.map(migrateDailyReport)` passes the array
+  // index as `now` and silently breaks settle-on-read.
+  return reports.slice(0, limit).map((report) => migrateDailyReport(report));
 }
+
+// Generation runs in the web process; a deploy/restart mid-run (SIGTERM skips
+// the catch paths) leaves an edition wedged at artifactStatus 'composing' or
+// 'enriching' forever, so the report page keeps treating it as in-flight. Past
+// this cutoff the run is certainly dead — content exists (both statuses are
+// only persisted alongside an html artifact), so reads settle it to 'rendered'.
+// Mirrors STUCK_GENERATION_MS in components/report/DailyReport.tsx and
+// ACTIVE_GENERATION_MS in lib/tools/daily-report.ts.
+const STUCK_ARTIFACT_MS = 20 * 60_000;
 
 // Daily reports are stored as opaque payloads, so editions written before a
 // field existed (the redesign added lanes/tracking; later work added tasks,
@@ -43,7 +54,8 @@ export async function listDailyReports(limit = 20) {
 // back missing keys the rich report page now reads. This upgrades any stored
 // report to the current shape on read so old and new editions render — and list
 // in history — identically. Pure (no write-back): a read must not mutate.
-function migrateDailyReport(raw: DailyReport): DailyReport {
+// Exported for unit tests only; production callers go through the getters.
+export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): DailyReport {
   const sections = (raw.sections ?? {}) as Partial<DailyReport['sections']>;
   const items = (value: unknown): DailyReportItem[] => (Array.isArray(value) ? value : []);
   const tasks = (Array.isArray(sections.tasks) ? sections.tasks : []) as DailyReportTaskItem[];
@@ -118,6 +130,18 @@ function migrateDailyReport(raw: DailyReport): DailyReport {
     migrated.html = buildNativeDailyReportArtifact(migrated, migrated.composition);
     migrated.artifactStatus = migrated.artifactStatus ?? 'rendered';
     migrated.artifactSource = migrated.artifactSource ?? 'deterministic';
+  }
+
+  // Settle-on-read: a non-terminal artifact status from a generation that died
+  // mid-flight (deploy/SIGTERM) settles to 'rendered' once it is clearly stale,
+  // so consumers stop polling a run that will never finish. The html shown is
+  // whatever the last completed phase persisted.
+  if (
+    (migrated.artifactStatus === 'composing' || migrated.artifactStatus === 'enriching') &&
+    migrated.html &&
+    now - (migrated.generatedAt || 0) > STUCK_ARTIFACT_MS
+  ) {
+    migrated.artifactStatus = 'rendered';
   }
 
   return migrated;

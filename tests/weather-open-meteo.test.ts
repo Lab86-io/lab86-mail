@@ -148,9 +148,10 @@ describe('geocodePlace', () => {
     expect(await geocodePlace('Nowhereville', { fetchImpl })).toBeNull();
   });
 
-  test('throws on HTTP failure', async () => {
-    const { fetchImpl } = fakeFetch(() => ({ ok: false, status: 500 }));
-    await expect(geocodePlace('Rochester', { fetchImpl })).rejects.toThrow('500');
+  test('throws on persistent HTTP failure (after the retry)', async () => {
+    const { fetchImpl, calls } = fakeFetch(() => ({ ok: false, status: 500 }));
+    await expect(geocodePlace('Rochester', { fetchImpl, retryDelayMs: 1 })).rejects.toThrow('500');
+    expect(calls).toHaveLength(2);
   });
 });
 
@@ -176,9 +177,54 @@ describe('fetchForecast', () => {
     expect(forecast.daily[0].precipitationChance).toBe(65);
   });
 
-  test('throws on HTTP failure', async () => {
-    const { fetchImpl } = fakeFetch(() => ({ ok: false, status: 429 }));
-    await expect(fetchForecast({ latitude: 0, longitude: 0 }, { fetchImpl })).rejects.toThrow('429');
+  test('throws on persistent HTTP failure (after the retry)', async () => {
+    const { fetchImpl, calls } = fakeFetch(() => ({ ok: false, status: 429 }));
+    await expect(
+      fetchForecast({ latitude: 0, longitude: 0 }, { fetchImpl, retryDelayMs: 1 }),
+    ).rejects.toThrow('429');
+    expect(calls).toHaveLength(2);
+  });
+});
+
+// Open-Meteo is keyless and rate-limits per IP; on shared egress (Railway) a
+// transient 429 used to silently cost the brief its weather module. One retry
+// rides out the burst; hard client errors (404) still fail immediately.
+describe('rate-limit retry', () => {
+  const flakyFetch = (failStatus: number, body: any) => {
+    const calls: string[] = [];
+    const fetchImpl = async (url: string) => {
+      calls.push(url);
+      const failing = calls.length === 1;
+      return {
+        ok: !failing,
+        status: failing ? failStatus : 200,
+        json: async () => body,
+      };
+    };
+    return { fetchImpl, calls };
+  };
+
+  test('geocodePlace retries a 429 once and succeeds', async () => {
+    const { fetchImpl, calls } = flakyFetch(429, GEOCODE_HIT);
+    const place = await geocodePlace('Rochester', { fetchImpl, retryDelayMs: 1 });
+    expect(place?.name).toBe('Rochester');
+    expect(calls).toHaveLength(2);
+  });
+
+  test('fetchForecast retries a 5xx once and succeeds', async () => {
+    const { fetchImpl, calls } = flakyFetch(503, FORECAST);
+    const forecast = await fetchForecast(
+      { latitude: 43.15, longitude: -77.62 },
+      { fetchImpl, retryDelayMs: 1 },
+    );
+    expect(forecast.timezone).toBe('America/New_York');
+    expect(calls).toHaveLength(2);
+  });
+
+  test('does not retry a hard client error', async () => {
+    const { fetchImpl, calls } = fakeFetch(() => ({ ok: false, status: 404 }));
+    await expect(geocodePlace('Rochester', { fetchImpl, retryDelayMs: 1 })).rejects.toThrow('404');
+    expect(calls).toHaveLength(1);
   });
 });
 

@@ -138,16 +138,30 @@ export function cityFromTimezone(timezone: string | undefined): string | null {
 
 const GEOCODE_BASE = 'https://geocoding-api.open-meteo.com/v1/search';
 const FORECAST_BASE = 'https://api.open-meteo.com/v1/forecast';
+const RETRY_DELAY_MS = 1200;
 
-export async function geocodePlace(
-  name: string,
-  opts: { fetchImpl?: FetchLike } = {},
-): Promise<GeocodedPlace | null> {
+export interface FetchOpts {
+  fetchImpl?: FetchLike;
+  /** Backoff before the single retry; tests shrink it. */
+  retryDelayMs?: number;
+}
+
+// Open-Meteo is keyless and rate-limits per IP; on shared egress (Railway) a
+// burst from a neighbouring tenant surfaces as a 429 and used to silently cost
+// the brief its weather module. One short-backoff retry rides out the burst.
+async function fetchRetrying(url: string, opts: FetchOpts) {
+  const fetchImpl = opts.fetchImpl ?? (fetch as unknown as FetchLike);
+  const res = await fetchImpl(url);
+  if (res.ok || (res.status !== 429 && res.status < 500)) return res;
+  await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? RETRY_DELAY_MS));
+  return fetchImpl(url);
+}
+
+export async function geocodePlace(name: string, opts: FetchOpts = {}): Promise<GeocodedPlace | null> {
   const query = String(name || '').trim();
   if (!query) return null;
-  const fetchImpl = opts.fetchImpl ?? (fetch as unknown as FetchLike);
   const url = `${GEOCODE_BASE}?name=${encodeURIComponent(query)}&count=1&language=en&format=json`;
-  const res = await fetchImpl(url);
+  const res = await fetchRetrying(url, opts);
   if (!res.ok) throw new Error(`Open-Meteo geocoding failed (${res.status})`);
   const data = await res.json();
   const hit = Array.isArray(data?.results) ? data.results[0] : null;
@@ -164,9 +178,8 @@ export async function geocodePlace(
 
 export async function fetchForecast(
   input: { latitude: number; longitude: number; unit?: TemperatureUnit; days?: number },
-  opts: { fetchImpl?: FetchLike } = {},
+  opts: FetchOpts = {},
 ): Promise<NormalizedForecast> {
-  const fetchImpl = opts.fetchImpl ?? (fetch as unknown as FetchLike);
   const unit: TemperatureUnit = input.unit ?? 'celsius';
   const days = Math.min(Math.max(input.days ?? 7, 1), 7);
   const params = [
@@ -180,7 +193,7 @@ export async function fetchForecast(
     `temperature_unit=${unit}`,
     `wind_speed_unit=${unit === 'fahrenheit' ? 'mph' : 'kmh'}`,
   ].join('&');
-  const res = await fetchImpl(`${FORECAST_BASE}?${params}`);
+  const res = await fetchRetrying(`${FORECAST_BASE}?${params}`, opts);
   if (!res.ok) throw new Error(`Open-Meteo forecast failed (${res.status})`);
   const data = await res.json();
 
@@ -308,7 +321,7 @@ export async function resolveWeatherPlace(
     candidates?: string[];
     timezone?: string;
   },
-  opts: { fetchImpl?: FetchLike } = {},
+  opts: FetchOpts = {},
 ): Promise<GeocodedPlace | null> {
   if (Number.isFinite(input.latitude) && Number.isFinite(input.longitude)) {
     return {
@@ -346,7 +359,7 @@ export async function briefWeather(
     timezone?: string;
     unit?: TemperatureUnit;
   },
-  opts: { fetchImpl?: FetchLike } = {},
+  opts: FetchOpts = {},
 ): Promise<BriefWeather | null> {
   const resolved = await resolveWeatherPlace(input, opts);
   if (!resolved) return null;

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { extractHtml } from '@/lib/mail/agent-report';
+import { withDeadline } from '@/lib/shared/deadline';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { invokeTool } from '@/lib/tools/registry';
 import { browserbaseSearch } from '@/lib/tools/web';
@@ -172,20 +173,11 @@ export function normalizeArtifactLinks(html: string): string {
   return out;
 }
 
-/** Turn an indefinite hang into a caught error: a generation that never
- * resolves would otherwise leave its intent in 'planning' with no planError
- * (the same wedge a mid-flight deploy causes — see the plan-reconcile cron). */
-export async function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
+// A generation that never resolves would otherwise leave its intent in
+// 'planning' with no planError (the wedge a mid-flight deploy causes — see the
+// plan-reconcile cron). Lifted to lib/shared/deadline.ts so the Daily Brief
+// pipeline shares it; re-exported to keep this module's public surface stable.
+export { withDeadline };
 
 /** Stable per-plan step keys ("step-1"…) assigned by index at plan-parse time.
  * They persist on the plan document, ride through apply (stepKey -> created

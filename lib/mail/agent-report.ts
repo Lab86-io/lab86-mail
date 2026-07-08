@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
-import { contextFirstName, getAiRequestContext } from '../ai/context';
+import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { listNylasAccounts } from '../nylas/provider';
 import { type BriefComposition, compositionFromReport } from '../shared/brief-composition';
+import { withDeadline } from '../shared/deadline';
 import { emailFromHeader } from '../shared/format';
 import {
   type DailyReport,
@@ -20,6 +21,7 @@ import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
 import { type BriefWeather, briefWeather, type FetchLike } from '../weather/open-meteo';
 import { briefServiceFromProvider, briefServicesFromIds } from './brief-services';
+import { resolveBriefTimezone } from './brief-timezone';
 import { getDailyArt } from './daily-art';
 import { generateDailyReport } from './daily-report';
 import { buildNativeDailyReportArtifact } from './report-artifact';
@@ -40,6 +42,17 @@ import { buildNativeDailyReportArtifact } from './report-artifact';
 
 const MAX_TASKS = 32;
 const MAX_EVENTS = 32;
+
+// Deadlines for the pipeline's unbounded awaits. A deploy/restart mid-run
+// SIGTERMs the process (no catch runs), but a plain hang used to wedge the
+// stored edition at 'composing'/'enriching' forever. With deadlines, hangs
+// become caught errors that settle the edition to 'rendered' with an
+// artifactError; the store's settle-on-read migration is the backstop for the
+// SIGTERM case. Generous ceilings: these exist to catch hangs, not slowness.
+const EXTRAS_DEADLINE_MS = 60_000;
+const ARTIFACT_LLM_DEADLINE_MS = 240_000;
+const MONTH_ENRICH_DEADLINE_MS = 300_000;
+const WEATHER_DEADLINE_MS = 12_000;
 const MAX_DIGEST_THREADS = 20;
 const MAX_MSGS_PER_THREAD = 6;
 const MAX_BODY_CHARS = 1100;
@@ -156,13 +169,14 @@ async function gatherBriefWeather(
 ): Promise<BriefWeatherPack | null> {
   const timezone = getAiRequestContext().userTimezone;
   try {
-    const weather = await Promise.race([
+    const weather = await withDeadline(
       briefWeather(
         { timezone, candidates: weatherLocationCandidates(report.sections.calendar) },
         fetchImpl ? { fetchImpl } : {},
       ),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
-    ]);
+      WEATHER_DEADLINE_MS,
+      'Brief weather',
+    );
     return weather ? toBriefWeather(weather) : null;
   } catch (err) {
     console.warn('[agent-report] weather gathering failed (brief continues without it):', err);
@@ -397,6 +411,22 @@ export async function generateAgentReport(input: {
   now?: number;
   reportId?: string;
 }): Promise<DailyReport> {
+  // The brief's dateline, weather geocoding, and calendar formatting all read
+  // the context timezone. A usable context value (browser header — tracks
+  // travel — or the cron's calendar guess) stands; when it is missing or
+  // UTC-filler, resolve one from the user's synced calendars and run the
+  // whole pipeline under it.
+  const context = getAiRequestContext();
+  const userTimezone = await resolveBriefTimezone(input.userId ?? context.userId, context.userTimezone);
+  return runWithAiRequestContext({ ...context, userTimezone }, () => runAgentReport(input));
+}
+
+async function runAgentReport(input: {
+  kind: DailyReport['kind'];
+  userId?: string | null;
+  now?: number;
+  reportId?: string;
+}): Promise<DailyReport> {
   // Both passes share one edition id so the month pass overwrites the week one.
   const reportId = input.reportId ?? randomUUID();
 
@@ -495,15 +525,21 @@ export async function generateAgentReport(input: {
   // place. Best-effort: if it fails (e.g. out of credits), keep the week brief.
   let finalReport: DailyReport;
   try {
-    const full = await generateDailyReport({
-      kind: input.kind,
-      includeCalendar: true,
-      userId: input.userId,
-      now: input.now,
-      scope: 'full',
-      reportId,
-      silent: true,
-    });
+    // The silent month pass never persists, so abandoning it on deadline
+    // cannot write behind the settled edition.
+    const full = await withDeadline(
+      generateDailyReport({
+        kind: input.kind,
+        includeCalendar: true,
+        userId: input.userId,
+        now: input.now,
+        scope: 'full',
+        reportId,
+        silent: true,
+      }),
+      MONTH_ENRICH_DEADLINE_MS,
+      'Month enrichment',
+    );
     let html: string | null = null;
     let failure: DailyReportArtifactError | undefined;
     try {
@@ -542,14 +578,24 @@ export async function generateAgentReport(input: {
 // ---- Artifact composition --------------------------------------------------
 
 async function composeArtifactHtml(report: DailyReport, userId?: string | null): Promise<string> {
-  const extras = await gatherBriefExtras(report, userId);
-  const { text } = await generateTextForCurrentUser({
-    feature: 'daily_report_artifact', // tiered cap → 32k output
-    speed: 'primary',
-    userId,
-    system: HTML_ARTIFACT_BRIEF,
-    prompt: buildDataPrompt(report, extras),
-  });
+  // Deadlines route hangs into the callers' week_artifact/month_artifact catch
+  // paths, which settle the edition with a fallback artifact + artifactError.
+  const extras = await withDeadline(
+    gatherBriefExtras(report, userId),
+    EXTRAS_DEADLINE_MS,
+    'Brief context gathering',
+  );
+  const { text } = await withDeadline(
+    generateTextForCurrentUser({
+      feature: 'daily_report_artifact', // tiered cap → 32k output
+      speed: 'primary',
+      userId,
+      system: HTML_ARTIFACT_BRIEF,
+      prompt: buildDataPrompt(report, extras),
+    }),
+    ARTIFACT_LLM_DEADLINE_MS,
+    'Brief artifact generation',
+  );
   const html = extractHtml(text);
   if (!html) throw new Error('AI did not return a complete HTML document.');
   return html;
@@ -586,6 +632,7 @@ OUTPUT RULES (critical):
 - data-payload MUST be a valid JSON object string containing exact ids/accounts from the JSON. Escape it correctly for HTML attributes.
 
 DO NOT:
+- Do NOT set text in ALL CAPS, anywhere. No uppercase letter-spaced micro-labels ("RESPOND", "WAIT / CLEAR", "SUGGESTED REPLY", "YOUR MOVE"), no text-transform: uppercase in CSS, no all-caps kickers, datelines, section titles, tags, or buttons. Sentence case everywhere — section titles, kickers, tags, chips, and action labels. Acronyms (RSVP, PDF) stay as written.
 - Do NOT render a stat strip or counter tiles ("X scanned", "Y reply owed", "Z events"). Raw counts are noise — omit them entirely.
 - Do NOT include "With love from Lab86".
 - Do NOT include a second app toolbar or app chrome.
@@ -595,7 +642,8 @@ DO NOT:
 
 MASTHEAD (signature element — replaces any app header):
 - Full-bleed landscape banner using data.art.imageUrl (object-fit: cover, ~38–46vh, never distorted). Overlay "The {data.weekday} Brief" in the display face, centered, with a legibility scrim.
-- Use data.localDate (e.g. "15 JUN 2026") and data.localTime (e.g. "9:54 AM") VERBATIM — they are already in the user's timezone; do not recompute or reformat times yourself. Set them vertically along the left/right edges, like a newspaper's spine.
+- Use data.localDate (e.g. "Jun 15, 2026") and data.localTime (e.g. "9:54 AM") VERBATIM — they are already in the user's timezone; do not recompute or reformat times yourself. Set them vertically along the left/right edges, like a newspaper's spine.
+- Dateline honesty: never derive or print a city, region, or place name from data.timezone, the art credit, or anything else you infer. The ONLY place name you may print anywhere in the brief is data.weather.location (a real, resolved location). When data.weather is null, the dateline and masthead carry only the edition name, date, and time — no city.
 - Small monospace caption beneath or inside the image: data.art.credit + " · " + data.art.source.
 - Image fallback is REQUIRED: use an <img> for the art with data.art.imageUrl as src and wire data.art.fallbacks through an onerror handler or equivalent inline JS so the masthead never shows a broken image. If all art URLs fail, hide the img and use a theme-token background.
 
@@ -714,7 +762,8 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   const fmt = (opts: Intl.DateTimeFormatOptions) =>
     new Intl.DateTimeFormat('en-US', { timeZone, ...opts }).format(at);
   const weekday = fmt({ weekday: 'long' });
-  const localDate = fmt({ day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+  // Sentence-case dateline ("Jun 15, 2026") — the ALL-CAPS treatment is banned.
+  const localDate = fmt({ day: '2-digit', month: 'short', year: 'numeric' });
   const localTime = fmt({ hour: 'numeric', minute: '2-digit' });
   const art = getDailyArt(report.generatedAt);
 

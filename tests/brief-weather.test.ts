@@ -188,4 +188,33 @@ describe('artifact brief prompt', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('CHART STANDARD');
     expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-hairline)');
   });
+
+  test('bans ALL-CAPS letter-spaced labels and demands sentence case', () => {
+    expect(HTML_ARTIFACT_BRIEF).toContain('Do NOT set text in ALL CAPS');
+    expect(HTML_ARTIFACT_BRIEF).toContain('text-transform: uppercase');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Sentence case everywhere');
+  });
+
+  test('dateline honesty: no city derived from timezone; weather location is the only place name', () => {
+    expect(HTML_ARTIFACT_BRIEF).toContain('Dateline honesty');
+    expect(HTML_ARTIFACT_BRIEF).toContain('never derive or print a city');
+    expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.location');
+    expect(HTML_ARTIFACT_BRIEF).toContain('no city');
+  });
+
+  test('buildDataPrompt datelines in sentence case, in the context timezone', async () => {
+    await withToolContext(async () => {
+      const prompt = buildDataPrompt(reportFixture(), {
+        digests: [],
+        voiceSamples: [],
+        services: ['gmail'],
+        weather: null,
+      } as any);
+      // 2026-07-07T13:00Z in America/New_York (harness context) is 9:00 AM.
+      expect(prompt).toContain('"localDate": "Jul 07, 2026"');
+      expect(prompt).not.toContain('JUL 07');
+      expect(prompt).toContain('"localTime": "9:00 AM"');
+      expect(prompt).toContain('"timezone": "America/New_York"');
+    });
+  });
 });

@@ -87,6 +87,17 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toMatch(/\.lede-block \.lede:first-of-type::first-letter\{[^}]*color:var\(--brief-accent\)/);
   });
 
+  test('never imposes ALL-CAPS labels: no uppercase transform, sentence-case dateline', () => {
+    const html = runWithAiRequestContext({ userTimezone: 'America/New_York' }, () =>
+      buildNativeDailyReportArtifact(sampleReport()),
+    );
+    expect(html).not.toContain('text-transform:uppercase');
+    expect(html).not.toContain('text-transform: uppercase');
+    // The spine dateline stays sentence case ("Jun 10, 2026"), never "JUN 10".
+    expect(html).toContain('Jun 10, 2026');
+    expect(html).not.toContain('JUN 10');
+  });
+
   test('renders branded source footer with service logos', () => {
     const html = buildNativeDailyReportArtifact({
       ...sampleReport(),
