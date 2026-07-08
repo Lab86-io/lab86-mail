@@ -15,6 +15,7 @@ import {
   planningIsStale,
   planRevealSequence,
   type QuestionOption,
+  questionOptionDescription,
   relativeTime,
 } from '../components/albatross/PlansSurface';
 
@@ -236,6 +237,24 @@ const coffeeOption: QuestionOption = {
 };
 
 const bareOption: QuestionOption = { id: 'o2', title: 'Devoción' };
+
+describe('questionOptionDescription', () => {
+  test('joins detail, address, and hours for the tool-ui OptionList description', () => {
+    expect(questionOptionDescription(coffeeOption)).toBe(
+      'Quiet third-wave cafe · 76 N 4th St, Brooklyn, NY · Open until 6pm',
+    );
+  });
+
+  test('skips missing or blank facts', () => {
+    expect(questionOptionDescription({ id: 'o3', title: 'Cafe', address: '1 Main St', hoursText: ' ' })).toBe(
+      '1 Main St',
+    );
+  });
+
+  test('undefined when the option is title-only (label stands alone)', () => {
+    expect(questionOptionDescription(bareOption)).toBeUndefined();
+  });
+});
 
 describe('nextUnansweredQuestion', () => {
   test('returns the first question without an answer', () => {

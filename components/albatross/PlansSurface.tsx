@@ -37,7 +37,10 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
+import { OptionList } from '@/components/tool-ui/option-list';
+import { ActionButtons } from '@/components/tool-ui/shared/action-buttons';
 import { ChamaacDock, ChamaacDockTile } from '@/components/ui/chamaac-dock';
+import { Input } from '@/components/ui/input';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import {
@@ -254,6 +257,16 @@ export function answeredOptionChoices(intent: IntentLike | null | undefined): An
     rows.push({ prompt: question.prompt, option, alternatives: question.options.length - 1 });
   }
   return rows;
+}
+
+// Choice questions render through the tool-ui OptionList, whose options carry
+// one description string: join the place facts the old cards stacked (detail,
+// address, hours) so the selection grammar keeps them visible. Pure, testable.
+export function questionOptionDescription(option: QuestionOption): string | undefined {
+  const parts = [option.detail, option.address, option.hoursText].filter((part): part is string =>
+    Boolean(part?.trim()),
+  );
+  return parts.length ? parts.join(' · ') : undefined;
 }
 
 // "123 Main St"-shaped: a street number, up to four words, then a street token.
@@ -1281,10 +1294,14 @@ function AnsweredChoicesReceipt({ intent }: { intent: IntentRow }) {
   );
 }
 
-// One-question-at-a-time stepper (Cosmos/Indeed/Juicebox pattern). Questions
-// with options render as choosable place cards (Vercel "we found some options"
-// affirm pattern); free text stays available beneath. Answering the LAST
-// question submits everything and regenerates immediately - no extra button.
+// One-question-at-a-time stepper rebuilt on the tool-ui question grammar so
+// intent questions read exactly like the chat's guided questions
+// (ask_question_flow / ask_user in hitl-parts + choice-prompt): a sentence-case
+// "Step n of m" header over question-flow's segmented progress bar, choice
+// questions as a tool-ui OptionList ("Use this one" confirms the selection),
+// Back to revisit a draft answer, and a free-text escape in the tool-ui input
+// idiom. Answering the LAST question submits everything and regenerates
+// immediately - no extra button.
 function QuestionStepper({
   intent,
   reduced,
@@ -1304,7 +1321,8 @@ function QuestionStepper({
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const current = open[Math.min(step, Math.max(0, open.length - 1))];
+  const stepIndex = Math.min(step, Math.max(0, open.length - 1));
+  const current = open[stepIndex];
 
   const advance = async (entry: AnswerEntry) => {
     const nextDrafts = { ...drafts, [entry.id]: entry };
@@ -1315,7 +1333,7 @@ function QuestionStepper({
       answer: nextDrafts[question.id]?.answer || question.answer,
     }));
     if (!answersReadyForRegen({ ...intent, questions: projected })) {
-      setStep(step + 1);
+      setStep(stepIndex + 1);
       return;
     }
     setSubmitting(true);
@@ -1331,10 +1349,6 @@ function QuestionStepper({
   const pickedOption = options.find((option) => option.id === picked[current.id]);
   const text = texts[current.id] ?? '';
 
-  const pick = (option: QuestionOption) => {
-    setPicked((prev) => ({ ...prev, [current.id]: option.id }));
-    onPreviewOption(option);
-  };
   const confirmOption = (option: QuestionOption) => {
     if (submitting) return;
     onPreviewOption(option); // the map keeps showing the choice through regen
@@ -1344,9 +1358,73 @@ function QuestionStepper({
     if (submitting || !text.trim()) return;
     void advance({ id: current.id, answer: text.trim() });
   };
+  const handleAction = (actionId: string) => {
+    if (actionId === 'later') onAnswerLater();
+    else if (actionId === 'back') setStep(Math.max(0, stepIndex - 1));
+    else if (actionId === 'confirm') {
+      if (options.length) {
+        if (pickedOption) confirmOption(pickedOption);
+      } else {
+        submitText();
+      }
+    }
+  };
+
+  // One footer grammar for both question kinds (tool-ui ActionButtons - the
+  // same row OptionList renders internally). Text-only buttons, sentence case.
+  const footerActions = [
+    ...(stepIndex > 0
+      ? [{ id: 'back', label: 'Back', variant: 'ghost' as const, disabled: submitting }]
+      : []),
+    { id: 'later', label: 'Answer later', variant: 'ghost' as const, disabled: submitting },
+    options.length
+      ? { id: 'confirm', label: 'Use this one', disabled: submitting }
+      : { id: 'confirm', label: 'Continue', disabled: submitting || !text.trim() },
+  ];
+
+  // OptionList doesn't expose hover/focus events, so the map preview delegates
+  // on the data-id attribute each vendored option button already renders -
+  // hover for mouse, focus for keyboard, both bubbling to this wrapper.
+  const previewHovered = (event: { target: EventTarget | null }) => {
+    const hit = (event.target as HTMLElement | null)?.closest?.('[data-id]');
+    const id = hit?.getAttribute('data-id');
+    const option = id ? options.find((entry) => entry.id === id) : undefined;
+    if (option) onPreviewOption(option);
+  };
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 py-8">
+    <div className="flex w-full flex-col gap-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 shadow-xs">
+      {open.length > 1 ? (
+        <div className="flex flex-col gap-2">
+          <span className="text-[12px] font-medium tabular-nums text-[var(--color-text-muted)]">
+            Step {stepIndex + 1} of {open.length}
+          </span>
+          {/* question-flow's segmented progress bar (the vendored component
+              does not export it) on app tokens; motion-safe honors reduce. */}
+          <div
+            className="flex h-1.5 gap-1"
+            role="progressbar"
+            aria-valuemin={1}
+            aria-valuemax={open.length}
+            aria-valuenow={stepIndex + 1}
+          >
+            {open.map((question, index) => (
+              <div
+                key={question.id}
+                className="relative flex-1 overflow-hidden rounded-full bg-[var(--color-bg-muted)]"
+              >
+                <div
+                  className={cn(
+                    'absolute inset-0 origin-left rounded-full bg-[var(--color-accent)]',
+                    'motion-safe:transition-transform motion-safe:duration-300',
+                    index <= stepIndex ? 'scale-x-100' : 'scale-x-0',
+                  )}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={current.id}
@@ -1354,111 +1432,60 @@ function QuestionStepper({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: reduced ? 0 : -8 }}
           transition={{ duration: reduced ? 0 : 0.18 }}
-          className="flex flex-col gap-3"
+          className="flex flex-col gap-4"
         >
-          <p className="text-[12px] font-medium tabular-nums text-[var(--color-text-faint)]">
-            {Math.min(step, open.length - 1) + 1} of {open.length}
-          </p>
-          <p className="font-display text-[19px] font-semibold leading-snug text-[var(--color-text)]">
-            {current.prompt}
-          </p>
+          <h2 className="text-lg font-semibold leading-tight text-[var(--color-text)]">{current.prompt}</h2>
 
           {options.length ? (
-            <div role="radiogroup" aria-label={current.prompt} className="flex flex-col gap-2">
-              {options.map((option) => {
-                const isPicked = pickedOption?.id === option.id;
-                return (
-                  // biome-ignore lint/a11y/useSemanticElements: the card embeds a real <a> (website), which a native <input type="radio"> cannot contain
-                  <div
-                    key={option.id}
-                    role="radio"
-                    aria-checked={isPicked}
-                    tabIndex={0}
-                    onClick={() => pick(option)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        if (isPicked) confirmOption(option);
-                        else pick(option);
-                      }
-                      if (event.key === ' ') {
-                        event.preventDefault();
-                        pick(option);
-                      }
-                    }}
-                    onMouseEnter={() => onPreviewOption(option)}
-                    onMouseLeave={() => onPreviewOption(pickedOption ?? null)}
-                    className={cn(
-                      'cursor-pointer rounded-lg border p-3 transition-colors',
-                      isPicked
-                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                        : 'border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-strong)]',
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      {/* tool-ui OptionList selection grammar: a radio indicator
-                          that fills with the accent when picked. */}
-                      <span className="flex h-5 shrink-0 items-center">
-                        <span
-                          className={cn(
-                            'flex size-4 items-center justify-center rounded-full border-2 transition-colors',
-                            isPicked
-                              ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
-                              : 'border-[var(--color-border-strong)]',
-                          )}
-                        >
-                          {isPicked ? <span className="size-2 rounded-full bg-current" /> : null}
-                        </span>
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[13.5px] font-semibold text-[var(--color-text)]">{option.title}</p>
-                        {[option.detail, option.address].filter(Boolean).map((line) => (
-                          <p
-                            key={line}
-                            className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]"
-                          >
-                            {line}
-                          </p>
-                        ))}
-                        {option.hoursText ? (
-                          <p className="mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">
-                            {option.hoursText}
-                          </p>
-                        ) : null}
-                        {option.website ? (
-                          <a
-                            href={option.website}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(event) => event.stopPropagation()}
-                            className="mt-1 inline-block text-[11.5px] font-medium text-[var(--color-accent)] hover:underline"
-                          >
-                            {websiteLabel(option.website)}
-                          </a>
-                        ) : null}
-                      </div>
-                      {isPicked ? (
-                        <button
-                          type="button"
-                          disabled={submitting}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            confirmOption(option);
-                          }}
-                          className="shrink-0 rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[11.5px] font-semibold text-[var(--color-accent-foreground)] disabled:opacity-40"
-                        >
-                          Use this one
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex flex-col gap-2">
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: hover/focus preview delegation only; selection stays on the OptionList buttons */}
+              <div
+                onMouseOver={previewHovered}
+                onFocus={previewHovered}
+                onMouseLeave={() => onPreviewOption(pickedOption ?? null)}
+              >
+                <OptionList
+                  id={`intent-question-${current.id}`}
+                  className="max-w-none"
+                  options={options.map((option) => ({
+                    id: option.id,
+                    label: option.title,
+                    description: questionOptionDescription(option),
+                  }))}
+                  selectionMode="single"
+                  value={picked[current.id] ?? null}
+                  onChange={(next) => {
+                    const id = typeof next === 'string' ? next : null;
+                    setPicked((prev) => {
+                      const draft = { ...prev };
+                      if (id) draft[current.id] = id;
+                      else delete draft[current.id];
+                      return draft;
+                    });
+                    onPreviewOption(id ? (options.find((entry) => entry.id === id) ?? null) : null);
+                  }}
+                  actions={footerActions}
+                  onAction={(actionId) => handleAction(actionId)}
+                />
+              </div>
+              {pickedOption?.website ? (
+                // The vendored option rows are buttons, so the chosen place's
+                // website surfaces as a link under the list (and on the map).
+                <a
+                  href={pickedOption.website}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-fit text-[11.5px] font-medium text-[var(--color-accent)] hover:underline"
+                >
+                  {websiteLabel(pickedOption.website)}
+                </a>
+              ) : null}
             </div>
           ) : null}
 
-          <input
-            // biome-ignore lint/a11y/noAutofocus: keyboard-first stepper - the input is the whole step and focus must follow each question
+          <Input
+            // Keyboard-first stepper: for text questions the input is the
+            // whole step, so focus follows each question.
             autoFocus={!options.length}
             value={text}
             disabled={submitting}
@@ -1470,21 +1497,13 @@ function QuestionStepper({
               }
             }}
             placeholder={options.length ? 'None of these / something else…' : 'Type your answer, press Enter'}
-            className="h-10 w-full rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)] disabled:opacity-50"
           />
-          <div className="flex items-center gap-3">
-            {!options.length ? (
-              <button
-                type="button"
-                disabled={submitting || !text.trim()}
-                onClick={submitText}
-                className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--color-accent-foreground)] disabled:opacity-40"
-              >
-                Continue
-              </button>
-            ) : null}
-            <QuietButton onClick={onAnswerLater}>Answer later</QuietButton>
-          </div>
+
+          {!options.length ? (
+            <div className="@container/actions">
+              <ActionButtons actions={footerActions} align="right" onAction={handleAction} />
+            </div>
+          ) : null}
         </motion.div>
       </AnimatePresence>
     </div>
