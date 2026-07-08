@@ -186,6 +186,44 @@ export function assignStepKeys<T extends object>(actions: T[]): Array<T & { key:
   return actions.map((action, index) => ({ ...action, key: `step-${index + 1}` }));
 }
 
+interface PlanQuestion {
+  id: string;
+  prompt: string;
+  options?: Array<{
+    id: string;
+    title: string;
+    detail?: string;
+    address?: string;
+    hoursText?: string;
+    website?: string;
+  }>;
+  answer?: string;
+  answeredOptionId?: string;
+  answeredAt?: number;
+}
+
+const normalizePrompt = (prompt: string) => prompt.trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** Merge a fresh generation's questions with the answers already given.
+ *
+ * The loop bug: each regeneration REPLACED intent.questions with only the new
+ * generation's questions, so an answered question the model didn't re-emit lost
+ * its answer entirely. The answer history collapsed to the last round, and the
+ * planner — no longer told those questions were answered — re-asked them,
+ * oscillating forever. This keeps every previously-answered question (that the
+ * new generation didn't re-emit) as answered context so answersBlock always
+ * carries the full history and nothing is ever re-asked. Answered questions
+ * sort first and keep stable ids; genuinely new open questions follow. */
+export function mergePlanQuestions(prior: PlanQuestion[], next: PlanQuestion[]): PlanQuestion[] {
+  const nextPrompts = new Set(next.map((question) => normalizePrompt(question.prompt)));
+  const retainedAnswered = (prior || []).filter(
+    (question) => question.answer && !nextPrompts.has(normalizePrompt(question.prompt)),
+  );
+  const merged = [...retainedAnswered, ...next];
+  // Answered first (stable), then open — the stepper shows only open ones.
+  return merged.sort((a, b) => (a.answer ? 0 : 1) - (b.answer ? 0 : 1));
+}
+
 /** Only refs that exist in the context pack survive into the stored plan. */
 export function resolveSourceRefs(refIds: string[] | undefined, pack: PlanContextRef[]) {
   const byId = new Map(pack.map((ref) => [ref.refId, ref]));
@@ -368,6 +406,12 @@ function answersBlock(
 ) {
   const answered = (questions || []).filter((question) => question.answer);
   if (!answered.length) return '';
+  // Once the user has answered, bias hard toward finishing: re-asking (even
+  // reworded) or piling on fresh questions is how the plan loops forever.
+  const stop =
+    answered.length >= 2
+      ? '\nThe user has already answered enough. Do NOT ask any more questions — produce the plan now, stating any remaining unknowns as assumptions.'
+      : '\nDo not re-ask these, and do not reword them into new questions. Only ask a genuinely new question if the plan is truly impossible without it; otherwise return questions: [] and state unknowns as assumptions.';
   return `\n## The user answered your earlier questions\n${answered
     .map((question) => {
       const chosen = question.answeredOptionId
@@ -378,7 +422,7 @@ function answersBlock(
         : '';
       return `- Q: ${question.prompt}\n  A: ${question.answer}${chosenDetail}`;
     })
-    .join('\n')}\nDo not re-ask these. Fold the answers into the plan.`;
+    .join('\n')}${stop}`;
 }
 
 /** Coarse "city, region" via OpenStreetMap Nominatim — enough for near-me search. */
@@ -513,12 +557,12 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         ? areas.find((area: any) => area.name.toLowerCase() === generation.areaName!.toLowerCase())?._id
         : undefined;
 
-    const questions = generation.questions.map((question, index) => {
+    const freshQuestions = generation.questions.map((question, index) => {
       const existing = (intent.questions || []).find(
-        (prior: any) => prior.prompt.toLowerCase() === question.prompt.toLowerCase(),
+        (prior: any) => normalizePrompt(prior.prompt) === normalizePrompt(question.prompt),
       );
       return {
-        id: question.id || `q${index + 1}`,
+        id: existing?.id || question.id || `q${index + 1}`,
         prompt: question.prompt,
         options: question.options?.map((option, optionIndex) => ({
           id: option.id || `q${index + 1}o${optionIndex + 1}`,
@@ -533,6 +577,9 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         answeredAt: existing?.answeredAt,
       };
     });
+    // Keep every answer already given, even for questions this generation
+    // dropped — otherwise the planner re-asks them and the loop never ends.
+    const questions = mergePlanQuestions(intent.questions || [], freshQuestions);
 
     const digitalActions = assignStepKeys(generation.digitalActions).map((action) => ({
       key: action.key,

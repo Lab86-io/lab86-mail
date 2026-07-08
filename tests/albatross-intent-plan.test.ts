@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { type PlanContextRef, parsePlanGeneration, resolveSourceRefs } from '../lib/albatross/intent-plan';
+import {
+  mergePlanQuestions,
+  type PlanContextRef,
+  parsePlanGeneration,
+  resolveSourceRefs,
+} from '../lib/albatross/intent-plan';
 
 const validPlan = {
   title: 'Finish passport application',
@@ -546,5 +551,52 @@ describe('plan reconcile wiring (stuck-planning self-heal)', () => {
     const bare = src.match(/await deps\.generateTextForCurrentUser\(/g) ?? [];
     expect(bare.length).toBe(0);
     expect((src.match(/withDeadline\(/g) ?? []).length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('mergePlanQuestions (question-loop fix)', () => {
+  const q = (id: string, prompt: string, answer?: string) => ({ id, prompt, ...(answer ? { answer } : {}) });
+
+  test('retains a prior answered question the new generation dropped', () => {
+    const prior = [q('q_form', 'Which form do you want?', 'Gold bars')];
+    const next = [q('q_dealer', 'Which dealer?')];
+    const merged = mergePlanQuestions(prior, next);
+    // The answered form question survives as context (answered), plus the new one.
+    expect(merged.map((m) => m.id)).toEqual(['q_form', 'q_dealer']);
+    expect(merged.find((m) => m.id === 'q_form')?.answer).toBe('Gold bars');
+  });
+
+  test('the oscillation cannot happen: answers accumulate across rounds', () => {
+    // Round 2 answered form, round 3 drops form and asks dealer. Without the
+    // merge, form's answer vanished and got re-asked next round.
+    let intentQuestions = [q('q_form', 'Which form?', 'Gold bars')];
+    // regen emits only a fresh dealer question
+    intentQuestions = mergePlanQuestions(intentQuestions, [q('q_dealer', 'Which dealer?')]);
+    // user answers dealer
+    intentQuestions = intentQuestions.map((m) => (m.id === 'q_dealer' ? { ...m, answer: 'APMEX' } : m));
+    // regen emits nothing new
+    intentQuestions = mergePlanQuestions(intentQuestions, []);
+    const answered = intentQuestions.filter((m) => m.answer);
+    expect(answered.map((m) => m.answer).sort()).toEqual(['APMEX', 'Gold bars']);
+    // No open questions remain → plan can go ready.
+    expect(intentQuestions.some((m) => !m.answer)).toBe(false);
+  });
+
+  test('a re-emitted question keeps its carried answer (dedup by normalized prompt)', () => {
+    const prior = [q('q_form', 'Which form do you want?', 'Gold bars')];
+    // Same prompt, different whitespace/case — must be treated as the same question.
+    const next = [{ id: 'q_form', prompt: 'which   FORM do you want?', answer: 'Gold bars' }];
+    const merged = mergePlanQuestions(prior, next);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].answer).toBe('Gold bars');
+  });
+
+  test('answered questions sort before open ones', () => {
+    const merged = mergePlanQuestions(
+      [q('q_a', 'Answered A', 'yes')],
+      [q('q_open', 'Open B'), q('q_b', 'Answered B', 'no')],
+    );
+    expect(merged[merged.length - 1].id).toBe('q_open');
+    expect(merged.filter((m) => m.answer)).toHaveLength(2);
   });
 });
