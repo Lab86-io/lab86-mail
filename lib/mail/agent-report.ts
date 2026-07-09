@@ -405,6 +405,13 @@ export function settleMonthHtmlArtifactReport(input: {
   return failure ? withArtifactError(fallback, failure) : fallback;
 }
 
+export function settleMonthSaveFailureReport(input: {
+  phase1: DailyReport;
+  failure: DailyReportArtifactError;
+}): DailyReport {
+  return withArtifactError({ ...input.phase1, artifactStatus: 'rendered' }, input.failure);
+}
+
 export async function generateAgentReport(input: {
   kind: DailyReport['kind'];
   userId?: string | null;
@@ -569,7 +576,20 @@ async function runAgentReport(input: {
     await saveDailyReport(finalReport);
   } catch (err) {
     console.error('[agent-report] month report save failed:', err);
-    throw err;
+    // If the enriched month edition fails to persist (for example because the
+    // full AI artifact exceeded the backing store's document limits), do not
+    // leave the already-visible week artifact polling forever at 'enriching'.
+    const settled = settleMonthSaveFailureReport({
+      phase1,
+      failure: artifactError('month_enrichment', err),
+    });
+    try {
+      await saveDailyReport(settled);
+      return settled;
+    } catch (saveErr) {
+      console.error('[agent-report] month report save-failure fallback save failed:', saveErr);
+      throw err;
+    }
   }
 
   return finalReport;

@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { extractAreaPlaces, intentDisplayTitle } from '../lib/albatross/area-home';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -687,6 +688,11 @@ export const domainActivity = query({
 const AREA_HOME_MAIL_CAP = 30;
 const AREA_HOME_EVENT_CAP = 20;
 const AREA_HOME_TASK_CAP = 30;
+// The brief leads with a handful of active plans/projects, not a backlog — a
+// bounded recency scan keeps the read cheap even for a busy area.
+const AREA_HOME_INTENT_SCAN = 150;
+const AREA_HOME_PLAN_CAP = 8;
+const AREA_HOME_PROJECT_CAP = 8;
 
 async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
   if (!link.accountId) return null;
@@ -836,12 +842,77 @@ export const areaHome = query({
       )
       .slice(0, AREA_HOME_TASK_CAP);
 
+    // Plans become components of the area: its active intents (+ their latest
+    // plan) surface here rather than on a separate Plans page. Intents carry
+    // areaId as a plain string, so this is a bounded recency scan filtered in
+    // memory rather than an indexed area read.
+    const areaIdStr = String(args.areaId);
+    const recentIntents = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(AREA_HOME_INTENT_SCAN);
+    const activeIntents = recentIntents
+      .filter(
+        (intent) =>
+          String(intent.areaId ?? '') === areaIdStr &&
+          intent.status !== 'done' &&
+          intent.status !== 'archived',
+      )
+      .slice(0, AREA_HOME_PLAN_CAP);
+    const intentPlans = await Promise.all(
+      activeIntents.map(async (intent) => {
+        const plan = intent.latestPlanId ? await ctx.db.get(intent.latestPlanId) : null;
+        const ownPlan = plan && plan.userId === userId ? plan : null;
+        return {
+          intentId: String(intent._id),
+          title: intentDisplayTitle(intent),
+          status: intent.status,
+          planId: ownPlan ? String(ownPlan._id) : null,
+          planStatus: ownPlan?.status ?? null,
+          outcome: ownPlan?.outcome ?? null,
+          summary: ownPlan?.summary ?? null,
+          proposedProjectTitle: ownPlan?.proposedProjectTitle ?? null,
+          updatedAt: intent.updatedAt,
+          _places: ownPlan?.places ?? null,
+          _mapQuery: ownPlan?.mapQuery ?? null,
+          _options: (intent.questions ?? []).flatMap((question) => question.options ?? []),
+        };
+      }),
+    );
+    const places = extractAreaPlaces(
+      intentPlans.map((row) => ({ places: row._places, mapQuery: row._mapQuery })),
+      intentPlans.map((row) => row._options),
+    );
+    const plans = intentPlans.map(({ _places, _mapQuery, _options, ...row }) => row);
+
+    const projects = (
+      await ctx.db
+        .query('albatrossProjects')
+        .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', areaIdStr))
+        .collect()
+    )
+      .filter((project) => project.status === 'active' || project.status === 'paused')
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, AREA_HOME_PROJECT_CAP)
+      .map((project) => ({
+        projectId: String(project._id),
+        title: project.title,
+        outcome: project.outcome ?? null,
+        status: project.status,
+        sourceIntentId: project.sourceIntentId ?? null,
+        updatedAt: project.updatedAt,
+      }));
+
     return {
       area,
       facts: { verified, candidate },
       mail,
       events,
       tasks,
+      plans,
+      projects,
+      places,
       counts: {
         facts: { verified: verified.length, candidate: candidate.length },
         links: {
@@ -855,6 +926,9 @@ export const areaHome = query({
         mail: mail.length,
         events: events.length,
         tasks: tasks.length,
+        plans: plans.length,
+        projects: projects.length,
+        places: places.length,
       },
     };
   },

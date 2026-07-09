@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DailyReport } from '../lib/shared/types';
-import { migrateDailyReport } from '../lib/store/daily-reports';
+import { getDailyReport, migrateDailyReport, saveDailyReport } from '../lib/store/daily-reports';
+import { kvGet } from '../lib/store/kv';
+import { withToolContext } from './tools/harness';
+import './tools/harness';
 
 // Settle-on-read: a deploy/restart mid-generation SIGTERMs the process, so no
 // catch path runs and the stored edition wedges at artifactStatus
@@ -63,6 +66,24 @@ describe('migrateDailyReport settle-on-read', () => {
     const raw = edition();
     migrateDailyReport(raw, NOW);
     expect(raw.artifactStatus).toBe('enriching');
+  });
+
+  test('getters persist the settled terminal status for stale artifact rows', async () => {
+    await withToolContext(async () => {
+      const raw = edition({
+        _id: 'rep_settle_persisted',
+        kind: 'evening',
+        generatedAt: Date.now() - STUCK_MS - 60_000,
+      });
+      await saveDailyReport(raw);
+
+      const fetched = await getDailyReport(raw._id);
+      const persisted = await kvGet<DailyReport>('dailyReport', raw._id);
+
+      expect(fetched?.artifactStatus).toBe('rendered');
+      expect(persisted?.artifactStatus).toBe('rendered');
+      expect(raw.artifactStatus).toBe('enriching');
+    });
   });
 
   test('list mapping does not pass the array index as `now`', () => {

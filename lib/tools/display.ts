@@ -853,7 +853,7 @@ export const showTerminal = defineTool({
 export const showPlan = defineTool({
   name: 'show_plan',
   description:
-    'Render a step-by-step plan/checklist card with per-step statuses (pending, in_progress, completed, cancelled). Use to present a proposed or in-flight multi-step approach.',
+    'Render a step-by-step plan/checklist card with per-step statuses (pending, in_progress, completed, cancelled). Use instead of plain Markdown whenever you present a proposed or in-flight multi-step approach.',
   category: 'meta',
   mutating: false,
   input: z.object({

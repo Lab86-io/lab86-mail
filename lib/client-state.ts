@@ -44,6 +44,11 @@ export interface ClientState {
   // The area whose home page the 'areas' surface shows. Persisted like
   // primaryView so a reload lands back on the same area; null = the chooser.
   selectedAreaId: string | null;
+  // A one-shot request to open a specific intent on the Plans surface. The
+  // Area Brief's capture bar sets this after creating an area-bound intent;
+  // AppShell consumes it (switch to Plans + select) and clears it. Transient,
+  // never persisted.
+  pendingOpenIntentId: string | null;
   searchDraft: string;
   nlSearchIntent: string | null;
   translatedQuery: string | null;
@@ -98,6 +103,7 @@ export interface ClientState {
   setQuery: (query: string) => void;
   setSmartCategory: (category: string | null) => void;
   setSelectedAreaId: (areaId: string | null) => void;
+  setPendingOpenIntentId: (intentId: string | null) => void;
   setSearchDraft: (draft: string) => void;
   setTranslatedSearch: (
     intent: string | null,
@@ -161,6 +167,7 @@ export const useClientStore = create<ClientState>()(
       query: DEFAULT_QUERY,
       smartCategory: 'main',
       selectedAreaId: null,
+      pendingOpenIntentId: null,
       searchDraft: '',
       nlSearchIntent: null,
       translatedQuery: null,
@@ -219,6 +226,7 @@ export const useClientStore = create<ClientState>()(
           querySource: smartCategory ? 'category' : 'typed',
         }),
       setSelectedAreaId: (selectedAreaId) => set({ selectedAreaId }),
+      setPendingOpenIntentId: (pendingOpenIntentId) => set({ pendingOpenIntentId }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
         set({ nlSearchIntent, translatedQuery, querySource, queryError: null }),

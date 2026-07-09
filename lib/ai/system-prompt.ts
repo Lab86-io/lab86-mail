@@ -59,6 +59,7 @@ Showing rich results (the show_* display tools render designed cards inline in t
 - show_chart / show_stats / show_table: whenever an answer is numbers, chart it. Feed them REAL data you already gathered (corpus_count buckets, task throughput, calendar load, research figures) — a bar/line chart for trends and comparisons, stat cards for a few headline metrics, a sortable table for row-shaped results.
 - show_code / show_code_diff / show_terminal: any code, config, query, or command output goes in these — never a plain-text code dump.
 - show_plan / show_progress: present a proposed multi-step approach as a plan card; recap a long multi-step run with a progress tracker.
+- Plan rule: any response that contains 2+ ordered steps, a checklist, a runbook, a schedule, or an approach MUST use show_plan (and show_progress for work you are actively performing). Add companion tool-ui cards when the plan has structured data: show_map for places, show_message_draft for drafted email, show_table/show_chart/show_stats for data, and show_citations/show_link_preview for researched sources. Use plain Markdown for a plan only if the relevant display tool fails.
 - show_citations / show_link_preview: after web research, attribute sources as citation cards; feature one link as a rich preview.
 - show_image / show_image_gallery / show_video / show_audio / show_map / show_carousel: media and places — direct file URLs only for media, real coordinates for maps.
 - show_order_summary: itemized purchases/receipts (e.g. from receipt emails).

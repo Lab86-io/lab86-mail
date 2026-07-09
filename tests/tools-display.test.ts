@@ -362,6 +362,13 @@ describe('display tool registration', () => {
     ]) {
       expect(SYSTEM_PROMPT).toContain(name);
     }
+    expect(SYSTEM_PROMPT).toContain('Plan rule');
+    expect(SYSTEM_PROMPT).toContain('MUST use show_plan');
+    expect(SYSTEM_PROMPT).toContain('companion tool-ui cards');
+  });
+
+  test('show_plan is positioned as the default surface for multi-step plans', () => {
+    expect(getTool('show_plan')?.description).toContain('instead of plain Markdown');
   });
 
   test('display tool handlers wrap builders into { ok, component, payload }', async () => {

@@ -1,7 +1,15 @@
 'use client';
 
 import { AnimatePresence, motion } from 'motion/react';
-import { Component, type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  Component,
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
 import { AreaHome } from '@/components/albatross/AreaHome';
@@ -77,10 +85,24 @@ export function AppShell({
     () =>
       typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('setup') === 'areas',
   );
-  const handleIntentCaptured = (intentId: string) => {
-    setCapturedIntentId(intentId);
-    setPrimaryView('intents');
-  };
+  const handleIntentCaptured = useCallback(
+    (intentId: string) => {
+      setCapturedIntentId(intentId);
+      setPrimaryView('intents');
+    },
+    [setPrimaryView],
+  );
+
+  // The Area Brief captures an area-bound intent, then hands it off here so the
+  // dump→plan moment lands on Plans with that intent selected — same contract
+  // as the global capture launcher, driven through client state.
+  const pendingOpenIntentId = useClientStore((s) => s.pendingOpenIntentId);
+  const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
+  useEffect(() => {
+    if (!pendingOpenIntentId) return;
+    handleIntentCaptured(pendingOpenIntentId);
+    setPendingOpenIntentId(null);
+  }, [handleIntentCaptured, pendingOpenIntentId, setPendingOpenIntentId]);
 
   useEffect(() => {
     // The deep link must win over whatever view was persisted.

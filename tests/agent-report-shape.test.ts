@@ -9,6 +9,7 @@ import {
   HTML_ARTIFACT_BRIEF,
   settleMonthArtifactReport,
   settleMonthHtmlArtifactReport,
+  settleMonthSaveFailureReport,
   toBriefEvent,
   toBriefTask,
 } from '../lib/mail/agent-report';
@@ -308,6 +309,30 @@ describe('settleMonthHtmlArtifactReport', () => {
     expect(settled.artifactStatus).toBe('rendered');
     expect(settled.html).toBe('<!doctype html><html><body>week</body></html>');
     expect(settled.artifactErrors).toEqual([{ stage: 'month_artifact', message: 'missing html', at: 456 }]);
+  });
+});
+
+describe('settleMonthSaveFailureReport', () => {
+  test('falls back to the visible week artifact and clears enriching', () => {
+    const phase1 = reportFixture({
+      html: '<!doctype html><html><body>week artifact</body></html>',
+      artifactStatus: 'enriching',
+      artifactSource: 'ai',
+      artifactErrors: [{ stage: 'week_artifact', message: 'week warning', at: 100 }],
+    });
+
+    const settled = settleMonthSaveFailureReport({
+      phase1,
+      failure: { stage: 'month_enrichment', message: 'final save too large', at: 200 },
+    });
+
+    expect(settled.artifactStatus).toBe('rendered');
+    expect(settled.artifactSource).toBe('ai');
+    expect(settled.html).toContain('week artifact');
+    expect(settled.artifactErrors).toEqual([
+      { stage: 'week_artifact', message: 'week warning', at: 100 },
+      { stage: 'month_enrichment', message: 'final save too large', at: 200 },
+    ]);
   });
 });
 

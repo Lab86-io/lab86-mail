@@ -1,8 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  AREA_PLACE_CAP,
   areaHasNoLinks,
   areaHomeSections,
+  areaNeedsYouRows,
+  areaPulse,
+  extractAreaPlaces,
   formatEventTime,
+  intentDisplayTitle,
+  mapsSearchUrl,
+  planActionLabel,
+  planStatusMeta,
   RAIL_AREA_CAP,
   railAreaBadge,
   railAreaRows,
@@ -155,5 +163,215 @@ describe('taskRowMeta', () => {
     const meta = taskRowMeta({ completedAt: null, dueAt: null }, now);
     expect(meta.state).toBe('open');
     expect(meta.label).toBe('No due date');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Area Brief helpers
+// ---------------------------------------------------------------------------
+
+const planRow = (over: Partial<Parameters<typeof areaNeedsYouRows>[0]['plans'][number]> = {}) => ({
+  intentId: 'i1',
+  title: 'Plan a trip',
+  status: 'planning',
+  planId: 'p1',
+  planStatus: null,
+  outcome: null,
+  summary: null,
+  proposedProjectTitle: null,
+  updatedAt: 0,
+  ...over,
+});
+
+describe('areaPulse', () => {
+  test('only non-zero facets, in fixed meaning-first order', () => {
+    const segments = areaPulse({ needsYou: 2, plans: 0, projects: 1, places: 3, upcoming: 0 });
+    expect(segments.map((s) => s.id)).toEqual(['needsYou', 'projects', 'places']);
+    expect(segments.map((s) => s.label)).toEqual(['2 need you', '1 project', '3 places']);
+  });
+
+  test('singular vs plural wording per facet', () => {
+    const segments = areaPulse({ needsYou: 1, plans: 1, projects: 1, places: 1, upcoming: 1 });
+    expect(segments.map((s) => s.label)).toEqual([
+      '1 needs you',
+      '1 active plan',
+      '1 project',
+      '1 place',
+      '1 upcoming',
+    ]);
+  });
+
+  test('a fully quiet area yields no segments (strip hides)', () => {
+    expect(areaPulse({ needsYou: 0, plans: 0, projects: 0, places: 0, upcoming: 0 })).toEqual([]);
+  });
+});
+
+describe('planStatusMeta', () => {
+  test('needs_answers outranks the intent status for tone', () => {
+    expect(planStatusMeta('planning', 'needs_answers')).toEqual({
+      label: 'Needs answers',
+      tone: 'attention',
+    });
+    expect(planStatusMeta('needs_answers')).toEqual({ label: 'Needs answers', tone: 'attention' });
+  });
+
+  test('maps each known intent status to a label and tone', () => {
+    expect(planStatusMeta('captured').tone).toBe('neutral');
+    expect(planStatusMeta('planning').tone).toBe('active');
+    expect(planStatusMeta('ready').tone).toBe('ready');
+    expect(planStatusMeta('applied').tone).toBe('active');
+    expect(planStatusMeta('done').tone).toBe('done');
+    expect(planStatusMeta('archived').tone).toBe('neutral');
+  });
+
+  test('unknown status falls back to a neutral echo', () => {
+    expect(planStatusMeta('weird')).toEqual({ label: 'weird', tone: 'neutral' });
+    expect(planStatusMeta('')).toEqual({ label: 'Plan', tone: 'neutral' });
+  });
+});
+
+describe('planActionLabel', () => {
+  test('the verb matches the next user move', () => {
+    expect(planActionLabel('needs_answers')).toBe('Answer questions');
+    expect(planActionLabel('planning', 'needs_answers')).toBe('Answer questions');
+    expect(planActionLabel('ready')).toBe('Review plan');
+    expect(planActionLabel('applied')).toBe('Open plan');
+    expect(planActionLabel('done')).toBe('Open plan');
+    expect(planActionLabel('captured')).toBe('Open');
+  });
+});
+
+describe('intentDisplayTitle', () => {
+  test('prefers the explicit title', () => {
+    expect(intentDisplayTitle({ title: '  Book flights ', rawText: 'ignore me' })).toBe('Book flights');
+  });
+
+  test('falls back to a one-line, collapsed slice of raw text', () => {
+    expect(intentDisplayTitle({ title: '', rawText: 'plan\n  the   whole   week' })).toBe(
+      'plan the whole week',
+    );
+  });
+
+  test('truncates a long raw dump with an ellipsis', () => {
+    const raw = 'a'.repeat(120);
+    const out = intentDisplayTitle({ rawText: raw });
+    expect(out.endsWith('…')).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(80);
+  });
+
+  test('never empty', () => {
+    expect(intentDisplayTitle({})).toBe('Untitled plan');
+    expect(intentDisplayTitle({ title: '   ', rawText: '   ' })).toBe('Untitled plan');
+  });
+});
+
+describe('mapsSearchUrl', () => {
+  test('builds an encoded Google Maps search link', () => {
+    expect(mapsSearchUrl('Blue Bottle, Oakland CA')).toBe(
+      'https://www.google.com/maps/search/?api=1&query=Blue%20Bottle%2C%20Oakland%20CA',
+    );
+  });
+});
+
+describe('areaNeedsYouRows', () => {
+  const now = at(2026, 6, 8, 12, 0);
+
+  test('ranks plan answers, then overdue tasks, then suggested context', () => {
+    const rows = areaNeedsYouRows(
+      {
+        plans: [planRow({ intentId: 'i9', title: 'Renew passport', status: 'needs_answers' })],
+        tasks: [
+          { cardId: 'c1', title: 'File taxes', completedAt: null, dueAt: at(2026, 6, 1) },
+          { cardId: 'c2', title: 'Not due', completedAt: null, dueAt: at(2026, 6, 20) },
+          { cardId: 'c3', title: 'Done', completedAt: at(2026, 6, 2), dueAt: at(2026, 6, 1) },
+        ],
+        candidateFacts: [{ _id: 'f1', kind: 'preference', value: 'Window seat' }],
+      },
+      now,
+    );
+    expect(rows.map((r) => r.kind)).toEqual(['plan_answers', 'overdue_task', 'suggested_context']);
+    expect(rows[0].intentId).toBe('i9');
+    expect(rows[1].title).toBe('File taxes');
+    expect(rows[2].title).toBe('Window seat');
+  });
+
+  test('only needs-answers plans and past-due incomplete tasks qualify', () => {
+    const rows = areaNeedsYouRows(
+      {
+        plans: [planRow({ status: 'planning' })],
+        tasks: [{ cardId: 'c1', title: 'Future', completedAt: null, dueAt: at(2026, 6, 20) }],
+        candidateFacts: [],
+      },
+      now,
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  test('a plan whose latest plan needs answers still surfaces', () => {
+    const rows = areaNeedsYouRows(
+      { plans: [planRow({ status: 'planning', planStatus: 'needs_answers' })] },
+      now,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe('plan_answers');
+  });
+
+  test('caps the queue', () => {
+    const facts = Array.from({ length: 20 }, (_, i) => ({ _id: `f${i}`, kind: 'note', value: `v${i}` }));
+    expect(areaNeedsYouRows({ candidateFacts: facts }, now, 3)).toHaveLength(3);
+  });
+
+  test('null/undefined inputs are treated as empty', () => {
+    expect(areaNeedsYouRows({}, now)).toEqual([]);
+    expect(areaNeedsYouRows({ plans: null, tasks: null, candidateFacts: null }, now)).toEqual([]);
+  });
+});
+
+describe('extractAreaPlaces', () => {
+  test('structured plan places lead and dedupe by name (case-insensitive)', () => {
+    const places = extractAreaPlaces(
+      [
+        {
+          places: [
+            { name: 'Tartine', detail: 'Bakery', address: '600 Guerrero St', mapsQuery: 'Tartine SF' },
+            { name: 'tartine' }, // duplicate collapses
+          ],
+          mapQuery: null,
+        },
+      ],
+      null,
+    );
+    expect(places).toHaveLength(1);
+    expect(places[0].name).toBe('Tartine');
+    expect(places[0].detail).toBe('Bakery');
+    expect(places[0].mapsUrl).toBe(mapsSearchUrl('Tartine SF'));
+  });
+
+  test('a plan mapQuery is only a fallback when no structured places exist', () => {
+    const withStructured = extractAreaPlaces(
+      [{ places: [{ name: 'Real Place' }], mapQuery: 'Fallback' }],
+      null,
+    );
+    expect(withStructured.map((p) => p.name)).toEqual(['Real Place']);
+    const withoutStructured = extractAreaPlaces([{ places: [], mapQuery: 'Fallback' }], null);
+    expect(withoutStructured.map((p) => p.name)).toEqual(['Fallback']);
+  });
+
+  test('answer options contribute only when they carry a real address', () => {
+    const places = extractAreaPlaces(null, [
+      [
+        { title: 'Free-text answer', detail: 'no address' },
+        { title: 'Hotel Zephyr', address: 'Pier 39, San Francisco' },
+      ],
+    ]);
+    expect(places.map((p) => p.name)).toEqual(['Hotel Zephyr']);
+    expect(places[0].mapsUrl).toBe(mapsSearchUrl('Hotel Zephyr, Pier 39, San Francisco'));
+  });
+
+  test('blank names are skipped and the result is capped', () => {
+    const many = Array.from({ length: AREA_PLACE_CAP + 5 }, (_, i) => ({ name: `Place ${i}` }));
+    const places = extractAreaPlaces([{ places: [{ name: '  ' }, ...many], mapQuery: null }], null);
+    expect(places).toHaveLength(AREA_PLACE_CAP);
+    expect(places[0].name).toBe('Place 0');
   });
 });
