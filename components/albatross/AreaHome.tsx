@@ -22,7 +22,7 @@
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
 import { AlertCircle, ArrowRight, CalendarDays, Inbox, RefreshCw, Sparkles } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,7 @@ import {
   areaBriefHeadline,
   areaHasNoLinks,
   areaHomeSections,
+  areaIndexStatusSummary,
   areaNeedsYouRows,
   areaOverviewBadges,
   areaOverviewPriority,
@@ -45,6 +46,7 @@ import {
   type NeedsYouRow,
   planActionLabel,
   planStatusMeta,
+  resolveAreaSelection,
   splitBriefRows,
   taskRowMeta,
 } from '@/lib/albatross/area-home';
@@ -123,11 +125,47 @@ interface AreaHomeData {
   };
 }
 
+interface AreaIndexStatusData {
+  latestRun: {
+    runId: string;
+    areaId: string | null;
+    status: string;
+    reason: string | null;
+    scanned: number;
+    inserted: number;
+    matched: number;
+    personal: number;
+    skipped: number;
+    error: string | null;
+    startedAt: number | null;
+    finishedAt: number | null;
+    createdAt: number;
+    updatedAt: number;
+  } | null;
+  mail: {
+    total: number;
+    ready: number;
+    indexing: number;
+    errored: number;
+    messagesSynced: number;
+    mailboxes: Array<{
+      accountId: string;
+      provider: string;
+      status: string;
+      corpusReady: boolean;
+      messagesSynced: number;
+      updatedAt: number;
+      error?: string;
+    }>;
+  };
+}
+
 interface AreaOverviewRow {
   _id: string;
   name: string;
   kind: string;
   description?: string;
+  externalId?: string | null;
   primaryDomain?: string | null;
   faviconUrl?: string | null;
   imageUrl?: string | null;
@@ -162,9 +200,32 @@ const BRIEF_LIMITS = {
 
 export function AreaHome() {
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
+  const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
+  const { isAuthenticated } = useConvexAuth();
+  const areas = useQuery(api.albatross.listAreasOverview, isAuthenticated ? { status: 'active' } : 'skip') as
+    | AreaOverviewRow[]
+    | undefined;
+  const selection = resolveAreaSelection(selectedAreaId, areas);
+
+  useEffect(() => {
+    if (selection.state === 'replaced') {
+      setSelectedAreaId(selection.areaId);
+    } else if (selection.state === 'missing') {
+      setSelectedAreaId(null);
+    }
+  }, [selection.areaId, selection.state, setSelectedAreaId]);
+
+  if (selection.state === 'loading') {
+    return <p className="px-4 py-6 text-[12.5px] text-[var(--color-text-muted)]">Loading area…</p>;
+  }
+
   // Keyed remount per area: section scroll state and fact busy-state must not
   // leak between areas.
-  return selectedAreaId ? <AreaHomeBody key={selectedAreaId} areaId={selectedAreaId} /> : <AreaChooser />;
+  return selection.areaId ? (
+    <AreaHomeBody key={selection.areaId} areaId={selection.areaId} />
+  ) : (
+    <AreaChooser />
+  );
 }
 
 // No area selected: the overview grid doubles as the chooser.
@@ -304,6 +365,9 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
     query: (api as any).albatross.areaHome,
     args: isAuthenticated ? { areaId: areaId as Id<'areas'> } : 'skip',
   });
+  const indexStatus = useQuery(api.albatross.areaIndexStatus, isAuthenticated ? {} : 'skip') as
+    | AreaIndexStatusData
+    | undefined;
 
   if (result.status === 'error') {
     return (
@@ -386,6 +450,7 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
         <span className="hidden text-[11px] tabular-nums text-[var(--color-text-faint)] sm:inline">
           {home.counts.facts.verified} verified · {home.counts.facts.candidate} suggested
         </span>
+        <AreaIndexStatusPill status={indexStatus} />
         <RefreshBriefButton areaId={home.area._id} />
         <ManageLink />
       </header>
@@ -397,6 +462,7 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
           pulse={pulse}
           upcoming={upcoming.length}
           needsYou={needsYou.length}
+          indexStatus={indexStatus}
         />
         {/* One capture line seeds an area-bound plan without leaving the brief. */}
         <CaptureBar areaId={home.area._id} areaName={home.area.name} />
@@ -441,13 +507,16 @@ function BriefLead({
   pulse,
   upcoming,
   needsYou,
+  indexStatus,
 }: {
   home: AreaHomeData;
   headline: string;
   pulse: ReturnType<typeof areaPulse>;
   upcoming: number;
   needsYou: number;
+  indexStatus?: AreaIndexStatusData;
 }) {
+  const indexSummary = areaIndexStatusSummary(indexStatus);
   return (
     <section className="px-3 pb-2 pt-4">
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
@@ -464,6 +533,11 @@ function BriefLead({
               {home.area.primaryDomain ? (
                 <p className="mt-1 truncate text-[11.5px] text-[var(--color-text-faint)]">
                   {home.area.primaryDomain}
+                </p>
+              ) : null}
+              {indexSummary ? (
+                <p className="mt-1 truncate text-[11.5px] text-[var(--color-text-faint)]">
+                  {indexSummary.label}
                 </p>
               ) : null}
             </div>
@@ -1241,6 +1315,35 @@ function RefreshBriefButton({ areaId }: { areaId: string }) {
       <RefreshCw className={cn('size-3', busy && 'animate-spin')} aria-hidden />
       {queued ? 'Queued' : 'Refresh brief'}
     </Button>
+  );
+}
+
+function AreaIndexStatusPill({ status }: { status?: AreaIndexStatusData }) {
+  const summary = areaIndexStatusSummary(status);
+  if (!summary) return null;
+  const toneClass =
+    summary.tone === 'warning'
+      ? 'border-[var(--color-danger)]/35 bg-[var(--color-danger)]/10 text-[var(--color-danger)]'
+      : summary.tone === 'active'
+        ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+        : summary.tone === 'done'
+          ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600'
+          : 'border-[var(--color-border)] text-[var(--color-text-muted)]';
+  const latestRun = status?.latestRun;
+  const title = latestRun
+    ? `${latestRun.reason || 'Area filing'} · ${latestRun.status} · ${latestRun.scanned.toLocaleString()} scanned, ${latestRun.inserted.toLocaleString()} filed`
+    : summary.label;
+  return (
+    <span
+      title={title}
+      className={cn(
+        'hidden max-w-[230px] shrink truncate rounded-full border px-2 py-0.5 text-[11px] leading-5 min-[900px]:inline-flex',
+        toneClass,
+      )}
+    >
+      {summary.tone === 'active' ? <RefreshCw className="mr-1.5 size-3 animate-spin" aria-hidden /> : null}
+      {summary.label}
+    </span>
   );
 }
 

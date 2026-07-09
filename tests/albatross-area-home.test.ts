@@ -5,6 +5,7 @@ import {
   areaBriefHeadline,
   areaHasNoLinks,
   areaHomeSections,
+  areaIndexStatusSummary,
   areaNeedsYouRows,
   areaOverviewBadges,
   areaOverviewPriority,
@@ -22,6 +23,7 @@ import {
   RAIL_AREA_CAP,
   railAreaBadge,
   railAreaRows,
+  resolveAreaSelection,
   splitBriefRows,
   suggestIntentArea,
   taskRowMeta,
@@ -149,6 +151,66 @@ describe('suggestIntentArea', () => {
       reason: 'Only active area',
     });
     expect(suggestIntentArea('buy replacement filters', areas)).toBeNull();
+  });
+});
+
+describe('resolveAreaSelection', () => {
+  const areas = [
+    { _id: 'area_personal_doc', name: 'Personal', kind: 'personal', externalId: PERSONAL_AREA_EXTERNAL_ID },
+    { _id: 'area_work_doc', name: 'Work', kind: 'work' },
+  ];
+
+  test('maps the persisted Personal external id to the live document id', () => {
+    expect(resolveAreaSelection(PERSONAL_AREA_EXTERNAL_ID, areas)).toEqual({
+      areaId: 'area_personal_doc',
+      state: 'replaced',
+    });
+  });
+
+  test('keeps valid document ids and drops stale ids', () => {
+    expect(resolveAreaSelection('area_work_doc', areas)).toEqual({
+      areaId: 'area_work_doc',
+      state: 'ready',
+    });
+    expect(resolveAreaSelection('missing_area', areas)).toEqual({ areaId: null, state: 'missing' });
+  });
+
+  test('distinguishes chooser from loading so the UI does not query a stale id too early', () => {
+    expect(resolveAreaSelection(null, areas)).toEqual({ areaId: null, state: 'chooser' });
+    expect(resolveAreaSelection('area_work_doc', undefined)).toEqual({
+      areaId: 'area_work_doc',
+      state: 'loading',
+    });
+  });
+});
+
+describe('areaIndexStatusSummary', () => {
+  test('describes queued and running area filing runs', () => {
+    expect(areaIndexStatusSummary({ latestRun: { status: 'queued' }, mail: { total: 1 } })).toEqual({
+      label: 'Area filing queued',
+      tone: 'active',
+    });
+    expect(
+      areaIndexStatusSummary({
+        latestRun: { status: 'running', scanned: 250 },
+        mail: { total: 1 },
+      }),
+    ).toEqual({ label: 'Filing areas · 250 scanned', tone: 'active' });
+  });
+
+  test('falls back to mailbox indexing when no area run is active', () => {
+    expect(
+      areaIndexStatusSummary({
+        latestRun: { status: 'done', scanned: 500, inserted: 20 },
+        mail: { total: 2, indexing: 1, messagesSynced: 1200 },
+      }),
+    ).toEqual({ label: '1 mailbox indexing · 1,200 messages', tone: 'active' });
+    expect(
+      areaIndexStatusSummary({ latestRun: { status: 'done', inserted: 4 }, mail: { total: 1 } }),
+    ).toEqual({
+      label: 'Area filing done · 4 filed',
+      tone: 'done',
+    });
   });
 });
 

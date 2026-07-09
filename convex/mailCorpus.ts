@@ -365,8 +365,9 @@ export const upsertCorpusBatch = mutation({
     }
 
     if (threadIds.size && (args.corpusReady === true || args.corpusReady === undefined)) {
-      await ctx.scheduler.runAfter(10_000, internal.albatross.reindexUserAreaArtifacts, {
+      await ctx.scheduler.runAfter(10_000, internal.albatross.queueUserAreaReindex, {
         userId: args.userId,
+        reason: args.corpusReady === true ? 'Mailbox backfill complete' : 'Mailbox update',
       });
     }
 

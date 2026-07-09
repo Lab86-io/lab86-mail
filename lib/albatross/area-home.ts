@@ -130,6 +130,45 @@ export interface IntentAreaSuggestion {
   reason: string;
 }
 
+export interface AreaSelectionOption {
+  _id: string;
+  name?: string | null;
+  kind?: string | null;
+  externalId?: string | null;
+}
+
+export interface AreaSelectionResolution {
+  areaId: string | null;
+  state: 'chooser' | 'loading' | 'ready' | 'replaced' | 'missing';
+}
+
+export interface AreaIndexRunLike {
+  status?: string | null;
+  scanned?: number | null;
+  inserted?: number | null;
+  matched?: number | null;
+  personal?: number | null;
+  updatedAt?: number | null;
+}
+
+export interface AreaIndexMailLike {
+  total?: number | null;
+  ready?: number | null;
+  indexing?: number | null;
+  errored?: number | null;
+  messagesSynced?: number | null;
+}
+
+export interface AreaIndexStatusLike {
+  latestRun?: AreaIndexRunLike | null;
+  mail?: AreaIndexMailLike | null;
+}
+
+export interface AreaIndexStatusSummary {
+  label: string;
+  tone: 'active' | 'done' | 'warning' | 'quiet';
+}
+
 function areaTextTokens(value?: string | null): string[] {
   return String(value || '')
     .toLowerCase()
@@ -180,6 +219,77 @@ export function suggestIntentArea(
     return { areaId: options[0]._id, confidence: 'medium', reason: 'Personal area' };
   }
   return null;
+}
+
+export function resolveAreaSelection(
+  selectedAreaId: string | null | undefined,
+  areas: AreaSelectionOption[] | undefined,
+): AreaSelectionResolution {
+  if (!selectedAreaId) return { areaId: null, state: 'chooser' };
+  if (areas === undefined) return { areaId: selectedAreaId, state: 'loading' };
+  const exact = areas.find((area) => area._id === selectedAreaId);
+  if (exact) return { areaId: exact._id, state: 'ready' };
+  if (selectedAreaId === PERSONAL_AREA_EXTERNAL_ID || selectedAreaId === 'personal') {
+    const personal = areas.find(
+      (area) =>
+        area.externalId === PERSONAL_AREA_EXTERNAL_ID ||
+        area.kind === 'personal' ||
+        area.name?.toLowerCase() === 'personal',
+    );
+    if (personal) return { areaId: personal._id, state: 'replaced' };
+  }
+  return { areaId: null, state: 'missing' };
+}
+
+export function areaIndexStatusSummary(status?: AreaIndexStatusLike | null): AreaIndexStatusSummary | null {
+  if (!status) return null;
+  const run = status.latestRun ?? null;
+  const mail = status.mail ?? null;
+  const scanned = Math.max(0, Math.floor(Number(run?.scanned ?? 0)));
+  const inserted = Math.max(0, Math.floor(Number(run?.inserted ?? 0)));
+  const matched = Math.max(0, Math.floor(Number(run?.matched ?? 0)));
+  const personal = Math.max(0, Math.floor(Number(run?.personal ?? 0)));
+  const mailboxTotal = Math.max(0, Math.floor(Number(mail?.total ?? 0)));
+  const mailboxIndexing = Math.max(0, Math.floor(Number(mail?.indexing ?? 0)));
+  const mailboxErrored = Math.max(0, Math.floor(Number(mail?.errored ?? 0)));
+  const messagesSynced = Math.max(0, Math.floor(Number(mail?.messagesSynced ?? 0)));
+
+  if (run?.status === 'queued') return { label: 'Area filing queued', tone: 'active' };
+  if (run?.status === 'running') {
+    return {
+      label: scanned ? `Filing areas · ${scanned.toLocaleString()} scanned` : 'Filing areas now',
+      tone: 'active',
+    };
+  }
+  if (run?.status === 'error') return { label: 'Area filing needs retry', tone: 'warning' };
+  if (mailboxErrored > 0) {
+    return {
+      label: mailboxErrored === 1 ? '1 mailbox sync error' : `${mailboxErrored} mailbox sync errors`,
+      tone: 'warning',
+    };
+  }
+  if (mailboxIndexing > 0) {
+    return {
+      label:
+        mailboxIndexing === 1
+          ? `1 mailbox indexing${messagesSynced ? ` · ${messagesSynced.toLocaleString()} messages` : ''}`
+          : `${mailboxIndexing} mailboxes indexing${messagesSynced ? ` · ${messagesSynced.toLocaleString()} messages` : ''}`,
+      tone: 'active',
+    };
+  }
+  if (run?.status === 'done') {
+    const filed = inserted || matched + personal;
+    return {
+      label: filed
+        ? `Area filing done · ${filed.toLocaleString()} filed`
+        : scanned
+          ? `Area filing done · ${scanned.toLocaleString()} scanned`
+          : 'Area filing done',
+      tone: 'done',
+    };
+  }
+  if (mailboxTotal > 0) return { label: 'Mail index ready', tone: 'done' };
+  return { label: 'Waiting for mailbox index', tone: 'quiet' };
 }
 
 // Fixed editorial order: the operational artifacts first (mail is the highest

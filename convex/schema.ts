@@ -406,6 +406,28 @@ export default defineSchema({
     .index('by_user_account_artifact', ['userId', 'accountId', 'artifactKind', 'artifactId'])
     .index('by_user_external', ['userId', 'externalId']),
 
+  areaReindexRuns: defineTable({
+    userId: v.string(),
+    areaId: v.optional(v.string()),
+    status: v.union(v.literal('queued'), v.literal('running'), v.literal('done'), v.literal('error')),
+    reason: v.optional(v.string()),
+    cursor: v.optional(v.string()),
+    scanned: v.number(),
+    inserted: v.number(),
+    matched: v.number(),
+    personal: v.number(),
+    skipped: v.number(),
+    error: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_area_updatedAt', ['userId', 'areaId', 'updatedAt']),
+
   albatrossProjects: defineTable({
     userId: v.string(),
     externalId: v.optional(v.string()),

@@ -226,8 +226,28 @@ async function ensurePersonalArea(ctx: MutationCtx, userId: string): Promise<Id<
   return areaId;
 }
 
-async function scheduleAreaReindex(ctx: MutationCtx, userId: string, delayMs = 5_000) {
-  await ctx.scheduler.runAfter(delayMs, internal.albatross.reindexUserAreaArtifacts, { userId });
+async function scheduleAreaReindex(
+  ctx: MutationCtx,
+  userId: string,
+  delayMs = 5_000,
+  input: { reason?: string; areaId?: Id<'areas'> } = {},
+) {
+  const ts = now();
+  const runId = await ctx.db.insert('areaReindexRuns', {
+    userId,
+    areaId: input.areaId ? String(input.areaId) : undefined,
+    status: 'queued',
+    reason: input.reason ? normalizeText(input.reason).slice(0, 160) : undefined,
+    scanned: 0,
+    inserted: 0,
+    matched: 0,
+    personal: 0,
+    skipped: 0,
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  await ctx.scheduler.runAfter(delayMs, internal.albatross.reindexUserAreaArtifacts, { userId, runId });
+  return runId;
 }
 
 export const createArea = mutation({
@@ -306,8 +326,66 @@ export const reindexMyAreas = mutation({
     const userId = await resolveUserId(ctx, args);
     if (args.areaId) await requireArea(ctx, args.areaId, userId);
     const personalAreaId = await ensurePersonalArea(ctx, userId);
-    await scheduleAreaReindex(ctx, userId, 0);
-    return { ok: true, personalAreaId };
+    const runId = await scheduleAreaReindex(ctx, userId, 0, {
+      reason: args.areaId ? 'Manual area brief refresh' : 'Manual area reindex',
+      areaId: args.areaId,
+    });
+    return { ok: true, personalAreaId, runId };
+  },
+});
+
+export const areaIndexStatus = query({
+  args: { ...callerArgs },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const latestRun = await ctx.db
+      .query('areaReindexRuns')
+      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+      .order('desc')
+      .first();
+    const syncStates = await ctx.db
+      .query('mailSyncStates')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    const mailboxes = syncStates.map((state) => ({
+      accountId: state.accountId,
+      provider: state.provider,
+      status: state.status,
+      corpusReady: state.corpusReady,
+      messagesSynced: state.messagesSynced ?? 0,
+      updatedAt: state.updatedAt,
+      error: state.error,
+    }));
+    return {
+      latestRun: latestRun
+        ? {
+            runId: String(latestRun._id),
+            areaId: latestRun.areaId ?? null,
+            status: latestRun.status as 'queued' | 'running' | 'done' | 'error',
+            reason: latestRun.reason ?? null,
+            scanned: latestRun.scanned,
+            inserted: latestRun.inserted,
+            matched: latestRun.matched,
+            personal: latestRun.personal,
+            skipped: latestRun.skipped,
+            error: latestRun.error ?? null,
+            startedAt: latestRun.startedAt ?? null,
+            finishedAt: latestRun.finishedAt ?? null,
+            createdAt: latestRun.createdAt,
+            updatedAt: latestRun.updatedAt,
+          }
+        : null,
+      mail: {
+        total: mailboxes.length,
+        ready: mailboxes.filter((state) => state.corpusReady).length,
+        indexing: mailboxes.filter(
+          (state) => !state.corpusReady && (state.status === 'backfilling' || state.status === 'syncing'),
+        ).length,
+        errored: mailboxes.filter((state) => state.status === 'error').length,
+        messagesSynced: mailboxes.reduce((sum, state) => sum + (state.messagesSynced ?? 0), 0),
+        mailboxes,
+      },
+    };
   },
 });
 
@@ -1370,137 +1448,196 @@ export const recordAreaLinks = mutation({
   },
 });
 
+export const queueUserAreaReindex = internalMutation({
+  args: {
+    userId: v.string(),
+    reason: v.optional(v.string()),
+    delayMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const runId = await scheduleAreaReindex(ctx, args.userId, Math.max(0, args.delayMs ?? 0), {
+      reason: args.reason,
+    });
+    return { runId };
+  },
+});
+
 export const reindexUserAreaArtifacts = internalMutation({
-  args: { userId: v.string(), cursor: v.optional(v.string()) },
+  args: { userId: v.string(), cursor: v.optional(v.string()), runId: v.optional(v.id('areaReindexRuns')) },
   handler: async (ctx, args) => {
     const userId = args.userId;
-    const personalAreaId = await ensurePersonalArea(ctx, userId);
-    const areas = await ctx.db
-      .query('areas')
-      .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
-      .collect();
-    const activeAreaIds = new Set(areas.map((area) => String(area._id)));
-    const factRows = (
-      await ctx.db
-        .query('areaFacts')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .collect()
-    ).filter(
-      (fact) =>
-        (fact.status === 'candidate' || fact.status === 'verified') && activeAreaIds.has(String(fact.areaId)),
-    );
-    const facts: AreaReindexFact[] = factRows.map((fact) => ({
-      _id: String(fact._id),
-      areaId: fact.areaId,
-      kind: fact.kind,
-      value: fact.value,
-      status: fact.status as 'candidate' | 'verified',
-      confirmationRefs: fact.confirmationRefs,
-      verifiedAt: fact.verifiedAt,
-      updatedAt: fact.updatedAt,
-    }));
-    for (const area of areas) {
-      const primaryDomain = normalizeAreaDomain(area.primaryDomain);
-      if (!primaryDomain) continue;
-      facts.push({
-        _id: `area-domain:${area._id}`,
-        areaId: area._id,
-        kind: 'domain',
-        value: primaryDomain,
-        status: 'candidate',
-        confirmationRefs: [],
-        updatedAt: area.updatedAt,
-      });
-    }
-
-    const page = await ctx.db
-      .query('mailCorpusThreads')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .paginate({ cursor: args.cursor ?? null, numItems: AREA_REINDEX_PAGE_SIZE });
-
+    const run = args.runId ? await ctx.db.get(args.runId) : null;
+    const trackedRun = run && run.userId === userId ? run : null;
+    const ts = now();
+    let scanned = 0;
     let inserted = 0;
     let matched = 0;
     let personal = 0;
     let skipped = 0;
-    const ts = now();
-
-    for (const row of page.page) {
-      const existing = await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_account_artifact', (q) =>
-          q
-            .eq('userId', userId)
-            .eq('accountId', row.accountId)
-            .eq('artifactKind', 'mailThread')
-            .eq('artifactId', row.providerThreadId),
-        )
+    try {
+      if (trackedRun) {
+        await ctx.db.patch(trackedRun._id, {
+          status: 'running',
+          cursor: args.cursor,
+          startedAt: trackedRun.startedAt ?? ts,
+          updatedAt: ts,
+        });
+      }
+      const personalAreaId = await ensurePersonalArea(ctx, userId);
+      const areas = await ctx.db
+        .query('areas')
+        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
         .collect();
-      const match = matchMailRowToAreaFact(row, facts);
-      const categorized = existing.some(
-        (link) => link.status !== 'rejected' && activeAreaIds.has(String(link.areaId)),
+      const activeAreaIds = new Set(areas.map((area) => String(area._id)));
+      const factRows = (
+        await ctx.db
+          .query('areaFacts')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect()
+      ).filter(
+        (fact) =>
+          (fact.status === 'candidate' || fact.status === 'verified') &&
+          activeAreaIds.has(String(fact.areaId)),
       );
-      const target = match
-        ? {
-            areaId: match.areaId,
-            status: match.status,
-            confidence: match.confidence,
-            reason: match.reason,
-            sourceRefs: [
-              {
-                kind: match.fact._id.startsWith('area-domain:') ? 'area' : 'areaFact',
-                id: match.fact._id,
-                label: `${match.fact.kind}: ${match.fact.value}`.slice(0, 200),
-              },
-            ],
-            confirmationRefs: match.status === 'verified' ? confirmationForVerifiedFact(match.fact) : [],
-          }
-        : categorized
-          ? null
-          : {
-              areaId: personalAreaId,
-              status: 'candidate' as const,
-              confidence: 0.25,
-              reason: 'legacy mail fallback to Personal',
-              sourceRefs: [{ kind: 'system', id: 'area-reindex', label: 'Historical area backfill' }],
-              confirmationRefs: [],
-            };
-      if (!target) {
-        skipped += 1;
-        continue;
+      const facts: AreaReindexFact[] = factRows.map((fact) => ({
+        _id: String(fact._id),
+        areaId: fact.areaId,
+        kind: fact.kind,
+        value: fact.value,
+        status: fact.status as 'candidate' | 'verified',
+        confirmationRefs: fact.confirmationRefs,
+        verifiedAt: fact.verifiedAt,
+        updatedAt: fact.updatedAt,
+      }));
+      for (const area of areas) {
+        const primaryDomain = normalizeAreaDomain(area.primaryDomain);
+        if (!primaryDomain) continue;
+        facts.push({
+          _id: `area-domain:${area._id}`,
+          areaId: area._id,
+          kind: 'domain',
+          value: primaryDomain,
+          status: 'candidate',
+          confirmationRefs: [],
+          updatedAt: area.updatedAt,
+        });
       }
-      if (existing.some((link) => String(link.areaId) === String(target.areaId))) {
-        skipped += 1;
-        continue;
+
+      const page = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .paginate({ cursor: args.cursor ?? null, numItems: AREA_REINDEX_PAGE_SIZE });
+
+      for (const row of page.page) {
+        scanned += 1;
+        const existing = await ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_account_artifact', (q) =>
+            q
+              .eq('userId', userId)
+              .eq('accountId', row.accountId)
+              .eq('artifactKind', 'mailThread')
+              .eq('artifactId', row.providerThreadId),
+          )
+          .collect();
+        const match = matchMailRowToAreaFact(row, facts);
+        const categorized = existing.some(
+          (link) => link.status !== 'rejected' && activeAreaIds.has(String(link.areaId)),
+        );
+        const target = match
+          ? {
+              areaId: match.areaId,
+              status: match.status,
+              confidence: match.confidence,
+              reason: match.reason,
+              sourceRefs: [
+                {
+                  kind: match.fact._id.startsWith('area-domain:') ? 'area' : 'areaFact',
+                  id: match.fact._id,
+                  label: `${match.fact.kind}: ${match.fact.value}`.slice(0, 200),
+                },
+              ],
+              confirmationRefs: match.status === 'verified' ? confirmationForVerifiedFact(match.fact) : [],
+            }
+          : categorized
+            ? null
+            : {
+                areaId: personalAreaId,
+                status: 'candidate' as const,
+                confidence: 0.25,
+                reason: 'legacy mail fallback to Personal',
+                sourceRefs: [{ kind: 'system', id: 'area-reindex', label: 'Historical area backfill' }],
+                confirmationRefs: [],
+              };
+        if (!target) {
+          skipped += 1;
+          continue;
+        }
+        if (existing.some((link) => String(link.areaId) === String(target.areaId))) {
+          skipped += 1;
+          continue;
+        }
+        assertVerifiedArtifactLinkAllowed(target.status, target.confirmationRefs);
+        await ctx.db.insert('areaArtifactLinks', {
+          userId,
+          areaId: target.areaId,
+          artifactKind: 'mailThread',
+          artifactId: row.providerThreadId,
+          accountId: row.accountId,
+          role: match ? 'supporting' : 'secondary',
+          status: target.status,
+          confidence: target.confidence,
+          reason: target.reason,
+          sourceRefs: normalizeSourceRefs(target.sourceRefs),
+          confirmationRefs: normalizeConfirmationRefs(target.confirmationRefs),
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        inserted += 1;
+        if (match) matched += 1;
+        else personal += 1;
       }
-      assertVerifiedArtifactLinkAllowed(target.status, target.confirmationRefs);
-      await ctx.db.insert('areaArtifactLinks', {
-        userId,
-        areaId: target.areaId,
-        artifactKind: 'mailThread',
-        artifactId: row.providerThreadId,
-        accountId: row.accountId,
-        role: match ? 'supporting' : 'secondary',
-        status: target.status,
-        confidence: target.confidence,
-        reason: target.reason,
-        sourceRefs: normalizeSourceRefs(target.sourceRefs),
-        confirmationRefs: normalizeConfirmationRefs(target.confirmationRefs),
-        createdAt: ts,
-        updatedAt: ts,
-      });
-      inserted += 1;
-      if (match) matched += 1;
-      else personal += 1;
-    }
 
-    if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.albatross.reindexUserAreaArtifacts, {
-        userId,
-        cursor: page.continueCursor,
-      });
-    }
+      if (trackedRun) {
+        await ctx.db.patch(trackedRun._id, {
+          status: page.isDone ? 'done' : 'running',
+          cursor: page.isDone ? undefined : page.continueCursor,
+          scanned: trackedRun.scanned + scanned,
+          inserted: trackedRun.inserted + inserted,
+          matched: trackedRun.matched + matched,
+          personal: trackedRun.personal + personal,
+          skipped: trackedRun.skipped + skipped,
+          finishedAt: page.isDone ? now() : undefined,
+          updatedAt: now(),
+        });
+      }
 
-    return { inserted, matched, personal, skipped, scanned: page.page.length, done: page.isDone };
+      if (!page.isDone) {
+        await ctx.scheduler.runAfter(0, internal.albatross.reindexUserAreaArtifacts, {
+          userId,
+          cursor: page.continueCursor,
+          ...(trackedRun ? { runId: trackedRun._id } : {}),
+        });
+      }
+
+      return { inserted, matched, personal, skipped, scanned, done: page.isDone };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!trackedRun) throw error;
+      await ctx.db.patch(trackedRun._id, {
+        status: 'error',
+        cursor: args.cursor,
+        scanned: trackedRun.scanned + scanned,
+        inserted: trackedRun.inserted + inserted,
+        matched: trackedRun.matched + matched,
+        personal: trackedRun.personal + personal,
+        skipped: trackedRun.skipped + skipped,
+        error: message.slice(0, 1000),
+        finishedAt: now(),
+        updatedAt: now(),
+      });
+      return { inserted, matched, personal, skipped, scanned, done: false, error: message };
+    }
   },
 });
 
