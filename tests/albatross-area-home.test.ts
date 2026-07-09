@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
   AREA_PLACE_CAP,
+  areaBriefHeadline,
   areaHasNoLinks,
   areaHomeSections,
   areaNeedsYouRows,
+  areaOverviewBadges,
+  areaOverviewPriority,
+  areaOverviewStatus,
   areaPulse,
   extractAreaPlaces,
   formatEventTime,
@@ -14,6 +18,7 @@ import {
   RAIL_AREA_CAP,
   railAreaBadge,
   railAreaRows,
+  splitBriefRows,
   taskRowMeta,
 } from '../lib/albatross/area-home';
 
@@ -56,6 +61,61 @@ describe('areaHasNoLinks', () => {
     expect(areaHasNoLinks(counts(1, 0, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 1, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 0, 1))).toBe(false);
+  });
+});
+
+const overviewCounts = (over: Partial<ReturnType<typeof baseOverviewCounts>> = {}) => ({
+  ...baseOverviewCounts(),
+  ...over,
+  facts: { ...baseOverviewCounts().facts, ...(over.facts ?? {}) },
+});
+
+function baseOverviewCounts() {
+  return {
+    facts: { verified: 0, candidate: 0 },
+    mail: 0,
+    events: 0,
+    tasks: 0,
+    plans: 0,
+    projects: 0,
+    needsYou: 0,
+    overdueTasks: 0,
+    unreadMail: 0,
+    suggestedLinks: 0,
+  };
+}
+
+describe('area overview chooser helpers', () => {
+  test('priority favors blockers over ordinary volume', () => {
+    const blocker = overviewCounts({ needsYou: 1 });
+    const busy = overviewCounts({ mail: 12, tasks: 3, projects: 2 });
+    expect(areaOverviewPriority(blocker)).toBeGreaterThan(areaOverviewPriority(busy));
+  });
+
+  test('badges are capped and attention states lead', () => {
+    const badges = areaOverviewBadges(
+      overviewCounts({
+        needsYou: 1,
+        overdueTasks: 2,
+        plans: 3,
+        events: 4,
+        tasks: 5,
+        facts: { verified: 0, candidate: 6 },
+      }),
+      3,
+    );
+    expect(badges.map((badge) => badge.id)).toEqual(['needsYou', 'overdueTasks', 'candidateFacts']);
+    expect(badges.map((badge) => badge.tone)).toEqual(['attention', 'attention', 'attention']);
+  });
+
+  test('status line names the most useful current reason to open the area', () => {
+    expect(areaOverviewStatus(overviewCounts({ needsYou: 2 }))).toBe('2 items need you');
+    expect(areaOverviewStatus(overviewCounts({ plans: 1 }))).toBe('1 active plan');
+    expect(areaOverviewStatus(overviewCounts({ events: 1, tasks: 2 }))).toBe('3 scheduled items');
+    expect(areaOverviewStatus(overviewCounts({ facts: { verified: 0, candidate: 1 } }))).toBe(
+      '1 context ask',
+    );
+    expect(areaOverviewStatus(overviewCounts())).toBe('Quiet');
   });
 });
 
@@ -203,6 +263,67 @@ describe('areaPulse', () => {
 
   test('a fully quiet area yields no segments (strip hides)', () => {
     expect(areaPulse({ needsYou: 0, plans: 0, projects: 0, places: 0, upcoming: 0 })).toEqual([]);
+  });
+});
+
+describe('areaBriefHeadline', () => {
+  test('blockers produce the lead sentence', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Household',
+        needsYou: 2,
+        upcoming: 1,
+        plans: 1,
+        projects: 0,
+        mail: 3,
+        tasks: 4,
+        candidateFacts: 1,
+      }),
+    ).toBe('2 items need you before Household can move cleanly.');
+  });
+
+  test('otherwise it summarizes upcoming events and active plans', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Job Search',
+        needsYou: 0,
+        upcoming: 1,
+        plans: 2,
+        projects: 0,
+        mail: 0,
+        tasks: 0,
+        candidateFacts: 0,
+      }),
+    ).toBe('1 upcoming event and 2 active plans are shaping Job Search today.');
+  });
+
+  test('quiet areas get a quiet sentence', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Garden',
+        needsYou: 0,
+        upcoming: 0,
+        plans: 0,
+        projects: 0,
+        mail: 0,
+        tasks: 0,
+        candidateFacts: 0,
+      }),
+    ).toBe('Garden is quiet right now.');
+  });
+});
+
+describe('splitBriefRows', () => {
+  test('returns visible rows, overflow, and total without mutating input', () => {
+    const rows = [1, 2, 3, 4, 5];
+    const split = splitBriefRows(rows, 3);
+    expect(split).toEqual({ visible: [1, 2, 3], overflow: 2, total: 5 });
+    expect(rows).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test('null input and negative limits are safe', () => {
+    expect(splitBriefRows(null, 3)).toEqual({ visible: [], overflow: 0, total: 0 });
+    expect(splitBriefRows([1, 2], -1)).toEqual({ visible: [], overflow: 2, total: 2 });
   });
 });
 

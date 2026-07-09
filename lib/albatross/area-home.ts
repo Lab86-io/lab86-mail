@@ -16,6 +16,27 @@ export interface AreaHomeSection {
   count: number;
 }
 
+export interface AreaOverviewCountsLike {
+  facts: { verified: number; candidate: number };
+  mail: number;
+  events: number;
+  tasks: number;
+  plans: number;
+  projects: number;
+  needsYou: number;
+  overdueTasks: number;
+  unreadMail: number;
+  suggestedLinks: number;
+}
+
+export type AreaOverviewTone = 'attention' | 'active' | 'quiet';
+
+export interface AreaOverviewBadge {
+  id: string;
+  label: string;
+  tone: AreaOverviewTone;
+}
+
 // Fixed editorial order: the operational artifacts first (mail is the highest
 // churn), the slow-moving context last. Sections always render — an empty
 // section shows its own quiet empty state rather than vanishing, so the user
@@ -33,6 +54,56 @@ export function areaHomeSections(counts: AreaHomeCountsLike): AreaHomeSection[] 
 // artifact sections for one whole-page explanation (context still renders).
 export function areaHasNoLinks(counts: AreaHomeCountsLike): boolean {
   return counts.mail + counts.events + counts.tasks === 0;
+}
+
+// The Areas chooser is now a work-entry surface, not a directory. This score
+// pulls areas with blockers and live work to the top while still letting the
+// server's priority/name order break ties.
+export function areaOverviewPriority(counts: AreaOverviewCountsLike): number {
+  return (
+    counts.needsYou * 160 +
+    counts.overdueTasks * 80 +
+    counts.plans * 24 +
+    counts.events * 16 +
+    counts.tasks * 12 +
+    counts.unreadMail * 10 +
+    counts.mail * 6 +
+    counts.projects * 6 +
+    counts.suggestedLinks * 4 +
+    counts.facts.candidate * 2
+  );
+}
+
+// Compact chooser badges: show why an area matters now, capped so cards do not
+// become dashboards. Attention badges always win the first slots.
+export function areaOverviewBadges(counts: AreaOverviewCountsLike, cap = 4): AreaOverviewBadge[] {
+  const badges: AreaOverviewBadge[] = [];
+  const push = (id: string, n: number, one: string, many: string, tone: AreaOverviewTone) => {
+    if (n > 0) badges.push({ id, label: `${n} ${n === 1 ? one : many}`, tone });
+  };
+  push('needsYou', counts.needsYou, 'needs you', 'need you', 'attention');
+  push('overdueTasks', counts.overdueTasks, 'overdue', 'overdue', 'attention');
+  push('suggestedLinks', counts.suggestedLinks, 'suggestion', 'suggestions', 'attention');
+  push('candidateFacts', counts.facts.candidate, 'context ask', 'context asks', 'attention');
+  push('plans', counts.plans, 'plan', 'plans', 'active');
+  push('events', counts.events, 'event', 'events', 'active');
+  push('tasks', counts.tasks, 'task', 'tasks', 'active');
+  push('unreadMail', counts.unreadMail, 'unread', 'unread', 'active');
+  push('mail', counts.mail, 'thread', 'threads', 'quiet');
+  push('projects', counts.projects, 'project', 'projects', 'quiet');
+  return badges.slice(0, Math.max(0, cap));
+}
+
+export function areaOverviewStatus(counts: AreaOverviewCountsLike): string {
+  if (counts.needsYou > 0)
+    return `${counts.needsYou} ${counts.needsYou === 1 ? 'item needs' : 'items need'} you`;
+  if (counts.plans > 0) return `${counts.plans} active ${counts.plans === 1 ? 'plan' : 'plans'}`;
+  if (counts.events > 0 || counts.tasks > 0)
+    return `${counts.events + counts.tasks} scheduled ${counts.events + counts.tasks === 1 ? 'item' : 'items'}`;
+  if (counts.mail > 0) return `${counts.mail} filed ${counts.mail === 1 ? 'thread' : 'threads'}`;
+  if (counts.facts.candidate > 0)
+    return `${counts.facts.candidate} context ${counts.facts.candidate === 1 ? 'ask' : 'asks'}`;
+  return 'Quiet';
 }
 
 export const RAIL_AREA_CAP = 8;
@@ -216,6 +287,48 @@ export function areaPulse(input: AreaPulseInput): AreaPulseSegment[] {
   push('places', input.places, 'place', 'places');
   push('upcoming', input.upcoming, 'upcoming', 'upcoming');
   return segments;
+}
+
+export function areaBriefHeadline(input: {
+  areaName: string;
+  needsYou: number;
+  upcoming: number;
+  plans: number;
+  projects: number;
+  mail: number;
+  tasks: number;
+  candidateFacts: number;
+}): string {
+  if (input.needsYou > 0)
+    return `${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
+  if (input.upcoming > 0 && input.plans > 0)
+    return `${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
+  if (input.plans > 0)
+    return `${input.plans} active ${input.plans === 1 ? 'plan is' : 'plans are'} in motion for ${input.areaName}.`;
+  if (input.mail + input.tasks + input.upcoming > 0)
+    return `${input.areaName} has ${input.mail + input.tasks + input.upcoming} filed ${input.mail + input.tasks + input.upcoming === 1 ? 'signal' : 'signals'} to review.`;
+  if (input.candidateFacts > 0)
+    return `${input.areaName} is waiting on ${input.candidateFacts} context ${input.candidateFacts === 1 ? 'confirmation' : 'confirmations'}.`;
+  return `${input.areaName} is quiet right now.`;
+}
+
+export interface BriefRows<T> {
+  visible: T[];
+  overflow: number;
+  total: number;
+}
+
+// Fit each area brief to the viewport: show the highest-signal rows inline and
+// send the long tail to the real deeper surfaces. This keeps the brief useful
+// above the fold even when an area owns dozens of threads or tasks.
+export function splitBriefRows<T>(rows: readonly T[] | null | undefined, limit: number): BriefRows<T> {
+  const list = [...(rows ?? [])];
+  const safeLimit = Math.max(0, Math.floor(limit));
+  return {
+    visible: list.slice(0, safeLimit),
+    overflow: Math.max(0, list.length - safeLimit),
+    total: list.length,
+  };
 }
 
 export type NeedsYouKind = 'plan_answers' | 'overdue_task' | 'suggested_context';

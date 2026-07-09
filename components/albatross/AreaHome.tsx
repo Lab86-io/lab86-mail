@@ -21,6 +21,7 @@
 // Plans, projects, and places are now components of the area, not separate pages.
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
+import { AlertCircle, ArrowRight, CalendarDays, Inbox, Sparkles } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -28,17 +29,23 @@ import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import {
+  type AreaOverviewCountsLike,
   type AreaPlaceRow,
   type AreaPlanRow,
   type AreaProjectRow,
+  areaBriefHeadline,
   areaHasNoLinks,
   areaHomeSections,
   areaNeedsYouRows,
+  areaOverviewBadges,
+  areaOverviewPriority,
+  areaOverviewStatus,
   areaPulse,
   formatEventTime,
   type NeedsYouRow,
   planActionLabel,
   planStatusMeta,
+  splitBriefRows,
   taskRowMeta,
 } from '@/lib/albatross/area-home';
 import { useClientStore } from '@/lib/client-state';
@@ -108,6 +115,40 @@ interface AreaHomeData {
   };
 }
 
+interface AreaOverviewRow {
+  _id: string;
+  name: string;
+  kind: string;
+  description?: string;
+  factCounts: { verified: number; candidate: number };
+  workCounts?: AreaOverviewCountsLike;
+  lastSignalAt?: number | null;
+}
+
+const emptyOverviewCounts: AreaOverviewCountsLike = {
+  facts: { verified: 0, candidate: 0 },
+  mail: 0,
+  events: 0,
+  tasks: 0,
+  plans: 0,
+  projects: 0,
+  needsYou: 0,
+  overdueTasks: 0,
+  unreadMail: 0,
+  suggestedLinks: 0,
+};
+
+const BRIEF_LIMITS = {
+  plans: 4,
+  mail: 6,
+  events: 4,
+  projects: 4,
+  places: 4,
+  tasks: 5,
+  candidateFacts: 4,
+  verifiedFacts: 5,
+};
+
 export function AreaHome() {
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
   // Keyed remount per area: section scroll state and fact busy-state must not
@@ -120,14 +161,28 @@ function AreaChooser() {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const areas = useQuery(api.albatross.listAreasOverview, isAuthenticated ? { status: 'active' } : 'skip') as
-    | Array<{
-        _id: string;
-        name: string;
-        kind: string;
-        description?: string;
-        factCounts: { verified: number; candidate: number };
-      }>
+    | AreaOverviewRow[]
     | undefined;
+  const ranked = areas
+    ? [...areas].sort((a, b) => {
+        const score =
+          areaOverviewPriority(b.workCounts ?? emptyOverviewCounts) -
+          areaOverviewPriority(a.workCounts ?? emptyOverviewCounts);
+        return score || a.name.localeCompare(b.name);
+      })
+    : undefined;
+  const totals =
+    areas?.reduce(
+      (acc, area) => {
+        const counts = area.workCounts ?? emptyOverviewCounts;
+        acc.needsYou += counts.needsYou;
+        acc.plans += counts.plans;
+        acc.events += counts.events;
+        acc.tasks += counts.tasks;
+        return acc;
+      },
+      { needsYou: 0, plans: 0, events: 0, tasks: 0 },
+    ) ?? null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -151,35 +206,82 @@ function AreaChooser() {
           </Button>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2 min-[1100px]:grid-cols-3">
-          {areas.map((area) => (
-            <button
-              key={area._id}
-              type="button"
-              onClick={() => setSelectedAreaId(area._id)}
-              className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-muted)]"
-            >
-              <div className="flex items-center gap-2">
-                <ToneDot id={area._id} />
-                <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{area.name}</span>
-                <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
-                  {area.kind}
-                </Badge>
-              </div>
-              {area.description ? (
-                <p className="mt-1 line-clamp-2 text-[12px] text-[var(--color-text-muted)]">
-                  {area.description}
-                </p>
-              ) : null}
-              <p className="mt-1.5 text-[11px] tabular-nums text-[var(--color-text-faint)]">
-                {area.factCounts.verified} verified · {area.factCounts.candidate} suggested
-              </p>
-            </button>
-          ))}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="border-b border-[var(--color-border)]/55 px-4 py-3">
+            <p className="max-w-3xl text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+              {totals && totals.needsYou > 0
+                ? `${totals.needsYou} ${totals.needsYou === 1 ? 'item needs' : 'items need'} you across your areas.`
+                : totals && totals.plans + totals.events + totals.tasks > 0
+                  ? `${totals.plans} active ${totals.plans === 1 ? 'plan' : 'plans'} · ${totals.events} ${totals.events === 1 ? 'event' : 'events'} · ${totals.tasks} ${totals.tasks === 1 ? 'task' : 'tasks'} filed by area.`
+                  : 'Your areas are quiet right now.'}
+            </p>
+          </div>
+          <div className="grid auto-rows-min grid-cols-1 gap-3 p-4 sm:grid-cols-2 min-[1200px]:grid-cols-3">
+            {(ranked ?? areas).map((area) => (
+              <AreaChooserCard key={area._id} area={area} onOpen={() => setSelectedAreaId(area._id)} />
+            ))}
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+function AreaChooserCard({ area, onOpen }: { area: AreaOverviewRow; onOpen: () => void }) {
+  const counts = area.workCounts ?? {
+    ...emptyOverviewCounts,
+    facts: area.factCounts,
+  };
+  const badges = areaOverviewBadges(counts);
+  const score = areaOverviewPriority(counts);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        'group flex min-h-[142px] flex-col rounded-lg border bg-[var(--color-bg-elevated)] px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-muted)]',
+        score > 0 ? 'border-[var(--color-border-strong)]' : 'border-[var(--color-border)]',
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <ToneDot id={area._id} />
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{area.name}</span>
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
+          {area.kind}
+        </Badge>
+      </div>
+      <p className="mt-1 text-[12px] font-medium text-[var(--color-text)]">{areaOverviewStatus(counts)}</p>
+      {area.description ? (
+        <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
+          {area.description}
+        </p>
+      ) : (
+        <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
+          {area.factCounts.verified} verified context facts · {area.factCounts.candidate} waiting.
+        </p>
+      )}
+      <div className="mt-auto flex flex-wrap gap-1.5 pt-3">
+        {badges.length ? (
+          badges.map((badge) => <OverviewBadge key={badge.id} label={badge.label} tone={badge.tone} />)
+        ) : (
+          <OverviewBadge label={`${area.factCounts.verified} verified`} tone="quiet" />
+        )}
+      </div>
+      <span className="mt-3 flex items-center gap-1 text-[11.5px] font-medium text-[var(--color-accent)] opacity-0 transition-opacity group-hover:opacity-100">
+        Open brief <ArrowRight className="size-3" aria-hidden />
+      </span>
+    </button>
+  );
+}
+
+function OverviewBadge({ label, tone }: { label: string; tone: 'attention' | 'active' | 'quiet' }) {
+  const toneClass =
+    tone === 'attention'
+      ? 'border-[var(--color-warning)]/35 bg-[var(--color-warning-soft)] text-[var(--color-warning)]'
+      : tone === 'active'
+        ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+        : 'border-[var(--color-border)] text-[var(--color-text-muted)]';
+  return <span className={cn('rounded border px-1.5 py-0.5 text-[10.5px]', toneClass)}>{label}</span>;
 }
 
 function AreaHomeBody({ areaId }: { areaId: string }) {
@@ -235,6 +337,16 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
     places: home.counts.places,
     upcoming: upcoming.length,
   });
+  const headline = areaBriefHeadline({
+    areaName: home.area.name,
+    needsYou: needsYou.length,
+    upcoming: upcoming.length,
+    plans: home.counts.plans,
+    projects: home.counts.projects,
+    mail: home.counts.mail,
+    tasks: home.counts.tasks,
+    candidateFacts: home.counts.facts.candidate,
+  });
   // The brief is empty only when the area has nothing the classifier or the
   // user has put here yet — then we explain rather than render empty sections.
   const briefEmpty =
@@ -267,9 +379,13 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-10">
-        {/* The pulse: one quiet line of what moved, only its non-zero facets.
-            The strip hides itself when the area is quiet. */}
-        <PulseStrip segments={pulse} />
+        <BriefLead
+          home={home}
+          headline={headline}
+          pulse={pulse}
+          upcoming={upcoming.length}
+          needsYou={needsYou.length}
+        />
         {/* One capture line seeds an area-bound plan without leaving the brief. */}
         <CaptureBar areaId={home.area._id} areaName={home.area.name} />
 
@@ -287,18 +403,18 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
         ) : (
           <>
             <NeedsYouSection rows={needsYou} />
-            <div className="grid gap-x-10 min-[1100px]:grid-cols-2">
+            <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0">
                 <PlansSection plans={home.plans} count={home.counts.plans} />
-                <MailSection mail={home.mail} count={sectionCount('mail')} />
-              </div>
-              <div className="min-w-0">
                 <EventsSection events={home.events} count={home.counts.events} />
+                <MailSection mail={home.mail} count={sectionCount('mail')} />
+                <TasksSection tasks={home.tasks} count={sectionCount('tasks')} />
+              </div>
+              <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-0 min-[1180px]:self-start">
                 <ProjectsSection projects={home.projects} count={home.counts.projects} />
                 <PlacesSection places={home.places} count={home.counts.places} />
-                <TasksSection tasks={home.tasks} count={sectionCount('tasks')} />
                 <ContextSection home={home} count={sectionCount('context')} />
-              </div>
+              </aside>
             </div>
           </>
         )}
@@ -307,20 +423,110 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
   );
 }
 
-// The pulse: a single meaning-first line under the header (Jira/Linear project
-// summary pattern) — dot-separated facets, never a row of stat cards.
-function PulseStrip({ segments }: { segments: ReturnType<typeof areaPulse> }) {
-  if (segments.length === 0) return null;
+function BriefLead({
+  home,
+  headline,
+  pulse,
+  upcoming,
+  needsYou,
+}: {
+  home: AreaHomeData;
+  headline: string;
+  pulse: ReturnType<typeof areaPulse>;
+  upcoming: number;
+  needsYou: number;
+}) {
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 pb-2 pt-4 text-[12.5px] text-[var(--color-text-muted)]">
-      {segments.map((segment, index) => (
-        <span key={segment.id} className="flex items-center gap-2">
-          {index > 0 ? <span className="text-[var(--color-text-faint)]">·</span> : null}
-          <span className={cn(segment.id === 'needsYou' && 'font-medium text-[var(--color-text)]')}>
-            {segment.label}
-          </span>
-        </span>
-      ))}
+    <section className="px-3 pb-2 pt-4">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
+        <div className="flex flex-col gap-2 min-[760px]:flex-row min-[760px]:items-start min-[760px]:justify-between">
+          <div className="min-w-0">
+            <p className="text-[14px] font-medium leading-snug text-[var(--color-text)]">{headline}</p>
+            {home.area.description ? (
+              <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                {home.area.description}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-1.5">
+            <BriefProperty
+              icon={<AlertCircle className="size-3" aria-hidden />}
+              label="Needs"
+              value={needsYou}
+              active={needsYou > 0}
+            />
+            <BriefProperty
+              icon={<CalendarDays className="size-3" aria-hidden />}
+              label="Upcoming"
+              value={upcoming}
+              active={upcoming > 0}
+            />
+            <BriefProperty
+              icon={<Inbox className="size-3" aria-hidden />}
+              label="Plans"
+              value={home.counts.plans}
+              active={home.counts.plans > 0}
+            />
+            <BriefProperty
+              icon={<Sparkles className="size-3" aria-hidden />}
+              label="Context"
+              value={home.counts.facts.candidate}
+              active={home.counts.facts.candidate > 0}
+            />
+          </div>
+        </div>
+        {pulse.length ? (
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-[var(--color-text-muted)]">
+            {pulse.map((segment, index) => (
+              <span key={segment.id} className="flex items-center gap-2">
+                {index > 0 ? <span className="text-[var(--color-text-faint)]">·</span> : null}
+                <span className={cn(segment.id === 'needsYou' && 'font-medium text-[var(--color-text)]')}>
+                  {segment.label}
+                </span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function BriefProperty({
+  icon,
+  label,
+  value,
+  active,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number;
+  active: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10.5px]',
+        active
+          ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+          : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
+      )}
+    >
+      {icon}
+      <span>{label}</span>
+      <span className="font-medium tabular-nums text-[var(--color-text)]">{value}</span>
+    </span>
+  );
+}
+
+function OverflowRow({ overflow, noun, action }: { overflow: number; noun: string; action?: ReactNode }) {
+  if (overflow <= 0) return null;
+  return (
+    <div className="flex items-center justify-between gap-2 px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
+      <span>
+        {overflow} more {noun}
+      </span>
+      {action}
     </div>
   );
 }
@@ -448,15 +654,20 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
 // never a synthetic link.
 function PlansSection({ plans, count }: { plans: AreaPlanRow[]; count: number }) {
   const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
+  const rows = splitBriefRows(plans, BRIEF_LIMITS.plans);
   return (
     <section>
-      <SectionHeader label="Plans" count={count} />
+      <SectionHeader
+        label="Plans"
+        count={count}
+        action={count > 0 ? <ViewLink view="intents">Plans</ViewLink> : undefined}
+      />
       {plans.length === 0 ? (
         <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">
           No active plans here — capture one above to start.
         </p>
       ) : (
-        plans.map((plan) => {
+        rows.visible.map((plan) => {
           const meta = planStatusMeta(plan.status, plan.planStatus);
           const line = plan.outcome || plan.summary || null;
           return (
@@ -484,6 +695,11 @@ function PlansSection({ plans, count }: { plans: AreaPlanRow[]; count: number })
           );
         })
       )}
+      <OverflowRow
+        overflow={rows.overflow}
+        noun="plans"
+        action={<ViewLink view="intents">Open plans</ViewLink>}
+      />
     </section>
   );
 }
@@ -515,11 +731,12 @@ function PlanToneBadge({ tone, label }: { tone: ReturnType<typeof planStatusMeta
 // rather than pointing at a surface it has no page on.
 function ProjectsSection({ projects, count }: { projects: AreaProjectRow[]; count: number }) {
   const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
+  const rows = splitBriefRows(projects, BRIEF_LIMITS.projects);
   if (count === 0) return null;
   return (
     <section>
       <SectionHeader label="Projects" count={count} />
-      {projects.map((project) => (
+      {rows.visible.map((project) => (
         <div
           key={project.projectId}
           className="flex items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 last:border-b-0"
@@ -549,6 +766,7 @@ function ProjectsSection({ projects, count }: { projects: AreaProjectRow[]; coun
           ) : null}
         </div>
       ))}
+      <OverflowRow overflow={rows.overflow} noun="projects" />
     </section>
   );
 }
@@ -557,12 +775,13 @@ function ProjectsSection({ projects, count }: { projects: AreaProjectRow[]; coun
 // link. Every row is a real string the plan/search produced; the link is a
 // plain Google Maps search, never a fabricated deep link.
 function PlacesSection({ places, count }: { places: AreaPlaceRow[]; count: number }) {
+  const rows = splitBriefRows(places, BRIEF_LIMITS.places);
   if (count === 0) return null;
   return (
     <section>
       <SectionHeader label="Places" count={count} />
       <div className="grid grid-cols-1 gap-2 px-3 py-2 sm:grid-cols-2">
-        {places.map((place) => (
+        {rows.visible.map((place) => (
           <a
             key={`${place.name}:${place.address ?? ''}`}
             href={place.mapsUrl}
@@ -581,6 +800,11 @@ function PlacesSection({ places, count }: { places: AreaPlaceRow[]; count: numbe
           </a>
         ))}
       </div>
+      <OverflowRow
+        overflow={rows.overflow}
+        noun="places"
+        action={<ViewLink view="intents">Open plans</ViewLink>}
+      />
     </section>
   );
 }
@@ -588,14 +812,19 @@ function PlacesSection({ places, count }: { places: AreaPlaceRow[]; count: numbe
 function MailSection({ mail, count }: { mail: AreaMailRow[]; count: number }) {
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
+  const rows = splitBriefRows(mail, BRIEF_LIMITS.mail);
 
   return (
     <section>
-      <SectionHeader label="Mail" count={count} />
+      <SectionHeader
+        label="Mail"
+        count={count}
+        action={count > 0 ? <ViewLink view="mail">Inbox</ViewLink> : undefined}
+      />
       {mail.length === 0 ? (
         <SectionEmpty />
       ) : (
-        mail.map((row) => {
+        rows.visible.map((row) => {
           const sender = shortFrom(row.fromAddress) || row.fromAddress;
           return (
             <button
@@ -651,12 +880,18 @@ function MailSection({ mail, count }: { mail: AreaMailRow[]; count: number }) {
           );
         })
       )}
+      <OverflowRow
+        overflow={rows.overflow}
+        noun="threads"
+        action={<ViewLink view="mail">Open inbox</ViewLink>}
+      />
     </section>
   );
 }
 
 function EventsSection({ events, count }: { events: AreaEventRow[]; count: number }) {
   const now = Date.now();
+  const rows = splitBriefRows(events, BRIEF_LIMITS.events);
   return (
     <section>
       <SectionHeader
@@ -667,7 +902,7 @@ function EventsSection({ events, count }: { events: AreaEventRow[]; count: numbe
       {events.length === 0 ? (
         <SectionEmpty />
       ) : (
-        events.map((event) => (
+        rows.visible.map((event) => (
           <div
             key={`${event.accountId}:${event.providerEventId}`}
             title={event.reason ?? undefined}
@@ -689,11 +924,17 @@ function EventsSection({ events, count }: { events: AreaEventRow[]; count: numbe
           </div>
         ))
       )}
+      <OverflowRow
+        overflow={rows.overflow}
+        noun="events"
+        action={<ViewLink view="calendar">Open calendar</ViewLink>}
+      />
     </section>
   );
 }
 
 function TasksSection({ tasks, count }: { tasks: AreaTaskRow[]; count: number }) {
+  const rows = splitBriefRows(tasks, BRIEF_LIMITS.tasks);
   return (
     <section>
       <SectionHeader
@@ -704,7 +945,7 @@ function TasksSection({ tasks, count }: { tasks: AreaTaskRow[]; count: number })
       {tasks.length === 0 ? (
         <SectionEmpty />
       ) : (
-        tasks.map((task) => {
+        rows.visible.map((task) => {
           const meta = taskRowMeta(task);
           const done = meta.state === 'done';
           return (
@@ -743,6 +984,11 @@ function TasksSection({ tasks, count }: { tasks: AreaTaskRow[]; count: number })
           );
         })
       )}
+      <OverflowRow
+        overflow={rows.overflow}
+        noun="tasks"
+        action={<ViewLink view="tasks">Open board</ViewLink>}
+      />
     </section>
   );
 }
@@ -751,6 +997,8 @@ function ContextSection({ home, count }: { home: AreaHomeData; count: number }) 
   const verifyFact = useMutation(api.albatross.verifyAreaFact);
   const rejectFact = useMutation(api.albatross.rejectAreaFact);
   const [busyFactId, setBusyFactId] = useState<string | null>(null);
+  const candidateRows = splitBriefRows(home.facts.candidate, BRIEF_LIMITS.candidateFacts);
+  const verifiedRows = splitBriefRows(home.facts.verified, BRIEF_LIMITS.verifiedFacts);
 
   const verify = async (fact: AreaFactRow) => {
     setBusyFactId(fact._id);
@@ -778,8 +1026,21 @@ function ContextSection({ home, count }: { home: AreaHomeData; count: number }) 
 
   return (
     <section>
-      <SectionHeader label="Context" count={count} />
-      {home.facts.candidate.map((fact) => (
+      <SectionHeader
+        label="Context"
+        count={count}
+        action={
+          count > 0 ? (
+            <a
+              href="/settings?tab=areas"
+              className="shrink-0 text-[11px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
+            >
+              Settings
+            </a>
+          ) : undefined
+        }
+      />
+      {candidateRows.visible.map((fact) => (
         <div
           key={fact._id}
           className={cn(
@@ -811,7 +1072,7 @@ function ContextSection({ home, count }: { home: AreaHomeData; count: number }) 
           </Button>
         </div>
       ))}
-      {home.facts.verified.map((fact) => (
+      {verifiedRows.visible.map((fact) => (
         <div
           key={fact._id}
           className="flex items-baseline gap-2 border-b border-[var(--color-border)]/45 px-3 py-2 last:border-b-0"
@@ -822,6 +1083,18 @@ function ContextSection({ home, count }: { home: AreaHomeData; count: number }) 
           <span className="min-w-0 flex-1 truncate text-[12.5px]">{fact.value}</span>
         </div>
       ))}
+      <OverflowRow
+        overflow={candidateRows.overflow + verifiedRows.overflow}
+        noun="context facts"
+        action={
+          <a
+            href="/settings?tab=areas"
+            className="shrink-0 text-[11px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
+          >
+            Open settings
+          </a>
+        }
+      />
       {count === 0 ? (
         <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">
           No facts yet —{' '}
@@ -854,7 +1127,13 @@ function SectionHeader({ label, count, action }: { label: string; count: number;
 
 // A quiet "open the deeper surface" link for a section header. Switches the
 // primary view — honest: every target is a real routed surface.
-function ViewLink({ view, children }: { view: 'calendar' | 'tasks'; children: ReactNode }) {
+function ViewLink({
+  view,
+  children,
+}: {
+  view: 'mail' | 'calendar' | 'tasks' | 'intents';
+  children: ReactNode;
+}) {
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   return (
     <button

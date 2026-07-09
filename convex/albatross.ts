@@ -574,7 +574,29 @@ function emailFromAddress(raw: string): string {
   return (token || candidate).replace(/^mailto:/, '').replace(/[<>,;"']/g, '');
 }
 
-// Areas plus per-area fact counts in one call — the Teach agent's first read.
+const AREA_OVERVIEW_LINK_SCAN = 2000;
+const AREA_OVERVIEW_INTENT_SCAN = 500;
+const AREA_OVERVIEW_PROJECT_SCAN = 500;
+const AREA_OVERVIEW_CARD_SCAN = 500;
+
+function emptyAreaWorkCounts() {
+  return {
+    facts: { verified: 0, candidate: 0 },
+    mail: 0,
+    events: 0,
+    tasks: 0,
+    plans: 0,
+    projects: 0,
+    needsYou: 0,
+    overdueTasks: 0,
+    unreadMail: 0,
+    suggestedLinks: 0,
+  };
+}
+
+// Areas plus compact per-area work counts in one call — the Teach agent's first
+// read, and the Areas chooser's command surface. Counts are intentionally
+// bounded and approximate where needed; opening the area resolves the full rows.
 export const listAreasOverview = query({
   args: { ...callerArgs, status: v.optional(areaStatusValidator) },
   handler: async (ctx, args) => {
@@ -588,22 +610,104 @@ export const listAreasOverview = query({
           .query('areas')
           .withIndex('by_user', (q) => q.eq('userId', userId))
           .collect();
-    const facts = await ctx.db
-      .query('areaFacts')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    const counts = new Map<string, { verified: number; candidate: number }>();
+    const areaIds = new Set(areas.map((area) => String(area._id)));
+    const boardToArea = new Map(
+      areas.filter((area) => area.boardId).map((area) => [String(area.boardId), String(area._id)] as const),
+    );
+    const [facts, links, intents, projects, cards] = await Promise.all([
+      ctx.db
+        .query('areaFacts')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+      ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(AREA_OVERVIEW_LINK_SCAN),
+      ctx.db
+        .query('albatrossIntents')
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(AREA_OVERVIEW_INTENT_SCAN),
+      ctx.db
+        .query('albatrossProjects')
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(AREA_OVERVIEW_PROJECT_SCAN),
+      ctx.db
+        .query('cards')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .take(AREA_OVERVIEW_CARD_SCAN),
+    ]);
+    const counts = new Map<string, ReturnType<typeof emptyAreaWorkCounts>>();
+    const lastSignalAt = new Map<string, number>();
+    const ensure = (areaId: string) => {
+      const existing = counts.get(areaId);
+      if (existing) return existing;
+      const next = emptyAreaWorkCounts();
+      counts.set(areaId, next);
+      return next;
+    };
+    const touch = (areaId: string, ts?: number) => {
+      if (!Number.isFinite(ts)) return;
+      lastSignalAt.set(areaId, Math.max(lastSignalAt.get(areaId) ?? 0, ts!));
+    };
     for (const fact of facts) {
       if (fact.status !== 'verified' && fact.status !== 'candidate') continue;
-      const entry = counts.get(fact.areaId) || { verified: 0, candidate: 0 };
-      entry[fact.status as 'verified' | 'candidate'] += 1;
-      counts.set(fact.areaId, entry);
+      const areaId = String(fact.areaId);
+      if (!areaIds.has(areaId)) continue;
+      ensure(areaId).facts[fact.status as 'verified' | 'candidate'] += 1;
+      touch(areaId, fact.updatedAt);
+    }
+    const linkedTaskIdsByArea = new Map<string, Set<string>>();
+    for (const link of links) {
+      if (link.status === 'rejected') continue;
+      const areaId = String(link.areaId);
+      if (!areaIds.has(areaId)) continue;
+      const entry = ensure(areaId);
+      if (link.status === 'candidate') entry.suggestedLinks += 1;
+      if (link.artifactKind === 'mailThread') entry.mail += 1;
+      if (link.artifactKind === 'calendarEvent') entry.events += 1;
+      if (link.artifactKind === 'task') {
+        const ids = linkedTaskIdsByArea.get(areaId) ?? new Set<string>();
+        ids.add(link.artifactId);
+        linkedTaskIdsByArea.set(areaId, ids);
+      }
+      touch(areaId, link.updatedAt);
+    }
+    for (const card of cards) {
+      const areaId = boardToArea.get(String(card.boardId));
+      if (!areaId) continue;
+      const ids = linkedTaskIdsByArea.get(areaId) ?? new Set<string>();
+      ids.add(String(card._id));
+      linkedTaskIdsByArea.set(areaId, ids);
+      if (!card.completedAt && card.dueAt && card.dueAt < now()) ensure(areaId).overdueTasks += 1;
+      touch(areaId, card.updatedAt);
+    }
+    for (const [areaId, ids] of linkedTaskIdsByArea) {
+      ensure(areaId).tasks = ids.size;
+    }
+    for (const intent of intents) {
+      const areaId = String(intent.areaId ?? '');
+      if (!areaIds.has(areaId) || intent.status === 'done' || intent.status === 'archived') continue;
+      const entry = ensure(areaId);
+      entry.plans += 1;
+      if (intent.status === 'needs_answers') entry.needsYou += 1;
+      touch(areaId, intent.updatedAt);
+    }
+    for (const project of projects) {
+      const areaId = String(project.areaId ?? '');
+      if (!areaIds.has(areaId) || (project.status !== 'active' && project.status !== 'paused')) continue;
+      ensure(areaId).projects += 1;
+      touch(areaId, project.updatedAt);
     }
     return areas
       .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99) || a.name.localeCompare(b.name))
       .map((area) => ({
         ...area,
-        factCounts: counts.get(area._id) || { verified: 0, candidate: 0 },
+        factCounts: counts.get(String(area._id))?.facts || { verified: 0, candidate: 0 },
+        workCounts: counts.get(String(area._id)) || emptyAreaWorkCounts(),
+        lastSignalAt: lastSignalAt.get(String(area._id)) ?? null,
       }));
   },
 });
