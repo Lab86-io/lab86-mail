@@ -34,6 +34,7 @@ import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
+import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
 import { taskSourceColor } from '@/lib/shared/task-colors';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
@@ -129,6 +130,7 @@ interface DailyReportPayload {
     | DailyReportCalendarItem[]
     | DailyReportMcpItem[]
     | string
+    | AlbatrossDailyReportContext
     | undefined
   >;
   stats: {
@@ -449,9 +451,12 @@ if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.c
 	})();
 	</script>`;
 
-function withReportArtifactRuntime(html: string): string {
+function withReportArtifactRuntime(
+  html: string,
+  albatrossContext?: AlbatrossDailyReportContext | null,
+): string {
   if (!html) return html;
-  let next = html.replace(
+  let next = injectReportAreaBrief(html, albatrossContext ?? null).replace(
     /<script\b(?=[^>]*\bid=(["'])lab86-report-runtime-js\1)[^>]*>[\s\S]*?<\/script>/gi,
     '',
   );
@@ -465,11 +470,13 @@ function withReportArtifactRuntime(html: string): string {
 
 function ReportArtifact({
   html,
+  albatrossContext,
   dismissedTaskIds,
   dismissedThreadRecords,
   onChanged,
 }: {
   html: string;
+  albatrossContext?: AlbatrossDailyReportContext | null;
   dismissedTaskIds: string[];
   dismissedThreadRecords: DailyReportThreadDismissalRecord[];
   onChanged?: () => void;
@@ -478,6 +485,7 @@ function ReportArtifact({
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   // The brief is theme-agnostic HTML (CSS vars with fallbacks); the host injects
   // the user's actual theme so it matches the app and restyles live on change.
@@ -585,11 +593,16 @@ function ReportArtifact({
             setPrimaryView('mail');
             return ack(true);
           case 'open_view':
-            if (['mail', 'tasks', 'calendar'].includes(payload.view)) {
+            if (['mail', 'tasks', 'calendar', 'areas'].includes(payload.view)) {
               setPrimaryView(payload.view);
               return ack(true);
             }
             return ack(false, 'unknown view');
+          case 'open_area':
+            if (!payload.areaId) return ack(false, 'missing areaId');
+            setSelectedAreaId(String(payload.areaId));
+            setPrimaryView('areas');
+            return ack(true);
           case 'toggle_task':
             if (!payload.cardId) return ack(false, 'missing cardId');
             {
@@ -716,13 +729,20 @@ function ReportArtifact({
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [setSelectedThread, setThreadAccount, setPrimaryView, setPendingReplyBody, onChanged]);
+  }, [
+    setSelectedThread,
+    setThreadAccount,
+    setPrimaryView,
+    setSelectedAreaId,
+    setPendingReplyBody,
+    onChanged,
+  ]);
 
   return (
     <iframe
       ref={frameRef}
       title="The Daily Brief"
-      srcDoc={withReportArtifactRuntime(html)}
+      srcDoc={withReportArtifactRuntime(html, albatrossContext)}
       onLoad={() => {
         postTheme();
         postDismissedTasks();
@@ -1337,6 +1357,7 @@ export function DailyReport() {
               >
                 <ReportArtifact
                   html={report.html}
+                  albatrossContext={asAlbatrossContext(report.sections.albatross)}
                   dismissedTaskIds={dismissedTaskIds}
                   dismissedThreadRecords={dismissedThreadRecords}
                   onChanged={invalidate}

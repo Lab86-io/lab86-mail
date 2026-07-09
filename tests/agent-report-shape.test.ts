@@ -190,6 +190,39 @@ describe('daily brief service metadata', () => {
     expect(data.services[0].logoSvg).toContain('gmail-footer-gradient-a');
   });
 
+  test('buildDataPrompt carries Albatross area context for artifact area briefs', async () => {
+    const report = reportFixture({
+      sections: {
+        ...reportFixture().sections,
+        albatross: {
+          includedAreas: [
+            {
+              areaId: 'area_launch',
+              name: 'Launch',
+              reason: 'Live Albatross work',
+              faviconUrl: 'https://example.test/favicon.ico',
+            },
+          ],
+          askBeforeCentering: [],
+          activeIntents: [{ id: 'intent_1', text: 'Plan launch review', areaId: 'area_launch' }],
+          activeProjects: [{ id: 'project_1', title: 'Ship launch', areaId: 'area_launch' }],
+          contextReview: [],
+          completions: [],
+        },
+      },
+    });
+    const prompt = await withToolContext(() =>
+      Promise.resolve(buildDataPrompt(report, { digests: [], voiceSamples: [], services: [] })),
+    );
+    const json = prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}';
+    const data = JSON.parse(json);
+
+    expect(data.albatross.includedAreas[0]).toMatchObject({ areaId: 'area_launch', name: 'Launch' });
+    expect(HTML_ARTIFACT_BRIEF).toContain('AREA BRIEFS MODULE');
+    expect(HTML_ARTIFACT_BRIEF).toContain('open_area payload { areaId }');
+    expect(HTML_ARTIFACT_BRIEF).toContain('view:"mail"|"tasks"|"calendar"|"areas"');
+  });
+
   test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('MASTHEAD (signature element');
     expect(HTML_ARTIFACT_BRIEF).toContain('Claude Artifact');

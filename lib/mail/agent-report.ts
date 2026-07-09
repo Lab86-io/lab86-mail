@@ -721,6 +721,7 @@ DESIGN:
 - REQUIRED VISUAL MODULES: when there is enough data, include at least TWO custom visual modules beyond the masthead; one must be temporal if calendar/tasks exist.
 - TIMELINE STANDARD: "The week ahead" must be a designed timeline/agenda system with rhythm, connectors, time bands, day groupings, or swimlanes. Do not render it as loose repeated day cards.
 - ACTION DESIGN: action controls may be chips, tabs, stamps, margin actions, inline labels, or rail controls, but they must be integrated into the artifact. Avoid rows of large generic rectangles.
+- AREA BRIEFS MODULE: when data.albatross is non-null, include a visible "Area briefs" / "Areas" module near the lede or before the footer. Use data.albatross.includedAreas, askBeforeCentering, activeProjects, activeIntents, contextReview, and completions to show the most relevant area cards/rows. Use area imageUrl/faviconUrl when provided. Every area card with an areaId should include an open_area action that leads to the standalone area brief.
 
 AI SLOP BAN LIST — before final output, ensure none of these dominate:
 - Generic hero/subtitle/CTA formula; purple/blue gradient SaaS palette; decorative glow blobs; equal feature cards; repeated bordered cards for everything; fake stats; generic section names; stock icon/emoji decoration; glassmorphism as hierarchy; full-width paragraph blocks; timelines without time/connectors; charts that decorate instead of explaining; components that would still make sense if the real mail/calendar/task content were swapped out.
@@ -730,11 +731,13 @@ CONTENT (compose from your analysis; omit empty parts):
 - "Needs you": the threads YOU judged as needing action — person, your one-line read of why from the body, how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via draft_reply.
 - "The week ahead": today → +7 days of calendar as a clean timeline/table/swimlane; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
 - Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from mail/meetings (create_task). Tasks are first-class, not a footnote.
+- Area briefs: if data.albatross exists, show the active/relevant areas and why they matter today. Ask-before-centering areas should read as questions, not assumptions.
 - Add other sections only if they improve this specific day: waiting on others, clear the noise, prep dossier, GitHub/tool digest, focus blocks, travel/logistics, or decision queue.
 
 VALID ACTIONS:
 - open_thread payload { account, threadId }
-- open_view payload { view:"mail"|"tasks"|"calendar" }
+- open_view payload { view:"mail"|"tasks"|"calendar"|"areas" }
+- open_area payload { areaId }
 - open_event payload { account, eventId }
 - resolve_thread payload { account, threadId, subject?, receivedAt?, trackedThreadId? }
 - dismiss_thread payload { account, threadId, subject?, receivedAt? }
@@ -828,6 +831,8 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     // Items from connected tools the user enabled for the
     // brief: open issues, PRs awaiting review, assigned tickets, mentions.
     mcp: (report.sections.mcp ?? []).slice(0, 20),
+    // Structured area context. Render an Area briefs module when present.
+    albatross: report.sections.albatross ?? null,
   };
 
   return [
