@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   AREA_PLACE_CAP,
+  areaBrandingFromFacts,
   areaBriefHeadline,
   areaHasNoLinks,
   areaHomeSections,
@@ -10,15 +11,19 @@ import {
   areaOverviewStatus,
   areaPulse,
   extractAreaPlaces,
+  faviconUrlForDomain,
   formatEventTime,
   intentDisplayTitle,
   mapsSearchUrl,
+  normalizeAreaDomain,
+  PERSONAL_AREA_EXTERNAL_ID,
   planActionLabel,
   planStatusMeta,
   RAIL_AREA_CAP,
   railAreaBadge,
   railAreaRows,
   splitBriefRows,
+  suggestIntentArea,
   taskRowMeta,
 } from '../lib/albatross/area-home';
 
@@ -61,6 +66,89 @@ describe('areaHasNoLinks', () => {
     expect(areaHasNoLinks(counts(1, 0, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 1, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 0, 1))).toBe(false);
+  });
+});
+
+describe('area branding helpers', () => {
+  test('normalizes domains from URLs, emails, @domains, and plain domains', () => {
+    expect(normalizeAreaDomain('https://www.statpearls.com/path?x=1')).toBe('statpearls.com');
+    expect(normalizeAreaDomain('Inbox <alerts@sub.example.org>')).toBe('sub.example.org');
+    expect(normalizeAreaDomain('@linear.app')).toBe('linear.app');
+    expect(normalizeAreaDomain('Not a domain')).toBeNull();
+  });
+
+  test('builds a bounded favicon URL from the normalized domain', () => {
+    expect(faviconUrlForDomain('https://www.linear.app', 256)).toBe(
+      'https://www.google.com/s2/favicons?domain=linear.app&sz=128',
+    );
+    expect(faviconUrlForDomain('not a domain')).toBeNull();
+  });
+
+  test('prefers explicit area branding, then verified facts, then candidate facts', () => {
+    expect(
+      areaBrandingFromFacts(
+        { primaryDomain: 'https://area.example', imageUrl: 'https://cdn.example/hero.png' },
+        [{ kind: 'domain', value: 'fact.example', status: 'verified' }],
+      ),
+    ).toEqual({
+      primaryDomain: 'area.example',
+      faviconUrl: 'https://www.google.com/s2/favicons?domain=area.example&sz=64',
+      imageUrl: 'https://cdn.example/hero.png',
+    });
+
+    expect(
+      areaBrandingFromFacts(null, [
+        { kind: 'domain', value: 'candidate.example', status: 'candidate' },
+        { kind: 'email', value: 'alerts@verified.example', status: 'verified' },
+      ]),
+    ).toEqual({
+      primaryDomain: 'verified.example',
+      faviconUrl: 'https://www.google.com/s2/favicons?domain=verified.example&sz=64',
+      imageUrl: null,
+    });
+  });
+});
+
+describe('suggestIntentArea', () => {
+  const areas = [
+    {
+      _id: 'personal',
+      name: 'Personal',
+      externalId: PERSONAL_AREA_EXTERNAL_ID,
+      primaryDomain: null,
+    },
+    {
+      _id: 'work',
+      name: 'StatPearls',
+      kind: 'work',
+      description: 'medical education contracts and editorial deadlines',
+      primaryDomain: 'statpearls.com',
+    },
+    {
+      _id: 'home',
+      name: 'House',
+      kind: 'property',
+      description: 'repairs, utilities, and neighborhood messages',
+      primaryDomain: null,
+    },
+  ];
+
+  test('uses strong name or domain evidence when it is present in the capture text', () => {
+    expect(suggestIntentArea('follow up on the StatPearls renewal', areas)).toEqual({
+      areaId: 'work',
+      confidence: 'high',
+      reason: 'StatPearls',
+    });
+    expect(suggestIntentArea('email legal@statpearls.com about the contract', areas)?.areaId).toBe('work');
+  });
+
+  test('defaults only when there is exactly one active area', () => {
+    expect(suggestIntentArea('buy replacement filters', [areas[0]])).toEqual({
+      areaId: 'personal',
+      confidence: 'medium',
+      reason: 'Only active area',
+    });
+    expect(suggestIntentArea('buy replacement filters', areas)).toBeNull();
   });
 });
 

@@ -1,11 +1,15 @@
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
+import { areaBrandingFromFacts } from './area-home';
 
 export interface AlbatrossDailyReportArea {
   areaId: string;
   name: string;
   reason: string;
   loudness?: number;
+  primaryDomain?: string | null;
+  faviconUrl?: string | null;
+  imageUrl?: string | null;
 }
 
 export interface AlbatrossDailyReportIntent {
@@ -25,7 +29,15 @@ export interface AlbatrossDailyReportProject {
 
 export interface AlbatrossDailyReportContext {
   includedAreas: AlbatrossDailyReportArea[];
-  askBeforeCentering: Array<{ areaId: string; name: string; prompt: string; loudness?: number }>;
+  askBeforeCentering: Array<{
+    areaId: string;
+    name: string;
+    prompt: string;
+    loudness?: number;
+    primaryDomain?: string | null;
+    faviconUrl?: string | null;
+    imageUrl?: string | null;
+  }>;
   activeIntents: AlbatrossDailyReportIntent[];
   activeProjects: AlbatrossDailyReportProject[];
   contextReview: Array<{ id: string; areaId?: string; title: string; reason?: string }>;
@@ -47,6 +59,7 @@ interface BuildAlbatrossDailyReportFromLiveInput {
   approvals?: any[];
   applications?: any[];
   sprints?: any[];
+  areas?: any[];
 }
 
 interface LoadLiveAlbatrossDailyReportInput {
@@ -206,6 +219,19 @@ export function buildAlbatrossDailyReportContextFromLive(
   const approvals = input.approvals ?? [];
   const applications = input.applications ?? [];
   const sprints = input.sprints ?? [];
+  const areaRows = input.areas ?? [];
+  const areaById = new Map(
+    areaRows.map((area) => {
+      const branding = areaBrandingFromFacts(area, []);
+      return [
+        String(area._id ?? area.id ?? area.areaId),
+        {
+          name: area.name || readableAreaName(String(area._id ?? area.id ?? area.areaId)),
+          ...branding,
+        },
+      ] as const;
+    }),
+  );
   const activeProjects = projects
     .filter((project) => project.status === 'active')
     .map((project) => ({
@@ -239,8 +265,11 @@ export function buildAlbatrossDailyReportContextFromLive(
   }
   const includedAreas = [...areaIds].slice(0, 6).map((areaId) => ({
     areaId,
-    name: readableAreaName(areaId),
+    name: areaById.get(areaId)?.name || readableAreaName(areaId),
     reason: 'Live Albatross work',
+    primaryDomain: areaById.get(areaId)?.primaryDomain ?? null,
+    faviconUrl: areaById.get(areaId)?.faviconUrl ?? null,
+    imageUrl: areaById.get(areaId)?.imageUrl ?? null,
   }));
 
   const pressureByArea = new Map<string, { approvals: number; unresolved: number }>();
@@ -270,11 +299,16 @@ export function buildAlbatrossDailyReportContextFromLive(
           : null,
       ].filter(Boolean);
       const name = readableAreaName(areaId);
+      const areaBranding = areaById.get(areaId);
+      const displayName = areaBranding?.name || name;
       return {
         areaId,
-        name,
-        prompt: `${name} has ${signalParts.join(' and ')}. Include it in today's report?`,
+        name: displayName,
+        prompt: `${displayName} has ${signalParts.join(' and ')}. Include it in today's report?`,
         loudness: Math.min(100, 45 + pressure.approvals * 20 + pressure.unresolved * 15),
+        primaryDomain: areaBranding?.primaryDomain ?? null,
+        faviconUrl: areaBranding?.faviconUrl ?? null,
+        imageUrl: areaBranding?.imageUrl ?? null,
       };
     })
     .sort((a, b) => (b.loudness ?? 0) - (a.loudness ?? 0))
@@ -363,6 +397,7 @@ export async function loadLiveAlbatrossDailyReportContext(
       approvals: live?.approvals,
       applications: live?.applications,
       sprints: live?.sprints,
+      areas: live?.areas,
     });
   } catch (err: any) {
     console.warn('Daily report Albatross context failed:', err?.message || err);

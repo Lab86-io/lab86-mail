@@ -695,7 +695,7 @@ export const dailyReportContext = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 100);
-    const [projects, approvals, applications, sprints] = await Promise.all([
+    const [projects, approvals, applications, sprints, areas] = await Promise.all([
       ctx.db
         .query('albatrossProjects')
         .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
@@ -716,6 +716,10 @@ export const dailyReportContext = query({
         .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
         .order('desc')
         .take(limit),
+      ctx.db
+        .query('areas')
+        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
+        .collect(),
     ]);
 
     return {
@@ -723,6 +727,7 @@ export const dailyReportContext = query({
       approvals,
       applications,
       sprints,
+      areas,
     };
   },
 });

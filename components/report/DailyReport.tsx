@@ -1699,6 +1699,21 @@ function TaskCalendarBrief({
 // the inbox is quiet, and asks - rather than assumes - about loud-but-undeclared
 // areas. Kept compact: one operational strip in the report's voice, never a
 // second dashboard.
+function AreaReportMark({ src }: { src?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return null;
+  return (
+    // biome-ignore lint/performance/noImgElement: report area marks use arbitrary favicon/image URLs.
+    <img
+      src={src}
+      alt=""
+      className="mt-0.5 size-5 shrink-0 rounded object-cover"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportContext | null; delay: number }) {
   if (!context) return null;
   const {
@@ -1716,16 +1731,19 @@ function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportConte
       id: `area:${area.areaId}`,
       title: area.name,
       meta: area.reason,
+      imageUrl: area.imageUrl ?? area.faviconUrl ?? null,
     })),
     ...contextReview.map((item) => ({
       id: `review:${item.id}`,
       title: item.title,
       meta: item.reason || 'Needs context review',
+      imageUrl: null,
     })),
     ...completions.map((event) => ({
       id: `completion:${event.id}`,
       title: event.summary,
       meta: event.completedAt ? formatDate(event.completedAt) : 'Completed',
+      imageUrl: null,
     })),
   ].slice(0, 6);
   if (!hasActive && askBeforeCentering.length === 0 && contextItems.length === 0 && !monthlyPrompt) {
@@ -1795,14 +1813,17 @@ function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportConte
               <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Worth a check?</h3>
               <ul className="mt-1.5 space-y-2">
                 {askBeforeCentering.map((area) => (
-                  <li key={area.areaId} className="min-w-0">
-                    <p className="text-[12.5px] leading-5 text-[var(--color-text-muted)]">
-                      {stripEmoji(area.prompt)}
-                    </p>
-                    <p className="mt-0.5 text-[10.5px] text-[var(--color-text-faint)]">
-                      {area.name}
-                      {typeof area.loudness === 'number' ? ` / loud in your inbox` : ''}
-                    </p>
+                  <li key={area.areaId} className="flex min-w-0 gap-2">
+                    <AreaReportMark src={area.imageUrl ?? area.faviconUrl ?? null} />
+                    <div className="min-w-0">
+                      <p className="text-[12.5px] leading-5 text-[var(--color-text-muted)]">
+                        {stripEmoji(area.prompt)}
+                      </p>
+                      <p className="mt-0.5 truncate text-[10.5px] text-[var(--color-text-faint)]">
+                        {area.name}
+                        {typeof area.loudness === 'number' ? ` / loud in your inbox` : ''}
+                      </p>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1815,11 +1836,16 @@ function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportConte
             <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Context carried in</h3>
             <ul className="mt-1.5 grid gap-x-5 gap-y-1.5 @[640px]:grid-cols-2">
               {contextItems.map((item) => (
-                <li key={item.id} className="min-w-0">
-                  <p className="truncate text-[12.5px] text-[var(--color-text)]">{stripEmoji(item.title)}</p>
-                  <p className="mt-0.5 truncate text-[10.5px] text-[var(--color-text-faint)]">
-                    {stripEmoji(item.meta)}
-                  </p>
+                <li key={item.id} className="flex min-w-0 gap-2">
+                  <AreaReportMark src={item.imageUrl ?? null} />
+                  <div className="min-w-0">
+                    <p className="truncate text-[12.5px] text-[var(--color-text)]">
+                      {stripEmoji(item.title)}
+                    </p>
+                    <p className="mt-0.5 truncate text-[10.5px] text-[var(--color-text-faint)]">
+                      {stripEmoji(item.meta)}
+                    </p>
+                  </div>
                 </li>
               ))}
             </ul>

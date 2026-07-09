@@ -2,7 +2,11 @@
 
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
+import {
+  useConvexAuth,
+  useMutation as useConvexMutation,
+  useQuery_experimental as useConvexQuery,
+} from 'convex/react';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
@@ -177,6 +181,35 @@ function RailDivider() {
   );
 }
 
+function AreaRailIcon({
+  area,
+}: {
+  area: { _id: string; name: string; faviconUrl?: string | null; imageUrl?: string | null };
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = !failed ? area.faviconUrl || area.imageUrl || null : null;
+  return (
+    <div className="grid size-4 shrink-0 place-items-center">
+      {src ? (
+        // biome-ignore lint/performance/noImgElement: rail area marks use arbitrary favicon/image URLs.
+        <img
+          src={src}
+          alt=""
+          className="size-4 rounded-sm object-cover"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span
+          className="size-2 rounded-full"
+          style={{ backgroundColor: categoricalColor(area._id) }}
+          aria-hidden
+        />
+      )}
+    </div>
+  );
+}
+
 export function Rail({
   albatrossEnabled = false,
   clerkEnabled = false,
@@ -292,6 +325,11 @@ export function Rail({
   // areas behave like first-class inboxes instead of hiding behind one door.
   // Auth-gated: a first-paint query before the Clerk token lands would error.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const ensurePersonal = useConvexMutation(api.albatross.ensurePersonal);
+  useEffect(() => {
+    if (!albatrossEnabled || !convexAuthed) return;
+    void ensurePersonal({}).catch(() => undefined);
+  }, [albatrossEnabled, convexAuthed, ensurePersonal]);
   const areasResult = useConvexQuery({
     query: (api as any).albatross.listAreasOverview,
     args: albatrossEnabled && convexAuthed ? { status: 'active' } : 'skip',
@@ -303,6 +341,8 @@ export function Rail({
               _id: string;
               name: string;
               kind: string;
+              faviconUrl?: string | null;
+              imageUrl?: string | null;
               factCounts?: { verified: number; candidate: number };
             }>
           | undefined) ?? [])
@@ -486,18 +526,7 @@ export function Rail({
                             ]}
                           />
                         ) : null}
-                        {/* Text-first rows: a small tone dot keys each area to the
-                            shared categorical palette, no per-area icon. The
-                            wrapper is a div on purpose — the menu button hides
-                            direct span children in icon mode, and the dot is
-                            all the collapsed rail shows for an area. */}
-                        <div className="grid size-4 shrink-0 place-items-center">
-                          <span
-                            className="size-2 rounded-full"
-                            style={{ backgroundColor: categoricalColor(area._id) }}
-                            aria-hidden
-                          />
-                        </div>
+                        <AreaRailIcon area={area} />
                         <span className="truncate">{area.name}</span>
                         {/* One indicator per row: facts awaiting confirmation. */}
                         {pending ? (

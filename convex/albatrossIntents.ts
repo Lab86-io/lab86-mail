@@ -1,10 +1,12 @@
 import { v } from 'convex/values';
+import { PERSONAL_AREA_EXTERNAL_ID } from '../lib/albatross/area-home';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { normalizeSourceRefs, normalizeText } from './albatrossModel';
 import { recordCompletionEvent } from './albatrossWork';
+import { insertBoardWithColumns } from './boards';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -116,6 +118,54 @@ async function requirePlan(ctx: QueryCtx | MutationCtx, planId: Id<'albatrossInt
   return plan;
 }
 
+async function ensurePersonalArea(ctx: MutationCtx, userId: string): Promise<Id<'areas'>> {
+  const ts = now();
+  const existing = await ctx.db
+    .query('areas')
+    .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', PERSONAL_AREA_EXTERNAL_ID))
+    .unique();
+  if (existing) {
+    if (existing.status !== 'active') {
+      await ctx.db.patch(existing._id, { status: 'active', archivedAt: undefined, updatedAt: ts });
+    }
+    if (existing.boardId) {
+      const board = await ctx.db.get(existing.boardId);
+      if (board) return existing._id;
+    }
+    const boardId = await insertBoardWithColumns(ctx, userId, existing.name);
+    await ctx.db.patch(existing._id, { boardId, updatedAt: ts });
+    return existing._id;
+  }
+
+  const areaId = await ctx.db.insert('areas', {
+    userId,
+    externalId: PERSONAL_AREA_EXTERNAL_ID,
+    name: 'Personal',
+    kind: 'personal',
+    status: 'active',
+    description: 'Personal mail, obligations, and catch-all context.',
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  const boardId = await insertBoardWithColumns(ctx, userId, 'Personal');
+  await ctx.db.patch(areaId, { boardId, updatedAt: ts });
+  return areaId;
+}
+
+async function normalizeIntentAreaId(
+  ctx: MutationCtx,
+  userId: string,
+  areaId: string | undefined,
+): Promise<string | undefined> {
+  const raw = bounded(areaId, 160);
+  if (!raw) return String(await ensurePersonalArea(ctx, userId));
+  const docId = ctx.db.normalizeId('areas', raw);
+  if (!docId) throw new Error('Area not found.');
+  const area = await ctx.db.get(docId);
+  if (!area || area.userId !== userId || area.status !== 'active') throw new Error('Area not found.');
+  return String(area._id);
+}
+
 export const createIntent = mutation({
   args: {
     ...callerArgs,
@@ -136,9 +186,18 @@ export const createIntent = mutation({
         .query('albatrossIntents')
         .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', externalId))
         .unique();
-      if (existing) return existing._id;
+      if (existing) {
+        if (!existing.areaId) {
+          await ctx.db.patch(existing._id, {
+            areaId: await normalizeIntentAreaId(ctx, userId, args.areaId),
+            updatedAt: now(),
+          });
+        }
+        return existing._id;
+      }
     }
     const ts = now();
+    const areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
     return ctx.db.insert('albatrossIntents', {
       userId,
       externalId,
@@ -147,7 +206,7 @@ export const createIntent = mutation({
       source: args.source,
       title: bounded(args.title, 180),
       status: 'captured',
-      areaId: bounded(args.areaId, 160),
+      areaId,
       createdAt: ts,
       updatedAt: ts,
     });
@@ -209,7 +268,7 @@ export const updateIntent = mutation({
     const patch: Record<string, unknown> = { updatedAt: ts };
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
     if (args.kind !== undefined) patch.kind = bounded(args.kind, 40);
-    if (args.areaId !== undefined) patch.areaId = bounded(args.areaId, 160) || undefined;
+    if (args.areaId !== undefined) patch.areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
     if (args.priority !== undefined) patch.priority = Math.min(Math.max(Math.round(args.priority), 1), 3);
     if (args.status !== undefined) {
       patch.status = args.status;
@@ -344,7 +403,8 @@ export const savePlan = mutation({
       status: planStatus,
       title: bounded(args.title, 180) ?? intent.title,
       kind: args.kind !== undefined ? bounded(args.kind, 40) : intent.kind,
-      areaId: args.areaId !== undefined ? bounded(args.areaId, 160) : intent.areaId,
+      areaId:
+        args.areaId !== undefined ? await normalizeIntentAreaId(ctx, userId, args.areaId) : intent.areaId,
       priority:
         args.priority !== undefined ? Math.min(Math.max(Math.round(args.priority), 1), 3) : intent.priority,
       questions: args.questions ?? intent.questions,

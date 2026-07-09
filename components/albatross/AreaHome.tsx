@@ -21,7 +21,7 @@
 // Plans, projects, and places are now components of the area, not separate pages.
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
-import { AlertCircle, ArrowRight, CalendarDays, Inbox, Sparkles } from 'lucide-react';
+import { AlertCircle, ArrowRight, CalendarDays, Inbox, RefreshCw, Sparkles } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -95,8 +95,16 @@ interface AreaFactRow {
   status: string;
 }
 
+interface AreaIdentityLike {
+  _id: string;
+  name: string;
+  primaryDomain?: string | null;
+  faviconUrl?: string | null;
+  imageUrl?: string | null;
+}
+
 interface AreaHomeData {
-  area: { _id: string; name: string; kind: string; description?: string };
+  area: AreaIdentityLike & { kind: string; description?: string };
   facts: { verified: AreaFactRow[]; candidate: AreaFactRow[] };
   mail: AreaMailRow[];
   events: AreaEventRow[];
@@ -120,6 +128,9 @@ interface AreaOverviewRow {
   name: string;
   kind: string;
   description?: string;
+  primaryDomain?: string | null;
+  faviconUrl?: string | null;
+  imageUrl?: string | null;
   factCounts: { verified: number; candidate: number };
   workCounts?: AreaOverviewCountsLike;
   lastSignalAt?: number | null;
@@ -244,7 +255,7 @@ function AreaChooserCard({ area, onOpen }: { area: AreaOverviewRow; onOpen: () =
       )}
     >
       <div className="flex items-center gap-2">
-        <ToneDot id={area._id} />
+        <AreaMark area={area} />
         <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{area.name}</span>
         <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
           {area.kind}
@@ -367,7 +378,7 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
           Areas
         </button>
         <span className="text-[12px] text-[var(--color-text-faint)]">/</span>
-        <ToneDot id={home.area._id} />
+        <AreaMark area={home.area} />
         <h2 className="min-w-0 truncate text-[15px] font-semibold tracking-tight">{home.area.name}</h2>
         <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
           {home.area.kind}
@@ -375,7 +386,8 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
         <span className="hidden text-[11px] tabular-nums text-[var(--color-text-faint)] sm:inline">
           {home.counts.facts.verified} verified · {home.counts.facts.candidate} suggested
         </span>
-        <ManageLink className="ml-auto" />
+        <RefreshBriefButton areaId={home.area._id} />
+        <ManageLink />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-10">
@@ -440,13 +452,21 @@ function BriefLead({
     <section className="px-3 pb-2 pt-4">
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
         <div className="flex flex-col gap-2 min-[760px]:flex-row min-[760px]:items-start min-[760px]:justify-between">
-          <div className="min-w-0">
-            <p className="text-[14px] font-medium leading-snug text-[var(--color-text)]">{headline}</p>
-            {home.area.description ? (
-              <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
-                {home.area.description}
-              </p>
-            ) : null}
+          <div className="flex min-w-0 gap-3">
+            <AreaMark area={home.area} size="lg" />
+            <div className="min-w-0">
+              <p className="text-[14px] font-medium leading-snug text-[var(--color-text)]">{headline}</p>
+              {home.area.description ? (
+                <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                  {home.area.description}
+                </p>
+              ) : null}
+              {home.area.primaryDomain ? (
+                <p className="mt-1 truncate text-[11.5px] text-[var(--color-text-faint)]">
+                  {home.area.primaryDomain}
+                </p>
+              ) : null}
+            </div>
           </div>
           <div className="flex shrink-0 flex-wrap gap-1.5">
             <BriefProperty
@@ -1007,7 +1027,7 @@ function ContextSection({ home, count }: { home: AreaHomeData; count: number }) 
       await verifyFact({
         factId: fact._id as Id<'areaFacts'>,
         confirmationRefs: [
-          { kind: 'user_confirmation', id: `area-home:${fact._id}:${Date.now()}`, confirmedAt: Date.now() },
+          { kind: 'userConfirmation', id: `area-home:${fact._id}:${Date.now()}`, confirmedAt: Date.now() },
         ],
       });
     } finally {
@@ -1163,11 +1183,64 @@ function SuggestedTag() {
   );
 }
 
-function ToneDot({ id }: { id: string }) {
+function AreaMark({ area, size = 'sm' }: { area: AreaIdentityLike; size?: 'sm' | 'lg' }) {
+  const [failed, setFailed] = useState(false);
+  const src = !failed ? area.imageUrl || area.faviconUrl || null : null;
+  const box = size === 'lg' ? 'size-10 rounded-lg' : 'size-4 rounded-sm';
+  const dot = size === 'lg' ? 'size-5 rounded-md' : 'size-2 rounded-full';
   return (
-    <span className="grid size-4 shrink-0 place-items-center" aria-hidden>
-      <span className="size-2 rounded-full" style={{ backgroundColor: categoricalColor(id) }} />
+    <span
+      className={cn(
+        'grid shrink-0 place-items-center overflow-hidden',
+        size === 'lg' && 'border border-[var(--color-border)] bg-[var(--color-bg-muted)]',
+        box,
+      )}
+      aria-hidden
+    >
+      {src ? (
+        // biome-ignore lint/performance/noImgElement: arbitrary user/domain favicon URLs are tiny unoptimized identity marks.
+        <img
+          src={src}
+          alt=""
+          className="size-full object-cover"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className={dot} style={{ backgroundColor: categoricalColor(area._id) }} />
+      )}
     </span>
+  );
+}
+
+function RefreshBriefButton({ areaId }: { areaId: string }) {
+  const reindex = useMutation(api.albatross.reindexMyAreas);
+  const [busy, setBusy] = useState(false);
+  const [queued, setQueued] = useState(false);
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await reindex({ areaId: areaId as Id<'areas'> });
+      setQueued(true);
+      window.setTimeout(() => setQueued(false), 2800);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      disabled={busy}
+      onClick={() => void run()}
+      title="Refresh this area brief"
+      className="ml-auto inline-flex gap-1.5 text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+    >
+      <RefreshCw className={cn('size-3', busy && 'animate-spin')} aria-hidden />
+      {queued ? 'Queued' : 'Refresh brief'}
+    </Button>
   );
 }
 

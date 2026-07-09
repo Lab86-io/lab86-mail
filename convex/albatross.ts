@@ -1,9 +1,16 @@
 import { v } from 'convex/values';
-import { extractAreaPlaces, intentDisplayTitle } from '../lib/albatross/area-home';
+import {
+  areaBrandingFromFacts,
+  extractAreaPlaces,
+  faviconUrlForDomain,
+  intentDisplayTitle,
+  normalizeAreaDomain,
+  PERSONAL_AREA_EXTERNAL_ID,
+} from '../lib/albatross/area-home';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { internalAction, mutation, query } from './_generated/server';
+import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import {
   type AlbatrossConfirmationRef,
   type AlbatrossSourceRef,
@@ -146,6 +153,83 @@ async function ensureAreaBoard(
   return boardId;
 }
 
+function cleanOptionalUrl(value: string | undefined) {
+  const raw = normalizeText(value || '').slice(0, 800);
+  return /^https?:\/\//i.test(raw) ? raw : undefined;
+}
+
+function areaBrandingPatch(args: { primaryDomain?: string; faviconUrl?: string; imageUrl?: string }) {
+  const primaryDomain =
+    args.primaryDomain !== undefined ? normalizeAreaDomain(args.primaryDomain) || undefined : undefined;
+  const shouldPatchFavicon = args.faviconUrl !== undefined || args.primaryDomain !== undefined;
+  const faviconUrl = shouldPatchFavicon
+    ? cleanOptionalUrl(args.faviconUrl) ||
+      (primaryDomain ? faviconUrlForDomain(primaryDomain) || undefined : undefined)
+    : undefined;
+  const imageUrl = args.imageUrl !== undefined ? cleanOptionalUrl(args.imageUrl) : undefined;
+  return {
+    ...(args.primaryDomain !== undefined ? { primaryDomain } : {}),
+    ...(shouldPatchFavicon ? { faviconUrl } : {}),
+    ...(args.imageUrl !== undefined ? { imageUrl } : {}),
+  };
+}
+
+async function ensurePersonalArea(ctx: MutationCtx, userId: string): Promise<Id<'areas'>> {
+  const ts = now();
+  const byExternal = await ctx.db
+    .query('areas')
+    .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', PERSONAL_AREA_EXTERNAL_ID))
+    .unique();
+  if (byExternal) {
+    const patch: Record<string, unknown> = {};
+    if (byExternal.status !== 'active') {
+      patch.status = 'active';
+      patch.archivedAt = undefined;
+    }
+    if (byExternal.kind !== 'personal') patch.kind = 'personal';
+    if (Object.keys(patch).length) {
+      patch.updatedAt = ts;
+      await ctx.db.patch(byExternal._id, patch);
+    }
+    await ensureAreaBoard(ctx, userId, byExternal);
+    return byExternal._id;
+  }
+
+  const mine = await ctx.db
+    .query('areas')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect();
+  const existingPersonal = mine.find((area) => area.name.toLowerCase() === 'personal');
+  if (existingPersonal) {
+    await ctx.db.patch(existingPersonal._id, {
+      externalId: PERSONAL_AREA_EXTERNAL_ID,
+      kind: 'personal',
+      status: 'active',
+      archivedAt: undefined,
+      updatedAt: ts,
+    });
+    await ensureAreaBoard(ctx, userId, existingPersonal);
+    return existingPersonal._id;
+  }
+
+  const areaId = await ctx.db.insert('areas', {
+    userId,
+    externalId: PERSONAL_AREA_EXTERNAL_ID,
+    name: 'Personal',
+    kind: 'personal',
+    status: 'active',
+    description: 'Personal mail, obligations, and catch-all context.',
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  await ensureAreaBoard(ctx, userId, { _id: areaId, name: 'Personal' });
+  return areaId;
+}
+
+async function scheduleAreaReindex(ctx: MutationCtx, userId: string, delayMs = 5_000) {
+  await ctx.scheduler.runAfter(delayMs, internal.albatross.reindexUserAreaArtifacts, { userId });
+}
+
 export const createArea = mutation({
   args: {
     ...callerArgs,
@@ -154,6 +238,9 @@ export const createArea = mutation({
     kind: v.optional(v.string()),
     description: v.optional(v.string()),
     priority: v.optional(v.number()),
+    primaryDomain: v.optional(v.string()),
+    faviconUrl: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -177,9 +264,11 @@ export const createArea = mutation({
         ...(args.kind ? { kind: normalizeText(args.kind, 'general').slice(0, 80) } : {}),
         ...(args.description ? { description: normalizeText(args.description).slice(0, 600) } : {}),
         ...(args.priority !== undefined ? { priority: args.priority } : {}),
+        ...areaBrandingPatch(args),
         updatedAt: ts,
       });
       await ensureAreaBoard(ctx, userId, existing);
+      await scheduleAreaReindex(ctx, userId);
       return existing._id;
     }
     await ensureExternalAreaIdAvailable(ctx, userId, externalId);
@@ -191,11 +280,34 @@ export const createArea = mutation({
       status: 'active',
       description: args.description ? normalizeText(args.description).slice(0, 600) : undefined,
       priority: args.priority,
+      ...areaBrandingPatch(args),
       createdAt: ts,
       updatedAt: ts,
     });
     await ensureAreaBoard(ctx, userId, { _id: areaId, name });
+    await ensurePersonalArea(ctx, userId);
+    await scheduleAreaReindex(ctx, userId);
     return areaId;
+  },
+});
+
+export const ensurePersonal = mutation({
+  args: callerArgs,
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const areaId = await ensurePersonalArea(ctx, userId);
+    return { areaId };
+  },
+});
+
+export const reindexMyAreas = mutation({
+  args: { ...callerArgs, areaId: v.optional(v.id('areas')) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    if (args.areaId) await requireArea(ctx, args.areaId, userId);
+    const personalAreaId = await ensurePersonalArea(ctx, userId);
+    await scheduleAreaReindex(ctx, userId, 0);
+    return { ok: true, personalAreaId };
   },
 });
 
@@ -207,11 +319,17 @@ export const updateArea = mutation({
     kind: v.optional(v.string()),
     description: v.optional(v.string()),
     priority: v.optional(v.number()),
+    primaryDomain: v.optional(v.string()),
+    faviconUrl: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
     status: v.optional(areaStatusValidator),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const area = await requireArea(ctx, args.areaId, userId);
+    if (area.externalId === PERSONAL_AREA_EXTERNAL_ID && args.status === 'archived') {
+      throw new Error('Personal is a system area and cannot be archived. Rename it instead.');
+    }
     const ts = now();
     await ctx.db.patch(args.areaId, {
       ...(args.name !== undefined ? { name: normalizeText(args.name, 'Untitled area').slice(0, 120) } : {}),
@@ -220,6 +338,7 @@ export const updateArea = mutation({
         ? { description: normalizeText(args.description).slice(0, 600) || undefined }
         : {}),
       ...(args.priority !== undefined ? { priority: args.priority } : {}),
+      ...areaBrandingPatch(args),
       ...(args.status !== undefined
         ? { status: args.status, archivedAt: args.status === 'archived' ? ts : undefined }
         : {}),
@@ -230,6 +349,7 @@ export const updateArea = mutation({
     if (args.status === 'active') {
       await ensureAreaBoard(ctx, userId, area);
     }
+    await scheduleAreaReindex(ctx, userId);
     return { ok: true };
   },
 });
@@ -238,9 +358,13 @@ export const archiveArea = mutation({
   args: { ...callerArgs, areaId: v.id('areas') },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
+    const area = await requireArea(ctx, args.areaId, userId);
+    if (area.externalId === PERSONAL_AREA_EXTERNAL_ID) {
+      throw new Error('Personal is a system area and cannot be archived. Rename it instead.');
+    }
     const ts = now();
     await ctx.db.patch(args.areaId, { status: 'archived', archivedAt: ts, updatedAt: ts });
+    await scheduleAreaReindex(ctx, userId);
     return { ok: true };
   },
 });
@@ -292,7 +416,7 @@ export const addAreaFact = mutation({
       confirmationRefs: refs.confirmationRefs,
     });
     const ts = now();
-    return await ctx.db.insert('areaFacts', {
+    const factId = await ctx.db.insert('areaFacts', {
       userId,
       areaId: args.areaId,
       externalId: args.externalId ? normalizeText(args.externalId) : undefined,
@@ -305,6 +429,8 @@ export const addAreaFact = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
+    await scheduleAreaReindex(ctx, userId);
+    return factId;
   },
 });
 
@@ -331,6 +457,7 @@ export const verifyAreaFact = mutation({
       verifiedAt: ts,
       updatedAt: ts,
     });
+    await scheduleAreaReindex(ctx, userId);
     return { ok: true };
   },
 });
@@ -348,6 +475,7 @@ export const rejectAreaFact = mutation({
       rejectedAt: ts,
       updatedAt: ts,
     });
+    await scheduleAreaReindex(ctx, userId);
     return { ok: true };
   },
 });
@@ -402,6 +530,7 @@ export const supersedeAreaFact = mutation({
       supersededByFactId: replacementFactId,
       updatedAt: ts,
     });
+    await scheduleAreaReindex(ctx, userId);
     return { ok: true, replacementFactId };
   },
 });
@@ -574,10 +703,87 @@ function emailFromAddress(raw: string): string {
   return (token || candidate).replace(/^mailto:/, '').replace(/[<>,;"']/g, '');
 }
 
+type AreaReindexFact = {
+  _id: string;
+  areaId: Id<'areas'>;
+  kind: string;
+  value: string;
+  status: 'candidate' | 'verified';
+  confirmationRefs: AlbatrossConfirmationRef[];
+  verifiedAt?: number;
+  updatedAt?: number;
+};
+
+type AreaReindexMatch = {
+  areaId: Id<'areas'>;
+  status: 'candidate' | 'verified';
+  confidence: number;
+  reason: string;
+  fact: AreaReindexFact;
+};
+
+function factIdentityKind(value: string): 'email' | 'domain' | null {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/^mailto:/, '')
+    .replace(/^@/, '');
+  if (!normalized || /\s/.test(normalized)) return null;
+  if (normalized.includes('@')) return 'email';
+  if (normalizeAreaDomain(normalized)) return 'domain';
+  return null;
+}
+
+function factIdentityValue(value: string, kind: 'email' | 'domain') {
+  if (kind === 'domain') return normalizeAreaDomain(value) || '';
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^mailto:/, '')
+    .replace(/^@/, '');
+}
+
+function confirmationForVerifiedFact(fact: AreaReindexFact): AlbatrossConfirmationRef[] {
+  const refs = normalizeConfirmationRefs(fact.confirmationRefs);
+  if (refs.some((ref) => ref.kind === 'userConfirmation' && Number.isFinite(ref.confirmedAt))) return refs;
+  return [];
+}
+
+function matchMailRowToAreaFact(
+  row: { fromAddress?: string },
+  facts: AreaReindexFact[],
+): AreaReindexMatch | null {
+  const email = emailFromAddress(row.fromAddress || '');
+  if (!email.includes('@')) return null;
+  const domain = email.split('@')[1] || '';
+  let best: AreaReindexMatch | null = null;
+  const rank = (match: AreaReindexMatch) =>
+    (match.status === 'verified' ? 4 : 0) + (match.reason.includes('email') ? 2 : 0);
+  for (const fact of facts) {
+    const kind = factIdentityKind(fact.value);
+    if (!kind) continue;
+    const value = factIdentityValue(fact.value, kind);
+    const matches = kind === 'email' ? email === value : domain === value;
+    if (!matches) continue;
+    const confirmationRefs = fact.status === 'verified' ? confirmationForVerifiedFact(fact) : [];
+    const status = fact.status === 'verified' && confirmationRefs.length ? 'verified' : 'candidate';
+    const match: AreaReindexMatch = {
+      areaId: fact.areaId,
+      status,
+      confidence: status === 'verified' ? 0.95 : 0.7,
+      reason: `${status} ${kind} ${value}`,
+      fact,
+    };
+    if (!best || rank(match) > rank(best)) best = match;
+  }
+  return best;
+}
+
 const AREA_OVERVIEW_LINK_SCAN = 2000;
 const AREA_OVERVIEW_INTENT_SCAN = 500;
 const AREA_OVERVIEW_PROJECT_SCAN = 500;
 const AREA_OVERVIEW_CARD_SCAN = 500;
+const AREA_REINDEX_PAGE_SIZE = 100;
 
 function emptyAreaWorkCounts() {
   return {
@@ -641,6 +847,7 @@ export const listAreasOverview = query({
     ]);
     const counts = new Map<string, ReturnType<typeof emptyAreaWorkCounts>>();
     const lastSignalAt = new Map<string, number>();
+    const factsByArea = new Map<string, typeof facts>();
     const ensure = (areaId: string) => {
       const existing = counts.get(areaId);
       if (existing) return existing;
@@ -656,6 +863,7 @@ export const listAreasOverview = query({
       if (fact.status !== 'verified' && fact.status !== 'candidate') continue;
       const areaId = String(fact.areaId);
       if (!areaIds.has(areaId)) continue;
+      factsByArea.set(areaId, [...(factsByArea.get(areaId) || []), fact]);
       ensure(areaId).facts[fact.status as 'verified' | 'candidate'] += 1;
       touch(areaId, fact.updatedAt);
     }
@@ -705,6 +913,7 @@ export const listAreasOverview = query({
       .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99) || a.name.localeCompare(b.name))
       .map((area) => ({
         ...area,
+        ...areaBrandingFromFacts(area, factsByArea.get(String(area._id))),
         factCounts: counts.get(String(area._id))?.facts || { verified: 0, candidate: 0 },
         workCounts: counts.get(String(area._id)) || emptyAreaWorkCounts(),
         lastSignalAt: lastSignalAt.get(String(area._id)) ?? null,
@@ -1008,8 +1217,10 @@ export const areaHome = query({
         updatedAt: project.updatedAt,
       }));
 
+    const branding = areaBrandingFromFacts(area, [...verified, ...candidate]);
+
     return {
-      area,
+      area: { ...area, ...branding },
       facts: { verified, candidate },
       mail,
       events,
@@ -1156,6 +1367,140 @@ export const recordAreaLinks = mutation({
       inserted += 1;
     }
     return { inserted, skipped };
+  },
+});
+
+export const reindexUserAreaArtifacts = internalMutation({
+  args: { userId: v.string(), cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = args.userId;
+    const personalAreaId = await ensurePersonalArea(ctx, userId);
+    const areas = await ctx.db
+      .query('areas')
+      .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
+      .collect();
+    const activeAreaIds = new Set(areas.map((area) => String(area._id)));
+    const factRows = (
+      await ctx.db
+        .query('areaFacts')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect()
+    ).filter(
+      (fact) =>
+        (fact.status === 'candidate' || fact.status === 'verified') && activeAreaIds.has(String(fact.areaId)),
+    );
+    const facts: AreaReindexFact[] = factRows.map((fact) => ({
+      _id: String(fact._id),
+      areaId: fact.areaId,
+      kind: fact.kind,
+      value: fact.value,
+      status: fact.status as 'candidate' | 'verified',
+      confirmationRefs: fact.confirmationRefs,
+      verifiedAt: fact.verifiedAt,
+      updatedAt: fact.updatedAt,
+    }));
+    for (const area of areas) {
+      const primaryDomain = normalizeAreaDomain(area.primaryDomain);
+      if (!primaryDomain) continue;
+      facts.push({
+        _id: `area-domain:${area._id}`,
+        areaId: area._id,
+        kind: 'domain',
+        value: primaryDomain,
+        status: 'candidate',
+        confirmationRefs: [],
+        updatedAt: area.updatedAt,
+      });
+    }
+
+    const page = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .paginate({ cursor: args.cursor ?? null, numItems: AREA_REINDEX_PAGE_SIZE });
+
+    let inserted = 0;
+    let matched = 0;
+    let personal = 0;
+    let skipped = 0;
+    const ts = now();
+
+    for (const row of page.page) {
+      const existing = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_account_artifact', (q) =>
+          q
+            .eq('userId', userId)
+            .eq('accountId', row.accountId)
+            .eq('artifactKind', 'mailThread')
+            .eq('artifactId', row.providerThreadId),
+        )
+        .collect();
+      const match = matchMailRowToAreaFact(row, facts);
+      const categorized = existing.some(
+        (link) => link.status !== 'rejected' && activeAreaIds.has(String(link.areaId)),
+      );
+      const target = match
+        ? {
+            areaId: match.areaId,
+            status: match.status,
+            confidence: match.confidence,
+            reason: match.reason,
+            sourceRefs: [
+              {
+                kind: match.fact._id.startsWith('area-domain:') ? 'area' : 'areaFact',
+                id: match.fact._id,
+                label: `${match.fact.kind}: ${match.fact.value}`.slice(0, 200),
+              },
+            ],
+            confirmationRefs: match.status === 'verified' ? confirmationForVerifiedFact(match.fact) : [],
+          }
+        : categorized
+          ? null
+          : {
+              areaId: personalAreaId,
+              status: 'candidate' as const,
+              confidence: 0.25,
+              reason: 'legacy mail fallback to Personal',
+              sourceRefs: [{ kind: 'system', id: 'area-reindex', label: 'Historical area backfill' }],
+              confirmationRefs: [],
+            };
+      if (!target) {
+        skipped += 1;
+        continue;
+      }
+      if (existing.some((link) => String(link.areaId) === String(target.areaId))) {
+        skipped += 1;
+        continue;
+      }
+      assertVerifiedArtifactLinkAllowed(target.status, target.confirmationRefs);
+      await ctx.db.insert('areaArtifactLinks', {
+        userId,
+        areaId: target.areaId,
+        artifactKind: 'mailThread',
+        artifactId: row.providerThreadId,
+        accountId: row.accountId,
+        role: match ? 'supporting' : 'secondary',
+        status: target.status,
+        confidence: target.confidence,
+        reason: target.reason,
+        sourceRefs: normalizeSourceRefs(target.sourceRefs),
+        confirmationRefs: normalizeConfirmationRefs(target.confirmationRefs),
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      inserted += 1;
+      if (match) matched += 1;
+      else personal += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.albatross.reindexUserAreaArtifacts, {
+        userId,
+        cursor: page.continueCursor,
+      });
+    }
+
+    return { inserted, matched, personal, skipped, scanned: page.page.length, done: page.isDone };
   },
 });
 

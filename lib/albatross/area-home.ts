@@ -8,6 +8,27 @@ export interface AreaHomeCountsLike {
   facts: { verified: number; candidate: number };
 }
 
+export const PERSONAL_AREA_EXTERNAL_ID = 'system:personal';
+
+export interface AreaFactLikeForBranding {
+  kind?: string | null;
+  value?: string | null;
+  status?: string | null;
+}
+
+export interface AreaLikeForBranding {
+  name?: string | null;
+  primaryDomain?: string | null;
+  faviconUrl?: string | null;
+  imageUrl?: string | null;
+}
+
+export interface AreaBranding {
+  primaryDomain: string | null;
+  faviconUrl: string | null;
+  imageUrl: string | null;
+}
+
 export type AreaHomeSectionId = 'mail' | 'events' | 'tasks' | 'context';
 
 export interface AreaHomeSection {
@@ -35,6 +56,130 @@ export interface AreaOverviewBadge {
   id: string;
   label: string;
   tone: AreaOverviewTone;
+}
+
+// Bare, display-safe domain extraction. Handles URLs, emails, @domains, and
+// plain domains from area facts without accepting arbitrary prose.
+export function normalizeAreaDomain(value?: string | null): string | null {
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!raw) return null;
+  const emailMatch = raw.match(/[a-z0-9._%+-]+@([a-z0-9.-]+\.[a-z]{2,})/i);
+  if (emailMatch?.[1]) return emailMatch[1].replace(/^www\./, '');
+  let text = raw.replace(/^mailto:/, '').replace(/^@/, '');
+  const protocolMatch = text.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i);
+  if (protocolMatch?.[1]) text = protocolMatch[1];
+  text = text
+    .split(/[/?#\s]/)[0]
+    .replace(/:\d+$/, '')
+    .replace(/^www\./, '')
+    .replace(/[),.;]+$/, '');
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(text)) return null;
+  if (text.length > 253 || text.split('.').some((part) => !part || part.length > 63)) return null;
+  return text;
+}
+
+export function faviconUrlForDomain(domain?: string | null, size = 64): string | null {
+  const normalized = normalizeAreaDomain(domain);
+  if (!normalized) return null;
+  const safeSize = Math.min(Math.max(Math.round(size) || 64, 16), 128);
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(normalized)}&sz=${safeSize}`;
+}
+
+function cleanOptionalUrl(value?: string | null): string | null {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (!/^https?:\/\//i.test(raw)) return null;
+  return raw.slice(0, 800);
+}
+
+export function areaBrandingFromFacts(
+  area?: AreaLikeForBranding | null,
+  facts?: AreaFactLikeForBranding[] | null,
+): AreaBranding {
+  const byTrust = [...(facts ?? [])].sort((a, b) => {
+    const rank = (fact: AreaFactLikeForBranding) => (fact.status === 'verified' ? 0 : 1);
+    return rank(a) - rank(b);
+  });
+  const factDomain =
+    byTrust
+      .filter((fact) => /^(domain|website|url|email|sender|organization)$/i.test(String(fact.kind || '')))
+      .map((fact) => normalizeAreaDomain(fact.value))
+      .find(Boolean) ?? null;
+  const primaryDomain = normalizeAreaDomain(area?.primaryDomain) ?? factDomain;
+  return {
+    primaryDomain,
+    faviconUrl: cleanOptionalUrl(area?.faviconUrl) ?? faviconUrlForDomain(primaryDomain),
+    imageUrl: cleanOptionalUrl(area?.imageUrl),
+  };
+}
+
+export interface IntentAreaOption {
+  _id: string;
+  name: string;
+  kind?: string | null;
+  description?: string | null;
+  externalId?: string | null;
+  primaryDomain?: string | null;
+}
+
+export interface IntentAreaSuggestion {
+  areaId: string;
+  confidence: 'high' | 'medium';
+  reason: string;
+}
+
+function areaTextTokens(value?: string | null): string[] {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((token) => token.length >= 3);
+}
+
+export function suggestIntentArea(
+  text: string,
+  areas?: IntentAreaOption[] | null,
+): IntentAreaSuggestion | null {
+  const options = [...(areas ?? [])].filter((area) => area._id && area.name);
+  if (!options.length) return null;
+  const normalizedText = String(text || '').toLowerCase();
+  const nonPersonal = options.filter((area) => area.externalId !== PERSONAL_AREA_EXTERNAL_ID);
+  if (!normalizedText.trim()) return null;
+
+  let best: { area: IntentAreaOption; score: number; reason: string } | null = null;
+  for (const area of options) {
+    let score = 0;
+    const name = area.name.toLowerCase().trim();
+    if (name && normalizedText.includes(name)) score += 8;
+    const domain = normalizeAreaDomain(area.primaryDomain);
+    if (domain && normalizedText.includes(domain)) score += 8;
+    const tokens = new Set([...areaTextTokens(area.name), ...areaTextTokens(area.kind)]);
+    for (const token of tokens) {
+      if (normalizedText.includes(token)) score += 2;
+    }
+    for (const token of areaTextTokens(area.description).slice(0, 10)) {
+      if (normalizedText.includes(token)) score += 1;
+    }
+    if (area.externalId === PERSONAL_AREA_EXTERNAL_ID) score -= 2;
+    if (!best || score > best.score) {
+      best = { area, score, reason: domain && normalizedText.includes(domain) ? domain : area.name };
+    }
+  }
+
+  if (best && best.score >= 8) {
+    return { areaId: best.area._id, confidence: 'high', reason: best.reason };
+  }
+  if (best && best.score >= 4) {
+    return { areaId: best.area._id, confidence: 'medium', reason: best.reason };
+  }
+  if (options.length === 1) {
+    return { areaId: options[0]._id, confidence: 'medium', reason: 'Only active area' };
+  }
+  if (nonPersonal.length === 0 && options.length === 1) {
+    return { areaId: options[0]._id, confidence: 'medium', reason: 'Personal area' };
+  }
+  return null;
 }
 
 // Fixed editorial order: the operational artifacts first (mail is the highest

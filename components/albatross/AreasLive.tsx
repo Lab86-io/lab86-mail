@@ -156,7 +156,7 @@ function AreaDetail({ area }: { area: AreaLike }) {
       await verifyFact({
         factId: fact._id as Id<'areaFacts'>,
         confirmationRefs: [
-          { kind: 'user_confirmation', id: `areas-live:${fact._id}:${Date.now()}`, confirmedAt: Date.now() },
+          { kind: 'userConfirmation', id: `areas-live:${fact._id}:${Date.now()}`, confirmedAt: Date.now() },
         ],
       });
     } finally {

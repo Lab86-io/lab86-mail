@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import {
@@ -360,6 +361,12 @@ export const upsertCorpusBatch = mutation({
         lastBackfillAt: ts,
         messagesSyncedDelta: insertedMessages,
         oldestIndexedCandidate: batchOldest,
+      });
+    }
+
+    if (threadIds.size && (args.corpusReady === true || args.corpusReady === undefined)) {
+      await ctx.scheduler.runAfter(10_000, internal.albatross.reindexUserAreaArtifacts, {
+        userId: args.userId,
       });
     }
 

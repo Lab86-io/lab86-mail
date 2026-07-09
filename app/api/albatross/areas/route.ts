@@ -25,6 +25,7 @@ function json(status: number, body: Record<string, unknown>) {
 export async function GET() {
   try {
     const user = await requireCurrentUser();
+    await convexMutation((api as any).albatross.ensurePersonal, { userId: user.userId }).catch(() => null);
     const [areas, onboarding] = await Promise.all([
       convexQuery<any[]>((api as any).albatross.listAreas, { userId: user.userId, status: 'active' }),
       convexQuery<any>((api as any).userData.getDoc, {
@@ -42,8 +43,29 @@ export async function GET() {
 }
 
 type Action =
-  | { action: 'create_area'; name: string; kind?: string; description?: string; priority?: number }
+  | {
+      action: 'create_area';
+      name: string;
+      kind?: string;
+      description?: string;
+      priority?: number;
+      primaryDomain?: string;
+      faviconUrl?: string;
+      imageUrl?: string;
+    }
+  | {
+      action: 'update_area';
+      areaId: string;
+      name?: string;
+      kind?: string;
+      description?: string;
+      priority?: number;
+      primaryDomain?: string;
+      faviconUrl?: string;
+      imageUrl?: string;
+    }
   | { action: 'archive_area'; areaId: string }
+  | { action: 'reindex_areas'; areaId?: string }
   | {
       action: 'add_fact';
       areaId: string;
@@ -58,7 +80,7 @@ type Action =
 function userConfirmationRefs(userId: string, prompt: string) {
   return [
     {
-      kind: 'user_confirmation',
+      kind: 'userConfirmation',
       id: `area-onboarding:${userId}:${Date.now()}`,
       confirmedAt: Date.now(),
       confirmedBy: userId,
@@ -93,12 +115,34 @@ export async function POST(req: NextRequest) {
           kind: body.kind,
           description: body.description,
           priority: body.priority,
+          primaryDomain: body.primaryDomain,
+          faviconUrl: body.faviconUrl,
+          imageUrl: body.imageUrl,
         });
         return json(200, { ok: true, areaId });
+      }
+      case 'update_area': {
+        if (!body.areaId) return json(400, { ok: false, error: 'areaId required' });
+        await convexMutation((api as any).albatross.updateArea, {
+          ...caller,
+          areaId: body.areaId,
+          name: body.name,
+          kind: body.kind,
+          description: body.description,
+          priority: body.priority,
+          primaryDomain: body.primaryDomain,
+          faviconUrl: body.faviconUrl,
+          imageUrl: body.imageUrl,
+        });
+        return json(200, { ok: true });
       }
       case 'archive_area': {
         if (!body.areaId) return json(400, { ok: false, error: 'areaId required' });
         await convexMutation((api as any).albatross.archiveArea, { ...caller, areaId: body.areaId });
+        return json(200, { ok: true });
+      }
+      case 'reindex_areas': {
+        await convexMutation((api as any).albatross.reindexMyAreas, { ...caller, areaId: body.areaId });
         return json(200, { ok: true });
       }
       case 'add_fact': {

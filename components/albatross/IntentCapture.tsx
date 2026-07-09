@@ -8,17 +8,18 @@
  * cycling label, and Chamaac UI DancingLetters for the
  * capture takeover. Buttons stay text-only — no decorative icons. */
 
-import { useMutation } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { Mic } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GooeyMorphText } from '@/components/albatross/GooeyMorphText';
 import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { api } from '@/convex/_generated/api';
+import { suggestIntentArea } from '@/lib/albatross/area-home';
 import { openPipWindow, pipSupported } from '@/lib/albatross/pip-window';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
@@ -51,6 +52,15 @@ export function rotatingLabelAt(tick: number): string {
 }
 
 export type CaptureState = 'closed' | 'editing' | 'split' | 'discard' | 'saving' | 'saved';
+
+interface CaptureArea {
+  _id: string;
+  name: string;
+  kind?: string | null;
+  description?: string | null;
+  externalId?: string | null;
+  primaryDomain?: string | null;
+}
 
 export type CaptureEvent =
   | { type: 'open' }
@@ -160,6 +170,83 @@ function resolveGeo(timeoutMs = 2500): Promise<CaptureGeo | null> {
   });
 }
 
+function CaptureAreaPicker({
+  areas,
+  selectedAreaId,
+  suggestedAreaId,
+  prompted,
+  onSelect,
+}: {
+  areas: CaptureArea[];
+  selectedAreaId: string | null;
+  suggestedAreaId: string | null;
+  prompted: boolean;
+  onSelect: (areaId: string) => void;
+}) {
+  if (areas.length === 0) return null;
+  const visible = areas.slice(0, 7);
+  const overflow = areas.slice(7);
+  const effectiveAreaId = selectedAreaId || suggestedAreaId;
+  const effectiveArea = areas.find((area) => area._id === effectiveAreaId) ?? null;
+  return (
+    <div
+      className={cn(
+        'mx-auto flex max-w-xl flex-col items-center gap-2 rounded-xl px-3 py-2 text-center transition-colors',
+        prompted && 'bg-[var(--color-warning-soft)]',
+      )}
+    >
+      <p
+        className={cn(
+          'text-[11.5px]',
+          prompted ? 'font-medium text-[var(--color-warning)]' : 'text-[var(--color-text-faint)]',
+        )}
+      >
+        {prompted
+          ? 'Which area should this become part of?'
+          : effectiveArea
+            ? `${selectedAreaId ? 'Area' : 'Suggested area'} / ${effectiveArea.name}`
+            : 'Choose an area for this intent'}
+      </p>
+      <div className="flex max-w-full flex-wrap justify-center gap-1.5">
+        {visible.map((area) => {
+          const active = effectiveAreaId === area._id;
+          return (
+            <button
+              key={area._id}
+              type="button"
+              onClick={() => onSelect(area._id)}
+              className={cn(
+                'max-w-36 truncate rounded-full border px-2.5 py-1 text-[11.5px] transition-colors',
+                active
+                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]/70 text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+              )}
+            >
+              {area.name}
+            </button>
+          );
+        })}
+        {overflow.length ? (
+          <select
+            value={overflow.some((area) => area._id === effectiveAreaId) ? effectiveAreaId || '' : ''}
+            onChange={(event) => {
+              if (event.target.value) onSelect(event.target.value);
+            }}
+            className="max-w-36 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/70 px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)]"
+          >
+            <option value="">More areas</option>
+            {overflow.map((area) => (
+              <option key={area._id} value={area._id}>
+                {area.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Launcher (button + full-screen capture takeover)                    */
 /* ------------------------------------------------------------------ */
@@ -170,10 +257,17 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   // launcher yields while it is open, exactly like Ask Assistant used to.
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const createIntent = useMutation(api.albatrossIntents.createIntent);
+  const { isAuthenticated } = useConvexAuth();
+  const liveAreas = useQuery(
+    api.albatross.listAreasOverview,
+    isAuthenticated ? { status: 'active' } : 'skip',
+  ) as CaptureArea[] | undefined;
 
   const [state, setState] = useState<CaptureState>('closed');
   const [text, setText] = useState('');
   const [source, setSource] = useState<'text' | 'voice'>('text');
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
+  const [areaPrompted, setAreaPrompted] = useState(false);
   const [listening, setListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -191,6 +285,8 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   }, []);
 
   const overlayOpen = state !== 'closed';
+  const areaSuggestion = useMemo(() => suggestIntentArea(text, liveAreas ?? null), [text, liveAreas]);
+  const resolvedAreaId = selectedAreaId || areaSuggestion?.areaId || null;
 
   // Dot-morph squish only makes sense on hover-capable pointers (SmoothUI).
   useEffect(() => {
@@ -234,6 +330,8 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     setListening(false);
     setText('');
     setSource('text');
+    setSelectedAreaId(null);
+    setAreaPrompted(false);
     setSaveError(null);
     launcherRef.current?.focus({ preventScroll: true });
   }, [overlayOpen]);
@@ -288,7 +386,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     }
   };
 
-  const persist = async (pieces: string[], captureSource: 'text' | 'voice') => {
+  const persist = async (pieces: string[], captureSource: 'text' | 'voice', areaId: string | null) => {
     // Start the (bounded, silent) geo lookup in parallel with the save so it
     // usually resolves before the kicks fire.
     const geoPromise = resolveGeo();
@@ -299,6 +397,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           rawText: piece,
           transcript: captureSource === 'voice' ? piece : undefined,
           source: captureSource,
+          ...(areaId ? { areaId } : {}),
         });
         ids.push(id as string);
       }
@@ -320,6 +419,12 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     const trimmed = text.trim();
     if (!trimmed) return;
     setSaveError(null);
+    const activeAreas = liveAreas ?? [];
+    const areaId = resolvedAreaId;
+    if (!areaId && activeAreas.length > 1) {
+      setAreaPrompted(true);
+      return;
+    }
     // Default to the real browser PiP: must be requested inside this click's
     // transient activation, before any awaits. Planning then follows the user
     // into other tabs (Dia/Chrome); unsupported browsers keep the in-app dock.
@@ -330,12 +435,12 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
       return;
     }
     send({ type: 'submit', multi: false });
-    void persist(resolveCapturePieces(trimmed, 'keep'), source);
+    void persist(resolveCapturePieces(trimmed, 'keep'), source, areaId);
   };
 
   const decide = (decision: 'split' | 'keep') => {
     send({ type: decision });
-    void persist(resolveCapturePieces(text, decision), source);
+    void persist(resolveCapturePieces(text, decision), source, resolvedAreaId);
   };
 
   const pieces = state === 'split' ? splitIntentText(text.trim()) : [];
@@ -517,6 +622,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
                       disabled={state === 'saving'}
                       onChange={(event) => {
                         setText(event.target.value);
+                        setAreaPrompted(false);
                         if (source !== 'text') setSource('text');
                       }}
                       onKeyDown={(event) => {
@@ -527,6 +633,16 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
                       }}
                       placeholder="passport, taxes, that idea from the shower..."
                       className="min-h-40 w-full resize-none bg-transparent text-center text-lg leading-relaxed text-[var(--color-text)] caret-[var(--color-accent)] placeholder:text-[var(--color-text-faint)] focus:outline-none sm:text-xl"
+                    />
+                    <CaptureAreaPicker
+                      areas={liveAreas ?? []}
+                      selectedAreaId={selectedAreaId}
+                      suggestedAreaId={areaSuggestion?.areaId ?? null}
+                      prompted={areaPrompted}
+                      onSelect={(areaId) => {
+                        setSelectedAreaId(areaId);
+                        setAreaPrompted(false);
+                      }}
                     />
                     <div className="flex items-center justify-center gap-3">
                       {voiceSupported ? (

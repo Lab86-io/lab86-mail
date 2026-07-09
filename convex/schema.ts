@@ -328,6 +328,9 @@ export default defineSchema({
     status: v.union(v.literal('active'), v.literal('archived')),
     description: v.optional(v.string()),
     priority: v.optional(v.number()),
+    primaryDomain: v.optional(v.string()),
+    faviconUrl: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
     // Every area gets its own task board at creation; archiving the area never
     // deletes the board, and unarchiving reuses it (no duplicates).
     boardId: v.optional(v.id('boards')),

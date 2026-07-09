@@ -518,8 +518,14 @@ interface AreaOverviewRow {
   kind: string;
   status: string;
   description?: string;
+  externalId?: string;
+  primaryDomain?: string | null;
+  faviconUrl?: string | null;
+  imageUrl?: string | null;
   factCounts: { verified: number; candidate: number };
 }
+
+const PERSONAL_AREA_EXTERNAL_ID = 'system:personal';
 
 function AreaManagementList() {
   // Skip until the Clerk token has reached the Convex client — first-paint
@@ -529,7 +535,11 @@ function AreaManagementList() {
     | AreaOverviewRow[]
     | undefined;
   const archiveArea = useMutation(api.albatross.archiveArea);
+  const updateArea = useMutation(api.albatross.updateArea);
+  const reindexAreas = useMutation(api.albatross.reindexMyAreas);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ name: '', primaryDomain: '', imageUrl: '' });
 
   const archive = async (area: AreaOverviewRow) => {
     if (!window.confirm(`Archive ${area.name}? Its history is kept — nothing is deleted.`)) return;
@@ -544,14 +554,64 @@ function AreaManagementList() {
     }
   };
 
+  const startEdit = (area: AreaOverviewRow) => {
+    setEditingId(area._id);
+    setDraft({
+      name: area.name,
+      primaryDomain: area.primaryDomain || '',
+      imageUrl: area.imageUrl || '',
+    });
+  };
+
+  const saveEdit = async (area: AreaOverviewRow) => {
+    setBusyId(area._id);
+    try {
+      await updateArea({
+        areaId: area._id,
+        name: draft.name,
+        primaryDomain: draft.primaryDomain || undefined,
+        imageUrl: draft.imageUrl || undefined,
+      });
+      setEditingId(null);
+      toast.success(`${draft.name || area.name} updated`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not update the area');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reindex = async () => {
+    setBusyId('reindex');
+    try {
+      await reindexAreas({});
+      toast.success('Area reindex queued');
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not queue area reindex');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <section>
-      <div className="mb-4">
-        <h2 className="text-[16px] font-semibold tracking-tight">Your areas</h2>
-        <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">
-          Everything the conversation has recorded. Archiving keeps history — tell the chat you left something
-          and it handles the rest.
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[16px] font-semibold tracking-tight">Your areas</h2>
+          <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">
+            Everything the conversation has recorded. Archiving keeps history — tell the chat you left
+            something and it handles the rest.
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busyId === 'reindex'}
+          onClick={() => void reindex()}
+        >
+          {busyId === 'reindex' ? 'Queuing…' : 'Reindex'}
+        </Button>
       </div>
       {areas === undefined ? (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-6 text-[12.5px] text-[var(--color-text-muted)]">
@@ -571,32 +631,93 @@ function AreaManagementList() {
                 busyId === area._id && 'opacity-60',
               )}
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-[13.5px] font-medium">{area.name}</span>
-                  <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
-                    {area.kind}
-                  </Badge>
+              {editingId === area._id ? (
+                <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[1fr_180px_1fr]">
+                  <input
+                    value={draft.name}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
+                    className="min-w-0 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--color-border-strong)]"
+                    placeholder="Area name"
+                  />
+                  <input
+                    value={draft.primaryDomain}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, primaryDomain: event.target.value }))}
+                    className="min-w-0 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--color-border-strong)]"
+                    placeholder="domain.com"
+                  />
+                  <input
+                    value={draft.imageUrl}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, imageUrl: event.target.value }))}
+                    className="min-w-0 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--color-border-strong)]"
+                    placeholder="https://… image"
+                  />
                 </div>
-                <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
-                  {area.factCounts.verified} verified
-                  {area.factCounts.candidate ? ` · ${area.factCounts.candidate} to confirm` : ''}
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {area.imageUrl || area.faviconUrl ? (
+                      // biome-ignore lint/performance/noImgElement: arbitrary user/domain favicon URLs are tiny unoptimized identity marks.
+                      <img
+                        src={area.imageUrl || area.faviconUrl || ''}
+                        alt=""
+                        className="size-5 shrink-0 rounded object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : null}
+                    <span className="truncate text-[13.5px] font-medium">{area.name}</span>
+                    <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
+                      {area.kind}
+                    </Badge>
+                    {area.externalId === PERSONAL_AREA_EXTERNAL_ID ? (
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                        Default
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <div className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-muted)]">
+                    {area.factCounts.verified} verified
+                    {area.factCounts.candidate ? ` · ${area.factCounts.candidate} to confirm` : ''}
+                    {area.primaryDomain ? ` · ${area.primaryDomain}` : ''}
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="flex shrink-0 items-center gap-1.5">
-                <Button asChild size="sm" variant="outline">
-                  <Link href={`/?area=${area._id}`}>View</Link>
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busyId === area._id}
-                  onClick={() => void archive(area)}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                >
-                  Archive
-                </Button>
+                {editingId === area._id ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={busyId === area._id || !draft.name.trim()}
+                      onClick={() => void saveEdit(area)}
+                    >
+                      Save
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button asChild size="sm" variant="outline">
+                      <Link href={`/?area=${area._id}`}>View</Link>
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => startEdit(area)}>
+                      Edit
+                    </Button>
+                    {area.externalId !== PERSONAL_AREA_EXTERNAL_ID ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={busyId === area._id}
+                        onClick={() => void archive(area)}
+                        className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                      >
+                        Archive
+                      </Button>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           ))}
