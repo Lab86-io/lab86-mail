@@ -186,6 +186,8 @@ describe('daily brief service metadata', () => {
     expect(data.services.map((service: any) => service.id)).toEqual(['gmail', 'slack', 'github']);
     expect(data.services.map((service: any) => service.label)).toEqual(['Gmail', 'Slack', 'GitHub']);
     expect(data.services.every((service: any) => service.logoSvg.includes('footer-logo'))).toBe(true);
+    expect(data.services[0].logoSvg).toContain('viewBox="0 0 800 636.36322"');
+    expect(data.services[0].logoSvg).toContain('gmail-footer-gradient-a');
   });
 
   test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
@@ -209,6 +211,11 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-font-display)');
     expect(HTML_ARTIFACT_BRIEF).toContain('data.art.imageUrl');
     expect(HTML_ARTIFACT_BRIEF).toContain('Image fallback is REQUIRED');
+    expect(HTML_ARTIFACT_BRIEF).toContain('FOOTER (required on EVERY generated brief)');
+    expect(HTML_ARTIFACT_BRIEF).toContain('.brief-footer{position:relative;margin-top:4.5rem');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Build [service list] from data.services in order');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Paste service.logoSvg unchanged');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Made for you by');
     expect(HTML_ARTIFACT_BRIEF).toContain('CONTENT (compose from your analysis');
     expect(HTML_ARTIFACT_BRIEF).toContain('repeated bordered cards');
     expect(HTML_ARTIFACT_BRIEF).toContain('charts that decorate');

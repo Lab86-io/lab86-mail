@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { extractHtml } from '@/lib/mail/agent-report';
+import { briefServicesFromIds } from '@/lib/mail/brief-services';
 import { withDeadline } from '@/lib/shared/deadline';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { invokeTool } from '@/lib/tools/registry';
@@ -238,6 +239,25 @@ export function resolveSourceRefs(refIds: string[] | undefined, pack: PlanContex
   return refs;
 }
 
+function planArtifactServiceIds(refs: Array<Omit<PlanContextRef, 'refId'>>): string[] {
+  const ids: string[] = [];
+  for (const ref of refs) {
+    const haystack = `${ref.url || ''} ${ref.label || ''} ${ref.id || ''}`.toLowerCase();
+    if (ref.kind === 'mail_thread') {
+      ids.push('mail');
+    } else if (haystack.includes('github.com')) {
+      ids.push('github');
+    } else if (haystack.includes('bitbucket.org') || haystack.includes('bitbucket')) {
+      ids.push('bitbucket');
+    } else if (haystack.includes('atlassian.net') || haystack.includes('jira')) {
+      ids.push('jira');
+    } else if (haystack.includes('slack.com') || haystack.includes('slack')) {
+      ids.push('slack');
+    }
+  }
+  return ids;
+}
+
 interface GenerateIntentPlanInput {
   userId: string;
   userEmail?: string | null;
@@ -317,7 +337,22 @@ Structure (adapt to the data, don't force empty sections):
 - Places, INLINE where they matter: every place gets a compact card in context — name, address, hours, phone, website link, and an "Open in Maps" link built as https://www.google.com/maps/search/?api=1&query=<url-encoded mapsQuery>. Place cards sit next to the step that uses them, not in an appendix.
 - The PRIMARY place also gets an embedded live map right in its card: <iframe src="https://www.google.com/maps?q=<url-encoded mapsQuery>&output=embed" style="width:100%;height:260px;border:0;border-radius:8px" loading="lazy"></iframe>. This is the ONE permitted external embed.
 - Working detail: document checklists, what to bring, phone scripts, fees, deadlines — the stuff that makes the errand executable without another search.
-- Quieter footer: assumptions, then sources as footnote links with a word on what each supports.
+- Quieter footer: assumptions and sources as footnote links with a word on what each supports, then the required Lab86 source footer below.
+
+FOOTER (required on EVERY plan dossier):
+- End the document with exactly one quiet source footer using the same grammar as the Daily Brief/manual fallback. Do not improvise another signature, app chrome, toolbar, or "With love" line.
+- Include this CSS class contract in the <style> block, preserving the same visual structure even if you minify whitespace:
+  .brief-footer{position:relative;margin-top:4.5rem;padding:3.6rem 1rem 4rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
+  .brief-footer::before{content:"";position:absolute;top:0;left:50%;width:min(920px,100%);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,var(--brief-hairline),transparent)}
+  .brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.35;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
+  .brief-footer-line{position:relative;z-index:1;max-width:100%;margin:0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--brief-font-display);font-size:clamp(.72rem,1.18vw,1rem);font-weight:650;line-height:1.25;letter-spacing:var(--brief-display-tracking)}
+  .brief-footer-line .soft{color:var(--brief-muted)}
+  .footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
+  .footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
+  .footer-sep{color:var(--brief-muted)}
+- HTML grammar exactly: <footer class="brief-footer"><div class="brief-footer-line"><span class="soft">Made for you by</span> <span class="footer-brand">Lab86</span> <span class="soft">using your</span> [service list]<span class="footer-sep">.</span></div></footer>
+- Build [service list] from data.services in order. Each entry is { id, label, logoSvg }. Paste service.logoSvg unchanged inside <span class="footer-service">, followed by <span>service.label</span>. These logoSvg values are already current source logos; do NOT redraw, substitute emoji, recolor, fetch, or replace them.
+- If data.services is empty, render a single text service "Plan context". Never invent source logos.
 
 AI SLOP BAN — before final output, ensure none of these appear or dominate:
 - Generic hero/subtitle/CTA formula; purple/blue gradient SaaS palette; decorative glow blobs; equal bordered cards for everything; fake stats or counter tiles; generic section names; stock icon or emoji decoration; glassmorphism as hierarchy; full-width paragraph blocks; timelines without time/connectors; rows of identical rectangular buttons; components that would still make sense if the real plan content were swapped out.
@@ -580,6 +615,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
     // Keep every answer already given, even for questions this generation
     // dropped — otherwise the planner re-asks them and the loop never ends.
     const questions = mergePlanQuestions(intent.questions || [], freshQuestions);
+    const sourceRefs = resolveSourceRefs(generation.sourceRefIds, refs);
 
     const digitalActions = assignStepKeys(generation.digitalActions).map((action) => ({
       key: action.key,
@@ -629,7 +665,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
               physicalActions: generation.physicalActions,
               places: generation.places,
               assumptions: generation.assumptions,
-              sources: resolveSourceRefs(generation.sourceRefIds, refs),
+              sources: sourceRefs,
+              services: briefServicesFromIds(planArtifactServiceIds(sourceRefs)),
               openQuestions: questions.filter((question) => !question.answer).map((q) => q.prompt),
             },
             null,
@@ -660,7 +697,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       digitalActions,
       physicalActions: generation.physicalActions,
       assumptions: generation.assumptions,
-      sourceRefs: resolveSourceRefs(generation.sourceRefIds, refs),
+      sourceRefs,
       artifactHtml,
       artifactTitle: generation.title,
       mapQuery: generation.mapQuery ?? generation.places[0]?.mapsQuery ?? undefined,

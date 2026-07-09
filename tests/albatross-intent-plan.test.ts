@@ -240,6 +240,8 @@ describe('generateIntentPlan orchestration', () => {
     // Data pack: each digital action carries its assigned key.
     const pack = JSON.parse(artifactGen.prompt);
     expect(pack.digitalActions[0].key).toBe('step-1');
+    expect(pack.services.map((service: any) => service.id)).toEqual(['mail']);
+    expect(pack.services[0].logoSvg).toContain('footer-logo');
 
     // The dossier prompt: theme contract intact, deterministic-bridge contract in.
     const system = artifactGen.system as string;
@@ -252,6 +254,11 @@ describe('generateIntentPlan orchestration', () => {
     expect(system).toContain('AI SLOP BAN');
     expect(system).toContain('TIMELINE STANDARD');
     expect(system).toContain('do NOT write your own postMessage bridge');
+    expect(system).toContain('FOOTER (required on EVERY plan dossier)');
+    expect(system).toContain('.brief-footer{position:relative;margin-top:4.5rem');
+    expect(system).toContain('Build [service list] from data.services in order');
+    expect(system).toContain('Paste service.logoSvg unchanged');
+    expect(system).toContain('Made for you by');
   });
 
   test('artifact composition failure still saves the plan without a brief', async () => {

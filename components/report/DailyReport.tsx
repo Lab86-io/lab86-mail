@@ -16,7 +16,7 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
-import { ConnectionLogo, ProviderLogo } from '@/components/icons/provider-logos';
+import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
 import {
@@ -353,7 +353,7 @@ function ServiceList({ services }: { services: BriefService[] }) {
 
 function ServiceLogo({ service }: { service: BriefService }) {
   const className = 'inline-block size-[0.88em] shrink-0 translate-y-[-0.04em]';
-  if (service.id === 'gmail') return <ProviderLogo provider="google" className={className} />;
+  if (service.id === 'gmail') return <GmailLogo className={className} />;
   if (service.id === 'outlook') return <ProviderLogo provider="microsoft" className={className} />;
   if (service.id === 'icloud') return <ProviderLogo provider="icloud" className={className} />;
   if (

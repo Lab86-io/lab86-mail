@@ -699,6 +699,21 @@ LIGHT AND DARK MODE REQUIREMENTS:
 - Every layer must be semantic: page background, elevated surfaces, subtle fills, hairlines, accent fills, muted text, focus rings, chart strokes/fills, action controls, and art scrims derive from --brief-* tokens with color-mix/opacity.
 - Before final output, mentally check both modes: body copy readable, muted text visible, actions obvious, chart marks distinguishable, masthead title legible.
 
+FOOTER (required on EVERY generated brief):
+- End the document's main content with exactly one quiet source footer using the deterministic manual fallback grammar. Do not improvise another footer, app chrome, toolbar, signature, or "With love" line.
+- Include this CSS class contract in the <style> block, preserving the same visual structure even if you minify whitespace:
+  .brief-footer{position:relative;margin-top:4.5rem;padding:3.6rem 1rem 4rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
+  .brief-footer::before{content:"";position:absolute;top:0;left:50%;width:min(920px,100%);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,var(--brief-hairline),transparent)}
+  .brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.35;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
+  .brief-footer-line{position:relative;z-index:1;max-width:100%;margin:0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--brief-font-display);font-size:clamp(.72rem,1.18vw,1rem);font-weight:650;line-height:1.25;letter-spacing:var(--brief-display-tracking)}
+  .brief-footer-line .soft{color:var(--brief-muted)}
+  .footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
+  .footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
+  .footer-sep{color:var(--brief-muted)}
+- HTML grammar exactly: <footer class="brief-footer"><div class="brief-footer-line"><span class="soft">Made for you by</span> <span class="footer-brand">Lab86</span> <span class="soft">using your</span> [service list]<span class="footer-sep">.</span></div></footer>
+- Build [service list] from data.services in order. Each entry is { id, label, logoSvg }. Paste service.logoSvg unchanged inside <span class="footer-service">, followed by <span>service.label</span>. These logoSvg values are already current source logos; do NOT redraw, substitute emoji, recolor, fetch, or replace them.
+- Join services in prose: "Gmail"; "Gmail and Slack"; "Gmail, Slack, and GitHub". If data.services is empty, render a single text service "Mail".
+
 DESIGN:
 - Editorial, generous whitespace, clear hierarchy, responsive 360→1100px, tasteful load animations. Use inline SVG only where a visual genuinely adds insight — e.g. a slim timeline of the week's meetings, a relationship map, a waiting-on matrix, a prep dossier, or a tool-workflow board. Never decorative number-counters.
 - CHART STANDARD (inline SVG): charts follow the same restrained grammar as a modern component library — no chart junk. Hairline axes/gridlines in var(--brief-hairline) (horizontal only, skip verticals), small muted tick labels in var(--brief-muted), bars with a small corner radius or 2px-stroke lines in var(--brief-accent-2, var(--brief-accent)) (multi-series may add var(--brief-accent)), direct labels over a legend when there are ≤2 series, generous inner padding, no 3D, no drop shadows, no gradient fills. A chart earns its place only when it explains real data (meeting load by day, waiting-time by person) — never decoration.

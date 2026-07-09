@@ -109,6 +109,9 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).not.toContain('footer-lab86');
     expect(html).not.toContain('footer-letter');
     expect(html).toContain('aria-label="Gmail"');
+    expect(html).toContain('viewBox="0 0 800 636.36322"');
+    expect(html).toContain('gmail-footer-gradient-a');
+    expect(html).not.toContain('M3.4 5.1h17.2v13.8H3.4z');
     expect(html).toContain('aria-label="GitHub"');
     expect(html).toContain('aria-label="Slack"');
   });
