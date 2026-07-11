@@ -472,6 +472,20 @@ export const getArea = query({
   },
 });
 
+// Route-safe owned-Area point lookup. It accepts the URL's raw string so an
+// invalid/stale id resolves to null instead of becoming a validator error, and
+// never reveals another user's Area.
+export const areaBriefTarget = query({
+  args: { ...callerArgs, areaId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const areaId = ctx.db.normalizeId('areas', args.areaId);
+    if (!areaId) return null;
+    const area = await ctx.db.get(areaId);
+    return area?.userId === userId ? { _id: area._id } : null;
+  },
+});
+
 export const addAreaFact = mutation({
   args: {
     ...callerArgs,
@@ -1084,6 +1098,43 @@ const AREA_HOME_TASK_CAP = 30;
 const AREA_HOME_INTENT_SCAN = 150;
 const AREA_HOME_PLAN_CAP = 8;
 const AREA_HOME_PROJECT_CAP = 8;
+const AREA_HOME_LINK_SCAN_CAPS = {
+  mailThread: AREA_HOME_MAIL_CAP * 3,
+  calendarEvent: AREA_HOME_EVENT_CAP * 3,
+  task: AREA_HOME_TASK_CAP * 3,
+  mcpItem: 30,
+  intent: 30,
+  manual: 30,
+} as const;
+
+type AreaHomeArtifactKind = keyof typeof AREA_HOME_LINK_SCAN_CAPS;
+
+async function recentActiveAreaLinks(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  areaId: Id<'areas'>,
+  artifactKind: AreaHomeArtifactKind,
+) {
+  const cap = AREA_HOME_LINK_SCAN_CAPS[artifactKind];
+  const statuses = ['verified', 'candidate'] as const;
+  const rows = (
+    await Promise.all(
+      statuses.map((status) =>
+        ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_area_kind_status_updatedAt', (q) =>
+            q.eq('userId', userId).eq('areaId', areaId).eq('artifactKind', artifactKind).eq('status', status),
+          )
+          .order('desc')
+          // Read one sentinel row past the scan cap so callers can distinguish
+          // an exact bounded count from "there are more" without an unbounded
+          // collect. The combined result is trimmed to that same cap + sentinel.
+          .take(cap + 1),
+      ),
+    )
+  ).flat();
+  return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap + 1);
+}
 
 async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
   if (!link.accountId) return null;
@@ -1157,7 +1208,7 @@ export const areaHome = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const area = await requireArea(ctx, args.areaId, userId);
-    const [verified, candidate, links] = await Promise.all([
+    const [verified, candidate, linkGroups] = await Promise.all([
       ctx.db
         .query('areaFacts')
         .withIndex('by_user_area_status', (q) =>
@@ -1170,12 +1221,13 @@ export const areaHome = query({
           q.eq('userId', userId).eq('areaId', args.areaId).eq('status', 'candidate'),
         )
         .collect(),
-      ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
-        .collect(),
+      Promise.all(
+        (Object.keys(AREA_HOME_LINK_SCAN_CAPS) as AreaHomeArtifactKind[]).map((artifactKind) =>
+          recentActiveAreaLinks(ctx, userId, args.areaId, artifactKind),
+        ),
+      ),
     ]);
-    const activeLinks = links.filter((link) => link.status !== 'rejected');
+    const activeLinks = linkGroups.flat();
     const byKind = new Map<string, any[]>();
     for (const link of activeLinks) {
       const list = byKind.get(link.artifactKind) || [];
@@ -1183,12 +1235,12 @@ export const areaHome = query({
       byKind.set(link.artifactKind, list);
     }
 
-    const mail = (
+    const resolvedMail = (
       await Promise.all((byKind.get('mailThread') || []).map((link) => resolveMailLink(ctx, userId, link)))
     )
       .filter((row): row is NonNullable<typeof row> => row !== null)
-      .sort((a, b) => b.lastDate - a.lastDate)
-      .slice(0, AREA_HOME_MAIL_CAP);
+      .sort((a, b) => b.lastDate - a.lastDate);
+    const mail = resolvedMail.slice(0, AREA_HOME_MAIL_CAP);
 
     const ts = now();
     const resolvedEvents = (
@@ -1207,12 +1259,14 @@ export const areaHome = query({
     const linkedTasks = (
       await Promise.all((byKind.get('task') || []).map((link) => resolveTaskLink(ctx, userId, link)))
     ).filter((row): row is NonNullable<typeof row> => row !== null);
-    const boardCards = area.boardId
+    const boardCardScan = area.boardId
       ? await ctx.db
           .query('cards')
-          .withIndex('by_board', (q) => q.eq('boardId', area.boardId!))
-          .take(200)
+          .withIndex('by_board_updatedAt', (q) => q.eq('boardId', area.boardId!))
+          .order('desc')
+          .take(201)
       : [];
+    const boardCards = boardCardScan.slice(0, 200);
     const seenCardIds = new Set(linkedTasks.map((task) => String(task.cardId)));
     const boardTasks = boardCards
       .filter((card) => !seenCardIds.has(String(card._id)))
@@ -1226,12 +1280,10 @@ export const areaHome = query({
         linkStatus: 'verified',
         reason: null,
       }));
-    const tasks = [...linkedTasks, ...boardTasks]
-      .sort(
-        (a, b) =>
-          Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,
-      )
-      .slice(0, AREA_HOME_TASK_CAP);
+    const resolvedTasks = [...linkedTasks, ...boardTasks].sort(
+      (a, b) => Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,
+    );
+    const tasks = resolvedTasks.slice(0, AREA_HOME_TASK_CAP);
 
     // Plans become components of the area: its active Work (+ latest plan)
     // surface here rather than on a separate Plans page. Read both the typed
@@ -1321,6 +1373,27 @@ export const areaHome = query({
       .query('albatrossAreaBriefs')
       .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
       .unique();
+    const evidence = {
+      mail: {
+        shown: mail.length,
+        hasMore:
+          resolvedMail.length > mail.length ||
+          (byKind.get('mailThread') || []).length > AREA_HOME_LINK_SCAN_CAPS.mailThread,
+      },
+      events: {
+        shown: events.length,
+        hasMore:
+          resolvedEvents.length > events.length ||
+          (byKind.get('calendarEvent') || []).length > AREA_HOME_LINK_SCAN_CAPS.calendarEvent,
+      },
+      tasks: {
+        shown: tasks.length,
+        hasMore:
+          resolvedTasks.length > tasks.length ||
+          boardCardScan.length > 200 ||
+          (byKind.get('task') || []).length > AREA_HOME_LINK_SCAN_CAPS.task,
+      },
+    };
 
     return {
       area: { ...area, ...branding },
@@ -1335,16 +1408,35 @@ export const areaHome = query({
       counts: {
         facts: { verified: verified.length, candidate: candidate.length },
         links: {
-          mailThread: (byKind.get('mailThread') || []).length,
-          calendarEvent: (byKind.get('calendarEvent') || []).length,
-          task: (byKind.get('task') || []).length,
-          other: activeLinks.filter(
-            (link) => !['mailThread', 'calendarEvent', 'task'].includes(link.artifactKind),
-          ).length,
+          mailThread: {
+            shown: Math.min((byKind.get('mailThread') || []).length, AREA_HOME_LINK_SCAN_CAPS.mailThread),
+            bounded: true,
+          },
+          calendarEvent: {
+            shown: Math.min(
+              (byKind.get('calendarEvent') || []).length,
+              AREA_HOME_LINK_SCAN_CAPS.calendarEvent,
+            ),
+            bounded: true,
+          },
+          task: {
+            shown: Math.min((byKind.get('task') || []).length, AREA_HOME_LINK_SCAN_CAPS.task),
+            bounded: true,
+          },
+          other: {
+            shown: (['mcpItem', 'intent', 'manual'] as const).reduce(
+              (total, kind) =>
+                total + Math.min((byKind.get(kind) || []).length, AREA_HOME_LINK_SCAN_CAPS[kind]),
+              0,
+            ),
+            bounded: true,
+          },
         },
-        mail: mail.length,
-        events: events.length,
-        tasks: tasks.length,
+        evidence,
+        // The actionable queue is assembled from these bounded task/intent
+        // previews plus the separate Work query. Let the UI qualify its count
+        // whenever either source may have more rows beyond the scan.
+        needsYouBounded: evidence.tasks.hasMore || recentIntents.length >= AREA_HOME_INTENT_SCAN,
         plans: plans.length,
         projects: projects.length,
         places: places.length,
