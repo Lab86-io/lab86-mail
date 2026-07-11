@@ -35,6 +35,7 @@ describe('Area brief refresh endpoint', () => {
     const deps = dependencies();
     let reindexFinished = false;
     deps.reindex.mockImplementation(async () => {
+      await Promise.resolve();
       reindexFinished = true;
       return { ok: true };
     });

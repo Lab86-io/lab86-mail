@@ -69,7 +69,9 @@ backend errors by pretending an Area was archived.
 - `convex/albatross.ts` `areaHome` query — returns `area`, `livingBrief`, facts,
   mail, events, tasks, plans/Work, Projects/Epics, places, and counts.
 - `lib/albatross/area-living-brief.ts` — generates and caches `{ lede, summary,
-  status, generatedAt, basedOnRevision }`; declared Work outranks artifact volume.
+  status, generatedAt, basedOnRevision, error? }`; optional `error` is recorded
+  when brief generation fails or saves an error state. Declared Work outranks
+  artifact volume.
 - `convex/albatrossWorkV2.ts` `areaWork` — returns operational Work rows.
 - `components/albatross/WorkDetail.tsx` — Area Work drill-in.
 - `components/shell/Rail.tsx`, `components/shell/AppShell.tsx`, and

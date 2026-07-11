@@ -442,6 +442,22 @@ describe('areaBriefHeadline', () => {
     ).toBe('2 items need you before Household can move cleanly.');
   });
 
+  test('a bounded blockers queue qualifies the count', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Garden',
+        needsYou: 6,
+        needsYouBounded: true,
+        upcoming: 0,
+        plans: 0,
+        projects: 0,
+        mail: 0,
+        tasks: 0,
+        candidateFacts: 0,
+      }),
+    ).toBe('at least 6 items need you before Garden can move cleanly.');
+  });
+
   test('otherwise it summarizes upcoming events and active plans', () => {
     expect(
       areaBriefHeadline({
@@ -807,6 +823,21 @@ describe('areaBriefState', () => {
     expect(empty.lede).toBe(headline);
     expect(empty.note).toBe('Live work and evidence are below.');
     expect(empty.canGenerate).toBe(true);
+  });
+
+  test('an unrenderable generated timestamp cannot masquerade as a published edition', () => {
+    const state = areaBriefState(
+      {
+        status: 'error',
+        lede: 'Placeholder text',
+        summary: 'Placeholder summary',
+        generatedAt: Number.MAX_VALUE,
+      },
+      headline,
+    );
+    expect(state.generatedAt).toBeNull();
+    expect(state.lede).toBe(headline);
+    expect(state.canGenerate).toBe(true);
   });
 
   test('absent brief (null doc) uses the headline and offers to generate', () => {

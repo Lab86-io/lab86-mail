@@ -147,6 +147,7 @@ interface AreaHomeData {
       task: { shown: number; bounded: boolean };
       other: { shown: number; bounded: boolean };
     };
+    needsYouBounded: boolean;
     plans: number;
     projects: number;
     places: number;
@@ -238,6 +239,15 @@ const BRIEF_LIMITS = {
   candidateFacts: 4,
   verifiedFacts: 4,
 };
+
+function useMinuteNow() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return now;
+}
 
 export function AreaHome() {
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
@@ -410,6 +420,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const setChatScope = useClientStore((s) => s.setChatScope);
+  const now = useMinuteNow();
   // Error-tolerant read: the persisted area id can outlive the area (deleted
   // in Settings) — that must degrade honestly, not crash the surface.
   const result = useConvexQuery({
@@ -479,7 +490,6 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     home.counts.evidence.events.hasMore ||
     home.counts.evidence.tasks.hasMore;
 
-  const now = Date.now();
   const upcoming = home.events.filter((event) => event.endAt >= now);
   // One authoritative "Needs you" queue: Work waiting on an answer leads, then
   // plans awaiting answers, overdue tasks, and suggested context to confirm.
@@ -489,9 +499,11 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     workNeedsYouRows(workRows),
     areaNeedsYouRows({ plans: home.plans, tasks: home.tasks, candidateFacts: home.facts.candidate }, now),
   );
+  const needsYouBounded = home.counts.needsYouBounded || (workRows?.length ?? 0) >= 100;
   const headline = areaBriefHeadline({
     areaName: home.area.name,
     needsYou: needsYou.length,
+    needsYouBounded,
     upcoming: upcoming.length,
     plans: home.counts.plans,
     projects: home.counts.projects,
@@ -553,7 +565,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-12">
-        <BriefLead home={home} brief={brief} indexStatus={indexStatus} onDiscuss={discuss} />
+        <BriefLead home={home} brief={brief} indexStatus={indexStatus} now={now} onDiscuss={discuss} />
         {/* One capture line, in the brief's voice — a real intent, not a form. */}
         <CaptureBar areaId={home.area._id} areaName={home.area.name} />
 
@@ -570,7 +582,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
           </>
         ) : (
           <>
-            <NeedsYouSection rows={needsYou} />
+            <NeedsYouSection rows={needsYou} bounded={needsYouBounded} />
             <ProjectsSection projects={home.projects} count={home.counts.projects} />
             <WorkSections rows={workRows} />
             {shouldShowEvidenceBand(evidence.length, home.counts.places) ? (
@@ -580,7 +592,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                   <div className="min-w-0">
                     <EventsSection events={home.events} count={sectionCount('events')} />
                     <MailSection mail={home.mail} count={sectionCount('mail')} />
-                    <TasksSection tasks={home.tasks} count={sectionCount('tasks')} />
+                    <TasksSection tasks={home.tasks} count={sectionCount('tasks')} now={now} />
                   </div>
                   <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-0 min-[1180px]:self-start">
                     <PlacesSection places={home.places} count={home.counts.places} />
@@ -604,15 +616,17 @@ function BriefLead({
   home,
   brief,
   indexStatus,
+  now,
   onDiscuss,
 }: {
   home: AreaHomeData;
   brief: AreaBriefState;
   indexStatus?: AreaIndexStatusData;
+  now: number;
   onDiscuss: () => void;
 }) {
   const indexSummary = areaIndexStatusSummary(indexStatus);
-  const freshness = brief.mode === 'ready' ? areaFreshness(brief.generatedAt) : null;
+  const freshness = brief.mode === 'ready' ? areaFreshness(brief.generatedAt, now) : null;
   return (
     <section className="px-3 pb-1 pt-5">
       <div className="flex min-w-0 items-start gap-3.5">
@@ -802,11 +816,11 @@ function CaptureBar({ areaId, areaName }: { areaId: string; areaName: string }) 
 // reads as "do this" rather than one row group among many. Each row carries an
 // honest affordance — Work/plans open their surface, context points at Settings,
 // overdue tasks stay informational (they also appear, dated, under Tasks).
-function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
+function NeedsYouSection({ rows, bounded }: { rows: NeedsYouRow[]; bounded: boolean }) {
   const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const [expanded, setExpanded] = useState(false);
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !bounded) return null;
   const collapsed = splitBriefRows(rows, 6);
   const visibleRows = expanded ? rows : collapsed.visible;
   return (
@@ -816,7 +830,7 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
           Needs you
         </span>
         <span className="text-[11px] tabular-nums leading-none text-[var(--color-text-faint)]">
-          {rows.length}
+          {rows.length > 0 ? `${rows.length}${bounded ? '+' : ''}` : 'More'}
         </span>
         <span className="h-px flex-1 self-center bg-[var(--color-warning)]/25" />
       </div>
@@ -867,8 +881,15 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
           onClick={() => setExpanded((value) => !value)}
           className="w-full border-t border-[var(--color-warning)]/15 px-3 py-2 text-left text-[11.5px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
-          {expanded ? 'Show fewer' : `Show ${collapsed.overflow} more`}
+          {expanded ? 'Show fewer' : `Show ${collapsed.overflow} more from this brief`}
         </button>
+      ) : null}
+      {bounded ? (
+        <div className="flex items-center gap-2 border-t border-[var(--color-warning)]/15 px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+          <span className="min-w-0 flex-1">This is a bounded preview; more may be waiting.</span>
+          <ViewLink view="intents">Open work</ViewLink>
+          <ViewLink view="tasks">Open tasks</ViewLink>
+        </div>
       ) : null}
     </section>
   );
@@ -1217,7 +1238,7 @@ function EventsSection({ events, count }: { events: AreaEventRow[]; count: numbe
   );
 }
 
-function TasksSection({ tasks, count }: { tasks: AreaTaskRow[]; count: number }) {
+function TasksSection({ tasks, count, now }: { tasks: AreaTaskRow[]; count: number; now: number }) {
   const rows = splitBriefRows(tasks, BRIEF_LIMITS.tasks);
   return (
     <section>
@@ -1230,7 +1251,7 @@ function TasksSection({ tasks, count }: { tasks: AreaTaskRow[]; count: number })
         <SectionEmpty />
       ) : (
         rows.visible.map((task) => {
-          const meta = taskRowMeta(task);
+          const meta = taskRowMeta(task, now);
           const done = meta.state === 'done';
           return (
             <div

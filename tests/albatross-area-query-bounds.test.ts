@@ -19,6 +19,7 @@ describe('Area home query bounds', () => {
     const areaHome = between(source, 'const AREA_HOME_MAIL_CAP', 'const UNCLASSIFIED_SCAN');
 
     expect(schema).toContain(".index('by_user_area_kind_status_updatedAt'");
+    expect(schema).toContain(".index('by_board_updatedAt', ['boardId', 'updatedAt'])");
     expect(areaHome).toContain(".withIndex('by_user_area_kind_status_updatedAt'");
     expect(areaHome).toContain('.take(cap + 1)');
     expect(areaHome).toContain('.slice(0, cap + 1)');
@@ -42,6 +43,8 @@ describe('Area home query bounds', () => {
     const areaHome = between(source, 'const AREA_HOME_MAIL_CAP', 'const UNCLASSIFIED_SCAN');
     expect(areaHome).toContain('.take(cap + 1)');
     expect(areaHome).toContain('.take(201)');
+    expect(areaHome).toContain(".withIndex('by_board_updatedAt'");
+    expect(areaHome).toContain(".order('desc')");
     expect(areaHome).toContain('boardCardScan.length > 200');
   });
 });

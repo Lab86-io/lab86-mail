@@ -551,6 +551,7 @@ export function areaPulse(input: AreaPulseInput): AreaPulseSegment[] {
 export function areaBriefHeadline(input: {
   areaName: string;
   needsYou: number;
+  needsYouBounded?: boolean;
   upcoming: number;
   plans: number;
   projects: number;
@@ -564,7 +565,7 @@ export function areaBriefHeadline(input: {
   upcomingBounded?: boolean;
 }): string {
   if (input.needsYou > 0)
-    return `${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
+    return `${input.needsYouBounded ? 'at least ' : ''}${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
   if (input.upcoming > 0 && input.plans > 0)
     return `${input.upcomingBounded ? 'at least ' : ''}${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
   if (input.plans > 0)
@@ -780,8 +781,13 @@ export function areaBriefState(brief: LivingBriefLike | null | undefined, headli
   // over. Only a published edition is dimmed as stale with "showing the last
   // brief"; a first-ever run shows the deterministic headline instead.
   const rawGeneratedAt = brief?.generatedAt;
+  const generatedDate = typeof rawGeneratedAt === 'number' ? new Date(rawGeneratedAt) : null;
   const generatedAt =
-    typeof rawGeneratedAt === 'number' && Number.isFinite(rawGeneratedAt) && rawGeneratedAt > 0
+    typeof rawGeneratedAt === 'number' &&
+    Number.isFinite(rawGeneratedAt) &&
+    rawGeneratedAt > 0 &&
+    generatedDate !== null &&
+    Number.isFinite(generatedDate.getTime())
       ? rawGeneratedAt
       : null;
   const hasPriorEdition = generatedAt !== null && hasText;

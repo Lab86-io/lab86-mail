@@ -111,7 +111,28 @@ Three concrete root causes in the current code:
   JavaScript, so SPA doc pages (Linear, some Asana) returned unusable markup or
   Cloudflare interstitials; `asana.com/inside-asana/...` 404'd. Text-clean
   product docs were read via the harness `WebFetch` route instead, recorded
-  above. No live authenticated screenshot of the Area Brief was captured; verification is via focused pure-helper tests, `typecheck`, and Biome.
+  above. No live authenticated screenshot of the Area Brief was captured.
+- Exact verification on the final implementation:
+  - `bun test tests/albatross-area-home.test.ts tests/albatross-area-query-bounds.test.ts tests/albatross-area-brief-route.test.ts tests/albatross-guardrails.test.ts`
+    — **113 passed, 0 failed** at the final focused run.
+  - `bun run typecheck` — **passed** (`tsc --noEmit`).
+  - `bun run lint` — **passed** (Biome checked 526 files, no fixes).
+  - `bun run test:coverage` — **1,019 passed, 0 failed** across 95 files.
+  - `bun run build` — **passed** (Next.js production compilation,
+    TypeScript, page-data collection, and static generation completed).
+- Backend/root-agent follow-ups resolved the Personal Area failure as a Convex
+  timeout caused by an unbounded artifact-link read. The final bounded query
+  was deployed to the development Convex deployment and verified against the
+  real Personal Area: **195 documents read in ~200 ms**, with a ready generated
+  living brief. The old path read 26,243 documents and timed out. Per-kind and
+  board-card scans now use sentinel rows and newest-first indexes; no known
+  Area Home query failure remains.
+- Root-agent review also added the real authenticated refresh route, explicit
+  ownership point lookup, best-effort reindex-before-generation sequencing,
+  safe error responses, bounded-count labels, complete/qualified Needs-you
+  presentation, and focused executable route/query/state tests. CodeRabbit was
+  rerun after each follow-up. Screenshot verification remains unavailable only
+  because no automation-capable T3 preview host was attached.
 
 ## Design decisions
 

@@ -1262,7 +1262,8 @@ export const areaHome = query({
     const boardCardScan = area.boardId
       ? await ctx.db
           .query('cards')
-          .withIndex('by_board', (q) => q.eq('boardId', area.boardId!))
+          .withIndex('by_board_updatedAt', (q) => q.eq('boardId', area.boardId!))
+          .order('desc')
           .take(201)
       : [];
     const boardCards = boardCardScan.slice(0, 200);
@@ -1432,6 +1433,10 @@ export const areaHome = query({
           },
         },
         evidence,
+        // The actionable queue is assembled from these bounded task/intent
+        // previews plus the separate Work query. Let the UI qualify its count
+        // whenever either source may have more rows beyond the scan.
+        needsYouBounded: evidence.tasks.hasMore || recentIntents.length >= AREA_HOME_INTENT_SCAN,
         plans: plans.length,
         projects: projects.length,
         places: places.length,
