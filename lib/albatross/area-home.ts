@@ -985,3 +985,10 @@ export function evidenceRollup(counts: EvidenceCountsLike): AreaPulseSegment[] {
   pushExact('candidate', counts.facts.candidate, 'context ask', 'context asks');
   return segments;
 }
+
+// Places are supporting evidence too, even when an Area has no linked
+// mail/events/tasks/context yet. Keep this gate pure so the only-places state
+// cannot disappear behind the artifact rollup condition again.
+export function shouldShowEvidenceBand(evidenceSegments: number, places: number): boolean {
+  return evidenceSegments > 0 || places > 0;
+}

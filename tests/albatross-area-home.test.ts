@@ -31,6 +31,7 @@ import {
   railAreaBadge,
   railAreaRows,
   resolveAreaSelection,
+  shouldShowEvidenceBand,
   splitBriefRows,
   suggestIntentArea,
   taskRowMeta,
@@ -982,5 +983,13 @@ describe('evidenceRollup', () => {
         facts: { verified: 0, candidate: 0 },
       }),
     ).toEqual([]);
+  });
+});
+
+describe('shouldShowEvidenceBand', () => {
+  test('keeps a places-only Area visible in the supporting evidence band', () => {
+    expect(shouldShowEvidenceBand(0, 2)).toBe(true);
+    expect(shouldShowEvidenceBand(0, 0)).toBe(false);
+    expect(shouldShowEvidenceBand(1, 0)).toBe(true);
   });
 });

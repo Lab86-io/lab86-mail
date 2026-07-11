@@ -56,6 +56,7 @@ import {
   projectProgress,
   projectStateMeta,
   resolveAreaSelection,
+  shouldShowEvidenceBand,
   splitBriefRows,
   taskRowMeta,
   workNeedsYouRows,
@@ -571,7 +572,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
             <NeedsYouSection rows={needsYou} />
             <ProjectsSection projects={home.projects} count={home.counts.projects} />
             <WorkSections rows={workRows} />
-            {evidence.length ? (
+            {shouldShowEvidenceBand(evidence.length, home.counts.places) ? (
               <>
                 <EvidenceHeader segments={evidence} />
                 <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">

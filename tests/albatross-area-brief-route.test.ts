@@ -84,6 +84,16 @@ describe('Area brief refresh endpoint', () => {
     expect(deps.generate).not.toHaveBeenCalled();
   });
 
+  test('rejects an empty area id before any Area work begins', async () => {
+    const deps = dependencies();
+    const response = await invoke(deps, '');
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ ok: false, error: 'area required' });
+    expect(deps.areaExists).not.toHaveBeenCalled();
+    expect(deps.reindex).not.toHaveBeenCalled();
+    expect(deps.generate).not.toHaveBeenCalled();
+  });
+
   test('keeps reindex best-effort and unknown generation failures client-safe', async () => {
     const withReindexFailure = dependencies();
     withReindexFailure.reindex.mockImplementation(async () => {
