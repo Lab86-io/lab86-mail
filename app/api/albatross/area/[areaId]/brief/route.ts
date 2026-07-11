@@ -41,9 +41,11 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
       // Reindex first so the prose is written from the freshest evidence. A
       // filing failure is best-effort: the existing evidence can still produce
       // a useful brief and the refresh request should not be discarded.
-      await deps.reindex(user.userId, areaId).catch((error: unknown) => {
+      try {
+        await deps.reindex(user.userId, areaId);
+      } catch (error: unknown) {
         console.warn('[albatross-area-brief] evidence reindex failed', error);
-      });
+      }
 
       const brief = await deps.generate({
         userId: user.userId,
@@ -70,8 +72,8 @@ export const POST = createAreaBriefPost({
   currentUser: requireCurrentUser,
   rateLimit: enforceUserRateLimit,
   areaExists: async (userId, areaId) => {
-    const areas = await convexQuery<any[]>((api as any).albatross.listAreas, { userId });
-    return areas.some((area) => String(area._id) === areaId);
+    const area = await convexQuery((api as any).albatross.areaBriefTarget, { userId, areaId });
+    return area !== null;
   },
   reindex: (userId, areaId) =>
     convexMutation((api as any).albatross.reindexMyAreas, {

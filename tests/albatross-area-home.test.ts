@@ -71,12 +71,13 @@ describe('areaHomeSections', () => {
 });
 
 describe('areaHasNoLinks', () => {
-  test('true only when mail, events, and tasks are all empty', () => {
+  test('true only when every rendered and other artifact link is empty', () => {
     expect(areaHasNoLinks(counts(0, 0, 0))).toBe(true);
     expect(areaHasNoLinks(counts(0, 0, 0, 5, 2))).toBe(true); // facts alone are not links
     expect(areaHasNoLinks(counts(1, 0, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 1, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 0, 1))).toBe(false);
+    expect(areaHasNoLinks(counts(0, 0, 0), 1)).toBe(false);
   });
 });
 
@@ -454,6 +455,22 @@ describe('areaBriefHeadline', () => {
         candidateFacts: 0,
       }),
     ).toBe('1 upcoming event and 2 active plans are shaping Job Search today.');
+  });
+
+  test('bounded upcoming evidence qualifies the event count', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Garden',
+        needsYou: 0,
+        upcoming: 3,
+        upcomingBounded: true,
+        plans: 1,
+        projects: 0,
+        mail: 0,
+        tasks: 0,
+        candidateFacts: 0,
+      }),
+    ).toBe('at least 3 upcoming events and 1 active plan are shaping Garden today.');
   });
 
   test('quiet areas get a quiet sentence', () => {
@@ -948,10 +965,15 @@ describe('evidenceRollup', () => {
       mail: preview(17),
       events: preview(0),
       tasks: preview(1),
-      facts: { verified: 2, candidate: 0 },
+      facts: { verified: 2, candidate: 1 },
     });
-    expect(segments.map((s) => s.id)).toEqual(['mail', 'tasks', 'verified']);
-    expect(segments.map((s) => s.label)).toEqual(['17 threads', '1 task', '2 verified facts']);
+    expect(segments.map((s) => s.id)).toEqual(['mail', 'tasks', 'verified', 'candidate']);
+    expect(segments.map((s) => s.label)).toEqual([
+      '17 threads',
+      '1 task',
+      '2 verified facts',
+      '1 context ask',
+    ]);
   });
 
   test('a bounded preview reads "N+" and never claims a false exact total', () => {

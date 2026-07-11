@@ -305,10 +305,11 @@ export function areaHomeSections(counts: AreaHomeCountsLike): AreaHomeSection[] 
   ];
 }
 
-// True when the classifier has filed nothing at all — the page swaps the three
-// artifact sections for one whole-page explanation (context still renders).
-export function areaHasNoLinks(counts: AreaHomeCountsLike): boolean {
-  return counts.mail + counts.events + counts.tasks === 0;
+// True when the classifier has filed nothing at all — including connected or
+// manual artifacts that do not render as mail/events/tasks. The page only uses
+// its whole-Area empty explanation when every link kind is genuinely absent.
+export function areaHasNoLinks(counts: AreaHomeCountsLike, otherLinks = 0): boolean {
+  return counts.mail + counts.events + counts.tasks + Math.max(0, otherLinks) === 0;
 }
 
 // The Areas chooser is now a work-entry surface, not a directory. This score
@@ -560,11 +561,12 @@ export function areaBriefHeadline(input: {
   // bounded preview rather than an exact total. The "filed signals" branch then
   // avoids an exact claim it can't stand behind.
   evidenceBounded?: boolean;
+  upcomingBounded?: boolean;
 }): string {
   if (input.needsYou > 0)
     return `${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
   if (input.upcoming > 0 && input.plans > 0)
-    return `${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
+    return `${input.upcomingBounded ? 'at least ' : ''}${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
   if (input.plans > 0)
     return `${input.plans} active ${input.plans === 1 ? 'plan is' : 'plans are'} in motion for ${input.areaName}.`;
   const signals = input.mail + input.tasks + input.upcoming;

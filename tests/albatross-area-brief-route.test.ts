@@ -102,7 +102,25 @@ describe('Area brief refresh endpoint', () => {
     const originalWarn = console.warn;
     console.warn = mock(() => undefined);
     try {
-      expect((await invoke(withReindexFailure)).status).toBe(200);
+      const response = await invoke(withReindexFailure);
+      expect(response.status).toBe(200);
+      expect(withReindexFailure.generate).toHaveBeenCalled();
+      expect(await response.json()).toEqual({
+        ok: true,
+        brief: { status: 'ready', lede: 'Current work is moving.', summary: 'Ready.' },
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const withSynchronousReindexFailure = dependencies();
+    withSynchronousReindexFailure.reindex.mockImplementation(() => {
+      throw new Error('synchronous classifier failure');
+    });
+    console.warn = mock(() => undefined);
+    try {
+      expect((await invoke(withSynchronousReindexFailure)).status).toBe(200);
+      expect(withSynchronousReindexFailure.generate).toHaveBeenCalled();
     } finally {
       console.warn = originalWarn;
     }

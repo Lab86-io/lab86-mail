@@ -472,6 +472,20 @@ export const getArea = query({
   },
 });
 
+// Route-safe owned-Area point lookup. It accepts the URL's raw string so an
+// invalid/stale id resolves to null instead of becoming a validator error, and
+// never reveals another user's Area.
+export const areaBriefTarget = query({
+  args: { ...callerArgs, areaId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const areaId = ctx.db.normalizeId('areas', args.areaId);
+    if (!areaId) return null;
+    const area = await ctx.db.get(areaId);
+    return area?.userId === userId ? { _id: area._id } : null;
+  },
+});
+
 export const addAreaFact = mutation({
   args: {
     ...callerArgs,
@@ -1245,12 +1259,13 @@ export const areaHome = query({
     const linkedTasks = (
       await Promise.all((byKind.get('task') || []).map((link) => resolveTaskLink(ctx, userId, link)))
     ).filter((row): row is NonNullable<typeof row> => row !== null);
-    const boardCards = area.boardId
+    const boardCardScan = area.boardId
       ? await ctx.db
           .query('cards')
           .withIndex('by_board', (q) => q.eq('boardId', area.boardId!))
-          .take(200)
+          .take(201)
       : [];
+    const boardCards = boardCardScan.slice(0, 200);
     const seenCardIds = new Set(linkedTasks.map((task) => String(task.cardId)));
     const boardTasks = boardCards
       .filter((card) => !seenCardIds.has(String(card._id)))
@@ -1374,7 +1389,7 @@ export const areaHome = query({
         shown: tasks.length,
         hasMore:
           resolvedTasks.length > tasks.length ||
-          boardCards.length >= 200 ||
+          boardCardScan.length > 200 ||
           (byKind.get('task') || []).length > AREA_HOME_LINK_SCAN_CAPS.task,
       },
     };
@@ -1408,9 +1423,11 @@ export const areaHome = query({
             bounded: true,
           },
           other: {
-            shown: activeLinks.filter(
-              (link) => !['mailThread', 'calendarEvent', 'task'].includes(link.artifactKind),
-            ).length,
+            shown: (['mcpItem', 'intent', 'manual'] as const).reduce(
+              (total, kind) =>
+                total + Math.min((byKind.get(kind) || []).length, AREA_HOME_LINK_SCAN_CAPS[kind]),
+              0,
+            ),
             bounded: true,
           },
         },

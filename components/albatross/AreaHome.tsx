@@ -473,7 +473,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   };
   const sections = areaHomeSections(displayCounts);
   const sectionCount = (id: string) => sections.find((section) => section.id === id)?.count ?? 0;
-  const noLinks = areaHasNoLinks(displayCounts);
+  const noLinks = areaHasNoLinks(displayCounts, home.counts.links.other.shown);
   const evidenceBounded =
     home.counts.evidence.mail.hasMore ||
     home.counts.evidence.events.hasMore ||
@@ -499,6 +499,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     tasks: displayCounts.tasks,
     candidateFacts: home.counts.facts.candidate,
     evidenceBounded,
+    upcomingBounded: home.counts.evidence.events.hasMore,
   });
   const brief = areaBriefState(home.livingBrief, headline);
   const evidence = evidenceRollup({
@@ -1488,17 +1489,22 @@ function RefreshBriefButton({ areaId, canGenerate }: { areaId: string; canGenera
   // BriefLead already shows: this only tells the user their click didn't land, so
   // retrying is worthwhile. No toast — the label carries it.
   const [requestFailed, setRequestFailed] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
   const run = async () => {
     if (busy) return;
     setBusy(true);
     setRequestFailed(false);
+    setServerError(null);
     try {
       const response = await fetch(`/api/albatross/area/${encodeURIComponent(areaId)}/brief`, {
         method: 'POST',
       });
-      // HTTP/auth failures return a response but not ok; only a landed request
-      // clears the failed state. The reactive query renders the actual outcome.
-      if (!response.ok) setRequestFailed(true);
+      // A non-OK response landed successfully; keep it distinct from a network
+      // delivery failure and surface the route's controlled message.
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        setServerError(payload?.error || 'Brief refresh was not accepted.');
+      }
     } catch {
       // Network error — the request never completed.
       setRequestFailed(true);
@@ -1508,16 +1514,18 @@ function RefreshBriefButton({ areaId, canGenerate }: { areaId: string; canGenera
   };
   const label = busy
     ? 'Working…'
-    : requestFailed
+    : requestFailed || serverError
       ? 'Retry'
       : canGenerate
         ? 'Generate brief'
         : 'Refresh brief';
   const title = requestFailed
     ? 'That request didn’t go through — try again'
-    : canGenerate
-      ? 'Generate this area brief'
-      : 'Refresh this area brief';
+    : serverError
+      ? `${serverError} Try again.`
+      : canGenerate
+        ? 'Generate this area brief'
+        : 'Refresh this area brief';
   return (
     <Button
       type="button"
