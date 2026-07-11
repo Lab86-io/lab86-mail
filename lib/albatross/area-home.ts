@@ -460,6 +460,9 @@ export interface AreaProjectRow {
   outcome: string | null;
   status: string;
   sourceIntentId: string | null;
+  taskCount?: number;
+  completedTaskCount?: number;
+  activeSprint?: { title: string; status: string; endAt: number | null } | null;
   updatedAt: number;
 }
 

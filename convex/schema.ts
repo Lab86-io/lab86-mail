@@ -451,6 +451,82 @@ export default defineSchema({
     .index('by_user_source_intent', ['userId', 'sourceIntentId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
+  // The untouched brain dump that precedes one or more Work items. A capture
+  // is preserved even when the splitter produces several albatrossIntents so
+  // the user can always recover exactly what they originally unloaded.
+  albatrossCaptures: defineTable({
+    userId: v.string(),
+    rawText: v.string(),
+    transcript: v.optional(v.string()),
+    source: v.union(v.literal('text'), v.literal('voice'), v.literal('chat'), v.literal('import')),
+    status: v.union(v.literal('processing'), v.literal('split'), v.literal('error')),
+    workIds: v.array(v.id('albatrossIntents')),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_user_status', ['userId', 'status']),
+
+  // One durable, material question for a Work item. Questions are separate
+  // from plan versions so the same active ask can render in Daily Brief, Area,
+  // Work detail, notification center, and optional browser PiP.
+  albatrossWorkQuestions: defineTable({
+    userId: v.string(),
+    workId: v.id('albatrossIntents'),
+    legacyQuestionId: v.optional(v.string()),
+    kind: v.union(v.literal('clarification'), v.literal('completion'), v.literal('correction')),
+    prompt: v.string(),
+    reason: v.optional(v.string()),
+    options: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          label: v.string(),
+          description: v.optional(v.string()),
+        }),
+      ),
+    ),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('answered'),
+      v.literal('dismissed'),
+      v.literal('superseded'),
+    ),
+    answer: v.optional(v.string()),
+    answeredOptionId: v.optional(v.string()),
+    sourceRefs: v.array(albatrossSourceRef),
+    createdAt: v.number(),
+    answeredAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_work', ['workId'])
+    .index('by_user_status_created', ['userId', 'status', 'createdAt'])
+    .index('by_user_work_status', ['userId', 'workId', 'status']),
+
+  // Cached editorial prose for a living Area brief. Operational sections are
+  // always queried live; this record can regenerate in the background without
+  // freezing questions, Work, tasks, or Project progress in an HTML snapshot.
+  albatrossAreaBriefs: defineTable({
+    userId: v.string(),
+    areaId: v.id('areas'),
+    status: v.union(v.literal('generating'), v.literal('ready'), v.literal('error')),
+    lede: v.string(),
+    summary: v.string(),
+    sourceRefs: v.array(albatrossSourceRef),
+    basedOnRevision: v.string(),
+    generatedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_area', ['areaId'])
+    .index('by_user_area', ['userId', 'areaId'])
+    .index('by_user_status', ['userId', 'status']),
+
   albatrossProjectLinks: defineTable({
     userId: v.string(),
     projectId: v.id('albatrossProjects'),
@@ -625,6 +701,32 @@ export default defineSchema({
     ),
     kind: v.optional(v.string()),
     areaId: v.optional(v.string()),
+    // Work-v2 additions. Legacy areaId/status remain readable during the
+    // additive migration; these fields become the user-facing Work contract.
+    captureId: v.optional(v.id('albatrossCaptures')),
+    conversationId: v.optional(v.string()),
+    primaryAreaId: v.optional(v.id('areas')),
+    primaryProjectId: v.optional(v.id('albatrossProjects')),
+    workState: v.optional(
+      v.union(
+        v.literal('active'),
+        v.literal('waiting'),
+        v.literal('blocked'),
+        v.literal('done'),
+        v.literal('archived'),
+      ),
+    ),
+    agentState: v.optional(
+      v.union(
+        v.literal('idle'),
+        v.literal('researching'),
+        v.literal('needs_input'),
+        v.literal('applying'),
+        v.literal('error'),
+      ),
+    ),
+    lastAgentRunAt: v.optional(v.number()),
+    lastEvidenceAt: v.optional(v.number()),
     priority: v.optional(v.number()),
     questions: v.optional(
       v.array(
@@ -663,7 +765,11 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_external', ['userId', 'externalId'])
-    .index('by_user_updatedAt', ['userId', 'updatedAt']),
+    .index('by_user_updatedAt', ['userId', 'updatedAt'])
+    .index('by_user_primary_area', ['userId', 'primaryAreaId'])
+    .index('by_user_work_state', ['userId', 'workState'])
+    .index('by_user_project', ['userId', 'primaryProjectId'])
+    .index('by_capture', ['captureId']),
 
   // A generated plan for one intent. digitalActions match the work-model
   // contract so albatross_apply_intent_plan can execute the plan as stored.
@@ -1142,6 +1248,138 @@ export default defineSchema({
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_dedupe', ['userId', 'dedupeKey'])
     .index('by_user_created', ['userId', 'createdAt']),
+
+  // Albatross notifications are delivery-independent. A failed web push or
+  // email never hides the durable in-app record, and dedupe keys make cron
+  // retries, deploys, and DST transitions safe.
+  albatrossNotifications: defineTable({
+    userId: v.string(),
+    type: v.union(
+      v.literal('daily_checkin'),
+      v.literal('work_question'),
+      v.literal('approval'),
+      v.literal('completion_suggestion'),
+      v.literal('brief_ready'),
+      v.literal('agent_error'),
+    ),
+    title: v.string(),
+    body: v.string(),
+    entityKind: v.optional(
+      v.union(
+        v.literal('checkin'),
+        v.literal('work'),
+        v.literal('project'),
+        v.literal('area'),
+        v.literal('approval'),
+      ),
+    ),
+    entityId: v.optional(v.string()),
+    deepLink: v.string(),
+    dedupeKey: v.string(),
+    status: v.union(
+      v.literal('queued'),
+      v.literal('delivered'),
+      v.literal('read'),
+      v.literal('acted'),
+      v.literal('dismissed'),
+      v.literal('expired'),
+    ),
+    scheduledFor: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    readAt: v.optional(v.number()),
+    actedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status_created', ['userId', 'status', 'createdAt'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
+    .index('by_scheduled', ['scheduledFor']),
+
+  albatrossNotificationPreferences: defineTable({
+    userId: v.string(),
+    timezone: v.string(),
+    eveningCheckinEnabled: v.boolean(),
+    eveningCheckinLocalTime: v.string(),
+    inAppEnabled: v.boolean(),
+    webPushEnabled: v.boolean(),
+    emailFallbackEnabled: v.boolean(),
+    emailFallbackDelayMinutes: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_user', ['userId']),
+
+  webPushSubscriptions: defineTable({
+    userId: v.string(),
+    endpoint: v.string(),
+    p256dh: v.string(),
+    auth: v.string(),
+    userAgent: v.optional(v.string()),
+    status: v.union(v.literal('active'), v.literal('revoked'), v.literal('expired')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastDeliveredAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_endpoint', ['endpoint']),
+
+  notificationDeliveries: defineTable({
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+    channel: v.union(v.literal('in_app'), v.literal('web_push'), v.literal('email')),
+    status: v.union(v.literal('queued'), v.literal('sent'), v.literal('failed'), v.literal('suppressed')),
+    attemptCount: v.number(),
+    providerId: v.optional(v.string()),
+    error: v.optional(v.string()),
+    scheduledFor: v.number(),
+    sentAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_notification', ['notificationId'])
+    .index('by_user', ['userId'])
+    .index('by_status_scheduled', ['status', 'scheduledFor']),
+
+  albatrossDailyCheckins: defineTable({
+    userId: v.string(),
+    localDate: v.string(),
+    timezone: v.string(),
+    status: v.union(v.literal('scheduled'), v.literal('open'), v.literal('answered'), v.literal('skipped')),
+    candidateItems: v.array(
+      v.object({
+        kind: v.union(
+          v.literal('work'),
+          v.literal('project'),
+          v.literal('task'),
+          v.literal('event'),
+          v.literal('artifact'),
+        ),
+        id: v.string(),
+        title: v.string(),
+        suggestedState: v.optional(v.string()),
+        evidence: v.array(albatrossSourceRef),
+      }),
+    ),
+    responseText: v.optional(v.string()),
+    reconciledChanges: v.optional(
+      v.array(
+        v.object({
+          kind: v.string(),
+          id: v.string(),
+          previousState: v.optional(v.string()),
+          nextState: v.optional(v.string()),
+        }),
+      ),
+    ),
+    conversationId: v.string(),
+    openedAt: v.optional(v.number()),
+    answeredAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_date', ['userId', 'localDate'])
+    .index('by_user_status_date', ['userId', 'status', 'localDate']),
 
   auditEvents: defineTable({
     userId: v.optional(v.string()),

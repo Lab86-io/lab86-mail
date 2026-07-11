@@ -28,6 +28,18 @@ crons.interval('area classify', { minutes: 30 }, internal.albatross.classifyTick
 // stale 'planning' intents through the app, then fails them gracefully.
 crons.interval('plan reconcile', { minutes: 5 }, internal.albatrossIntents.planReconcileTick, {});
 
+// Local-time Albatross check-ins and their multi-channel delivery outbox.
+// Each target is deduped by user + local date, so a 15-minute cadence remains
+// safe across deploys, retries, and daylight-saving transitions.
+crons.interval('albatross notifications', { minutes: 15 }, internal.albatrossNotifications.tick, {});
+
+// Additive Work-v2 migration is idempotent and paginates through legacy
+// intents. Re-igniting it twice daily also catches rows written by an older
+// client during the compatibility window.
+crons.interval('albatross Work v2 migration', { hours: 12 }, internal.albatrossWorkV2.migrateLegacyBatch, {
+  limit: 100,
+});
+
 // Poll each user's connected tool servers/APIs every 20 minutes
 // so brief/search items stay current. Cast: the generated `internal` type only
 // gains `mcpSync` after codegen on deploy.

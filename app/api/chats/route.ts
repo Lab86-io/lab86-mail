@@ -4,9 +4,11 @@ import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import {
+  type ChatSessionScope,
   deleteChatSession,
   getChatSession,
   listChatSessions,
+  listScopedChatSessions,
   saveChatSession,
 } from '@/lib/store/chat-sessions';
 
@@ -38,7 +40,16 @@ export async function GET(req: NextRequest) {
         const session = await getChatSession(id);
         return NextResponse.json({ ok: true, session });
       }
-      const sessions = await listChatSessions();
+      const kind = req.nextUrl.searchParams.get('scopeKind');
+      const scope =
+        kind === 'global' || kind === 'area' || kind === 'work'
+          ? ({
+              kind,
+              areaId: req.nextUrl.searchParams.get('areaId') || undefined,
+              workId: req.nextUrl.searchParams.get('workId') || undefined,
+            } satisfies ChatSessionScope)
+          : null;
+      const sessions = scope ? await listScopedChatSessions(scope) : await listChatSessions();
       return NextResponse.json({ ok: true, sessions });
     });
   } catch (err: any) {
@@ -47,7 +58,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { id?: string; title?: string; messages?: unknown[] };
+  let body: {
+    id?: string;
+    title?: string;
+    messages?: unknown[];
+    scope?: ChatSessionScope;
+    scopeKind?: string;
+    areaId?: string;
+    workId?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -60,12 +79,31 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(body.messages)) {
     return NextResponse.json({ ok: false, error: 'messages required' }, { status: 400 });
   }
+  const kind = body.scope?.kind || body.scopeKind || 'global';
+  if (!['global', 'area', 'work'].includes(kind)) {
+    return NextResponse.json({ ok: false, error: 'invalid chat scope' }, { status: 400 });
+  }
+  const areaId =
+    String(body.scope?.areaId || body.areaId || '')
+      .trim()
+      .slice(0, 180) || undefined;
+  const workId =
+    String(body.scope?.workId || body.workId || '')
+      .trim()
+      .slice(0, 180) || undefined;
+  if (kind === 'area' && !areaId) {
+    return NextResponse.json({ ok: false, error: 'areaId required for Area chat' }, { status: 400 });
+  }
+  if (kind === 'work' && !workId) {
+    return NextResponse.json({ ok: false, error: 'workId required for Work chat' }, { status: 400 });
+  }
+  const scope: ChatSessionScope = { kind: kind as ChatSessionScope['kind'], areaId, workId };
   try {
     const user = await requireCurrentUser();
     await enforceUserRateLimit({ userId: user.userId, key: 'chat-save', limit: 120, windowMs: 60_000 });
     const session = await runWithAiRequestContext(
       { userId: user.userId, userEmail: user.email, userName: user.name, agent: 'user' },
-      () => saveChatSession(id, body.messages as any[], body.title),
+      () => saveChatSession(id, body.messages as any[], body.title, scope),
     );
     const { messages: _messages, ...summary } = session;
     return NextResponse.json({ ok: true, session: summary });

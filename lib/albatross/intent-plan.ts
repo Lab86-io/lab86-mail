@@ -7,6 +7,7 @@ import { withDeadline } from '@/lib/shared/deadline';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { invokeTool } from '@/lib/tools/registry';
 import { browserbaseSearch } from '@/lib/tools/web';
+import { assignStableActionKeys, shouldComposeWorkBrief } from './work-v2';
 
 // Dependency seam mirroring lib/tools/albatross.ts: tests swap the network
 // edges (Convex, gateway, tool invocation) and exercise the real orchestration.
@@ -377,7 +378,7 @@ function packLine(ref: PlanContextRef, detail: string) {
   return `- [${ref.refId}] (${ref.kind}) ${detail}`;
 }
 
-async function buildContextPack(userId: string, rawText: string) {
+async function buildContextPack(userId: string, rawText: string, areaId?: string) {
   const refs: PlanContextRef[] = [];
   const lines: string[] = [];
 
@@ -395,6 +396,54 @@ async function buildContextPack(userId: string, rawText: string) {
         .map((fact) => `${fact.kind}: ${fact.value}${fact.label ? ` (${fact.label})` : ''}`);
       lines.push(`- ${area.name} [${area.kind}]${area.description ? ` — ${area.description}` : ''}`);
       for (const factLine of areaFacts) lines.push(`  - ${factLine}`);
+    }
+  }
+
+  // A Work item belongs to an Area, so planning should see that Area's actual
+  // live schedule, tasks, projects, and linked mail instead of merely claiming
+  // to read them in loading copy. The query is bounded and provenance-shaped.
+  if (areaId) {
+    const home = await deps
+      .convexQuery<any>(deps.api.albatross.areaHome, { userId, areaId })
+      .catch(() => null);
+    if (home) {
+      lines.push('', `## Current Area state: ${home.area?.name || 'Area'}`);
+      for (const event of (home.events || []).slice(0, 12)) {
+        const refId = `ref${refs.length + 1}`;
+        refs.push({
+          refId,
+          kind: 'calendar_event',
+          id: String(event.providerEventId || refId),
+          label: event.title,
+          accountId: event.accountId,
+        });
+        lines.push(
+          packLine(
+            refs[refs.length - 1],
+            `${event.title} — ${new Date(event.startAt).toISOString()} to ${new Date(event.endAt).toISOString()}${event.location ? ` — ${event.location}` : ''}`,
+          ),
+        );
+      }
+      for (const task of (home.tasks || []).slice(0, 16)) {
+        const refId = `ref${refs.length + 1}`;
+        refs.push({ refId, kind: 'task', id: String(task.cardId || refId), label: task.title });
+        lines.push(
+          packLine(
+            refs[refs.length - 1],
+            `${task.title}${task.completedAt ? ' — completed' : ''}${task.dueAt ? ` — due ${new Date(task.dueAt).toISOString()}` : ''}`,
+          ),
+        );
+      }
+      for (const project of (home.projects || []).slice(0, 8)) {
+        const refId = `ref${refs.length + 1}`;
+        refs.push({ refId, kind: 'project', id: String(project.projectId || refId), label: project.title });
+        lines.push(
+          packLine(
+            refs[refs.length - 1],
+            `${project.title} — ${project.status}${project.outcome ? ` — ${project.outcome}` : ''}`,
+          ),
+        );
+      }
     }
   }
 
@@ -489,7 +538,7 @@ async function detectLocalQuery(input: GenerateIntentPlanInput, rawText: string)
         speed: 'fast',
         userId: input.userId,
         system:
-          'Does this thought involve visiting, calling, or buying from a nearby business or venue? Respond with ONE JSON object: {"query": string|null} — a short web-search category like "guitar stores" or "passport photo services", or null when nothing local is involved.',
+          'Does this thought involve visiting, calling, or buying from a nearby business or venue? Respond with ONE JSON object: {"query": string|null} using a short category grounded only in the user\'s thought, or null when nothing local is involved.',
         prompt: rawText.slice(0, 500),
       }),
       30_000,
@@ -552,7 +601,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
 
   try {
     const [{ refs, contextText, areas }, nearby] = await Promise.all([
-      buildContextPack(input.userId, intent.rawText),
+      buildContextPack(input.userId, intent.rawText, intent.primaryAreaId || intent.areaId),
       nearbyEvidence(input, intent.rawText),
     ]);
     const nowIso = new Date().toISOString();
@@ -617,25 +666,33 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
     const questions = mergePlanQuestions(intent.questions || [], freshQuestions);
     const sourceRefs = resolveSourceRefs(generation.sourceRefIds, refs);
 
-    const digitalActions = assignStepKeys(generation.digitalActions).map((action) => ({
-      key: action.key,
-      kind: action.kind,
-      title: action.title,
-      description: action.description,
-      priority: (action.priority as 1 | 2 | 3 | undefined) ?? (generation.priority as 1 | 2 | 3 | undefined),
-      durationMinutes: action.durationMinutes,
-      startIso: action.startIso,
-      endIso: action.endIso,
-      account: action.account,
-      to: action.to,
-      subject: action.subject,
-      body: action.body,
-      areaId,
-      sourceRefs: resolveSourceRefs(action.sourceRefIds, refs),
-    }));
+    const digitalActions = assignStableActionKeys(assignStepKeys(generation.digitalActions)).map(
+      (action) => ({
+        key: action.key,
+        actionKey: action.actionKey,
+        kind: action.kind,
+        title: action.title,
+        description: action.description,
+        priority:
+          (action.priority as 1 | 2 | 3 | undefined) ?? (generation.priority as 1 | 2 | 3 | undefined),
+        durationMinutes: action.durationMinutes,
+        startIso: action.startIso,
+        endIso: action.endIso,
+        account: action.account,
+        to: action.to,
+        subject: action.subject,
+        body: action.body,
+        areaId,
+        sourceRefs: resolveSourceRefs(action.sourceRefIds, refs),
+      }),
+    );
 
     let artifactHtml: string | undefined;
+    const composeBrief =
+      questions.every((question) => question.answer) &&
+      shouldComposeWorkBrief({ declaredProjectTitle: generation.projectTitle, actions: digitalActions });
     try {
+      if (!composeBrief) throw new Error('brief-not-required');
       const artifact = await withDeadline(
         deps.generateTextForCurrentUser({
           feature: 'albatross_plan_artifact',
@@ -680,7 +737,9 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       artifactHtml = extracted ? normalizeArtifactLinks(extracted) : undefined;
     } catch (err) {
       // The plan is still fully usable without its brief; don't fail the loop.
-      console.warn('[albatross-plan] artifact composition failed:', err);
+      if (!(err instanceof Error && err.message === 'brief-not-required')) {
+        console.warn('[albatross-plan] artifact composition failed:', err);
+      }
     }
 
     const planId = await deps.convexMutation<string>(deps.api.albatrossIntents.savePlan, {

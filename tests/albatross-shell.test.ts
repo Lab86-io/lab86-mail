@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { migratePersistedClientState } from '../lib/client-state';
 import { isAlbatrossEnabled } from '../lib/hosted/controls';
 import {
   hasPersistedPrimaryViewValue,
@@ -29,6 +30,11 @@ describe('Albatross shell flag', () => {
 });
 
 describe('Albatross primary view guards', () => {
+  test('migrates the removed Plans destination to Areas without dropping Work selection', () => {
+    const persisted = migratePersistedClientState({ primaryView: 'intents', selectedWorkId: 'work_123' });
+    expect(persisted.primaryView).toBe('areas');
+    expect(persisted.selectedWorkId).toBe('work_123');
+  });
   test('recognizes the hidden Albatross views', () => {
     expect(isAlbatrossPrimaryView('areas')).toBe(true);
     expect(isAlbatrossPrimaryView('intents')).toBe(true);
@@ -43,9 +49,9 @@ describe('Albatross primary view guards', () => {
     expect(normalizePrimaryView('unknown', false)).toBe('daily_report');
   });
 
-  test('keeps Albatross views reachable when the flag is enabled', () => {
+  test('keeps current Albatross views reachable and folds legacy Plans into Areas', () => {
     expect(normalizePrimaryView('areas', true)).toBe('areas');
-    expect(normalizePrimaryView('intents', true)).toBe('intents');
+    expect(normalizePrimaryView('intents', true)).toBe('areas');
     expect(normalizePrimaryView('unassigned', true)).toBe('unassigned');
   });
 

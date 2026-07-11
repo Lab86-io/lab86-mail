@@ -44,7 +44,7 @@ export function railTileLabel(title: string | null | undefined, max = 40): strin
 
 /**
  * One/two-letter typographic initial for an intent title:
- * "Renew passport" -> "RP", "Taxes" -> "T". Leading punctuation is ignored
+ * "Prepare launch" -> "PL", "Planning" -> "P". Leading punctuation is ignored
  * ("'quick' errand" -> "QE"); an empty title falls back to a middle dot.
  */
 export function intentInitials(title: string | null | undefined): string {

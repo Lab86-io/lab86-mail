@@ -75,7 +75,7 @@ export const areaList = defineTool({
 export const areaCreate = defineTool({
   name: 'area_create',
   description:
-    'Create an area — one part of life the user is responsible for. Create it as soon as the user names it, then investigate (area_domain_activity, corpus_search, sender_profile) before proposing facts. On success the area is active, appears in the sidebar rail immediately, and has its own task board — tell the user both ("StatPearls is in your sidebar now, with its own task board"). Re-creating an existing or archived area revives it and reuses its board, never duplicates. If this tool errors, the area was NOT created; say so and retry instead of narrating success.',
+    "Create an area — one part of life the user is responsible for. Create it as soon as the user names it, then investigate (area_domain_activity, corpus_search, sender_profile) before proposing facts. On success the area is active, appears in the sidebar rail immediately, and has its own task board — confirm both using the user's actual Area name. Re-creating an existing or archived area revives it and reuses its board, never duplicates. If this tool errors, the area was NOT created; say so and retry instead of narrating success.",
   category: 'memory',
   mutating: true,
   input: z.object({
@@ -108,7 +108,7 @@ export const areaCreate = defineTool({
     const area = await deps
       .convexQuery<any>(areasApi().getArea, { userId, areaId: String(areaId) })
       .catch(() => null);
-    // Echo enough for the chat to confirm truthfully ("StatPearls is in your
+    // Echo enough for the chat to confirm truthfully ("[Area] is in your
     // sidebar now, with its own task board") without a follow-up read.
     return {
       ok: true,
@@ -215,12 +215,12 @@ export const areaFactSetStatus = defineTool({
 export const areaDomainActivity = defineTool({
   name: 'area_domain_activity',
   description:
-    'Investigate a domain or one sender against the local mail index: top senders with thread counts and recent subjects. Use this to ground Teach questions in evidence — "these people emailed you from cardhunt.com — coworkers?" Provide domain OR senderEmail.',
+    "Investigate a domain or one sender against the local mail index: top senders with thread counts and recent subjects. Use this to ground Area questions in the user's real evidence. Provide domain OR senderEmail.",
   category: 'mail',
   mutating: false,
   input: z
     .object({
-      domain: z.string().max(200).optional().describe('Bare domain like cardhunt.com'),
+      domain: z.string().max(200).optional().describe("Bare domain from the user's connected data"),
       senderEmail: z.string().max(200).optional().describe('One full address'),
       max: z.number().int().min(1).max(25).default(10),
     })

@@ -95,7 +95,7 @@ interface PlaceLookupResult {
 
 const ENTRY_TYPES = [
   { id: 'person', label: 'Person', placeholder: 'Andrew: boss' },
-  { id: 'site', label: 'Domain or site', placeholder: 'cardhunt.com' },
+  { id: 'site', label: 'Domain or site', placeholder: 'example.com' },
   { id: 'place', label: 'Place', placeholder: "Joe's Coffee, Albany" },
   { id: 'note', label: 'Note', placeholder: 'Rent is due on the 1st' },
 ] as const;
@@ -332,7 +332,7 @@ function AreasStep({
           onKeyDown={(event) => {
             if (event.key === 'Enter') addCustom();
           }}
-          placeholder="Something else — CardHunt, Habits, AI news…"
+          placeholder="Something else you’re responsible for…"
           className="h-8 text-[13px]"
         />
         <Button type="button" variant="outline" size="sm" onClick={addCustom} disabled={!custom.trim()}>

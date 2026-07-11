@@ -71,8 +71,8 @@ import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { categoricalColor } from '@/lib/shared/format';
-import { type AlbatrossPrimaryView, normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
-import { SuggestionsTray } from './SuggestionsTray';
+import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
+import { NotificationCenter } from './NotificationCenter';
 import { ThemePanel } from './ThemePanel';
 
 interface MailboxItem {
@@ -135,9 +135,6 @@ const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: stri
 // so the rail reflects the user's actual life instead of a generic 'Areas'
 // door. Unassigned stays routable (persisted views, review-queue affordance)
 // but earns no rail slot.
-const ALBATROSS_SURFACES: Array<{ view: AlbatrossPrimaryView; label: string; Icon: any }> = [
-  { view: 'intents', label: 'Plans', Icon: rowIcon(SquarePenIcon) },
-];
 
 // Areas are becoming the primary sort of the inbox; only the mechanical
 // categories that no area should absorb keep a rail row.
@@ -233,6 +230,7 @@ export function Rail({
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const { isMobile, setOpenMobile, state: railState } = useSidebar();
@@ -351,6 +349,7 @@ export function Rail({
   const openArea = (areaId: string | null) => {
     // A fresh area context should not carry a stale open thread with it.
     setSelectedThread(null);
+    setSelectedWorkId(null);
     setSelectedAreaId(areaId);
     setPrimaryView('areas');
     closeMobileSidebar();
@@ -400,7 +399,7 @@ export function Rail({
           <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
-          <SuggestionsTray />
+          {albatrossEnabled ? <NotificationCenter /> : null}
           <SidebarTrigger
             title="Toggle navigation rail"
             className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
@@ -477,33 +476,6 @@ export function Rail({
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {ALBATROSS_SURFACES.map(({ view, label, Icon }) => (
-                  <SidebarMenuItem key={view}>
-                    <SidebarMenuButton
-                      isActive={visiblePrimaryView === view}
-                      tooltip={label}
-                      onClick={() => {
-                        setPrimaryView(view);
-                        closeMobileSidebar();
-                      }}
-                      className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
-                    >
-                      {visiblePrimaryView === view ? (
-                        <ShineBorder
-                          borderWidth={1}
-                          duration={10}
-                          shineColor={[
-                            'var(--color-accent-shine-1)',
-                            'var(--color-accent-shine-2)',
-                            'var(--color-accent-shine-3)',
-                          ]}
-                        />
-                      ) : null}
-                      <Icon />
-                      <span>{label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
                 {areaRows.map((area) => {
                   const active = visiblePrimaryView === 'areas' && selectedAreaId === area._id;
                   const pending = railAreaBadge(area.factCounts);

@@ -11,6 +11,7 @@ export type SettingsTabId =
   | 'connections'
   | 'areas'
   | 'sending'
+  | 'notifications'
   | 'ai'
   | 'shortcuts'
   | 'account';
@@ -20,6 +21,7 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> 
   { id: 'connections', label: 'Connections' },
   { id: 'areas', label: 'Areas' },
   { id: 'sending', label: 'Sending' },
+  { id: 'notifications', label: 'Notifications' },
   { id: 'ai', label: 'AI' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'account', label: 'Account' },
@@ -746,7 +748,7 @@ export interface TeachFactRow {
   text: string;
 }
 
-// One quiet line per recorded change ("CardHunt created", "Verified: …").
+// One quiet line per recorded change ("Area created", "Verified: …").
 // Returns null for tools this renderer does not summarize.
 export function factRowFromToolOutput(toolName: string, input: any, output: any): TeachFactRow | null {
   if (!output || output.ok === false) return null;

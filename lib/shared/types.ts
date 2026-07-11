@@ -181,6 +181,7 @@ export function hasPersistedPrimaryViewValue(raw: string | null): boolean {
 
 export function normalizePrimaryView(view: unknown, albatrossEnabled: boolean): PrimaryView {
   if (isCorePrimaryView(view)) return view;
+  if (view === 'intents') return albatrossEnabled ? 'areas' : 'daily_report';
   if (albatrossEnabled && isAlbatrossPrimaryView(view)) return view;
   return 'daily_report';
 }

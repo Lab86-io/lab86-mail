@@ -14,7 +14,7 @@ export interface VortexSource {
   id: string;
   label: string;
   kind: 'mail' | 'calendar' | 'tasks' | 'areas' | 'web' | 'notes';
-  /** What is actually being read from this source ("search: passport…"). */
+  /** What is actually being read from this source ("search: project notes…"). */
   detail?: string;
 }
 

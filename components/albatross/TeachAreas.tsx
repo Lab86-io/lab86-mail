@@ -68,8 +68,8 @@ export function TeachAreas() {
         <div className="mb-4">
           <h2 className="text-[16px] font-semibold tracking-tight">Areas</h2>
           <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">
-            The parts of your life Albatross files mail, events, and tasks against. Teach it in conversation —
-            it checks your actual mail and asks before it records anything.
+            The parts of your life Albatross keeps coherent. This is the same Albatross conversation, scoped
+            to shaping your Areas and grounded in your actual mail.
           </p>
         </div>
         <TeachChat />
@@ -93,7 +93,7 @@ function newTeachChatId() {
 // The seeded opener is rendered locally and never persisted: the real thread
 // starts with the user's first reply, so the saved transcript stays clean.
 const TEACH_OPENER =
-  'What parts of your life are you responsible for? A job, a family, a property, a side project — name one and I will check your mail for it.';
+  'Unload what is in your head about the parts of life you are responsible for. I’ll help turn the recurring parts into Areas and ask one useful question at a time.';
 
 function TeachChat() {
   const [input, setInput] = useState('');
@@ -137,7 +137,7 @@ function TeachChat() {
     probedRef.current = true;
     (async () => {
       try {
-        const listRes = await fetch('/api/chats');
+        const listRes = await fetch('/api/chats?scopeKind=global');
         const listData = await listRes.json();
         const teach = ((listData?.sessions || []) as Array<{ _id: string; title?: string }>).find(
           isTeachChatSession,
@@ -172,7 +172,7 @@ function TeachChat() {
       void fetch('/api/chats', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id, title: TEACH_CHAT_TITLE, messages }),
+        body: JSON.stringify({ id, title: TEACH_CHAT_TITLE, messages, scopeKind: 'global' }),
       }).catch(() => undefined);
     }, 600);
     return () => {
@@ -233,7 +233,9 @@ function TeachChat() {
         onClick={() => dispatch({ type: 'expand' })}
         className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 text-left shadow-[var(--shadow-soft)] transition-colors hover:border-[var(--color-accent)]"
       >
-        <span className="block text-[13px] font-medium text-[var(--color-text)]">Teach Albatross more</span>
+        <span className="block text-[13px] font-medium text-[var(--color-text)]">
+          Continue with Albatross
+        </span>
         <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
           Same conversation as before — it remembers what you already covered.
         </span>
@@ -247,7 +249,7 @@ function TeachChat() {
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3.5 py-2">
-        <span className="text-[12.5px] font-medium text-[var(--color-text)]">Teach conversation</span>
+        <span className="text-[12.5px] font-medium text-[var(--color-text)]">Albatross · Areas</span>
         {messages.length ? (
           <button
             type="button"
@@ -480,7 +482,7 @@ function SenderCards({ input, output }: { input: any; output: any }) {
   );
 }
 
-// Quiet confirmation for recorded changes ("CardHunt created", "Verified: …").
+// Quiet confirmation for recorded changes ("Area created", "Verified: …").
 function FactConfirmationRow({ row }: { row: TeachFactRow }) {
   return (
     <div className="flex items-center gap-1.5 px-1 text-[12px]">

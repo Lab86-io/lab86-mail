@@ -8,19 +8,15 @@
  * cycling label, and Chamaac UI DancingLetters for the
  * capture takeover. Buttons stay text-only — no decorative icons. */
 
-import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { Mic } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { GooeyMorphText } from '@/components/albatross/GooeyMorphText';
 import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
-import { api } from '@/convex/_generated/api';
-import { suggestIntentArea } from '@/lib/albatross/area-home';
-import { openPipWindow, pipSupported } from '@/lib/albatross/pip-window';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -38,7 +34,7 @@ const DancingLetters = dynamic(() => import('@/components/dancing-letters'), { s
 /** Rotating button copy. The accessible name stays "New Intent" - this list
  *  only feeds the aria-hidden gooey label so screen readers get stability. */
 export const CAPTURE_BUTTON_LABELS = [
-  'New Intent',
+  'New Work',
   'New Idea',
   'New Procrastination',
   'Make This Real',
@@ -170,7 +166,7 @@ function resolveGeo(timeoutMs = 2500): Promise<CaptureGeo | null> {
   });
 }
 
-function CaptureAreaPicker({
+function _CaptureAreaPicker({
   areas,
   selectedAreaId,
   suggestedAreaId,
@@ -256,18 +252,11 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   // The floating assistant panel (Cmd+K) shares the bottom-right slot; the
   // launcher yields while it is open, exactly like Ask Assistant used to.
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
-  const createIntent = useMutation(api.albatrossIntents.createIntent);
-  const { isAuthenticated } = useConvexAuth();
-  const liveAreas = useQuery(
-    api.albatross.listAreasOverview,
-    isAuthenticated ? { status: 'active' } : 'skip',
-  ) as CaptureArea[] | undefined;
 
   const [state, setState] = useState<CaptureState>('closed');
   const [text, setText] = useState('');
   const [source, setSource] = useState<'text' | 'voice'>('text');
-  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
-  const [areaPrompted, setAreaPrompted] = useState(false);
+  const [savedCount, setSavedCount] = useState(1);
   const [listening, setListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -285,8 +274,6 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   }, []);
 
   const overlayOpen = state !== 'closed';
-  const areaSuggestion = useMemo(() => suggestIntentArea(text, liveAreas ?? null), [text, liveAreas]);
-  const resolvedAreaId = selectedAreaId || areaSuggestion?.areaId || null;
 
   // Dot-morph squish only makes sense on hover-capable pointers (SmoothUI).
   useEffect(() => {
@@ -330,8 +317,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     setListening(false);
     setText('');
     setSource('text');
-    setSelectedAreaId(null);
-    setAreaPrompted(false);
+    setSavedCount(1);
     setSaveError(null);
     launcherRef.current?.focus({ preventScroll: true });
   }, [overlayOpen]);
@@ -368,15 +354,12 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     recognition.start();
   };
 
-  // Fire-and-forget plan kick. Never awaited before closing; the Plans surface
-  // owns planError state if this request fails.
-  const kickPlan = (intentId: string, geo: CaptureGeo | null) => {
+  const advanceWork = (workId: string, geo: CaptureGeo | null) => {
     try {
-      void fetch('/api/albatross/plan', {
+      void fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          intentId,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           ...(geo ? { geo } : {}),
         }),
@@ -386,27 +369,31 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     }
   };
 
-  const persist = async (pieces: string[], captureSource: 'text' | 'voice', areaId: string | null) => {
+  const persist = async (rawText: string, captureSource: 'text' | 'voice') => {
     // Start the (bounded, silent) geo lookup in parallel with the save so it
     // usually resolves before the kicks fire.
     const geoPromise = resolveGeo();
     try {
-      const ids: string[] = [];
-      for (const piece of pieces) {
-        const id = await createIntent({
-          rawText: piece,
-          transcript: captureSource === 'voice' ? piece : undefined,
+      const response = await fetch('/api/albatross/capture', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          rawText,
+          transcript: captureSource === 'voice' ? rawText : undefined,
           source: captureSource,
-          ...(areaId ? { areaId } : {}),
-        });
-        ids.push(id as string);
-      }
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Capture failed.');
+      const ids = Array.isArray(body.workIds) ? body.workIds.map(String) : [];
+      setSavedCount(Math.max(ids.length, 1));
       if (ids[0]) onCaptured(ids[0]);
       send({ type: 'saved' });
       window.setTimeout(() => send({ type: 'finish' }), 900);
       // Kicks wait for geo (max 2.5s) but the close beat above never does.
       void geoPromise.then((geo) => {
-        for (const id of ids) kickPlan(id, geo);
+        for (const id of ids) advanceWork(id, geo);
       });
     } catch {
       setSaveError("Couldn't save that. It's still here - try again.");
@@ -419,28 +406,13 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     const trimmed = text.trim();
     if (!trimmed) return;
     setSaveError(null);
-    const activeAreas = liveAreas ?? [];
-    const areaId = resolvedAreaId;
-    if (!areaId && activeAreas.length > 1) {
-      setAreaPrompted(true);
-      return;
-    }
-    // Default to the real browser PiP: must be requested inside this click's
-    // transient activation, before any awaits. Planning then follows the user
-    // into other tabs (Dia/Chrome); unsupported browsers keep the in-app dock.
-    if (pipSupported()) void openPipWindow();
-    // One intent per capture by default; only ask when the dump clearly splits.
-    if (looksLikeMultipleIntents(trimmed)) {
-      send({ type: 'submit', multi: true });
-      return;
-    }
     send({ type: 'submit', multi: false });
-    void persist(resolveCapturePieces(trimmed, 'keep'), source, areaId);
+    void persist(trimmed, source);
   };
 
   const decide = (decision: 'split' | 'keep') => {
     send({ type: decision });
-    void persist(resolveCapturePieces(text, decision), source, resolvedAreaId);
+    void persist(text.trim(), source);
   };
 
   const pieces = state === 'split' ? splitIntentText(text.trim()) : [];
@@ -460,7 +432,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           aria-haspopup="dialog"
-          aria-label="New Intent"
+          aria-label="New Work"
           className="group pointer-events-auto flex h-10 cursor-pointer items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 pr-4 pl-2.5 text-[var(--color-text)] shadow-[var(--shadow-soft)] backdrop-blur-sm transition-colors duration-150 ease-out hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] hover:shadow-[var(--shadow-pop)] focus-visible:border-[var(--color-accent)] focus-visible:bg-[var(--color-accent)] focus-visible:text-[var(--color-accent-foreground)] focus-visible:outline-none active:scale-[0.97]"
         >
           <motion.span
@@ -517,7 +489,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
               <motion.div
                 role="dialog"
                 aria-modal="true"
-                aria-label="New Intent"
+                aria-label="New Work"
                 className="pointer-events-auto w-full max-w-2xl"
                 initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 14 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -541,7 +513,9 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
                       transition={{ duration: 0.35, delay: 0.3 }}
                       className="font-display text-2xl text-[var(--color-text)]"
                     >
-                      Got it. Making a plan.
+                      {savedCount === 1
+                        ? 'Got it. Making Work.'
+                        : `Got it. I found ${savedCount} Work items.`}
                     </motion.p>
                   </div>
                 ) : state === 'discard' ? (
@@ -622,7 +596,6 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
                       disabled={state === 'saving'}
                       onChange={(event) => {
                         setText(event.target.value);
-                        setAreaPrompted(false);
                         if (source !== 'text') setSource('text');
                       }}
                       onKeyDown={(event) => {
@@ -631,18 +604,8 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
                           handleSave();
                         }
                       }}
-                      placeholder="passport, taxes, that idea from the shower..."
+                      placeholder="the thing you keep carrying around…"
                       className="min-h-40 w-full resize-none bg-transparent text-center text-lg leading-relaxed text-[var(--color-text)] caret-[var(--color-accent)] placeholder:text-[var(--color-text-faint)] focus:outline-none sm:text-xl"
-                    />
-                    <CaptureAreaPicker
-                      areas={liveAreas ?? []}
-                      selectedAreaId={selectedAreaId}
-                      suggestedAreaId={areaSuggestion?.areaId ?? null}
-                      prompted={areaPrompted}
-                      onSelect={(areaId) => {
-                        setSelectedAreaId(areaId);
-                        setAreaPrompted(false);
-                      }}
                     />
                     <div className="flex items-center justify-center gap-3">
                       {voiceSupported ? (

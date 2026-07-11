@@ -11,11 +11,11 @@ import {
   useState,
 } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
 import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
 import { AreaHome } from '@/components/albatross/AreaHome';
 import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
-import { IntentPip } from '@/components/albatross/IntentPip';
-import { PlansSurface } from '@/components/albatross/PlansSurface';
+import { WorkDetail } from '@/components/albatross/WorkDetail';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
@@ -77,20 +77,19 @@ export function AppShell({
     initialPrimaryView !== normalizedPrimaryView ? initialPrimaryView : null,
   );
   const visiblePrimaryView = normalizePrimaryView(bootView ?? primaryView, albatrossEnabled);
-  // A fresh capture lands the user on Plans with that intent selected, so the
-  // dump→plan moment is never lost behind navigation.
-  const [capturedIntentId, setCapturedIntentId] = useState<string | null>(null);
+  const selectedWorkId = useClientStore((s) => s.selectedWorkId);
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   // Settings deep-links back into the area setup wizard via /?setup=areas.
   const [openAreaSetup] = useState<boolean>(
     () =>
       typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('setup') === 'areas',
   );
-  const handleIntentCaptured = useCallback(
-    (intentId: string) => {
-      setCapturedIntentId(intentId);
-      setPrimaryView('intents');
+  const handleWorkCaptured = useCallback(
+    (workId: string) => {
+      setSelectedWorkId(workId);
+      setPrimaryView('areas');
     },
-    [setPrimaryView],
+    [setPrimaryView, setSelectedWorkId],
   );
 
   // The Area Brief captures an area-bound intent, then hands it off here so the
@@ -100,9 +99,16 @@ export function AppShell({
   const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
   useEffect(() => {
     if (!pendingOpenIntentId) return;
-    handleIntentCaptured(pendingOpenIntentId);
+    handleWorkCaptured(pendingOpenIntentId);
     setPendingOpenIntentId(null);
-  }, [handleIntentCaptured, pendingOpenIntentId, setPendingOpenIntentId]);
+  }, [handleWorkCaptured, pendingOpenIntentId, setPendingOpenIntentId]);
+  const pendingOpenWorkId = useClientStore((s) => s.pendingOpenWorkId);
+  const setPendingOpenWorkId = useClientStore((s) => s.setPendingOpenWorkId);
+  useEffect(() => {
+    if (!pendingOpenWorkId) return;
+    handleWorkCaptured(pendingOpenWorkId);
+    setPendingOpenWorkId(null);
+  }, [handleWorkCaptured, pendingOpenWorkId, setPendingOpenWorkId]);
 
   useEffect(() => {
     // The deep link must win over whatever view was persisted.
@@ -213,7 +219,7 @@ export function AppShell({
                 <PrimarySurface
                   albatrossEnabled={albatrossEnabled}
                   view={visiblePrimaryView}
-                  capturedIntentId={capturedIntentId}
+                  selectedWorkId={selectedWorkId}
                 />
               </motion.div>
 
@@ -234,8 +240,8 @@ export function AppShell({
             </div>
             <AIBarTrigger buttonHidden={albatrossEnabled} />
             <AssistantChat />
-            {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
-            {albatrossEnabled ? <IntentPip onOpenIntent={handleIntentCaptured} /> : null}
+            {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleWorkCaptured} /> : null}
+            {albatrossEnabled ? <AlbatrossCompanion /> : null}
           </main>
         </SidebarProvider>
 
@@ -280,7 +286,7 @@ export function AppShell({
                   <PrimarySurface
                     albatrossEnabled={albatrossEnabled}
                     view={visiblePrimaryView}
-                    capturedIntentId={capturedIntentId}
+                    selectedWorkId={selectedWorkId}
                   />
                 </ReflowPanel>
               </Panel>
@@ -306,8 +312,8 @@ export function AppShell({
           </TooltipProvider>
           <AIBarTrigger buttonHidden={albatrossEnabled} />
           <AssistantChat />
-          {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleIntentCaptured} /> : null}
-          {albatrossEnabled ? <IntentPip onOpenIntent={handleIntentCaptured} /> : null}
+          {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleWorkCaptured} /> : null}
+          {albatrossEnabled ? <AlbatrossCompanion /> : null}
         </main>
       </SidebarProvider>
 
@@ -322,11 +328,11 @@ export function AppShell({
 function PrimarySurface({
   albatrossEnabled,
   view,
-  capturedIntentId,
+  selectedWorkId,
 }: {
   albatrossEnabled: boolean;
   view: PrimaryView;
-  capturedIntentId?: string | null;
+  selectedWorkId?: string | null;
 }) {
   switch (view) {
     case 'daily_report':
@@ -336,21 +342,14 @@ function PrimarySurface({
     case 'tasks':
       return <TasksSurface />;
     case 'intents':
-      // Plans: the live intent → plan loop. The legacy seed-driven surface in
-      // AlbatrossSurfaces is no longer routed here.
-      return albatrossEnabled ? (
-        <SurfaceErrorBoundary surface="Plans">
-          <PlansSurface initialIntentId={capturedIntentId} />
-        </SurfaceErrorBoundary>
-      ) : (
-        <DailyReport />
-      );
+      // Compatibility only: persisted Plans routes normalize to Areas.
+      return albatrossEnabled ? <AreaHome /> : <DailyReport />;
     case 'areas':
       // The area home page: mail, events, tasks, and context for the selected
       // area. Management/teach flows live in /settings?tab=areas now.
       return albatrossEnabled ? (
         <SurfaceErrorBoundary surface="Areas">
-          <AreaHome />
+          {selectedWorkId ? <WorkDetail workId={selectedWorkId} /> : <AreaHome />}
         </SurfaceErrorBoundary>
       ) : (
         <DailyReport />

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useConvexAuth, useQuery as useConvexQuery } from 'convex/react';
 import {
   Ban,
   CalendarDays,
@@ -16,6 +17,7 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
+import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
 import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
@@ -30,6 +32,7 @@ import {
 import { Markdown } from '@/components/ui/markdown';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { api } from '@/convex/_generated/api';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -1326,6 +1329,8 @@ export function DailyReport() {
         </div>
       ) : null}
 
+      <DailyBriefLiveState />
+
       <div
         className={cn(
           'min-h-0 flex-1',
@@ -1487,6 +1492,61 @@ export function DailyReport() {
         )}
       </div>
     </section>
+  );
+}
+
+function DailyBriefLiveState() {
+  const { isAuthenticated } = useConvexAuth();
+  const checkin = useConvexQuery(api.albatrossNotifications.currentCheckin, isAuthenticated ? {} : 'skip') as
+    | DailyCheckinData
+    | null
+    | undefined;
+  const questions = useConvexQuery(
+    api.albatrossWorkV2.livePendingQuestions,
+    isAuthenticated ? { limit: 5 } : 'skip',
+  ) as
+    | Array<{
+        question: { _id: string; prompt: string };
+        work: null | { _id: string; title?: string; rawText: string };
+      }>
+    | undefined;
+  const setPrimaryView = useClientStore((state) => state.setPrimaryView);
+  const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  const [checkinOpen, setCheckinOpen] = useState(false);
+  const pending = questions?.filter((row) => row.work) || [];
+  if (!checkin && !pending.length) return null;
+  const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+  const carryover = checkin && checkin.localDate !== today;
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-5 py-2.5 text-[11.5px]">
+        {checkin ? (
+          <button
+            type="button"
+            onClick={() => setCheckinOpen(true)}
+            className="font-medium text-[var(--color-warning)] hover:underline"
+          >
+            {carryover ? 'Yesterday’s check-in is still open' : 'Evening check-in is ready'}
+          </button>
+        ) : null}
+        {pending.length ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedWorkId(String(pending[0].work!._id));
+              setPrimaryView('areas');
+            }}
+            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
+          >
+            {pending.length} Work {pending.length === 1 ? 'question' : 'questions'} need you
+          </button>
+        ) : null}
+        <span className="ml-auto text-[10.5px] text-[var(--color-text-faint)]">
+          Live · updates without regenerating the brief
+        </span>
+      </div>
+      <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
+    </>
   );
 }
 

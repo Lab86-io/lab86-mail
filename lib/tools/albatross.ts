@@ -367,6 +367,7 @@ export const albatrossApplyIntentPlan = defineTool({
         // stepKey/kind let callers map plan steps back to created artifacts
         // (the plan dossier's toggleable task cards).
         stepKey: step.stepKey,
+        actionKey: step.actionKey,
         kind: step.kind,
         result,
       });
@@ -380,6 +381,8 @@ export const albatrossApplyIntentPlan = defineTool({
         id: artifactId,
         title: step.title,
         operationId: result.operationId,
+        actionKey: step.actionKey,
+        stepKey: step.stepKey,
       });
       await linkToProject(userId, projectId, {
         artifactKind:
@@ -419,7 +422,15 @@ export const albatrossApplyIntentPlan = defineTool({
         toolName: step.toolName,
         toolArgs: step.toolArgs,
         stepKey: step.stepKey,
+        actionKey: step.actionKey,
         kind: step.kind,
+      });
+      artifacts.push({
+        kind: 'approval',
+        id: String(approvalId),
+        title: step.title,
+        actionKey: step.actionKey,
+        stepKey: step.stepKey,
       });
       await linkToProject(userId, projectId, {
         artifactKind: 'operationBatch',

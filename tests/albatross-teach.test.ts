@@ -28,6 +28,7 @@ describe('settings tabs', () => {
   test('is case- and whitespace-tolerant', () => {
     expect(settingsTabFromSearch(' Areas ')).toBe('areas');
     expect(settingsTabFromSearch('AI')).toBe('ai');
+    expect(settingsTabFromSearch('Notifications')).toBe('notifications');
   });
 
   test('unknown, empty, and missing values land on the default tab', () => {

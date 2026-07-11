@@ -8,6 +8,7 @@
 
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
 import {
   ArrowLeft,
   Brain,
@@ -25,7 +26,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { type ReactNode, Suspense, useState } from 'react';
+import { type ReactNode, Suspense, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
 import {
@@ -54,6 +55,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { api } from '@/convex/_generated/api';
 import { SETTINGS_TABS, type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 
@@ -71,6 +73,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   connections: () => <ConnectionsSection />,
   areas: () => <TeachAreas />,
   sending: () => <SendingSection />,
+  notifications: () => <NotificationsSection />,
   ai: () => <AiSection />,
   shortcuts: () => <ShortcutsSection />,
   account: () => <AccountSection />,
@@ -231,6 +234,210 @@ function SendingSection() {
         </Select>
       </div>
     </section>
+  );
+}
+
+interface NotificationPreferences {
+  _id?: string;
+  timezone: string;
+  eveningCheckinEnabled: boolean;
+  eveningCheckinLocalTime: string;
+  inAppEnabled: boolean;
+  webPushEnabled: boolean;
+  emailFallbackEnabled: boolean;
+  emailFallbackDelayMinutes: number;
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replaceAll('-', '+').replaceAll('_', '/');
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+}
+
+function NotificationsSection() {
+  const { isAuthenticated } = useConvexAuth();
+  const remote = useConvexQuery(api.albatrossNotifications.getPreferences, isAuthenticated ? {} : 'skip') as
+    | NotificationPreferences
+    | undefined;
+  const savePreferences = useConvexMutation(api.albatrossNotifications.savePreferences);
+  const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMessage, setPushMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (remote && !prefs) {
+      setPrefs({
+        ...remote,
+        timezone: remote._id ? remote.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      });
+    }
+  }, [prefs, remote]);
+
+  const update = <K extends keyof NotificationPreferences>(key: K, value: NotificationPreferences[K]) => {
+    setPrefs((current) => (current ? { ...current, [key]: value } : current));
+  };
+
+  const save = async () => {
+    if (!prefs) return;
+    setSaving(true);
+    try {
+      const { _id: _storedId, ...values } = prefs;
+      await savePreferences(values);
+      toast.success('Notification preferences saved');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save notification preferences');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const enablePush = async () => {
+    if (!prefs || pushBusy) return;
+    setPushBusy(true);
+    setPushMessage(null);
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        throw new Error('This browser does not support Web Push.');
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+      const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!publicKey) throw new Error('Web Push is not configured on this deployment.');
+      const registration = await navigator.serviceWorker.register('/albatross-sw.js');
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      const response = await fetch('/api/notifications/push', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(subscription.toJSON()),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not enable Web Push.');
+      const next = { ...prefs, webPushEnabled: true };
+      setPrefs(next);
+      const { _id: _storedId, ...values } = next;
+      await savePreferences(values);
+      setPushMessage('Web Push is enabled on this browser.');
+    } catch (error) {
+      setPushMessage(error instanceof Error ? error.message : 'Could not enable Web Push.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  if (!prefs) return <p className="text-[12.5px] text-[var(--color-text-muted)]">Loading preferences…</p>;
+
+  return (
+    <section>
+      <SectionHeading
+        title="Notifications"
+        blurb="Albatross asks instead of silently deciding what you finished. Your evening check-in defaults to 7:00 PM local time."
+      />
+      <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 shadow-[var(--shadow-soft)]">
+        <SettingToggle
+          label="Evening check-in"
+          description="Ask what actually moved today and carry an unanswered check-in into tomorrow’s brief."
+          checked={prefs.eveningCheckinEnabled}
+          onCheckedChange={(value) => update('eveningCheckinEnabled', value)}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+          <div>
+            <p className="text-[13px] font-medium">Check-in time</p>
+            <p className="text-[11.5px] text-[var(--color-text-muted)]">Uses your selected timezone.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              className="w-28"
+              type="time"
+              value={prefs.eveningCheckinLocalTime}
+              onChange={(event) => update('eveningCheckinLocalTime', event.target.value)}
+            />
+            <Input
+              className="w-52"
+              value={prefs.timezone}
+              onChange={(event) => update('timezone', event.target.value)}
+              aria-label="Timezone"
+            />
+          </div>
+        </div>
+        <SettingToggle
+          label="In-app notification center"
+          description="Show questions, check-ins, approvals, and updates together."
+          checked={prefs.inAppEnabled}
+          onCheckedChange={(value) => update('inAppEnabled', value)}
+        />
+        <div className="flex items-center justify-between gap-4 py-3">
+          <div>
+            <p className="text-[13px] font-medium">Web Push</p>
+            <p className="text-[11.5px] text-[var(--color-text-muted)]">
+              Permission is requested only when you enable it here.
+            </p>
+            {pushMessage ? (
+              <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">{pushMessage}</p>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pushBusy}
+            onClick={() => void enablePush()}
+          >
+            {prefs.webPushEnabled ? 'Re-enable' : pushBusy ? 'Enabling…' : 'Enable'}
+          </Button>
+        </div>
+        <SettingToggle
+          label="Fallback email"
+          description={`Email only when the check-in is still unanswered after ${prefs.emailFallbackDelayMinutes} minutes.`}
+          checked={prefs.emailFallbackEnabled}
+          onCheckedChange={(value) => update('emailFallbackEnabled', value)}
+        />
+        <div className="flex items-center justify-between gap-3 py-3">
+          <Label htmlFor="fallback-delay">Fallback delay</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="fallback-delay"
+              className="w-24"
+              type="number"
+              min={15}
+              max={1440}
+              value={prefs.emailFallbackDelayMinutes}
+              onChange={(event) => update('emailFallbackDelayMinutes', Number(event.target.value) || 90)}
+            />
+            <span className="text-[11.5px] text-[var(--color-text-muted)]">minutes</span>
+          </div>
+        </div>
+      </div>
+      <Button className="mt-4" disabled={saving} onClick={() => void save()}>
+        {saving ? 'Saving…' : 'Save notification preferences'}
+      </Button>
+    </section>
+  );
+}
+
+function SettingToggle({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div>
+        <p className="text-[13px] font-medium">{label}</p>
+        <p className="text-[11.5px] text-[var(--color-text-muted)]">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
   );
 }
 

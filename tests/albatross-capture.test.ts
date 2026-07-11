@@ -26,7 +26,7 @@ describe('rotatingLabelAt', () => {
   });
 
   test('tick 0 matches the stable accessible name', () => {
-    expect(rotatingLabelAt(0)).toBe('New Intent');
+    expect(rotatingLabelAt(0)).toBe('New Work');
   });
 });
 

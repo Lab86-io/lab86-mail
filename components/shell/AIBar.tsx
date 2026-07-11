@@ -163,6 +163,11 @@ export function AssistantChat() {
   const account = useClientStore((s) => s.account);
   const threadAccount = useClientStore((s) => s.threadAccount);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
+  const chatScopeKind = useClientStore((s) => s.chatScopeKind);
+  const chatScopeAreaId = useClientStore((s) => s.chatScopeAreaId);
+  const chatScopeWorkId = useClientStore((s) => s.chatScopeWorkId);
+  const setChatScope = useClientStore((s) => s.setChatScope);
+  const scopeKey = `${chatScopeKind}:${chatScopeAreaId || ''}:${chatScopeWorkId || ''}`;
 
   const setQuery = useClientStore((s) => s.setQuery);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -184,9 +189,17 @@ export function AssistantChat() {
     () =>
       new DefaultChatTransport({
         api: '/api/agent',
-        body: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        body: {
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          extraSystem:
+            chatScopeKind === 'work' && chatScopeWorkId
+              ? `This conversation is scoped to Albatross Work ${chatScopeWorkId}. Keep questions and actions about that Work unless the user explicitly broadens scope.`
+              : chatScopeKind === 'area' && chatScopeAreaId
+                ? `This conversation is scoped to Albatross Area ${chatScopeAreaId}. Keep context and questions within that Area unless the user explicitly broadens scope.`
+                : undefined,
+        },
       }),
-    [],
+    [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
   );
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
@@ -233,6 +246,14 @@ export function AssistantChat() {
   const sessionIdRef = useRef<string | null>(null);
   const restoredRef = useRef(false);
   const saveTimer = useRef<number | null>(null);
+  const priorScopeRef = useRef(scopeKey);
+
+  useEffect(() => {
+    if (priorScopeRef.current === scopeKey) return;
+    priorScopeRef.current = scopeKey;
+    sessionIdRef.current = null;
+    setMessages([]);
+  }, [scopeKey, setMessages]);
 
   const loadSession = useCallback(
     async (id: string) => {
@@ -261,11 +282,11 @@ export function AssistantChat() {
     if (!aiBarOpen || restoredRef.current) return;
     restoredRef.current = true;
     const fresh = lastChatAt && Date.now() - lastChatAt < CHAT_RESTORE_WINDOW_MS;
-    if (lastChatId && fresh && messages.length === 0) {
+    if (chatScopeKind === 'global' && lastChatId && fresh && messages.length === 0) {
       sessionIdRef.current = lastChatId;
       void loadSession(lastChatId);
     }
-  }, [aiBarOpen, lastChatId, lastChatAt, messages.length, loadSession]);
+  }, [aiBarOpen, chatScopeKind, lastChatId, lastChatAt, messages.length, loadSession]);
 
   // Autosave once the stream settles (debounced so multi-step turns save once).
   useEffect(() => {
@@ -278,7 +299,13 @@ export function AssistantChat() {
       void fetch('/api/chats', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id, messages }),
+        body: JSON.stringify({
+          id,
+          messages,
+          scopeKind: chatScopeKind,
+          areaId: chatScopeAreaId || undefined,
+          workId: chatScopeWorkId || undefined,
+        }),
       })
         .then(() => qc.invalidateQueries({ queryKey: ['chat-sessions'] }))
         .catch(() => undefined);
@@ -286,7 +313,7 @@ export function AssistantChat() {
     return () => {
       if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     };
-  }, [messages, status, qc]);
+  }, [chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc]);
 
   const startNewChat = useCallback(() => {
     sessionIdRef.current = null;
@@ -295,9 +322,12 @@ export function AssistantChat() {
   }, [setLastChatId, setMessages]);
 
   const { data: sessionsData } = useQuery({
-    queryKey: ['chat-sessions'],
+    queryKey: ['chat-sessions', scopeKey],
     queryFn: async () => {
-      const res = await fetch('/api/chats');
+      const params = new URLSearchParams({ scopeKind: chatScopeKind });
+      if (chatScopeAreaId) params.set('areaId', chatScopeAreaId);
+      if (chatScopeWorkId) params.set('workId', chatScopeWorkId);
+      const res = await fetch(`/api/chats?${params.toString()}`);
       const data = await res.json();
       return (data?.sessions || []) as ChatSessionSummary[];
     },
@@ -453,7 +483,7 @@ export function AssistantChat() {
     // and the conversation shows up in history.
     if (!sessionIdRef.current) {
       sessionIdRef.current = newChatId();
-      setLastChatId(sessionIdRef.current);
+      if (chatScopeKind === 'global') setLastChatId(sessionIdRef.current);
     }
     const activeAccount =
       threadAccount && threadAccount !== ALL_ACCOUNTS
@@ -466,6 +496,12 @@ export function AssistantChat() {
         ? `Active account: ${activeAccount}`
         : 'Working across all mailboxes (call list_accounts to enumerate).',
       selectedThreadId ? `Currently focused thread id: ${selectedThreadId}` : '',
+      chatScopeKind === 'work' && chatScopeWorkId
+        ? `This conversation is scoped to Albatross Work ${chatScopeWorkId}. Keep questions and actions about that Work unless the user explicitly broadens scope.`
+        : '',
+      chatScopeKind === 'area' && chatScopeAreaId
+        ? `This conversation is scoped to Albatross Area ${chatScopeAreaId}. Keep context and questions within that Area unless the user explicitly broadens scope.`
+        : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -552,7 +588,20 @@ export function AssistantChat() {
                 >
                   <SiriOrb size="20px" animationDuration={7} colors={ORB_COLORS} />
                 </span>
-                <span className="truncate font-medium text-[var(--color-text)]">Assistant</span>
+                <button
+                  type="button"
+                  title={
+                    chatScopeKind === 'global'
+                      ? 'Global Albatross conversation'
+                      : 'Return to global conversation'
+                  }
+                  onClick={() => {
+                    if (chatScopeKind !== 'global') setChatScope({ kind: 'global' });
+                  }}
+                  className="truncate font-medium text-[var(--color-text)] hover:underline"
+                >
+                  Albatross{chatScopeKind === 'work' ? ' · Work' : chatScopeKind === 'area' ? ' · Area' : ''}
+                </button>
               </div>
               <div className="flex items-center gap-0.5">
                 <Button

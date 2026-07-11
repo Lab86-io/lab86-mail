@@ -44,8 +44,6 @@ import {
   areaPulse,
   formatEventTime,
   type NeedsYouRow,
-  planActionLabel,
-  planStatusMeta,
   resolveAreaSelection,
   splitBriefRows,
   taskRowMeta,
@@ -107,6 +105,12 @@ interface AreaIdentityLike {
 
 interface AreaHomeData {
   area: AreaIdentityLike & { kind: string; description?: string };
+  livingBrief?: null | {
+    status: 'generating' | 'ready' | 'error';
+    lede: string;
+    summary: string;
+    generatedAt?: number;
+  };
   facts: { verified: AreaFactRow[]; candidate: AreaFactRow[] };
   mail: AreaMailRow[];
   events: AreaEventRow[];
@@ -123,6 +127,17 @@ interface AreaHomeData {
     projects: number;
     places: number;
   };
+}
+
+interface AreaWorkRow {
+  _id: string;
+  title?: string;
+  rawText: string;
+  status: string;
+  workState?: 'active' | 'waiting' | 'blocked' | 'done' | 'archived';
+  agentState?: 'idle' | 'researching' | 'needs_input' | 'applying' | 'error';
+  primaryProjectId?: string;
+  updatedAt: number;
 }
 
 interface AreaIndexStatusData {
@@ -359,6 +374,8 @@ function OverviewBadge({ label, tone }: { label: string; tone: 'attention' | 'ac
 function AreaHomeBody({ areaId }: { areaId: string }) {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
+  const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
+  const setChatScope = useClientStore((s) => s.setChatScope);
   // Error-tolerant read: the persisted area id can outlive the area (deleted
   // in Settings) — that must degrade to the chooser, not a crashed surface.
   const result = useConvexQuery({
@@ -368,6 +385,10 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
   const indexStatus = useQuery(api.albatross.areaIndexStatus, isAuthenticated ? {} : 'skip') as
     | AreaIndexStatusData
     | undefined;
+  const workRows = useQuery(
+    api.albatrossWorkV2.areaWork,
+    isAuthenticated ? { areaId: areaId as Id<'areas'>, includeDone: true } : 'skip',
+  ) as AreaWorkRow[] | undefined;
 
   if (result.status === 'error') {
     return (
@@ -451,6 +472,17 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
           {home.counts.facts.verified} verified · {home.counts.facts.candidate} suggested
         </span>
         <AreaIndexStatusPill status={indexStatus} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => {
+            setChatScope({ kind: 'area', areaId: home.area._id });
+            setAiBarOpen(true);
+          }}
+        >
+          Discuss
+        </Button>
         <RefreshBriefButton areaId={home.area._id} />
         <ManageLink />
       </header>
@@ -481,15 +513,15 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
         ) : (
           <>
             <NeedsYouSection rows={needsYou} />
+            <ProjectsSection projects={home.projects} count={home.counts.projects} />
+            <WorkSections rows={workRows || []} />
             <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0">
-                <PlansSection plans={home.plans} count={home.counts.plans} />
                 <EventsSection events={home.events} count={home.counts.events} />
                 <MailSection mail={home.mail} count={sectionCount('mail')} />
                 <TasksSection tasks={home.tasks} count={sectionCount('tasks')} />
               </div>
               <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-0 min-[1180px]:self-start">
-                <ProjectsSection projects={home.projects} count={home.counts.projects} />
                 <PlacesSection places={home.places} count={home.counts.places} />
                 <ContextSection home={home} count={sectionCount('context')} />
               </aside>
@@ -524,7 +556,14 @@ function BriefLead({
           <div className="flex min-w-0 gap-3">
             <AreaMark area={home.area} size="lg" />
             <div className="min-w-0">
-              <p className="text-[14px] font-medium leading-snug text-[var(--color-text)]">{headline}</p>
+              <p className="text-[14px] font-medium leading-snug text-[var(--color-text)]">
+                {home.livingBrief?.status === 'ready' ? home.livingBrief.lede : headline}
+              </p>
+              {home.livingBrief?.status === 'ready' && home.livingBrief.summary ? (
+                <p className="mt-1.5 max-w-2xl text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+                  {home.livingBrief.summary}
+                </p>
+              ) : null}
               {home.area.description ? (
                 <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
                   {home.area.description}
@@ -629,8 +668,7 @@ function OverflowRow({ overflow, noun, action }: { overflow: number; noun: strin
 // it creates a real albatross intent (source=chat, areaId) and hands off to the
 // existing Plans surface — no fake conversational chrome.
 function CaptureBar({ areaId, areaName }: { areaId: string; areaName: string }) {
-  const createIntent = useMutation(api.albatrossIntents.createIntent);
-  const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
+  const setPendingOpenWorkId = useClientStore((s) => s.setPendingOpenWorkId);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -641,24 +679,28 @@ function CaptureBar({ areaId, areaName }: { areaId: string; areaName: string }) 
     setBusy(true);
     setError(null);
     try {
-      const intentId = (await createIntent({ rawText: trimmed, source: 'chat', areaId })) as string;
-      // Fire-and-forget plan kick, same contract as the global capture launcher;
-      // the Plans surface owns any plan error once the user lands there.
-      try {
-        void fetch('/api/albatross/plan', {
+      const response = await fetch('/api/albatross/capture', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          rawText: trimmed,
+          source: 'chat',
+          areaId,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Capture failed.');
+      const workIds = Array.isArray(body.workIds) ? body.workIds.map(String) : [];
+      setText('');
+      if (workIds[0]) setPendingOpenWorkId(workIds[0]);
+      for (const workId of workIds) {
+        void fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            intentId,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          }),
-        }).catch(() => {});
-      } catch {
-        /* best-effort */
+          body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+        }).catch(() => undefined);
       }
-      setText('');
-      // Hand off: AppShell switches to Plans with this intent selected.
-      setPendingOpenIntentId(intentId);
     } catch {
       setError("Couldn't capture that — it's still here, try again.");
     } finally {
@@ -742,81 +784,86 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
   );
 }
 
-// Active plans render as the area's own components (Linear plan-as-document):
-// title, a status-tone badge, the plan's outcome/summary line, and one verb
-// button that opens the live Plans surface at this intent. Real intent data —
-// never a synthetic link.
-function PlansSection({ plans, count }: { plans: AreaPlanRow[]; count: number }) {
-  const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
-  const rows = splitBriefRows(plans, BRIEF_LIMITS.plans);
-  return (
-    <section>
-      <SectionHeader
-        label="Plans"
-        count={count}
-        action={count > 0 ? <ViewLink view="intents">Plans</ViewLink> : undefined}
-      />
-      {plans.length === 0 ? (
-        <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">
-          No active plans here — capture one above to start.
-        </p>
-      ) : (
-        rows.visible.map((plan) => {
-          const meta = planStatusMeta(plan.status, plan.planStatus);
-          const line = plan.outcome || plan.summary || null;
-          return (
-            <button
-              key={plan.intentId}
-              type="button"
-              onClick={() => setPendingOpenIntentId(plan.intentId)}
-              className="group flex w-full flex-col gap-1 border-b border-[var(--color-border)]/45 px-3 py-2.5 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]"
-            >
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate font-display text-[13.5px] font-medium">
-                  {plan.title}
-                </span>
-                <PlanToneBadge tone={meta.tone} label={meta.label} />
-              </div>
-              {line ? (
-                <span className="line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
-                  {line}
-                </span>
-              ) : null}
-              <span className="text-[11.5px] font-medium text-[var(--color-accent)] opacity-0 transition-opacity group-hover:opacity-100">
-                {planActionLabel(plan.status, plan.planStatus)} →
-              </span>
-            </button>
-          );
-        })
-      )}
-      <OverflowRow
-        overflow={rows.overflow}
-        noun="plans"
-        action={<ViewLink view="intents">Open plans</ViewLink>}
-      />
-    </section>
+function WorkSections({ rows }: { rows: AreaWorkRow[] }) {
+  const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  const active = rows.filter(
+    (row) =>
+      !['waiting', 'blocked', 'done', 'archived'].includes(row.workState || 'active') &&
+      row.agentState !== 'needs_input',
   );
-}
+  const waiting = rows.filter((row) => ['waiting', 'blocked'].includes(row.workState || ''));
+  const done = rows.filter((row) => row.workState === 'done').slice(0, 6);
+  const needs = rows.filter((row) => row.agentState === 'needs_input');
 
-// One status-tone badge for a plan row. 'attention' pulls the user in (warning),
-// 'done' reads as success, everything active borrows the accent; neutral stays
-// a quiet outline. Same tone vocabulary as the Plans surface.
-function PlanToneBadge({ tone, label }: { tone: ReturnType<typeof planStatusMeta>['tone']; label: string }) {
-  if (tone === 'neutral') {
+  const renderGroup = (label: string, group: AreaWorkRow[], quiet = false) => {
+    if (!group.length) return null;
     return (
-      <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
-        {label}
-      </Badge>
+      <section>
+        <SectionHeader label={label} count={group.length} />
+        <div className="divide-y divide-[var(--color-border)]/55">
+          {group.map((work) => (
+            <button
+              key={work._id}
+              type="button"
+              onClick={() => setSelectedWorkId(work._id)}
+              className="group flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-[var(--color-hover-soft)]"
+            >
+              <span
+                className={cn(
+                  'size-2 shrink-0 rounded-full',
+                  work.agentState === 'needs_input'
+                    ? 'bg-[var(--color-warning)]'
+                    : work.agentState === 'error'
+                      ? 'bg-[var(--color-danger)]'
+                      : work.workState === 'done'
+                        ? 'bg-[var(--color-success)]'
+                        : 'bg-[var(--color-accent)]',
+                )}
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1">
+                <span
+                  className={cn(
+                    'block truncate text-[13px] font-medium',
+                    quiet && 'text-[var(--color-text-muted)]',
+                  )}
+                >
+                  {work.title || work.rawText}
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] capitalize text-[var(--color-text-faint)]">
+                  {work.agentState === 'needs_input'
+                    ? 'Needs your answer'
+                    : work.primaryProjectId
+                      ? 'Part of a Project / Epic'
+                      : (work.workState || work.agentState || work.status).replaceAll('_', ' ')}
+                </span>
+              </span>
+              <ArrowRight className="size-3.5 text-[var(--color-text-faint)] opacity-0 transition-opacity group-hover:opacity-100" />
+            </button>
+          ))}
+        </div>
+      </section>
+    );
+  };
+
+  if (!rows.length) {
+    return (
+      <section>
+        <SectionHeader label="Work" count={0} />
+        <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">
+          Nothing active here yet. Unload something above and Albatross will start working it through.
+        </p>
+      </section>
     );
   }
-  const cssTone = tone === 'attention' ? 'warning' : tone === 'done' ? 'success' : 'accent';
+
   return (
-    <span
-      className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-      style={{ color: `var(--color-${cssTone})`, backgroundColor: `var(--color-${cssTone}-soft)` }}
-    >
-      {label}
-    </span>
+    <>
+      {renderGroup('Needs you', needs)}
+      {renderGroup('Active Work', active)}
+      {renderGroup('Waiting / blocked', waiting, true)}
+      {renderGroup('Recently done', done, true)}
+    </>
   );
 }
 
@@ -824,7 +871,7 @@ function PlanToneBadge({ tone, label }: { tone: ReturnType<typeof planStatusMeta
 // (honest: the source intent exists); a standalone project stays informational
 // rather than pointing at a surface it has no page on.
 function ProjectsSection({ projects, count }: { projects: AreaProjectRow[]; count: number }) {
-  const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const rows = splitBriefRows(projects, BRIEF_LIMITS.projects);
   if (count === 0) return null;
   return (
@@ -847,15 +894,35 @@ function ProjectsSection({ projects, count }: { projects: AreaProjectRow[]; coun
             {project.outcome ? (
               <span className="truncate text-[11.5px] text-[var(--color-text-muted)]">{project.outcome}</span>
             ) : null}
+            {typeof project.taskCount === 'number' ? (
+              <div className="mt-1.5 flex items-center gap-2">
+                <div className="h-1 min-w-20 flex-1 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+                  <div
+                    className="h-full rounded-full bg-[var(--color-accent)]"
+                    style={{
+                      width: `${project.taskCount ? ((project.completedTaskCount || 0) / project.taskCount) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
+                  {project.completedTaskCount || 0}/{project.taskCount}
+                </span>
+              </div>
+            ) : null}
+            {project.activeSprint ? (
+              <span className="mt-1 truncate text-[10.5px] text-[var(--color-text-faint)]">
+                Current sprint · {project.activeSprint.title}
+              </span>
+            ) : null}
           </div>
           {project.sourceIntentId ? (
             <Button
               type="button"
               variant="ghost"
               size="xs"
-              onClick={() => setPendingOpenIntentId(project.sourceIntentId!)}
+              onClick={() => setSelectedWorkId(project.sourceIntentId!)}
             >
-              Open plan
+              Open Work
             </Button>
           ) : null}
         </div>

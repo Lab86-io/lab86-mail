@@ -1233,10 +1233,9 @@ export const areaHome = query({
       )
       .slice(0, AREA_HOME_TASK_CAP);
 
-    // Plans become components of the area: its active intents (+ their latest
-    // plan) surface here rather than on a separate Plans page. Intents carry
-    // areaId as a plain string, so this is a bounded recency scan filtered in
-    // memory rather than an indexed area read.
+    // Plans become components of the area: its active Work (+ latest plan)
+    // surface here rather than on a separate Plans page. Read both the typed
+    // primaryAreaId and the legacy string during the additive migration.
     const areaIdStr = String(args.areaId);
     const recentIntents = await ctx.db
       .query('albatrossIntents')
@@ -1246,7 +1245,7 @@ export const areaHome = query({
     const activeIntents = recentIntents
       .filter(
         (intent) =>
-          String(intent.areaId ?? '') === areaIdStr &&
+          String(intent.primaryAreaId ?? intent.areaId ?? '') === areaIdStr &&
           intent.status !== 'done' &&
           intent.status !== 'archived',
       )
@@ -1277,7 +1276,7 @@ export const areaHome = query({
     );
     const plans = intentPlans.map(({ _places, _mapQuery, _options, ...row }) => row);
 
-    const projects = (
+    const projectRows = (
       await ctx.db
         .query('albatrossProjects')
         .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', areaIdStr))
@@ -1285,20 +1284,47 @@ export const areaHome = query({
     )
       .filter((project) => project.status === 'active' || project.status === 'paused')
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, AREA_HOME_PROJECT_CAP)
-      .map((project) => ({
-        projectId: String(project._id),
-        title: project.title,
-        outcome: project.outcome ?? null,
-        status: project.status,
-        sourceIntentId: project.sourceIntentId ?? null,
-        updatedAt: project.updatedAt,
-      }));
+      .slice(0, AREA_HOME_PROJECT_CAP);
+    const projects = await Promise.all(
+      projectRows.map(async (project) => {
+        const links = await ctx.db
+          .query('albatrossProjectLinks')
+          .withIndex('by_user_project', (q) => q.eq('userId', userId).eq('projectId', project._id))
+          .collect();
+        const taskLinks = links.filter((link) => link.artifactKind === 'task');
+        const cards = await Promise.all(
+          taskLinks.slice(0, 100).map((link) => {
+            const cardId = ctx.db.normalizeId('cards', link.artifactId);
+            return cardId ? ctx.db.get(cardId) : null;
+          }),
+        );
+        const activeSprint = project.activeSprintId ? await ctx.db.get(project.activeSprintId) : null;
+        return {
+          projectId: String(project._id),
+          title: project.title,
+          outcome: project.outcome ?? null,
+          status: project.status,
+          sourceIntentId: project.sourceIntentId ?? null,
+          taskCount: taskLinks.length,
+          completedTaskCount: cards.filter((card) => card?.userId === userId && card.completedAt).length,
+          activeSprint:
+            activeSprint?.userId === userId
+              ? { title: activeSprint.title, status: activeSprint.status, endAt: activeSprint.endAt ?? null }
+              : null,
+          updatedAt: project.updatedAt,
+        };
+      }),
+    );
 
     const branding = areaBrandingFromFacts(area, [...verified, ...candidate]);
+    const livingBrief = await ctx.db
+      .query('albatrossAreaBriefs')
+      .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
+      .unique();
 
     return {
       area: { ...area, ...branding },
+      livingBrief,
       facts: { verified, candidate },
       mail,
       events,
