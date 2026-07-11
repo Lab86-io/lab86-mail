@@ -803,7 +803,10 @@ function CaptureBar({ areaId, areaName }: { areaId: string; areaName: string }) 
 function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
   const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
+  const [expanded, setExpanded] = useState(false);
   if (rows.length === 0) return null;
+  const collapsed = splitBriefRows(rows, 6);
+  const visibleRows = expanded ? rows : collapsed.visible;
   return (
     <section className="mx-3 mt-3 overflow-hidden rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)]/45">
       <div className="flex items-baseline gap-2.5 px-3 pb-1.5 pt-2.5">
@@ -815,7 +818,7 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
         </span>
         <span className="h-px flex-1 self-center bg-[var(--color-warning)]/25" />
       </div>
-      {rows.map((row) => (
+      {visibleRows.map((row) => (
         <div
           key={row.id}
           className="flex items-center gap-2.5 border-t border-[var(--color-warning)]/15 px-3 py-2"
@@ -856,6 +859,15 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
           ) : null}
         </div>
       ))}
+      {collapsed.overflow > 0 ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="w-full border-t border-[var(--color-warning)]/15 px-3 py-2 text-left text-[11.5px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          {expanded ? 'Show fewer' : `Show ${collapsed.overflow} more`}
+        </button>
+      ) : null}
     </section>
   );
 }

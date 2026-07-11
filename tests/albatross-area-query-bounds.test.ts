@@ -17,8 +17,9 @@ describe('Area home query bounds', () => {
     expect(areaHome).toContain(".withIndex('by_user_area_kind_status_updatedAt'");
     expect(areaHome).toContain('.take(cap + 1)');
     expect(areaHome).toContain('.slice(0, cap + 1)');
-    expect(areaHome).not.toContain(
-      ".withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))\n        .collect()",
+    const normalized = areaHome.replace(/\s+/g, ' ');
+    expect(normalized).not.toContain(
+      ".withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId)) .collect()",
     );
   });
 

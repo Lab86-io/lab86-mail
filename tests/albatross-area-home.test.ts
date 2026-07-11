@@ -500,6 +500,22 @@ describe('areaBriefHeadline', () => {
       }),
     ).toBe('Household has at least 30 filed signals to review.');
   });
+
+  test('a single bounded signal keeps singular wording', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Household',
+        needsYou: 0,
+        upcoming: 0,
+        plans: 0,
+        projects: 0,
+        mail: 1,
+        tasks: 0,
+        candidateFacts: 0,
+        evidenceBounded: true,
+      }),
+    ).toBe('Household has at least 1 filed signal to review.');
+  });
 });
 
 describe('splitBriefRows', () => {
@@ -626,9 +642,9 @@ describe('areaNeedsYouRows', () => {
     expect(rows[0].kind).toBe('plan_answers');
   });
 
-  test('caps the queue', () => {
+  test('returns the complete queue so presentation can collapse it without losing actions', () => {
     const facts = Array.from({ length: 20 }, (_, i) => ({ _id: `f${i}`, kind: 'note', value: `v${i}` }));
-    expect(areaNeedsYouRows({ candidateFacts: facts }, now, 3)).toHaveLength(3);
+    expect(areaNeedsYouRows({ candidateFacts: facts }, now)).toHaveLength(20);
   });
 
   test('null/undefined inputs are treated as empty', () => {
@@ -807,6 +823,7 @@ describe('areaFreshness', () => {
     expect(areaFreshness(undefined, now)).toBeNull();
     expect(areaFreshness(0, now)).toBeNull();
     expect(areaFreshness(Number.NaN, now)).toBeNull();
+    expect(areaFreshness(Number.MAX_VALUE, now)).toBeNull();
   });
 });
 
@@ -823,14 +840,14 @@ describe('workNeedsYouRows', () => {
     expect(rows[0].detail).toBe('Answer to continue this work');
   });
 
-  test('null input and the cap are respected', () => {
+  test('null input is empty and every actionable row remains reachable', () => {
     expect(workNeedsYouRows(null)).toEqual([]);
     const many = Array.from({ length: 10 }, (_, i) => ({
       _id: `w${i}`,
       title: `W${i}`,
       agentState: 'needs_input',
     }));
-    expect(workNeedsYouRows(many, 3)).toHaveLength(3);
+    expect(workNeedsYouRows(many)).toHaveLength(10);
   });
 });
 
@@ -891,14 +908,13 @@ describe('mergeNeedsYouRows', () => {
     expect(merged).toHaveLength(2);
   });
 
-  test('the cap is applied after dedupe; null inputs are empty', () => {
+  test('dedupe never drops unrelated actionable rows; null inputs are empty', () => {
     const merged = mergeNeedsYouRows(
       [work('i1'), work('i2'), work('i3')],
       [plan('i1'), task('c1'), fact('f1')],
-      3,
     );
-    expect(merged).toHaveLength(3);
-    expect(merged.map((r) => r.id)).toEqual(['work:i1', 'work:i2', 'work:i3']);
+    expect(merged).toHaveLength(5);
+    expect(merged.map((r) => r.id)).toEqual(['work:i1', 'work:i2', 'work:i3', 'task:c1', 'fact:f1']);
     expect(mergeNeedsYouRows(null, null)).toEqual([]);
   });
 });

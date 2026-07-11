@@ -1,25 +1,114 @@
-import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { describe, expect, mock, test } from 'bun:test';
+import type { NextRequest } from 'next/server';
+import { createAreaBriefPost } from '../app/api/albatross/area/[areaId]/brief/route';
+import { AuthRequiredError } from '../lib/auth/current-user';
+import { RateLimitError } from '../lib/rate-limit';
 
-const source = readFileSync(
-  path.join(process.cwd(), 'app/api/albatross/area/[areaId]/brief/route.ts'),
-  'utf8',
-);
+const user = {
+  userId: 'user_test',
+  email: 'person@example.test',
+  name: 'Person',
+  source: 'clerk' as const,
+};
+
+function dependencies() {
+  return {
+    currentUser: mock(async () => user),
+    rateLimit: mock(async () => ({ ok: true }) as any),
+    areaExists: mock(async () => true),
+    reindex: mock(async () => ({ ok: true })),
+    generate: mock(async () => ({
+      status: 'ready',
+      lede: 'Current work is moving.',
+      summary: 'Ready.',
+    })) as any,
+  };
+}
+
+async function invoke(deps: ReturnType<typeof dependencies>, areaId = 'area_test') {
+  const post = createAreaBriefPost(deps as any);
+  return post({} as NextRequest, { params: Promise.resolve({ areaId }) });
+}
 
 describe('Area brief refresh endpoint', () => {
-  test('regenerates prose and starts a best-effort evidence reindex', () => {
-    expect(source).toContain('generateAreaLivingBrief({');
-    expect(source).toContain('albatross.reindexMyAreas');
-    expect(source).toContain('evidence reindex failed');
-    expect(source).toContain('await reindex;');
+  test('authenticates, rate-limits, reindexes, then generates from refreshed evidence', async () => {
+    const deps = dependencies();
+    let reindexFinished = false;
+    deps.reindex.mockImplementation(async () => {
+      reindexFinished = true;
+      return { ok: true };
+    });
+    deps.generate.mockImplementation(async () => {
+      expect(reindexFinished).toBe(true);
+      return { status: 'ready', lede: 'Current work is moving.', summary: 'Ready.' };
+    });
+
+    const response = await invoke(deps);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      brief: { status: 'ready', lede: 'Current work is moving.', summary: 'Ready.' },
+    });
+    expect(deps.rateLimit).toHaveBeenCalledWith({
+      userId: user.userId,
+      key: 'albatross-area-brief',
+      limit: 12,
+      windowMs: 60_000,
+    });
+    expect(deps.areaExists).toHaveBeenCalledWith(user.userId, 'area_test');
   });
 
-  test('is authenticated, rate-limited, and keeps unknown errors client-safe', () => {
-    expect(source).toContain('requireCurrentUser()');
-    expect(source).toContain("key: 'albatross-area-brief'");
-    expect(source).toContain('error instanceof AreaBriefNotFoundError');
-    expect(source).toContain("error: 'brief refresh failed'");
-    expect(source).not.toContain('error: message');
+  test('returns controlled authentication and rate-limit responses', async () => {
+    const unauthenticated = dependencies();
+    unauthenticated.currentUser.mockImplementation(async () => {
+      throw new AuthRequiredError('Sign in required.');
+    });
+    expect((await invoke(unauthenticated)).status).toBe(401);
+
+    const limited = dependencies();
+    limited.rateLimit.mockImplementation(async () => {
+      throw new RateLimitError('Too many requests. Try again shortly.', 2_000, 12);
+    });
+    const limitedResponse = await invoke(limited);
+    expect(limitedResponse.status).toBe(429);
+    expect(limitedResponse.headers.get('retry-after')).toBe('2');
+  });
+
+  test('returns 404 only after an explicit owned-area lookup', async () => {
+    const deps = dependencies();
+    deps.areaExists.mockImplementation(async () => false);
+    const response = await invoke(deps, 'missing_area');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ ok: false, error: 'area not found' });
+    expect(deps.reindex).not.toHaveBeenCalled();
+    expect(deps.generate).not.toHaveBeenCalled();
+  });
+
+  test('keeps reindex best-effort and unknown generation failures client-safe', async () => {
+    const withReindexFailure = dependencies();
+    withReindexFailure.reindex.mockImplementation(async () => {
+      throw new Error('classifier unavailable');
+    });
+    const originalWarn = console.warn;
+    console.warn = mock(() => undefined);
+    try {
+      expect((await invoke(withReindexFailure)).status).toBe(200);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const withGenerationFailure = dependencies();
+    withGenerationFailure.generate.mockImplementation(async () => {
+      throw new Error('provider not found while generating');
+    });
+    const originalError = console.error;
+    console.error = mock(() => undefined);
+    try {
+      const response = await invoke(withGenerationFailure);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ ok: false, error: 'brief refresh failed' });
+    } finally {
+      console.error = originalError;
+    }
   });
 });

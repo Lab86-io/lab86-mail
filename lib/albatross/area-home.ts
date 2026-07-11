@@ -569,7 +569,8 @@ export function areaBriefHeadline(input: {
     return `${input.plans} active ${input.plans === 1 ? 'plan is' : 'plans are'} in motion for ${input.areaName}.`;
   const signals = input.mail + input.tasks + input.upcoming;
   if (signals > 0) {
-    if (input.evidenceBounded) return `${input.areaName} has at least ${signals} filed signals to review.`;
+    if (input.evidenceBounded)
+      return `${input.areaName} has at least ${signals} filed ${signals === 1 ? 'signal' : 'signals'} to review.`;
     return `${input.areaName} has ${signals} filed ${signals === 1 ? 'signal' : 'signals'} to review.`;
   }
   if (input.candidateFacts > 0)
@@ -618,7 +619,6 @@ export function areaNeedsYouRows(
     candidateFacts?: Array<{ _id: string; kind: string; value: string }> | null;
   },
   now = Date.now(),
-  cap = 6,
 ): NeedsYouRow[] {
   const rows: NeedsYouRow[] = [];
   for (const plan of input.plans ?? []) {
@@ -650,7 +650,7 @@ export function areaNeedsYouRows(
       detail: `Suggested ${fact.kind}`,
     });
   }
-  return rows.slice(0, cap);
+  return rows;
 }
 
 export const AREA_PLACE_CAP = 8;
@@ -842,6 +842,8 @@ export function areaFreshness(
   locale = 'en-US',
 ): string | null {
   if (typeof generatedAt !== 'number' || !Number.isFinite(generatedAt) || generatedAt <= 0) return null;
+  const generatedDate = new Date(generatedAt);
+  if (!Number.isFinite(generatedDate.getTime())) return null;
   const deltaMs = now - generatedAt;
   if (deltaMs < 0) return 'just now';
   const minutes = Math.floor(deltaMs / 60_000);
@@ -849,7 +851,7 @@ export function areaFreshness(
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(generatedAt));
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(generatedDate);
 }
 
 // Work items whose agent is explicitly waiting on the user's answer. These fold
@@ -862,7 +864,6 @@ export function workNeedsYouRows(
     rawText?: string | null;
     agentState?: string | null;
   }> | null,
-  cap = 6,
 ): NeedsYouRow[] {
   const out: NeedsYouRow[] = [];
   for (const row of rows ?? []) {
@@ -876,7 +877,7 @@ export function workNeedsYouRows(
       workId: String(row._id),
     });
   }
-  return out.slice(0, cap);
+  return out;
 }
 
 // The single "Needs you" queue is assembled from two sources that can name the
@@ -886,12 +887,12 @@ export function workNeedsYouRows(
 // by that shared identity, keeping the directly actionable work_input row and
 // dropping the duplicate plan_answers. Rows with no shared identity — overdue
 // tasks and suggested context — are always preserved. First-seen order is kept
-// (pass workNeedsYouRows first so work_input wins the shared slot) and the cap
-// is applied last.
+// (pass workNeedsYouRows first so work_input wins the shared slot). Presentation
+// may collapse this complete queue, but the data helper never silently drops an
+// actionable item.
 export function mergeNeedsYouRows(
   workRows: readonly NeedsYouRow[] | null | undefined,
   areaRows: readonly NeedsYouRow[] | null | undefined,
-  cap = 6,
 ): NeedsYouRow[] {
   const sharedIntentKey = (row: NeedsYouRow): string | null => {
     if (row.kind === 'work_input') return row.workId ? `intent:${row.workId}` : null;
@@ -908,7 +909,7 @@ export function mergeNeedsYouRows(
     }
     out.push(row);
   }
-  return out.slice(0, Math.max(0, cap));
+  return out;
 }
 
 export interface ProjectProgress {
