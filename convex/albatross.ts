@@ -1084,6 +1084,40 @@ const AREA_HOME_TASK_CAP = 30;
 const AREA_HOME_INTENT_SCAN = 150;
 const AREA_HOME_PLAN_CAP = 8;
 const AREA_HOME_PROJECT_CAP = 8;
+const AREA_HOME_LINK_SCAN_CAPS = {
+  mailThread: AREA_HOME_MAIL_CAP * 3,
+  calendarEvent: AREA_HOME_EVENT_CAP * 3,
+  task: AREA_HOME_TASK_CAP * 3,
+  mcpItem: 30,
+  intent: 30,
+  manual: 30,
+} as const;
+
+type AreaHomeArtifactKind = keyof typeof AREA_HOME_LINK_SCAN_CAPS;
+
+async function recentActiveAreaLinks(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  areaId: Id<'areas'>,
+  artifactKind: AreaHomeArtifactKind,
+) {
+  const cap = AREA_HOME_LINK_SCAN_CAPS[artifactKind];
+  const statuses = ['verified', 'candidate'] as const;
+  const rows = (
+    await Promise.all(
+      statuses.map((status) =>
+        ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_area_kind_status_updatedAt', (q) =>
+            q.eq('userId', userId).eq('areaId', areaId).eq('artifactKind', artifactKind).eq('status', status),
+          )
+          .order('desc')
+          .take(cap),
+      ),
+    )
+  ).flat();
+  return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap);
+}
 
 async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
   if (!link.accountId) return null;
@@ -1157,7 +1191,7 @@ export const areaHome = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const area = await requireArea(ctx, args.areaId, userId);
-    const [verified, candidate, links] = await Promise.all([
+    const [verified, candidate, linkGroups] = await Promise.all([
       ctx.db
         .query('areaFacts')
         .withIndex('by_user_area_status', (q) =>
@@ -1170,12 +1204,13 @@ export const areaHome = query({
           q.eq('userId', userId).eq('areaId', args.areaId).eq('status', 'candidate'),
         )
         .collect(),
-      ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
-        .collect(),
+      Promise.all(
+        (Object.keys(AREA_HOME_LINK_SCAN_CAPS) as AreaHomeArtifactKind[]).map((artifactKind) =>
+          recentActiveAreaLinks(ctx, userId, args.areaId, artifactKind),
+        ),
+      ),
     ]);
-    const activeLinks = links.filter((link) => link.status !== 'rejected');
+    const activeLinks = linkGroups.flat();
     const byKind = new Map<string, any[]>();
     for (const link of activeLinks) {
       const list = byKind.get(link.artifactKind) || [];

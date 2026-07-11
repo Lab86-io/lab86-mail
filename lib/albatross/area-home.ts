@@ -589,7 +589,7 @@ export function splitBriefRows<T>(rows: readonly T[] | null | undefined, limit: 
   };
 }
 
-export type NeedsYouKind = 'plan_answers' | 'overdue_task' | 'suggested_context';
+export type NeedsYouKind = 'work_input' | 'plan_answers' | 'overdue_task' | 'suggested_context';
 
 export interface NeedsYouRow {
   id: string;
@@ -597,6 +597,7 @@ export interface NeedsYouRow {
   title: string;
   detail: string | null;
   intentId?: string;
+  workId?: string;
 }
 
 // The "needs you" queue: the few things in this area actually waiting on the
@@ -710,4 +711,252 @@ export function extractAreaPlaces(
     }
   }
   return out.slice(0, cap);
+}
+
+// ---------------------------------------------------------------------------
+// Living brief presentation. The Convex read model (areaHome) returns the whole
+// brief doc — status, lede, summary, generatedAt, error — so the page can be
+// honest about generating/error/absent, not just render a perfect brief. These
+// pure resolvers turn that doc into exactly what the lead should say, carrying
+// the last-known text through transient generating/error states so the thesis
+// never blinks out or fabricates progress.
+// ---------------------------------------------------------------------------
+
+export interface LivingBriefLike {
+  status?: 'generating' | 'ready' | 'error' | string | null;
+  lede?: string | null;
+  summary?: string | null;
+  generatedAt?: number | null;
+  error?: string | null;
+}
+
+export type AreaBriefMode = 'ready' | 'generating' | 'error' | 'absent';
+
+export interface AreaBriefState {
+  mode: AreaBriefMode;
+  // The editorial lead. Always present and never fabricated: for ready it is
+  // the generated lede; otherwise it is the last-known lede if we have one,
+  // else the deterministic headline the caller passes in.
+  lede: string;
+  // The supporting paragraph. Null when we have nothing real to show.
+  summary: string | null;
+  // A short, honest status note under the lead for non-ready modes. Null for
+  // ready (freshness is shown separately) and when there is nothing to say.
+  note: string | null;
+  // True when lede/summary are carried over from a previous edition while the
+  // current one is generating or errored — the UI dims them and shows `note`.
+  stale: boolean;
+  // Whether the primary affordance should offer to generate vs refresh.
+  canGenerate: boolean;
+  generatedAt: number | null;
+}
+
+function cleanBriefText(value?: string | null): string {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// The single source of truth for what the brief lead renders. `headline` is the
+// deterministic fallback (areaBriefHeadline) used only when there is no real
+// generated text to show.
+export function areaBriefState(brief: LivingBriefLike | null | undefined, headline: string): AreaBriefState {
+  const lede = cleanBriefText(brief?.lede);
+  const summary = cleanBriefText(brief?.summary);
+  const hasText = lede.length > 0;
+  const status = brief?.status ?? null;
+  // A valid generatedAt marks a *published* prior edition. The backend's very
+  // first generating/error record has no generatedAt and can carry placeholder
+  // text — so text alone must not be mistaken for a real last brief to carry
+  // over. Only a published edition is dimmed as stale with "showing the last
+  // brief"; a first-ever run shows the deterministic headline instead.
+  const rawGeneratedAt = brief?.generatedAt;
+  const generatedAt =
+    typeof rawGeneratedAt === 'number' && Number.isFinite(rawGeneratedAt) && rawGeneratedAt > 0
+      ? rawGeneratedAt
+      : null;
+  const hasPriorEdition = generatedAt !== null && hasText;
+
+  if (status === 'ready' && hasText) {
+    return {
+      mode: 'ready',
+      lede,
+      summary: summary || null,
+      note: null,
+      stale: false,
+      canGenerate: false,
+      generatedAt,
+    };
+  }
+  if (status === 'generating') {
+    return {
+      mode: 'generating',
+      lede: hasPriorEdition ? lede : headline,
+      summary: hasPriorEdition ? summary || null : null,
+      note: hasPriorEdition ? 'Updating the brief…' : 'Writing the brief…',
+      stale: hasPriorEdition,
+      canGenerate: false,
+      generatedAt,
+    };
+  }
+  if (status === 'error') {
+    return {
+      mode: 'error',
+      lede: hasPriorEdition ? lede : headline,
+      summary: hasPriorEdition ? summary || null : null,
+      note: hasPriorEdition
+        ? 'Couldn’t refresh — showing the last brief.'
+        : 'Live work and evidence are below.',
+      stale: hasPriorEdition,
+      // A first-ever error has no published brief to show, so still offer to
+      // generate one; a failed *refresh* keeps the prior edition and Refresh.
+      canGenerate: !hasPriorEdition,
+      generatedAt,
+    };
+  }
+  // No brief doc yet, or a ready doc that somehow has no text: fall back to the
+  // deterministic headline and offer to generate one. Never invent a summary.
+  return {
+    mode: 'absent',
+    lede: hasText ? lede : headline,
+    summary: hasText ? summary || null : null,
+    note: null,
+    stale: false,
+    canGenerate: true,
+    generatedAt,
+  };
+}
+
+// A quiet, honest freshness string for a ready brief: "just now", "12m ago",
+// "3h ago", else the calendar date. Null when there is no timestamp.
+export function areaFreshness(
+  generatedAt?: number | null,
+  now = Date.now(),
+  locale = 'en-US',
+): string | null {
+  if (typeof generatedAt !== 'number' || !Number.isFinite(generatedAt) || generatedAt <= 0) return null;
+  const deltaMs = now - generatedAt;
+  if (deltaMs < 0) return 'just now';
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(generatedAt));
+}
+
+// Work items whose agent is explicitly waiting on the user's answer. These fold
+// into the single "Needs you" queue so there is one authoritative action region
+// rather than a duplicate needs group inside Work.
+export function workNeedsYouRows(
+  rows?: Array<{
+    _id: string;
+    title?: string | null;
+    rawText?: string | null;
+    agentState?: string | null;
+  }> | null,
+  cap = 6,
+): NeedsYouRow[] {
+  const out: NeedsYouRow[] = [];
+  for (const row of rows ?? []) {
+    if (row?.agentState !== 'needs_input') continue;
+    const title = cleanBriefText(row.title) || cleanBriefText(row.rawText) || 'Untitled work';
+    out.push({
+      id: `work:${row._id}`,
+      kind: 'work_input',
+      title,
+      detail: 'Answer to continue this work',
+      workId: String(row._id),
+    });
+  }
+  return out.slice(0, cap);
+}
+
+// The single "Needs you" queue is assembled from two sources that can name the
+// same thing: workNeedsYouRows (the agent is waiting → work_input) and
+// areaNeedsYouRows (a plan needs answers → plan_answers). Because a Work item
+// and its plan share one intent id, the same intent can surface as both. Merge
+// by that shared identity, keeping the directly actionable work_input row and
+// dropping the duplicate plan_answers. Rows with no shared identity — overdue
+// tasks and suggested context — are always preserved. First-seen order is kept
+// (pass workNeedsYouRows first so work_input wins the shared slot) and the cap
+// is applied last.
+export function mergeNeedsYouRows(
+  workRows: readonly NeedsYouRow[] | null | undefined,
+  areaRows: readonly NeedsYouRow[] | null | undefined,
+  cap = 6,
+): NeedsYouRow[] {
+  const sharedIntentKey = (row: NeedsYouRow): string | null => {
+    if (row.kind === 'work_input') return row.workId ? `intent:${row.workId}` : null;
+    if (row.kind === 'plan_answers') return row.intentId ? `intent:${row.intentId}` : null;
+    return null;
+  };
+  const seen = new Set<string>();
+  const out: NeedsYouRow[] = [];
+  for (const row of [...(workRows ?? []), ...(areaRows ?? [])]) {
+    const key = sharedIntentKey(row);
+    if (key !== null) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(row);
+  }
+  return out.slice(0, Math.max(0, cap));
+}
+
+export interface ProjectProgress {
+  completed: number;
+  total: number;
+  percent: number;
+  hasBar: boolean;
+}
+
+// Divide-by-zero-safe completion for a Project/Epic progress bar. Only produces
+// a bar when there is a real task total; percent is clamped to 0–100.
+export function projectProgress(completed?: number | null, total?: number | null): ProjectProgress {
+  const totalN = Math.max(0, Math.floor(Number(total ?? 0)));
+  const completedN = Math.min(totalN, Math.max(0, Math.floor(Number(completed ?? 0))));
+  const percent = totalN > 0 ? Math.round((completedN / totalN) * 100) : 0;
+  return { completed: completedN, total: totalN, percent, hasBar: totalN > 0 };
+}
+
+export type ProjectStateTone = 'active' | 'paused' | 'neutral';
+
+// The state chip for a Project/Epic row. Real status only — no inferred health.
+export function projectStateMeta(status?: string | null): { label: string; tone: ProjectStateTone } {
+  switch (status) {
+    case 'active':
+      return { label: 'Active', tone: 'active' };
+    case 'paused':
+      return { label: 'Paused', tone: 'paused' };
+    case 'done':
+      return { label: 'Done', tone: 'neutral' };
+    case 'archived':
+      return { label: 'Archived', tone: 'neutral' };
+    default:
+      return { label: status ? status.replaceAll('_', ' ') : 'Project', tone: 'neutral' };
+  }
+}
+
+export interface EvidenceCountsLike {
+  mail: number;
+  events: number;
+  tasks: number;
+  facts: { verified: number; candidate: number };
+}
+
+// The one-line rollup above the supporting Evidence band: only non-zero facets,
+// in a fixed order, so a noisy mailbox is summarized rather than dumped. Empty
+// array when the area has no evidence yet (the band then hides).
+export function evidenceRollup(counts: EvidenceCountsLike): AreaPulseSegment[] {
+  const segments: AreaPulseSegment[] = [];
+  const push = (id: string, n: number, one: string, many: string) => {
+    if (n > 0) segments.push({ id, label: `${n} ${n === 1 ? one : many}` });
+  };
+  push('mail', counts.mail, 'thread', 'threads');
+  push('events', counts.events, 'event', 'events');
+  push('tasks', counts.tasks, 'task', 'tasks');
+  push('verified', counts.facts.verified, 'verified fact', 'verified facts');
+  push('candidate', counts.facts.candidate, 'context ask', 'context asks');
+  return segments;
 }

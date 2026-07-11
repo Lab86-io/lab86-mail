@@ -401,6 +401,7 @@ export default defineSchema({
     .index('by_area', ['areaId'])
     .index('by_user_area', ['userId', 'areaId'])
     .index('by_user_area_status', ['userId', 'areaId', 'status'])
+    .index('by_user_area_kind_status_updatedAt', ['userId', 'areaId', 'artifactKind', 'status', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_artifact', ['userId', 'artifactKind', 'artifactId'])
     .index('by_user_account_artifact', ['userId', 'accountId', 'artifactKind', 'artifactId'])
