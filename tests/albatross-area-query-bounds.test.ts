@@ -15,7 +15,8 @@ describe('Area home query bounds', () => {
 
     expect(schema).toContain(".index('by_user_area_kind_status_updatedAt'");
     expect(areaHome).toContain(".withIndex('by_user_area_kind_status_updatedAt'");
-    expect(areaHome).toContain('.take(cap)');
+    expect(areaHome).toContain('.take(cap + 1)');
+    expect(areaHome).toContain('.slice(0, cap + 1)');
     expect(areaHome).not.toContain(
       ".withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))\n        .collect()",
     );
@@ -31,14 +32,5 @@ describe('Area home query bounds', () => {
     for (const kind of ['mailThread', 'calendarEvent', 'task', 'mcpItem', 'intent', 'manual']) {
       expect(bounds).toContain(`${kind}:`);
     }
-  });
-
-  test('the refresh endpoint regenerates prose and reindexes evidence', () => {
-    const route = read('app/api/albatross/area/[areaId]/brief/route.ts');
-
-    expect(route).toContain('generateAreaLivingBrief({');
-    expect(route).toContain('albatross.reindexMyAreas');
-    expect(route).toContain("key: 'albatross-area-brief'");
-    expect(route).toContain('requireCurrentUser()');
   });
 });

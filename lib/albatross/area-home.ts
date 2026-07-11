@@ -556,6 +556,10 @@ export function areaBriefHeadline(input: {
   mail: number;
   tasks: number;
   candidateFacts: number;
+  // True when any supporting evidence count fed in (mail/tasks/upcoming) is a
+  // bounded preview rather than an exact total. The "filed signals" branch then
+  // avoids an exact claim it can't stand behind.
+  evidenceBounded?: boolean;
 }): string {
   if (input.needsYou > 0)
     return `${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
@@ -563,8 +567,11 @@ export function areaBriefHeadline(input: {
     return `${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
   if (input.plans > 0)
     return `${input.plans} active ${input.plans === 1 ? 'plan is' : 'plans are'} in motion for ${input.areaName}.`;
-  if (input.mail + input.tasks + input.upcoming > 0)
-    return `${input.areaName} has ${input.mail + input.tasks + input.upcoming} filed ${input.mail + input.tasks + input.upcoming === 1 ? 'signal' : 'signals'} to review.`;
+  const signals = input.mail + input.tasks + input.upcoming;
+  if (signals > 0) {
+    if (input.evidenceBounded) return `${input.areaName} has at least ${signals} filed signals to review.`;
+    return `${input.areaName} has ${signals} filed ${signals === 1 ? 'signal' : 'signals'} to review.`;
+  }
   if (input.candidateFacts > 0)
     return `${input.areaName} is waiting on ${input.candidateFacts} context ${input.candidateFacts === 1 ? 'confirmation' : 'confirmations'}.`;
   return `${input.areaName} is quiet right now.`;
@@ -938,25 +945,42 @@ export function projectStateMeta(status?: string | null): { label: string; tone:
   }
 }
 
+// A bounded preview count: `shown` is how many rows the read model returned;
+// `hasMore` is true when the area owns more than were shown (the total is not
+// known here, only that it exceeds the preview). Facts remain exact totals.
+export interface EvidencePreview {
+  shown: number;
+  hasMore: boolean;
+}
+
 export interface EvidenceCountsLike {
-  mail: number;
-  events: number;
-  tasks: number;
+  mail: EvidencePreview;
+  events: EvidencePreview;
+  tasks: EvidencePreview;
   facts: { verified: number; candidate: number };
 }
 
 // The one-line rollup above the supporting Evidence band: only non-zero facets,
-// in a fixed order, so a noisy mailbox is summarized rather than dumped. Empty
-// array when the area has no evidence yet (the band then hides).
+// in a fixed order, so a noisy mailbox is summarized rather than dumped. Mail,
+// events, and tasks are bounded previews — when more exist than were shown, the
+// label reads "30+ threads" (honest about the cap) rather than a false exact
+// total. Facts are exact. Empty array when the area has no evidence yet (the
+// band then hides).
 export function evidenceRollup(counts: EvidenceCountsLike): AreaPulseSegment[] {
   const segments: AreaPulseSegment[] = [];
-  const push = (id: string, n: number, one: string, many: string) => {
+  const pushPreview = (id: string, preview: EvidencePreview, one: string, many: string) => {
+    const n = Math.max(0, Math.floor(Number(preview?.shown ?? 0)));
+    if (n <= 0) return;
+    const noun = n === 1 && !preview.hasMore ? one : many;
+    segments.push({ id, label: preview.hasMore ? `${n}+ ${noun}` : `${n} ${noun}` });
+  };
+  const pushExact = (id: string, n: number, one: string, many: string) => {
     if (n > 0) segments.push({ id, label: `${n} ${n === 1 ? one : many}` });
   };
-  push('mail', counts.mail, 'thread', 'threads');
-  push('events', counts.events, 'event', 'events');
-  push('tasks', counts.tasks, 'task', 'tasks');
-  push('verified', counts.facts.verified, 'verified fact', 'verified facts');
-  push('candidate', counts.facts.candidate, 'context ask', 'context asks');
+  pushPreview('mail', counts.mail, 'thread', 'threads');
+  pushPreview('events', counts.events, 'event', 'events');
+  pushPreview('tasks', counts.tasks, 'task', 'tasks');
+  pushExact('verified', counts.facts.verified, 'verified fact', 'verified facts');
+  pushExact('candidate', counts.facts.candidate, 'context ask', 'context asks');
   return segments;
 }

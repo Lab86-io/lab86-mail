@@ -469,6 +469,37 @@ describe('areaBriefHeadline', () => {
       }),
     ).toBe('Garden is quiet right now.');
   });
+
+  test('exact filed-signals count when evidence is not bounded', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Household',
+        needsYou: 0,
+        upcoming: 1,
+        plans: 0,
+        projects: 0,
+        mail: 3,
+        tasks: 2,
+        candidateFacts: 0,
+      }),
+    ).toBe('Household has 6 filed signals to review.');
+  });
+
+  test('bounded evidence avoids an exact claim it cannot stand behind', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Household',
+        needsYou: 0,
+        upcoming: 0,
+        plans: 0,
+        projects: 0,
+        mail: 30,
+        tasks: 0,
+        candidateFacts: 0,
+        evidenceBounded: true,
+      }),
+    ).toBe('Household has at least 30 filed signals to review.');
+  });
 });
 
 describe('splitBriefRows', () => {
@@ -893,15 +924,47 @@ describe('projectStateMeta', () => {
 });
 
 describe('evidenceRollup', () => {
+  const preview = (shown: number, hasMore = false) => ({ shown, hasMore });
+
   test('only non-zero facets in a fixed order, with singular/plural', () => {
-    const segments = evidenceRollup({ mail: 17, events: 0, tasks: 1, facts: { verified: 2, candidate: 0 } });
+    const segments = evidenceRollup({
+      mail: preview(17),
+      events: preview(0),
+      tasks: preview(1),
+      facts: { verified: 2, candidate: 0 },
+    });
     expect(segments.map((s) => s.id)).toEqual(['mail', 'tasks', 'verified']);
     expect(segments.map((s) => s.label)).toEqual(['17 threads', '1 task', '2 verified facts']);
   });
 
+  test('a bounded preview reads "N+" and never claims a false exact total', () => {
+    const segments = evidenceRollup({
+      mail: preview(30, true),
+      events: preview(3, false),
+      tasks: preview(1, true),
+      facts: { verified: 0, candidate: 0 },
+    });
+    expect(segments.map((s) => s.label)).toEqual(['30+ threads', '3 events', '1+ tasks']);
+  });
+
+  test('a single shown row that is not bounded stays singular', () => {
+    const segments = evidenceRollup({
+      mail: preview(1, false),
+      events: preview(0),
+      tasks: preview(0),
+      facts: { verified: 0, candidate: 0 },
+    });
+    expect(segments.map((s) => s.label)).toEqual(['1 thread']);
+  });
+
   test('a quiet area yields no rollup (band hides)', () => {
-    expect(evidenceRollup({ mail: 0, events: 0, tasks: 0, facts: { verified: 0, candidate: 0 } })).toEqual(
-      [],
-    );
+    expect(
+      evidenceRollup({
+        mail: preview(0),
+        events: preview(0),
+        tasks: preview(0),
+        facts: { verified: 0, candidate: 0 },
+      }),
+    ).toEqual([]);
   });
 });

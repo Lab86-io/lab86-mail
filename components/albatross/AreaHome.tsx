@@ -133,9 +133,19 @@ interface AreaHomeData {
   places: AreaPlaceRow[];
   counts: {
     facts: { verified: number; candidate: number };
-    mail: number;
-    events: number;
-    tasks: number;
+    // Mail/events/tasks are bounded previews, not exact totals: `shown` is how
+    // many rows came back, `hasMore` whether the area owns more than the cap.
+    evidence: {
+      mail: { shown: number; hasMore: boolean };
+      events: { shown: number; hasMore: boolean };
+      tasks: { shown: number; hasMore: boolean };
+    };
+    links: {
+      mailThread: { shown: number; bounded: boolean };
+      calendarEvent: { shown: number; bounded: boolean };
+      task: { shown: number; bounded: boolean };
+      other: { shown: number; bounded: boolean };
+    };
     plans: number;
     projects: number;
     places: number;
@@ -451,9 +461,22 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   }
 
   const home = result.data as AreaHomeData;
-  const sections = areaHomeSections(home.counts);
+  // The backend returns bounded evidence previews (shown/hasMore), not exact
+  // mail/events/tasks totals. Derive the flat display-count shape the section
+  // and no-links helpers expect from those previews' `shown` counts.
+  const displayCounts = {
+    mail: home.counts.evidence.mail.shown,
+    events: home.counts.evidence.events.shown,
+    tasks: home.counts.evidence.tasks.shown,
+    facts: home.counts.facts,
+  };
+  const sections = areaHomeSections(displayCounts);
   const sectionCount = (id: string) => sections.find((section) => section.id === id)?.count ?? 0;
-  const noLinks = areaHasNoLinks(home.counts);
+  const noLinks = areaHasNoLinks(displayCounts);
+  const evidenceBounded =
+    home.counts.evidence.mail.hasMore ||
+    home.counts.evidence.events.hasMore ||
+    home.counts.evidence.tasks.hasMore;
 
   const now = Date.now();
   const upcoming = home.events.filter((event) => event.endAt >= now);
@@ -471,23 +494,30 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     upcoming: upcoming.length,
     plans: home.counts.plans,
     projects: home.counts.projects,
-    mail: home.counts.mail,
-    tasks: home.counts.tasks,
+    mail: displayCounts.mail,
+    tasks: displayCounts.tasks,
     candidateFacts: home.counts.facts.candidate,
+    evidenceBounded,
   });
   const brief = areaBriefState(home.livingBrief, headline);
   const evidence = evidenceRollup({
-    mail: home.counts.mail,
-    events: home.counts.events,
-    tasks: home.counts.tasks,
+    mail: home.counts.evidence.mail,
+    events: home.counts.evidence.events,
+    tasks: home.counts.evidence.tasks,
     facts: home.counts.facts,
   });
+  // Work loads from an independent query. `undefined` is still loading; only a
+  // resolved array tells us whether the area truly has no work.
+  const workLoaded = workRows !== undefined;
   const hasWork = (workRows?.length ?? 0) > 0;
   // The brief is empty only when the area has nothing the classifier or the
   // user has put here yet — then we explain rather than render empty sections.
+  // Gate on the Work query resolving so the empty-Area panel never flashes while
+  // Work is still loading and could yet fill the page.
   const briefEmpty =
-    noLinks &&
+    workLoaded &&
     !hasWork &&
+    noLinks &&
     home.counts.plans === 0 &&
     home.counts.projects === 0 &&
     home.counts.places === 0 &&
@@ -540,13 +570,13 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
           <>
             <NeedsYouSection rows={needsYou} />
             <ProjectsSection projects={home.projects} count={home.counts.projects} />
-            <WorkSections rows={workRows || []} />
+            <WorkSections rows={workRows} />
             {evidence.length ? (
               <>
                 <EvidenceHeader segments={evidence} />
                 <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="min-w-0">
-                    <EventsSection events={home.events} count={home.counts.events} />
+                    <EventsSection events={home.events} count={sectionCount('events')} />
                     <MailSection mail={home.mail} count={sectionCount('mail')} />
                     <TasksSection tasks={home.tasks} count={sectionCount('tasks')} />
                   </div>
@@ -833,8 +863,19 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
 // Work: the smaller outcomes Albatross is moving through, grouped by momentum.
 // Items awaiting the user's answer are NOT duplicated here — they lead the page
 // in the single "Needs you" queue. This keeps Work about what is in motion.
-function WorkSections({ rows }: { rows: AreaWorkRow[] }) {
+function WorkSections({ rows }: { rows: AreaWorkRow[] | undefined }) {
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  // Work is an independent query. While it loads (undefined), hold a quiet
+  // placeholder rather than flashing "Nothing in motion" — the empty state is
+  // only honest once the query has resolved to an empty array.
+  if (rows === undefined) {
+    return (
+      <section>
+        <SectionHeader label="Work" count={0} />
+        <p className="px-3 py-3 text-[12px] text-[var(--color-text-faint)]">Loading work…</p>
+      </section>
+    );
+  }
   const active = rows.filter(
     (row) =>
       !['waiting', 'blocked', 'done', 'archived'].includes(row.workState || 'active') &&

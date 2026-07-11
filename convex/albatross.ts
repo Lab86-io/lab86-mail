@@ -1112,11 +1112,14 @@ async function recentActiveAreaLinks(
             q.eq('userId', userId).eq('areaId', areaId).eq('artifactKind', artifactKind).eq('status', status),
           )
           .order('desc')
-          .take(cap),
+          // Read one sentinel row past the scan cap so callers can distinguish
+          // an exact bounded count from "there are more" without an unbounded
+          // collect. The combined result is trimmed to that same cap + sentinel.
+          .take(cap + 1),
       ),
     )
   ).flat();
-  return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap);
+  return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cap + 1);
 }
 
 async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
@@ -1218,12 +1221,12 @@ export const areaHome = query({
       byKind.set(link.artifactKind, list);
     }
 
-    const mail = (
+    const resolvedMail = (
       await Promise.all((byKind.get('mailThread') || []).map((link) => resolveMailLink(ctx, userId, link)))
     )
       .filter((row): row is NonNullable<typeof row> => row !== null)
-      .sort((a, b) => b.lastDate - a.lastDate)
-      .slice(0, AREA_HOME_MAIL_CAP);
+      .sort((a, b) => b.lastDate - a.lastDate);
+    const mail = resolvedMail.slice(0, AREA_HOME_MAIL_CAP);
 
     const ts = now();
     const resolvedEvents = (
@@ -1261,12 +1264,10 @@ export const areaHome = query({
         linkStatus: 'verified',
         reason: null,
       }));
-    const tasks = [...linkedTasks, ...boardTasks]
-      .sort(
-        (a, b) =>
-          Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,
-      )
-      .slice(0, AREA_HOME_TASK_CAP);
+    const resolvedTasks = [...linkedTasks, ...boardTasks].sort(
+      (a, b) => Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,
+    );
+    const tasks = resolvedTasks.slice(0, AREA_HOME_TASK_CAP);
 
     // Plans become components of the area: its active Work (+ latest plan)
     // surface here rather than on a separate Plans page. Read both the typed
@@ -1356,6 +1357,27 @@ export const areaHome = query({
       .query('albatrossAreaBriefs')
       .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
       .unique();
+    const evidence = {
+      mail: {
+        shown: mail.length,
+        hasMore:
+          resolvedMail.length > mail.length ||
+          (byKind.get('mailThread') || []).length > AREA_HOME_LINK_SCAN_CAPS.mailThread,
+      },
+      events: {
+        shown: events.length,
+        hasMore:
+          resolvedEvents.length > events.length ||
+          (byKind.get('calendarEvent') || []).length > AREA_HOME_LINK_SCAN_CAPS.calendarEvent,
+      },
+      tasks: {
+        shown: tasks.length,
+        hasMore:
+          resolvedTasks.length > tasks.length ||
+          boardCards.length >= 200 ||
+          (byKind.get('task') || []).length > AREA_HOME_LINK_SCAN_CAPS.task,
+      },
+    };
 
     return {
       area: { ...area, ...branding },
@@ -1370,16 +1392,29 @@ export const areaHome = query({
       counts: {
         facts: { verified: verified.length, candidate: candidate.length },
         links: {
-          mailThread: (byKind.get('mailThread') || []).length,
-          calendarEvent: (byKind.get('calendarEvent') || []).length,
-          task: (byKind.get('task') || []).length,
-          other: activeLinks.filter(
-            (link) => !['mailThread', 'calendarEvent', 'task'].includes(link.artifactKind),
-          ).length,
+          mailThread: {
+            shown: Math.min((byKind.get('mailThread') || []).length, AREA_HOME_LINK_SCAN_CAPS.mailThread),
+            bounded: true,
+          },
+          calendarEvent: {
+            shown: Math.min(
+              (byKind.get('calendarEvent') || []).length,
+              AREA_HOME_LINK_SCAN_CAPS.calendarEvent,
+            ),
+            bounded: true,
+          },
+          task: {
+            shown: Math.min((byKind.get('task') || []).length, AREA_HOME_LINK_SCAN_CAPS.task),
+            bounded: true,
+          },
+          other: {
+            shown: activeLinks.filter(
+              (link) => !['mailThread', 'calendarEvent', 'task'].includes(link.artifactKind),
+            ).length,
+            bounded: true,
+          },
         },
-        mail: mail.length,
-        events: events.length,
-        tasks: tasks.length,
+        evidence,
         plans: plans.length,
         projects: projects.length,
         places: places.length,
