@@ -16,6 +16,8 @@ interface AreaBriefRouteDependencies {
   areaExists: (userId: string, areaId: string) => Promise<boolean>;
   reindex: (userId: string, areaId: string) => Promise<unknown>;
   generate: typeof generateAreaLivingBrief;
+  warn: (message: string, error: unknown) => void;
+  error: (message: string, error: unknown) => void;
 }
 
 // A small dependency seam keeps the route's security, sequencing, and error
@@ -44,7 +46,7 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
       try {
         await deps.reindex(user.userId, areaId);
       } catch (error: unknown) {
-        console.warn('[albatross-area-brief] evidence reindex failed', error);
+        deps.warn('[albatross-area-brief] evidence reindex failed', error);
       }
 
       const brief = await deps.generate({
@@ -62,7 +64,7 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
       if (error instanceof AreaBriefNotFoundError) {
         return Response.json({ ok: false, error: 'area not found' }, { status: 404 });
       }
-      console.error('[albatross-area-brief] refresh failed', error);
+      deps.error('[albatross-area-brief] refresh failed', error);
       return Response.json({ ok: false, error: 'brief refresh failed' }, { status: 500 });
     }
   };
@@ -81,4 +83,6 @@ export const POST = createAreaBriefPost({
       areaId,
     }),
   generate: generateAreaLivingBrief,
+  warn: console.warn,
+  error: console.error,
 });

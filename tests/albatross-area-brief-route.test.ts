@@ -22,6 +22,8 @@ function dependencies() {
       lede: 'Current work is moving.',
       summary: 'Ready.',
     })) as any,
+    warn: mock(() => undefined),
+    error: mock(() => undefined),
   };
 }
 
@@ -57,6 +59,13 @@ describe('Area brief refresh endpoint', () => {
       windowMs: 60_000,
     });
     expect(deps.areaExists).toHaveBeenCalledWith(user.userId, 'area_test');
+    expect(deps.reindex).toHaveBeenCalledWith(user.userId, 'area_test');
+    expect(deps.generate).toHaveBeenCalledWith({
+      userId: user.userId,
+      userEmail: user.email,
+      userName: user.name,
+      areaId: 'area_test',
+    });
   });
 
   test('returns controlled authentication and rate-limit responses', async () => {
@@ -100,44 +109,30 @@ describe('Area brief refresh endpoint', () => {
     withReindexFailure.reindex.mockImplementation(async () => {
       throw new Error('classifier unavailable');
     });
-    const originalWarn = console.warn;
-    console.warn = mock(() => undefined);
-    try {
-      const response = await invoke(withReindexFailure);
-      expect(response.status).toBe(200);
-      expect(withReindexFailure.generate).toHaveBeenCalled();
-      expect(await response.json()).toEqual({
-        ok: true,
-        brief: { status: 'ready', lede: 'Current work is moving.', summary: 'Ready.' },
-      });
-    } finally {
-      console.warn = originalWarn;
-    }
+    const response = await invoke(withReindexFailure);
+    expect(response.status).toBe(200);
+    expect(withReindexFailure.generate).toHaveBeenCalled();
+    expect(await response.json()).toEqual({
+      ok: true,
+      brief: { status: 'ready', lede: 'Current work is moving.', summary: 'Ready.' },
+    });
+    expect(withReindexFailure.warn).toHaveBeenCalled();
 
     const withSynchronousReindexFailure = dependencies();
     withSynchronousReindexFailure.reindex.mockImplementation(() => {
       throw new Error('synchronous classifier failure');
     });
-    console.warn = mock(() => undefined);
-    try {
-      expect((await invoke(withSynchronousReindexFailure)).status).toBe(200);
-      expect(withSynchronousReindexFailure.generate).toHaveBeenCalled();
-    } finally {
-      console.warn = originalWarn;
-    }
+    expect((await invoke(withSynchronousReindexFailure)).status).toBe(200);
+    expect(withSynchronousReindexFailure.generate).toHaveBeenCalled();
+    expect(withSynchronousReindexFailure.warn).toHaveBeenCalled();
 
     const withGenerationFailure = dependencies();
     withGenerationFailure.generate.mockImplementation(async () => {
       throw new Error('provider not found while generating');
     });
-    const originalError = console.error;
-    console.error = mock(() => undefined);
-    try {
-      const response = await invoke(withGenerationFailure);
-      expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ ok: false, error: 'brief refresh failed' });
-    } finally {
-      console.error = originalError;
-    }
+    const failedResponse = await invoke(withGenerationFailure);
+    expect(failedResponse.status).toBe(500);
+    expect(await failedResponse.json()).toEqual({ ok: false, error: 'brief refresh failed' });
+    expect(withGenerationFailure.error).toHaveBeenCalled();
   });
 });
