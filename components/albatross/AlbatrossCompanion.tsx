@@ -134,6 +134,7 @@ export function AlbatrossCompanion() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void submit();
                   }}
+                  aria-label="Answer Albatross in your own words"
                   placeholder="Answer in your own words"
                   className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12px] outline-none focus:border-[var(--color-accent)]"
                 />
@@ -211,6 +212,7 @@ export function AlbatrossCompanion() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void submit();
                   }}
+                  aria-label="Answer Albatross in your own words"
                   placeholder="Answer in your own words"
                   className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12px] outline-none"
                 />

@@ -215,3 +215,13 @@ export function fallbackEmailIsDue(input: {
   if (input.answeredAt) return false;
   return (input.now ?? Date.now()) >= input.checkinCreatedAt + Math.max(0, input.delayMinutes) * 60_000;
 }
+
+export function captureFallbackItem(rawText: string, areaId?: string) {
+  const primaryAreaId = String(areaId || '').trim() || undefined;
+  return {
+    title: rawText.slice(0, 180),
+    rawText,
+    relatedAreaIds: [],
+    ...(primaryAreaId ? { primaryAreaId } : {}),
+  };
+}

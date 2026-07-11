@@ -11,18 +11,25 @@ export interface NotificationEnvelope {
 }
 
 function linkSecret() {
-  return process.env.LAB86_NOTIFICATION_LINK_SECRET || process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+  return process.env.LAB86_NOTIFICATION_LINK_SECRET || '';
 }
 
-function signaturePayload(notificationId: string, userId: string, redirect: string) {
-  return `${notificationId}\n${userId}\n${redirect}`;
+const NOTIFICATION_LINK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function signaturePayload(notificationId: string, userId: string, redirect: string, expiresAt: number) {
+  return JSON.stringify([notificationId, userId, redirect, expiresAt]);
 }
 
-export function signNotificationLink(notificationId: string, userId: string, redirect: string) {
+export function signNotificationLink(
+  notificationId: string,
+  userId: string,
+  redirect: string,
+  expiresAt: number,
+) {
   const secret = linkSecret();
-  if (!secret) return '';
+  if (!secret || !Number.isSafeInteger(expiresAt) || expiresAt <= 0) return '';
   return createHmac('sha256', secret)
-    .update(signaturePayload(notificationId, userId, redirect))
+    .update(signaturePayload(notificationId, userId, redirect, expiresAt))
     .digest('hex');
 }
 
@@ -31,22 +38,62 @@ export function verifyNotificationLink(
   userId: string,
   redirect: string,
   signature: string,
+  expiresAt: number,
+  now = Date.now(),
 ) {
-  const expected = signNotificationLink(notificationId, userId, redirect);
-  if (!expected || !signature || expected.length !== signature.length) return false;
-  return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || !/^[a-f\d]{64}$/i.test(signature)) return false;
+  const expected = signNotificationLink(notificationId, userId, redirect, expiresAt);
+  if (!expected) return false;
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'));
 }
 
 export function notificationOpenUrl(envelope: NotificationEnvelope) {
   const redirect = envelope.deepLink.startsWith('/') ? envelope.deepLink : '/';
-  const sig = signNotificationLink(envelope.id, envelope.userId, redirect);
+  const expiresAt = Date.now() + NOTIFICATION_LINK_TTL_MS;
+  const sig = signNotificationLink(envelope.id, envelope.userId, redirect, expiresAt);
+  if (!sig) throw new Error('Notification link signing is not configured.');
   const params = new URLSearchParams({
     notificationId: envelope.id,
     userId: envelope.userId,
     redirect,
+    expiresAt: String(expiresAt),
     sig,
   });
   return `${hostedPublicUrl()}/api/notifications/open?${params.toString()}`;
+}
+
+const PUSH_SERVICE_HOSTS = new Set([
+  'android.googleapis.com',
+  'fcm.googleapis.com',
+  'push.services.mozilla.com',
+  'updates.push.services.mozilla.com',
+  'web.push.apple.com',
+]);
+
+function approvedPushHosts() {
+  const configured = String(process.env.LAB86_PUSH_ENDPOINT_HOSTS || '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set([...PUSH_SERVICE_HOSTS, ...configured]);
+}
+
+export function isAllowedPushEndpoint(endpoint: string) {
+  if (!endpoint || endpoint.length > 4096) return false;
+  try {
+    const url = new URL(endpoint);
+    const hostname = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) {
+      return false;
+    }
+    return (
+      approvedPushHosts().has(hostname) ||
+      hostname === 'notify.windows.com' ||
+      hostname.endsWith('.notify.windows.com')
+    );
+  } catch {
+    return false;
+  }
 }
 
 function configureWebPush() {

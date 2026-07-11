@@ -57,6 +57,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/convex/_generated/api';
 import { SETTINGS_TABS, type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
+import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 
 // useSearchParams needs a Suspense boundary for static generation.
@@ -237,17 +238,6 @@ function SendingSection() {
   );
 }
 
-interface NotificationPreferences {
-  _id?: string;
-  timezone: string;
-  eveningCheckinEnabled: boolean;
-  eveningCheckinLocalTime: string;
-  inAppEnabled: boolean;
-  webPushEnabled: boolean;
-  emailFallbackEnabled: boolean;
-  emailFallbackDelayMinutes: number;
-}
-
 function urlBase64ToUint8Array(value: string) {
   const padding = '='.repeat((4 - (value.length % 4)) % 4);
   const base64 = (value + padding).replaceAll('-', '+').replaceAll('_', '/');
@@ -283,8 +273,7 @@ function NotificationsSection() {
     if (!prefs) return;
     setSaving(true);
     try {
-      const { _id: _storedId, ...values } = prefs;
-      await savePreferences(values);
+      await savePreferences(notificationPreferenceInput(prefs));
       toast.success('Notification preferences saved');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save notification preferences');
@@ -319,8 +308,7 @@ function NotificationsSection() {
       if (!response.ok) throw new Error(body.error || 'Could not enable Web Push.');
       const next = { ...prefs, webPushEnabled: true };
       setPrefs(next);
-      const { _id: _storedId, ...values } = next;
-      await savePreferences(values);
+      await savePreferences(notificationPreferenceInput(next));
       setPushMessage('Web Push is enabled on this browser.');
     } catch (error) {
       setPushMessage(error instanceof Error ? error.message : 'Could not enable Web Push.');

@@ -27,6 +27,7 @@ const KIND = 'chatSession';
 const MAX_MESSAGES = 80;
 const MAX_PART_JSON_BYTES = 4_000;
 const MAX_SESSIONS_LISTED = 30;
+const MAX_SESSIONS_SCANNED = 1_000;
 
 // Tool outputs can carry whole thread bodies; history only needs the shape
 // (name, state, input) for the step cards, so big payloads are dropped.
@@ -105,8 +106,11 @@ export async function listChatSessions(limit = MAX_SESSIONS_LISTED): Promise<Cha
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
 }
 
-export async function listScopedChatSessions(scope: ChatSessionScope, limit = MAX_SESSIONS_LISTED) {
-  const rows = await listChatSessions(MAX_SESSIONS_LISTED);
+export function filterChatSessionsByScope(
+  rows: ChatSessionSummary[],
+  scope: ChatSessionScope,
+  limit = MAX_SESSIONS_LISTED,
+) {
   return rows
     .filter((row) => {
       const rowScope = row.scope || { kind: 'global' as const };
@@ -116,6 +120,16 @@ export async function listScopedChatSessions(scope: ChatSessionScope, limit = MA
       return true;
     })
     .slice(0, limit);
+}
+
+export async function listScopedChatSessions(scope: ChatSessionScope, limit = MAX_SESSIONS_LISTED) {
+  // Scope before applying the display cap. Otherwise 30 newer global chats
+  // can hide every matching Area or Work conversation.
+  const rows = await kvList<ChatSession>(KIND, { limit: MAX_SESSIONS_SCANNED });
+  const summaries = rows
+    .map(({ messages: _messages, ...summary }) => summary)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  return filterChatSessionsByScope(summaries, scope, limit);
 }
 
 export async function deleteChatSession(id: string) {

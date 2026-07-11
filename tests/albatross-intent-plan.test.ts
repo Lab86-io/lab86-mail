@@ -99,7 +99,11 @@ describe('generateIntentPlan orchestration', () => {
   const { __setIntentPlanDepsForTest, generateIntentPlan } = require('../lib/albatross/intent-plan');
 
   const fakeApi = {
-    albatross: { listAreas: 'q:listAreas', listVerifiedFacts: 'q:listVerifiedFacts' },
+    albatross: {
+      listAreas: 'q:listAreas',
+      listVerifiedFacts: 'q:listVerifiedFacts',
+      areaHome: 'q:areaHome',
+    },
     albatrossIntents: {
       getIntentWorkbench: 'q:getIntentWorkbench',
       updateIntent: 'm:updateIntent',
@@ -161,6 +165,21 @@ describe('generateIntentPlan orchestration', () => {
         if (fn === 'q:getIntentWorkbench') return { intent, plan: null };
         if (fn === 'q:listAreas') return AREAS;
         if (fn === 'q:listVerifiedFacts') return FACTS;
+        if (fn === 'q:areaHome') {
+          return {
+            area: AREAS[0],
+            events: [
+              {
+                providerEventId: 'event-tax-deadline',
+                title: 'Tax deadline',
+                startAt: Date.parse('2026-07-15T13:00:00Z'),
+                endAt: Date.parse('2026-07-15T14:00:00Z'),
+              },
+            ],
+            tasks: [],
+            projects: [],
+          };
+        }
         throw new Error(`unexpected query ${fn}`);
       },
       convexMutation: async (fn: string, args: any) => {
@@ -259,6 +278,25 @@ describe('generateIntentPlan orchestration', () => {
     expect(system).toContain('Build [service list] from data.services in order');
     expect(system).toContain('Paste service.logoSvg unchanged');
     expect(system).toContain('Made for you by');
+  });
+
+  test('Area evidence and corpus evidence receive unique reference ids', async () => {
+    const planText = JSON.stringify({
+      ...goodGeneration,
+      sourceRefIds: ['ref2'],
+      digitalActions: [{ kind: 'task', title: 'Upload NYS tax PDF', sourceRefIds: ['ref2'] }],
+    });
+    const { calls } = wire({ intent: { primaryAreaId: 'area_money' }, planText });
+
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+
+    const prompt = calls.generations[0].prompt as string;
+    expect(prompt).toContain('[ref1] (calendar_event)');
+    expect(prompt).toContain('[ref2] (mail_thread)');
+    const save = calls.mutations.find((mutation) => mutation.fn === 'm:savePlan');
+    expect(save!.args.sourceRefs).toEqual([
+      expect.objectContaining({ kind: 'mail_thread', id: 'thread-tax' }),
+    ]);
   });
 
   test('artifact composition failure still saves the plan without a brief', async () => {

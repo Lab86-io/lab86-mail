@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   actionKeyFor,
   assignStableActionKeys,
+  captureFallbackItem,
   checkinIsDue,
   fallbackEmailIsDue,
   localDateKey,
@@ -12,9 +13,23 @@ import {
   titleFromWorkText,
   unappliedActions,
 } from '@/lib/albatross/work-v2';
-import { signNotificationLink, verifyNotificationLink } from '@/lib/notifications/delivery';
+import {
+  isAllowedPushEndpoint,
+  signNotificationLink,
+  verifyNotificationLink,
+} from '@/lib/notifications/delivery';
 
 describe('Albatross Work capture', () => {
+  test('fallback capture preserves an explicit Area assignment', () => {
+    expect(captureFallbackItem('Ship the client release', ' area_client ')).toEqual({
+      title: 'Ship the client release',
+      rawText: 'Ship the client release',
+      relatedAreaIds: [],
+      primaryAreaId: 'area_client',
+    });
+    expect(captureFallbackItem('Unassigned thought')).not.toHaveProperty('primaryAreaId');
+  });
+
   test('splits independent work without losing supplied detail', () => {
     const result = parseWorkSplit(
       JSON.stringify({
@@ -148,17 +163,52 @@ describe('Albatross evening check-ins', () => {
 });
 
 describe('Albatross notification links', () => {
-  test('signatures bind notification, user, and redirect', () => {
+  test('signatures bind notification, user, redirect, and expiry', () => {
     const previous = process.env.LAB86_NOTIFICATION_LINK_SECRET;
     process.env.LAB86_NOTIFICATION_LINK_SECRET = 'test-notification-secret';
     try {
-      const signature = signNotificationLink('notice-1', 'user-1', '/?checkin=one');
-      expect(verifyNotificationLink('notice-1', 'user-1', '/?checkin=one', signature)).toBe(true);
-      expect(verifyNotificationLink('notice-1', 'user-2', '/?checkin=one', signature)).toBe(false);
-      expect(verifyNotificationLink('notice-1', 'user-1', '/?checkin=two', signature)).toBe(false);
+      const now = 1_800_000_000_000;
+      const expiresAt = now + 60_000;
+      const signature = signNotificationLink('notice-1', 'user-1', '/?checkin=one', expiresAt);
+      expect(verifyNotificationLink('notice-1', 'user-1', '/?checkin=one', signature, expiresAt, now)).toBe(
+        true,
+      );
+      expect(verifyNotificationLink('notice-1', 'user-2', '/?checkin=one', signature, expiresAt, now)).toBe(
+        false,
+      );
+      expect(verifyNotificationLink('notice-1', 'user-1', '/?checkin=two', signature, expiresAt, now)).toBe(
+        false,
+      );
+      expect(
+        verifyNotificationLink('notice-1', 'user-1', '/?checkin=one', signature, expiresAt, expiresAt),
+      ).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.LAB86_NOTIFICATION_LINK_SECRET;
       else process.env.LAB86_NOTIFICATION_LINK_SECRET = previous;
+    }
+  });
+
+  test('push subscriptions only accept approved HTTPS services', () => {
+    expect(isAllowedPushEndpoint('https://fcm.googleapis.com/fcm/send/abc')).toBe(true);
+    expect(isAllowedPushEndpoint('https://updates.push.services.mozilla.com/wpush/v2/abc')).toBe(true);
+    expect(isAllowedPushEndpoint('https://db5p.notify.windows.com/w/?token=abc')).toBe(true);
+    expect(isAllowedPushEndpoint('http://fcm.googleapis.com/fcm/send/abc')).toBe(false);
+    expect(isAllowedPushEndpoint('https://127.0.0.1/push')).toBe(false);
+    expect(isAllowedPushEndpoint('not a url')).toBe(false);
+  });
+
+  test('notification links do not reuse the Convex internal secret', () => {
+    const previousNotification = process.env.LAB86_NOTIFICATION_LINK_SECRET;
+    const previousConvex = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    delete process.env.LAB86_NOTIFICATION_LINK_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'must-not-sign-notification-links';
+    try {
+      expect(signNotificationLink('notice-1', 'user-1', '/', Date.now() + 60_000)).toBe('');
+    } finally {
+      if (previousNotification === undefined) delete process.env.LAB86_NOTIFICATION_LINK_SECRET;
+      else process.env.LAB86_NOTIFICATION_LINK_SECRET = previousNotification;
+      if (previousConvex === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousConvex;
     }
   });
 });

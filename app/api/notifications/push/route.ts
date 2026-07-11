@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { isAllowedPushEndpoint } from '@/lib/notifications/delivery';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
     const endpoint = String(body.endpoint || '');
     const p256dh = String(body.keys?.p256dh || '');
     const auth = String(body.keys?.auth || '');
-    if (!endpoint || !p256dh || !auth) {
+    if (!isAllowedPushEndpoint(endpoint) || !p256dh || !auth) {
       return Response.json({ ok: false, error: 'complete push subscription required' }, { status: 400 });
     }
     const subscriptionId = await convexMutation((api as any).albatrossNotifications.upsertPushSubscription, {

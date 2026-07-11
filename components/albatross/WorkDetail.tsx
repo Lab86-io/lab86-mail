@@ -308,7 +308,7 @@ export function WorkDetail({ workId }: { workId: string }) {
               <iframe
                 title={`Brief for ${work.title || 'Work'}`}
                 srcDoc={artifact}
-                sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+                sandbox="allow-scripts allow-popups"
                 className="min-h-[680px] w-full rounded-xl border border-[var(--color-border)] bg-white"
               />
             </section>
@@ -428,6 +428,7 @@ function WorkQuestionCard({ question }: { question: WorkQuestion }) {
           onKeyDown={(event) => {
             if (event.key === 'Enter') void submit();
           }}
+          aria-label="Answer in your own words"
           placeholder="Or answer in your own words"
           className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
         />

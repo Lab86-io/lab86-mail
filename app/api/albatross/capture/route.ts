@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
-import { parseWorkSplit } from '@/lib/albatross/work-v2';
+import { captureFallbackItem, parseWorkSplit } from '@/lib/albatross/work-v2';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -117,7 +117,7 @@ Return one JSON object only:
       const workIds = await convexMutation<string[]>((api as any).albatrossWorkV2.finishCapture, {
         userId: user.userId,
         captureId,
-        items: [{ title: rawText.slice(0, 180), rawText, relatedAreaIds: [] }],
+        items: [captureFallbackItem(rawText, body.areaId)],
       }).catch(async () => {
         await convexMutation((api as any).albatrossWorkV2.failCapture, {
           userId: user.userId,
