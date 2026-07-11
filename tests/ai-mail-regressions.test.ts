@@ -418,7 +418,9 @@ describe('local-first mail search routing', () => {
     );
     const ast = parseMailSearchQuery('in:inbox is:unread from:alerts@example.test newer_than:30d invoice');
     const plan = compileAstToLocalCorpusQuery(ast);
-    const now = Date.parse('2026-06-10T12:00:00.000Z');
+    // Keep the fixture inside the relative search window regardless of when
+    // the suite runs. A fixed date made this test start failing after 30 days.
+    const now = Date.now() - 24 * 60 * 60 * 1000;
     const messages = [
       {
         accountId: 'grant_microsoft',
