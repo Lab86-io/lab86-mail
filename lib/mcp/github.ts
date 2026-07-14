@@ -20,7 +20,9 @@ interface GitHubIssueLike {
   updated_at?: string;
   user?: { login?: string };
   assignees?: Array<{ login?: string }>;
-  pull_request?: unknown;
+  merged_at?: string | null;
+  pull_request?: { merged_at?: string | null } | unknown;
+  base?: { repo?: { full_name?: string } };
 }
 
 interface GitHubCommitLike {
@@ -76,6 +78,11 @@ interface GitHubProjectsResponse {
   errors?: Array<{ message?: string }>;
 }
 
+const DEEP_REPOSITORY_LIMIT = 25;
+const GITHUB_ITEM_LIMIT = 5_000;
+const REPOSITORY_HISTORY_DAYS = 365;
+const OPTIONAL_GITHUB_STATUSES = new Set([403, 404, 409, 422]);
+
 function timestamp(value: string | null | undefined) {
   if (!value) return undefined;
   const parsed = Date.parse(value);
@@ -98,9 +105,11 @@ export function normalizeGitHubIssue(
   row: GitHubIssueLike,
   viewerLogin: string,
   forcedKind?: 'issue' | 'pull_request',
+  forcedState?: string,
 ): NormalizedMcpItem | null {
   const kind = forcedKind || (row.pull_request ? 'pull_request' : 'issue');
-  const repository = repositoryFromUrl(row.repository_url) || repositoryFromUrl(row.html_url);
+  const repository =
+    repositoryFromUrl(row.repository_url) || row.base?.repo?.full_name || repositoryFromUrl(row.html_url);
   const number = row.number ?? row.id;
   const title = compactSummary(row.title, 500);
   if (!number || !title) return null;
@@ -108,20 +117,23 @@ export function normalizeGitHubIssue(
   const organization = repository?.split('/')[0];
   const author = row.user?.login;
   const summary = compactSummary(row.body);
+  const pullRequest = row.pull_request as { merged_at?: string | null } | undefined;
+  const state =
+    forcedState ||
+    (kind === 'pull_request' && (row.merged_at || pullRequest?.merged_at) ? 'merged' : row.state);
   return {
     externalId,
     kind,
     title,
     summary,
     url: row.html_url,
-    state: row.state,
+    state,
     author,
     repository,
     organization,
     assignedToUser: row.assignees?.some((assignee) => assignee.login === viewerLogin),
     updatedAtSource: timestamp(row.updated_at),
-    raw: row,
-    searchText: [title, summary, kind, repository, organization, author, row.state].filter(Boolean).join(' '),
+    searchText: [title, summary, kind, repository, organization, author, state].filter(Boolean).join(' '),
   };
 }
 
@@ -149,7 +161,6 @@ export function normalizeGitHubCommit(
     organization,
     sha,
     updatedAtSource: timestamp(row.commit?.committer?.date || row.commit?.author?.date),
-    raw: row,
     searchText: [title, message, 'commit', repository, organization, author, sha].filter(Boolean).join(' '),
   };
 }
@@ -167,7 +178,6 @@ export function normalizeGitHubProject(row: GitHubProjectLike): NormalizedMcpIte
     state: row.closed ? 'closed' : 'open',
     organization,
     updatedAtSource: timestamp(row.updatedAt),
-    raw: row,
     searchText: [row.title, summary, 'project', organization, row.closed ? 'closed' : 'open']
       .filter(Boolean)
       .join(' '),
@@ -195,7 +205,6 @@ export function normalizeGitHubProjectItem(
     organization,
     parentExternalId: `github:project:${project.id}`,
     updatedAtSource: timestamp(content?.updatedAt || row.updatedAt),
-    raw: row,
     searchText: [title, summary, 'project item', project.title, repository, organization, content?.state]
       .filter(Boolean)
       .join(' '),
@@ -243,9 +252,42 @@ async function optional<T>(task: Promise<T>, fallback: T): Promise<T> {
     return await task;
   } catch (error) {
     const status = Number((error as { statusCode?: number }).statusCode);
-    if (status !== 404) throw error;
+    const message = String((error as { message?: string }).message || '');
+    const isRateLimit = /rate limit|secondary rate|abuse detection/i.test(message);
+    if (!OPTIONAL_GITHUB_STATUSES.has(status) || isRateLimit) throw error;
     return fallback;
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), values.length) }, async () => {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export function rankGitHubItems(items: NormalizedMcpItem[], limit = GITHUB_ITEM_LIMIT): NormalizedMcpItem[] {
+  const newest = new Map<string, NormalizedMcpItem>();
+  for (const item of items) {
+    const previous = newest.get(item.externalId);
+    if (!previous || (item.updatedAtSource ?? 0) > (previous.updatedAtSource ?? 0)) {
+      newest.set(item.externalId, item);
+    }
+  }
+  return [...newest.values()]
+    .sort((left, right) => (right.updatedAtSource ?? 0) - (left.updatedAtSource ?? 0))
+    .slice(0, Math.max(0, limit));
 }
 
 function githubEndpoints(configuredBaseUrl: string) {
@@ -257,15 +299,15 @@ function githubEndpoints(configuredBaseUrl: string) {
 const PROJECTS_QUERY = `
 query AlbatrossProjects($login: String!) {
   user(login: $login) {
-    projectsV2(first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    projectsV2(first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes { id number title shortDescription url closed updatedAt owner { ... on User { login } ... on Organization { login } } }
     }
   }
   viewer {
-    organizations(first: 10) {
+    organizations(first: 20) {
       nodes {
         login
-        projectsV2(first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        projectsV2(first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
           nodes { id number title shortDescription url closed updatedAt owner { ... on User { login } ... on Organization { login } } }
         }
       }
@@ -277,7 +319,7 @@ const PROJECT_ITEMS_QUERY = `
 query AlbatrossProjectItems($id: ID!) {
   node(id: $id) {
     ... on ProjectV2 {
-      items(first: 50) {
+      items(first: 100) {
         nodes {
           id type updatedAt
           content {
@@ -324,17 +366,23 @@ export async function loadGitHubItems(
   const viewer = await githubJson<GitHubUser>(token, '/user', endpoints.rest, fetchImpl);
   if (!viewer.login) throw new GitHubApiError('GitHub did not return the authenticated user.', 401);
 
-  const issueQueries = [
-    { query: 'assignee:@me is:open is:issue', kind: 'issue' as const },
+  const issueQueries: Array<{
+    query: string;
+    kind: 'issue' | 'pull_request';
+    state?: string;
+  }> = [
+    { query: 'involves:@me is:issue', kind: 'issue' as const },
     { query: 'author:@me is:pr', kind: 'pull_request' as const },
+    { query: 'reviewed-by:@me is:pr', kind: 'pull_request' as const },
     { query: 'review-requested:@me is:open is:pr', kind: 'pull_request' as const },
+    { query: 'involves:@me is:merged is:pr', kind: 'pull_request' as const, state: 'merged' },
   ];
   const issueResults = await Promise.all(
     issueQueries.map(({ query }) =>
       optional(
         githubJson<{ items?: GitHubIssueLike[] }>(
           token,
-          `/search/issues?q=${encodeURIComponent(query)}&sort=updated&order=desc&per_page=50`,
+          `/search/issues?q=${encodeURIComponent(query)}&sort=updated&order=desc&per_page=100`,
           endpoints.rest,
           fetchImpl,
         ),
@@ -346,26 +394,59 @@ export async function loadGitHubItems(
   const repositories = await optional(
     githubJson<GitHubRepository[]>(
       token,
-      '/user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&direction=desc&per_page=20',
+      '/user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&direction=desc&per_page=100',
       endpoints.rest,
       fetchImpl,
     ),
     [],
   );
-  const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
-  const commitResults = await Promise.all(
-    repositories.slice(0, 12).map(async (repository) => ({
-      repository: repository.full_name,
-      rows: await optional(
-        githubJson<GitHubCommitLike[]>(
-          token,
-          `/repos/${repository.full_name}/commits?author=${encodeURIComponent(viewer.login)}&since=${encodeURIComponent(since)}&per_page=20`,
-          endpoints.rest,
-          fetchImpl,
+  const since = new Date(Date.now() - REPOSITORY_HISTORY_DAYS * 86_400_000).toISOString();
+  const repositoryResults = await mapWithConcurrency(
+    repositories.slice(0, DEEP_REPOSITORY_LIMIT),
+    6,
+    async (repository) => {
+      const encodedRepository = repository.full_name.split('/').map(encodeURIComponent).join('/');
+      const [issues, pulls, commits] = await Promise.all([
+        optional(
+          githubJson<GitHubIssueLike[]>(
+            token,
+            `/repos/${encodedRepository}/issues?state=all&sort=updated&direction=desc&per_page=100`,
+            endpoints.rest,
+            fetchImpl,
+          ),
+          [],
         ),
-        [],
-      ),
-    })),
+        optional(
+          githubJson<GitHubIssueLike[]>(
+            token,
+            `/repos/${encodedRepository}/pulls?state=all&sort=updated&direction=desc&per_page=100`,
+            endpoints.rest,
+            fetchImpl,
+          ),
+          [],
+        ),
+        optional(
+          githubJson<GitHubCommitLike[]>(
+            token,
+            `/repos/${encodedRepository}/commits?since=${encodeURIComponent(since)}&per_page=100`,
+            endpoints.rest,
+            fetchImpl,
+          ),
+          [],
+        ),
+      ]);
+      return { repository: repository.full_name, issues, pulls, commits };
+    },
+  );
+
+  const authoredCommits = await optional(
+    githubJson<{ items?: GitHubCommitLike[] }>(
+      token,
+      `/search/commits?q=${encodeURIComponent(`author:${viewer.login}`)}&sort=author-date&order=desc&per_page=100`,
+      endpoints.rest,
+      fetchImpl,
+    ),
+    { items: [] },
   );
 
   const projectsResponse = await optional(
@@ -379,31 +460,43 @@ export async function loadGitHubItems(
     ),
   ];
   const projects = [...new Map(projectRows.filter((row) => row?.id).map((row) => [row.id, row])).values()];
-  const projectItems = await Promise.all(
-    projects.slice(0, 12).map(async (project) => ({
-      project,
-      rows:
-        (
-          await optional(
-            graphql(token, PROJECT_ITEMS_QUERY, { id: project.id }, endpoints.graphql, fetchImpl),
-            {} as GitHubProjectsResponse,
-          )
-        ).data?.node?.items?.nodes || [],
-    })),
-  );
+  const projectItems = await mapWithConcurrency(projects.slice(0, 25), 6, async (project) => ({
+    project,
+    rows:
+      (
+        await optional(
+          graphql(token, PROJECT_ITEMS_QUERY, { id: project.id }, endpoints.graphql, fetchImpl),
+          {} as GitHubProjectsResponse,
+        )
+      ).data?.node?.items?.nodes || [],
+  }));
 
   const items: NormalizedMcpItem[] = [];
-  issueResults.forEach((result, index) => {
-    for (const row of result.items || []) {
-      const item = normalizeGitHubIssue(row, viewer.login, issueQueries[index].kind);
+  for (const result of repositoryResults) {
+    for (const row of result.issues) {
+      if (row.pull_request) continue;
+      const item = normalizeGitHubIssue(row, viewer.login, 'issue');
       if (item) items.push(item);
     }
-  });
-  for (const result of commitResults) {
-    for (const row of result.rows) {
+    for (const row of result.pulls) {
+      const item = normalizeGitHubIssue(row, viewer.login, 'pull_request');
+      if (item) items.push(item);
+    }
+    for (const row of result.commits) {
       const item = normalizeGitHubCommit(row, result.repository);
       if (item) items.push(item);
     }
+  }
+  issueResults.forEach((result, index) => {
+    for (const row of result.items || []) {
+      const query = issueQueries[index];
+      const item = normalizeGitHubIssue(row, viewer.login, query.kind, query.state);
+      if (item) items.push(item);
+    }
+  });
+  for (const row of authoredCommits.items || []) {
+    const item = normalizeGitHubCommit(row);
+    if (item) items.push(item);
   }
   for (const project of projects) {
     const item = normalizeGitHubProject(project);
@@ -415,6 +508,5 @@ export async function loadGitHubItems(
       if (item) items.push(item);
     }
   }
-  const deduped = [...new Map(items.map((item) => [item.externalId, item])).values()];
-  return { items: deduped.slice(0, 500), viewer: viewer.login };
+  return { items: rankGitHubItems(items), viewer: viewer.login };
 }

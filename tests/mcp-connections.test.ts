@@ -41,7 +41,7 @@ describe('MCP connection auth', () => {
 });
 
 describe('Bitbucket connection sync', () => {
-  test('loads authored open pull requests from user workspaces', async () => {
+  test('loads authored pull requests across open and terminal states from user workspaces', async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; authorization: string | null }> = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -125,6 +125,8 @@ describe('Bitbucket connection sync', () => {
       expect(result.items[0]?.searchText).toContain('bitbucket-access');
       expect(result.items[1]?.title).toBe('Review staged rollout');
       expect(requests.some((request) => request.url.includes('page=2'))).toBe(true);
+      expect(requests.some((request) => request.url.includes('state=MERGED'))).toBe(true);
+      expect(requests.some((request) => request.url.includes('state=DECLINED'))).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -163,7 +165,7 @@ describe('Bitbucket connection sync', () => {
 
       await expect(
         loadBitbucketItems('https://api.bitbucket.org/2.0', 'person@example.com:api-token'),
-      ).rejects.toThrow(/Bitbucket list pull requests for other failed with HTTP 500/);
+      ).rejects.toThrow(/Bitbucket list open pull requests for other failed with HTTP 500/);
     } finally {
       globalThis.fetch = originalFetch;
     }

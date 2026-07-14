@@ -3,9 +3,10 @@ import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
 import { loadGitHubItems } from './github';
-import { getServerDef, type NormalizedMcpItem, normalizeItems } from './servers';
+import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
 
 const mcpApi = (api as any).mcp;
+const UPSERT_BATCH_SIZE = 100;
 
 export interface SyncConnectionDeps {
   getConnectionToken: typeof getConnectionToken;
@@ -33,6 +34,19 @@ function classifyError(err: unknown): string {
   return String((err as { message?: string })?.message || 'sync failed').slice(0, 200);
 }
 
+async function upsertItemsInBatches(
+  deps: SyncConnectionDeps,
+  args: { userId: string; connectionId: string; server: McpConnectionRow['server'] },
+  items: NormalizedMcpItem[],
+) {
+  for (let start = 0; start < items.length; start += UPSERT_BATCH_SIZE) {
+    await deps.convexMutation(mcpApi.upsertItems, {
+      ...args,
+      items: items.slice(start, start + UPSERT_BATCH_SIZE),
+    });
+  }
+}
+
 export async function syncConnection(
   userId: string,
   connectionId: string,
@@ -52,6 +66,30 @@ export async function syncConnection(
   const { row, token } = resolved;
   const def = getServerDef(row.server);
   if (!def) return { ok: false, count: 0, error: 'unknown server' };
+  const config = resolveMcpConnectionConfig(row.server, row.serverUrl, row.scopes);
+  const connection = { ...row, serverUrl: config.serverUrl, scopes: config.scopes };
+
+  if (config.migrated) {
+    try {
+      await deps.convexMutation(mcpApi.updateConnectionConfig, {
+        userId,
+        connectionId,
+        server: row.server,
+        serverUrl: config.serverUrl,
+        scopes: config.scopes,
+      });
+    } catch (err) {
+      const error = classifyError(err);
+      await deps.convexMutation(mcpApi.setSyncState, {
+        userId,
+        connectionId,
+        server: row.server,
+        status: 'error',
+        error,
+      });
+      return { ok: false, count: 0, error };
+    }
+  }
 
   await deps.convexMutation(mcpApi.setSyncState, {
     userId,
@@ -64,15 +102,10 @@ export async function syncConnection(
     try {
       const result =
         def.transport === 'github-rest'
-          ? await deps.loadGitHubItems(row.serverUrl, token)
-          : await deps.loadBitbucketItems(row.serverUrl, token);
+          ? await deps.loadGitHubItems(connection.serverUrl, token)
+          : await deps.loadBitbucketItems(connection.serverUrl, token);
       if (result.items.length) {
-        await deps.convexMutation(mcpApi.upsertItems, {
-          userId,
-          connectionId,
-          server: row.server,
-          items: result.items,
-        });
+        await upsertItemsInBatches(deps, { userId, connectionId, server: row.server }, result.items);
       }
       await deps.convexMutation(mcpApi.setSyncState, {
         userId,
@@ -98,7 +131,7 @@ export async function syncConnection(
 
   let handle: McpClientHandle;
   try {
-    handle = await deps.connectMcp(row.serverUrl, token, def.authMode);
+    handle = await deps.connectMcp(connection.serverUrl, token, def.authMode);
   } catch (err) {
     const error = classifyError(err);
     await deps.convexMutation(mcpApi.setSyncState, {
@@ -161,12 +194,7 @@ export async function syncConnection(
   }
 
   if (items.length) {
-    await deps.convexMutation(mcpApi.upsertItems, {
-      userId,
-      connectionId,
-      server: row.server,
-      items,
-    });
+    await upsertItemsInBatches(deps, { userId, connectionId, server: row.server }, items);
   }
   await deps.convexMutation(mcpApi.setSyncState, {
     userId,
@@ -184,7 +212,7 @@ export async function syncAllMcpConnections(
   deps: SyncConnectionDeps = defaultDeps,
 ): Promise<{ connections: number; items: number }> {
   const connections = (await deps.listUserConnections(userId)).filter(
-    (c): c is McpConnectionRow => c.status === 'connected',
+    (c): c is McpConnectionRow => c.status === 'connected' || c.status === 'error',
   );
   let items = 0;
   for (const connection of connections) {

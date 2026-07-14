@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getServerDef, MCP_SERVERS, normalizeItems } from '../lib/mcp/servers';
+import { getServerDef, MCP_SERVERS, normalizeItems, resolveMcpConnectionConfig } from '../lib/mcp/servers';
 
 describe('MCP server registry and normalizer', () => {
   test('declares direct GitHub/Bitbucket transports and hosted Jira/Slack transports', () => {
@@ -12,6 +12,40 @@ describe('MCP server registry and normalizer', () => {
     expect(getServerDef('slack')?.syncQueries[0]?.tool).toBe('search_messages');
     expect(getServerDef('missing')).toBeNull();
     expect(Object.keys(MCP_SERVERS)).toEqual(['github', 'bitbucket', 'jira', 'slack']);
+  });
+
+  test('migrates legacy GitHub MCP connections without rewriting enterprise REST hosts', () => {
+    expect(
+      resolveMcpConnectionConfig('github', 'https://api.githubcopilot.com/mcp/readonly', [
+        'issues:read',
+        'pull_requests:read',
+      ]),
+    ).toEqual({
+      serverUrl: 'https://api.github.com',
+      scopes: ['metadata:read', 'contents:read', 'issues:read', 'pull_requests:read', 'projects:read'],
+      migrated: true,
+    });
+    expect(
+      resolveMcpConnectionConfig('github', 'https://github.enterprise.test/api/v3', [
+        'metadata:read',
+        'contents:read',
+        'issues:read',
+        'pull_requests:read',
+        'projects:read',
+      ]),
+    ).toMatchObject({
+      serverUrl: 'https://github.enterprise.test/api/v3',
+      migrated: false,
+    });
+    expect(resolveMcpConnectionConfig('github', 'not a URL', ['issues:read'])).toMatchObject({
+      serverUrl: 'https://api.github.com',
+      migrated: true,
+    });
+    expect(resolveMcpConnectionConfig('unknown', 'https://example.test/mcp', ['custom:read'])).toEqual({
+      serverUrl: 'https://example.test/mcp',
+      scopes: ['custom:read'],
+      migrated: false,
+    });
   });
 
   test('normalizes structured arrays with unique IDs and timestamps', () => {

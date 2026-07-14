@@ -50,4 +50,13 @@ crons.interval('albatross Work v2 migration', { hours: 12 }, internal.albatrossW
 // gains `mcpSync` after codegen on deploy.
 crons.interval('mcp sync', { minutes: 20 }, (internal as any).mcpSync.tick, {});
 
+// Disconnect normally schedules its own bounded cleanup chain. This sweep is
+// the recovery path if a deploy interrupts that chain between batches.
+crons.interval(
+  'mcp disconnect cleanup',
+  { minutes: 30 },
+  (internal as any).mcp.sweepDisconnectedConnections,
+  {},
+);
+
 export default crons;

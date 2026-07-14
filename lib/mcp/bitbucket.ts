@@ -4,6 +4,7 @@ import type { NormalizedMcpItem } from './servers';
 const BITBUCKET_REQUEST_TIMEOUT_MS = 10_000;
 const WORKSPACE_PAGE_SIZE = 12;
 const PULL_REQUEST_PAGE_SIZE = 25;
+const PULL_REQUEST_STATES = ['OPEN', 'MERGED', 'DECLINED', 'SUPERSEDED'] as const;
 
 interface BitbucketPage<T> {
   values?: T[];
@@ -202,16 +203,22 @@ export async function loadBitbucketItems(baseUrl: string, token: string): Promis
 
   const items: NormalizedMcpItem[] = [];
   for (const workspace of workspaces) {
-    const rows = await fetchPagedValues<BitbucketPullRequest>(
-      baseUrl,
-      token,
-      `list pull requests for ${workspace}`,
-      `/workspaces/${encodeURIComponent(workspace)}/pullrequests/${encodeURIComponent(userSelector)}`,
-      {
-        pagelen: String(PULL_REQUEST_PAGE_SIZE),
-        state: 'OPEN',
-      },
-    );
+    const rows = (
+      await Promise.all(
+        PULL_REQUEST_STATES.map((state) =>
+          fetchPagedValues<BitbucketPullRequest>(
+            baseUrl,
+            token,
+            `list ${state.toLowerCase()} pull requests for ${workspace}`,
+            `/workspaces/${encodeURIComponent(workspace)}/pullrequests/${encodeURIComponent(userSelector)}`,
+            {
+              pagelen: String(PULL_REQUEST_PAGE_SIZE),
+              state,
+            },
+          ),
+        ),
+      )
+    ).flat();
     for (const row of rows) {
       const item = normalizePullRequest(row, workspace);
       if (item) items.push(item);
@@ -220,6 +227,6 @@ export async function loadBitbucketItems(baseUrl: string, token: string): Promis
 
   return {
     displayName: user.display_name || user.username || user.account_id,
-    items,
+    items: [...new Map(items.map((item) => [item.externalId, item])).values()],
   };
 }
