@@ -7,6 +7,19 @@ import { resolveBoardAndColumn } from './tasks';
 const mcpApi = (api as any).mcp;
 const boardsApi = (api as any).boards;
 
+const defaultDeps = {
+  convexQuery,
+  convexMutation,
+  resolveBoardAndColumn,
+  recordOperation,
+};
+
+let deps = defaultDeps;
+
+export function __setMcpToolDepsForTest(overrides: Partial<typeof defaultDeps> = {}) {
+  deps = { ...defaultDeps, ...overrides };
+}
+
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');
   return userId;
@@ -28,7 +41,7 @@ export const mcpSearch = defineTool({
   output: z.object({ items: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const items = await convexQuery<any[]>(mcpApi.searchItems, {
+    const items = await deps.convexQuery<any[]>(mcpApi.searchItems, {
       userId,
       query: args.query,
       server: args.server,
@@ -55,7 +68,7 @@ export const githubSearch = defineTool({
   output: z.object({ items: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const items = await convexQuery<any[]>(mcpApi.searchItems, {
+    const items = await deps.convexQuery<any[]>(mcpApi.searchItems, {
       userId,
       query: args.query,
       server: 'github',
@@ -79,7 +92,7 @@ export const mcpListItems = defineTool({
   output: z.object({ items: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const items = await convexQuery<any[]>(mcpApi.listItemsForBrief, { userId, limit: args.limit });
+    const items = await deps.convexQuery<any[]>(mcpApi.listItemsForBrief, { userId, limit: args.limit });
     return { items: (items || []).map(toToolItem) };
   },
 });
@@ -102,8 +115,8 @@ export const mcpCreateTask = defineTool({
   output: z.object({ ok: z.boolean(), cardId: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const { board, column } = await resolveBoardAndColumn(userId, args.boardId, args.column);
-    const cardId = await convexMutation<string>(boardsApi.createCard, {
+    const { board, column } = await deps.resolveBoardAndColumn(userId, args.boardId, args.column);
+    const cardId = await deps.convexMutation<string>(boardsApi.createCard, {
       userId,
       boardId: board.boardId,
       columnId: column.columnId,
@@ -119,14 +132,14 @@ export const mcpCreateTask = defineTool({
     });
     // Record the link so a future sync can auto-complete this card when the
     // source item closes.
-    await convexMutation(mcpApi.linkTask, {
+    await deps.convexMutation(mcpApi.linkTask, {
       userId,
       connectionId: args.connectionId,
       server: args.server,
       externalId: args.externalId,
       cardId,
     });
-    const operationId = await recordOperation({
+    const operationId = await deps.recordOperation({
       userId,
       tool: 'mcp_create_task',
       surface: 'tasks',

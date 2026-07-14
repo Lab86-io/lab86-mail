@@ -30,6 +30,35 @@ function depsFor(overrides: Partial<SyncConnectionDeps> = {}): SyncConnectionDep
 }
 
 describe('MCP syncConnection state transitions', () => {
+  test('records missing credentials and rejects unknown server definitions', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const missing = await syncConnection(
+      'user_1',
+      'missing_conn',
+      depsFor({
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+    const unknown = await syncConnection(
+      'user_1',
+      'unknown_conn',
+      depsFor({
+        getConnectionToken: async () => ({
+          row: { ...bitbucketRow, server: 'unknown', connectionId: 'unknown_conn' } as any,
+          token: 'token',
+        }),
+      }),
+    );
+
+    expect(missing).toEqual({ ok: false, count: 0, error: 'missing credentials' });
+    expect(mutations[0]).toMatchObject({ status: 'error', error: 'missing or unreadable credentials' });
+    expect(unknown).toEqual({ ok: false, count: 0, error: 'unknown server' });
+  });
+
   test('stores Bitbucket items and marks the connection ready', async () => {
     const mutations: Array<Record<string, any>> = [];
     const item = {
@@ -173,6 +202,110 @@ describe('MCP syncConnection state transitions', () => {
       author: 'octocat',
     });
     expect(mutations.at(-1)).toMatchObject({ server: 'github', status: 'ready', itemCount: 3 });
+  });
+
+  test('marks hosted MCP connection and query failures as errors and always closes handles', async () => {
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const jiraRow = {
+      ...bitbucketRow,
+      connectionId: 'jira_conn',
+      server: 'jira',
+      serverUrl: 'https://mcp.atlassian.com/v1/mcp',
+    } as any;
+    const connectFailure = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'bad' }),
+        connectMcp: async () => {
+          throw Object.assign(new Error('forbidden'), { statusCode: 403 });
+        },
+      }),
+    );
+    let closedUnsupported = false;
+    const unsupported = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['different_tool']),
+            close: async () => {
+              closedUnsupported = true;
+            },
+          }) as any,
+      }),
+    );
+    let closedRejected = false;
+    const rejected = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['searchJiraIssuesUsingJql']),
+            close: async () => {
+              closedRejected = true;
+            },
+          }) as any,
+        callMcpTool: async () => {
+          throw new Error('query rejected');
+        },
+      }),
+    );
+
+    expect(connectFailure.error).toBe('auth rejected — reconnect with a valid token');
+    expect(unsupported.error).toContain('did not expose supported tools');
+    expect(rejected.error).toBe('query rejected');
+    expect(closedUnsupported).toBe(true);
+    expect(closedRejected).toBe(true);
+  });
+
+  test('normalizes, deduplicates, persists, and closes successful hosted MCP results', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    let closed = false;
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const slackRow = {
+      ...bitbucketRow,
+      connectionId: 'slack_conn',
+      server: 'slack',
+      serverUrl: 'https://mcp.slack.com/mcp',
+    } as any;
+    const result = await syncConnection(
+      'user_1',
+      slackRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: slackRow, token: 'token' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['search_messages']),
+            close: async () => {
+              closed = true;
+            },
+          }) as any,
+        callMcpTool: async (_handle, tool, args) => {
+          expect(tool).toBe('search_messages');
+          expect(args).toMatchObject({ query: 'is:mention' });
+          return {
+            structuredContent: [
+              { id: 'message_1', text: 'One mention', user: 'Ada', ts: '1760000000' },
+              { id: 'message_1', text: 'Duplicate mention' },
+            ],
+          } as any;
+        },
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(closed).toBe(true);
+    expect(mutations.find((entry) => Array.isArray(entry.items))?.items).toHaveLength(1);
+    expect(mutations.at(-1)).toMatchObject({ status: 'ready', itemCount: 1 });
   });
 
   test('syncAllMcpConnections only syncs connected rows and totals item counts', async () => {
