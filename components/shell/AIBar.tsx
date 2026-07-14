@@ -41,8 +41,8 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/r
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
 import {
+  createHitlAutoContinueGuard,
   isHitlToolName,
-  lastMessageAnsweredHitl,
   toolActivityLine,
   toolActivityState,
   toolPartName,
@@ -201,6 +201,7 @@ export function AssistantChat() {
       }),
     [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
   );
+  const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
     // Auto-continue ONLY after the user answers a human-in-the-loop tool call
@@ -209,7 +210,7 @@ export function AssistantChat() {
     // lastAssistantMessageIsCompleteWithToolCalls also fires after ordinary
     // server-tool turns, which can resubmit in a loop — our server already
     // runs server tools to completion in one response.
-    sendAutomaticallyWhen: ({ messages: msgs }) => lastMessageAnsweredHitl(msgs as any),
+    sendAutomaticallyWhen: ({ messages: msgs }) => shouldAutoContinueHitl(msgs as any),
   });
 
   // Hand human-in-the-loop answers back into the stream. Memoized so the

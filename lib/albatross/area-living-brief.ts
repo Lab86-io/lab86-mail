@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { withDeadline } from '../shared/deadline';
+import { injectAreaArtifactFontContract } from './area-artifact-fonts';
 
 const AREA_ARTIFACT_DEADLINE_MS = 180_000;
 
@@ -226,7 +227,7 @@ export function normalizeAreaArtifactHtml(html: string) {
   } else {
     next = next.replace(/<html([^>]*)>/i, `<html$1><head>${csp}</head>`);
   }
-  return next;
+  return injectAreaArtifactFontContract(next);
 }
 
 export const AREA_ARTIFACT_SYSTEM = `You are the user's chief of staff and a world-class editorial designer/front-end engineer. Compose one complete, self-contained HTML Area Brief from the supplied JSON.
@@ -257,7 +258,8 @@ ANTI-SLOP CHECK:
 THEME AND ACCESSIBILITY:
 - Use semantic variables everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#276749), --brief-accent-soft (color-mix(in oklab,var(--brief-accent) 14%,transparent)), --brief-accent-2 (#8a4b20), --brief-font-display ('Fraunces',Georgia,serif), --brief-font-body ('Geist',system-ui,sans-serif), --brief-display-tracking (0em).
 - Include usable light :root fallbacks and @media(prefers-color-scheme:dark) that remaps only --brief-* tokens. The host posts live tokens later.
-- One Google Fonts link may load Fraunces, Instrument Serif, Averia Serif Libre, Geist, and Hanken Grotesk from fonts.googleapis.com. No other external resources.
+- The host loads the approved fonts. Never hardcode a font-family. Use --brief-font-body for all body/UI copy and --brief-font-display for every heading or editorial display line; mark non-heading display text with data-brief-display so the live app font is enforced. The user's selected display face may change after this document is generated.
+- No external resources.
 - Responsive from 360px to 1200px; generous wide-pane composition without making mobile a shrunken desktop. Visible :focus-visible, semantic headings, real buttons/links for actions, and reduced-motion support are required.
 - Use tasteful entrance motion only when it clarifies hierarchy; honor prefers-reduced-motion.
 

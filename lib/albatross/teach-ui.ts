@@ -94,6 +94,33 @@ export function lastMessageAnsweredHitl(messages: Array<{ role?: string; parts?:
   );
 }
 
+/** Identify the answered pause that is eligible for an automatic continuation. */
+export function answeredHitlToolCallId(messages: Array<{ role?: string; parts?: unknown[] }>): string | null {
+  const last = messages[messages.length - 1] as { role?: string; parts?: any[] } | undefined;
+  if (!last || last.role !== 'assistant') return null;
+  for (const part of [...(last.parts || [])].reverse()) {
+    if (!isHitlToolName(toolPartName(part)) || part?.state !== 'output-available') continue;
+    const toolCallId = typeof part?.toolCallId === 'string' ? part.toolCallId.trim() : '';
+    if (toolCallId) return toolCallId;
+  }
+  return null;
+}
+
+/**
+ * AI SDK can evaluate sendAutomaticallyWhen more than once for the same
+ * message state. Consume each answered pause once so a re-render, autosave,
+ * or session restore cannot submit the same answer repeatedly.
+ */
+export function createHitlAutoContinueGuard() {
+  const continued = new Set<string>();
+  return (messages: Array<{ role?: string; parts?: unknown[] }>): boolean => {
+    const toolCallId = answeredHitlToolCallId(messages);
+    if (!toolCallId || continued.has(toolCallId)) return false;
+    continued.add(toolCallId);
+    return true;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Multi-select helpers (ask_user option lists)
 // ---------------------------------------------------------------------------

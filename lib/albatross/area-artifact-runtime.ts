@@ -3,6 +3,8 @@
 // and the React host validates the resulting message before navigation or a
 // capture mutation. It intentionally has no access to app APIs.
 
+import { injectAreaArtifactFontContract } from './area-artifact-fonts';
+
 export const AREA_ARTIFACT_MESSAGE_SOURCE = 'lab86-area-artifact';
 export const AREA_ARTIFACT_HOST_SOURCE = 'lab86-host';
 
@@ -99,7 +101,7 @@ e.preventDefault();submitCapture(form,form.querySelector('[data-action="capture_
 /** Idempotently append the trusted runtime to a complete Area document. */
 export function injectAreaArtifactRuntime(html: string) {
   if (!html) return html;
-  let next = html.replace(
+  let next = injectAreaArtifactFontContract(html).replace(
     /<script\b(?=[^>]*\bid=(["'])lab86-area-runtime-js\1)[^>]*>[\s\S]*?<\/script>/gi,
     '',
   );

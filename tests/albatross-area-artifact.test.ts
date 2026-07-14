@@ -129,6 +129,8 @@ describe('Area artifact data contract', () => {
     expect(AREA_ARTIFACT_SYSTEM).toContain('context.candidates are uncertain hypotheses');
     expect(AREA_ARTIFACT_SYSTEM).toContain('data-area-capture');
     expect(AREA_ARTIFACT_SYSTEM).toContain('Do not write any JavaScript');
+    expect(AREA_ARTIFACT_SYSTEM).toContain('Never hardcode a font-family');
+    expect(AREA_ARTIFACT_SYSTEM).toContain('data-brief-display');
   });
 });
 
@@ -152,6 +154,10 @@ describe('Area artifact HTML boundary', () => {
     expect(normalized).not.toContain('http-equiv="refresh"');
     expect(normalized).toContain('href="#"');
     expect(normalized).toContain('formaction="#"');
+    expect(normalized).toContain('id="lab86-area-fonts"');
+    expect(normalized).toContain('id="lab86-area-font-contract"');
+    expect(normalized).toContain('var(--brief-font-display');
+    expect(normalized).toContain('var(--brief-font-body');
   });
 });
 

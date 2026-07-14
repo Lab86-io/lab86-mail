@@ -47,10 +47,10 @@ import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { TEACH_SYSTEM_PROMPT } from '@/lib/albatross/teach-prompt';
 import {
+  createHitlAutoContinueGuard,
   factRowFromToolOutput,
   isHitlToolName,
   isTeachChatSession,
-  lastMessageAnsweredHitl,
   senderCardsFromToolOutput,
   TEACH_CHAT_TITLE,
   TEACH_PANE_INITIAL,
@@ -113,13 +113,14 @@ function TeachChat() {
       }),
     [],
   );
+  const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
 
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
     // Auto-continue ONLY after the user answers a human-in-the-loop tool call
     // — same rationale as AIBar: the server runs ordinary tools to completion
     // in one response, so the built-in predicate would resubmit in a loop.
-    sendAutomaticallyWhen: ({ messages: msgs }) => lastMessageAnsweredHitl(msgs as any),
+    sendAutomaticallyWhen: ({ messages: msgs }) => shouldAutoContinueHitl(msgs as any),
   });
 
   const answerHitl = useCallback(

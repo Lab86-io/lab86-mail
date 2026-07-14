@@ -15,6 +15,10 @@ describe('Area artifact runtime injection', () => {
     expect(once.indexOf('lab86-area-runtime-js')).toBeGreaterThan(-1);
     expect(once.indexOf('lab86-area-runtime-js')).toBeLessThan(once.indexOf('</body>'));
     expect(twice.match(/id="lab86-area-runtime-js"/g)).toHaveLength(1);
+    expect(twice.match(/id="lab86-area-fonts"/g)).toHaveLength(1);
+    expect(twice.match(/id="lab86-area-font-contract"/g)).toHaveLength(1);
+    expect(twice).toContain('var(--brief-font-display');
+    expect(twice).toContain('var(--brief-font-body');
     expect(injectAreaArtifactRuntime('')).toBe('');
   });
 
