@@ -234,15 +234,20 @@ export const cleanupDisconnectedConnection = internalMutation({
       .take(DISCONNECT_BATCH_SIZE);
     if (links.length) {
       const detachedAt = now();
-      for (const link of links) {
-        const item = await ctx.db
-          .query('mcpItems')
-          .withIndex('by_connection_external', (q) =>
-            q.eq('connectionId', args.connectionId).eq('externalId', link.externalId),
-          )
-          .unique();
-        const cardId = ctx.db.normalizeId('cards', link.cardId);
-        const card = cardId ? await ctx.db.get(cardId) : null;
+      const enriched = await Promise.all(
+        links.map(async (link) => {
+          const item = await ctx.db
+            .query('mcpItems')
+            .withIndex('by_connection_external', (q) =>
+              q.eq('connectionId', args.connectionId).eq('externalId', link.externalId),
+            )
+            .unique();
+          const cardId = ctx.db.normalizeId('cards', link.cardId);
+          const card = cardId ? await ctx.db.get(cardId) : null;
+          return { link, item, card };
+        }),
+      );
+      for (const { link, item, card } of enriched) {
         const detachedSource = card
           ? detachedMcpSource({
               source: card.source,

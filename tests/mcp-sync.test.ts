@@ -364,20 +364,22 @@ describe('MCP syncConnection state transitions', () => {
       ...bitbucketRow,
       connectionId: 'slack_conn',
       server: 'slack',
-      serverUrl: 'https://mcp.slack.com/mcp',
+      serverUrl: 'https://mcp.slack.com/mcp/',
     } as any;
     const result = await syncConnection(
       'user_1',
       slackRow.connectionId,
       depsFor({
         getConnectionToken: async () => ({ row: slackRow, token: 'token' }),
-        connectMcp: async () =>
-          ({
+        connectMcp: async (serverUrl) => {
+          expect(serverUrl).toBe('https://mcp.slack.com/mcp');
+          return {
             toolNames: new Set(['search_messages']),
             close: async () => {
               closed = true;
             },
-          }) as any,
+          } as any;
+        },
         callMcpTool: async (_handle, tool, args) => {
           expect(tool).toBe('search_messages');
           expect(args).toMatchObject({ query: 'is:mention' });

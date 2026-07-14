@@ -277,6 +277,12 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+export function rankGitHubItems(items: NormalizedMcpItem[], limit = GITHUB_ITEM_LIMIT): NormalizedMcpItem[] {
+  return [...new Map(items.map((item) => [item.externalId, item])).values()]
+    .sort((left, right) => (right.updatedAtSource ?? 0) - (left.updatedAtSource ?? 0))
+    .slice(0, Math.max(0, limit));
+}
+
 function githubEndpoints(configuredBaseUrl: string) {
   const rest = String(configuredBaseUrl || 'https://api.github.com').replace(/\/$/, '');
   const graphql = /\/api\/v3$/i.test(rest) ? rest.replace(/\/api\/v3$/i, '/api/graphql') : `${rest}/graphql`;
@@ -447,18 +453,16 @@ export async function loadGitHubItems(
     ),
   ];
   const projects = [...new Map(projectRows.filter((row) => row?.id).map((row) => [row.id, row])).values()];
-  const projectItems = await Promise.all(
-    projects.slice(0, 25).map(async (project) => ({
-      project,
-      rows:
-        (
-          await optional(
-            graphql(token, PROJECT_ITEMS_QUERY, { id: project.id }, endpoints.graphql, fetchImpl),
-            {} as GitHubProjectsResponse,
-          )
-        ).data?.node?.items?.nodes || [],
-    })),
-  );
+  const projectItems = await mapWithConcurrency(projects.slice(0, 25), 6, async (project) => ({
+    project,
+    rows:
+      (
+        await optional(
+          graphql(token, PROJECT_ITEMS_QUERY, { id: project.id }, endpoints.graphql, fetchImpl),
+          {} as GitHubProjectsResponse,
+        )
+      ).data?.node?.items?.nodes || [],
+  }));
 
   const items: NormalizedMcpItem[] = [];
   for (const result of repositoryResults) {
@@ -497,6 +501,5 @@ export async function loadGitHubItems(
       if (item) items.push(item);
     }
   }
-  const deduped = [...new Map(items.map((item) => [item.externalId, item])).values()];
-  return { items: deduped.slice(0, GITHUB_ITEM_LIMIT), viewer: viewer.login };
+  return { items: rankGitHubItems(items), viewer: viewer.login };
 }

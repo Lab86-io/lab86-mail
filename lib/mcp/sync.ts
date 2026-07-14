@@ -131,7 +131,7 @@ export async function syncConnection(
 
   let handle: McpClientHandle;
   try {
-    handle = await deps.connectMcp(row.serverUrl, token, def.authMode);
+    handle = await deps.connectMcp(connection.serverUrl, token, def.authMode);
   } catch (err) {
     const error = classifyError(err);
     await deps.convexMutation(mcpApi.setSyncState, {

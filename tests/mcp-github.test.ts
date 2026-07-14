@@ -5,9 +5,42 @@ import {
   normalizeGitHubIssue,
   normalizeGitHubProject,
   normalizeGitHubProjectItem,
+  rankGitHubItems,
 } from '../lib/mcp/github';
 
 describe('GitHub evidence normalization', () => {
+  test('deduplicates and ranks recent evidence before applying the connector cap', () => {
+    expect(
+      rankGitHubItems(
+        [
+          { externalId: 'issue-1', kind: 'issue', title: 'Old issue', updatedAtSource: 10, searchText: '' },
+          {
+            externalId: 'project-1',
+            kind: 'project',
+            title: 'Recent project',
+            updatedAtSource: 30,
+            searchText: '',
+          },
+          {
+            externalId: 'issue-1',
+            kind: 'issue',
+            title: 'Duplicate issue',
+            updatedAtSource: 20,
+            searchText: '',
+          },
+          {
+            externalId: 'commit-1',
+            kind: 'commit',
+            title: 'Middle commit',
+            updatedAtSource: 20,
+            searchText: '',
+          },
+        ],
+        3,
+      ).map((item) => item.externalId),
+    ).toEqual(['project-1', 'issue-1', 'commit-1']);
+  });
+
   test('keeps issue and PR identity repository-scoped', () => {
     const issue = normalizeGitHubIssue(
       {
