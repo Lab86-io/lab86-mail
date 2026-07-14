@@ -2,6 +2,7 @@ import { api, convexMutation } from '@/lib/hosted/convex';
 import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
+import { loadGitHubItems } from './github';
 import { getServerDef, type NormalizedMcpItem, normalizeItems } from './servers';
 
 const mcpApi = (api as any).mcp;
@@ -11,6 +12,7 @@ export interface SyncConnectionDeps {
   listUserConnections: typeof listUserConnections;
   convexMutation: typeof convexMutation;
   loadBitbucketItems: typeof loadBitbucketItems;
+  loadGitHubItems: typeof loadGitHubItems;
   connectMcp: typeof connectMcp;
   callMcpTool: typeof callMcpTool;
 }
@@ -20,6 +22,7 @@ const defaultDeps: SyncConnectionDeps = {
   listUserConnections,
   convexMutation,
   loadBitbucketItems,
+  loadGitHubItems,
   connectMcp,
   callMcpTool,
 };
@@ -57,9 +60,12 @@ export async function syncConnection(
     status: 'syncing',
   });
 
-  if (def.transport === 'bitbucket-rest') {
+  if (def.transport === 'bitbucket-rest' || def.transport === 'github-rest') {
     try {
-      const result = await deps.loadBitbucketItems(row.serverUrl, token);
+      const result =
+        def.transport === 'github-rest'
+          ? await deps.loadGitHubItems(row.serverUrl, token)
+          : await deps.loadBitbucketItems(row.serverUrl, token);
       if (result.items.length) {
         await deps.convexMutation(mcpApi.upsertItems, {
           userId,

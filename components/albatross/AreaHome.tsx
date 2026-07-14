@@ -26,8 +26,10 @@
 // Plans have no standalone destination; projects/places are area components.
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
-import { ArrowRight, MessageSquareText, RefreshCw } from 'lucide-react';
+import { ArrowRight, ChevronDown, Inbox, LayoutTemplate, MessageSquareText, RefreshCw } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { OptionList } from '@/components/tool-ui/option-list';
+import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -46,6 +48,7 @@ import {
   areaHasNoLinks,
   areaHomeSections,
   areaIndexStatusSummary,
+  areaInitials,
   areaNeedsYouRows,
   areaOverviewBadges,
   areaOverviewPriority,
@@ -156,6 +159,38 @@ interface AreaHomeData {
     projects: number;
     places: number;
   };
+}
+
+interface AreaPulseData {
+  areaId: string;
+  projects: Array<{
+    project: {
+      _id: string;
+      title: string;
+      outcome?: string;
+      status: string;
+      updatedAt: number;
+    };
+    routines: Array<{
+      _id: string;
+      title: string;
+      status: string;
+      consent: string;
+      cadence: string;
+      localTime: string;
+      nextRunAt: number;
+    }>;
+    pendingQuestions: Array<{
+      _id: string;
+      prompt: string;
+      reason?: string;
+      responseKind?: string;
+      options?: Array<{ id: string; label: string; description?: string }>;
+    }>;
+    taskCount: number;
+    completedTaskCount: number;
+    todayTasks: Array<{ _id: string; title: string; dueAt?: number }>;
+  }>;
 }
 
 interface AreaWorkRow {
@@ -428,6 +463,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   const [artifactRefreshing, setArtifactRefreshing] = useState(false);
   const [artifactRefreshError, setArtifactRefreshError] = useState<string | null>(null);
   const [showStructuredFallback, setShowStructuredFallback] = useState(false);
+  const [areaView, setAreaView] = useState<'brief' | 'inbox'>('brief');
   const requestedInitialArtifact = useRef(false);
   // Error-tolerant read: the persisted area id can outlive the area (deleted
   // in Settings) — that must degrade honestly, not crash the surface.
@@ -442,6 +478,10 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     api.albatrossWorkV2.areaWork,
     isAuthenticated ? { areaId: areaId as Id<'areas'>, includeDone: true } : 'skip',
   ) as AreaWorkRow[] | undefined;
+  const pulse = useQuery(
+    api.albatrossRoutines.areaPulse,
+    isAuthenticated ? { areaId: areaId as Id<'areas'> } : 'skip',
+  ) as AreaPulseData | undefined;
 
   const loadedHome = result.status === 'success' ? (result.data as AreaHomeData) : null;
   const refreshArtifact = useCallback(async () => {
@@ -525,6 +565,17 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
 
   const home = result.data as AreaHomeData;
 
+  if (areaView === 'inbox') {
+    return (
+      <AreaInbox
+        home={home}
+        pulse={pulse}
+        onAllAreas={() => setSelectedAreaId(null)}
+        onViewChange={setAreaView}
+      />
+    );
+  }
+
   // The generated document is the selected Area screen. React only supplies
   // the sandbox, theme/action bridge, and small floating host controls. The
   // structured renderer below is retained solely as an explicit recovery view.
@@ -543,7 +594,9 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
           setAiBarOpen(true);
         }}
         onAllAreas={() => setSelectedAreaId(null)}
+        onViewChange={setAreaView}
         onStructuredFallback={() => setShowStructuredFallback(true)}
+        pulse={pulse}
       />
     );
   }
@@ -558,6 +611,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
         error={artifactRefreshError || home.livingBrief?.error || null}
         onRefresh={() => void refreshArtifact()}
         onAllAreas={() => setSelectedAreaId(null)}
+        onViewChange={setAreaView}
         onStructuredFallback={() => setShowStructuredFallback(true)}
       />
     );
@@ -648,6 +702,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
           {home.area.kind}
         </Badge>
         <AreaIndexStatusPill status={indexStatus} />
+        <AreaViewSwitcher value={areaView} onChange={setAreaView} />
         <span className="ml-auto" />
         <RefreshBriefButton areaId={home.area._id} canGenerate={brief.canGenerate} />
         <ManageLink />
@@ -697,6 +752,340 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   );
 }
 
+function AreaViewSwitcher({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: 'brief' | 'inbox';
+  onChange: (view: 'brief' | 'inbox') => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Area view"
+      className={cn(
+        'inline-flex items-center rounded-full bg-[var(--color-bg-muted)] p-0.5',
+        compact && 'bg-transparent p-0',
+      )}
+    >
+      {[
+        { id: 'brief' as const, label: 'Brief', icon: LayoutTemplate },
+        { id: 'inbox' as const, label: 'Inbox', icon: Inbox },
+      ].map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={value === item.id}
+            onClick={() => onChange(item.id)}
+            className={cn(
+              'inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors',
+              value === item.id &&
+                'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]',
+              compact && 'h-6 px-2 text-[10.5px]',
+            )}
+          >
+            <Icon className="size-3" aria-hidden />
+            {item.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AreaInbox({
+  home,
+  pulse,
+  onAllAreas,
+  onViewChange,
+}: {
+  home: AreaHomeData;
+  pulse?: AreaPulseData;
+  onAllAreas: () => void;
+  onViewChange: (view: 'brief' | 'inbox') => void;
+}) {
+  const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const setSelectedThread = useClientStore((state) => state.setSelectedThread);
+  const setThreadAccount = useClientStore((state) => state.setThreadAccount);
+  const unread = home.mail.filter((row) => row.unread).length;
+  const rows = filter === 'unread' ? home.mail.filter((row) => row.unread) : home.mail;
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
+      <header className="flex min-h-13 items-center gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-2.5">
+        <button
+          type="button"
+          onClick={onAllAreas}
+          className="text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+        >
+          Areas
+        </button>
+        <span className="text-[var(--color-text-faint)]">/</span>
+        <AreaMark area={home.area} />
+        <h2 className="min-w-0 truncate text-[14px] font-semibold">{home.area.name}</h2>
+        <AreaViewSwitcher value="inbox" onChange={onViewChange} />
+        <a
+          href="/settings?tab=areas"
+          className="ml-auto text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          Manage
+        </a>
+      </header>
+      <div className="grid min-h-0 flex-1 min-[1080px]:grid-cols-[minmax(0,1fr)_300px]">
+        <section className="flex min-h-0 flex-col bg-[var(--color-bg-elevated)]">
+          <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
+            <div>
+              <h3 className="font-display text-[17px] leading-tight">Recent Area mail</h3>
+              <p className="mt-0.5 text-[11px] text-[var(--color-text-faint)]">
+                A bounded recent preview filed into {home.area.name}; universal views and complete counts stay
+                in Mail.
+              </p>
+            </div>
+            <div className="ml-auto inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
+              {(['all', 'unread'] as const).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setFilter(id)}
+                  className={cn(
+                    'rounded px-2 py-1 text-[10.5px] capitalize text-[var(--color-text-muted)]',
+                    filter === id && 'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-sm',
+                  )}
+                >
+                  {id} {id === 'unread' && unread ? `${unread} recent` : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {rows.length ? (
+              rows.map((row) => {
+                const sender = shortFrom(row.fromAddress) || row.fromAddress;
+                return (
+                  <button
+                    key={`${row.accountId}:${row.providerThreadId}`}
+                    type="button"
+                    onClick={() => {
+                      setThreadAccount(row.accountId);
+                      setSelectedThread(row.providerThreadId);
+                    }}
+                    title={row.reason || undefined}
+                    className="grid w-full grid-cols-[36px_minmax(0,1fr)_auto] gap-3 border-b border-[var(--color-border)]/70 bg-[var(--color-bg-elevated)] px-4 py-3 text-left hover:bg-[var(--color-hover-soft)]"
+                  >
+                    <Avatar name={sender} size={34} />
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2">
+                        <span className={cn('truncate text-[12.5px]', row.unread && 'font-semibold')}>
+                          {sender}
+                        </span>
+                        {row.linkStatus === 'candidate' ? (
+                          <span className="rounded border border-[var(--color-warning)]/35 px-1.5 text-[9.5px] text-[var(--color-warning)]">
+                            Suggested
+                          </span>
+                        ) : row.unread ? (
+                          <span className="size-1.5 rounded-full bg-[var(--color-accent)]" />
+                        ) : null}
+                      </span>
+                      <span className={cn('mt-0.5 block truncate text-[13px]', row.unread && 'font-medium')}>
+                        {row.subject || '(no subject)'}
+                      </span>
+                      {row.snippet ? (
+                        <span className="mt-0.5 block truncate text-[11.5px] text-[var(--color-text-muted)]">
+                          {row.snippet}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="pt-0.5 text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
+                      {formatDate(row.lastDate)}
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <Inbox className="mx-auto size-5 text-[var(--color-text-faint)]" aria-hidden />
+                <p className="mt-3 text-[12.5px] font-medium">
+                  {filter === 'unread'
+                    ? 'No unread mail in this recent preview.'
+                    : 'No recently filed mail in this preview.'}
+                </p>
+                <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+                  Corrections teach future Area filing instead of creating another smart filter.
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+        <aside className="hidden min-h-0 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-bg)] p-4 min-[1080px]:block">
+          <p className="font-display text-[13px] italic">What this inbox knows</p>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
+            {home.counts.facts.verified} verified facts and {home.counts.facts.candidate} suggestions ground
+            these classifications.
+          </p>
+          <div className="mt-4 space-y-2">
+            {(pulse?.projects || []).slice(0, 5).map((row) => (
+              <div
+                key={row.project._id}
+                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
+              >
+                <p className="truncate text-[12px] font-medium">{row.project.title}</p>
+                <p className="mt-1 text-[10.5px] text-[var(--color-text-muted)]">
+                  {row.completedTaskCount}/{row.taskCount} tasks · {row.routines.length}{' '}
+                  {row.routines.length === 1 ? 'routine' : 'routines'}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-5 border-t border-[var(--color-border)] pt-3 text-[10.5px] leading-relaxed text-[var(--color-text-faint)]">
+            More confirmed evidence strengthens future filing. A message or commit remains supporting
+            evidence; it does not prove intent or completion.
+          </p>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function LivingProjectPulse({ pulse, areaName }: { pulse?: AreaPulseData; areaName: string }) {
+  const [open, setOpen] = useState(false);
+  const projects = pulse?.projects || [];
+  if (!projects.length) return null;
+  const questions = projects.flatMap((row) => row.pendingQuestions);
+  const routines = projects.reduce((count, row) => count + row.routines.length, 0);
+  const steps = projects.slice(0, 5).map((row) => ({
+    id: row.project._id,
+    label: row.project.title,
+    description: `${row.completedTaskCount}/${row.taskCount} tasks · ${row.routines.length} ${row.routines.length === 1 ? 'routine' : 'routines'}`,
+    status: (row.taskCount > 0 && row.completedTaskCount >= row.taskCount
+      ? 'completed'
+      : row.project.status === 'active'
+        ? 'in-progress'
+        : 'pending') as 'pending' | 'in-progress' | 'completed',
+  }));
+  return (
+    <div className="pointer-events-none absolute bottom-3 left-3 z-10">
+      <div className="pointer-events-auto w-[min(390px,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left"
+          aria-expanded={open}
+        >
+          <span className="size-2 rounded-full bg-[var(--color-accent)]" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10px] text-[var(--color-text-faint)]">Live project pulse</span>
+            <span className="block truncate text-[12px] font-medium">
+              {projects.length} {projects.length === 1 ? 'project' : 'projects'} · {routines}{' '}
+              {routines === 1 ? 'routine' : 'routines'}
+              {questions.length ? ` · ${questions.length} question${questions.length === 1 ? '' : 's'}` : ''}
+            </span>
+          </span>
+          <ChevronDown className={cn('size-3.5 transition-transform', open && 'rotate-180')} aria-hidden />
+        </button>
+        {open ? (
+          <div className="max-h-[min(65vh,600px)] space-y-3 overflow-y-auto border-t border-[var(--color-border)] p-3">
+            <ProgressTracker
+              id={`area-pulse-${pulse?.areaId || areaName}`}
+              steps={steps}
+              className="!min-w-0 !max-w-none [&>div]:!gap-2 [&>div]:!p-3"
+            />
+            {questions[0] ? <PulseQuestion key={questions[0]._id} question={questions[0]} /> : null}
+            <p className="px-1 text-[10px] leading-relaxed text-[var(--color-text-faint)]">
+              Live state from projects, tasks, routines, and your answers. Observed activity never marks a
+              project done by itself.
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PulseQuestion({
+  question,
+}: {
+  question: AreaPulseData['projects'][number]['pendingQuestions'][number];
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [answer, setAnswer] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const options = question.options?.length
+    ? question.options
+    : question.responseKind === 'boolean'
+      ? [
+          { id: 'yes', label: 'Yes' },
+          { id: 'no', label: 'No' },
+        ]
+      : [];
+  const submit = async () => {
+    const option = options.find((row) => row.id === selected);
+    const value = answer.trim() || option?.label || '';
+    if (!value || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/albatross/work/questions/${encodeURIComponent(question._id)}/answer`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            answer: value,
+            answeredOptionId: selected || undefined,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          }),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Could not save that answer.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save that answer.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <p className="text-[12.5px] font-medium leading-snug">{question.prompt}</p>
+      {question.reason ? (
+        <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--color-text-muted)]">{question.reason}</p>
+      ) : null}
+      {options.length ? (
+        <OptionList
+          id={`pulse-question-${question._id}`}
+          options={options}
+          selectionMode="single"
+          value={selected}
+          onChange={(value) => setSelected(typeof value === 'string' ? value : null)}
+          density="compact"
+          hideActions
+          className="mt-2 !min-w-0 !max-w-none"
+        />
+      ) : null}
+      <div className="mt-2 flex gap-2">
+        <input
+          value={answer}
+          onChange={(event) => setAnswer(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void submit();
+          }}
+          placeholder={options.length ? 'Or answer in your own words' : 'Answer in your own words'}
+          className="h-8 min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[11.5px] outline-none focus:border-[var(--color-accent)]"
+        />
+        <Button size="sm" className="h-8" disabled={busy || (!answer.trim() && !selected)} onClick={submit}>
+          {busy ? 'Saving…' : 'Answer'}
+        </Button>
+      </div>
+      {error ? <p className="mt-2 text-[10.5px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 function AreaArtifactCanvas({
   home,
   html,
@@ -707,7 +1096,9 @@ function AreaArtifactCanvas({
   onRefresh,
   onDiscuss,
   onAllAreas,
+  onViewChange,
   onStructuredFallback,
+  pulse,
 }: {
   home: AreaHomeData;
   html: string;
@@ -718,7 +1109,9 @@ function AreaArtifactCanvas({
   onRefresh: () => void;
   onDiscuss: () => void;
   onAllAreas: () => void;
+  onViewChange: (view: 'brief' | 'inbox') => void;
   onStructuredFallback: () => void;
+  pulse?: AreaPulseData;
 }) {
   const area = home.area;
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -753,6 +1146,15 @@ function AreaArtifactCanvas({
   const allowedEventKeys = useMemo(
     () => new Set(home.events.map((row) => `${row.accountId}:${row.providerEventId}`)),
     [home.events],
+  );
+  const allowedQuestionIds = useMemo(
+    () =>
+      new Set(
+        (pulse?.projects || []).flatMap((row) =>
+          row.pendingQuestions.map((question) => String(question._id)),
+        ),
+      ),
+    [pulse],
   );
 
   const postTheme = useCallback(() => {
@@ -829,6 +1231,29 @@ function AreaArtifactCanvas({
             }
             return ack(true);
           }
+          case 'answer_question': {
+            if (!allowedQuestionIds.has(message.payload.questionId)) return ack(false, 'unknown question');
+            // Generated HTML can suggest an answer control, but only the
+            // host-owned UI may authorize persisting a user answer.
+            if (!window.confirm(`Submit “${message.payload.text}” as this answer?`)) {
+              return ack(false, 'cancelled');
+            }
+            const response = await fetch(
+              `/api/albatross/work/questions/${encodeURIComponent(message.payload.questionId)}/answer`,
+              {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  answer: message.payload.text,
+                  answeredOptionId: message.payload.answeredOptionId,
+                  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                }),
+              },
+            );
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'Answer failed.');
+            return ack(true);
+          }
         }
       } catch (error) {
         return ack(false, error instanceof Error ? error.message : 'Action failed.');
@@ -840,6 +1265,7 @@ function AreaArtifactCanvas({
     area.name,
     areaId,
     allowedEventKeys,
+    allowedQuestionIds,
     allowedThreadKeys,
     allowedWorkIds,
     setAiBarOpen,
@@ -884,6 +1310,8 @@ function AreaArtifactCanvas({
           <span className="text-[var(--color-text-faint)]">/</span>
           <AreaMark area={area} />
           <span className="max-w-48 truncate text-[12px] font-medium">{area.name}</span>
+          <span className="mx-0.5 h-4 w-px bg-[var(--color-border)]" aria-hidden />
+          <AreaViewSwitcher value="brief" onChange={onViewChange} compact />
         </div>
 
         <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
@@ -932,6 +1360,7 @@ function AreaArtifactCanvas({
           ) : null}
         </div>
       </div>
+      <LivingProjectPulse pulse={pulse} areaName={area.name} />
     </div>
   );
 }
@@ -943,6 +1372,7 @@ function AreaArtifactUnavailable({
   error,
   onRefresh,
   onAllAreas,
+  onViewChange,
   onStructuredFallback,
 }: {
   area: AreaIdentityLike;
@@ -951,6 +1381,7 @@ function AreaArtifactUnavailable({
   error: string | null;
   onRefresh: () => void;
   onAllAreas: () => void;
+  onViewChange: (view: 'brief' | 'inbox') => void;
   onStructuredFallback: () => void;
 }) {
   return (
@@ -963,6 +1394,9 @@ function AreaArtifactUnavailable({
       >
         Areas
       </button>
+      <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-sm">
+        <AreaViewSwitcher value="brief" onChange={onViewChange} compact />
+      </div>
       <div className="relative m-auto max-w-lg px-8 text-center">
         <AreaMark area={area} size="lg" />
         <p className="mt-5 font-display text-[clamp(24px,4vw,42px)] italic leading-tight tracking-[-0.025em]">
@@ -1854,7 +2288,6 @@ function AreaMark({ area, size = 'sm' }: { area: AreaIdentityLike; size?: 'sm' |
   const [failed, setFailed] = useState(false);
   const src = !failed ? area.imageUrl || area.faviconUrl || null : null;
   const box = size === 'lg' ? 'size-10 rounded-lg' : 'size-4 rounded-sm';
-  const dot = size === 'lg' ? 'size-5 rounded-md' : 'size-2 rounded-full';
   return (
     <span
       className={cn(
@@ -1874,7 +2307,15 @@ function AreaMark({ area, size = 'sm' }: { area: AreaIdentityLike; size?: 'sm' |
           onError={() => setFailed(true)}
         />
       ) : (
-        <span className={dot} style={{ backgroundColor: categoricalColor(area._id) }} />
+        <span
+          className={cn(
+            'grid size-full place-items-center font-semibold text-white',
+            size === 'lg' ? 'text-[12px] tracking-[-0.02em]' : 'text-[6px] leading-none',
+          )}
+          style={{ backgroundColor: categoricalColor(area._id) }}
+        >
+          {areaInitials(area.name)}
+        </span>
       )}
     </span>
   );

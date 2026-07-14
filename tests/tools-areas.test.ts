@@ -7,6 +7,7 @@ import {
   areaDomainActivity,
   areaFactSetStatus,
   areaList,
+  areaUpdateIdentity,
   TEACH_SYSTEM_PROMPT,
 } from '../lib/tools/areas';
 import { runTool, TEST_USER } from './tools/harness';
@@ -16,6 +17,7 @@ const apiMock = {
     listAreasOverview: 'albatross.listAreasOverview',
     createArea: 'albatross.createArea',
     getArea: 'albatross.getArea',
+    updateArea: 'albatross.updateArea',
     archiveArea: 'albatross.archiveArea',
     addAreaFact: 'albatross.addAreaFact',
     verifyAreaFact: 'albatross.verifyAreaFact',
@@ -149,6 +151,57 @@ describe('area_archive', () => {
   });
 });
 
+describe('area_update_identity', () => {
+  test('writes only the explicit display identity and keeps web evidence in the fact workflow', async () => {
+    const result = await runTool(areaUpdateIdentity.handler, {
+      areaId: 'area_1',
+      primaryDomain: 'statpearls.com',
+      description: 'Clinical reference publishing and education.',
+      identityBasis: 'official_web',
+      officialSourceUrl: 'https://statpearls.com/about',
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mutationCalls[0]).toMatchObject({
+      fn: apiMock.albatross.updateArea,
+      args: {
+        userId: TEST_USER.userId,
+        areaId: 'area_1',
+        primaryDomain: 'statpearls.com',
+        description: 'Clinical reference publishing and education.',
+      },
+    });
+    expect(areaUpdateIdentity.description).toContain('official web research');
+    expect(areaUpdateIdentity.description).toContain('confirmedByUser=false');
+  });
+
+  test('rejects empty identity updates before writing', async () => {
+    expect(areaUpdateIdentity.input.safeParse({ areaId: 'area_1' }).success).toBe(false);
+    await expect(runTool(areaUpdateIdentity.handler, { areaId: 'area_1' })).rejects.toThrow(
+      'Provide a primary domain or description.',
+    );
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  test('requires attributable, domain-matching sources for web identity', async () => {
+    expect(
+      areaUpdateIdentity.input.safeParse({
+        areaId: 'area_1',
+        primaryDomain: 'statpearls.com',
+        identityBasis: 'official_web',
+      }).success,
+    ).toBe(false);
+    await expect(
+      runTool(areaUpdateIdentity.handler, {
+        areaId: 'area_1',
+        primaryDomain: 'statpearls.com',
+        identityBasis: 'official_web',
+        officialSourceUrl: 'https://unrelated.example/about',
+      }),
+    ).rejects.toThrow('must match');
+  });
+});
+
 describe('area_add_fact', () => {
   test('confirmedByUser=true writes a verified fact with a server-minted confirmation ref', async () => {
     const result: any = await runTool(areaAddFact.handler, {
@@ -183,6 +236,19 @@ describe('area_add_fact', () => {
     expect(args.status).toBe('candidate');
     expect(args.confirmationRefs).toBeUndefined();
     expect(args.sourceRefs).toHaveLength(1);
+  });
+
+  test('rejects unattributed official-web facts before writing', async () => {
+    await expect(
+      runTool(areaAddFact.handler, {
+        areaId: 'area_1',
+        kind: 'organization',
+        value: 'StatPearls publishes clinical reference material.',
+        confirmedByUser: false,
+        evidenceKind: 'official_web',
+      }),
+    ).rejects.toThrow('attributable');
+    expect(mutationCalls).toHaveLength(0);
   });
 
   test('the tool contract demands an explicit per-fact yes', () => {

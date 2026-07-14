@@ -7,6 +7,8 @@ import {
   normalizeAreaDomain,
   PERSONAL_AREA_EXTERNAL_ID,
 } from '../lib/albatross/area-home';
+import { validateAreaImageUpload } from '../lib/albatross/area-image';
+import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -172,6 +174,57 @@ function areaBrandingPatch(args: { primaryDomain?: string; faviconUrl?: string; 
     ...(shouldPatchFavicon ? { faviconUrl } : {}),
     ...(args.imageUrl !== undefined ? { imageUrl } : {}),
   };
+}
+
+async function upsertAreaEvidence(
+  ctx: MutationCtx,
+  input: {
+    userId: string;
+    areaId: Id<'areas'>;
+    sourceKind: EvidenceSourceKind;
+    sourceId: string;
+    title: string;
+    summary?: string;
+    occurredAt: number;
+    trust: 'observed' | 'inferred' | 'confirmed' | 'rejected';
+    confidence?: number;
+    dedupeKey: string;
+    metadata?: unknown;
+  },
+) {
+  const existing = await ctx.db
+    .query('albatrossEvidence')
+    .withIndex('by_user_dedupe', (q) => q.eq('userId', input.userId).eq('dedupeKey', input.dedupeKey))
+    .unique();
+  const confidence = Math.min(1, Math.max(0, input.confidence ?? 1));
+  const row = {
+    userId: input.userId,
+    targetKind: 'area' as const,
+    targetId: String(input.areaId),
+    sourceKind: input.sourceKind,
+    sourceId: input.sourceId,
+    title: input.title.slice(0, 500),
+    summary: input.summary?.slice(0, 2_000),
+    occurredAt: input.occurredAt,
+    weight: evidenceWeight(input.sourceKind, input.trust, confidence),
+    confidence,
+    trust: input.trust,
+    dedupeKey: input.dedupeKey,
+    searchText: `${input.title} ${input.summary || ''}`.trim().slice(0, 4_000),
+    metadata: input.metadata,
+    updatedAt: now(),
+  };
+  if (existing) await ctx.db.patch(existing._id, row);
+  else await ctx.db.insert('albatrossEvidence', { ...row, createdAt: now() });
+}
+
+function artifactEvidenceKind(kind: string): EvidenceSourceKind {
+  if (kind === 'mailThread') return 'mail_thread';
+  if (kind === 'calendarEvent') return 'calendar_event';
+  if (kind === 'task') return 'task';
+  if (kind === 'mcpItem') return 'mcp_item';
+  if (kind === 'intent') return 'chat';
+  return 'manual';
 }
 
 async function ensurePersonalArea(ctx: MutationCtx, userId: string): Promise<Id<'areas'>> {
@@ -432,6 +485,54 @@ export const updateArea = mutation({
   },
 });
 
+export const setAreaImage = mutation({
+  args: {
+    ...callerArgs,
+    areaId: v.id('areas'),
+    uploadId: v.optional(v.id('agentUploads')),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const area = await requireArea(ctx, args.areaId, userId);
+    const previousStorageId = area.imageStorageId;
+    if (!args.uploadId) {
+      await ctx.db.patch(args.areaId, {
+        imageStorageId: undefined,
+        imageUrl: undefined,
+        updatedAt: now(),
+      });
+      if (previousStorageId) {
+        const previousUpload = await ctx.db
+          .query('agentUploads')
+          .withIndex('by_storage', (q) => q.eq('storageId', previousStorageId))
+          .unique();
+        if (previousUpload?.userId === userId) await ctx.db.delete(previousUpload._id);
+        await ctx.storage.delete(previousStorageId);
+      }
+      return { ok: true, imageUrl: null };
+    }
+    const upload = await ctx.db.get(args.uploadId);
+    if (!upload || upload.userId !== userId) throw new Error('Image upload not found.');
+    validateAreaImageUpload(upload);
+    const imageUrl = await ctx.storage.getUrl(upload.storageId);
+    if (!imageUrl) throw new Error('The uploaded image is unavailable.');
+    await ctx.db.patch(args.areaId, {
+      imageStorageId: upload.storageId,
+      imageUrl,
+      updatedAt: now(),
+    });
+    if (previousStorageId && previousStorageId !== upload.storageId) {
+      const previousUpload = await ctx.db
+        .query('agentUploads')
+        .withIndex('by_storage', (q) => q.eq('storageId', previousStorageId))
+        .unique();
+      if (previousUpload?.userId === userId) await ctx.db.delete(previousUpload._id);
+      await ctx.storage.delete(previousStorageId);
+    }
+    return { ok: true, imageUrl };
+  },
+});
+
 export const archiveArea = mutation({
   args: { ...callerArgs, areaId: v.id('areas') },
   handler: async (ctx, args) => {
@@ -521,6 +622,20 @@ export const addAreaFact = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
+    const factKind = normalizeText(args.kind, 'note').slice(0, 80);
+    const factValue = normalizeText(args.value).slice(0, 1200);
+    await upsertAreaEvidence(ctx, {
+      userId,
+      areaId: args.areaId,
+      sourceKind: 'area_fact',
+      sourceId: String(factId),
+      title: `${factKind}: ${factValue}`,
+      occurredAt: ts,
+      trust: status === 'verified' ? 'confirmed' : 'inferred',
+      confidence: status === 'verified' ? 1 : 0.7,
+      dedupeKey: `area-fact:${String(factId)}`,
+      metadata: { factKind, status },
+    });
     await scheduleAreaReindex(ctx, userId);
     return factId;
   },
@@ -549,6 +664,18 @@ export const verifyAreaFact = mutation({
       verifiedAt: ts,
       updatedAt: ts,
     });
+    await upsertAreaEvidence(ctx, {
+      userId,
+      areaId: fact.areaId,
+      sourceKind: 'area_fact',
+      sourceId: String(fact._id),
+      title: `${fact.kind}: ${fact.value}`,
+      occurredAt: ts,
+      trust: 'confirmed',
+      confidence: 1,
+      dedupeKey: `area-fact:${String(fact._id)}`,
+      metadata: { factKind: fact.kind, status: 'verified' },
+    });
     await scheduleAreaReindex(ctx, userId);
     return { ok: true };
   },
@@ -566,6 +693,18 @@ export const rejectAreaFact = mutation({
       rejectedReason: args.reason ? normalizeText(args.reason).slice(0, 500) : undefined,
       rejectedAt: ts,
       updatedAt: ts,
+    });
+    await upsertAreaEvidence(ctx, {
+      userId,
+      areaId: fact.areaId,
+      sourceKind: 'area_fact',
+      sourceId: String(fact._id),
+      title: `${fact.kind}: ${fact.value}`,
+      occurredAt: ts,
+      trust: 'rejected',
+      confidence: 1,
+      dedupeKey: `area-fact:${String(fact._id)}`,
+      metadata: { factKind: fact.kind, status: 'rejected' },
     });
     await scheduleAreaReindex(ctx, userId);
     return { ok: true };
@@ -726,9 +865,41 @@ export const linkArtifactToArea = mutation({
     };
     if (existing) {
       await ctx.db.patch(existing._id, patch);
+      await upsertAreaEvidence(ctx, {
+        userId,
+        areaId: args.areaId,
+        sourceKind: artifactEvidenceKind(args.artifactKind),
+        sourceId: artifactId,
+        title: `${args.artifactKind} filed to this Area`,
+        summary: patch.reason,
+        occurredAt: ts,
+        trust: status === 'verified' ? 'confirmed' : status === 'rejected' ? 'rejected' : 'inferred',
+        confidence: args.confidence ?? (status === 'verified' ? 1 : status === 'rejected' ? 0 : 0.65),
+        dedupeKey: `area-link:${String(args.areaId)}:${args.artifactKind}:${accountId || ''}:${artifactId}`,
+        metadata: {
+          artifactKind: args.artifactKind,
+          role: patch.role,
+          status,
+          linkId: String(existing._id),
+        },
+      });
       return existing._id;
     }
-    return await ctx.db.insert('areaArtifactLinks', { ...patch, createdAt: ts });
+    const linkId = await ctx.db.insert('areaArtifactLinks', { ...patch, createdAt: ts });
+    await upsertAreaEvidence(ctx, {
+      userId,
+      areaId: args.areaId,
+      sourceKind: artifactEvidenceKind(args.artifactKind),
+      sourceId: artifactId,
+      title: `${args.artifactKind} filed to this Area`,
+      summary: patch.reason,
+      occurredAt: ts,
+      trust: status === 'verified' ? 'confirmed' : status === 'rejected' ? 'rejected' : 'inferred',
+      confidence: args.confidence ?? (status === 'verified' ? 1 : status === 'rejected' ? 0 : 0.65),
+      dedupeKey: `area-link:${String(args.areaId)}:${args.artifactKind}:${accountId || ''}:${artifactId}`,
+      metadata: { artifactKind: args.artifactKind, role: patch.role, status, linkId: String(linkId) },
+    });
+    return linkId;
   },
 });
 

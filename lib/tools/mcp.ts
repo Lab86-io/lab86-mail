@@ -38,6 +38,37 @@ export const mcpSearch = defineTool({
   },
 });
 
+export const githubSearch = defineTool({
+  name: 'github_search',
+  description:
+    "Search the user's connected GitHub issues, pull requests, commits, Projects, and Project items. Use repository and kind filters when the user names a repo or asks for commit/project evidence. Results are read-only evidence and never prove that a goal is complete by themselves.",
+  category: 'mcp',
+  mutating: false,
+  input: z.object({
+    query: z.string().min(1),
+    repository: z.string().optional().describe('Exact owner/repository name, such as Lab86-io/lab86-mail.'),
+    organization: z.string().optional(),
+    kind: z.enum(['issue', 'pull_request', 'commit', 'project', 'project_item']).optional(),
+    state: z.string().optional(),
+    limit: z.number().int().min(1).max(50).default(25),
+  }),
+  output: z.object({ items: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const items = await convexQuery<any[]>(mcpApi.searchItems, {
+      userId,
+      query: args.query,
+      server: 'github',
+      repository: args.repository,
+      organization: args.organization,
+      kind: args.kind,
+      state: args.state,
+      limit: args.limit,
+    });
+    return { items: (items || []).map(toToolItem) };
+  },
+});
+
 export const mcpListItems = defineTool({
   name: 'mcp_list_items',
   description:
@@ -114,6 +145,10 @@ function toToolItem(row: any) {
     title: row.title,
     state: row.state ?? null,
     author: row.author ?? null,
+    repository: row.repository ?? null,
+    organization: row.organization ?? null,
+    parentExternalId: row.parentExternalId ?? null,
+    sha: row.sha ?? null,
     url: row.url ?? null,
     updatedAt: row.updatedAtSource ?? row.updatedAt ?? null,
     connectionId: row.connectionId,

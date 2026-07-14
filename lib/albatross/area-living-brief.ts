@@ -54,7 +54,12 @@ function clean(value: unknown, max: number) {
  * are included only where the host exposes a matching read/navigation action.
  * Candidate facts are segregated so they cannot masquerade as verified truth.
  */
-export function buildAreaArtifactContext(home: AreaHomeLike, generatedAt = Date.now()) {
+export function buildAreaArtifactContext(
+  home: AreaHomeLike,
+  generatedAt = Date.now(),
+  pulse?: Record<string, any> | null,
+  evidenceIndex?: Record<string, any> | null,
+) {
   const areaId = String(home.area?._id || '');
   return {
     edition: {
@@ -161,6 +166,50 @@ export function buildAreaArtifactContext(home: AreaHomeLike, generatedAt = Date.
         confidence: typeof fact.confidence === 'number' ? fact.confidence : null,
       })),
     },
+    livingIndex: {
+      totalEvidence: typeof evidenceIndex?.total === 'number' ? evidenceIndex.total : 0,
+      strength: typeof evidenceIndex?.strength === 'number' ? evidenceIndex.strength : 0,
+      bounded: Boolean(evidenceIndex?.bounded),
+      sourceCounts: evidenceIndex?.sourceCounts || {},
+      trustCounts: evidenceIndex?.trustCounts || {},
+      note: 'Strength is bounded corroboration, not completion probability. Explicit answers and confirmed facts carry more weight than observed activity.',
+    },
+    projectPulse: (pulse?.projects || []).slice(0, 12).map((row: any) => ({
+      projectId: clean(String(row.project?._id || ''), 100),
+      title: clean(row.project?.title, 240),
+      outcome: clean(row.project?.outcome, 1_200),
+      status: clean(row.project?.status, 80),
+      taskCount: typeof row.taskCount === 'number' ? row.taskCount : 0,
+      completedTaskCount: typeof row.completedTaskCount === 'number' ? row.completedTaskCount : 0,
+      todayTasks: (row.todayTasks || []).slice(0, 8).map((task: any) => ({
+        title: clean(task.title, 500),
+        dueAtIso: iso(task.dueAt),
+      })),
+      routines: (row.routines || []).slice(0, 8).map((routine: any) => ({
+        routineId: clean(String(routine._id || ''), 100),
+        title: clean(routine.title, 240),
+        purpose: clean(routine.purpose, 800),
+        kind: clean(routine.kind, 80),
+        status: clean(routine.status, 80),
+        consent: clean(routine.consent, 80),
+        cadence: clean(routine.cadence, 80),
+        localTime: clean(routine.localTime, 20),
+        timezone: clean(routine.timezone, 100),
+        nextRunAtIso: iso(routine.nextRunAt),
+      })),
+      pendingQuestions: (row.pendingQuestions || []).slice(0, 6).map((question: any) => ({
+        questionId: clean(String(question._id || ''), 100),
+        kind: clean(question.kind, 80),
+        responseKind: clean(question.responseKind, 80),
+        prompt: clean(question.prompt, 700),
+        reason: clean(question.reason, 700),
+        options: (question.options || []).slice(0, 8).map((option: any) => ({
+          id: clean(option.id, 80),
+          label: clean(option.label, 180),
+          description: clean(option.description, 400),
+        })),
+      })),
+    })),
     bounds: home.counts || {},
     actions: {
       openWork: { action: 'open_work', payload: { workId: '<work.workId>' } },
@@ -175,6 +224,10 @@ export function buildAreaArtifactContext(home: AreaHomeLike, generatedAt = Date.
       openTasks: { action: 'open_tasks', payload: {} },
       discussArea: { action: 'discuss_area', payload: { areaId } },
       captureIntent: { action: 'capture_intent', payload: { areaId, text: '<user input>' } },
+      answerQuestion: {
+        action: 'answer_question',
+        payload: { questionId: '<projectPulse.pendingQuestions.questionId>', text: '<user input>' },
+      },
     },
   };
 }
@@ -238,6 +291,8 @@ PRODUCT TRUTH:
 - Albatross is an intent layer. Declared Work and what the user explicitly said they are trying to do outrank the volume of mail, events, or tasks.
 - Projects/Epics are durable multi-week containers grouping tasks and Work. A plan is nested under the Work it implements; never create a standalone Plans destination or Plans section.
 - Evidence can support a read but cannot prove intent or completion. Never say work is done unless an explicit completed/completedAt state says so. Never infer completion from email silence or activity.
+- livingIndex.strength is bounded corroboration, not a completion score or probability. Use it only to explain how well-grounded the Area model is. More repeated evidence should make the read more confident, never louder or falsely certain.
+- projectPulse is the live layer for Projects/Epics and routines. A proposed routine is not active consent. Make recurring work and its next useful question visible without turning the page into a habit tracker.
 - context.verified may be stated as fact. context.candidates are uncertain hypotheses: phrase them as a quiet question with "Suggested" provenance, or omit them.
 - Use only supplied data. Never invent importance, progress, people, commitments, deadlines, dependencies, quotations, or metrics.
 
@@ -248,6 +303,7 @@ COMPOSITION:
 - Build from real relationships: time, momentum, waiting, decisions, project nesting, and provenance. Use typography, rhythm, annotation, spatial grouping, responsive CSS, and restrained inline SVG where they genuinely explain real data.
 - When enough data exists, make at least one module memorable by form: perhaps a week rail, operating map, project constellation, decision ledger, momentum field, or annotated dossier. Those are inspiration, not a template. Never draw a decorative chart from meaningless numbers.
 - Integrate a compact "Get this out of my head" form when appropriate: a form with data-area-capture, one input/textarea carrying data-capture-input, and a submit control with data-action="capture_intent" and data-payload containing only {"areaId":"the supplied areaId"}. The host runtime supplies the typed text.
+- When projectPulse contains a pending question, the page may ask ONE highest-value question in context. Use a compact form with data-area-question and data-question-id="the supplied questionId", one input, textarea, or select carrying data-question-input, and a submit control with data-action="answer_question" and data-payload containing only {"questionId":"the supplied questionId"}. Use supplied options when finite. Never repeat the same question elsewhere in the document.
 - Reserve breathing room near the top corners for small floating host controls; do not draw app navigation, a toolbar, a sidebar, refresh controls, or settings inside the document.
 
 ANTI-SLOP CHECK:
@@ -271,6 +327,7 @@ ACTIONS:
 - open_tasks payload {}
 - discuss_area payload {"areaId":"..."}
 - capture_intent as described above. Never put invented or prefilled text in this action.
+- answer_question as described above. Use only a supplied pending questionId. The host supplies the typed or selected answer.
 - Use only IDs supplied in the corresponding records. Do not create actions when the ID is null.
 
 OUTPUT:
@@ -297,11 +354,25 @@ export async function generateAreaLivingBrief(input: {
   areaId: string;
   force?: boolean;
 }) {
-  const home = await areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
-    userId: input.userId,
-    areaId: input.areaId,
-  });
-  const context = buildAreaArtifactContext(home);
+  const [home, pulse, evidenceIndex] = await Promise.all([
+    areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
+      userId: input.userId,
+      areaId: input.areaId,
+    }),
+    areaLivingBriefDependencies.convexQuery<Record<string, any>>((api as any).albatrossRoutines.areaPulse, {
+      userId: input.userId,
+      areaId: input.areaId,
+    }),
+    areaLivingBriefDependencies.convexQuery<Record<string, any>>(
+      (api as any).albatrossEvidence.indexSummary,
+      {
+        userId: input.userId,
+        targetKind: 'area',
+        targetId: input.areaId,
+      },
+    ),
+  ]);
+  const context = buildAreaArtifactContext(home, Date.now(), pulse, evidenceIndex);
   const revision = areaArtifactRevision(context);
   if (
     !input.force &&

@@ -331,6 +331,7 @@ export default defineSchema({
     primaryDomain: v.optional(v.string()),
     faviconUrl: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
+    imageStorageId: v.optional(v.id('_storage')),
     // Every area gets its own task board at creation; archiving the area never
     // deletes the board, and unarchiving reuses it (no duplicates).
     boardId: v.optional(v.id('boards')),
@@ -475,9 +476,31 @@ export default defineSchema({
   // Work detail, notification center, and optional browser PiP.
   albatrossWorkQuestions: defineTable({
     userId: v.string(),
-    workId: v.id('albatrossIntents'),
+    // Work remains optional for project/routine questions. This table predates
+    // generic questions, but is intentionally evolved in place so one ask can
+    // render in chat, a living brief, Work, and notifications without copies.
+    workId: v.optional(v.id('albatrossIntents')),
+    projectId: v.optional(v.id('albatrossProjects')),
+    routineId: v.optional(v.id('albatrossRoutines')),
+    dedupeKey: v.optional(v.string()),
     legacyQuestionId: v.optional(v.string()),
-    kind: v.union(v.literal('clarification'), v.literal('completion'), v.literal('correction')),
+    kind: v.union(
+      v.literal('clarification'),
+      v.literal('completion'),
+      v.literal('correction'),
+      v.literal('checkin'),
+      v.literal('consent'),
+      v.literal('reflection'),
+    ),
+    responseKind: v.optional(
+      v.union(
+        v.literal('text'),
+        v.literal('single_select'),
+        v.literal('multi_select'),
+        v.literal('number'),
+        v.literal('boolean'),
+      ),
+    ),
     prompt: v.string(),
     reason: v.optional(v.string()),
     options: v.optional(
@@ -498,14 +521,174 @@ export default defineSchema({
     answer: v.optional(v.string()),
     answeredOptionId: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
+    metadata: v.optional(v.any()),
     createdAt: v.number(),
     answeredAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_work', ['workId'])
+    .index('by_project', ['projectId'])
+    .index('by_routine', ['routineId'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_work_status', ['userId', 'workId', 'status']),
+
+  // A Routine is an explicitly consented recurring behavior attached to a
+  // durable Project/Epic. The scheduler materializes durable runs; a retry can
+  // never duplicate a task, question, or notification because runKey is stable
+  // in the user's local timezone.
+  albatrossRoutines: defineTable({
+    userId: v.string(),
+    projectId: v.id('albatrossProjects'),
+    areaId: v.optional(v.id('areas')),
+    title: v.string(),
+    purpose: v.optional(v.string()),
+    kind: v.union(
+      v.literal('task'),
+      v.literal('checkin'),
+      v.literal('task_and_checkin'),
+      v.literal('review'),
+    ),
+    status: v.union(v.literal('proposed'), v.literal('active'), v.literal('paused'), v.literal('archived')),
+    consent: v.union(v.literal('proposed'), v.literal('enabled'), v.literal('declined')),
+    cadence: v.union(v.literal('daily'), v.literal('weekly'), v.literal('weekdays'), v.literal('custom')),
+    daysOfWeek: v.optional(v.array(v.number())),
+    localTime: v.string(),
+    timezone: v.string(),
+    quietHoursStart: v.optional(v.string()),
+    quietHoursEnd: v.optional(v.string()),
+    taskTemplate: v.optional(
+      v.object({
+        title: v.string(),
+        description: v.optional(v.string()),
+        priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
+      }),
+    ),
+    questionTemplate: v.optional(
+      v.object({
+        prompt: v.string(),
+        reason: v.optional(v.string()),
+        responseKind: v.optional(
+          v.union(
+            v.literal('text'),
+            v.literal('single_select'),
+            v.literal('multi_select'),
+            v.literal('number'),
+            v.literal('boolean'),
+          ),
+        ),
+        options: v.optional(
+          v.array(v.object({ id: v.string(), label: v.string(), description: v.optional(v.string()) })),
+        ),
+      }),
+    ),
+    notification: v.object({
+      enabled: v.boolean(),
+      channel: v.union(
+        v.literal('in_app'),
+        v.literal('web_push'),
+        v.literal('email'),
+        v.literal('preferred'),
+      ),
+    }),
+    nextRunAt: v.number(),
+    lastRunAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_project', ['projectId'])
+    .index('by_area', ['areaId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_status_nextRunAt', ['status', 'nextRunAt'])
+    .index('by_user_project_status', ['userId', 'projectId', 'status']),
+
+  albatrossRoutineRuns: defineTable({
+    userId: v.string(),
+    routineId: v.id('albatrossRoutines'),
+    projectId: v.id('albatrossProjects'),
+    areaId: v.optional(v.id('areas')),
+    runKey: v.string(),
+    localDate: v.string(),
+    scheduledFor: v.number(),
+    status: v.union(
+      v.literal('queued'),
+      v.literal('running'),
+      v.literal('completed'),
+      v.literal('skipped'),
+      v.literal('error'),
+    ),
+    taskCardId: v.optional(v.id('cards')),
+    questionId: v.optional(v.id('albatrossWorkQuestions')),
+    notificationId: v.optional(v.id('albatrossNotifications')),
+    error: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_routine', ['routineId'])
+    .index('by_project', ['projectId'])
+    .index('by_routine_runKey', ['routineId', 'runKey'])
+    .index('by_user_status_scheduled', ['userId', 'status', 'scheduledFor']),
+
+  // Source-normalized evidence is the substrate for the personal index. The
+  // target is optional: unassigned evidence remains searchable until the user
+  // or classifier links it to an Area, Project, Work item, or Routine.
+  albatrossEvidence: defineTable({
+    userId: v.string(),
+    targetKind: v.optional(
+      v.union(v.literal('area'), v.literal('project'), v.literal('work'), v.literal('routine')),
+    ),
+    targetId: v.optional(v.string()),
+    sourceKind: v.union(
+      v.literal('mail_thread'),
+      v.literal('calendar_event'),
+      v.literal('task'),
+      v.literal('chat'),
+      v.literal('question_answer'),
+      v.literal('area_fact'),
+      v.literal('github_issue'),
+      v.literal('github_pull_request'),
+      v.literal('github_project'),
+      v.literal('github_project_item'),
+      v.literal('github_commit'),
+      v.literal('mcp_item'),
+      v.literal('manual'),
+    ),
+    sourceId: v.string(),
+    connectionId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    title: v.string(),
+    summary: v.optional(v.string()),
+    url: v.optional(v.string()),
+    occurredAt: v.number(),
+    weight: v.number(),
+    confidence: v.number(),
+    trust: v.union(
+      v.literal('observed'),
+      v.literal('inferred'),
+      v.literal('confirmed'),
+      v.literal('rejected'),
+    ),
+    dedupeKey: v.string(),
+    searchText: v.string(),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_occurredAt', ['userId', 'occurredAt'])
+    .index('by_user_target', ['userId', 'targetKind', 'targetId'])
+    .index('by_user_source', ['userId', 'sourceKind', 'sourceId'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'sourceKind', 'targetKind', 'targetId'],
+    }),
 
   // Cached AI-composed Area document. The full selected-Area canvas is rendered
   // from artifactHtml in an opaque sandbox; the smaller prose fields remain as
@@ -1473,6 +1656,10 @@ export default defineSchema({
     url: v.optional(v.string()),
     state: v.optional(v.string()),
     author: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    organization: v.optional(v.string()),
+    parentExternalId: v.optional(v.string()),
+    sha: v.optional(v.string()),
     assignedToUser: v.optional(v.boolean()),
     updatedAtSource: v.optional(v.number()),
     raw: v.optional(v.any()),
@@ -1486,7 +1673,7 @@ export default defineSchema({
     .index('by_user_updated', ['userId', 'updatedAtSource'])
     .searchIndex('by_search_text', {
       searchField: 'searchText',
-      filterFields: ['userId', 'server', 'connectionId', 'state'],
+      filterFields: ['userId', 'server', 'connectionId', 'kind', 'state', 'repository', 'organization'],
     }),
 
   mcpSyncStates: defineTable({

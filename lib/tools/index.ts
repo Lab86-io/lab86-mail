@@ -14,13 +14,17 @@ import {
   albatrossApplyIntentPlan,
   albatrossApproveAction,
   albatrossCreateProject,
+  albatrossCreateRoutine,
   albatrossCreateSprint,
   albatrossGetProjectPane,
   albatrossListApprovalQueue,
   albatrossListProjects,
+  albatrossListRoutines,
   albatrossListSprints,
   albatrossPreviewUndoUnresolved,
   albatrossRejectAction,
+  albatrossRunRoutineNow,
+  albatrossSetRoutineConsent,
   albatrossUndoApproval,
 } from './albatross';
 import {
@@ -30,6 +34,7 @@ import {
   areaDomainActivity,
   areaFactSetStatus,
   areaList,
+  areaUpdateIdentity,
 } from './areas';
 import { listAuditEntries, logAction } from './audit-tools';
 import {
@@ -107,7 +112,7 @@ import {
   unsnoozeThreadTool,
   unstarMessage,
 } from './mail-mutate';
-import { mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
+import { githubSearch, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
@@ -163,6 +168,7 @@ import { browserbaseFetch, browserbaseSearch } from './web';
 
 const allTools: AnyTool[] = [
   mcpSearch,
+  githubSearch,
   mcpListItems,
   mcpCreateTask,
   listAccounts,
@@ -278,6 +284,10 @@ const allTools: AnyTool[] = [
   albatrossUndoApproval,
   albatrossCreateProject,
   albatrossListProjects,
+  albatrossCreateRoutine,
+  albatrossListRoutines,
+  albatrossSetRoutineConsent,
+  albatrossRunRoutineNow,
   albatrossGetProjectPane,
   albatrossCreateSprint,
   albatrossListSprints,
@@ -285,6 +295,7 @@ const allTools: AnyTool[] = [
   salvageContext,
   areaList,
   areaCreate,
+  areaUpdateIdentity,
   areaArchive,
   areaAddFact,
   areaFactSetStatus,

@@ -47,19 +47,22 @@ interface SelectionIndicatorProps {
   mode: "multi" | "single";
   isSelected: boolean;
   disabled?: boolean;
+  compact?: boolean;
 }
 
 function SelectionIndicator({
   mode,
   isSelected,
   disabled,
+  compact,
 }: SelectionIndicatorProps) {
   const shape = mode === "single" ? "rounded-full" : "rounded";
 
   return (
     <div
       className={cn(
-        "flex size-4 shrink-0 items-center justify-center border-2 transition-colors",
+        "flex shrink-0 items-center justify-center border-2 transition-colors",
+        compact ? "size-3.5" : "size-4",
         shape,
         isSelected && "border-primary bg-primary text-primary-foreground",
         !isSelected && "border-muted-foreground/50",
@@ -85,6 +88,7 @@ interface OptionItemProps {
   tabIndex?: number;
   onFocus?: () => void;
   buttonRef?: (el: HTMLButtonElement | null) => void;
+  compact?: boolean;
 }
 
 function OptionItem({
@@ -98,6 +102,7 @@ function OptionItem({
   tabIndex,
   onFocus,
   buttonRef,
+  compact,
 }: OptionItemProps) {
   const hasAdjacentOptions = !isFirst && !isLast;
 
@@ -114,10 +119,13 @@ function OptionItem({
       tabIndex={tabIndex}
       disabled={isDisabled}
       className={cn(
-        "peer group relative h-auto min-h-[50px] w-full justify-start text-left text-sm font-medium",
-        "rounded-none border-0 bg-transparent px-0 py-2 text-base shadow-none transition-none hover:bg-transparent! @md/option-list:text-sm",
-        isFirst && "pb-2.5",
-        hasAdjacentOptions && "py-2.5",
+        "peer group relative h-auto w-full justify-start text-left font-medium",
+        "rounded-none border-0 bg-transparent px-0 shadow-none transition-none hover:bg-transparent!",
+        compact
+          ? "min-h-9 py-1.5 text-[13px]"
+          : "min-h-[50px] py-2 text-base @md/option-list:text-sm",
+        isFirst && !compact && "pb-2.5",
+        hasAdjacentOptions && !compact && "py-2.5",
       )}
     >
       <span
@@ -125,21 +133,22 @@ function OptionItem({
           "bg-primary/5 absolute inset-0 -mx-3 -my-0.5 rounded-xl opacity-0 transition-opacity group-hover:opacity-100",
         )}
       />
-      <div className="relative flex items-start gap-3">
-        <span className="flex h-6 items-center">
+      <div className={cn("relative flex items-start", compact ? "gap-2" : "gap-3")}>
+        <span className={cn("flex items-center", compact ? "h-5" : "h-6")}>
           <SelectionIndicator
             mode={selectionMode}
             isSelected={isSelected}
             disabled={option.disabled}
+            compact={compact}
           />
         </span>
         {option.icon && (
-          <span className="flex h-6 items-center">{option.icon}</span>
+          <span className={cn("flex items-center", compact ? "h-5" : "h-6")}>{option.icon}</span>
         )}
         <div className="flex flex-col text-left">
-          <span className="leading-6 text-pretty">{option.label}</span>
+          <span className={cn("text-pretty", compact ? "leading-5" : "leading-6")}>{option.label}</span>
           {option.description && (
-            <span className="text-muted-foreground text-sm font-normal text-pretty">
+            <span className={cn("text-muted-foreground font-normal text-pretty", compact ? "text-[11.5px] leading-4" : "text-sm")}>
               {option.description}
             </span>
           )}
@@ -224,6 +233,8 @@ export function OptionList({
   choice,
   onChange,
   actions,
+  density = "default",
+  hideActions = false,
   onAction,
   onBeforeAction,
   className,
@@ -570,7 +581,8 @@ export function OptionList({
         >
           <div
             className={cn(
-              "group/list bg-card flex w-full flex-col overflow-hidden rounded-2xl border px-4 py-1.5 shadow-xs",
+              "group/list bg-card flex w-full flex-col overflow-hidden rounded-2xl border shadow-xs",
+              density === "compact" ? "px-3 py-1" : "px-4 py-1.5",
             )}
             role="listbox"
             aria-multiselectable={selectionMode === "multi"}
@@ -597,6 +609,7 @@ export function OptionList({
                     buttonRef={(el) => {
                       optionRefs.current[index] = el;
                     }}
+                    compact={density === "compact"}
                     onToggle={() => toggleSelection(option.id)}
                   />
                 </Fragment>
@@ -604,7 +617,7 @@ export function OptionList({
             })}
           </div>
 
-          <div className="@container/actions">
+          {!hideActions && <div className="@container/actions">
             <ActionButtons
               actions={actionsWithDisabledState}
               align={normalizedFooterActions.align}
@@ -617,7 +630,7 @@ export function OptionList({
                   : undefined
               }
             />
-          </div>
+          </div>}
         </div>
       )}
     </div>

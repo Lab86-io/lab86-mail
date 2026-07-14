@@ -20,7 +20,14 @@ describe('generated Area screen host contract', () => {
     expect(source).toContain('event.source !== frame.contentWindow');
     expect(source).toContain('parseAreaArtifactMessage(event.data, areaId)');
     expect(source).toContain("case 'capture_intent'");
-    expect(source).toContain('window.confirm(');
+    expect(source.match(/window\.confirm\(/g)).toHaveLength(2);
+  });
+
+  test('labels Area mail as a bounded recent preview instead of claiming complete counts', () => {
+    const source = read('components/albatross/AreaHome.tsx');
+    expect(source).toContain('Recent Area mail');
+    expect(source).toContain('A bounded recent preview');
+    expect(source).toContain('No unread mail in this recent preview.');
   });
 
   test('preserves last-good HTML during regeneration and bounds persisted documents', () => {

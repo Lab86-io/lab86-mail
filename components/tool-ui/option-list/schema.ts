@@ -116,6 +116,8 @@ const OptionListPropsSchemaBase = z.object({
   receipt: ToolUIReceiptSchema.optional(),
   options: z.array(OptionListOptionSchema).min(1),
   selectionMode: z.enum(["multi", "single"]).optional(),
+  density: z.enum(["default", "compact"]).optional(),
+  hideActions: z.boolean().optional(),
   /**
    * Controlled selection value (advanced / runtime only).
    *

@@ -24,7 +24,7 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
-import { ArrowUp, Check, Square } from 'lucide-react';
+import { ArrowUp, Check, ImagePlus, Square } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -539,6 +539,7 @@ function AreaManagementList() {
     | undefined;
   const archiveArea = useMutation(api.albatross.archiveArea);
   const updateArea = useMutation(api.albatross.updateArea);
+  const setAreaImage = useMutation(api.albatross.setAreaImage);
   const reindexAreas = useMutation(api.albatross.reindexMyAreas);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -579,6 +580,42 @@ function AreaManagementList() {
       toast.success(`${draft.name || area.name} updated`);
     } catch (err: any) {
       toast.error(err?.message || 'Could not update the area');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const uploadImage = async (area: AreaOverviewRow, file: File) => {
+    setBusyId(area._id);
+    try {
+      const form = new FormData();
+      form.append('files', file);
+      const response = await fetch('/api/agent/uploads', { method: 'POST', body: form });
+      const body = await response.json();
+      if (!response.ok || !body.uploads?.[0]?.uploadId) {
+        throw new Error(body.error || 'Could not upload that image.');
+      }
+      const result = await setAreaImage({
+        areaId: area._id,
+        uploadId: body.uploads[0].uploadId as Id<'agentUploads'>,
+      });
+      setDraft((previous) => ({ ...previous, imageUrl: result.imageUrl || '' }));
+      toast.success(`${area.name} image updated`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not upload that image');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const clearImage = async (area: AreaOverviewRow) => {
+    setBusyId(area._id);
+    try {
+      await setAreaImage({ areaId: area._id });
+      setDraft((previous) => ({ ...previous, imageUrl: '' }));
+      toast.success(`${area.name} image removed`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not remove that image');
     } finally {
       setBusyId(null);
     }
@@ -654,6 +691,37 @@ function AreaManagementList() {
                     className="min-w-0 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--color-border-strong)]"
                     placeholder="https://… image"
                   />
+                  <div className="flex items-center gap-2 sm:col-span-3">
+                    <label className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 text-[11.5px] font-medium hover:bg-[var(--color-bg-muted)]">
+                      <ImagePlus className="size-3.5" />
+                      Upload image
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        disabled={busyId === area._id}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void uploadImage(area, file);
+                          event.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+                    {area.imageUrl ? (
+                      <button
+                        type="button"
+                        className="text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                        disabled={busyId === area._id}
+                        onClick={() => void clearImage(area)}
+                      >
+                        Remove custom image
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-[var(--color-text-faint)]">
+                        Otherwise Albatross uses the domain favicon, then initials.
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="min-w-0 flex-1">

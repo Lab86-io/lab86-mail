@@ -9,6 +9,7 @@ import {
   areaHasNoLinks,
   areaHomeSections,
   areaIndexStatusSummary,
+  areaInitials,
   areaNeedsYouRows,
   areaOverviewBadges,
   areaOverviewPriority,
@@ -82,6 +83,12 @@ describe('areaHasNoLinks', () => {
 });
 
 describe('area branding helpers', () => {
+  test('uses readable initials when an Area has no image or favicon', () => {
+    expect(areaInitials('Lab86 / Albatross')).toBe('LA');
+    expect(areaInitials('Personal')).toBe('PE');
+    expect(areaInitials('')).toBe('A');
+  });
+
   test('normalizes domains from URLs, emails, @domains, and plain domains', () => {
     expect(normalizeAreaDomain('https://www.statpearls.com/path?x=1')).toBe('statpearls.com');
     expect(normalizeAreaDomain('Inbox <alerts@sub.example.org>')).toBe('sub.example.org');

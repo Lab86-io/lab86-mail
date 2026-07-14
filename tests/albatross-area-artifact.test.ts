@@ -199,8 +199,12 @@ describe('Area artifact composition pipeline', () => {
       basedOnRevision,
     };
     let touched = false;
+    let queryCount = 0;
     const restore = setAreaLivingBriefDependenciesForTest({
-      convexQuery: (async () => ({ ...home, livingBrief })) as any,
+      convexQuery: (async () => {
+        queryCount += 1;
+        return queryCount === 1 ? { ...home, livingBrief } : null;
+      }) as any,
       convexMutation: (async () => {
         touched = true;
       }) as any,
@@ -241,6 +245,29 @@ describe('Area artifact composition pipeline', () => {
       expect(result.artifactHtml).toContain('Content-Security-Policy');
       expect(writes.map((write) => write.status)).toEqual(['generating', 'ready']);
       expect(writes[1].artifactHtml).toContain('<title>Studio</title>');
+    } finally {
+      restore();
+    }
+  });
+
+  test('propagates a living-index query failure without writing partial state', async () => {
+    const writes: any[] = [];
+    let queryCount = 0;
+    const restore = setAreaLivingBriefDependenciesForTest({
+      convexQuery: (async () => {
+        queryCount += 1;
+        if (queryCount === 2) throw new Error('pulse unavailable');
+        return home;
+      }) as any,
+      convexMutation: (async (_ref: unknown, args: any) => {
+        writes.push(args);
+      }) as any,
+    });
+    try {
+      await expect(
+        generateAreaLivingBrief({ userId: 'user_1', areaId: 'area_1', force: true }),
+      ).rejects.toThrow('pulse unavailable');
+      expect(writes).toHaveLength(0);
     } finally {
       restore();
     }

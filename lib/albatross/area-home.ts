@@ -29,6 +29,16 @@ export interface AreaBranding {
   imageUrl: string | null;
 }
 
+export function areaInitials(name?: string | null) {
+  const words = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return 'A';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0] || ''}${words.at(-1)?.[0] || ''}`.toUpperCase();
+}
+
 export type AreaHomeSectionId = 'mail' | 'events' | 'tasks' | 'context';
 
 export interface AreaHomeSection {

@@ -25,6 +25,8 @@ describe('Area artifact runtime injection', () => {
   test('owns capture form input and live theme behavior without app API access', () => {
     expect(AREA_ARTIFACT_RUNTIME_JS).toContain("closest('[data-area-capture]')");
     expect(AREA_ARTIFACT_RUNTIME_JS).toContain("querySelector('[data-capture-input]')");
+    expect(AREA_ARTIFACT_RUNTIME_JS).toContain("querySelector('[data-question-input]:checked')");
+    expect(AREA_ARTIFACT_RUNTIME_JS).toContain(':not([type="radio"]):not([type="checkbox"])');
     expect(AREA_ARTIFACT_RUNTIME_JS).toContain("source:'lab86-area-artifact'");
     expect(AREA_ARTIFACT_RUNTIME_JS).toContain("d.type==='theme'");
     expect(AREA_ARTIFACT_RUNTIME_JS).not.toContain('fetch(');
@@ -104,6 +106,19 @@ describe('Area artifact host allowlist', () => {
         areaId,
       ),
     ).toEqual({ action: 'capture_intent', payload: { areaId, text: 'Plan the launch' } });
+    expect(
+      parseAreaArtifactMessage(
+        {
+          source: AREA_ARTIFACT_MESSAGE_SOURCE,
+          action: 'answer_question',
+          payload: { questionId: 'q1', text: 'I completed the prototype', answeredOptionId: 'done' },
+        },
+        areaId,
+      ),
+    ).toEqual({
+      action: 'answer_question',
+      payload: { questionId: 'q1', text: 'I completed the prototype', answeredOptionId: 'done' },
+    });
 
     for (const bad of [
       null,

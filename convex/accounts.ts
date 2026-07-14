@@ -252,7 +252,14 @@ const ACCOUNT_BULK_TABLES = [
   'areaArtifactLinks',
 ] as const;
 
-const USER_BULK_TABLES = [...ACCOUNT_BULK_TABLES, 'areaFacts', 'areaReindexRuns'] as const;
+const USER_BULK_TABLES = [
+  ...ACCOUNT_BULK_TABLES,
+  'areaFacts',
+  'areaReindexRuns',
+  'albatrossRoutines',
+  'albatrossRoutineRuns',
+  'albatrossEvidence',
+] as const;
 
 const PURGE_BATCH = 250;
 

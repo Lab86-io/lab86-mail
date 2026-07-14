@@ -50,6 +50,10 @@ function albatrossApi() {
   return (deps.api as any).albatrossWork;
 }
 
+function routinesApi() {
+  return (deps.api as any).albatrossRoutines;
+}
+
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');
   return userId;
@@ -667,6 +671,152 @@ export const albatrossListProjects = defineTool({
       limit: args.limit,
     });
     return { projects };
+  },
+});
+
+export const albatrossCreateRoutine = defineTool({
+  name: 'albatross_create_routine',
+  description:
+    'Create a durable recurring routine inside an Albatross Project/Epic. Use this after the user declares a recurring personal or professional commitment, such as daily weight-loss actions, an evening food check-in, a weekly client review, or weekday launch work. A routine can materialize tasks, questions, or both in the user’s local timezone. It never enables notifications silently; the living assistant asks once for notification consent after the first check-in.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    projectId: z.string(),
+    areaId: z.string().optional(),
+    title: z.string().min(1).max(180),
+    purpose: z.string().max(800).optional(),
+    kind: z.enum(['task', 'checkin', 'task_and_checkin', 'review']),
+    cadence: z.enum(['daily', 'weekly', 'weekdays', 'custom']).default('daily'),
+    daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
+    localTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .default('19:00'),
+    timezone: z.string().optional(),
+    activation: z.enum(['active', 'proposed']).default('active'),
+    taskTemplate: z
+      .object({
+        title: z.string().min(1).max(300),
+        description: z.string().max(2_000).optional(),
+        priority: z.enum(['low', 'medium', 'high']).optional(),
+      })
+      .optional(),
+    questionTemplate: z
+      .object({
+        prompt: z.string().min(1).max(700),
+        reason: z.string().max(700).optional(),
+        responseKind: z.enum(['text', 'single_select', 'multi_select', 'number', 'boolean']).optional(),
+        options: z
+          .array(
+            z.object({
+              id: z.string().max(80),
+              label: z.string().max(180),
+              description: z.string().max(400).optional(),
+            }),
+          )
+          .max(8)
+          .optional(),
+      })
+      .optional(),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    routineId: z.string(),
+    status: z.enum(['active', 'proposed']),
+    notification: z.enum(['asks_once_after_first_checkin', 'not_requested_for_task_only']),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const routineId = await deps.convexMutation<string>(routinesApi().create, {
+      userId,
+      projectId: args.projectId,
+      areaId: args.areaId,
+      title: args.title,
+      purpose: args.purpose,
+      kind: args.kind,
+      cadence: args.cadence,
+      daysOfWeek: args.daysOfWeek,
+      localTime: args.localTime,
+      timezone: args.timezone || ctx.userTimezone || 'UTC',
+      taskTemplate: args.taskTemplate,
+      questionTemplate: args.questionTemplate,
+      consent: args.activation === 'active' ? 'enabled' : 'proposed',
+      notification: { enabled: false, channel: 'in_app' },
+    });
+    return {
+      ok: true,
+      routineId: String(routineId),
+      status: args.activation,
+      notification:
+        args.kind === 'task'
+          ? ('not_requested_for_task_only' as const)
+          : ('asks_once_after_first_checkin' as const),
+    };
+  },
+});
+
+export const albatrossListRoutines = defineTool({
+  name: 'albatross_list_routines',
+  description: 'List active and proposed routines, recent runs, and pending check-ins for one Project/Epic.',
+  category: 'tasks',
+  mutating: false,
+  input: z.object({ projectId: z.string() }),
+  output: z.object({ routines: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const routines = await deps.convexQuery<any[]>(routinesApi().listForProject, {
+      userId: requireUserId(ctx.userId),
+      projectId: args.projectId,
+    });
+    return { routines };
+  },
+});
+
+export const albatrossSetRoutineConsent = defineTool({
+  name: 'albatross_set_routine_consent',
+  description:
+    'Enable, pause, or decline a routine only after the user explicitly agrees. Notification delivery is a separate explicit choice and defaults off.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    routineId: z.string(),
+    consent: z.enum(['enabled', 'declined', 'proposed']),
+    localTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
+    timezone: z.string().optional(),
+    notificationEnabled: z.boolean().optional(),
+    notificationChannel: z.literal('in_app').optional(),
+  }),
+  output: z.object({ ok: z.boolean() }),
+  async handler(args, ctx) {
+    await deps.convexMutation(routinesApi().setConsent, {
+      userId: requireUserId(ctx.userId),
+      routineId: args.routineId,
+      consent: args.consent,
+      localTime: args.localTime,
+      timezone: args.timezone || ctx.userTimezone,
+      notificationEnabled: args.notificationEnabled,
+      notificationChannel: args.notificationChannel,
+    });
+    return { ok: true };
+  },
+});
+
+export const albatrossRunRoutineNow = defineTool({
+  name: 'albatross_run_routine_now',
+  description:
+    'Materialize today’s task/check-in for an enabled routine now. The stable local-date run key prevents duplicate tasks or questions.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ routineId: z.string() }),
+  output: z.object({ ok: z.boolean() }),
+  async handler(args, ctx) {
+    await deps.convexMutation(routinesApi().runNow, {
+      userId: requireUserId(ctx.userId),
+      routineId: args.routineId,
+    });
+    return { ok: true };
   },
 });
 
