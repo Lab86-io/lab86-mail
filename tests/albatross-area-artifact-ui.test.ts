@@ -23,11 +23,14 @@ describe('generated Area screen host contract', () => {
     expect(source.match(/window\.confirm\(/g)).toHaveLength(2);
   });
 
-  test('labels Area mail as a bounded recent preview instead of claiming complete counts', () => {
+  test('renders Area mail with the production Inbox row instead of a second preview design', () => {
     const source = read('components/albatross/AreaHome.tsx');
-    expect(source).toContain('Recent Area mail');
-    expect(source).toContain('A bounded recent preview');
-    expect(source).toContain('No unread mail in this recent preview.');
+    expect(source).toContain('InboxThreadRow');
+    expect(source).toContain('inboxDateGroupLabel');
+    expect(source).toContain(['Search mail in ', '$', '{home.area.name}'].join(''));
+    expect(source).toContain('Filed by Area evidence');
+    expect(source).not.toContain('Recent Area mail');
+    expect(source).not.toContain('What this inbox knows');
   });
 
   test('preserves last-good HTML during regeneration and bounds persisted documents', () => {

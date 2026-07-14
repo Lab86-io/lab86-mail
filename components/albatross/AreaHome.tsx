@@ -26,13 +26,38 @@
 // Plans have no standalone destination; projects/places are area components.
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
-import { ArrowRight, ChevronDown, Inbox, LayoutTemplate, MessageSquareText, RefreshCw } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Archive,
+  ArrowRight,
+  CheckSquare,
+  ChevronDown,
+  FolderInput,
+  Inbox,
+  LayoutTemplate,
+  MessageSquareText,
+  MoreHorizontal,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { InboxThreadRow, inboxDateGroupLabel, type ThreadRow } from '@/components/inbox/Inbox';
 import { OptionList } from '@/components/tool-ui/option-list';
 import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { injectAreaArtifactRuntime, parseAreaArtifactMessage } from '@/lib/albatross/area-artifact-runtime';
@@ -65,8 +90,10 @@ import {
   taskRowMeta,
   workNeedsYouRows,
 } from '@/lib/albatross/area-home';
+import { areaMailRowKey, filterAreaMailRows, selectedVisibleAreaMailRows } from '@/lib/albatross/area-mail';
+import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { categoricalColor, formatDate, shortFrom } from '@/lib/shared/format';
+import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
@@ -78,6 +105,10 @@ interface AreaMailRow {
   lastDate: number;
   snippet: string;
   unread: boolean;
+  labels: string[];
+  starred: boolean;
+  messageCount: number;
+  smartCategory: unknown | null;
   linkStatus: string;
   confidence: number | null;
   reason: string | null;
@@ -566,14 +597,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   const home = result.data as AreaHomeData;
 
   if (areaView === 'inbox') {
-    return (
-      <AreaInbox
-        home={home}
-        pulse={pulse}
-        onAllAreas={() => setSelectedAreaId(null)}
-        onViewChange={setAreaView}
-      />
-    );
+    return <AreaInbox home={home} onAllAreas={() => setSelectedAreaId(null)} onViewChange={setAreaView} />;
   }
 
   // The generated document is the selected Area screen. React only supplies
@@ -800,20 +824,144 @@ function AreaViewSwitcher({
 
 function AreaInbox({
   home,
-  pulse,
   onAllAreas,
   onViewChange,
 }: {
   home: AreaHomeData;
-  pulse?: AreaPulseData;
   onAllAreas: () => void;
   onViewChange: (view: 'brief' | 'inbox') => void;
 }) {
-  const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const { isAuthenticated } = useConvexAuth();
+  const areas = useQuery(api.albatross.listAreasOverview, isAuthenticated ? { status: 'active' } : 'skip') as
+    | AreaOverviewRow[]
+    | undefined;
+  const moveThreads = useMutation((api as any).albatross.moveMailThreadsToArea);
+  const [search, setSearch] = useState('');
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [lastSelectionKey, setLastSelectionKey] = useState<string | null>(null);
+  const pendingKeysRef = useRef(new Set<string>());
+  const [pendingKeys, setPendingKeys] = useState<string[]>([]);
+  const [hiddenKeys, setHiddenKeys] = useState<string[]>([]);
   const setSelectedThread = useClientStore((state) => state.setSelectedThread);
   const setThreadAccount = useClientStore((state) => state.setThreadAccount);
+  const selectedThreadId = useClientStore((state) => state.selectedThreadId);
+  const threadAccount = useClientStore((state) => state.threadAccount);
+  const destinations = (areas || []).filter((area) => area._id !== home.area._id);
+  const rowByKey = useMemo(() => new Map(home.mail.map((row) => [areaMailRowKey(row), row])), [home.mail]);
+  const visibleRows = useMemo(
+    () =>
+      filterAreaMailRows(
+        home.mail.filter((row) => !hiddenKeys.includes(areaMailRowKey(row))),
+        { query: search },
+      ),
+    [hiddenKeys, home.mail, search],
+  );
+  const visibleKeys = useMemo(() => visibleRows.map(areaMailRowKey), [visibleRows]);
+  const visibleKeySet = useMemo(() => new Set(visibleKeys), [visibleKeys]);
+  const selectedVisibleKeys = selectedKeys.filter((key) => visibleKeySet.has(key));
+  const selectedRows = selectedVisibleAreaMailRows(visibleRows, selectedVisibleKeys);
+  const selectionHasPending = selectedVisibleKeys.some((key) => pendingKeys.includes(key));
   const unread = home.mail.filter((row) => row.unread).length;
-  const rows = filter === 'unread' ? home.mail.filter((row) => row.unread) : home.mail;
+  const mailboxCount = new Set(home.mail.map((row) => row.accountId)).size;
+
+  useEffect(() => {
+    setSelectedKeys((current) => current.filter((key) => rowByKey.has(key)));
+  }, [rowByKey]);
+
+  const toggleSelected = useCallback((key: string) => {
+    setSelectedKeys((current) =>
+      current.includes(key) ? current.filter((candidate) => candidate !== key) : [...current, key],
+    );
+    setLastSelectionKey(key);
+  }, []);
+
+  const selectRangeTo = useCallback(
+    (key: string) => {
+      const anchor = lastSelectionKey && visibleKeys.includes(lastSelectionKey) ? lastSelectionKey : key;
+      const start = visibleKeys.indexOf(anchor);
+      const end = visibleKeys.indexOf(key);
+      if (start < 0 || end < 0) {
+        toggleSelected(key);
+        return;
+      }
+      const from = Math.min(start, end);
+      const to = Math.max(start, end);
+      setSelectedKeys((current) => [...new Set([...current, ...visibleKeys.slice(from, to + 1)])]);
+      setLastSelectionKey(key);
+    },
+    [lastSelectionKey, toggleSelected, visibleKeys],
+  );
+
+  const beginPending = useCallback((keys: string[]) => {
+    if (keys.some((key) => pendingKeysRef.current.has(key))) return false;
+    for (const key of keys) pendingKeysRef.current.add(key);
+    setPendingKeys([...pendingKeysRef.current]);
+    return true;
+  }, []);
+
+  const endPending = useCallback((keys: string[]) => {
+    for (const key of keys) pendingKeysRef.current.delete(key);
+    setPendingKeys([...pendingKeysRef.current]);
+  }, []);
+
+  const moveRows = useCallback(
+    async (rows: AreaMailRow[], destination: AreaOverviewRow) => {
+      if (!rows.length) return;
+      const keys = rows.map(areaMailRowKey);
+      if (!beginPending(keys)) return;
+      try {
+        const result = await moveThreads({
+          sourceAreaId: home.area._id as Id<'areas'>,
+          destinationAreaId: destination._id as Id<'areas'>,
+          threads: rows.map((row) => ({ accountId: row.accountId, threadId: row.providerThreadId })),
+        });
+        if (!result.moved) throw new Error('Those threads were no longer filed in this Area.');
+        setSelectedKeys((current) => current.filter((key) => !keys.includes(key)));
+        toast.success(
+          `${result.moved} ${result.moved === 1 ? 'thread' : 'threads'} moved to ${destination.name}`,
+        );
+        if (result.skipped) toast.info(`${result.skipped} already moved or unavailable`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not move mail to that Area.');
+      } finally {
+        endPending(keys);
+      }
+    },
+    [beginPending, endPending, home.area._id, moveThreads],
+  );
+
+  const mutateMail = useCallback(
+    async (keys: string[], action: 'archive_thread' | 'trash_thread') => {
+      const operations = keys.flatMap((key) => {
+        const row = rowByKey.get(key);
+        return row ? [{ key, row }] : [];
+      });
+      if (!operations.length) return;
+      const operationKeys = operations.map(({ key }) => key);
+      if (!beginPending(operationKeys)) return;
+      try {
+        const results = await Promise.allSettled(
+          operations.map(({ row }) =>
+            callTool(action, { account: row.accountId, threadId: row.providerThreadId }),
+          ),
+        );
+        const succeeded = operations.flatMap((operation, index) =>
+          results[index]?.status === 'fulfilled' ? [operation.key] : [],
+        );
+        const failed = results.length - succeeded.length;
+        setHiddenKeys((current) => [...new Set([...current, ...succeeded])]);
+        setSelectedKeys((current) => current.filter((key) => !succeeded.includes(key)));
+        if (succeeded.length) {
+          toast.success(`${action === 'archive_thread' ? 'Archived' : 'Trashed'} ${succeeded.length}`);
+        }
+        if (failed) toast.error(`Could not update ${failed} ${failed === 1 ? 'thread' : 'threads'}.`);
+      } finally {
+        endPending(operationKeys);
+      }
+    },
+    [beginPending, endPending, rowByKey],
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
       <header className="flex min-h-13 items-center gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-2.5">
@@ -835,118 +983,246 @@ function AreaInbox({
           Manage
         </a>
       </header>
-      <div className="grid min-h-0 flex-1 min-[1080px]:grid-cols-[minmax(0,1fr)_300px]">
-        <section className="flex min-h-0 flex-col bg-[var(--color-bg-elevated)]">
-          <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
-            <div>
-              <h3 className="font-display text-[17px] leading-tight">Recent Area mail</h3>
-              <p className="mt-0.5 text-[11px] text-[var(--color-text-faint)]">
-                A bounded recent preview filed into {home.area.name}; universal views and complete counts stay
-                in Mail.
-              </p>
-            </div>
-            <div className="ml-auto inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
-              {(['all', 'unread'] as const).map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setFilter(id)}
-                  className={cn(
-                    'rounded px-2 py-1 text-[10.5px] capitalize text-[var(--color-text-muted)]',
-                    filter === id && 'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-sm',
-                  )}
-                >
-                  {id} {id === 'unread' && unread ? `${unread} recent` : ''}
-                </button>
-              ))}
+      <section className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg)] p-2 sm:p-3">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+          <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+                <InputGroupAddon>
+                  <Search className="size-4 text-[var(--color-text-faint)]" aria-hidden />
+                </InputGroupAddon>
+                <InputGroupInput
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={`Search mail in ${home.area.name}`}
+                  aria-label={`Search mail in ${home.area.name}`}
+                  className="text-[13px]"
+                />
+                {search ? (
+                  <InputGroupAddon align="inline-end">
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)]"
+                      aria-label="Clear Area mail search"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </InputGroupAddon>
+                ) : null}
+              </InputGroup>
+              <div className="shrink-0 text-right">
+                <p className="text-[11px] font-medium tabular-nums text-[var(--color-text)]">
+                  {home.mail.length} mail{unread ? ` · ${unread} unread` : ''}
+                </p>
+                <p className="text-[9.5px] text-[var(--color-text-faint)]">Filed by Area evidence</p>
+              </div>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {rows.length ? (
-              rows.map((row) => {
-                const sender = shortFrom(row.fromAddress) || row.fromAddress;
-                return (
+
+          {selectedVisibleKeys.length ? (
+            <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-3 py-2 text-[12px]">
+              <span className="font-semibold text-[var(--color-text)]">
+                {selectedVisibleKeys.length} selected
+              </span>
+              {selectedVisibleKeys.length < visibleKeys.length ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedKeys((current) => [...new Set([...current, ...visibleKeys])])}
+                  className="ml-2 flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                >
+                  <CheckSquare className="size-3" />
+                  Select visible
+                </button>
+              ) : null}
+              <AreaMoveMenu
+                areas={destinations}
+                disabled={!selectedRows.length || selectionHasPending}
+                onMove={(area) => void moveRows(selectedRows, area)}
+                trigger={
                   <button
-                    key={`${row.accountId}:${row.providerThreadId}`}
                     type="button"
-                    onClick={() => {
-                      setThreadAccount(row.accountId);
-                      setSelectedThread(row.providerThreadId);
-                    }}
-                    title={row.reason || undefined}
-                    className="grid w-full grid-cols-[36px_minmax(0,1fr)_auto] gap-3 border-b border-[var(--color-border)]/70 bg-[var(--color-bg-elevated)] px-4 py-3 text-left hover:bg-[var(--color-hover-soft)]"
+                    className="flex items-center gap-1 rounded-lg bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] shadow-[var(--shadow-control)] hover:bg-[var(--color-accent-hover)]"
                   >
-                    <Avatar name={sender} size={34} />
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-2">
-                        <span className={cn('truncate text-[12.5px]', row.unread && 'font-semibold')}>
-                          {sender}
-                        </span>
-                        {row.linkStatus === 'candidate' ? (
-                          <span className="rounded border border-[var(--color-warning)]/35 px-1.5 text-[9.5px] text-[var(--color-warning)]">
-                            Suggested
-                          </span>
-                        ) : row.unread ? (
-                          <span className="size-1.5 rounded-full bg-[var(--color-accent)]" />
-                        ) : null}
-                      </span>
-                      <span className={cn('mt-0.5 block truncate text-[13px]', row.unread && 'font-medium')}>
-                        {row.subject || '(no subject)'}
-                      </span>
-                      {row.snippet ? (
-                        <span className="mt-0.5 block truncate text-[11.5px] text-[var(--color-text-muted)]">
-                          {row.snippet}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="pt-0.5 text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
-                      {formatDate(row.lastDate)}
-                    </span>
+                    <FolderInput className="size-3" />
+                    Move to Area
                   </button>
-                );
-              })
+                }
+              />
+              <button
+                type="button"
+                disabled={selectionHasPending}
+                onClick={() => void mutateMail(selectedVisibleKeys, 'archive_thread')}
+                className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-45"
+              >
+                <Archive className="size-3" />
+                Archive
+              </button>
+              <button
+                type="button"
+                disabled={selectionHasPending}
+                onClick={() => void mutateMail(selectedVisibleKeys, 'trash_thread')}
+                className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-45"
+              >
+                <Trash2 className="size-3" />
+                Trash
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedKeys([])}
+                className="ml-auto grid size-5 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+                title="Clear selection"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ) : null}
+
+          <div className="scrollable flex min-h-0 flex-1 flex-col">
+            {visibleRows.length ? (
+              <div>
+                {visibleRows.map((row, index) => {
+                  const key = areaMailRowKey(row);
+                  const previous = index ? visibleRows[index - 1] : null;
+                  const group = inboxDateGroupLabel(row.lastDate);
+                  const previousGroup = previous ? inboxDateGroupLabel(previous.lastDate) : null;
+                  const inboxRow: ThreadRow = {
+                    _id: row.providerThreadId,
+                    account: row.accountId,
+                    from: row.fromAddress,
+                    fromAddress: row.fromAddress,
+                    subject: row.subject,
+                    snippet: row.snippet,
+                    lastDate: row.lastDate,
+                    unread: row.unread,
+                    starred: row.starred,
+                    labels: row.labels,
+                    messageCount: row.messageCount,
+                    smartCategory: row.smartCategory,
+                  };
+                  return (
+                    <Fragment key={key}>
+                      {group !== previousGroup ? (
+                        <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
+                          <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+                            {group}
+                          </span>
+                          <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+                        </div>
+                      ) : null}
+                      <InboxThreadRow
+                        item={inboxRow}
+                        rowId={key}
+                        rowAccount={row.accountId}
+                        senderEmail={emailFromHeader(row.fromAddress) || ''}
+                        providerPhotoUrl={null}
+                        showAccount={mailboxCount > 1}
+                        activeCategory={null}
+                        selected={selectedKeys.includes(key)}
+                        active={selectedThreadId === row.providerThreadId && threadAccount === row.accountId}
+                        selecting={selectedVisibleKeys.length > 0}
+                        actionsDisabled={pendingKeys.includes(key)}
+                        onSelectRange={selectRangeTo}
+                        onToggleSelect={toggleSelected}
+                        onOpen={(accountId, threadId) => {
+                          setThreadAccount(accountId);
+                          setSelectedThread(threadId);
+                        }}
+                        onPrefetch={() => undefined}
+                        onApplyLabels={() => undefined}
+                        onArchive={(rowKey) => void mutateMail([rowKey], 'archive_thread')}
+                        onTrash={(rowKey) => void mutateMail([rowKey], 'trash_thread')}
+                        onCorrect={() => undefined}
+                        onUndoLast={() => undefined}
+                        customLabels={[]}
+                        actionMenu={
+                          <AreaMoveMenu
+                            areas={destinations}
+                            disabled={pendingKeys.includes(key)}
+                            onMove={(area) => void moveRows([row], area)}
+                          />
+                        }
+                      />
+                    </Fragment>
+                  );
+                })}
+              </div>
             ) : (
-              <div className="px-6 py-12 text-center">
-                <Inbox className="mx-auto size-5 text-[var(--color-text-faint)]" aria-hidden />
-                <p className="mt-3 text-[12.5px] font-medium">
-                  {filter === 'unread'
-                    ? 'No unread mail in this recent preview.'
-                    : 'No recently filed mail in this preview.'}
-                </p>
-                <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
-                  Corrections teach future Area filing instead of creating another smart filter.
-                </p>
+              <div className="grid min-h-64 flex-1 place-items-center px-6 py-12 text-center">
+                <div>
+                  <Inbox className="mx-auto size-5 text-[var(--color-text-faint)]" aria-hidden />
+                  <p className="mt-3 text-[12.5px] font-medium">
+                    {search
+                      ? `No mail in ${home.area.name} matches that search.`
+                      : `No mail in ${home.area.name}.`}
+                  </p>
+                  <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+                    Moving a thread here teaches Albatross how this Area should be filed next time.
+                  </p>
+                </div>
               </div>
             )}
           </div>
-        </section>
-        <aside className="hidden min-h-0 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-bg)] p-4 min-[1080px]:block">
-          <p className="font-display text-[13px] italic">What this inbox knows</p>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
-            {home.counts.facts.verified} verified facts and {home.counts.facts.candidate} suggestions ground
-            these classifications.
-          </p>
-          <div className="mt-4 space-y-2">
-            {(pulse?.projects || []).slice(0, 5).map((row) => (
-              <div
-                key={row.project._id}
-                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
-              >
-                <p className="truncate text-[12px] font-medium">{row.project.title}</p>
-                <p className="mt-1 text-[10.5px] text-[var(--color-text-muted)]">
-                  {row.completedTaskCount}/{row.taskCount} tasks · {row.routines.length}{' '}
-                  {row.routines.length === 1 ? 'routine' : 'routines'}
-                </p>
-              </div>
-            ))}
-          </div>
-          <p className="mt-5 border-t border-[var(--color-border)] pt-3 text-[10.5px] leading-relaxed text-[var(--color-text-faint)]">
-            More confirmed evidence strengthens future filing. A message or commit remains supporting
-            evidence; it does not prove intent or completion.
-          </p>
-        </aside>
-      </div>
+        </div>
+      </section>
     </div>
+  );
+}
+
+function AreaMoveMenu({
+  areas,
+  disabled,
+  onMove,
+  trigger,
+}: {
+  areas: AreaOverviewRow[];
+  disabled?: boolean;
+  onMove: (area: AreaOverviewRow) => void;
+  trigger?: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        asChild
+        disabled={disabled}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+        }}
+      >
+        {trigger || (
+          <button
+            type="button"
+            className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-45"
+            title="Move to another Area"
+          >
+            <MoreHorizontal className="size-3.5" />
+            <span className="sr-only">Move to another Area</span>
+          </button>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="max-h-80 w-64 overflow-y-auto"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <DropdownMenuLabel>Move to Area</DropdownMenuLabel>
+        <p className="px-2 pb-2 text-[10.5px] leading-relaxed text-[var(--color-text-faint)]">
+          This corrects the filing and strengthens future Area matches.
+        </p>
+        <DropdownMenuSeparator />
+        {areas.length ? (
+          areas.map((area) => (
+            <DropdownMenuItem key={area._id} onSelect={() => onMove(area)} className="gap-2.5">
+              <AreaMark area={area} />
+              <span className="min-w-0 flex-1 truncate">{area.name}</span>
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled>No other active Areas</DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

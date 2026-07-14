@@ -8,6 +8,7 @@ import {
   PERSONAL_AREA_EXTERNAL_ID,
 } from '../lib/albatross/area-home';
 import { validateAreaImageUpload } from '../lib/albatross/area-image';
+import { areaMailMoveConfirmation, areaMailMoveReason } from '../lib/albatross/area-mail';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -903,6 +904,161 @@ export const linkArtifactToArea = mutation({
   },
 });
 
+// A user's Area move is an explicit filing correction, not a destructive
+// relabel. The source link remains as rejected evidence so Albatross can learn
+// what was wrong; the destination link becomes verified with a server-minted
+// user confirmation. A batch keeps multi-select moves one atomic transaction.
+export const moveMailThreadsToArea = mutation({
+  args: {
+    ...callerArgs,
+    sourceAreaId: v.id('areas'),
+    destinationAreaId: v.id('areas'),
+    threads: v.array(v.object({ accountId: v.string(), threadId: v.string() })),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    if (args.threads.length > 50) throw new Error('Move at most 50 mail threads at a time.');
+    if (args.sourceAreaId === args.destinationAreaId) throw new Error('Choose a different Area.');
+    const [sourceArea, destinationArea] = await Promise.all([
+      requireArea(ctx, args.sourceAreaId, userId),
+      requireArea(ctx, args.destinationAreaId, userId),
+    ]);
+    if (destinationArea.status !== 'active') throw new Error('The destination Area is archived.');
+
+    const ts = now();
+    let moved = 0;
+    let skipped = 0;
+    for (const requested of args.threads) {
+      const { artifactId: threadId, accountId } = normalizedArtifactIdentity({
+        artifactId: requested.threadId,
+        accountId: requested.accountId,
+      });
+      if (!threadId || !accountId) {
+        skipped += 1;
+        continue;
+      }
+      const links = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_account_artifact', (q) =>
+          q
+            .eq('userId', userId)
+            .eq('accountId', accountId)
+            .eq('artifactKind', 'mailThread')
+            .eq('artifactId', threadId),
+        )
+        .collect();
+      const sourceLinks = links.filter(
+        (link) => link.areaId === args.sourceAreaId && link.status !== 'rejected',
+      );
+      if (!sourceLinks.length) {
+        skipped += 1;
+        continue;
+      }
+
+      const reason = areaMailMoveReason(sourceArea.name, destinationArea.name);
+      const confirmation = areaMailMoveConfirmation({
+        sourceAreaId: String(args.sourceAreaId),
+        destinationAreaId: String(args.destinationAreaId),
+        accountId,
+        threadId,
+        sourceAreaName: sourceArea.name,
+        destinationAreaName: destinationArea.name,
+        confirmedAt: ts,
+        confirmedBy: userId,
+      });
+      const sourceRef = {
+        kind: 'mailThread',
+        id: threadId,
+        accountId,
+        label: `Mail moved from ${sourceArea.name} to ${destinationArea.name}`,
+      };
+
+      for (const sourceLink of sourceLinks) {
+        await ctx.db.patch(sourceLink._id, {
+          status: 'rejected',
+          confidence: 0,
+          reason,
+          sourceRefs: normalizeSourceRefs([sourceRef, ...(sourceLink.sourceRefs || [])]),
+          confirmationRefs: normalizeConfirmationRefs([confirmation, ...(sourceLink.confirmationRefs || [])]),
+          updatedAt: ts,
+        });
+      }
+
+      const destinationLink = links.find((link) => link.areaId === args.destinationAreaId);
+      const confirmationRefs = normalizeConfirmationRefs([
+        confirmation,
+        ...(destinationLink?.confirmationRefs || []),
+      ]);
+      assertVerifiedArtifactLinkAllowed('verified', confirmationRefs);
+      const destinationPatch = {
+        userId,
+        areaId: args.destinationAreaId,
+        artifactKind: 'mailThread' as const,
+        artifactId: threadId,
+        accountId,
+        role: 'primary' as const,
+        status: 'verified' as const,
+        confidence: 1,
+        reason,
+        sourceRefs: normalizeSourceRefs([sourceRef, ...(destinationLink?.sourceRefs || [])]),
+        confirmationRefs,
+        updatedAt: ts,
+      };
+      let destinationLinkId: Id<'areaArtifactLinks'>;
+      if (destinationLink) {
+        await ctx.db.patch(destinationLink._id, destinationPatch);
+        destinationLinkId = destinationLink._id;
+      } else {
+        destinationLinkId = await ctx.db.insert('areaArtifactLinks', {
+          ...destinationPatch,
+          createdAt: ts,
+        });
+      }
+
+      await Promise.all([
+        upsertAreaEvidence(ctx, {
+          userId,
+          areaId: args.sourceAreaId,
+          sourceKind: 'mail_thread',
+          sourceId: threadId,
+          title: 'Mail removed from this Area',
+          summary: reason,
+          occurredAt: ts,
+          trust: 'rejected',
+          confidence: 0,
+          dedupeKey: `area-link:${String(args.sourceAreaId)}:mailThread:${accountId}:${threadId}`,
+          metadata: {
+            artifactKind: 'mailThread',
+            status: 'rejected',
+            movedToAreaId: String(args.destinationAreaId),
+          },
+        }),
+        upsertAreaEvidence(ctx, {
+          userId,
+          areaId: args.destinationAreaId,
+          sourceKind: 'mail_thread',
+          sourceId: threadId,
+          title: 'Mail filed to this Area',
+          summary: reason,
+          occurredAt: ts,
+          trust: 'confirmed',
+          confidence: 1,
+          dedupeKey: `area-link:${String(args.destinationAreaId)}:mailThread:${accountId}:${threadId}`,
+          metadata: {
+            artifactKind: 'mailThread',
+            role: 'primary',
+            status: 'verified',
+            linkId: String(destinationLinkId),
+            movedFromAreaId: String(args.sourceAreaId),
+          },
+        }),
+      ]);
+      moved += 1;
+    }
+    return { moved, skipped };
+  },
+});
+
 export const listAreaArtifactLinks = query({
   args: { ...callerArgs, areaId: v.id('areas'), status: v.optional(linkStatusValidator) },
   handler: async (ctx, args) => {
@@ -1323,7 +1479,11 @@ async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link
     fromAddress: thread.fromAddress,
     lastDate: thread.lastDate,
     snippet: thread.snippet,
+    labels: thread.labels,
     unread: thread.unread,
+    starred: thread.starred ?? false,
+    messageCount: thread.messageCount ?? 1,
+    smartCategory: thread.smartCategory ?? null,
     linkStatus: link.status,
     confidence: link.confidence ?? null,
     reason: link.reason ?? null,
