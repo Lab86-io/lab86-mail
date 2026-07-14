@@ -10,7 +10,9 @@ import {
   areaArtifactRevision,
   buildAreaArtifactContext,
   extractAreaArtifactHtml,
+  generateAreaLivingBrief,
   normalizeAreaArtifactHtml,
+  setAreaLivingBriefDependenciesForTest,
 } from '../lib/albatross/area-living-brief';
 
 const home = {
@@ -72,6 +74,39 @@ describe('Area artifact data contract', () => {
     expect(context.context.verified[0]?.value).toBe('example.test');
     expect(context.context.candidates[0]?.value).toBe('Maybe the owner');
     expect(context.actions.discussArea.payload.areaId).toBe('area_1');
+  });
+
+  test('carries real sprint and place details without inventing missing values', () => {
+    const context = buildAreaArtifactContext({
+      ...home,
+      projects: [
+        {
+          ...home.projects[0],
+          activeSprint: { title: 'Launch week', status: 'active', endAt: 1_900_000_000_000 },
+        },
+      ],
+      places: [
+        {
+          name: 'Studio',
+          detail: 'Second floor',
+          address: '1 Main Street',
+          hoursText: '9–5',
+          website: 'https://example.test',
+        },
+      ],
+    });
+    expect(context.projects[0]?.activeSprint).toMatchObject({
+      title: 'Launch week',
+      status: 'active',
+      endAt: 1_900_000_000_000,
+    });
+    expect(context.places[0]).toEqual({
+      name: 'Studio',
+      detail: 'Second floor',
+      address: '1 Main Street',
+      hoursText: '9–5',
+      website: 'https://example.test',
+    });
   });
 
   test('revision changes with source state but not edition time', () => {
@@ -146,5 +181,82 @@ describe('Area artifact persistence boundary', () => {
         status: 'ready',
       }),
     ).toThrow('Area artifact document exceeds the maximum size.');
+  });
+});
+
+describe('Area artifact composition pipeline', () => {
+  test('reuses a matching ready edition without writing or calling the model', async () => {
+    const basedOnRevision = areaArtifactRevision(buildAreaArtifactContext(home));
+    const livingBrief = {
+      status: 'ready',
+      artifactHtml: '<!doctype html><html><body>existing</body></html>',
+      basedOnRevision,
+    };
+    let touched = false;
+    const restore = setAreaLivingBriefDependenciesForTest({
+      convexQuery: (async () => ({ ...home, livingBrief })) as any,
+      convexMutation: (async () => {
+        touched = true;
+      }) as any,
+      generateTextForCurrentUser: (async () => {
+        touched = true;
+        throw new Error('should not compose');
+      }) as any,
+    });
+    try {
+      await expect(generateAreaLivingBrief({ userId: 'user_1', areaId: 'area_1' })).resolves.toBe(
+        livingBrief,
+      );
+      expect(touched).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  test('persists generating then ready for a complete creative edition', async () => {
+    const writes: any[] = [];
+    const document = `<!doctype html><html><head><title>Studio</title></head><body>${'edition '.repeat(40)}</body></html>`;
+    const restore = setAreaLivingBriefDependenciesForTest({
+      convexQuery: (async () => home) as any,
+      convexMutation: (async (_ref: unknown, args: any) => {
+        writes.push(args);
+      }) as any,
+      generateTextForCurrentUser: (async () => ({ text: document })) as any,
+    });
+    try {
+      const result = await generateAreaLivingBrief({
+        userId: 'user_1',
+        userEmail: 'owner@example.test',
+        userName: 'Owner',
+        areaId: 'area_1',
+        force: true,
+      });
+      expect(result.status).toBe('ready');
+      expect(result.artifactHtml).toContain('Content-Security-Policy');
+      expect(writes.map((write) => write.status)).toEqual(['generating', 'ready']);
+      expect(writes[1].artifactHtml).toContain('<title>Studio</title>');
+    } finally {
+      restore();
+    }
+  });
+
+  test('records an error while preserving the original generation failure', async () => {
+    const writes: any[] = [];
+    const restore = setAreaLivingBriefDependenciesForTest({
+      convexQuery: (async () => home) as any,
+      convexMutation: (async (_ref: unknown, args: any) => {
+        writes.push(args);
+      }) as any,
+      generateTextForCurrentUser: (async () => ({ text: 'not an HTML document' })) as any,
+    });
+    try {
+      await expect(
+        generateAreaLivingBrief({ userId: 'user_1', areaId: 'area_1', force: true }),
+      ).rejects.toThrow('complete Area HTML document');
+      expect(writes.map((write) => write.status)).toEqual(['generating', 'error']);
+      expect(writes[1].error).toContain('complete Area HTML document');
+    } finally {
+      restore();
+    }
   });
 });

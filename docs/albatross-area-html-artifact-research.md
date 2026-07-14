@@ -110,4 +110,4 @@ just their metadata.
 - Inspected that edition in a browser at desktop width: the document had no
   horizontal overflow, missing content, or overlapping regions, and exposed the
   expected capture and navigation actions.
-- Passed typecheck, lint, all 1,033 tests, and the production Next.js build.
+- Passed typecheck, lint, all 1,047 tests, and the production Next.js build.

@@ -5,6 +5,28 @@ import { withDeadline } from '../shared/deadline';
 
 const AREA_ARTIFACT_DEADLINE_MS = 180_000;
 
+interface AreaLivingBriefDependencies {
+  convexMutation: typeof convexMutation;
+  convexQuery: typeof convexQuery;
+  generateTextForCurrentUser: typeof generateTextForCurrentUser;
+}
+
+const defaultAreaLivingBriefDependencies: AreaLivingBriefDependencies = {
+  convexMutation,
+  convexQuery,
+  generateTextForCurrentUser,
+};
+
+let areaLivingBriefDependencies = defaultAreaLivingBriefDependencies;
+
+export function setAreaLivingBriefDependenciesForTest(overrides: Partial<AreaLivingBriefDependencies>) {
+  const previous = areaLivingBriefDependencies;
+  areaLivingBriefDependencies = { ...previous, ...overrides };
+  return () => {
+    areaLivingBriefDependencies = previous;
+  };
+}
+
 type AreaHomeLike = {
   area: Record<string, any>;
   livingBrief?: Record<string, any> | null;
@@ -273,7 +295,7 @@ export async function generateAreaLivingBrief(input: {
   areaId: string;
   force?: boolean;
 }) {
-  const home = await convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
+  const home = await areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
     userId: input.userId,
     areaId: input.areaId,
   });
@@ -289,7 +311,7 @@ export async function generateAreaLivingBrief(input: {
   }
 
   const fallback = fallbackCopy(home);
-  await convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+  await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
     userId: input.userId,
     areaId: input.areaId,
     status: 'generating',
@@ -301,7 +323,7 @@ export async function generateAreaLivingBrief(input: {
 
   try {
     const { text } = await withDeadline(
-      generateTextForCurrentUser({
+      areaLivingBriefDependencies.generateTextForCurrentUser({
         feature: 'albatross_area_artifact',
         speed: 'primary',
         userId: input.userId,
@@ -316,7 +338,7 @@ export async function generateAreaLivingBrief(input: {
     const extracted = extractAreaArtifactHtml(text);
     if (!extracted) throw new Error('AI did not return a complete Area HTML document.');
     const artifactHtml = normalizeAreaArtifactHtml(extracted);
-    await convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+    await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
       userId: input.userId,
       areaId: input.areaId,
       status: 'ready',
@@ -327,16 +349,18 @@ export async function generateAreaLivingBrief(input: {
     });
     return { ...fallback, artifactHtml, status: 'ready', basedOnRevision: revision };
   } catch (error) {
-    await convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
-      userId: input.userId,
-      areaId: input.areaId,
-      status: 'error',
-      lede: home.livingBrief?.lede || fallback.lede,
-      summary: home.livingBrief?.summary || fallback.summary,
-      sourceRefs: [],
-      basedOnRevision: revision,
-      error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    await areaLivingBriefDependencies
+      .convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+        userId: input.userId,
+        areaId: input.areaId,
+        status: 'error',
+        lede: home.livingBrief?.lede || fallback.lede,
+        summary: home.livingBrief?.summary || fallback.summary,
+        sourceRefs: [],
+        basedOnRevision: revision,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      .catch(() => undefined);
     throw error;
   }
 }

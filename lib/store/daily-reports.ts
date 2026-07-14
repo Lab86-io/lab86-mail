@@ -14,6 +14,16 @@ import {
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert } from './kv';
 
+let persistSettledDailyReport: typeof kvUpsert = kvUpsert;
+
+export function setDailyReportPersistenceForTest(persist: typeof kvUpsert) {
+  const previous = persistSettledDailyReport;
+  persistSettledDailyReport = persist;
+  return () => {
+    persistSettledDailyReport = previous;
+  };
+}
+
 export async function saveDailyReport(report: DailyReport) {
   await kvUpsert('dailyReport', report._id, report);
   return report;
@@ -51,9 +61,11 @@ const STUCK_ARTIFACT_MS = 20 * 60_000;
 async function migrateDailyReportForRead(raw: DailyReport): Promise<DailyReport> {
   const migrated = migrateDailyReport(raw);
   if (settledStaleArtifactStatus(raw, migrated)) {
-    await kvUpsert('dailyReport', migrated._id, migrated).catch((err) => {
+    try {
+      await persistSettledDailyReport('dailyReport', migrated._id, migrated);
+    } catch (err) {
       console.warn('[daily-reports] failed to persist settled artifact status:', err);
-    });
+    }
   }
   return migrated;
 }
