@@ -278,7 +278,14 @@ async function mapWithConcurrency<T, R>(
 }
 
 export function rankGitHubItems(items: NormalizedMcpItem[], limit = GITHUB_ITEM_LIMIT): NormalizedMcpItem[] {
-  return [...new Map(items.map((item) => [item.externalId, item])).values()]
+  const newest = new Map<string, NormalizedMcpItem>();
+  for (const item of items) {
+    const previous = newest.get(item.externalId);
+    if (!previous || (item.updatedAtSource ?? 0) > (previous.updatedAtSource ?? 0)) {
+      newest.set(item.externalId, item);
+    }
+  }
+  return [...newest.values()]
     .sort((left, right) => (right.updatedAtSource ?? 0) - (left.updatedAtSource ?? 0))
     .slice(0, Math.max(0, limit));
 }

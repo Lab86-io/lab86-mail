@@ -12,7 +12,13 @@ export interface DetachedMcpSourceInput {
 export function detachedMcpSource(input: DetachedMcpSourceInput): Record<string, unknown> | null {
   const source =
     input.source && typeof input.source === 'object' ? (input.source as Record<string, unknown>) : null;
-  if (source?.kind !== 'mcp' || source.connectionId !== input.connectionId) return null;
+  if (
+    source?.kind !== 'mcp' ||
+    source.connectionId !== input.connectionId ||
+    source.externalId !== input.externalId
+  ) {
+    return null;
+  }
 
   return {
     kind: 'external_snapshot',

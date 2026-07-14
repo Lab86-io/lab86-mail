@@ -13,7 +13,13 @@ describe('GitHub evidence normalization', () => {
     expect(
       rankGitHubItems(
         [
-          { externalId: 'issue-1', kind: 'issue', title: 'Old issue', updatedAtSource: 10, searchText: '' },
+          {
+            externalId: 'issue-1',
+            kind: 'issue',
+            title: 'Newest issue',
+            updatedAtSource: 20,
+            searchText: '',
+          },
           {
             externalId: 'project-1',
             kind: 'project',
@@ -24,8 +30,8 @@ describe('GitHub evidence normalization', () => {
           {
             externalId: 'issue-1',
             kind: 'issue',
-            title: 'Duplicate issue',
-            updatedAtSource: 20,
+            title: 'Stale duplicate issue',
+            updatedAtSource: 10,
             searchText: '',
           },
           {
@@ -37,8 +43,12 @@ describe('GitHub evidence normalization', () => {
           },
         ],
         3,
-      ).map((item) => item.externalId),
-    ).toEqual(['project-1', 'issue-1', 'commit-1']);
+      ).map((item) => ({ id: item.externalId, title: item.title })),
+    ).toEqual([
+      { id: 'project-1', title: 'Recent project' },
+      { id: 'issue-1', title: 'Newest issue' },
+      { id: 'commit-1', title: 'Middle commit' },
+    ]);
   });
 
   test('keeps issue and PR identity repository-scoped', () => {

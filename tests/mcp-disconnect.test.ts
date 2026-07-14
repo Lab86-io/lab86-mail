@@ -49,6 +49,16 @@ describe('MCP disconnect provenance', () => {
         disconnectedAt: 1,
       }),
     ).toBeNull();
+    expect(
+      detachedMcpSource({
+        source: { kind: 'mcp', connectionId: 'github_old', externalId: 'issue-2' },
+        connectionId: 'github_old',
+        server: 'github',
+        externalId: 'issue-1',
+        fallbackTitle: 'Keep me',
+        disconnectedAt: 1,
+      }),
+    ).toBeNull();
   });
 
   test('revokes credentials and completes the resumable cascade without orphaning linked tasks', async () => {
@@ -68,20 +78,6 @@ describe('MCP disconnect provenance', () => {
           boardId,
           name: 'Today',
           order: 0,
-          createdAt: ts,
-          updatedAt: ts,
-        });
-        const cardId = await ctx.db.insert('cards', {
-          boardId,
-          columnId,
-          userId: 'user_1',
-          title: 'Track connector cleanup',
-          order: 0,
-          source: {
-            kind: 'mcp',
-            connectionId: 'github_old',
-            externalId: 'github:issue:Lab86-io/lab86-mail#120',
-          },
           createdAt: ts,
           updatedAt: ts,
         });
@@ -106,18 +102,6 @@ describe('MCP disconnect provenance', () => {
           createdAt: ts,
           updatedAt: ts,
         });
-        await ctx.db.insert('mcpItems', {
-          userId: 'user_1',
-          connectionId: 'github_old',
-          server: 'github',
-          externalId: 'github:issue:Lab86-io/lab86-mail#120',
-          kind: 'issue',
-          title: 'Connector cleanup',
-          url: 'https://github.com/Lab86-io/lab86-mail/issues/120',
-          searchText: 'Connector cleanup',
-          createdAt: ts,
-          updatedAt: ts,
-        });
         await ctx.db.insert('mcpSyncStates', {
           userId: 'user_1',
           connectionId: 'github_old',
@@ -126,31 +110,62 @@ describe('MCP disconnect provenance', () => {
           createdAt: ts,
           updatedAt: ts,
         });
-        await ctx.db.insert('mcpTaskLinks', {
-          userId: 'user_1',
-          connectionId: 'github_old',
-          server: 'github',
-          externalId: 'github:issue:Lab86-io/lab86-mail#120',
-          cardId: String(cardId),
-          createdAt: ts,
-          updatedAt: ts,
-        });
-        await ctx.db.insert('albatrossEvidence', {
-          userId: 'user_1',
-          sourceKind: 'github_issue',
-          sourceId: 'github:issue:Lab86-io/lab86-mail#120',
-          connectionId: 'github_old',
-          title: 'Connector cleanup',
-          occurredAt: ts,
-          weight: 1,
-          confidence: 1,
-          trust: 'observed',
-          dedupeKey: 'mcp:github:github_old:issue-120',
-          searchText: 'Connector cleanup',
-          createdAt: ts,
-          updatedAt: ts,
-        });
-        return { cardId };
+        for (let index = 0; index < 101; index += 1) {
+          const issueNumber = 120 + index;
+          const externalId = `github:issue:Lab86-io/lab86-mail#${issueNumber}`;
+          const title = `Connector cleanup ${issueNumber}`;
+          const cardId = await ctx.db.insert('cards', {
+            boardId,
+            columnId,
+            userId: 'user_1',
+            title: `Track ${title.toLowerCase()}`,
+            order: index,
+            source: {
+              kind: 'mcp',
+              connectionId: 'github_old',
+              externalId,
+            },
+            createdAt: ts,
+            updatedAt: ts,
+          });
+          await ctx.db.insert('mcpItems', {
+            userId: 'user_1',
+            connectionId: 'github_old',
+            server: 'github',
+            externalId,
+            kind: 'issue',
+            title,
+            url: `https://github.com/Lab86-io/lab86-mail/issues/${issueNumber}`,
+            searchText: title,
+            createdAt: ts,
+            updatedAt: ts,
+          });
+          await ctx.db.insert('mcpTaskLinks', {
+            userId: 'user_1',
+            connectionId: 'github_old',
+            server: 'github',
+            externalId,
+            cardId: String(cardId),
+            createdAt: ts,
+            updatedAt: ts,
+          });
+          await ctx.db.insert('albatrossEvidence', {
+            userId: 'user_1',
+            sourceKind: 'github_issue',
+            sourceId: externalId,
+            connectionId: 'github_old',
+            title,
+            occurredAt: ts,
+            weight: 1,
+            confidence: 1,
+            trust: 'observed',
+            dedupeKey: `mcp:github:github_old:issue-${issueNumber}`,
+            searchText: title,
+            createdAt: ts,
+            updatedAt: ts,
+          });
+        }
+        return { boardId };
       });
 
       expect(
@@ -160,6 +175,14 @@ describe('MCP disconnect provenance', () => {
           connectionId: 'github_old',
         }),
       ).toEqual({ ok: true, cleanupScheduled: true });
+
+      const immediateCredentials = await t.run((ctx) =>
+        ctx.db
+          .query('mcpCredentials')
+          .withIndex('by_user_connection', (q) => q.eq('userId', 'user_1').eq('connectionId', 'github_old'))
+          .collect(),
+      );
+      expect(immediateCredentials).toEqual([]);
 
       let settled = false;
       for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -179,7 +202,10 @@ describe('MCP disconnect provenance', () => {
       expect(settled).toBe(true);
 
       const finalState = await t.run(async (ctx) => ({
-        card: await ctx.db.get(seeded.cardId),
+        cards: await ctx.db
+          .query('cards')
+          .withIndex('by_board', (q) => q.eq('boardId', seeded.boardId))
+          .collect(),
         credentials: await ctx.db
           .query('mcpCredentials')
           .withIndex('by_user_connection', (q) => q.eq('userId', 'user_1').eq('connectionId', 'github_old'))
@@ -202,13 +228,17 @@ describe('MCP disconnect provenance', () => {
           .collect(),
       }));
 
-      expect(finalState.card?.source).toMatchObject({
-        kind: 'external_snapshot',
-        server: 'github',
-        externalId: 'github:issue:Lab86-io/lab86-mail#120',
-        title: 'Connector cleanup',
-        url: 'https://github.com/Lab86-io/lab86-mail/issues/120',
-      });
+      expect(finalState.cards).toHaveLength(101);
+      expect(
+        finalState.cards.every(
+          (card) =>
+            card.source?.kind === 'external_snapshot' &&
+            card.source.server === 'github' &&
+            typeof card.source.externalId === 'string' &&
+            typeof card.source.title === 'string' &&
+            typeof card.source.url === 'string',
+        ),
+      ).toBe(true);
       expect(finalState.credentials).toEqual([]);
       expect(finalState.items).toEqual([]);
       expect(finalState.evidence).toEqual([]);
