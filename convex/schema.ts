@@ -685,6 +685,7 @@ export default defineSchema({
     .index('by_user_target', ['userId', 'targetKind', 'targetId'])
     .index('by_user_source', ['userId', 'sourceKind', 'sourceId'])
     .index('by_user_dedupe', ['userId', 'dedupeKey'])
+    .index('by_user_connection', ['userId', 'connectionId'])
     .searchIndex('by_search_text', {
       searchField: 'searchText',
       filterFields: ['userId', 'sourceKind', 'targetKind', 'targetId'],
@@ -1628,6 +1629,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_status', ['status'])
     .index('by_server', ['server']),
 
   mcpCredentials: defineTable({
@@ -1706,6 +1708,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_card', ['cardId']),
 });

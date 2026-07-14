@@ -1,8 +1,12 @@
 // @ts-nocheck
 import { v } from 'convex/values';
 import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
-import { internalQuery, mutation, query } from './_generated/server';
+import { detachedMcpSource } from '../lib/mcp/disconnect';
+import { internal } from './_generated/api';
+import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
+
+const DISCONNECT_BATCH_SIZE = 100;
 
 const serverValidator = v.union(
   v.literal('github'),
@@ -92,14 +96,42 @@ export const upsertConnection = mutation({
   },
 });
 
+export const updateConnectionConfig = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    connectionId: v.string(),
+    server: serverValidator,
+    serverUrl: v.string(),
+    scopes: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const connection = await ctx.db
+      .query('mcpConnections')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .unique();
+    if (!connection || connection.server !== args.server) return { ok: false };
+    await ctx.db.patch(connection._id, {
+      serverUrl: args.serverUrl,
+      scopes: args.scopes,
+      updatedAt: now(),
+    });
+    return { ok: true };
+  },
+});
+
 export const listConnections = query({
   args: { internalSecret: v.optional(v.string()), userId: v.string() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    return await ctx.db
+    const rows = await ctx.db
       .query('mcpConnections')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
+    return rows.filter((row) => row.status !== 'disconnected');
   },
 });
 
@@ -155,29 +187,143 @@ export const disconnectConnection = mutation({
   args: { internalSecret: v.optional(v.string()), userId: v.string(), connectionId: v.string() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const drop = async (table: string) => {
-      const rows = await ctx.db
-        .query(table)
-        .withIndex('by_user_connection', (q) =>
-          q.eq('userId', args.userId).eq('connectionId', args.connectionId),
-        )
-        .collect();
-      for (const row of rows) await ctx.db.delete(row._id);
-    };
-    await drop('mcpConnections');
-    await drop('mcpCredentials');
-    await drop('mcpItems');
-    await drop('mcpSyncStates');
-    // mcpTaskLinks has no by_user_connection index — sweep by user and filter so
-    // links don't outlive the connection they point at.
+    const connection = await ctx.db
+      .query('mcpConnections')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .unique();
+    if (!connection) return { ok: true, cleanupScheduled: false };
+
+    await ctx.db.patch(connection._id, {
+      status: 'disconnected',
+      error: undefined,
+      updatedAt: now(),
+    });
+    const credentials = await ctx.db
+      .query('mcpCredentials')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .collect();
+    for (const credential of credentials) await ctx.db.delete(credential._id);
+    await ctx.scheduler.runAfter(0, internal.mcp.cleanupDisconnectedConnection, {
+      userId: args.userId,
+      connectionId: args.connectionId,
+    });
+    return { ok: true, cleanupScheduled: true };
+  },
+});
+
+export const cleanupDisconnectedConnection = internalMutation({
+  args: { userId: v.string(), connectionId: v.string() },
+  handler: async (ctx, args) => {
+    const connection = await ctx.db
+      .query('mcpConnections')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .unique();
+    if (connection && connection.status !== 'disconnected') return { ok: false, reason: 'active' };
+
     const links = await ctx.db
       .query('mcpTaskLinks')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const link of links) {
-      if (link.connectionId === args.connectionId) await ctx.db.delete(link._id);
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .take(DISCONNECT_BATCH_SIZE);
+    if (links.length) {
+      const detachedAt = now();
+      for (const link of links) {
+        const item = await ctx.db
+          .query('mcpItems')
+          .withIndex('by_connection_external', (q) =>
+            q.eq('connectionId', args.connectionId).eq('externalId', link.externalId),
+          )
+          .unique();
+        const cardId = ctx.db.normalizeId('cards', link.cardId);
+        const card = cardId ? await ctx.db.get(cardId) : null;
+        const detachedSource = card
+          ? detachedMcpSource({
+              source: card.source,
+              connectionId: args.connectionId,
+              server: link.server,
+              externalId: link.externalId,
+              itemTitle: item?.title,
+              itemUrl: item?.url,
+              fallbackTitle: card.title,
+              disconnectedAt: detachedAt,
+            })
+          : null;
+        if (card && card.userId === args.userId && detachedSource) {
+          await ctx.db.patch(card._id, {
+            source: detachedSource,
+            updatedAt: detachedAt,
+          });
+        }
+        await ctx.db.delete(link._id);
+      }
+      await ctx.scheduler.runAfter(0, internal.mcp.cleanupDisconnectedConnection, args);
+      return { ok: true, remaining: true, phase: 'taskLinks' };
     }
-    return { ok: true };
+
+    const evidence = await ctx.db
+      .query('albatrossEvidence')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .take(DISCONNECT_BATCH_SIZE);
+    if (evidence.length) {
+      for (const row of evidence) await ctx.db.delete(row._id);
+      await ctx.scheduler.runAfter(0, internal.mcp.cleanupDisconnectedConnection, args);
+      return { ok: true, remaining: true, phase: 'evidence' };
+    }
+
+    const items = await ctx.db
+      .query('mcpItems')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .take(DISCONNECT_BATCH_SIZE);
+    if (items.length) {
+      for (const item of items) await ctx.db.delete(item._id);
+      await ctx.scheduler.runAfter(0, internal.mcp.cleanupDisconnectedConnection, args);
+      return { ok: true, remaining: true, phase: 'items' };
+    }
+
+    const syncStates = await ctx.db
+      .query('mcpSyncStates')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .collect();
+    for (const state of syncStates) await ctx.db.delete(state._id);
+    const credentials = await ctx.db
+      .query('mcpCredentials')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .collect();
+    for (const credential of credentials) await ctx.db.delete(credential._id);
+    if (connection) await ctx.db.delete(connection._id);
+    return { ok: true, remaining: false };
+  },
+});
+
+export const sweepDisconnectedConnections = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const disconnected = await ctx.db
+      .query('mcpConnections')
+      .withIndex('by_status', (q) => q.eq('status', 'disconnected'))
+      .take(DISCONNECT_BATCH_SIZE);
+    for (const connection of disconnected) {
+      await ctx.scheduler.runAfter(0, internal.mcp.cleanupDisconnectedConnection, {
+        userId: connection.userId,
+        connectionId: connection.connectionId,
+      });
+    }
+    return { scheduled: disconnected.length };
   },
 });
 
@@ -451,16 +597,18 @@ export const searchItems = query({
   },
 });
 
-// Distinct userIds with at least one connected connection — the cron fans out
-// over these. internalQuery: called only from the sync action via runQuery, so
-// no internal-secret gate (internal functions aren't client-exposed).
+// Distinct userIds with a connected or errored connection — errored providers
+// are retried so endpoint migrations and transient failures can self-heal.
+// internalQuery: called only from the sync action via runQuery, so no
+// internal-secret gate (internal functions aren't client-exposed).
 export const listSyncTargetUserIds = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db
-      .query('mcpConnections')
-      .filter((q) => q.eq(q.field('status'), 'connected'))
-      .collect();
-    return [...new Set(rows.map((r) => r.userId))];
+    const rows = await ctx.db.query('mcpConnections').collect();
+    return [
+      ...new Set(
+        rows.filter((row) => row.status === 'connected' || row.status === 'error').map((row) => row.userId),
+      ),
+    ];
   },
 });

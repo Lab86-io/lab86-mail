@@ -101,6 +101,117 @@ describe('GitHub evidence normalization', () => {
     });
   });
 
+  test('indexes repository-wide issues, merged pull requests, and commits from other authors', async () => {
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/user')) {
+        return new Response(JSON.stringify({ login: 'jakob' }), { status: 200 });
+      }
+      if (url.includes('/search/issues')) {
+        const query = new URL(url).searchParams.get('q') || '';
+        return new Response(
+          JSON.stringify({
+            items: query.includes('is:merged')
+              ? [
+                  {
+                    number: 96,
+                    title: 'Render Areas as artifacts',
+                    repository_url: 'https://api.github.com/repos/Lab86-io/lab86-mail',
+                    state: 'closed',
+                    pull_request: {},
+                  },
+                ]
+              : [],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/search/commits')) {
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      }
+      if (url.includes('/user/repos')) {
+        return new Response(JSON.stringify([{ full_name: 'Lab86-io/lab86-mail' }]), { status: 200 });
+      }
+      if (url.includes('/repos/Lab86-io/lab86-mail/issues?')) {
+        return new Response(
+          JSON.stringify([
+            {
+              number: 120,
+              title: 'Connector migration',
+              body: 'Preserve evidence when credentials are revoked.',
+              repository_url: 'https://api.github.com/repos/Lab86-io/lab86-mail',
+              state: 'closed',
+              user: { login: 'grace' },
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/repos/Lab86-io/lab86-mail/pulls?')) {
+        return new Response(
+          JSON.stringify([
+            {
+              number: 96,
+              title: 'Render Areas as artifacts',
+              state: 'closed',
+              merged_at: '2026-07-14T16:00:00Z',
+              base: { repo: { full_name: 'Lab86-io/lab86-mail' } },
+              user: { login: 'jakob' },
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/repos/Lab86-io/lab86-mail/commits?')) {
+        return new Response(
+          JSON.stringify([
+            {
+              sha: 'other-author-sha',
+              html_url: 'https://github.com/Lab86-io/lab86-mail/commit/other-author-sha',
+              author: { login: 'grace' },
+              commit: {
+                message: 'Review evidence cleanup',
+                committer: { date: '2026-07-14T15:00:00Z' },
+              },
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith('/graphql') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              user: { projectsV2: { nodes: [] } },
+              viewer: { organizations: { nodes: [] } },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response('not found', { status: 404 });
+    }) as typeof fetch;
+
+    const result = await loadGitHubItems('https://api.github.com', 'token', fetchImpl);
+
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalId: 'github:issue:Lab86-io/lab86-mail#120',
+          state: 'closed',
+        }),
+        expect.objectContaining({
+          externalId: 'github:pull_request:Lab86-io/lab86-mail#96',
+          state: 'merged',
+        }),
+        expect.objectContaining({
+          externalId: 'github:commit:Lab86-io/lab86-mail:other-author-sha',
+          author: 'grace',
+        }),
+      ]),
+    );
+  });
+
   test('uses configured enterprise REST and GraphQL endpoints', async () => {
     const urls: string[] = [];
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {

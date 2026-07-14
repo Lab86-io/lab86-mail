@@ -92,6 +92,44 @@ export function getServerDef(id: string): McpServerDef | null {
   return (MCP_SERVERS as Record<string, McpServerDef>)[id] ?? null;
 }
 
+const LEGACY_GITHUB_MCP_HOSTS = new Set(['api.githubcopilot.com']);
+
+function sameScopes(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((scope, index) => scope === right[index]);
+}
+
+export function resolveMcpConnectionConfig(
+  server: string,
+  storedUrl: string,
+  storedScopes: readonly string[] = [],
+): { serverUrl: string; scopes: string[]; migrated: boolean } {
+  const definition = getServerDef(server);
+  if (!definition) {
+    return { serverUrl: storedUrl, scopes: [...storedScopes], migrated: false };
+  }
+
+  const normalizedStoredUrl = String(storedUrl || '').replace(/\/+$/u, '');
+  let serverUrl = normalizedStoredUrl || definition.defaultUrl;
+  if (server === 'github') {
+    try {
+      if (LEGACY_GITHUB_MCP_HOSTS.has(new URL(serverUrl).hostname.toLowerCase())) {
+        serverUrl = definition.defaultUrl;
+      }
+    } catch {
+      // Connection URLs are server-authored, but an older malformed value
+      // should still self-heal to the provider default instead of receiving a
+      // bearer token or trapping the connection in a permanent sync error.
+      serverUrl = definition.defaultUrl;
+    }
+  }
+
+  return {
+    serverUrl,
+    scopes: [...definition.scopes],
+    migrated: serverUrl !== normalizedStoredUrl || !sameScopes(storedScopes, definition.scopes),
+  };
+}
+
 export interface NormalizedMcpItem {
   externalId: string;
   kind: string;
