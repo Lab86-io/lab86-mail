@@ -37,6 +37,15 @@ describe('MCP server registry and normalizer', () => {
       serverUrl: 'https://github.enterprise.test/api/v3',
       migrated: false,
     });
+    expect(resolveMcpConnectionConfig('github', 'not a URL', ['issues:read'])).toMatchObject({
+      serverUrl: 'https://api.github.com',
+      migrated: true,
+    });
+    expect(resolveMcpConnectionConfig('unknown', 'https://example.test/mcp', ['custom:read'])).toEqual({
+      serverUrl: 'https://example.test/mcp',
+      scopes: ['custom:read'],
+      migrated: false,
+    });
   });
 
   test('normalizes structured arrays with unique IDs and timestamps', () => {
