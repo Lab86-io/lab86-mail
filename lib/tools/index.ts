@@ -10,6 +10,32 @@ import {
   translateThread,
   triageThread,
 } from './ai';
+import {
+  albatrossApplyIntentPlan,
+  albatrossApproveAction,
+  albatrossCreateProject,
+  albatrossCreateRoutine,
+  albatrossCreateSprint,
+  albatrossGetProjectPane,
+  albatrossListApprovalQueue,
+  albatrossListProjects,
+  albatrossListRoutines,
+  albatrossListSprints,
+  albatrossPreviewUndoUnresolved,
+  albatrossRejectAction,
+  albatrossRunRoutineNow,
+  albatrossSetRoutineConsent,
+  albatrossUndoApproval,
+} from './albatross';
+import {
+  areaAddFact,
+  areaArchive,
+  areaCreate,
+  areaDomainActivity,
+  areaFactSetStatus,
+  areaList,
+  areaUpdateIdentity,
+} from './areas';
 import { listAuditEntries, logAction } from './audit-tools';
 import {
   calendarCountEvents,
@@ -54,6 +80,7 @@ import {
   listDailyReportTaskDismissalsTool,
   listDailyReportThreadDismissalsTool,
 } from './daily-report';
+import { DISPLAY_TOOLS } from './display';
 import {
   getMessage,
   getSmartCategoryStats,
@@ -85,11 +112,12 @@ import {
   unsnoozeThreadTool,
   unstarMessage,
 } from './mail-mutate';
-import { mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
+import { githubSearch, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
 import type { AnyTool } from './registry';
+import { salvageContext } from './salvage';
 import {
   applySmartCorrection,
   createSmartLabel,
@@ -140,6 +168,7 @@ import { browserbaseFetch, browserbaseSearch } from './web';
 
 const allTools: AnyTool[] = [
   mcpSearch,
+  githubSearch,
   mcpListItems,
   mcpCreateTask,
   listAccounts,
@@ -248,6 +277,29 @@ const allTools: AnyTool[] = [
   undoOperationTool,
   tasksListBoards,
   tasksGetBoard,
+  albatrossApplyIntentPlan,
+  albatrossListApprovalQueue,
+  albatrossApproveAction,
+  albatrossRejectAction,
+  albatrossUndoApproval,
+  albatrossCreateProject,
+  albatrossListProjects,
+  albatrossCreateRoutine,
+  albatrossListRoutines,
+  albatrossSetRoutineConsent,
+  albatrossRunRoutineNow,
+  albatrossGetProjectPane,
+  albatrossCreateSprint,
+  albatrossListSprints,
+  albatrossPreviewUndoUnresolved,
+  salvageContext,
+  areaList,
+  areaCreate,
+  areaUpdateIdentity,
+  areaArchive,
+  areaAddFact,
+  areaFactSetStatus,
+  areaDomainActivity,
   tasksCreateBoard,
   tasksCreateCard,
   tasksUpdateCard,
@@ -270,6 +322,9 @@ const allTools: AnyTool[] = [
   uiToast,
   uiCloseBar,
   uiSwitchAccount,
+  // Display tools — validated payloads rendered as rich tool-ui components in
+  // chat (weather, charts, tables, code, media, maps, drafts…).
+  ...DISPLAY_TOOLS,
 ];
 
 export const TOOLS: Record<string, AnyTool> = Object.fromEntries(allTools.map((t) => [t.name, t]));

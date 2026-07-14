@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import './tools/harness';
 import {
   buildDataPrompt,
@@ -7,6 +9,7 @@ import {
   HTML_ARTIFACT_BRIEF,
   settleMonthArtifactReport,
   settleMonthHtmlArtifactReport,
+  settleMonthSaveFailureReport,
   toBriefEvent,
   toBriefTask,
 } from '../lib/mail/agent-report';
@@ -183,6 +186,41 @@ describe('daily brief service metadata', () => {
     expect(data.services.map((service: any) => service.id)).toEqual(['gmail', 'slack', 'github']);
     expect(data.services.map((service: any) => service.label)).toEqual(['Gmail', 'Slack', 'GitHub']);
     expect(data.services.every((service: any) => service.logoSvg.includes('footer-logo'))).toBe(true);
+    expect(data.services[0].logoSvg).toContain('viewBox="0 0 800 636.36322"');
+    expect(data.services[0].logoSvg).toContain('gmail-footer-gradient-a');
+  });
+
+  test('buildDataPrompt carries Albatross area context for artifact area briefs', async () => {
+    const report = reportFixture({
+      sections: {
+        ...reportFixture().sections,
+        albatross: {
+          includedAreas: [
+            {
+              areaId: 'area_launch',
+              name: 'Launch',
+              reason: 'Live Albatross work',
+              faviconUrl: 'https://example.test/favicon.ico',
+            },
+          ],
+          askBeforeCentering: [],
+          activeIntents: [{ id: 'intent_1', text: 'Plan launch review', areaId: 'area_launch' }],
+          activeProjects: [{ id: 'project_1', title: 'Ship launch', areaId: 'area_launch' }],
+          contextReview: [],
+          completions: [],
+        },
+      },
+    });
+    const prompt = await withToolContext(() =>
+      Promise.resolve(buildDataPrompt(report, { digests: [], voiceSamples: [], services: [] })),
+    );
+    const json = prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}';
+    const data = JSON.parse(json);
+
+    expect(data.albatross.includedAreas[0]).toMatchObject({ areaId: 'area_launch', name: 'Launch' });
+    expect(HTML_ARTIFACT_BRIEF).toContain('AREA BRIEFS MODULE');
+    expect(HTML_ARTIFACT_BRIEF).toContain('open_area payload { areaId }');
+    expect(HTML_ARTIFACT_BRIEF).toContain('view:"mail"|"tasks"|"calendar"|"areas"');
   });
 
   test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
@@ -206,6 +244,11 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-font-display)');
     expect(HTML_ARTIFACT_BRIEF).toContain('data.art.imageUrl');
     expect(HTML_ARTIFACT_BRIEF).toContain('Image fallback is REQUIRED');
+    expect(HTML_ARTIFACT_BRIEF).toContain('FOOTER (required on EVERY generated brief)');
+    expect(HTML_ARTIFACT_BRIEF).toContain('.brief-footer{position:relative;margin-top:4.5rem');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Build [service list] from data.services in order');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Paste service.logoSvg unchanged');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Made for you by');
     expect(HTML_ARTIFACT_BRIEF).toContain('CONTENT (compose from your analysis');
     expect(HTML_ARTIFACT_BRIEF).toContain('repeated bordered cards');
     expect(HTML_ARTIFACT_BRIEF).toContain('charts that decorate');
@@ -309,6 +352,30 @@ describe('settleMonthHtmlArtifactReport', () => {
   });
 });
 
+describe('settleMonthSaveFailureReport', () => {
+  test('falls back to the visible week artifact and clears enriching', () => {
+    const phase1 = reportFixture({
+      html: '<!doctype html><html><body>week artifact</body></html>',
+      artifactStatus: 'enriching',
+      artifactSource: 'ai',
+      artifactErrors: [{ stage: 'week_artifact', message: 'week warning', at: 100 }],
+    });
+
+    const settled = settleMonthSaveFailureReport({
+      phase1,
+      failure: { stage: 'month_enrichment', message: 'final save too large', at: 200 },
+    });
+
+    expect(settled.artifactStatus).toBe('rendered');
+    expect(settled.artifactSource).toBe('ai');
+    expect(settled.html).toContain('week artifact');
+    expect(settled.artifactErrors).toEqual([
+      { stage: 'week_artifact', message: 'week warning', at: 100 },
+      { stage: 'month_enrichment', message: 'final save too large', at: 200 },
+    ]);
+  });
+});
+
 describe('extractHtml', () => {
   test('extracts a fenced HTML document and trims trailing prose', () => {
     const body = 'ok '.repeat(80);
@@ -323,6 +390,28 @@ describe('extractHtml', () => {
 
   test('rejects incomplete HTML documents', () => {
     expect(extractHtml(`<!doctype html><html><body>${'ok '.repeat(80)}</body>`)).toBeNull();
+  });
+});
+
+describe('brief pipeline hang/wedge guards', () => {
+  const src = readFileSync(path.join(import.meta.dir, '..', 'lib', 'mail', 'agent-report.ts'), 'utf8');
+
+  test('every unbounded await in the artifact path carries a deadline', () => {
+    // Weather fetch, extras gathering, both artifact LLM calls (shared helper),
+    // and the silent month pass — a hang must become a caught error that
+    // settles the edition, never a forever-'enriching' wedge.
+    expect((src.match(/withDeadline\(/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(src).toContain("from '../shared/deadline'");
+    // The compose LLM call itself is wrapped, not bare.
+    expect(src).not.toMatch(/const \{ text \} = await generateTextForCurrentUser\(/);
+  });
+
+  test('the pipeline re-resolves the user timezone from calendars', () => {
+    // The context timezone is whatever client triggered the run (a remote
+    // browser once datelined the brief "Chicago"); generation must run under
+    // the calendar-resolved zone instead.
+    expect(src).toContain('resolveBriefTimezone');
+    expect(src).toMatch(/runWithAiRequestContext\(\{ \.\.\.context, userTimezone \}/);
   });
 });
 

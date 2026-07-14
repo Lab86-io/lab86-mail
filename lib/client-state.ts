@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
-import type { PrimaryView } from './shared/types';
+import { isAlbatrossPrimaryView, isCorePrimaryView, type PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
   to?: string;
@@ -41,6 +41,18 @@ export interface ClientState {
   primaryAccount: string;
   query: string;
   smartCategory: string | null;
+  // The area whose home page the 'areas' surface shows. Persisted like
+  // primaryView so a reload lands back on the same area; null = the chooser.
+  selectedAreaId: string | null;
+  // Opening Work replaces the Area body while keeping Areas as the primary
+  // navigation context. Persisted so a refresh returns to the same Work.
+  selectedWorkId: string | null;
+  // A one-shot request to open a specific intent on the Plans surface. The
+  // Area Brief's capture bar sets this after creating an area-bound intent;
+  // AppShell consumes it (switch to Plans + select) and clears it. Transient,
+  // never persisted.
+  pendingOpenIntentId: string | null;
+  pendingOpenWorkId: string | null;
   searchDraft: string;
   nlSearchIntent: string | null;
   translatedQuery: string | null;
@@ -55,6 +67,9 @@ export interface ClientState {
   railOpen: boolean;
   railWidth: number;
   aiBarOpen: boolean;
+  chatScopeKind: 'global' | 'area' | 'work';
+  chatScopeAreaId: string | null;
+  chatScopeWorkId: string | null;
   // Reader takes over (almost) the whole window; not persisted.
   threadFullscreen: boolean;
   // Persisted id of the most recent AI chat session, so reopening the app
@@ -67,6 +82,11 @@ export interface ClientState {
   // accent family (see globals.css). null = the default forest green.
   accentHue: number | null;
   accentChroma: number | null;
+  // Second accent: the editorial pairing (headers, tags, hairline-accent
+  // lines). null = the default terracotta pair; presets write curated pairs
+  // from lib/theme/palette-presets.ts.
+  accent2Hue: number | null;
+  accent2Chroma: number | null;
   // Background hue is its own axis, decoupled from the accent.
   bgHue: number | null;
   // 0..1 how much of bgHue bleeds into the background surfaces.
@@ -89,6 +109,10 @@ export interface ClientState {
   setPrimaryAccount: (account: string) => void;
   setQuery: (query: string) => void;
   setSmartCategory: (category: string | null) => void;
+  setSelectedAreaId: (areaId: string | null) => void;
+  setSelectedWorkId: (workId: string | null) => void;
+  setPendingOpenIntentId: (intentId: string | null) => void;
+  setPendingOpenWorkId: (workId: string | null) => void;
   setSearchDraft: (draft: string) => void;
   setTranslatedSearch: (
     intent: string | null,
@@ -115,10 +139,16 @@ export interface ClientState {
   setRailOpen: (open: boolean) => void;
   setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
+  setChatScope: (scope: {
+    kind: 'global' | 'area' | 'work';
+    areaId?: string | null;
+    workId?: string | null;
+  }) => void;
   setThreadFullscreen: (full: boolean) => void;
   setLastChatId: (id: string | null) => void;
   setPendingReplyBody: (body: string | null) => void;
   setAccent: (hue: number | null, chroma: number | null) => void;
+  setAccent2: (hue: number | null, chroma: number | null) => void;
   setBgHue: (hue: number | null) => void;
   setSurfaceTint: (tint: number) => void;
   setWashOpacity: (opacity: number) => void;
@@ -140,6 +170,18 @@ const initialCompose: ComposeState = {
 const PERSIST_KEY = 'lab86-mail-ui';
 const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
 
+export function migratePersistedClientState(persisted: any) {
+  if (!persisted) return persisted;
+  persisted.account = '';
+  if (persisted.query === '-in:trash newer_than:365d') persisted.query = DEFAULT_QUERY;
+  if (persisted.smartCategory === 'waiting') persisted.smartCategory = 'review';
+  if (persisted.primaryView === 'intents') persisted.primaryView = 'areas';
+  if (!isCorePrimaryView(persisted.primaryView) && !isAlbatrossPrimaryView(persisted.primaryView)) {
+    persisted.primaryView = 'daily_report';
+  }
+  return persisted;
+}
+
 export const useClientStore = create<ClientState>()(
   persist(
     (set) => ({
@@ -150,6 +192,10 @@ export const useClientStore = create<ClientState>()(
       primaryAccount: '',
       query: DEFAULT_QUERY,
       smartCategory: 'main',
+      selectedAreaId: null,
+      selectedWorkId: null,
+      pendingOpenIntentId: null,
+      pendingOpenWorkId: null,
       searchDraft: '',
       nlSearchIntent: null,
       translatedQuery: null,
@@ -164,12 +210,17 @@ export const useClientStore = create<ClientState>()(
       railOpen: true,
       railWidth: 240,
       aiBarOpen: false,
+      chatScopeKind: 'global',
+      chatScopeAreaId: null,
+      chatScopeWorkId: null,
       threadFullscreen: false,
       lastChatId: null,
       lastChatAt: null,
       pendingReplyBody: null,
       accentHue: null,
       accentChroma: null,
+      accent2Hue: null,
+      accent2Chroma: null,
       bgHue: null,
       surfaceTint: 0,
       washOpacity: 0,
@@ -205,6 +256,10 @@ export const useClientStore = create<ClientState>()(
           queryError: null,
           querySource: smartCategory ? 'category' : 'typed',
         }),
+      setSelectedAreaId: (selectedAreaId) => set({ selectedAreaId }),
+      setSelectedWorkId: (selectedWorkId) => set({ selectedWorkId }),
+      setPendingOpenIntentId: (pendingOpenIntentId) => set({ pendingOpenIntentId }),
+      setPendingOpenWorkId: (pendingOpenWorkId) => set({ pendingOpenWorkId }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
         set({ nlSearchIntent, translatedQuery, querySource, queryError: null }),
@@ -247,10 +302,13 @@ export const useClientStore = create<ClientState>()(
       setRailOpen: (railOpen) => set({ railOpen }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
+      setChatScope: ({ kind, areaId, workId }) =>
+        set({ chatScopeKind: kind, chatScopeAreaId: areaId || null, chatScopeWorkId: workId || null }),
       setThreadFullscreen: (threadFullscreen) => set({ threadFullscreen }),
       setLastChatId: (lastChatId) => set({ lastChatId, lastChatAt: lastChatId ? Date.now() : null }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
       setAccent: (accentHue, accentChroma) => set({ accentHue, accentChroma }),
+      setAccent2: (accent2Hue, accent2Chroma) => set({ accent2Hue, accent2Chroma }),
       setBgHue: (bgHue) => set({ bgHue }),
       setSurfaceTint: (surfaceTint) => set({ surfaceTint }),
       setWashOpacity: (washOpacity) => set({ washOpacity }),
@@ -261,25 +319,20 @@ export const useClientStore = create<ClientState>()(
     }),
     {
       name: PERSIST_KEY,
-      version: 3,
+      version: 5,
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
       migrate: (persisted: any) => {
-        if (!persisted) return persisted;
-        persisted.account = '';
-        if (persisted && persisted.query === '-in:trash newer_than:365d') {
-          persisted.query = DEFAULT_QUERY;
-        }
-        // The Waiting smart category was removed; fold it into Review.
-        if (persisted.smartCategory === 'waiting') persisted.smartCategory = 'review';
-        return persisted;
+        return migratePersistedClientState(persisted);
       },
       partialize: (s) => ({
         account: s.account,
         primaryView: s.primaryView,
         query: s.query,
         smartCategory: s.smartCategory,
+        selectedAreaId: s.selectedAreaId,
+        selectedWorkId: s.selectedWorkId,
         rightRailOpen: s.rightRailOpen,
         railOpen: s.railOpen,
         railWidth: s.railWidth,
@@ -287,6 +340,8 @@ export const useClientStore = create<ClientState>()(
         lastChatAt: s.lastChatAt,
         accentHue: s.accentHue,
         accentChroma: s.accentChroma,
+        accent2Hue: s.accent2Hue,
+        accent2Chroma: s.accent2Chroma,
         bgHue: s.bgHue,
         surfaceTint: s.surfaceTint,
         washOpacity: s.washOpacity,

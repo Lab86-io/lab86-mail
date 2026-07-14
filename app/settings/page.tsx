@@ -1,7 +1,14 @@
 'use client';
 
+// Two-column settings: a left rail of section tabs, one section in the pane.
+// Research (Albatross contract): Mobbin/Perplexity settings
+// (mobbin.com/screens/01930a76-50aa-48a9-bc02-b5eceefa17d0) and Mobbin/Melio
+// settings (mobbin.com/screens/ac45719a-952f-44c6-9bcc-ce8ce1580b36) — text-only
+// tab rails on the left, a single focused content pane on the right.
+
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
 import {
   ArrowLeft,
   Brain,
@@ -18,8 +25,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
-import { type ReactNode, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { type ReactNode, Suspense, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { TeachAreas } from '@/components/albatross/TeachAreas';
 import {
   type ModelOption,
   normalizeOpenRouterFastModel,
@@ -46,13 +55,45 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { api } from '@/convex/_generated/api';
+import { SETTINGS_TABS, type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
+import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 
+// useSearchParams needs a Suspense boundary for static generation.
 export default function SettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsPageBody />
+    </Suspense>
+  );
+}
+
+const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
+  mailboxes: () => <MailboxesSection />,
+  connections: () => <ConnectionsSection />,
+  areas: () => <TeachAreas />,
+  sending: () => <SendingSection />,
+  notifications: () => <NotificationsSection />,
+  ai: () => <AiSection />,
+  shortcuts: () => <ShortcutsSection />,
+  account: () => <AccountSection />,
+};
+
+function SettingsPageBody() {
+  const searchParams = useSearchParams();
+  // Local state owns the active tab; the URL mirrors it (replaceState, no
+  // navigation) so /settings?tab=areas deep-links and refresh keeps its place.
+  const [tab, setTab] = useState<SettingsTabId>(() => settingsTabFromSearch(searchParams.get('tab')));
+  const selectTab = (next: SettingsTabId) => {
+    setTab(next);
+    window.history.replaceState(null, '', `/settings?tab=${next}`);
+  };
+
   return (
     <main className="app-paper relative min-h-dvh text-[var(--color-text)]">
       <DotGridGlow />
-      <div className="relative z-10 mx-auto max-w-3xl px-5 py-8 sm:py-12">
+      <div className="relative z-10 mx-auto max-w-5xl px-5 py-8 sm:py-12">
         <header className="mb-8">
           <Link
             href="/"
@@ -66,13 +107,29 @@ export default function SettingsPage() {
             Your mailboxes, your models, your rules.
           </p>
         </header>
-        <div className="space-y-10">
-          <MailboxesSection />
-          <ConnectionsSection />
-          <SendingSection />
-          <AiSection />
-          <ShortcutsSection />
-          <AccountSection />
+        <div className="flex flex-col gap-6 md:grid md:grid-cols-[180px_minmax(0,1fr)] md:gap-10">
+          {/* Mobile: a horizontal scroller above the pane; md+: a sticky left rail. */}
+          <nav
+            aria-label="Settings sections"
+            className="-mx-5 flex gap-1 overflow-x-auto px-5 md:sticky md:top-8 md:mx-0 md:flex-col md:self-start md:overflow-visible md:px-0"
+          >
+            {SETTINGS_TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectTab(item.id)}
+                aria-current={tab === item.id ? 'page' : undefined}
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-left text-[13px] transition-colors md:w-full ${
+                  tab === item.id
+                    ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="min-w-0">{TAB_SECTIONS[tab]()}</div>
         </div>
       </div>
     </main>
@@ -178,6 +235,197 @@ function SendingSection() {
         </Select>
       </div>
     </section>
+  );
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replaceAll('-', '+').replaceAll('_', '/');
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+}
+
+function NotificationsSection() {
+  const { isAuthenticated } = useConvexAuth();
+  const remote = useConvexQuery(api.albatrossNotifications.getPreferences, isAuthenticated ? {} : 'skip') as
+    | NotificationPreferences
+    | undefined;
+  const savePreferences = useConvexMutation(api.albatrossNotifications.savePreferences);
+  const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMessage, setPushMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (remote && !prefs) {
+      setPrefs({
+        ...remote,
+        timezone: remote._id ? remote.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      });
+    }
+  }, [prefs, remote]);
+
+  const update = <K extends keyof NotificationPreferences>(key: K, value: NotificationPreferences[K]) => {
+    setPrefs((current) => (current ? { ...current, [key]: value } : current));
+  };
+
+  const save = async () => {
+    if (!prefs) return;
+    setSaving(true);
+    try {
+      await savePreferences(notificationPreferenceInput(prefs));
+      toast.success('Notification preferences saved');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save notification preferences');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const enablePush = async () => {
+    if (!prefs || pushBusy) return;
+    setPushBusy(true);
+    setPushMessage(null);
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        throw new Error('This browser does not support Web Push.');
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+      const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!publicKey) throw new Error('Web Push is not configured on this deployment.');
+      const registration = await navigator.serviceWorker.register('/albatross-sw.js');
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      const response = await fetch('/api/notifications/push', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(subscription.toJSON()),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not enable Web Push.');
+      const next = { ...prefs, webPushEnabled: true };
+      setPrefs(next);
+      await savePreferences(notificationPreferenceInput(next));
+      setPushMessage('Web Push is enabled on this browser.');
+    } catch (error) {
+      setPushMessage(error instanceof Error ? error.message : 'Could not enable Web Push.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  if (!prefs) return <p className="text-[12.5px] text-[var(--color-text-muted)]">Loading preferences…</p>;
+
+  return (
+    <section>
+      <SectionHeading
+        title="Notifications"
+        blurb="Albatross asks instead of silently deciding what you finished. Your evening check-in defaults to 7:00 PM local time."
+      />
+      <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 shadow-[var(--shadow-soft)]">
+        <SettingToggle
+          label="Evening check-in"
+          description="Ask what actually moved today and carry an unanswered check-in into tomorrow’s brief."
+          checked={prefs.eveningCheckinEnabled}
+          onCheckedChange={(value) => update('eveningCheckinEnabled', value)}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+          <div>
+            <p className="text-[13px] font-medium">Check-in time</p>
+            <p className="text-[11.5px] text-[var(--color-text-muted)]">Uses your selected timezone.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              className="w-28"
+              type="time"
+              value={prefs.eveningCheckinLocalTime}
+              onChange={(event) => update('eveningCheckinLocalTime', event.target.value)}
+            />
+            <Input
+              className="w-52"
+              value={prefs.timezone}
+              onChange={(event) => update('timezone', event.target.value)}
+              aria-label="Timezone"
+            />
+          </div>
+        </div>
+        <SettingToggle
+          label="In-app notification center"
+          description="Show questions, check-ins, approvals, and updates together."
+          checked={prefs.inAppEnabled}
+          onCheckedChange={(value) => update('inAppEnabled', value)}
+        />
+        <div className="flex items-center justify-between gap-4 py-3">
+          <div>
+            <p className="text-[13px] font-medium">Web Push</p>
+            <p className="text-[11.5px] text-[var(--color-text-muted)]">
+              Permission is requested only when you enable it here.
+            </p>
+            {pushMessage ? (
+              <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">{pushMessage}</p>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pushBusy}
+            onClick={() => void enablePush()}
+          >
+            {prefs.webPushEnabled ? 'Re-enable' : pushBusy ? 'Enabling…' : 'Enable'}
+          </Button>
+        </div>
+        <SettingToggle
+          label="Fallback email"
+          description={`Email only when the check-in is still unanswered after ${prefs.emailFallbackDelayMinutes} minutes.`}
+          checked={prefs.emailFallbackEnabled}
+          onCheckedChange={(value) => update('emailFallbackEnabled', value)}
+        />
+        <div className="flex items-center justify-between gap-3 py-3">
+          <Label htmlFor="fallback-delay">Fallback delay</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="fallback-delay"
+              className="w-24"
+              type="number"
+              min={15}
+              max={1440}
+              value={prefs.emailFallbackDelayMinutes}
+              onChange={(event) => update('emailFallbackDelayMinutes', Number(event.target.value) || 90)}
+            />
+            <span className="text-[11.5px] text-[var(--color-text-muted)]">minutes</span>
+          </div>
+        </div>
+      </div>
+      <Button className="mt-4" disabled={saving} onClick={() => void save()}>
+        {saving ? 'Saving…' : 'Save notification preferences'}
+      </Button>
+    </section>
+  );
+}
+
+function SettingToggle({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div>
+        <p className="text-[13px] font-medium">{label}</p>
+        <p className="text-[11.5px] text-[var(--color-text-muted)]">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
   );
 }
 

@@ -90,6 +90,12 @@
   --color-selected: #0f5132;
   --color-selected-soft: #e5f2eb;
 
+  /* second accent - terracotta, the editorial pair to the forest green.
+     Headers, tags, and hairline-accent lines; never action fills. The pair
+     table lives in lib/theme/palette-presets.ts. */
+  --color-accent-2: #853e19;
+  --color-accent-2-soft: oklch(0.55 0.088 45 / 0.13);
+
   /* status */
   --color-success: #159a74;
   --color-success-foreground: #ffffff;
@@ -163,6 +169,12 @@
   :root {
     --accent-hue: 156;
     --accent-chroma: 0.09;
+    /* Second accent: the editorial pairing to the primary accent (headers,
+       tags, hairline-accent lines). Defaults reproduce Forest's terracotta;
+       curated per-preset pairs live in lib/theme/palette-presets.ts and are
+       written inline on <html> by the theme panel. */
+    --accent-2-hue: 45;
+    --accent-2-chroma: 0.11;
     /* Background is its OWN axis (Arc separates window color from accent):
        --bg-hue + --surface-tint drive every surface; accent never bleeds into
        backgrounds unless the user dials it in themselves. 0 tint reproduces
@@ -207,6 +219,8 @@
     --color-accent: oklch(0.45 var(--accent-chroma) var(--accent-hue));
     --color-accent-hover: oklch(0.39 var(--accent-chroma) var(--accent-hue));
     --color-accent-soft: oklch(0.55 calc(var(--accent-chroma) * 0.8) var(--accent-hue) / 0.13);
+    --color-accent-2: oklch(0.45 var(--accent-2-chroma) var(--accent-2-hue));
+    --color-accent-2-soft: oklch(0.55 calc(var(--accent-2-chroma) * 0.8) var(--accent-2-hue) / 0.13);
     --color-accent-shine-1: oklch(0.45 var(--accent-chroma) var(--accent-hue));
     --color-accent-shine-2: oklch(0.62 calc(var(--accent-chroma) * 1.1) var(--accent-hue));
     --color-accent-shine-3: oklch(0.39 var(--accent-chroma) var(--accent-hue));
@@ -302,6 +316,8 @@
     --color-accent: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-accent-hover: oklch(0.79 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-accent-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
+    --color-accent-2: oklch(0.73 calc(var(--accent-2-chroma) * 0.78) var(--accent-2-hue));
+    --color-accent-2-soft: oklch(0.73 calc(var(--accent-2-chroma) * 0.7) var(--accent-2-hue) / 0.14);
     --color-accent-foreground: oklch(0.17 calc(var(--accent-chroma) * 0.4) var(--accent-hue));
     --color-accent-shine-1: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-accent-shine-2: oklch(0.85 calc(var(--accent-chroma) * 0.6) var(--accent-hue));

@@ -18,16 +18,20 @@ export interface BriefService {
 
 const ICON_CLASS = 'footer-logo';
 
+const GMAIL_2026_LOGO = `<svg class="${ICON_CLASS}" viewBox="0 0 800 636.36322" role="img" aria-label="Gmail"><title>Gmail</title><path fill="url(#gmail-footer-gradient-a)" d="M627.27193 81.819216h172.72682V581.8179c0 30.12265-24.42266 54.54532-54.54531 54.54532h-90.90885a27.272655 27.272655 0 0 1-27.27266-27.27266z"/><path fill="#fc413d" d="M172.72768 81.819216H.00085692711V581.8179c0 30.12265 24.42266207289 54.54532 54.54531007289 54.54532h90.908853a27.272655 27.272655 0 0 0 27.27266-27.27266z"/><path fill="url(#gmail-footer-gradient-b)" d="M141.93685 20.255746C105.42331-10.435083 50.946177-5.7169131 20.255349 30.796627-10.435479 67.305622-5.7173098 121.78275 30.79623 152.47813l345.80818 290.6765a36.36354 36.36354 0 0 0 46.79533 0L769.20792 152.47358C805.71691 121.78275 810.43508 67.305622 779.74426 30.792081 749.05343-5.7169131 694.5763-10.435083 658.0673 20.255746L399.9998 237.18245z"/><defs><linearGradient id="gmail-footer-gradient-a" x1="713.6374" x2="713.6374" y1="81.819216" y2="636.36322" gradientUnits="userSpaceOnUse"><stop stop-color="#60d673"/><stop offset=".17" stop-color="#42c868"/><stop offset=".39" stop-color="#0ebc5f"/><stop offset=".62" stop-color="#00a9bb"/><stop offset=".86" stop-color="#3c90ff"/><stop offset="1" stop-color="#3186ff"/></linearGradient><linearGradient id="gmail-footer-gradient-b" x1="0" x2="799.9998" y1="91.501434" y2="91.501434" gradientUnits="userSpaceOnUse"><stop offset=".08" stop-color="#ff63a0"/><stop offset=".3" stop-color="#fc413d"/><stop offset=".65" stop-color="#fc413d"/><stop offset=".72" stop-color="#fc5c30"/><stop offset=".86" stop-color="#feb10c"/><stop offset=".91" stop-color="#fec700"/><stop offset=".96" stop-color="#ffdb0f"/></linearGradient></defs></svg>`;
+
+const MICROSOFT_LOGO = `<svg class="${ICON_CLASS}" viewBox="0 0 24 24" role="img" aria-label="Outlook"><title>Outlook</title><path fill="#F25022" d="M1 1h10.5v10.5H1z"/><path fill="#7FBA00" d="M12.5 1H23v10.5H12.5z"/><path fill="#00A4EF" d="M1 12.5h10.5V23H1z"/><path fill="#FFB900" d="M12.5 12.5H23V23H12.5z"/></svg>`;
+
 const SERVICES: Record<BriefServiceId, BriefService> = {
   gmail: {
     id: 'gmail',
     label: 'Gmail',
-    logoSvg: `<svg class="${ICON_CLASS}" viewBox="0 0 24 24" role="img" aria-label="Gmail"><path fill="#EA4335" d="M3.4 5.1h17.2v13.8H3.4z"/><path fill="#fff" d="M5.1 7.3v9.8h13.8V7.3L12 12.4 5.1 7.3Z"/><path fill="#FBBC04" d="M3.4 5.1 12 11.5l8.6-6.4v2.6L12 14.1 3.4 7.7V5.1Z"/><path fill="#34A853" d="M3.4 7.7v11.2h3.1V10L3.4 7.7Z"/><path fill="#4285F4" d="M20.6 7.7v11.2h-3.1V10l3.1-2.3Z"/></svg>`,
+    logoSvg: GMAIL_2026_LOGO,
   },
   outlook: {
     id: 'outlook',
     label: 'Outlook',
-    logoSvg: `<svg class="${ICON_CLASS}" viewBox="0 0 24 24" role="img" aria-label="Outlook"><path fill="#0078D4" d="M2 5.2 11 3v18l-9-2.2V5.2Z"/><path fill="#50A7F9" d="M11 5h10v14H11z"/><path fill="#fff" d="M13 8h6v1.6h-6V8Zm0 3.2h6v1.6h-6v-1.6Zm0 3.2h4.4V16H13v-1.6Z"/><path fill="#fff" d="M6.55 8.4c1.65 0 2.8 1.32 2.8 3.1s-1.15 3.1-2.8 3.1-2.8-1.32-2.8-3.1 1.15-3.1 2.8-3.1Zm0 1.3c-.76 0-1.27.72-1.27 1.8s.51 1.8 1.27 1.8 1.27-.72 1.27-1.8-.51-1.8-1.27-1.8Z"/></svg>`,
+    logoSvg: MICROSOFT_LOGO,
   },
   icloud: {
     id: 'icloud',

@@ -6,7 +6,7 @@
 import type { McpAuthMode } from './auth';
 
 export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack';
-export type McpServerTransport = 'mcp' | 'bitbucket-rest';
+export type McpServerTransport = 'mcp' | 'bitbucket-rest' | 'github-rest';
 
 export interface McpSyncQuery {
   tool: string;
@@ -32,26 +32,14 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
   github: {
     id: 'github',
     label: 'GitHub',
-    transport: 'mcp',
+    transport: 'github-rest',
     authMode: 'bearer',
-    defaultUrl: 'https://api.githubcopilot.com/mcp/readonly',
+    defaultUrl: 'https://api.github.com',
     tokenLabel: 'GitHub personal access token',
     tokenHelp:
-      'Create a fine-grained PAT (read access to issues & pull requests) at github.com/settings/tokens.',
-    scopes: ['issues:read', 'pull_requests:read'],
-    syncQueries: [
-      { tool: 'search_issues', args: { query: 'assignee:@me is:open is:issue', perPage: 30 }, kind: 'issue' },
-      {
-        tool: 'search_issues',
-        args: { query: 'author:@me is:open is:pull-request', perPage: 30 },
-        kind: 'pull_request',
-      },
-      {
-        tool: 'search_pull_requests',
-        args: { query: 'review-requested:@me is:open', perPage: 30 },
-        kind: 'pull_request',
-      },
-    ],
+      'Create a fine-grained PAT with read access to metadata, contents, issues, pull requests, and Projects at github.com/settings/tokens.',
+    scopes: ['metadata:read', 'contents:read', 'issues:read', 'pull_requests:read', 'projects:read'],
+    syncQueries: [],
   },
   bitbucket: {
     id: 'bitbucket',
@@ -112,6 +100,10 @@ export interface NormalizedMcpItem {
   url?: string;
   state?: string;
   author?: string;
+  repository?: string;
+  organization?: string;
+  parentExternalId?: string;
+  sha?: string;
   assignedToUser?: boolean;
   updatedAtSource?: number;
   raw?: unknown;

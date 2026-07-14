@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { recordCompletionEvent } from './albatrossWork';
 import { now, requireInternalSecret } from './lib';
 
 // Kanban boards with sharing (spec M2). Every function resolves its caller
@@ -152,6 +153,21 @@ async function appendActivity(ctx: MutationCtx, card: any, userId: string, actio
   await ctx.db.patch(card._id, { activity });
 }
 
+// Completion history (issue #87/#18): the first flip of a card from open to
+// completed records a completionEvent, whether it happened via the completed
+// toggle (updateCard) or a drag into the Done column (moveCard). Reopening
+// does not erase history; recordCompletionEvent is best-effort and never
+// fails the card mutation.
+async function recordCardCompletion(ctx: MutationCtx, userId: string, card: any, completedAt: number) {
+  await recordCompletionEvent(ctx, {
+    userId,
+    artifactKind: 'task',
+    artifactId: String(card._id),
+    completedAt,
+    dueAt: typeof card.dueAt === 'number' ? card.dueAt : undefined,
+  });
+}
+
 function sourceIndexFields(source: any) {
   const threadId = typeof source?.threadId === 'string' ? source.threadId : undefined;
   const eventId =
@@ -168,6 +184,37 @@ function sourceIndexFields(source: any) {
   };
 }
 
+// Shared board factory: one insert path for the default Personal board, user-
+// created boards, and per-area boards (convex/albatross.ts createArea), so
+// every board is born with real columns and the Done-column completion rule
+// applies everywhere.
+export async function insertBoardWithColumns(
+  ctx: MutationCtx,
+  ownerUserId: string,
+  title: string,
+  options: { columns?: string[]; isDefault?: boolean } = {},
+): Promise<Id<'boards'>> {
+  const ts = now();
+  const boardId = await ctx.db.insert('boards', {
+    ownerUserId,
+    title: title.trim() || 'Untitled board',
+    ...(options.isDefault ? { isDefault: true } : {}),
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  const columns = options.columns?.length ? options.columns : STARTER_COLUMNS;
+  for (let i = 0; i < columns.length; i += 1) {
+    await ctx.db.insert('boardColumns', {
+      boardId,
+      name: columns[i],
+      order: (i + 1) * ORDER_STEP,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  }
+  return boardId;
+}
+
 export const ensureDefaultBoard = mutation({
   args: { ...callerArgs },
   handler: async (ctx, args) => {
@@ -177,24 +224,7 @@ export const ensureDefaultBoard = mutation({
       .withIndex('by_owner', (q) => q.eq('ownerUserId', userId))
       .collect();
     if (owned.length) return owned[0]._id;
-    const ts = now();
-    const boardId = await ctx.db.insert('boards', {
-      ownerUserId: userId,
-      title: 'Personal',
-      isDefault: true,
-      createdAt: ts,
-      updatedAt: ts,
-    });
-    for (let i = 0; i < STARTER_COLUMNS.length; i += 1) {
-      await ctx.db.insert('boardColumns', {
-        boardId,
-        name: STARTER_COLUMNS[i],
-        order: (i + 1) * ORDER_STEP,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
-    return boardId;
+    return insertBoardWithColumns(ctx, userId, 'Personal', { isDefault: true });
   },
 });
 
@@ -202,24 +232,7 @@ export const createBoard = mutation({
   args: { ...callerArgs, title: v.string(), columns: v.optional(v.array(v.string())) },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    const ts = now();
-    const boardId = await ctx.db.insert('boards', {
-      ownerUserId: userId,
-      title: args.title.trim() || 'Untitled board',
-      createdAt: ts,
-      updatedAt: ts,
-    });
-    const columns = args.columns?.length ? args.columns : STARTER_COLUMNS;
-    for (let i = 0; i < columns.length; i += 1) {
-      await ctx.db.insert('boardColumns', {
-        boardId,
-        name: columns[i],
-        order: (i + 1) * ORDER_STEP,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
-    return boardId;
+    return insertBoardWithColumns(ctx, userId, args.title, { columns: args.columns });
   },
 });
 
@@ -498,6 +511,9 @@ export const updateCard = mutation({
       // column membership stay consistent on boards that have a Done column,
       // and the toggle still works on those that don't.
       patch.completedAt = completing ? args.completedAt : undefined;
+      if (completing && !card.completedAt) {
+        await recordCardCompletion(ctx, userId, card, args.completedAt as number);
+      }
       const columns = await columnsForBoard(ctx, card.boardId);
       if (completing) {
         const done = columns.find((column) => isDoneColumn(column.name));
@@ -518,11 +534,12 @@ export const updateCard = mutation({
     }
     await ctx.db.patch(args.cardId, patch);
     const changed = Object.keys(patch).filter((key) => key !== 'updatedAt');
+    let fresh = await ctx.db.get(args.cardId);
     if (changed.length) {
-      const fresh = await ctx.db.get(args.cardId);
       if (fresh) await appendActivity(ctx, fresh, userId, 'updated', changed.join(', '));
+      fresh = await ctx.db.get(args.cardId);
     }
-    return { previous: snapshotCard(card) };
+    return { previous: snapshotCard(card), card: await cardStatePayload(ctx, fresh || card) };
   },
 });
 
@@ -583,7 +600,11 @@ export const moveCard = mutation({
     const movePatch: Record<string, unknown> = { columnId: args.columnId, order, updatedAt: now() };
     // Keep completion in sync with the Done column.
     if (isDoneColumn(column.name)) {
-      if (!card.completedAt) movePatch.completedAt = now();
+      if (!card.completedAt) {
+        const completedAt = now();
+        movePatch.completedAt = completedAt;
+        await recordCardCompletion(ctx, userId, card, completedAt);
+      }
     } else if (card.completedAt) {
       movePatch.completedAt = undefined; // leaving Done reopens the card
     }
@@ -592,7 +613,45 @@ export const moveCard = mutation({
       const fresh = await ctx.db.get(args.cardId);
       if (fresh) await appendActivity(ctx, fresh, userId, 'moved', `to ${column.name}`);
     }
-    return { previous };
+    const fresh = await ctx.db.get(args.cardId);
+    return { previous, card: await cardStatePayload(ctx, fresh || card) };
+  },
+});
+
+export const getCardState = query({
+  args: { ...callerArgs, cardId: v.id('cards') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const card = await ctx.db.get(args.cardId);
+    if (!card) throw new Error('Card not found.');
+    await requireBoard(ctx, card.boardId, userId, 'viewer');
+    return cardStatePayload(ctx, card);
+  },
+});
+
+// Batch completion snapshot for the plan dossier's task cards: the artifact
+// iframe strikes steps off from this live query, so a card completed on the
+// board crosses off in the dossier too. Lenient by design — deleted cards,
+// malformed ids, and lost board access are skipped, never thrown, so one
+// stale mapping can't break the whole plan view.
+export const getCardStates = query({
+  args: { ...callerArgs, cardIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const states: Array<{ cardId: string; completedAt: number | null }> = [];
+    for (const raw of args.cardIds.slice(0, 60)) {
+      const cardId = ctx.db.normalizeId('cards', raw);
+      if (!cardId) continue;
+      const card = await ctx.db.get(cardId);
+      if (!card) continue;
+      try {
+        await requireBoard(ctx, card.boardId, userId, 'viewer');
+      } catch {
+        continue;
+      }
+      states.push({ cardId: String(cardId), completedAt: card.completedAt ?? null });
+    }
+    return states;
   },
 });
 
@@ -1002,5 +1061,17 @@ function snapshotCard(card: any) {
     sourceThreadId: card.sourceThreadId,
     sourceCalendarEventId: card.sourceCalendarEventId,
     sourceAccountId: card.sourceAccountId,
+  };
+}
+
+async function cardStatePayload(ctx: QueryCtx | MutationCtx, card: any) {
+  const [board, column] = (await Promise.all([ctx.db.get(card.boardId), ctx.db.get(card.columnId)])) as any[];
+  return {
+    cardId: card._id,
+    ...snapshotCard(card),
+    boardTitle: board?.title ?? null,
+    columnName: column?.name ?? null,
+    completed: Boolean(card.completedAt),
+    completedAt: card.completedAt ?? null,
   };
 }

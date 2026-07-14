@@ -69,6 +69,35 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toContain('class="icon-btn"');
   });
 
+  test('styles the editorial header/line voice with the second accent', () => {
+    const html = buildNativeDailyReportArtifact(sampleReport());
+    // Deterministic fallback for standalone rendering.
+    expect(html).toContain('--brief-accent-2:#774914');
+    // Header texts, tags, and the section rule speak in accent-2 with an
+    // accent-1 (or hairline) fallback.
+    expect(html).toMatch(/\.section-title\{[^}]*color:var\(--brief-accent-2,var\(--brief-ink\)\)/);
+    expect(html).toMatch(
+      /\.section-title::after\{[^}]*background:var\(--brief-accent-2,var\(--brief-hairline\)\)/,
+    );
+    expect(html).toMatch(/\.narrative h3\{[^}]*color:var\(--brief-accent-2,var\(--brief-accent\)\)/);
+    expect(html).toMatch(/\.tag\{[^}]*color:var\(--brief-accent-2,var\(--brief-accent\)\)/);
+    expect(html).toMatch(/\.caption\{[^}]*color:var\(--brief-accent-2,var\(--brief-muted\)\)/);
+    // Accent-1 stays the action/emphasis voice.
+    expect(html).toMatch(/\.btn\.primary\{[^}]*background:var\(--brief-accent\)/);
+    expect(html).toMatch(/\.lede-block \.lede:first-of-type::first-letter\{[^}]*color:var\(--brief-accent\)/);
+  });
+
+  test('never imposes ALL-CAPS labels: no uppercase transform, sentence-case dateline', () => {
+    const html = runWithAiRequestContext({ userTimezone: 'America/New_York' }, () =>
+      buildNativeDailyReportArtifact(sampleReport()),
+    );
+    expect(html).not.toContain('text-transform:uppercase');
+    expect(html).not.toContain('text-transform: uppercase');
+    // The spine dateline stays sentence case ("Jun 10, 2026"), never "JUN 10".
+    expect(html).toContain('Jun 10, 2026');
+    expect(html).not.toContain('JUN 10');
+  });
+
   test('renders branded source footer with service logos', () => {
     const html = buildNativeDailyReportArtifact({
       ...sampleReport(),
@@ -80,6 +109,9 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).not.toContain('footer-lab86');
     expect(html).not.toContain('footer-letter');
     expect(html).toContain('aria-label="Gmail"');
+    expect(html).toContain('viewBox="0 0 800 636.36322"');
+    expect(html).toContain('gmail-footer-gradient-a');
+    expect(html).not.toContain('M3.4 5.1h17.2v13.8H3.4z');
     expect(html).toContain('aria-label="GitHub"');
     expect(html).toContain('aria-label="Slack"');
   });

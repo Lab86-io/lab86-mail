@@ -39,6 +39,10 @@ export const reportTargets = internalQuery({
     const tzByUser = new Map<string, string>();
     for (const calendar of calendars) {
       if (!userIds.has(calendar.userId) || !calendar.timezone) continue;
+      // UTC/GMT/Etc are provider filler, not the user's place — a UTC-labeled
+      // primary must not beat a real zone (or the morning edition fires at
+      // 7am UTC and the brief datelines the wrong locale).
+      if (/^(UTC|GMT|Etc\/)/i.test(calendar.timezone)) continue;
       // Prefer the primary calendar's tz; otherwise keep the first one seen.
       if (calendar.isPrimary || !tzByUser.has(calendar.userId)) {
         tzByUser.set(calendar.userId, calendar.timezone);

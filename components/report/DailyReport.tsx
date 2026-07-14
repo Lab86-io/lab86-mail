@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useConvexAuth, useQuery as useConvexQuery } from 'convex/react';
 import {
   Ban,
   CalendarDays,
@@ -9,13 +10,15 @@ import {
   FileText,
   Inbox,
   Newspaper,
-  Palette,
   RefreshCw,
   User,
   X,
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ConnectionLogo, ProviderLogo } from '@/components/icons/provider-logos';
+import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
+import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
+import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,11 +32,15 @@ import {
 import { Markdown } from '@/components/ui/markdown';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { api } from '@/convex/_generated/api';
+import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
+import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
 import { taskSourceColor } from '@/lib/shared/task-colors';
+import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
 interface DailyReportItem {
@@ -126,6 +133,7 @@ interface DailyReportPayload {
     | DailyReportCalendarItem[]
     | DailyReportMcpItem[]
     | string
+    | AlbatrossDailyReportContext
     | undefined
   >;
   stats: {
@@ -238,6 +246,13 @@ function asEvents(value: DailyReportPayload['sections'][string]): DailyReportCal
   return Array.isArray(value) ? (value as DailyReportCalendarItem[]) : [];
 }
 
+// The Albatross section is an object, not the array/string the other sections
+// carry, so it needs its own coercion before the brief reads it.
+function asAlbatrossContext(value: unknown): AlbatrossDailyReportContext | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as AlbatrossDailyReportContext;
+}
+
 function dailyReportThreadKey(account: string, threadId: string): string {
   return JSON.stringify([account, threadId]);
 }
@@ -343,7 +358,7 @@ function ServiceList({ services }: { services: BriefService[] }) {
 
 function ServiceLogo({ service }: { service: BriefService }) {
   const className = 'inline-block size-[0.88em] shrink-0 translate-y-[-0.04em]';
-  if (service.id === 'gmail') return <ProviderLogo provider="google" className={className} />;
+  if (service.id === 'gmail') return <GmailLogo className={className} />;
   if (service.id === 'outlook') return <ProviderLogo provider="microsoft" className={className} />;
   if (service.id === 'icloud') return <ProviderLogo provider="icloud" className={className} />;
   if (
@@ -364,14 +379,6 @@ function ServiceLogo({ service }: { service: BriefService }) {
 // access (it cannot read cookies, storage, or the Convex client) — every
 // mutation flows through this allowlisted postMessage handler, which validates
 // the message source and the action before touching app state.
-const FONT_FAMILIES: Record<string, string> = {
-  sans: "'Geist', system-ui, sans-serif",
-  grotesk: "'Hanken Grotesk', system-ui, sans-serif",
-  serif: "'Fraunces', Georgia, serif",
-  instrument: "'Instrument Serif', Georgia, serif",
-  news: "'Averia Serif Libre', Georgia, serif",
-};
-
 const REPORT_ARTIFACT_RUNTIME_JS = `<script id="lab86-report-runtime-js">
 (function(){
 if(window.__lab86ReportRuntimeInstalled)return;
@@ -447,9 +454,12 @@ if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.c
 	})();
 	</script>`;
 
-function withReportArtifactRuntime(html: string): string {
+function withReportArtifactRuntime(
+  html: string,
+  albatrossContext?: AlbatrossDailyReportContext | null,
+): string {
   if (!html) return html;
-  let next = html.replace(
+  let next = injectReportAreaBrief(html, albatrossContext ?? null).replace(
     /<script\b(?=[^>]*\bid=(["'])lab86-report-runtime-js\1)[^>]*>[\s\S]*?<\/script>/gi,
     '',
   );
@@ -463,11 +473,13 @@ function withReportArtifactRuntime(html: string): string {
 
 function ReportArtifact({
   html,
+  albatrossContext,
   dismissedTaskIds,
   dismissedThreadRecords,
   onChanged,
 }: {
   html: string;
+  albatrossContext?: AlbatrossDailyReportContext | null;
   dismissedTaskIds: string[];
   dismissedThreadRecords: DailyReportThreadDismissalRecord[];
   onChanged?: () => void;
@@ -476,6 +488,7 @@ function ReportArtifact({
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   // The brief is theme-agnostic HTML (CSS vars with fallbacks); the host injects
   // the user's actual theme so it matches the app and restyles live on change.
@@ -483,6 +496,8 @@ function ReportArtifact({
   const appFont = useClientStore((s) => s.appFont);
   const accentHue = useClientStore((s) => s.accentHue);
   const accentChroma = useClientStore((s) => s.accentChroma);
+  const accent2Hue = useClientStore((s) => s.accent2Hue);
+  const accent2Chroma = useClientStore((s) => s.accent2Chroma);
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
 
@@ -490,24 +505,7 @@ function ReportArtifact({
   // background, and light/dark) into the brief's --brief-* tokens. Posted on
   // iframe load and again whenever any customization slice changes.
   const postTheme = useCallback(() => {
-    const win = frameRef.current?.contentWindow;
-    if (!win) return;
-    const css = getComputedStyle(document.documentElement);
-    const v = (name: string) => css.getPropertyValue(name).trim();
-    const theme: Record<string, string> = {
-      '--brief-bg': v('--color-bg') || '#faf9f6',
-      '--brief-ink': v('--color-text') || '#1a1a1a',
-      '--brief-muted': v('--color-text-muted') || '#6b6b6b',
-      '--brief-hairline': v('--color-border') || '#e6e3dc',
-      '--brief-accent': v('--color-accent') || '#c2683c',
-      '--brief-accent-soft': v('--color-accent-soft') || 'rgba(194,104,60,0.14)',
-      // Two fonts, like the rest of the app: the picked face drives the display
-      // layer (headings/masthead); body copy stays sans.
-      '--brief-font-display': FONT_FAMILIES[appFont ?? 'serif'] ?? FONT_FAMILIES.serif,
-      '--brief-font-body': FONT_FAMILIES.sans,
-      '--brief-display-tracking': appFont === 'instrument' ? '0.045em' : '0em',
-    };
-    win.postMessage({ source: 'lab86-host', type: 'theme', theme }, '*');
+    postBriefTheme(frameRef.current?.contentWindow, appFont);
   }, [appFont]);
 
   const postDismissedTasks = useCallback(() => {
@@ -539,6 +537,8 @@ function ReportArtifact({
     postDismissedThreads,
     accentHue,
     accentChroma,
+    accent2Hue,
+    accent2Chroma,
     bgHue,
     surfaceTint,
     html,
@@ -596,11 +596,16 @@ function ReportArtifact({
             setPrimaryView('mail');
             return ack(true);
           case 'open_view':
-            if (['mail', 'tasks', 'calendar'].includes(payload.view)) {
+            if (['mail', 'tasks', 'calendar', 'areas'].includes(payload.view)) {
               setPrimaryView(payload.view);
               return ack(true);
             }
             return ack(false, 'unknown view');
+          case 'open_area':
+            if (!payload.areaId) return ack(false, 'missing areaId');
+            setSelectedAreaId(String(payload.areaId));
+            setPrimaryView('areas');
+            return ack(true);
           case 'toggle_task':
             if (!payload.cardId) return ack(false, 'missing cardId');
             {
@@ -727,13 +732,20 @@ function ReportArtifact({
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [setSelectedThread, setThreadAccount, setPrimaryView, setPendingReplyBody, onChanged]);
+  }, [
+    setSelectedThread,
+    setThreadAccount,
+    setPrimaryView,
+    setSelectedAreaId,
+    setPendingReplyBody,
+    onChanged,
+  ]);
 
   return (
     <iframe
       ref={frameRef}
       title="The Daily Brief"
-      srcDoc={withReportArtifactRuntime(html)}
+      srcDoc={withReportArtifactRuntime(html, albatrossContext)}
       onLoad={() => {
         postTheme();
         postDismissedTasks();
@@ -748,109 +760,32 @@ function ReportArtifact({
   );
 }
 
-const GENERATING_PHRASES = [
-  'Reading the last week of mail',
-  'Finding the threads that need a decision',
-  'Folding in tasks and calendar context',
-  "Choosing today's artwork",
-  'Composing the brief artifact',
-  'Laying out charts, actions, and widgets',
-];
-
-const GENERATION_STEPS = [
-  { label: 'Source scan', icon: Inbox },
-  { label: 'Editorial pass', icon: FileText },
-  { label: 'Artwork', icon: Palette },
-  { label: 'Artifact render', icon: Newspaper },
-];
-
 const STUCK_GENERATION_MS = 20 * 60_000;
 
-// The "we're working on it" state: a quiet, staged progress surface. Mobbin
-// references favored calm skeleton/progress cards over rapid typewriter motion.
+// Context the brief actually reads; the vortex swallows these while composing.
+const BRIEF_VORTEX_SOURCES: VortexSource[] = [
+  { id: 'mail', label: 'Mail', kind: 'mail' },
+  { id: 'calendar', label: 'Calendar', kind: 'calendar' },
+  { id: 'tasks', label: 'Tasks', kind: 'tasks' },
+  { id: 'areas', label: 'Areas', kind: 'areas' },
+  { id: 'notes', label: 'Notes', kind: 'notes' },
+];
+
+// The "we're working on it" state: the shared context-vortex treatment —
+// context cards fly into a growing singularity until the brief springs out.
 function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
-  const [phraseIdx, setPhraseIdx] = useState(0);
-
-  useEffect(() => {
-    const t = window.setInterval(() => setPhraseIdx((i) => (i + 1) % GENERATING_PHRASES.length), 1600);
-    return () => window.clearInterval(t);
-  }, []);
-
   const stage =
-    report?.artifactStatus === 'composing'
-      ? 'Designing the layout'
-      : report?.progress?.stage || 'Gathering the last week';
-  const pct = report?.progress?.total
-    ? Math.max(8, Math.min(100, (report.progress.done / report.progress.total) * 100))
-    : null;
-  const currentStep = pct == null ? 0 : Math.min(GENERATION_STEPS.length - 1, Math.floor(pct / 25));
+    report?.artifactStatus === 'composing' ? 'Designing the layout' : report?.progress?.stage || null;
+  const progressCount = report?.progress?.total
+    ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}`
+    : '';
+  const subtitle = stage
+    ? `${stripEmoji(stage)}${progressCount}…`
+    : 'Reading the week’s mail, calendar, and tasks…';
 
   return (
-    <div className="grid h-full place-items-center px-6">
-      <div className="@container w-full max-w-xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-left shadow-[var(--shadow-soft)]">
-        <div className="flex items-start gap-4">
-          <div className="relative grid size-12 shrink-0 place-items-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-accent)] shadow-[var(--shadow-control)]">
-            <Ring className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="font-serif text-[13px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Daily Brief
-            </p>
-            <h1 className="mt-1 font-serif text-[26px] font-semibold italic leading-none text-[var(--color-text)]">
-              Building your report
-            </h1>
-            <p className="mt-3 min-h-[1.45em] text-[14px] text-[var(--color-text-muted)] transition-opacity duration-150">
-              {GENERATING_PHRASES[phraseIdx % GENERATING_PHRASES.length]}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
-            {pct != null ? (
-              <div
-                className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                style={{ width: `${pct}%` }}
-              />
-            ) : (
-              <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--color-accent)]" />
-            )}
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-            <span>{stripEmoji(stage)}</span>
-            <span>
-              {report?.progress?.total
-                ? `${Math.min(report.progress.done, report.progress.total)}/${report.progress.total}`
-                : 'Queued'}
-            </span>
-          </div>
-        </div>
-
-        <div className="mt-5 grid grid-cols-2 gap-2 @[520px]:grid-cols-4">
-          {GENERATION_STEPS.map((step, index) => {
-            const Icon = step.icon;
-            const complete = pct != null && index < currentStep;
-            const active = index === currentStep;
-            return (
-              <div
-                key={step.label}
-                className={cn(
-                  'rounded-xl border px-3 py-3 text-[12px]',
-                  active || complete
-                    ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-subtle)] text-[var(--color-text)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]',
-                )}
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <Icon className="size-3.5" />
-                  {complete ? <CheckCircle2 className="size-3.5 text-[var(--color-accent)]" /> : null}
-                </div>
-                <div className="truncate font-medium">{step.label}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+    <div className="relative h-full min-h-[420px]">
+      <ContextVortex title="Composing your brief" subtitle={subtitle} sources={BRIEF_VORTEX_SOURCES} />
     </div>
   );
 }
@@ -1394,6 +1329,8 @@ export function DailyReport() {
         </div>
       ) : null}
 
+      <DailyBriefLiveState />
+
       <div
         className={cn(
           'min-h-0 flex-1',
@@ -1402,8 +1339,37 @@ export function DailyReport() {
       >
         {reportQuery.isLoading && !report ? (
           <ReportSkeleton />
-        ) : showGeneratingState ? (
-          <ReportGenerating report={report} />
+        ) : showGeneratingState || (displayArtifact && report?.html) ? (
+          // Vortex while composing; when the brief lands, the vortex collapses
+          // and the finished artifact springs out of it.
+          <AnimatePresence mode="wait" initial={false}>
+            {showGeneratingState || !report?.html ? (
+              <motion.div
+                key="vortex"
+                className="h-full"
+                exit={{ opacity: 0, scale: 1.05 }}
+                transition={{ duration: 0.25, ease: 'easeIn' }}
+              >
+                <ReportGenerating report={report} />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="artifact"
+                className="h-full"
+                initial={{ opacity: 0, scale: 0.92 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: 'spring', stiffness: 190, damping: 22, mass: 0.9 }}
+              >
+                <ReportArtifact
+                  html={report.html}
+                  albatrossContext={asAlbatrossContext(report.sections.albatross)}
+                  dismissedTaskIds={dismissedTaskIds}
+                  dismissedThreadRecords={dismissedThreadRecords}
+                  onChanged={invalidate}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         ) : !report ? (
           <Empty className="grid h-full place-items-center px-6 py-12 text-center">
             <EmptyHeader>
@@ -1417,13 +1383,6 @@ export function DailyReport() {
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
-        ) : displayArtifact && report.html ? (
-          <ReportArtifact
-            html={report.html}
-            dismissedTaskIds={dismissedTaskIds}
-            dismissedThreadRecords={dismissedThreadRecords}
-            onChanged={invalidate}
-          />
         ) : structuredArtifactUnavailable ? (
           <FullArtifactUnavailable
             artifactErrors={report.artifactErrors}
@@ -1492,6 +1451,8 @@ export function DailyReport() {
               dismissingTaskId={dismissTask.isPending ? dismissTask.variables?.cardId : undefined}
             />
 
+            <AlbatrossBrief context={asAlbatrossContext(report.sections.albatross)} delay={205} />
+
             {/* Sections. */}
             {SECTION_LABELS.map(([key, label, limit, roomy], i) => (
               <ReportSection
@@ -1531,6 +1492,61 @@ export function DailyReport() {
         )}
       </div>
     </section>
+  );
+}
+
+function DailyBriefLiveState() {
+  const { isAuthenticated } = useConvexAuth();
+  const checkin = useConvexQuery(api.albatrossNotifications.currentCheckin, isAuthenticated ? {} : 'skip') as
+    | DailyCheckinData
+    | null
+    | undefined;
+  const questions = useConvexQuery(
+    api.albatrossWorkV2.livePendingQuestions,
+    isAuthenticated ? { limit: 5 } : 'skip',
+  ) as
+    | Array<{
+        question: { _id: string; prompt: string };
+        work: null | { _id: string; title?: string; rawText: string };
+      }>
+    | undefined;
+  const setPrimaryView = useClientStore((state) => state.setPrimaryView);
+  const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  const [checkinOpen, setCheckinOpen] = useState(false);
+  const pending = questions?.filter((row) => row.work) || [];
+  if (!checkin && !pending.length) return null;
+  const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+  const carryover = checkin && checkin.localDate !== today;
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-5 py-2.5 text-[11.5px]">
+        {checkin ? (
+          <button
+            type="button"
+            onClick={() => setCheckinOpen(true)}
+            className="font-medium text-[var(--color-warning)] hover:underline"
+          >
+            {carryover ? 'Yesterday’s check-in is still open' : 'Evening check-in is ready'}
+          </button>
+        ) : null}
+        {pending.length ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedWorkId(String(pending[0].work!._id));
+              setPrimaryView('areas');
+            }}
+            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
+          >
+            {pending.length} Work {pending.length === 1 ? 'question' : 'questions'} need you
+          </button>
+        ) : null}
+        <span className="ml-auto text-[10.5px] text-[var(--color-text-faint)]">
+          Live · updates without regenerating the brief
+        </span>
+      </div>
+      <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
+    </>
   );
 }
 
@@ -1755,6 +1771,167 @@ function TaskCalendarBrief({
         ) : (
           <p className="text-[12px] text-[var(--color-text-faint)]">No calendar context in the last month.</p>
         )}
+      </div>
+    </section>
+  );
+}
+
+// Issue #85: the brief carries active Albatross intents and projects even when
+// the inbox is quiet, and asks - rather than assumes - about loud-but-undeclared
+// areas. Kept compact: one operational strip in the report's voice, never a
+// second dashboard.
+function AreaReportMark({ src }: { src?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return null;
+  return (
+    // biome-ignore lint/performance/noImgElement: report area marks use arbitrary favicon/image URLs.
+    <img
+      src={src}
+      alt=""
+      className="mt-0.5 size-5 shrink-0 rounded object-cover"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function AlbatrossBrief({ context, delay }: { context: AlbatrossDailyReportContext | null; delay: number }) {
+  if (!context) return null;
+  const {
+    activeProjects,
+    activeIntents,
+    askBeforeCentering,
+    includedAreas,
+    contextReview,
+    completions,
+    monthlyPrompt,
+  } = context;
+  const hasActive = activeProjects.length > 0 || activeIntents.length > 0;
+  const contextItems = [
+    ...includedAreas.map((area) => ({
+      id: `area:${area.areaId}`,
+      title: area.name,
+      meta: area.reason,
+      imageUrl: area.imageUrl ?? area.faviconUrl ?? null,
+    })),
+    ...contextReview.map((item) => ({
+      id: `review:${item.id}`,
+      title: item.title,
+      meta: item.reason || 'Needs context review',
+      imageUrl: null,
+    })),
+    ...completions.map((event) => ({
+      id: `completion:${event.id}`,
+      title: event.summary,
+      meta: event.completedAt ? formatDate(event.completedAt) : 'Completed',
+      imageUrl: null,
+    })),
+  ].slice(0, 6);
+  if (!hasActive && askBeforeCentering.length === 0 && contextItems.length === 0 && !monthlyPrompt) {
+    return null;
+  }
+
+  return (
+    <section className="blur-in @container" style={{ animationDelay: `${delay}ms` }}>
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="font-serif text-[14px] font-semibold text-[var(--color-text)]">
+            Areas &amp; Intents
+          </h2>
+          <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
+            {activeProjects.length + activeIntents.length + askBeforeCentering.length + contextItems.length ||
+              ''}
+          </span>
+        </div>
+
+        {monthlyPrompt ? (
+          <p className="mb-2.5 rounded-lg border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-3 py-2 text-[12px] leading-5 text-[var(--color-text)]">
+            {stripEmoji(monthlyPrompt)}
+          </p>
+        ) : null}
+
+        <div className="grid gap-x-5 gap-y-3 @[640px]:grid-cols-2">
+          <div className="min-w-0">
+            {hasActive ? (
+              <>
+                <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Active now</h3>
+                <ul className="mt-1.5 space-y-2">
+                  {activeProjects.map((project) => (
+                    <li key={project.id} className="min-w-0">
+                      <p className="truncate text-[12.5px] font-medium text-[var(--color-text)]">
+                        {stripEmoji(project.title)}
+                      </p>
+                      <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-5 text-[var(--color-text-muted)]">
+                        {project.outcome
+                          ? stripEmoji(project.outcome)
+                          : `Project / ${project.status ?? 'active'}`}
+                      </p>
+                    </li>
+                  ))}
+                  {activeIntents.map((intent) => (
+                    <li key={intent.id} className="flex min-w-0 items-baseline gap-2">
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--color-text)]">
+                        {stripEmoji(intent.text)}
+                      </span>
+                      {intent.status ? (
+                        <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">
+                          {intent.status.replace(/_/g, ' ')}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="text-[12px] text-[var(--color-text-faint)]">
+                No active intents or projects declared for today.
+              </p>
+            )}
+          </div>
+
+          {askBeforeCentering.length ? (
+            <div className="min-w-0">
+              <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Worth a check?</h3>
+              <ul className="mt-1.5 space-y-2">
+                {askBeforeCentering.map((area) => (
+                  <li key={area.areaId} className="flex min-w-0 gap-2">
+                    <AreaReportMark src={area.imageUrl ?? area.faviconUrl ?? null} />
+                    <div className="min-w-0">
+                      <p className="text-[12.5px] leading-5 text-[var(--color-text-muted)]">
+                        {stripEmoji(area.prompt)}
+                      </p>
+                      <p className="mt-0.5 truncate text-[10.5px] text-[var(--color-text-faint)]">
+                        {area.name}
+                        {typeof area.loudness === 'number' ? ` / loud in your inbox` : ''}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        {contextItems.length ? (
+          <div className="mt-3 border-t border-[var(--color-border)] pt-2.5">
+            <h3 className="text-[12px] font-medium text-[var(--color-text-muted)]">Context carried in</h3>
+            <ul className="mt-1.5 grid gap-x-5 gap-y-1.5 @[640px]:grid-cols-2">
+              {contextItems.map((item) => (
+                <li key={item.id} className="flex min-w-0 gap-2">
+                  <AreaReportMark src={item.imageUrl ?? null} />
+                  <div className="min-w-0">
+                    <p className="truncate text-[12.5px] text-[var(--color-text)]">
+                      {stripEmoji(item.title)}
+                    </p>
+                    <p className="mt-0.5 truncate text-[10.5px] text-[var(--color-text-faint)]">
+                      {stripEmoji(item.meta)}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </section>
   );

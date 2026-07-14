@@ -9,7 +9,9 @@
       "!**/data",
       "!next-env.d.ts",
       "!convex/_generated",
-      "!apps"
+      "!apps",
+      "!src_*.tsx",
+      "!components/tool-ui"
     ]
   },
   "formatter": {

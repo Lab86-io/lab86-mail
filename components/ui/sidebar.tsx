@@ -5,6 +5,7 @@ import { PanelLeftIcon } from 'lucide-react';
 import { Slot } from 'radix-ui';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
+import { DockRail, DockTile, useDock } from '@/components/ui/dock';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -203,7 +204,7 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          'relative w-(--sidebar-width) bg-[var(--color-transparent)] transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+          'relative w-(--sidebar-width) bg-[var(--color-transparent)] transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
           'group-data-[collapsible=offcanvas]:w-0',
           'group-data-[side=right]:rotate-180',
           variant === 'floating' || variant === 'inset'
@@ -214,7 +215,7 @@ function Sidebar({
       <div
         data-slot="sidebar-container"
         className={cn(
-          'fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:flex',
+          'fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:flex motion-reduce:transition-none',
           side === 'left'
             ? 'left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]'
             : 'right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]',
@@ -226,13 +227,20 @@ function Sidebar({
         )}
         {...props}
       >
-        <div
+        {/* The inner column doubles as the dock container: it tracks the
+            pointer across the whole rail so collapsed menu buttons magnify
+            with macOS dock physics (see SidebarMenuButton). While expanded
+            no DockTiles are mounted, so the tracking is inert. */}
+        <DockRail
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
+          baseSize={32}
+          magnifiedSize={44}
+          range={96}
           className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm"
         >
           {children}
-        </div>
+        </DockRail>
       </div>
     </div>
   );
@@ -325,7 +333,12 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="sidebar-header"
       data-sidebar="header"
-      className={cn('flex flex-col gap-2 p-2', className)}
+      // Icon mode tightens to the same rhythm as the content groups: one
+      // centered tile column with even small gaps.
+      className={cn(
+        'flex flex-col gap-2 p-2 group-data-[collapsible=icon]:gap-1.5 group-data-[collapsible=icon]:px-1',
+        className,
+      )}
       {...props}
     />
   );
@@ -358,8 +371,11 @@ function SidebarContent({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="sidebar-content"
       data-sidebar="content"
+      // Icon mode: the groups' own (reduced) padding carries the rhythm, so
+      // the container gap goes to zero — between-group space stays constant
+      // instead of compounding (p + gap + p) into lumpy runs.
       className={cn(
-        'flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden',
+        'flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:overflow-hidden',
         className,
       )}
       {...props}
@@ -372,7 +388,9 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="sidebar-group"
       data-sidebar="group"
-      className={cn('relative flex w-full min-w-0 flex-col p-2', className)}
+      // Icon mode: half the padding — a 48px rail can't afford 8px gutters,
+      // and py-1 on each group gives every group boundary the same 8px.
+      className={cn('relative flex w-full min-w-0 flex-col p-2 group-data-[collapsible=icon]:p-1', className)}
       {...props}
     />
   );
@@ -449,14 +467,20 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
     <li
       data-slot="sidebar-menu-item"
       data-sidebar="menu-item"
-      className={cn('group/menu-item relative', className)}
+      // Icon mode centers each row: dock tiles grow past the group's content
+      // width, and a centered flex item overflows symmetrically (macOS-style
+      // spill) instead of hugging the left edge.
+      className={cn(
+        'group/menu-item relative group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center',
+        className,
+      )}
       {...props}
     />
   );
 }
 
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding,color,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>span]:max-w-[12rem] [&>span]:transition-[max-width,opacity,transform] [&>span]:duration-200 [&>span]:ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:[&>span]:max-w-0 group-data-[collapsible=icon]:[&>span]:translate-x-1 group-data-[collapsible=icon]:[&>span]:opacity-0 [&>svg]:size-4 [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding,color,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-has-data-[sidebar=menu-action]/menu-item:pr-8 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>span]:max-w-[12rem] [&>span]:transition-[max-width,opacity,transform] [&>span]:duration-200 [&>span]:delay-150 [&>span]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>span]:transition-none group-data-[collapsible=icon]:[&>span]:max-w-0 group-data-[collapsible=icon]:[&>span]:translate-x-1 group-data-[collapsible=icon]:[&>span]:opacity-0 group-data-[collapsible=icon]:[&>span]:delay-0 [&>svg]:size-4 [&>svg]:shrink-0',
   {
     variants: {
       variant: {
@@ -492,6 +516,63 @@ function SidebarMenuButton({
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const Comp = asChild ? Slot.Root : 'button';
   const { isMobile, state } = useSidebar();
+  const dock = useDock();
+
+  // Collapsed desktop rows are dock tiles: sized by cursor proximity (macOS
+  // dock physics via the rail's shared mouseY) and named by a floating label
+  // beside the tile — the tooltip stands down so exactly one label mechanism
+  // exists. Expanded (pinned) and mobile render the normal list row.
+  if (dock && !asChild && state === 'collapsed' && !isMobile) {
+    return (
+      <DockTile
+        data-slot="sidebar-menu-button"
+        data-sidebar="menu-button"
+        data-size={size}
+        data-active={isActive}
+        label={typeof tooltip === 'string' ? tooltip : undefined}
+        className={cn(
+          sidebarMenuButtonVariants({ variant, size }),
+          // The tile's width/height come from the dock spring (inline style);
+          // a CSS transition on them would double-smooth the physics.
+          'shrink-0 justify-center transition-[color,background-color,box-shadow]',
+          // Glyph dead-center: the expanded row's p-2/gap-2 stand down and
+          // the label span leaves the flow entirely (its icon-mode max-w-0
+          // still occupied a flex slot, so every gap-2 pushed the glyph left
+          // by half a gap — 4px per trailing span). A 32px tile with p-0,
+          // gap-0 and justify-center puts the 16px glyph at true center.
+          // DockTile's own glow layer is also a span — it stays.
+          'gap-0 p-0 [&>span:not([data-slot=dock-tile-glow])]:hidden',
+          // The glyph rides the magnification: scale with the tile's size
+          // spring (--dock-glyph-scale from DockTile) instead of floating
+          // fixed-size in a swelling button. Scale is paint-only, so the
+          // centering above holds at every size. The shine border is
+          // excluded — it already tracks the button bounds via inset-0.
+          '[&>svg]:scale-(--dock-glyph-scale) [&>div:not([data-slot=shine-border])]:scale-(--dock-glyph-scale)',
+          // One tile system for every collapsed row: the same radius on all
+          // tiles, and the elevated-surface hover (DockTile adds the accent
+          // ring + glow) instead of the expanded list's flat accent wash.
+          // Callers with a stronger identity (the accent compose tile) still
+          // win via their own classes.
+          'rounded-lg hover:bg-[var(--color-bg-elevated)]',
+          className,
+          // After the caller's classes on purpose — these adapt the expanded
+          // row identity (passed in one className for both modes) to the
+          // dock:
+          // - overflow-visible: the hover glow halos past the tile edge
+          //   (callers set overflow-hidden for the expanded truncate).
+          // - Selected shows as the animated shine border hugging the tile,
+          //   not the expanded row's accent wash — one indicator per tile.
+          'overflow-visible data-[active=true]:bg-transparent data-[active=true]:shadow-none dark:data-[active=true]:bg-transparent dark:data-[active=true]:shadow-none',
+          // The shine border marks the SELECTED tile only: Compose mounts a
+          // permanent decorative shine for its expanded CTA row, so inactive
+          // tiles hide theirs and the active row's shine is the one moving
+          // highlight in the dock.
+          '[&[data-active=false]_[data-slot=shine-border]]:hidden',
+        )}
+        {...props}
+      />
+    );
+  }
 
   const button = (
     <Comp
@@ -499,7 +580,15 @@ function SidebarMenuButton({
       data-sidebar="menu-button"
       data-size={size}
       data-active={isActive}
-      className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
+      className={cn(
+        sidebarMenuButtonVariants({ variant, size }),
+        // Fallback icon-mode sizing (SSR first paint, asChild rows): fixed
+        // square tiles — the dock branch above owns interactive sizing. Same
+        // centering contract as the dock tiles: no padding, no gap, and the
+        // label span out of flow so the glyph sits dead-center.
+        'group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:[&>span]:hidden',
+        className,
+      )}
       {...props}
     />
   );
@@ -517,6 +606,8 @@ function SidebarMenuButton({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
+      {/* Icon-row tooltips only make sense when the labels are hidden: never
+          on mobile, never expanded (collapsed rows use the dock label). */}
       <TooltipContent side="right" align="center" hidden={state !== 'collapsed' || isMobile} {...tooltip} />
     </Tooltip>
   );

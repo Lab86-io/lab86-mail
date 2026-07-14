@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { McpClientHandle } from '../lib/mcp/client';
 import type { SyncConnectionDeps } from '../lib/mcp/sync';
 
 const bitbucketRow = {
@@ -19,6 +18,7 @@ function depsFor(overrides: Partial<SyncConnectionDeps> = {}): SyncConnectionDep
     listUserConnections: async () => [],
     convexMutation: async () => undefined,
     loadBitbucketItems: async () => ({ items: [] }),
+    loadGitHubItems: async () => ({ items: [], viewer: 'octocat' }),
     connectMcp: async () => {
       throw new Error('connectMcp should not be called');
     },
@@ -30,6 +30,35 @@ function depsFor(overrides: Partial<SyncConnectionDeps> = {}): SyncConnectionDep
 }
 
 describe('MCP syncConnection state transitions', () => {
+  test('records missing credentials and rejects unknown server definitions', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const missing = await syncConnection(
+      'user_1',
+      'missing_conn',
+      depsFor({
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+    const unknown = await syncConnection(
+      'user_1',
+      'unknown_conn',
+      depsFor({
+        getConnectionToken: async () => ({
+          row: { ...bitbucketRow, server: 'unknown', connectionId: 'unknown_conn' } as any,
+          token: 'token',
+        }),
+      }),
+    );
+
+    expect(missing).toEqual({ ok: false, count: 0, error: 'missing credentials' });
+    expect(mutations[0]).toMatchObject({ status: 'error', error: 'missing or unreadable credentials' });
+    expect(unknown).toEqual({ ok: false, count: 0, error: 'unknown server' });
+  });
+
   test('stores Bitbucket items and marks the connection ready', async () => {
     const mutations: Array<Record<string, any>> = [];
     const item = {
@@ -102,17 +131,8 @@ describe('MCP syncConnection state transitions', () => {
     });
   });
 
-  test('normalizes MCP tool output, upserts it, closes the client, and marks ready', async () => {
+  test('loads GitHub issues, projects, and commits through the direct read API', async () => {
     const mutations: Array<Record<string, any>> = [];
-    const calledTools: string[] = [];
-    let closed = false;
-    const handle: McpClientHandle = {
-      client: {} as any,
-      toolNames: new Set(['search_issues']),
-      close: async () => {
-        closed = true;
-      },
-    };
     const { syncConnection } = await import('../lib/mcp/sync');
 
     const result = await syncConnection(
@@ -123,7 +143,7 @@ describe('MCP syncConnection state transitions', () => {
           row: {
             connectionId: 'github_conn',
             server: 'github',
-            serverUrl: 'https://api.githubcopilot.com/mcp/readonly',
+            serverUrl: 'https://api.github.com',
             authKind: 'token',
             status: 'connected',
             scopes: [],
@@ -132,28 +152,38 @@ describe('MCP syncConnection state transitions', () => {
           } as any,
           token: 'ghp_123',
         }),
-        connectMcp: async (serverUrl, token, authMode) => {
-          expect(serverUrl).toContain('githubcopilot.com');
+        loadGitHubItems: async (serverUrl, token) => {
+          expect(serverUrl).toContain('api.github.com');
           expect(token).toBe('ghp_123');
-          expect(authMode).toBe('bearer');
-          return handle;
-        },
-        callMcpTool: async (_handle, tool) => {
-          calledTools.push(tool);
-          if (calledTools.length > 1) return { structuredContent: { items: [] } };
           return {
-            structuredContent: {
-              items: [
-                {
-                  id: 'issue_123',
-                  title: 'Investigate CI flakes',
-                  html_url: 'https://github.com/lab86/mail/issues/123',
-                  state: 'open',
-                  user: { login: 'octocat' },
-                  updated_at: '2026-06-25T16:00:00.000Z',
-                },
-              ],
-            },
+            viewer: 'octocat',
+            items: [
+              {
+                externalId: 'github:issue:lab86/mail#123',
+                kind: 'issue',
+                title: 'Investigate CI flakes',
+                state: 'open',
+                author: 'octocat',
+                repository: 'lab86/mail',
+                organization: 'lab86',
+                searchText: 'Investigate CI flakes issue lab86/mail',
+              },
+              {
+                externalId: 'github:project:PVT_1',
+                kind: 'project',
+                title: 'Albatross',
+                state: 'open',
+                searchText: 'Albatross project',
+              },
+              {
+                externalId: 'github:commit:lab86/mail:abc',
+                kind: 'commit',
+                title: 'Tighten the intent loop',
+                repository: 'lab86/mail',
+                sha: 'abc',
+                searchText: 'Tighten the intent loop commit',
+              },
+            ],
           };
         },
         convexMutation: async (_fn, args) => {
@@ -163,17 +193,119 @@ describe('MCP syncConnection state transitions', () => {
       }),
     );
 
-    expect(result).toEqual({ ok: true, count: 1 });
-    expect(calledTools).toEqual(['search_issues', 'search_issues']);
-    expect(closed).toBe(true);
+    expect(result).toEqual({ ok: true, count: 3 });
     expect(mutations.find((mutation) => Array.isArray(mutation.items))?.items[0]).toMatchObject({
-      externalId: 'issue_123',
+      externalId: 'github:issue:lab86/mail#123',
       kind: 'issue',
       title: 'Investigate CI flakes',
       state: 'open',
       author: 'octocat',
     });
-    expect(mutations.at(-1)).toMatchObject({ server: 'github', status: 'ready', itemCount: 1 });
+    expect(mutations.at(-1)).toMatchObject({ server: 'github', status: 'ready', itemCount: 3 });
+  });
+
+  test('marks hosted MCP connection and query failures as errors and always closes handles', async () => {
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const jiraRow = {
+      ...bitbucketRow,
+      connectionId: 'jira_conn',
+      server: 'jira',
+      serverUrl: 'https://mcp.atlassian.com/v1/mcp',
+    } as any;
+    const connectFailure = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'bad' }),
+        connectMcp: async () => {
+          throw Object.assign(new Error('forbidden'), { statusCode: 403 });
+        },
+      }),
+    );
+    let closedUnsupported = false;
+    const unsupported = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['different_tool']),
+            close: async () => {
+              closedUnsupported = true;
+            },
+          }) as any,
+      }),
+    );
+    let closedRejected = false;
+    const rejected = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['searchJiraIssuesUsingJql']),
+            close: async () => {
+              closedRejected = true;
+            },
+          }) as any,
+        callMcpTool: async () => {
+          throw new Error('query rejected');
+        },
+      }),
+    );
+
+    expect(connectFailure.error).toBe('auth rejected — reconnect with a valid token');
+    expect(unsupported.error).toContain('did not expose supported tools');
+    expect(rejected.error).toBe('query rejected');
+    expect(closedUnsupported).toBe(true);
+    expect(closedRejected).toBe(true);
+  });
+
+  test('normalizes, deduplicates, persists, and closes successful hosted MCP results', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    let closed = false;
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const slackRow = {
+      ...bitbucketRow,
+      connectionId: 'slack_conn',
+      server: 'slack',
+      serverUrl: 'https://mcp.slack.com/mcp',
+    } as any;
+    const result = await syncConnection(
+      'user_1',
+      slackRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: slackRow, token: 'token' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['search_messages']),
+            close: async () => {
+              closed = true;
+            },
+          }) as any,
+        callMcpTool: async (_handle, tool, args) => {
+          expect(tool).toBe('search_messages');
+          expect(args).toMatchObject({ query: 'is:mention' });
+          return {
+            structuredContent: [
+              { id: 'message_1', text: 'One mention', user: 'Ada', ts: '1760000000' },
+              { id: 'message_1', text: 'Duplicate mention' },
+            ],
+          } as any;
+        },
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(closed).toBe(true);
+    expect(mutations.find((entry) => Array.isArray(entry.items))?.items).toHaveLength(1);
+    expect(mutations.at(-1)).toMatchObject({ status: 'ready', itemCount: 1 });
   });
 
   test('syncAllMcpConnections only syncs connected rows and totals item counts', async () => {

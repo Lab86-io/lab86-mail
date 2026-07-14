@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { v } from 'convex/values';
+import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
 import { internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
@@ -250,6 +251,10 @@ export const upsertItems = mutation({
         url: v.optional(v.string()),
         state: v.optional(v.string()),
         author: v.optional(v.string()),
+        repository: v.optional(v.string()),
+        organization: v.optional(v.string()),
+        parentExternalId: v.optional(v.string()),
+        sha: v.optional(v.string()),
         assignedToUser: v.optional(v.boolean()),
         updatedAtSource: v.optional(v.number()),
         raw: v.optional(v.any()),
@@ -276,6 +281,41 @@ export const upsertItems = mutation({
       };
       if (existing) await ctx.db.patch(existing._id, row);
       else await ctx.db.insert('mcpItems', { ...row, createdAt: ts });
+
+      const evidenceKey = `mcp:${args.server}:${args.connectionId}:${item.externalId}`;
+      const existingEvidence = await ctx.db
+        .query('albatrossEvidence')
+        .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', evidenceKey))
+        .unique();
+      const sourceKind = args.server === 'github' ? githubEvidenceKind(item.kind) : 'mcp_item';
+      const occurredAt = item.updatedAtSource ?? ts;
+      const evidenceRow = {
+        userId: args.userId,
+        sourceKind,
+        sourceId: item.externalId,
+        connectionId: args.connectionId,
+        title: item.title,
+        summary: item.summary,
+        url: item.url,
+        occurredAt,
+        weight: evidenceWeight(sourceKind, 'observed', 1),
+        confidence: 1,
+        trust: 'observed',
+        dedupeKey: evidenceKey,
+        searchText: item.searchText,
+        metadata: {
+          server: args.server,
+          kind: item.kind,
+          state: item.state,
+          repository: item.repository,
+          organization: item.organization,
+          parentExternalId: item.parentExternalId,
+          sha: item.sha,
+        },
+        updatedAt: ts,
+      };
+      if (existingEvidence) await ctx.db.patch(existingEvidence._id, evidenceRow);
+      else await ctx.db.insert('albatrossEvidence', { ...evidenceRow, createdAt: ts });
 
       // "External wins for status": when an item transitions INTO a terminal
       // state, auto-complete any task created from it. Only act on a real
@@ -374,6 +414,10 @@ export const searchItems = query({
     userId: v.string(),
     query: v.string(),
     server: v.optional(serverValidator),
+    kind: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    organization: v.optional(v.string()),
+    state: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -391,6 +435,10 @@ export const searchItems = query({
     const q = ctx.db.query('mcpItems').withSearchIndex('by_search_text', (s) => {
       let expr = s.search('searchText', trimmed).eq('userId', args.userId);
       if (args.server) expr = expr.eq('server', args.server);
+      if (args.kind) expr = expr.eq('kind', args.kind);
+      if (args.repository) expr = expr.eq('repository', args.repository);
+      if (args.organization) expr = expr.eq('organization', args.organization);
+      if (args.state) expr = expr.eq('state', args.state);
       return expr;
     });
     const limit = args.limit ?? 25;

@@ -1,8 +1,21 @@
 'use client';
 
 import { AnimatePresence, motion } from 'motion/react';
-import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  Component,
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
+import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
+import { AreaHome } from '@/components/albatross/AreaHome';
+import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
+import { WorkDetail } from '@/components/albatross/WorkDetail';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
@@ -14,9 +27,15 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
-import type { PrimaryView } from '@/lib/shared/types';
+import {
+  hasPersistedPrimaryViewValue,
+  isAlbatrossPrimaryView,
+  normalizePrimaryView,
+  type PrimaryView,
+  resolveInitialPrimaryView,
+} from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
-import { AIBarSidebar, AIBarTrigger } from './AIBar';
+import { AIBarTrigger, AssistantChat } from './AIBar';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
@@ -25,30 +44,124 @@ import { ShortcutsSheet } from './ShortcutsSheet';
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
 // The navigation rail is no longer part of this group — it's a shadcn Sidebar
 // that collapses to an icon strip rather than unmounting.
-export function AppShell() {
-  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+export function AppShell({
+  albatrossEnabled,
+  clerkEnabled,
+  initialView,
+}: {
+  albatrossEnabled: boolean;
+  clerkEnabled: boolean;
+  initialView?: PrimaryView;
+}) {
   const railOpen = useClientStore((s) => s.railOpen);
   const railWidth = useClientStore((s) => s.railWidth);
   const setRailOpen = useClientStore((s) => s.setRailOpen);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const primaryView = useClientStore((s) => s.primaryView);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const composeMode = useClientStore((s) => s.compose.mode);
   const isMobile = useIsMobile();
   const [panelResizing, setPanelResizing] = useState(false);
   const mobileHistoryThreadRef = useRef<string | null>(null);
+  const initialViewAppliedRef = useRef(false);
+  const [hasSavedPrimaryView] = useState(() => hasPersistedPrimaryView());
+  const normalizedPrimaryView = normalizePrimaryView(primaryView, albatrossEnabled);
+  const initialPrimaryView = resolveInitialPrimaryView(
+    primaryView,
+    albatrossEnabled,
+    initialView,
+    hasSavedPrimaryView,
+  );
+  const [bootView, setBootView] = useState<PrimaryView | null>(() =>
+    initialPrimaryView !== normalizedPrimaryView ? initialPrimaryView : null,
+  );
+  const visiblePrimaryView = normalizePrimaryView(bootView ?? primaryView, albatrossEnabled);
+  const selectedWorkId = useClientStore((s) => s.selectedWorkId);
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
+  // Settings deep-links back into the area setup wizard via /?setup=areas.
+  const [openAreaSetup] = useState<boolean>(
+    () =>
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('setup') === 'areas',
+  );
+  const handleWorkCaptured = useCallback(
+    (workId: string) => {
+      setSelectedWorkId(workId);
+      setPrimaryView('areas');
+    },
+    [setPrimaryView, setSelectedWorkId],
+  );
+
+  // The Area Brief captures an area-bound intent, then hands it off here so the
+  // dump→plan moment lands on Plans with that intent selected — same contract
+  // as the global capture launcher, driven through client state.
+  const pendingOpenIntentId = useClientStore((s) => s.pendingOpenIntentId);
+  const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
+  useEffect(() => {
+    if (!pendingOpenIntentId) return;
+    handleWorkCaptured(pendingOpenIntentId);
+    setPendingOpenIntentId(null);
+  }, [handleWorkCaptured, pendingOpenIntentId, setPendingOpenIntentId]);
+  const pendingOpenWorkId = useClientStore((s) => s.pendingOpenWorkId);
+  const setPendingOpenWorkId = useClientStore((s) => s.setPendingOpenWorkId);
+  useEffect(() => {
+    if (!pendingOpenWorkId) return;
+    handleWorkCaptured(pendingOpenWorkId);
+    setPendingOpenWorkId(null);
+  }, [handleWorkCaptured, pendingOpenWorkId, setPendingOpenWorkId]);
+
+  useEffect(() => {
+    // The deep link must win over whatever view was persisted.
+    if (openAreaSetup && albatrossEnabled) setPrimaryView('areas');
+  }, [openAreaSetup, albatrossEnabled, setPrimaryView]);
 
   // The thread reader rides along with the mail-ish surfaces; calendar and
   // tasks keep their pane to themselves. Compose stays available everywhere.
-  const mailish = primaryView === 'mail' || primaryView === 'daily_report';
+  // Areas count as mail-ish: opening a thread from an area home slides the
+  // reader in beside it instead of yanking the user back to the inbox.
+  const mailish =
+    visiblePrimaryView === 'mail' || visiblePrimaryView === 'daily_report' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
-  const permutation = `i${readerVisible ? 't' : ''}${aiBarOpen ? 'a' : ''}`;
-  const panelIds = ['inbox', ...(readerVisible ? ['reader'] : []), ...(aiBarOpen ? ['ai'] : [])];
+  // The assistant is a floating overlay now (AssistantChat), not a docked
+  // panel, so it no longer participates in the resizable layout.
+  const permutation = `i${readerVisible ? 't' : ''}`;
+  const panelIds = ['inbox', ...(readerVisible ? ['reader'] : [])];
+  const layoutStorage = typeof window !== 'undefined' && !isMobile ? window.localStorage : noopLayoutStorage;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: `lab86-mail-shell-v2:${permutation}`,
     panelIds,
-    storage: typeof window !== 'undefined' && !isMobile ? window.localStorage : undefined,
+    storage: layoutStorage,
   });
+
+  useEffect(() => {
+    if (!bootView && visiblePrimaryView !== primaryView) setPrimaryView(visiblePrimaryView);
+  }, [bootView, primaryView, setPrimaryView, visiblePrimaryView]);
+
+  useEffect(() => {
+    if (!initialView || initialViewAppliedRef.current) return;
+
+    const retryMs = [0, 150, 600, 1500];
+    const timers = retryMs.map((delay, index) =>
+      window.setTimeout(() => {
+        const currentState = useClientStore.getState();
+        const nextView = resolveInitialPrimaryView(
+          currentState.primaryView,
+          albatrossEnabled,
+          initialView,
+          hasSavedPrimaryView,
+        );
+        if (nextView !== currentState.primaryView) currentState.setPrimaryView(nextView);
+        if (index === retryMs.length - 1) {
+          initialViewAppliedRef.current = true;
+          setBootView(null);
+        }
+      }, delay),
+    );
+
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [albatrossEnabled, hasSavedPrimaryView, initialView]);
 
   useEffect(() => {
     if (!isMobile || !selectedThreadId || mobileHistoryThreadRef.current === selectedThreadId) return;
@@ -84,7 +197,11 @@ export function AppShell() {
           style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
           className="h-dvh overflow-hidden bg-[var(--color-bg)]"
         >
-          <Rail />
+          <Rail
+            albatrossEnabled={albatrossEnabled}
+            clerkEnabled={clerkEnabled}
+            activeViewOverride={bootView ?? undefined}
+          />
           <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
             <SidebarTrigger
               title="Show sidebar"
@@ -99,7 +216,11 @@ export function AppShell() {
                 className="absolute inset-0 h-full w-full"
                 aria-hidden={readerVisible}
               >
-                <PrimarySurface view={primaryView} />
+                <PrimarySurface
+                  albatrossEnabled={albatrossEnabled}
+                  view={visiblePrimaryView}
+                  selectedWorkId={selectedWorkId}
+                />
               </motion.div>
 
               <AnimatePresence initial={false}>
@@ -116,25 +237,11 @@ export function AppShell() {
                   </motion.div>
                 ) : null}
               </AnimatePresence>
-
-              <AnimatePresence initial={false}>
-                {aiBarOpen ? (
-                  <motion.div
-                    key="ai"
-                    initial={{ x: '100%' }}
-                    animate={{ x: 0 }}
-                    exit={{ x: '100%' }}
-                    transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute inset-0 z-40 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
-                  >
-                    <div className="h-full w-full overflow-hidden border-l border-[var(--color-border)]">
-                      <AIBarSidebar />
-                    </div>
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
             </div>
-            <AIBarTrigger />
+            <AIBarTrigger buttonHidden={albatrossEnabled} />
+            <AssistantChat />
+            {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleWorkCaptured} /> : null}
+            {albatrossEnabled ? <AlbatrossCompanion /> : null}
           </main>
         </SidebarProvider>
 
@@ -155,7 +262,11 @@ export function AppShell() {
         style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
         className="h-dvh overflow-hidden bg-[var(--color-bg)]"
       >
-        <Rail />
+        <Rail
+          albatrossEnabled={albatrossEnabled}
+          clerkEnabled={clerkEnabled}
+          activeViewOverride={bootView ?? undefined}
+        />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
         {railOpen ? <RailResizeHandle /> : null}
         <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
@@ -170,9 +281,13 @@ export function AppShell() {
               data-panel-resizing={panelResizing || undefined}
               className="h-full w-full"
             >
-              <Panel id="inbox" defaultSize="40%" minSize="280px">
+              <Panel id="inbox" defaultSize={panelIds.length === 1 ? '100%' : '40%'} minSize="280px">
                 <ReflowPanel>
-                  <PrimarySurface view={primaryView} />
+                  <PrimarySurface
+                    albatrossEnabled={albatrossEnabled}
+                    view={visiblePrimaryView}
+                    selectedWorkId={selectedWorkId}
+                  />
                 </ReflowPanel>
               </Panel>
 
@@ -193,18 +308,12 @@ export function AppShell() {
                   </ReflowPanel>
                 </Panel>
               ) : null}
-
-              {aiBarOpen ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
-              {aiBarOpen ? (
-                <Panel id="ai" defaultSize="360px" minSize="280px" maxSize="640px">
-                  <ReflowPanel className="border-l border-[var(--color-border)]">
-                    <AIBarSidebar />
-                  </ReflowPanel>
-                </Panel>
-              ) : null}
             </Group>
           </TooltipProvider>
-          <AIBarTrigger />
+          <AIBarTrigger buttonHidden={albatrossEnabled} />
+          <AssistantChat />
+          {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleWorkCaptured} /> : null}
+          {albatrossEnabled ? <AlbatrossCompanion /> : null}
         </main>
       </SidebarProvider>
 
@@ -216,7 +325,15 @@ export function AppShell() {
   );
 }
 
-function PrimarySurface({ view }: { view: PrimaryView }) {
+function PrimarySurface({
+  albatrossEnabled,
+  view,
+  selectedWorkId,
+}: {
+  albatrossEnabled: boolean;
+  view: PrimaryView;
+  selectedWorkId?: string | null;
+}) {
   switch (view) {
     case 'daily_report':
       return <DailyReport />;
@@ -224,8 +341,61 @@ function PrimarySurface({ view }: { view: PrimaryView }) {
       return <CalendarSurface />;
     case 'tasks':
       return <TasksSurface />;
+    case 'intents':
+      // Compatibility only: persisted Plans routes normalize to Areas.
+      return albatrossEnabled ? <AreaHome /> : <DailyReport />;
+    case 'areas':
+      // The area home page: mail, events, tasks, and context for the selected
+      // area. Management/teach flows live in /settings?tab=areas now.
+      return albatrossEnabled ? (
+        <SurfaceErrorBoundary surface="Areas">
+          {selectedWorkId ? <WorkDetail workId={selectedWorkId} /> : <AreaHome />}
+        </SurfaceErrorBoundary>
+      ) : (
+        <DailyReport />
+      );
+    case 'unassigned':
+      return albatrossEnabled && isAlbatrossPrimaryView(view) ? (
+        <AlbatrossSurface kind={view} />
+      ) : (
+        <DailyReport />
+      );
     default:
       return <Inbox />;
+  }
+}
+
+// A live-data surface must never take the whole shell down with it (a thrown
+// Convex query error propagates as a render error). Catch, explain, offer retry.
+class SurfaceErrorBoundary extends Component<
+  { surface: string; children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-center">
+          <p className="text-[14px] font-medium">{this.props.surface} hit an error.</p>
+          <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+            {this.state.error.message.slice(0, 300)}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ error: null })}
+            className="mt-4 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-[12.5px] hover:bg-[var(--color-bg-subtle)]"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
   }
 }
 
@@ -244,6 +414,19 @@ function ReflowPanel({ children, className }: { children: ReactNode; className?:
 const RAIL_MIN = 200;
 const RAIL_MAX = 420;
 const RAIL_DEFAULT = 240;
+const noopLayoutStorage: Pick<Storage, 'getItem' | 'setItem'> = {
+  getItem: () => null,
+  setItem: () => undefined,
+};
+
+function hasPersistedPrimaryView() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return hasPersistedPrimaryViewValue(window.localStorage.getItem('lab86-mail-ui'));
+  } catch {
+    return false;
+  }
+}
 
 // Drag handle living between the sidebar and the main content. It nudges the
 // `--sidebar-width` CSS variable directly during the drag (so the resize is

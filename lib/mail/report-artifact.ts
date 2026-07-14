@@ -17,11 +17,12 @@ export function buildNativeDailyReportArtifact(
   const generatedAt = report.generatedAt || Date.now();
   const art = getDailyArt(generatedAt);
   const weekday = formatInTimezone(generatedAt, timezone, { weekday: 'long' });
+  // Sentence-case dateline — ALL-CAPS letter-spaced labels are banned.
   const localDate = formatInTimezone(generatedAt, timezone, {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-  }).toUpperCase();
+  });
   const localTime = formatInTimezone(generatedAt, timezone, { hour: 'numeric', minute: '2-digit' });
   const composition = compositionInput || report.composition || compositionFromReport(report);
   const services = servicesForReport(report, composition);
@@ -34,7 +35,7 @@ export function buildNativeDailyReportArtifact(
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
 <style>
 *,*::before,*::after{box-sizing:border-box}
-:root{--brief-bg:#faf9f6;--brief-ink:#1a1a1a;--brief-muted:#6b6b6b;--brief-hairline:#e6e3dc;--brief-accent:#c2683c;--brief-accent-soft:rgba(194,104,60,.14);--brief-font-display:'Fraunces',Georgia,serif;--brief-font-body:'Geist',system-ui,sans-serif;--brief-display-tracking:0em}
+:root{--brief-bg:#faf9f6;--brief-ink:#1a1a1a;--brief-muted:#6b6b6b;--brief-hairline:#e6e3dc;--brief-accent:#c2683c;--brief-accent-soft:rgba(194,104,60,.14);--brief-accent-2:#774914;--brief-font-display:'Fraunces',Georgia,serif;--brief-font-body:'Geist',system-ui,sans-serif;--brief-display-tracking:0em}
 html,body{margin:0;min-height:100%;background:var(--brief-bg);color:var(--brief-ink);font-family:var(--brief-font-body);font-size:16px}
 body{overflow-x:hidden}
 button,a{font:inherit}
@@ -43,9 +44,9 @@ button,a{font:inherit}
 .hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.58),rgba(0,0,0,.18) 34%,rgba(0,0,0,.38)),linear-gradient(0deg,rgba(0,0,0,.42),rgba(0,0,0,0) 42%)}
 .masthead{position:absolute;inset:0;z-index:1;display:grid;place-items:center;text-align:center;padding:3rem 4rem}
 .masthead h1{max-width:12ch;margin:0;font-family:var(--brief-font-display);font-size:clamp(4rem,11vw,9.5rem);font-weight:650;font-style:italic;line-height:.82;letter-spacing:var(--brief-display-tracking);text-wrap:balance;text-shadow:0 2px 30px rgba(0,0,0,.48)}
-.spine{position:absolute;z-index:2;top:1.5rem;bottom:1.5rem;display:flex;align-items:center;font-size:.72rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.84);writing-mode:vertical-rl}
+.spine{position:absolute;z-index:2;top:1.5rem;bottom:1.5rem;display:flex;align-items:center;font-size:.74rem;font-weight:700;letter-spacing:.04em;color:rgba(255,255,255,.84);writing-mode:vertical-rl}
 .spine.left{left:1rem}.spine.right{right:1rem;transform:rotate(180deg)}
-.caption{max-width:1120px;margin:.55rem auto 0;padding:0 1.25rem;color:var(--brief-muted);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase}
+.caption{max-width:1120px;margin:.55rem auto 0;padding:0 1.25rem;color:var(--brief-accent-2,var(--brief-muted));font-size:.72rem;letter-spacing:.02em}
 main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .blocks{display:grid;grid-template-columns:minmax(0,1fr);gap:2rem}
 @media (min-width:860px){.blocks{grid-template-columns:minmax(0,.92fr) minmax(18rem,.48fr)}}
@@ -59,16 +60,16 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .narrative h1,.narrative h2{margin:.35rem 0 0;font-family:var(--brief-font-display);font-weight:650;line-height:1.08;letter-spacing:var(--brief-display-tracking);color:var(--brief-ink)}
 .narrative h1{font-size:clamp(1.55rem,3vw,2.15rem);font-style:italic}
 .narrative h2{font-size:clamp(1.12rem,2vw,1.48rem)}
-.narrative h3{margin:.45rem 0 0;font-size:.72rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:var(--brief-accent)}
+.narrative h3{margin:.45rem 0 0;font-size:.8rem;font-weight:750;letter-spacing:.02em;color:var(--brief-accent-2,var(--brief-accent))}
 .narrative p,.narrative li{margin:0;color:var(--brief-muted);font-size:.94rem;line-height:1.58}
 .narrative ul{margin:.1rem 0 0;padding-left:1.1rem}
 .narrative strong{color:var(--brief-ink);font-weight:700}
-.section-title{display:flex;align-items:center;gap:.85rem;margin:0 0 1rem;font-family:var(--brief-font-display);font-size:.82rem;font-weight:700;letter-spacing:max(var(--brief-display-tracking),.12em);text-transform:uppercase;color:var(--brief-ink)}
-.section-title::after{content:"";height:1px;flex:1;background:var(--brief-hairline)}
+.section-title{display:flex;align-items:center;gap:.85rem;margin:0 0 1rem;font-family:var(--brief-font-display);font-size:.98rem;font-weight:700;letter-spacing:var(--brief-display-tracking);color:var(--brief-accent-2,var(--brief-ink))}
+.section-title::after{content:"";height:1px;flex:1;background:var(--brief-accent-2,var(--brief-hairline));opacity:.45}
 .needs{display:grid;gap:.8rem}
 .need{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.8rem;padding:1rem 0;border-top:1px solid var(--brief-hairline)}
 .need:first-child{border-top:0}
-.tag{font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--brief-accent)}
+.tag{font-size:.74rem;font-weight:700;letter-spacing:.02em;color:var(--brief-accent-2,var(--brief-accent))}
 .need h3{margin:.25rem 0 .35rem;font-family:var(--brief-font-display);font-size:1.2rem;line-height:1.12;letter-spacing:var(--brief-display-tracking)}
 .need p,.muted{margin:0;color:var(--brief-muted);line-height:1.5}
 .actions{display:flex;align-items:start;gap:.5rem}

@@ -1,0 +1,952 @@
+{
+  "schemaVersion": "albatross-seed/v1",
+  "generatedAt": "2026-06-30T06:35:00.000Z",
+  "description": "Simulated Albatross 0.9 data for exercising areas, facts, unassigned review, intent capture, planning, approvals, daily report priority conflicts, projects, sprints, and completion reporting.",
+  "seedUser": {
+    "userId": "user_albatross_dev_seed",
+    "email": "albatross-dev@example.test",
+    "name": "Albatross Dev User",
+    "timezone": "America/New_York"
+  },
+  "tables": {
+    "accounts": [
+      {
+        "id": "account_personal_gmail",
+        "provider": "google",
+        "email": "jakob.personal@example.test",
+        "displayName": "Personal Gmail",
+        "primary": true
+      },
+      {
+        "id": "account_work_google",
+        "provider": "google",
+        "email": "jakob@cardhunt.example",
+        "displayName": "CardHunt Work",
+        "primary": false
+      },
+      {
+        "id": "account_statpearls_ms",
+        "provider": "microsoft",
+        "email": "jakob@statpearls.example",
+        "displayName": "StatPearls",
+        "primary": false
+      }
+    ],
+    "areas": [
+      {
+        "id": "area_cardhunt",
+        "name": "CardHunt",
+        "kind": "work",
+        "status": "active",
+        "description": "Job and launch work for CardHunt.",
+        "priority": 1
+      },
+      {
+        "id": "area_statpearls",
+        "name": "StatPearls",
+        "kind": "work",
+        "status": "active",
+        "description": "Clinical education product and content work.",
+        "priority": 2
+      },
+      {
+        "id": "area_my_apps",
+        "name": "My Apps",
+        "kind": "work",
+        "status": "active",
+        "description": "Lab86 Mail, Voice, Terminal, Files, Music, and adjacent personal software.",
+        "priority": 1
+      },
+      {
+        "id": "area_money",
+        "name": "Money Management",
+        "kind": "life_admin",
+        "status": "active",
+        "description": "Taxes, bills, accounts, reimbursements, and financial admin.",
+        "priority": 1
+      },
+      {
+        "id": "area_trip",
+        "name": "Trip Management",
+        "kind": "life_admin",
+        "status": "active",
+        "description": "Passports, travel documents, flights, hotels, and trip prep.",
+        "priority": 2
+      },
+      {
+        "id": "area_relationship",
+        "name": "Relationship Management",
+        "kind": "personal",
+        "status": "active",
+        "description": "Partner, family, friends, and social obligations.",
+        "priority": 2
+      },
+      {
+        "id": "area_schedule",
+        "name": "Schedule Management",
+        "kind": "personal",
+        "status": "active",
+        "description": "Calendar hygiene, appointments, sleep recovery, and replanning.",
+        "priority": 1
+      },
+      {
+        "id": "area_ai_news",
+        "name": "AI Development News",
+        "kind": "learning",
+        "status": "active",
+        "description": "Model releases, developer tooling, API updates, and papers.",
+        "priority": 3
+      },
+      {
+        "id": "area_music",
+        "name": "Music To Learn",
+        "kind": "learning",
+        "status": "active",
+        "description": "Banjo, guitar, music courses, playlists, and practice.",
+        "priority": 3
+      },
+      {
+        "id": "area_habits",
+        "name": "Habits",
+        "kind": "personal",
+        "status": "active",
+        "description": "Routines, exercise, sleep, hydration, and recurring self-maintenance.",
+        "priority": 2
+      },
+      {
+        "id": "area_job_search",
+        "name": "Job Search",
+        "kind": "candidate",
+        "status": "candidate",
+        "description": "Created from recruiter mail when the user confirms it belongs.",
+        "priority": 3
+      }
+    ],
+    "areaFacts": [
+      {
+        "id": "fact_cardhunt_domain_verified",
+        "areaId": "area_cardhunt",
+        "kind": "domain",
+        "status": "verified",
+        "value": "cardhunt.example",
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_cardhunt_launch",
+            "label": "Launch review thread"
+          }
+        ],
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_cardhunt_domain",
+            "confirmedAt": "2026-06-24T14:20:00.000Z",
+            "prompt": "Use cardhunt.example as a verified CardHunt domain."
+          }
+        ]
+      },
+      {
+        "id": "fact_cardhunt_repo_verified",
+        "areaId": "area_cardhunt",
+        "kind": "repo",
+        "status": "verified",
+        "value": "github.com/cardhunt/app",
+        "sourceRefs": [
+          {
+            "kind": "mcpItem",
+            "id": "mcp_cardhunt_pr_442",
+            "label": "CardHunt launch PR"
+          }
+        ],
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_cardhunt_repo",
+            "confirmedAt": "2026-06-24T14:21:00.000Z",
+            "prompt": "Store github.com/cardhunt/app as a CardHunt repo."
+          }
+        ]
+      },
+      {
+        "id": "fact_cardhunt_manager_candidate",
+        "areaId": "area_cardhunt",
+        "kind": "person_relationship",
+        "status": "candidate",
+        "value": "Andrew may be Jakob's manager for CardHunt.",
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_cardhunt_andrew_1_1",
+            "label": "1:1 scheduling with Andrew"
+          }
+        ],
+        "confirmationRefs": []
+      },
+      {
+        "id": "fact_cardhunt_old_status_rejected",
+        "areaId": "area_cardhunt",
+        "kind": "project_status",
+        "status": "rejected",
+        "value": "CardHunt launch was finished on June 20.",
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_cardhunt_launch",
+            "label": "Outdated launch thread"
+          }
+        ],
+        "confirmationRefs": []
+      },
+      {
+        "id": "fact_statpearls_domain_verified",
+        "areaId": "area_statpearls",
+        "kind": "domain",
+        "status": "verified",
+        "value": "statpearls.example",
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_statpearls_review",
+            "label": "StatPearls review request"
+          }
+        ],
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_statpearls_domain",
+            "confirmedAt": "2026-06-25T09:15:00.000Z",
+            "prompt": "Store statpearls.example as a StatPearls domain."
+          }
+        ]
+      },
+      {
+        "id": "fact_my_apps_lab86_mail_verified",
+        "areaId": "area_my_apps",
+        "kind": "repo",
+        "status": "verified",
+        "value": "github.com/Lab86-io/lab86-mail",
+        "sourceRefs": [
+          {
+            "kind": "mcpItem",
+            "id": "mcp_lab86_mail_issue_70",
+            "label": "Albatross shell issue"
+          }
+        ],
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_lab86_mail_repo",
+            "confirmedAt": "2026-06-30T06:20:00.000Z",
+            "prompt": "Treat lab86-mail as part of My Apps."
+          }
+        ]
+      },
+      {
+        "id": "fact_money_tax_deadline_candidate",
+        "areaId": "area_money",
+        "kind": "deadline",
+        "status": "candidate",
+        "value": "Taxes may be due April 15.",
+        "sourceRefs": [
+          {
+            "kind": "intent",
+            "id": "intent_taxes_panic",
+            "label": "Tax panic intent"
+          }
+        ],
+        "confirmationRefs": []
+      },
+      {
+        "id": "fact_trip_passport_candidate",
+        "areaId": "area_trip",
+        "kind": "document",
+        "status": "candidate",
+        "value": "Passport status is unknown and needs questions before planning.",
+        "sourceRefs": [
+          {
+            "kind": "intent",
+            "id": "intent_passport_one_word",
+            "label": "Passport intent"
+          }
+        ],
+        "confirmationRefs": []
+      },
+      {
+        "id": "fact_music_banjo_verified",
+        "areaId": "area_music",
+        "kind": "interest",
+        "status": "verified",
+        "value": "Banjo is a real music-learning interest.",
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_banjo_course",
+            "label": "Banjo course receipt"
+          }
+        ],
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_banjo_interest",
+            "confirmedAt": "2026-06-28T19:02:00.000Z",
+            "prompt": "Classify banjo learning as Music To Learn, not Noise."
+          }
+        ]
+      },
+      {
+        "id": "fact_rewards_sender_noise_verified",
+        "areaId": "area_habits",
+        "kind": "sender_rule",
+        "status": "verified",
+        "value": "rewards@bulk-air.example is noise unless tied to an active trip.",
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_rewards_points",
+            "label": "Rewards points promo"
+          }
+        ],
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_rewards_noise",
+            "confirmedAt": "2026-06-29T10:00:00.000Z",
+            "prompt": "Mark rewards sender as Noise."
+          }
+        ]
+      },
+      {
+        "id": "fact_relationship_lease_candidate",
+        "areaId": "area_relationship",
+        "kind": "relationship_finance",
+        "status": "candidate",
+        "value": "Shared lease decision may involve Alex.",
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_lease_renewal",
+            "label": "Lease renewal"
+          }
+        ],
+        "confirmationRefs": []
+      }
+    ],
+    "mailThreads": [
+      {
+        "id": "thread_cardhunt_launch",
+        "accountId": "account_work_google",
+        "subject": "Launch review: search UX and buyer onboarding",
+        "from": "andrew@cardhunt.example",
+        "lastDate": "2026-06-30T13:45:00.000Z",
+        "snippet": "Can you review the new buyer onboarding before tomorrow's demo?",
+        "smartPrimary": "needs_reply",
+        "unread": true,
+        "loudness": 92
+      },
+      {
+        "id": "thread_cardhunt_andrew_1_1",
+        "accountId": "account_work_google",
+        "subject": "1:1 this week",
+        "from": "andrew@cardhunt.example",
+        "lastDate": "2026-06-29T16:10:00.000Z",
+        "snippet": "Let's use the 1:1 to talk through launch risk and what you need from me.",
+        "smartPrimary": "main",
+        "unread": false,
+        "loudness": 54
+      },
+      {
+        "id": "thread_statpearls_review",
+        "accountId": "account_statpearls_ms",
+        "subject": "Cardiology module edits",
+        "from": "editor@statpearls.example",
+        "lastDate": "2026-06-28T11:05:00.000Z",
+        "snippet": "Please review the revised cardiology cases by Friday.",
+        "smartPrimary": "needs_reply",
+        "unread": true,
+        "loudness": 63
+      },
+      {
+        "id": "thread_banjo_course",
+        "accountId": "account_personal_gmail",
+        "subject": "Your banjo course starts Monday",
+        "from": "teacher@banjolab.example",
+        "lastDate": "2026-06-27T18:30:00.000Z",
+        "snippet": "Here are the practice tracks and first lesson materials.",
+        "smartPrimary": "review",
+        "unread": false,
+        "loudness": 31
+      },
+      {
+        "id": "thread_rewards_points",
+        "accountId": "account_personal_gmail",
+        "subject": "Flash deal: double points today only",
+        "from": "rewards@bulk-air.example",
+        "lastDate": "2026-06-30T08:15:00.000Z",
+        "snippet": "Earn twice the points on hotels before midnight.",
+        "smartPrimary": "noise",
+        "unread": true,
+        "loudness": 70
+      },
+      {
+        "id": "thread_recruiter_founder",
+        "accountId": "account_personal_gmail",
+        "subject": "Founder role intro",
+        "from": "maya@searchfirm.example",
+        "lastDate": "2026-06-30T15:20:00.000Z",
+        "snippet": "Would you be open to a confidential founder-in-residence conversation?",
+        "smartPrimary": "review",
+        "unread": true,
+        "loudness": 45
+      },
+      {
+        "id": "thread_passport_old",
+        "accountId": "account_personal_gmail",
+        "subject": "Passport appointment confirmation",
+        "from": "noreply@travel-docs.example",
+        "lastDate": "2024-11-04T14:00:00.000Z",
+        "snippet": "Your appointment confirmation code is P-2044.",
+        "smartPrimary": "finance_admin",
+        "unread": false,
+        "loudness": 20
+      },
+      {
+        "id": "thread_lease_renewal",
+        "accountId": "account_personal_gmail",
+        "subject": "Lease renewal options",
+        "from": "leasing@building.example",
+        "lastDate": "2026-06-26T12:00:00.000Z",
+        "snippet": "Please select a renewal option by July 10.",
+        "smartPrimary": "finance_admin",
+        "unread": false,
+        "loudness": 61
+      }
+    ],
+    "calendarEvents": [
+      {
+        "id": "cal_cardhunt_demo",
+        "calendarId": "work",
+        "title": "CardHunt buyer demo",
+        "startsAt": "2026-07-01T16:00:00.000-04:00",
+        "endsAt": "2026-07-01T16:45:00.000-04:00",
+        "attendees": ["andrew@cardhunt.example", "sales@cardhunt.example"],
+        "areaId": "area_cardhunt"
+      },
+      {
+        "id": "cal_tax_prep_hold",
+        "calendarId": "personal",
+        "title": "Tax document cleanup",
+        "startsAt": "2026-07-02T10:30:00.000-04:00",
+        "endsAt": "2026-07-02T12:00:00.000-04:00",
+        "attendees": [],
+        "areaId": "area_money"
+      },
+      {
+        "id": "cal_banjo_practice",
+        "calendarId": "personal",
+        "title": "Banjo practice",
+        "startsAt": "2026-07-03T18:00:00.000-04:00",
+        "endsAt": "2026-07-03T18:30:00.000-04:00",
+        "attendees": [],
+        "areaId": "area_music"
+      }
+    ],
+    "mcpItems": [
+      {
+        "id": "mcp_lab86_mail_issue_70",
+        "provider": "github",
+        "kind": "issue",
+        "title": "Add Albatross feature flag and navigation shell",
+        "url": "https://github.com/Lab86-io/lab86-mail/issues/70",
+        "areaId": "area_my_apps"
+      },
+      {
+        "id": "mcp_cardhunt_pr_442",
+        "provider": "github",
+        "kind": "pull_request",
+        "title": "Buyer onboarding polish",
+        "url": "https://github.com/cardhunt/app/pull/442",
+        "areaId": "area_cardhunt"
+      },
+      {
+        "id": "mcp_statpearls_jira_193",
+        "provider": "jira",
+        "kind": "ticket",
+        "title": "Cardiology module QA",
+        "url": "https://statpearls.example/browse/SP-193",
+        "areaId": "area_statpearls"
+      }
+    ],
+    "areaArtifactLinks": [
+      {
+        "id": "link_cardhunt_launch_primary",
+        "areaId": "area_cardhunt",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_cardhunt_launch",
+        "role": "primary",
+        "status": "verified",
+        "confidence": 0.96,
+        "reason": "Verified CardHunt domain and sender match.",
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_cardhunt_launch_link",
+            "confirmedAt": "2026-06-24T14:25:00.000Z",
+            "prompt": "Assign this launch thread to CardHunt as verified context."
+          }
+        ]
+      },
+      {
+        "id": "link_cardhunt_demo_primary",
+        "areaId": "area_cardhunt",
+        "artifactKind": "calendarEvent",
+        "artifactId": "cal_cardhunt_demo",
+        "role": "primary",
+        "status": "candidate",
+        "confidence": 0.88,
+        "reason": "Event title and attendees match CardHunt facts."
+      },
+      {
+        "id": "link_rewards_noise",
+        "areaId": "area_trip",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_rewards_points",
+        "role": "primary",
+        "status": "rejected",
+        "confidence": 0.22,
+        "reason": "User marked this sender as noise unless tied to an active trip."
+      },
+      {
+        "id": "link_banjo_music_primary",
+        "areaId": "area_music",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_banjo_course",
+        "role": "primary",
+        "status": "verified",
+        "confidence": 0.93,
+        "reason": "User confirmed banjo belongs to Music To Learn.",
+        "confirmationRefs": [
+          {
+            "kind": "userConfirmation",
+            "id": "confirm_banjo_music_link",
+            "confirmedAt": "2026-06-28T19:05:00.000Z",
+            "prompt": "Assign the banjo course thread to Music To Learn as verified context."
+          }
+        ]
+      },
+      {
+        "id": "link_lease_relationship_secondary",
+        "areaId": "area_relationship",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_lease_renewal",
+        "role": "secondary",
+        "status": "candidate",
+        "confidence": 0.64,
+        "reason": "Lease is finance/admin but may involve relationship planning."
+      }
+    ],
+    "contextReviewItems": [
+      {
+        "id": "review_banjo_course",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_banjo_course",
+        "reason": "Course email could be Music To Learn or Noise.",
+        "suggestedActions": ["assign_area", "mark_noise", "ask_later"],
+        "candidateAreaIds": ["area_music"],
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_banjo_course",
+            "label": "Banjo course starts Monday"
+          }
+        ]
+      },
+      {
+        "id": "review_rewards_sender",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_rewards_points",
+        "reason": "High-volume rewards sender is loud but not clearly important.",
+        "suggestedActions": ["mark_noise", "ignore_sender", "assign_area"],
+        "candidateAreaIds": ["area_trip"],
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_rewards_points",
+            "label": "Flash deal rewards promo"
+          }
+        ]
+      },
+      {
+        "id": "review_recruiter",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_recruiter_founder",
+        "reason": "Recruiter mail may create or assign Job Search.",
+        "suggestedActions": ["create_area", "assign_area", "ignore_sender", "ask_later"],
+        "candidateAreaIds": ["area_job_search"],
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_recruiter_founder",
+            "label": "Founder role intro"
+          }
+        ]
+      },
+      {
+        "id": "review_cardhunt_andrew_relationship",
+        "artifactKind": "mailThread",
+        "artifactId": "thread_cardhunt_andrew_1_1",
+        "reason": "Andrew appears repeatedly, but role must be explicitly confirmed.",
+        "suggestedActions": ["verify_fact", "reject_fact", "ask_later"],
+        "candidateFactIds": ["fact_cardhunt_manager_candidate"],
+        "candidateAreaIds": ["area_cardhunt"],
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_cardhunt_andrew_1_1",
+            "label": "1:1 this week"
+          }
+        ]
+      }
+    ],
+    "intents": [
+      {
+        "id": "intent_taxes_panic",
+        "rawInput": "Fuck, I need to file my taxes by April 15 and I have no idea what is done.",
+        "source": "text",
+        "capturedAt": "2026-06-30T07:45:00.000-04:00",
+        "classification": "obligation",
+        "status": "needs_questions",
+        "likelyAreaId": "area_money",
+        "assumptions": [
+          "April 15 may be the relevant tax deadline.",
+          "User has not confirmed filing status."
+        ],
+        "questions": [
+          {
+            "id": "q_tax_year",
+            "text": "Which tax year are you trying to file?",
+            "kind": "short_text"
+          },
+          {
+            "id": "q_tax_progress",
+            "text": "What is already done?",
+            "kind": "choice",
+            "choices": ["nothing", "documents gathered", "return drafted", "extension filed", "not sure"]
+          }
+        ]
+      },
+      {
+        "id": "intent_passport_one_word",
+        "rawInput": "Passport",
+        "source": "voice",
+        "capturedAt": "2026-06-30T08:05:00.000-04:00",
+        "classification": "obligation",
+        "status": "needs_questions",
+        "likelyAreaId": "area_trip",
+        "assumptions": [],
+        "questions": [
+          {
+            "id": "q_passport_goal",
+            "text": "What do you need to do with your passport?",
+            "kind": "choice",
+            "choices": [
+              "renew",
+              "apply first time",
+              "find it",
+              "check expiration",
+              "replace lost passport",
+              "not sure"
+            ]
+          },
+          {
+            "id": "q_passport_trip",
+            "text": "Is this tied to a specific trip or deadline?",
+            "kind": "short_text"
+          }
+        ]
+      },
+      {
+        "id": "intent_cardhunt_new_job_context",
+        "rawInput": "I started a new job at CardHunt. My manager is Andrew and most of the work is buyer onboarding.",
+        "source": "text",
+        "capturedAt": "2026-06-30T08:40:00.000-04:00",
+        "classification": "area_setup",
+        "status": "needs_confirmation",
+        "likelyAreaId": "area_cardhunt",
+        "candidateFactIds": ["fact_cardhunt_manager_candidate"],
+        "assumptions": ["This should update area context, not create task cards."],
+        "questions": [
+          {
+            "id": "q_confirm_andrew",
+            "text": "Should I store Andrew as your CardHunt manager?",
+            "kind": "confirm"
+          }
+        ]
+      },
+      {
+        "id": "intent_salvage_day",
+        "rawInput": "Fuck, I woke up at 11:30 and the day is already cooked.",
+        "source": "text",
+        "capturedAt": "2026-06-30T11:32:00.000-04:00",
+        "classification": "replan",
+        "status": "draft_plan_ready",
+        "likelyAreaId": "area_schedule",
+        "assumptions": [
+          "User wants a realistic remaining-day plan.",
+          "Move/defer external commitments only after approval."
+        ],
+        "questions": [
+          {
+            "id": "q_energy",
+            "text": "How much energy do you have left today?",
+            "kind": "choice",
+            "choices": ["low", "medium", "surprisingly fine"]
+          }
+        ]
+      },
+      {
+        "id": "intent_banjo_practice",
+        "rawInput": "I actually want to learn banjo this summer. Make it real but do not make it a whole lifestyle app thing.",
+        "source": "text",
+        "capturedAt": "2026-06-29T19:15:00.000-04:00",
+        "classification": "habit",
+        "status": "draft_plan_ready",
+        "likelyAreaId": "area_music",
+        "assumptions": ["Small recurring practice is better than a project unless the user asks for more."],
+        "questions": []
+      }
+    ],
+    "intentPlans": [
+      {
+        "id": "plan_taxes_panic",
+        "intentId": "intent_taxes_panic",
+        "status": "draft",
+        "outcome": "Know exactly what remains for taxes and block the next concrete work session.",
+        "digitalActions": [
+          {
+            "kind": "task",
+            "title": "List missing tax documents",
+            "areaId": "area_money",
+            "priority": 1
+          },
+          {
+            "kind": "calendar_event",
+            "title": "Tax document cleanup",
+            "durationMinutes": 90,
+            "areaId": "area_money"
+          }
+        ],
+        "physicalActions": [
+          "Find last year's return.",
+          "Collect W-2, 1099, bank, brokerage, and donation records."
+        ],
+        "sourceRefs": [
+          {
+            "kind": "intent",
+            "id": "intent_taxes_panic",
+            "label": "Raw tax intent"
+          }
+        ],
+        "assumptions": ["Deadline and filing route need confirmation before official instructions."]
+      },
+      {
+        "id": "plan_passport_questions",
+        "intentId": "intent_passport_one_word",
+        "status": "blocked_on_questions",
+        "outcome": "Determine passport route before creating tasks or calendar blocks.",
+        "digitalActions": [],
+        "physicalActions": [],
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_passport_old",
+            "label": "Old passport appointment"
+          }
+        ],
+        "assumptions": []
+      },
+      {
+        "id": "plan_salvage_day",
+        "intentId": "intent_salvage_day",
+        "status": "draft",
+        "outcome": "Recover today without pretending the morning did not happen.",
+        "digitalActions": [
+          {
+            "kind": "calendar_event",
+            "title": "CardHunt demo prep",
+            "durationMinutes": 45,
+            "areaId": "area_cardhunt"
+          },
+          {
+            "kind": "task",
+            "title": "Defer nonessential inbox cleanup",
+            "areaId": "area_schedule",
+            "priority": 2
+          }
+        ],
+        "physicalActions": [
+          "Eat something before opening the launch thread.",
+          "Put the phone away for the prep block."
+        ],
+        "sourceRefs": [
+          {
+            "kind": "calendarEvent",
+            "id": "cal_cardhunt_demo",
+            "label": "CardHunt buyer demo"
+          },
+          {
+            "kind": "mailThread",
+            "id": "thread_cardhunt_launch",
+            "label": "Launch review thread"
+          }
+        ],
+        "assumptions": ["Tone may be direct and funny, but not disappointed."]
+      }
+    ],
+    "projects": [
+      {
+        "id": "project_cardhunt_launch",
+        "areaId": "area_cardhunt",
+        "title": "CardHunt buyer onboarding launch",
+        "status": "active",
+        "outcome": "Buyer onboarding is demo-ready and launch risk is visible.",
+        "intentIds": ["intent_cardhunt_new_job_context"],
+        "taskIds": ["task_cardhunt_review_onboarding", "task_cardhunt_send_demo_notes"]
+      },
+      {
+        "id": "project_trip_documents",
+        "areaId": "area_trip",
+        "title": "Travel document cleanup",
+        "status": "paused",
+        "outcome": "Passport route and travel-document status are known.",
+        "intentIds": ["intent_passport_one_word"],
+        "taskIds": []
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task_cardhunt_review_onboarding",
+        "title": "Review CardHunt buyer onboarding",
+        "status": "todo",
+        "areaId": "area_cardhunt",
+        "projectId": "project_cardhunt_launch",
+        "priority": 1,
+        "sourceRefs": [
+          {
+            "kind": "mailThread",
+            "id": "thread_cardhunt_launch",
+            "label": "Launch review thread"
+          }
+        ]
+      },
+      {
+        "id": "task_cardhunt_send_demo_notes",
+        "title": "Draft demo notes for Andrew",
+        "status": "todo",
+        "areaId": "area_cardhunt",
+        "projectId": "project_cardhunt_launch",
+        "priority": 1,
+        "sourceRefs": [
+          {
+            "kind": "calendarEvent",
+            "id": "cal_cardhunt_demo",
+            "label": "CardHunt buyer demo"
+          }
+        ]
+      },
+      {
+        "id": "task_tax_missing_docs",
+        "title": "List missing tax documents",
+        "status": "todo",
+        "areaId": "area_money",
+        "priority": 1,
+        "sourceRefs": [
+          {
+            "kind": "intent",
+            "id": "intent_taxes_panic",
+            "label": "Tax panic intent"
+          }
+        ]
+      },
+      {
+        "id": "task_banjo_first_practice",
+        "title": "Do first 20 minute banjo practice",
+        "status": "todo",
+        "areaId": "area_music",
+        "priority": 3,
+        "sourceRefs": [
+          {
+            "kind": "intent",
+            "id": "intent_banjo_practice",
+            "label": "Banjo practice intent"
+          }
+        ]
+      }
+    ],
+    "approvalQueue": [
+      {
+        "id": "approval_email_andrew_demo_notes",
+        "sourceIntentId": "intent_salvage_day",
+        "sourcePlanId": "plan_salvage_day",
+        "areaId": "area_cardhunt",
+        "kind": "email_draft",
+        "status": "pending",
+        "title": "Draft update to Andrew",
+        "summary": "Tell Andrew the buyer onboarding review will be done before the demo.",
+        "requiresHumanApproval": true,
+        "undoWindowSeconds": 10
+      },
+      {
+        "id": "approval_calendar_demo_invite",
+        "sourceIntentId": "intent_salvage_day",
+        "sourcePlanId": "plan_salvage_day",
+        "areaId": "area_cardhunt",
+        "kind": "calendar_invite",
+        "status": "pending",
+        "title": "Move CardHunt demo prep block",
+        "summary": "Move an internal prep block only; do not move the attendee demo without approval.",
+        "requiresHumanApproval": true,
+        "undoWindowSeconds": 10
+      }
+    ],
+    "dailyReportSignals": [
+      {
+        "id": "signal_cardhunt_loud_but_ask",
+        "areaId": "area_cardhunt",
+        "date": "2026-06-30",
+        "artifactCount": 14,
+        "loudness": 94,
+        "declaredPriority": "unknown_today",
+        "reportBehavior": "ask_before_centering",
+        "prompt": "CardHunt is loud today. Include it?"
+      },
+      {
+        "id": "signal_money_quiet_declared_intent",
+        "areaId": "area_money",
+        "date": "2026-06-30",
+        "artifactCount": 1,
+        "loudness": 22,
+        "declaredPriority": "active_intent",
+        "reportBehavior": "include_even_if_quiet",
+        "prompt": "Taxes are quiet in your inbox, but you declared them. Keep them on today's plan?"
+      }
+    ],
+    "completionEvents": [
+      {
+        "id": "completion_banjo_review_classified",
+        "completedAt": "2026-06-28T19:02:00.000Z",
+        "kind": "context_review",
+        "artifactId": "review_banjo_course",
+        "areaId": "area_music",
+        "summary": "Classified banjo as Music To Learn instead of Noise."
+      },
+      {
+        "id": "completion_rewards_noise_rule",
+        "completedAt": "2026-06-29T10:00:00.000Z",
+        "kind": "context_review",
+        "artifactId": "review_rewards_sender",
+        "areaId": "area_habits",
+        "summary": "Marked rewards sender as noise."
+      }
+    ]
+  }
+}

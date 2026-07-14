@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { internalMutation, mutation, query } from './_generated/server';
@@ -250,6 +249,16 @@ const ACCOUNT_BULK_TABLES = [
   'mailWebhookEvents',
   'calendarEvents',
   'calendarEventCorpus',
+  'areaArtifactLinks',
+] as const;
+
+const USER_BULK_TABLES = [
+  ...ACCOUNT_BULK_TABLES,
+  'areaFacts',
+  'areaReindexRuns',
+  'albatrossRoutines',
+  'albatrossRoutineRuns',
+  'albatrossEvidence',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -261,7 +270,7 @@ export const purgeUserDataBatch = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     let deleted = 0;
-    for (const table of ACCOUNT_BULK_TABLES) {
+    for (const table of USER_BULK_TABLES) {
       if (deleted >= PURGE_BATCH) break;
       const rows = await ctx.db
         .query(table)
@@ -411,6 +420,24 @@ export const deleteUserCascade = mutation({
       'suggestions',
       'calendars',
       'calendarSyncStates',
+      'albatrossDevRecords',
+      'albatrossProjects',
+      'albatrossProjectLinks',
+      'albatrossSprints',
+      'albatrossApprovals',
+      'albatrossPlanApplications',
+      'completionEvents',
+      'albatrossIntents',
+      'albatrossIntentPlans',
+      'albatrossCaptures',
+      'albatrossWorkQuestions',
+      'albatrossAreaBriefs',
+      'albatrossNotifications',
+      'albatrossNotificationPreferences',
+      'webPushSubscriptions',
+      'notificationDeliveries',
+      'albatrossDailyCheckins',
+      'areas',
       'mcpConnections',
       'mcpCredentials',
       'mcpItems',

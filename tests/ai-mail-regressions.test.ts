@@ -418,7 +418,9 @@ describe('local-first mail search routing', () => {
     );
     const ast = parseMailSearchQuery('in:inbox is:unread from:alerts@example.test newer_than:30d invoice');
     const plan = compileAstToLocalCorpusQuery(ast);
-    const now = Date.parse('2026-06-10T12:00:00.000Z');
+    // Keep the fixture inside the relative search window regardless of when
+    // the suite runs. A fixed date made this test start failing after 30 days.
+    const now = Date.now() - 24 * 60 * 60 * 1000;
     const messages = [
       {
         accountId: 'grant_microsoft',
@@ -577,14 +579,14 @@ describe('compliance readiness', () => {
     // is either added to the cascade or explicitly exempted here.
     const schema = readFileSync(path.join(process.cwd(), 'convex/schema.ts'), 'utf8');
     const accounts = readFileSync(path.join(process.cwd(), 'convex/accounts.ts'), 'utf8');
-    const cascadeSource = accounts.slice(accounts.indexOf('deleteUserCascade'));
+    const cleanupSource = accounts.slice(accounts.indexOf('ACCOUNT_BULK_TABLES'));
     const tables = [...schema.matchAll(/^\s{2}([a-zA-Z0-9]+): defineTable/gm)].map((match) => match[1]);
     const exempt = new Set<string>([]);
 
     expect(tables.length).toBeGreaterThan(10);
     for (const table of tables) {
       if (exempt.has(table)) continue;
-      expect(cascadeSource).toContain(`'${table}'`);
+      expect(cleanupSource).toContain(`'${table}'`);
     }
   });
 });

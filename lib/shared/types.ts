@@ -1,3 +1,4 @@
+import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import type { BriefComposition } from './brief-composition';
 
 export type AccountEmail = string;
@@ -143,7 +144,61 @@ export interface LabelRecord {
 
 export type Priority = 1 | 2 | 3;
 export type TriageAction = 'reply' | 'read' | 'archive' | 'delegate' | 'wait';
-export type PrimaryView = 'daily_report' | 'mail' | 'calendar' | 'tasks';
+
+export const CORE_PRIMARY_VIEWS = ['daily_report', 'mail', 'calendar', 'tasks'] as const;
+export const ALBATROSS_PRIMARY_VIEWS = ['areas', 'intents', 'unassigned'] as const;
+
+export type CorePrimaryView = (typeof CORE_PRIMARY_VIEWS)[number];
+export type AlbatrossPrimaryView = (typeof ALBATROSS_PRIMARY_VIEWS)[number];
+export type PrimaryView = CorePrimaryView | AlbatrossPrimaryView;
+
+export function isCorePrimaryView(view: unknown): view is CorePrimaryView {
+  return typeof view === 'string' && (CORE_PRIMARY_VIEWS as readonly string[]).includes(view);
+}
+
+export function isAlbatrossPrimaryView(view: unknown): view is AlbatrossPrimaryView {
+  return typeof view === 'string' && (ALBATROSS_PRIMARY_VIEWS as readonly string[]).includes(view);
+}
+
+export function isAnyPrimaryView(view: unknown): view is PrimaryView {
+  return isCorePrimaryView(view) || isAlbatrossPrimaryView(view);
+}
+
+export function persistedPrimaryViewFromStorage(raw: string | null): PrimaryView | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const view = parsed?.state?.primaryView;
+    return isAnyPrimaryView(view) ? view : null;
+  } catch {
+    return null;
+  }
+}
+
+export function hasPersistedPrimaryViewValue(raw: string | null): boolean {
+  return persistedPrimaryViewFromStorage(raw) !== null;
+}
+
+export function normalizePrimaryView(view: unknown, albatrossEnabled: boolean): PrimaryView {
+  if (isCorePrimaryView(view)) return view;
+  if (view === 'intents') return albatrossEnabled ? 'areas' : 'daily_report';
+  if (albatrossEnabled && isAlbatrossPrimaryView(view)) return view;
+  return 'daily_report';
+}
+
+export function resolveInitialPrimaryView(
+  currentView: unknown,
+  albatrossEnabled: boolean,
+  initialView?: PrimaryView,
+  hasSavedPrimaryView = true,
+): PrimaryView {
+  const normalizedCurrent = normalizePrimaryView(currentView, albatrossEnabled);
+  if (!initialView || hasSavedPrimaryView) return normalizedCurrent;
+
+  const normalizedInitial = normalizePrimaryView(initialView, albatrossEnabled);
+  return normalizedInitial === initialView ? normalizedInitial : normalizedCurrent;
+}
+
 export type SmartCategoryId =
   | 'main'
   | 'needs_reply'
@@ -429,6 +484,7 @@ export interface DailyReport {
     tasks?: DailyReportTaskItem[];
     calendar?: DailyReportCalendarItem[];
     mcp?: DailyReportMcpItem[];
+    albatross?: AlbatrossDailyReportContext;
     noiseSummary?: string;
   };
   stats: {
@@ -442,6 +498,9 @@ export interface DailyReport {
     openTasks?: number;
     completedTasks?: number;
     calendarEvents?: number;
+    albatrossActiveIntents?: number;
+    albatrossActiveProjects?: number;
+    albatrossQuestions?: number;
   };
   model?: string;
   errors?: string[];

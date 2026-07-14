@@ -37,10 +37,15 @@ export function ShineBorder({
 }: ShineBorderProps) {
   return (
     <div
+      data-slot="shine-border"
       style={
         {
           '--border-width': `${borderWidth}px`,
           '--duration': `${duration}s`,
+          // Reduced motion swaps the moving gradient for this flat accent —
+          // the mask still cuts it to a border, so the treatment stays a
+          // border, just static.
+          '--shine-static': Array.isArray(shineColor) ? shineColor[0] : shineColor,
           backgroundImage: `radial-gradient(var(--color-transparent),var(--color-transparent), ${
             Array.isArray(shineColor) ? shineColor.join(',') : shineColor
           },var(--color-transparent),var(--color-transparent))`,
@@ -55,6 +60,10 @@ export function ShineBorder({
       }
       className={cn(
         'motion-safe:animate-shine pointer-events-none absolute inset-0 size-full rounded-[inherit] will-change-[background-position]',
+        // Honor prefers-reduced-motion: drop the animated gradient (the `!`
+        // beats the inline backgroundImage) and show a static accent border
+        // through the same mask instead of a frozen mid-animation frame.
+        'motion-reduce:bg-none! motion-reduce:bg-(--shine-static)',
         className,
       )}
       {...props}

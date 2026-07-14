@@ -3,9 +3,10 @@ import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { isPublicSignupDisabled } from '@/lib/hosted/controls';
+import { isClerkConfigured } from '@/lib/hosted/env';
 
 export default async function SignUpPage() {
-  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+  if (!isClerkConfigured()) {
     return (
       <main className="grid min-h-dvh place-items-center bg-[var(--color-bg)] px-4">
         <div className="max-w-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-center">

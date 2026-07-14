@@ -5,6 +5,13 @@ import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useClientStore } from '@/lib/client-state';
+import {
+  DEFAULT_ACCENT_2_CHROMA,
+  DEFAULT_ACCENT_2_HUE,
+  DEFAULT_ACCENT_CHROMA,
+  DEFAULT_ACCENT_HUE,
+  PALETTE_PRESETS,
+} from '@/lib/theme/palette-presets';
 import { cn } from '@/lib/utils';
 
 // Arc-style theme panel. Accent and background are independent axes (Arc
@@ -12,25 +19,13 @@ import { cn } from '@/lib/utils';
 // background = its own hue + tint amount, plus the rail gradient wash, film
 // grain, and the editorial display font. Every control writes CSS variables
 // on <html>; the OKLCH derivations in globals.css do the rest.
-const DEFAULT_HUE = 156;
-const DEFAULT_CHROMA = 0.09;
+const DEFAULT_HUE = DEFAULT_ACCENT_HUE;
+const DEFAULT_CHROMA = DEFAULT_ACCENT_CHROMA;
 
-// Each quick swatch is a curated accent + background pairing, not just an
-// accent: complementary-leaning paper tints that sit well under the accent.
-const PRESETS: {
-  name: string;
-  hue: number;
-  chroma: number;
-  bgHue: number | null;
-  surfaceTint: number;
-}[] = [
-  { name: 'Forest', hue: DEFAULT_HUE, chroma: DEFAULT_CHROMA, bgHue: 95, surfaceTint: 0.22 },
-  { name: 'Ocean', hue: 235, chroma: 0.11, bgHue: 215, surfaceTint: 0.28 },
-  { name: 'Iris', hue: 290, chroma: 0.11, bgHue: 310, surfaceTint: 0.2 },
-  { name: 'Rose', hue: 15, chroma: 0.11, bgHue: 35, surfaceTint: 0.24 },
-  { name: 'Ember', hue: 60, chroma: 0.1, bgHue: 80, surfaceTint: 0.3 },
-  { name: 'Mono', hue: 250, chroma: 0.015, bgHue: null, surfaceTint: 0 },
-];
+// Each quick swatch is a curated two-accent + background pairing, not just an
+// accent: an editorial pair (see lib/theme/palette-presets.ts) over a paper
+// tint that sits well under both.
+const PRESETS = PALETTE_PRESETS;
 
 // Display-layer font: wordmark, sender names, subjects, section headers.
 // Body copy and controls always stay sans.
@@ -49,6 +44,8 @@ const FONTS: {
 export function useApplyThemeExtras() {
   const accentHue = useClientStore((s) => s.accentHue);
   const accentChroma = useClientStore((s) => s.accentChroma);
+  const accent2Hue = useClientStore((s) => s.accent2Hue);
+  const accent2Chroma = useClientStore((s) => s.accent2Chroma);
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
   const washOpacity = useClientStore((s) => s.washOpacity);
@@ -64,6 +61,11 @@ export function useApplyThemeExtras() {
     };
     setOrClear('--accent-hue', accentHue == null ? null : String(accentHue));
     setOrClear('--accent-chroma', accentHue == null ? null : String(accentChroma ?? DEFAULT_CHROMA));
+    setOrClear('--accent-2-hue', accent2Hue == null ? null : String(accent2Hue));
+    setOrClear(
+      '--accent-2-chroma',
+      accent2Hue == null ? null : String(accent2Chroma ?? DEFAULT_ACCENT_2_CHROMA),
+    );
     setOrClear('--bg-hue', bgHue == null ? null : String(bgHue));
     setOrClear('--surface-tint', surfaceTint > 0 ? String(surfaceTint) : null);
     setOrClear('--wash-opacity', washOpacity > 0 ? String(washOpacity) : null);
@@ -75,6 +77,8 @@ export function useApplyThemeExtras() {
   }, [
     accentHue,
     accentChroma,
+    accent2Hue,
+    accent2Chroma,
     bgHue,
     surfaceTint,
     washOpacity,
@@ -160,6 +164,9 @@ export function ThemePanel({ className }: { className?: string }) {
   const accentHue = useClientStore((s) => s.accentHue);
   const accentChroma = useClientStore((s) => s.accentChroma);
   const setAccent = useClientStore((s) => s.setAccent);
+  const accent2Hue = useClientStore((s) => s.accent2Hue);
+  const accent2Chroma = useClientStore((s) => s.accent2Chroma);
+  const setAccent2 = useClientStore((s) => s.setAccent2);
   const bgHue = useClientStore((s) => s.bgHue);
   const setBgHue = useClientStore((s) => s.setBgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
@@ -177,6 +184,8 @@ export function ThemePanel({ className }: { className?: string }) {
 
   const hue = accentHue ?? DEFAULT_HUE;
   const chroma = accentChroma ?? DEFAULT_CHROMA;
+  const hue2 = accent2Hue ?? DEFAULT_ACCENT_2_HUE;
+  const chroma2 = accent2Chroma ?? DEFAULT_ACCENT_2_CHROMA;
   const backgroundHue = bgHue ?? DEFAULT_HUE;
   if (!mounted) return <div className={cn('h-7 w-7', className)} />;
   const mode = theme === 'light' || theme === 'dark' ? theme : 'system';
@@ -241,6 +250,11 @@ export function ThemePanel({ className }: { className?: string }) {
                     } else {
                       setAccent(preset.hue, preset.chroma);
                     }
+                    if (preset.hue2 === DEFAULT_ACCENT_2_HUE && preset.chroma2 === DEFAULT_ACCENT_2_CHROMA) {
+                      setAccent2(null, null);
+                    } else {
+                      setAccent2(preset.hue2, preset.chroma2);
+                    }
                     setBgHue(preset.bgHue);
                     setSurfaceTint(preset.surfaceTint);
                   }}
@@ -258,7 +272,9 @@ export function ThemePanel({ className }: { className?: string }) {
                 >
                   <span
                     className="block h-3.5 w-3.5 rounded-full"
-                    style={{ background: `oklch(0.62 ${preset.chroma} ${preset.hue})` }}
+                    style={{
+                      background: `linear-gradient(135deg, oklch(0.62 ${preset.chroma} ${preset.hue}) 50%, oklch(0.62 ${preset.chroma2} ${preset.hue2}) 50%)`,
+                    }}
                   />
                   <span className="sr-only">{preset.name}</span>
                 </button>
@@ -286,6 +302,33 @@ export function ThemePanel({ className }: { className?: string }) {
               onChange={(value) => setAccent(hue, value)}
               trackStyle={{
                 background: `linear-gradient(to right, oklch(0.62 0.01 ${hue}), oklch(0.62 0.16 ${hue}))`,
+              }}
+            />
+          </div>
+        </Section>
+
+        <Section title="Second accent">
+          <div className="space-y-2">
+            <Slider
+              label="Hue"
+              min={0}
+              max={359}
+              step={1}
+              value={hue2}
+              readout={`${Math.round(hue2)}°`}
+              onChange={(value) => setAccent2(value, Math.max(chroma2, 0.08))}
+              trackStyle={{ background: HUE_TRACK }}
+            />
+            <Slider
+              label="Intensity"
+              min={0.01}
+              max={0.16}
+              step={0.005}
+              value={chroma2}
+              readout={`${Math.round(((chroma2 - 0.01) / 0.15) * 100)}%`}
+              onChange={(value) => setAccent2(hue2, value)}
+              trackStyle={{
+                background: `linear-gradient(to right, oklch(0.62 0.01 ${hue2}), oklch(0.62 0.16 ${hue2}))`,
               }}
             />
           </div>

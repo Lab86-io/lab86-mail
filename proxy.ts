@@ -97,7 +97,8 @@ function basicAuthOrNext(req: Request) {
   });
 }
 
-function shouldRequireBasicAuth(req: Request, pathname: string) {
+export function shouldRequireBasicAuth(req: Request, pathname: string) {
+  if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1' && isBasicAuthBypassAllowed(req)) return false;
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
   if (pathname === '/api/clerk/webhook') return false;
@@ -115,6 +116,38 @@ function shouldRequireBasicAuth(req: Request, pathname: string) {
   // Internal cron callbacks authenticate via the internal secret, not basic auth.
   if (pathname.startsWith('/api/cron')) return false;
   return true;
+}
+
+export function isBasicAuthBypassAllowed(req: Request) {
+  if (process.env.NODE_ENV === 'production' && process.env.RAILWAY_ENVIRONMENT_NAME !== 'development') {
+    return false;
+  }
+  return isLocalBasicAuthBypassHost(req);
+}
+
+export function isLocalBasicAuthBypassHost(req: Request) {
+  const url = new URL(req.url);
+  const host = req.headers.get('host') || url.host;
+  const hostname = hostnameWithoutPort(host);
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1' ||
+    hostname.endsWith('.localhost') ||
+    hostname === 'albatross.lab86.io'
+  );
+}
+
+function hostnameWithoutPort(host: string) {
+  const normalized = host.trim().toLowerCase();
+  if (normalized.startsWith('[')) {
+    const closeBracket = normalized.indexOf(']');
+    return closeBracket === -1 ? normalized : normalized.slice(0, closeBracket + 1);
+  }
+  const colonCount = [...normalized].filter((char) => char === ':').length;
+  if (colonCount > 1) return normalized;
+  return normalized.replace(/:\d+$/, '');
 }
 
 function decodeBase64(value: string) {

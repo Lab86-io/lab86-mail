@@ -4,6 +4,8 @@ import { kvUpsert } from '../lib/store/kv';
 import { getPhotoFromCache, setPhotoCache } from '../lib/store/photos';
 import { contactLookup, expandAlias } from '../lib/tools/contacts';
 import {
+  companyLogoCandidates,
+  companyLogoCandidatesForDomain,
   companyLogoUrl,
   isCompanyDomain,
   logoDomainForEmail,
@@ -434,6 +436,25 @@ describe('contact and photo tools', () => {
     expect(logoDomainForEmail('alerts@mail.acme.co.in')).toBe('acme.co.in');
     expect(logoDomainForEmail('alerts@service.acme.com.cn')).toBe('acme.com.cn');
     expect(companyLogoUrl('friend@gmail.com')).toBeNull();
+
+    const previousLogoDev = process.env.LOGO_DEV_TOKEN;
+    const previousBrandfetch = process.env.BRANDFETCH_CLIENT_ID;
+    process.env.LOGO_DEV_TOKEN = 'logo token';
+    process.env.BRANDFETCH_CLIENT_ID = 'brand token';
+    try {
+      expect(companyLogoCandidates('alerts@linear.app')).toEqual([
+        'https://img.logo.dev/linear.app?token=logo%20token&size=128&retina=true&format=png',
+        'https://cdn.brandfetch.io/linear.app/w/128/h/128?c=brand%20token',
+        'https://icons.duckduckgo.com/ip3/linear.app.ico',
+        'https://www.google.com/s2/favicons?sz=128&domain=linear.app',
+      ]);
+      expect(companyLogoCandidatesForDomain('gmail.com')).toEqual([]);
+    } finally {
+      if (previousLogoDev === undefined) delete process.env.LOGO_DEV_TOKEN;
+      else process.env.LOGO_DEV_TOKEN = previousLogoDev;
+      if (previousBrandfetch === undefined) delete process.env.BRANDFETCH_CLIENT_ID;
+      else process.env.BRANDFETCH_CLIENT_ID = previousBrandfetch;
+    }
 
     await expect(
       resolveProviderProfilePhoto({
