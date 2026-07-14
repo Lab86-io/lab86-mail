@@ -229,16 +229,17 @@ describe('MCP disconnect provenance', () => {
       }));
 
       expect(finalState.cards).toHaveLength(101);
-      expect(
-        finalState.cards.every(
-          (card) =>
-            card.source?.kind === 'external_snapshot' &&
-            card.source.server === 'github' &&
-            typeof card.source.externalId === 'string' &&
-            typeof card.source.title === 'string' &&
-            typeof card.source.url === 'string',
-        ),
-      ).toBe(true);
+      for (const card of finalState.cards) {
+        const issueNumber = 120 + card.order;
+        expect(card.source).toMatchObject({
+          kind: 'external_snapshot',
+          server: 'github',
+          externalId: `github:issue:Lab86-io/lab86-mail#${issueNumber}`,
+          title: `Connector cleanup ${issueNumber}`,
+          url: `https://github.com/Lab86-io/lab86-mail/issues/${issueNumber}`,
+          disconnectedAt: expect.any(Number),
+        });
+      }
       expect(finalState.credentials).toEqual([]);
       expect(finalState.items).toEqual([]);
       expect(finalState.evidence).toEqual([]);

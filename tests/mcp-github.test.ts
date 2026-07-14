@@ -191,19 +191,7 @@ describe('GitHub evidence normalization', () => {
         );
       }
       if (url.includes('/repos/Lab86-io/lab86-mail/pulls?')) {
-        return new Response(
-          JSON.stringify([
-            {
-              number: 96,
-              title: 'Render Areas as artifacts',
-              state: 'closed',
-              merged_at: '2026-07-14T16:00:00Z',
-              base: { repo: { full_name: 'Lab86-io/lab86-mail' } },
-              user: { login: 'jakob' },
-            },
-          ]),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes('/repos/Lab86-io/lab86-mail/commits?')) {
         return new Response(
@@ -245,6 +233,7 @@ describe('GitHub evidence normalization', () => {
         }),
         expect.objectContaining({
           externalId: 'github:pull_request:Lab86-io/lab86-mail#96',
+          title: 'Render Areas as artifacts',
           state: 'merged',
         }),
         expect.objectContaining({
