@@ -507,15 +507,17 @@ export default defineSchema({
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_work_status', ['userId', 'workId', 'status']),
 
-  // Cached editorial prose for a living Area brief. Operational sections are
-  // always queried live; this record can regenerate in the background without
-  // freezing questions, Work, tasks, or Project progress in an HTML snapshot.
+  // Cached AI-composed Area document. The full selected-Area canvas is rendered
+  // from artifactHtml in an opaque sandbox; the smaller prose fields remain as
+  // an honest deterministic fallback while the first artifact is composing or
+  // when generation is unavailable. Regeneration preserves the last good HTML.
   albatrossAreaBriefs: defineTable({
     userId: v.string(),
     areaId: v.id('areas'),
     status: v.union(v.literal('generating'), v.literal('ready'), v.literal('error')),
     lede: v.string(),
     summary: v.string(),
+    artifactHtml: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
     basedOnRevision: v.string(),
     generatedAt: v.optional(v.number()),

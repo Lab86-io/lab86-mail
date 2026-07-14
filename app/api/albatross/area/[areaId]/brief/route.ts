@@ -54,6 +54,9 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
         userEmail: user.email,
         userName: user.name,
         areaId,
+        // A user pressing refresh asks for a new creative edition even if the
+        // bounded source revision is unchanged.
+        force: true,
       });
       return Response.json({ ok: true, brief });
     } catch (error) {

@@ -1,4 +1,8 @@
 import { v } from 'convex/values';
+import {
+  areaArtifactHtmlForWrite,
+  assertAreaArtifactDocumentSize,
+} from '../lib/albatross/area-artifact-storage';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -383,6 +387,7 @@ export const saveAreaBrief = mutation({
     status: v.union(v.literal('generating'), v.literal('ready'), v.literal('error')),
     lede: v.string(),
     summary: v.string(),
+    artifactHtml: v.optional(v.string()),
     sourceRefs: v.optional(v.array(sourceRefValidator)),
     basedOnRevision: v.string(),
     error: v.optional(v.string()),
@@ -395,18 +400,24 @@ export const saveAreaBrief = mutation({
       .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
       .unique();
     const ts = now();
+    const artifactHtml = areaArtifactHtmlForWrite(args.status, args.artifactHtml, existing?.artifactHtml);
     const doc = {
       userId,
       areaId: args.areaId,
       status: args.status,
       lede: args.lede.slice(0, 600),
       summary: args.summary.slice(0, 2_000),
+      artifactHtml,
       sourceRefs: args.sourceRefs || [],
       basedOnRevision: args.basedOnRevision.slice(0, 160),
       generatedAt: args.status === 'ready' ? ts : existing?.generatedAt,
       error: bounded(args.error, 500),
       updatedAt: ts,
     };
+    // Never truncate a complete document: doing so can persist syntactically
+    // broken HTML and replace the last good edition. Measure the whole record,
+    // including metadata/source refs, and reject before any patch or insert.
+    assertAreaArtifactDocumentSize(existing ? doc : { ...doc, createdAt: ts });
     if (existing) {
       await ctx.db.patch(existing._id, doc);
       return existing._id;

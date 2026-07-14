@@ -27,12 +27,13 @@
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
 import { ArrowRight, MessageSquareText, RefreshCw } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { injectAreaArtifactRuntime, parseAreaArtifactMessage } from '@/lib/albatross/area-artifact-runtime';
 import {
   type AreaBriefState,
   type AreaOverviewCountsLike,
@@ -63,6 +64,7 @@ import {
 } from '@/lib/albatross/area-home';
 import { useClientStore } from '@/lib/client-state';
 import { categoricalColor, formatDate, shortFrom } from '@/lib/shared/format';
+import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
 interface AreaMailRow {
@@ -122,6 +124,8 @@ interface AreaHomeData {
     status: 'generating' | 'ready' | 'error';
     lede: string;
     summary: string;
+    artifactHtml?: string;
+    basedOnRevision?: string;
     generatedAt?: number;
     error?: string;
   };
@@ -421,6 +425,10 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const setChatScope = useClientStore((s) => s.setChatScope);
   const now = useMinuteNow();
+  const [artifactRefreshing, setArtifactRefreshing] = useState(false);
+  const [artifactRefreshError, setArtifactRefreshError] = useState<string | null>(null);
+  const [showStructuredFallback, setShowStructuredFallback] = useState(false);
+  const requestedInitialArtifact = useRef(false);
   // Error-tolerant read: the persisted area id can outlive the area (deleted
   // in Settings) — that must degrade honestly, not crash the surface.
   const result = useConvexQuery({
@@ -434,6 +442,49 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     api.albatrossWorkV2.areaWork,
     isAuthenticated ? { areaId: areaId as Id<'areas'>, includeDone: true } : 'skip',
   ) as AreaWorkRow[] | undefined;
+
+  const loadedHome = result.status === 'success' ? (result.data as AreaHomeData) : null;
+  const refreshArtifact = useCallback(async () => {
+    if (artifactRefreshing) return;
+    setArtifactRefreshing(true);
+    setArtifactRefreshError(null);
+    try {
+      const response = await fetch(`/api/albatross/area/${encodeURIComponent(areaId)}/brief`, {
+        method: 'POST',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Area artifact refresh failed.');
+    } catch (error) {
+      setArtifactRefreshError(error instanceof Error ? error.message : 'Area artifact refresh failed.');
+    } finally {
+      setArtifactRefreshing(false);
+    }
+  }, [areaId, artifactRefreshing]);
+
+  // Existing Area brief records predate full HTML artifacts. Compose the first
+  // document on open once, while leaving the explicit refresh control as the
+  // force-new-edition path thereafter.
+  useEffect(() => {
+    if (
+      !loadedHome ||
+      loadedHome.livingBrief?.artifactHtml ||
+      loadedHome.livingBrief?.status === 'generating'
+    )
+      return;
+    if (requestedInitialArtifact.current) return;
+    requestedInitialArtifact.current = true;
+    void refreshArtifact();
+  }, [loadedHome, refreshArtifact]);
+
+  useEffect(() => {
+    if (
+      showStructuredFallback &&
+      loadedHome?.livingBrief?.status === 'ready' &&
+      loadedHome.livingBrief.artifactHtml
+    ) {
+      setShowStructuredFallback(false);
+    }
+  }, [loadedHome, showStructuredFallback]);
 
   if (result.status === 'error') {
     // Truthful: the query failed to load. We do not know the area was archived,
@@ -473,6 +524,44 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   }
 
   const home = result.data as AreaHomeData;
+
+  // The generated document is the selected Area screen. React only supplies
+  // the sandbox, theme/action bridge, and small floating host controls. The
+  // structured renderer below is retained solely as an explicit recovery view.
+  if (home.livingBrief?.artifactHtml && !showStructuredFallback) {
+    return (
+      <AreaArtifactCanvas
+        home={home}
+        html={home.livingBrief.artifactHtml}
+        status={home.livingBrief.status}
+        generatedAt={home.livingBrief.generatedAt}
+        refreshError={artifactRefreshError || home.livingBrief.error || null}
+        refreshing={artifactRefreshing}
+        onRefresh={() => void refreshArtifact()}
+        onDiscuss={() => {
+          setChatScope({ kind: 'area', areaId: home.area._id });
+          setAiBarOpen(true);
+        }}
+        onAllAreas={() => setSelectedAreaId(null)}
+        onStructuredFallback={() => setShowStructuredFallback(true)}
+      />
+    );
+  }
+
+  if (!showStructuredFallback) {
+    const failed = home.livingBrief?.status === 'error' || Boolean(artifactRefreshError);
+    return (
+      <AreaArtifactUnavailable
+        area={home.area}
+        failed={failed}
+        refreshing={artifactRefreshing || home.livingBrief?.status === 'generating'}
+        error={artifactRefreshError || home.livingBrief?.error || null}
+        onRefresh={() => void refreshArtifact()}
+        onAllAreas={() => setSelectedAreaId(null)}
+        onStructuredFallback={() => setShowStructuredFallback(true)}
+      />
+    );
+  }
   // The backend returns bounded evidence previews (shown/hasMore), not exact
   // mail/events/tasks totals. Derive the flat display-count shape the section
   // and no-links helpers expect from those previews' `shown` counts.
@@ -603,6 +692,299 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
             ) : null}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function AreaArtifactCanvas({
+  home,
+  html,
+  status,
+  generatedAt,
+  refreshError,
+  refreshing,
+  onRefresh,
+  onDiscuss,
+  onAllAreas,
+  onStructuredFallback,
+}: {
+  home: AreaHomeData;
+  html: string;
+  status: 'generating' | 'ready' | 'error';
+  generatedAt?: number;
+  refreshError: string | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onDiscuss: () => void;
+  onAllAreas: () => void;
+  onStructuredFallback: () => void;
+}) {
+  const area = home.area;
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const setPendingOpenWorkId = useClientStore((s) => s.setPendingOpenWorkId);
+  const setChatScope = useClientStore((s) => s.setChatScope);
+  const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
+  const appFont = useClientStore((s) => s.appFont);
+  const accentHue = useClientStore((s) => s.accentHue);
+  const accentChroma = useClientStore((s) => s.accentChroma);
+  const accent2Hue = useClientStore((s) => s.accent2Hue);
+  const accent2Chroma = useClientStore((s) => s.accent2Chroma);
+  const bgHue = useClientStore((s) => s.bgHue);
+  const surfaceTint = useClientStore((s) => s.surfaceTint);
+  const srcDoc = useMemo(() => injectAreaArtifactRuntime(html), [html]);
+  const areaId = area._id;
+  const allowedWorkIds = useMemo(
+    () =>
+      new Set([
+        ...home.plans.map((row) => String(row.intentId)),
+        ...home.projects.map((row) => String(row.sourceIntentId || '')).filter(Boolean),
+      ]),
+    [home.plans, home.projects],
+  );
+  const allowedThreadKeys = useMemo(
+    () => new Set(home.mail.map((row) => `${row.accountId}:${row.providerThreadId}`)),
+    [home.mail],
+  );
+  const allowedEventKeys = useMemo(
+    () => new Set(home.events.map((row) => `${row.accountId}:${row.providerEventId}`)),
+    [home.events],
+  );
+
+  const postTheme = useCallback(() => {
+    postBriefTheme(frameRef.current?.contentWindow, appFont);
+  }, [appFont]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolved CSS is read by postBriefTheme; customization slices intentionally retrigger it.
+  useEffect(() => {
+    postTheme();
+  }, [postTheme, accentHue, accentChroma, accent2Hue, accent2Chroma, bgHue, surfaceTint, srcDoc]);
+
+  useEffect(() => {
+    const onMessage = async (event: MessageEvent) => {
+      const frame = frameRef.current;
+      if (!frame || event.source !== frame.contentWindow) return;
+      const message = parseAreaArtifactMessage(event.data, areaId);
+      if (!message) return;
+      const ack = (ok: boolean, error?: string) =>
+        frame.contentWindow?.postMessage(
+          { source: 'lab86-host', action: message.action, ok, error, payload: message.payload },
+          '*',
+        );
+      try {
+        switch (message.action) {
+          case 'open_work':
+            if (!allowedWorkIds.has(message.payload.workId)) return ack(false, 'unknown work');
+            setSelectedWorkId(message.payload.workId);
+            return ack(true);
+          case 'open_thread':
+            if (!allowedThreadKeys.has(`${message.payload.accountId}:${message.payload.threadId}`))
+              return ack(false, 'unknown thread');
+            setThreadAccount(message.payload.accountId);
+            setSelectedThread(message.payload.threadId);
+            return ack(true);
+          case 'open_event':
+            if (!allowedEventKeys.has(`${message.payload.accountId}:${message.payload.eventId}`))
+              return ack(false, 'unknown event');
+            setPrimaryView('calendar');
+            return ack(true);
+          case 'open_tasks':
+            setPrimaryView('tasks');
+            return ack(true);
+          case 'discuss_area':
+            setChatScope({ kind: 'area', areaId });
+            setAiBarOpen(true);
+            return ack(true);
+          case 'capture_intent': {
+            // The HTML is model-authored from untrusted evidence. A script
+            // injection cannot silently create Work: the top-level host owns
+            // this explicit confirmation and the mutation.
+            if (!window.confirm(`Capture “${message.payload.text}” in ${area.name}?`)) {
+              return ack(false, 'cancelled');
+            }
+            const response = await fetch('/api/albatross/capture', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                rawText: message.payload.text,
+                source: 'chat',
+                areaId,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              }),
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'Capture failed.');
+            const workIds = Array.isArray(body.workIds) ? body.workIds.map(String) : [];
+            if (workIds[0]) setPendingOpenWorkId(workIds[0]);
+            for (const workId of workIds) {
+              void fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+              }).catch(() => undefined);
+            }
+            return ack(true);
+          }
+        }
+      } catch (error) {
+        return ack(false, error instanceof Error ? error.message : 'Action failed.');
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [
+    area.name,
+    areaId,
+    allowedEventKeys,
+    allowedThreadKeys,
+    allowedWorkIds,
+    setAiBarOpen,
+    setChatScope,
+    setPendingOpenWorkId,
+    setPrimaryView,
+    setSelectedThread,
+    setSelectedWorkId,
+    setThreadAccount,
+  ]);
+
+  const updating = refreshing || status === 'generating';
+  const editionLabel =
+    status === 'error'
+      ? 'Last good edition'
+      : updating
+        ? 'Composing a new edition…'
+        : generatedAt
+          ? `Updated ${areaFreshness(generatedAt, Date.now())}`
+          : 'Area artifact';
+
+  return (
+    <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)]" data-area-artifact-canvas>
+      <iframe
+        ref={frameRef}
+        title={`Area brief for ${area.name}`}
+        srcDoc={srcDoc}
+        onLoad={postTheme}
+        sandbox="allow-scripts"
+        className="h-full w-full border-0 bg-[var(--color-bg)]"
+      />
+
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3">
+        <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 pr-2 shadow-sm backdrop-blur-md">
+          <button
+            type="button"
+            onClick={onAllAreas}
+            className="rounded-full px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+          >
+            Areas
+          </button>
+          <span className="text-[var(--color-text-faint)]">/</span>
+          <AreaMark area={area} />
+          <span className="max-w-48 truncate text-[12px] font-medium">{area.name}</span>
+        </div>
+
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
+          <span
+            className={cn(
+              'hidden max-w-44 truncate px-2 text-[10.5px] sm:block',
+              status === 'error' || refreshError
+                ? 'text-[var(--color-danger)]'
+                : 'text-[var(--color-text-faint)]',
+            )}
+            aria-live="polite"
+          >
+            {refreshError ? `Error: ${refreshError}` : editionLabel}
+          </span>
+          <button
+            type="button"
+            onClick={onDiscuss}
+            className="rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+          >
+            Discuss
+          </button>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={updating}
+            className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+            title="Compose a fresh Area edition"
+          >
+            <RefreshCw className={cn('size-3', updating && 'motion-safe:animate-spin')} aria-hidden />
+            <span className="hidden md:inline">Refresh</span>
+          </button>
+          <a
+            href="/settings?tab=areas"
+            className="rounded-full px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+          >
+            Manage
+          </a>
+          {status === 'error' ? (
+            <button
+              type="button"
+              onClick={onStructuredFallback}
+              className="sr-only focus:not-sr-only focus:rounded-full focus:px-2.5 focus:py-1 focus:text-[11.5px]"
+            >
+              Open structured fallback
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AreaArtifactUnavailable({
+  area,
+  failed,
+  refreshing,
+  error,
+  onRefresh,
+  onAllAreas,
+  onStructuredFallback,
+}: {
+  area: AreaIdentityLike;
+  failed: boolean;
+  refreshing: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onAllAreas: () => void;
+  onStructuredFallback: () => void;
+}) {
+  return (
+    <div className="relative flex h-full min-h-[420px] overflow-hidden bg-[var(--color-bg)]">
+      <div className="pointer-events-none absolute inset-0 opacity-45 [background-image:radial-gradient(var(--color-border)_0.7px,transparent_0.7px)] [background-size:13px_13px] [mask-image:linear-gradient(to_bottom,black,transparent_80%)]" />
+      <button
+        type="button"
+        onClick={onAllAreas}
+        className="absolute left-4 top-4 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 px-3 py-1.5 text-[11.5px] text-[var(--color-text-muted)] shadow-sm backdrop-blur hover:text-[var(--color-text)]"
+      >
+        Areas
+      </button>
+      <div className="relative m-auto max-w-lg px-8 text-center">
+        <AreaMark area={area} size="lg" />
+        <p className="mt-5 font-display text-[clamp(24px,4vw,42px)] italic leading-tight tracking-[-0.025em]">
+          {failed ? `The ${area.name} edition needs another pass.` : `Composing ${area.name}.`}
+        </p>
+        <p className="mx-auto mt-3 max-w-md text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+          {failed
+            ? 'The full HTML artifact was not available. Your scoped Work and evidence are unchanged.'
+            : 'Albatross is shaping this Area’s Work, Projects, calendar, tasks, and evidence into one living document.'}
+        </p>
+        {error ? <p className="mt-2 text-[11px] text-[var(--color-danger)]">{error}</p> : null}
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+          <Button type="button" size="sm" onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw className={cn('size-3.5', refreshing && 'motion-safe:animate-spin')} aria-hidden />
+            {refreshing ? 'Composing…' : failed ? 'Try again' : 'Compose artifact'}
+          </Button>
+          {failed ? (
+            <Button type="button" size="sm" variant="outline" onClick={onStructuredFallback}>
+              Open structured fallback
+            </Button>
+          ) : null}
+        </div>
       </div>
     </div>
   );

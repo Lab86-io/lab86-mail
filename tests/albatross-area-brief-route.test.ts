@@ -65,6 +65,7 @@ describe('Area brief refresh endpoint', () => {
       userEmail: user.email,
       userName: user.name,
       areaId: 'area_test',
+      force: true,
     });
   });
 
