@@ -3,7 +3,12 @@ import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
 import { loadGitHubItems } from './github';
-import { granolaMeetingDetailArgs, mergeGranolaMeetingDetails } from './granola';
+import {
+  granolaAccountInfo,
+  granolaMeetingCountHint,
+  granolaMeetingDetailArgs,
+  mergeGranolaMeetingDetails,
+} from './granola';
 import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
 
 const mcpApi = (api as any).mcp;
@@ -150,15 +155,29 @@ export async function syncConnection(
   let supportedQueries = 0;
   let successfulQueries = 0;
   const queryErrors: string[] = [];
+  let accountInfo: { email?: string; workspaceName?: string } = {};
   try {
+    if (row.server === 'granola' && handle.toolNames.has('get_account_info')) {
+      try {
+        accountInfo = granolaAccountInfo(await deps.callMcpTool(handle, 'get_account_info', {}));
+      } catch (err) {
+        queryErrors.push(`account check: ${classifyError(err)}`);
+      }
+    }
     for (const query of def.syncQueries) {
       // Skip tools the server doesn't actually expose (graceful vendor drift).
       if (handle.toolNames.size && !handle.toolNames.has(query.tool)) continue;
       supportedQueries += 1;
       try {
         const result = await deps.callMcpTool(handle, query.tool, query.args);
+        const normalized = normalizeItems(query, result);
+        const advertisedCount = row.server === 'granola' ? granolaMeetingCountHint(result) : null;
+        if (advertisedCount && normalized.length === 0) {
+          queryErrors.push(`Granola returned ${advertisedCount} meetings in an unsupported response shape`);
+          continue;
+        }
         successfulQueries += 1;
-        for (const item of normalizeItems(query, result)) {
+        for (const item of normalized) {
           if (seen.has(item.externalId)) continue;
           seen.add(item.externalId);
           items.push(item);
@@ -223,6 +242,8 @@ export async function syncConnection(
     status: 'ready',
     lastSyncedAt: Date.now(),
     itemCount: items.length,
+    accountEmail: accountInfo.email,
+    workspaceName: accountInfo.workspaceName,
   });
   return { ok: true, count: items.length };
 }

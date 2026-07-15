@@ -403,7 +403,7 @@ describe('MCP syncConnection state transitions', () => {
     expect(mutations.at(-1)).toMatchObject({ status: 'ready', itemCount: 1 });
   });
 
-  test('enriches Granola meeting listings with notes using the advertised tool schema', async () => {
+  test('indexes Granola live text listings, account identity, and enriched notes', async () => {
     const mutations: Array<Record<string, any>> = [];
     const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
     const { syncConnection } = await import('../lib/mcp/sync');
@@ -422,7 +422,7 @@ describe('MCP syncConnection state transitions', () => {
         getConnectionToken: async () => ({ row: granolaRow, token: 'oauth-access' }),
         connectMcp: async () =>
           ({
-            toolNames: new Set(['list_meetings', 'get_meetings']),
+            toolNames: new Set(['get_account_info', 'list_meetings', 'get_meetings']),
             toolSchemas: new Map([
               ['get_meetings', { type: 'object', properties: { meeting_ids: { type: 'array' } } }],
             ]),
@@ -430,11 +430,27 @@ describe('MCP syncConnection state transitions', () => {
           }) as any,
         callMcpTool: async (_handle, tool, args) => {
           calls.push({ tool, args });
+          if (tool === 'get_account_info') {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    email: 'josh@example.com',
+                    active_workspace: { display_name: 'StatPearls' },
+                  }),
+                },
+              ],
+            } as any;
+          }
           if (tool === 'list_meetings') {
             return {
-              structuredContent: {
-                meetings: [{ id: 'meeting_1', title: 'Albatross planning', date: '2026-07-15T14:00:00Z' }],
-              },
+              content: [
+                {
+                  type: 'text',
+                  text: '<meetings_data count="1"><meeting id="meeting_1" title="Albatross planning" date="2026-07-15T14:00:00Z"><summary>Planning notes</summary></meeting></meetings_data>',
+                },
+              ],
             } as any;
           }
           return {
@@ -458,6 +474,7 @@ describe('MCP syncConnection state transitions', () => {
 
     expect(result).toEqual({ ok: true, count: 1 });
     expect(calls).toEqual([
+      { tool: 'get_account_info', args: {} },
       { tool: 'list_meetings', args: {} },
       { tool: 'get_meetings', args: { meeting_ids: ['meeting_1'] } },
     ]);
@@ -465,6 +482,12 @@ describe('MCP syncConnection state transitions', () => {
       externalId: 'meeting_1',
       kind: 'meeting',
       summary: '{"decisions":["Ship OAuth"],"actions":["Verify staging"]}',
+    });
+    expect(mutations.at(-1)).toMatchObject({
+      status: 'ready',
+      itemCount: 1,
+      accountEmail: 'josh@example.com',
+      workspaceName: 'StatPearls',
     });
   });
 

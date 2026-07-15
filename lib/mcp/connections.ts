@@ -18,6 +18,11 @@ export interface McpConnectionRow {
   includeInSearch: boolean;
   lastSyncedAt?: number;
   error?: string;
+  syncStatus?: 'idle' | 'syncing' | 'ready' | 'error';
+  itemCount?: number;
+  accountEmail?: string;
+  workspaceName?: string;
+  syncError?: string;
 }
 
 interface McpCredentialsRow {

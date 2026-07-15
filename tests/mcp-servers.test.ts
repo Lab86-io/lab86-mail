@@ -46,6 +46,38 @@ describe('MCP server registry and normalizer', () => {
     expect(meetings[0]?.searchText).toContain('Ada, grace@example.com');
   });
 
+  test('normalizes the XML-like meeting payload returned by the live Granola MCP', () => {
+    const meetings = normalizeItems(
+      { tool: 'list_meetings', args: {}, kind: 'meeting' },
+      {
+        content: [
+          {
+            type: 'text',
+            text: `<meetings_data count="2">
+              <meeting id="meeting_live_1" title="CardHunt &amp; Lab86" date="2026-07-14T17:00:00Z">
+                <known_participants>Ada Lovelace, grace@example.com</known_participants>
+                <summary>Reviewed GitHub pull requests &amp; staging.</summary>
+              </meeting>
+              <meeting id="meeting_live_2" title="One-on-one" date="2026-07-13T16:00:00Z">
+                <private_notes>Follow up next week.</private_notes>
+              </meeting>
+            </meetings_data>`,
+          },
+        ],
+      },
+    );
+
+    expect(meetings).toHaveLength(2);
+    expect(meetings[0]).toMatchObject({
+      externalId: 'meeting_live_1',
+      title: 'CardHunt & Lab86',
+      summary: 'Reviewed GitHub pull requests & staging.',
+      updatedAtSource: Date.parse('2026-07-14T17:00:00Z'),
+    });
+    expect(meetings[0]?.searchText).toContain('grace@example.com');
+    expect(meetings[1]?.summary).toBe('Follow up next week.');
+  });
+
   test('migrates legacy GitHub MCP connections without rewriting enterprise REST hosts', () => {
     expect(
       resolveMcpConnectionConfig('github', 'https://api.githubcopilot.com/mcp/readonly', [

@@ -733,6 +733,11 @@ interface McpConnectionRow {
   includeInSearch: boolean;
   lastSyncedAt?: number;
   error?: string;
+  syncStatus?: 'idle' | 'syncing' | 'ready' | 'error';
+  itemCount?: number;
+  accountEmail?: string;
+  workspaceName?: string;
+  syncError?: string;
 }
 
 interface McpServerInfo {
@@ -856,10 +861,18 @@ function ConnectionsSection() {
                     <ShieldCheck className="size-3" />
                     Connected
                     {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
+                    {connection.itemCount !== undefined
+                      ? ` · ${connection.itemCount.toLocaleString()} item${connection.itemCount === 1 ? '' : 's'}`
+                      : ''}
                   </div>
                 ) : (
                   <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">Disconnected</div>
                 )}
+                {connection.server === 'granola' && (connection.workspaceName || connection.accountEmail) ? (
+                  <div className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]">
+                    {[connection.workspaceName, connection.accountEmail].filter(Boolean).join(' · ')}
+                  </div>
+                ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 <Button

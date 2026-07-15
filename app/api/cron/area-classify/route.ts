@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { classifyThreads } from '@/lib/albatross/area-classifier';
+import { classifyAreaArtifacts } from '@/lib/albatross/area-discovery';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
@@ -25,7 +26,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
   }
   try {
-    const counts = await runWithAiRequestContext({ userId, agent: 'ai' }, () => classifyThreads({ userId }));
+    const counts = await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
+      const mail = await classifyThreads({ userId });
+      const connected = await classifyAreaArtifacts({ userId });
+      return { mail, connected };
+    });
     return NextResponse.json({ ok: true, userId, ...counts }, { status: 200 });
   } catch (err: any) {
     console.error('[cron/area-classify] classification failed', userId, err);

@@ -24,3 +24,11 @@ Browserbase verified the live protected-resource and authorization-server metada
 - Granola meeting evidence participates in connected search, Daily Briefs, and proactive Area matching under the same candidate/verification rules as other MCP evidence.
 
 Granola plan and workspace visibility still governs what Lab86 can read. Basic accounts may expose only recent personal notes, while paid or Enterprise configurations can expose broader meeting and transcript access.
+
+## Dogfood repair and chat research
+
+The connected staging account exposed eight meetings, but Granola's live `list_meetings` response arrived as an XML-like text content block rather than JSON `structuredContent`. The original normalizer treated that successful response as an empty list and marked sync ready with zero items. Sync now parses that live shape, records Granola account/workspace identity, and treats a positive advertised meeting count with no normalized rows as an error instead of a successful empty sync.
+
+The connector row uses Granola's official mark from `granola.ai`, and shows indexed item count plus the connected workspace/account so a successful OAuth connection can be distinguished from a successful data sync.
+
+Chat motion was implemented directly with 5.6-sol. Existing Mobbin grounding in `AIBar.tsx` and `TeachAreas.tsx` covers quiet assistant surfaces and restrained streaming feedback (Linear Ask, Ferndesk, and Notion AI). Fresh Browserbase research checked Streamdown's progressive-render contract; assistant text now uses its word-separated `fadeIn` animation only while the newest response is streaming, then returns to static rendering. The short duration and stagger preserve the existing app density and respect the surrounding reduced-motion behavior.

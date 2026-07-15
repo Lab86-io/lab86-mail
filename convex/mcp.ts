@@ -237,7 +237,25 @@ export const listConnections = query({
       .query('mcpConnections')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
-    return rows.filter((row) => row.status !== 'disconnected');
+    const active = rows.filter((row) => row.status !== 'disconnected');
+    return await Promise.all(
+      active.map(async (row) => {
+        const sync = await ctx.db
+          .query('mcpSyncStates')
+          .withIndex('by_user_connection', (q) =>
+            q.eq('userId', args.userId).eq('connectionId', row.connectionId),
+          )
+          .first();
+        return {
+          ...row,
+          syncStatus: sync?.status,
+          itemCount: sync?.itemCount,
+          accountEmail: sync?.accountEmail,
+          workspaceName: sync?.workspaceName,
+          syncError: sync?.error,
+        };
+      }),
+    );
   },
 });
 
@@ -448,6 +466,8 @@ export const setSyncState = mutation({
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),
     itemCount: v.optional(v.number()),
+    accountEmail: v.optional(v.string()),
+    workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -467,6 +487,8 @@ export const setSyncState = mutation({
       lastSyncedAt: args.lastSyncedAt,
       lastCursor: args.lastCursor,
       itemCount: args.itemCount,
+      accountEmail: args.accountEmail,
+      workspaceName: args.workspaceName,
       error: args.error,
       updatedAt: ts,
     };
@@ -722,7 +744,12 @@ export const linkTask = mutation({
 
 // Recent items across the user's brief-enabled connections, newest first.
 export const listItemsForBrief = query({
-  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    server: v.optional(serverValidator),
+    limit: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const connections = await ctx.db
@@ -738,7 +765,9 @@ export const listItemsForBrief = query({
       .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
       .order('desc')
       .take(400);
-    return rows.filter((r) => enabled.has(r.connectionId)).slice(0, args.limit ?? 40);
+    return rows
+      .filter((r) => enabled.has(r.connectionId) && (!args.server || r.server === args.server))
+      .slice(0, args.limit ?? 40);
   },
 });
 

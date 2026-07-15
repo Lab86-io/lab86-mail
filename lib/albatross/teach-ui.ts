@@ -268,6 +268,16 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
       failed: 'Checking recent senders failed',
     };
   },
+  area_discover_context: fixed(
+    'Searching connected context for Areas',
+    'Searched connected context for Areas',
+    'Area context search failed',
+  ),
+  mcp_connection_status: fixed(
+    'Checking connection sync status',
+    'Checked connection sync status',
+    'Connection status check failed',
+  ),
   area_list: fixed('Checking saved areas', 'Checked saved areas', 'Checking saved areas failed'),
   area_create: (a, out) => {
     const name = str(a.name) || str(out.name);

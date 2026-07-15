@@ -5,8 +5,10 @@ import {
   type UIMessage,
 } from 'ai';
 import type { NextRequest } from 'next/server';
+import { runWithAiRequestContext } from '@/lib/ai/context';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
+import { prepareAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
@@ -23,6 +25,7 @@ interface AgentRequestBody {
   messages: UIMessage[];
   extraSystem?: string;
   timezone?: string;
+  areaDiscovery?: { mode: 'teach' | 'area'; areaId?: string };
 }
 
 function messageText(message: UIMessage): string {
@@ -133,10 +136,24 @@ export async function POST(req: NextRequest) {
       prepared.omitted || prepared.compacted
         ? `Conversation continuity note: ${prepared.omitted} older UI message(s) were omitted and ${prepared.compacted} older message(s) were compacted to text-only form to keep this long conversation stable. Treat the remaining recent transcript as authoritative.`
         : '';
+    const areaDiscoveryContext = body.areaDiscovery
+      ? await runWithAiRequestContext(
+          { userId: user.userId, userEmail: user.email, userName: user.name, agent: 'ai' },
+          () =>
+            prepareAreaDiscoveryContext({
+              userId: user.userId,
+              areaId: body.areaDiscovery?.mode === 'area' ? body.areaDiscovery.areaId : undefined,
+            }).then((result) => result.systemContext),
+        ).catch((error) => {
+          console.warn('[agent-route] area discovery context failed', errorForLog(error));
+          return '';
+        })
+      : '';
     const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
     const stream = await runAgent({
       messages: modelMessages,
-      extraSystem: [body.extraSystem, compactionNote].filter(Boolean).join('\n\n') || undefined,
+      extraSystem:
+        [body.extraSystem, areaDiscoveryContext, compactionNote].filter(Boolean).join('\n\n') || undefined,
       userId: user.userId,
       userEmail: user.email,
       userName: user.name,

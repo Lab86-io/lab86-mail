@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { prepareAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { defineTool } from './registry';
 
@@ -14,6 +15,7 @@ const defaultDeps = {
   api: api as any,
   convexQuery,
   convexMutation,
+  prepareAreaDiscoveryContext,
   now: () => Date.now(),
 };
 
@@ -310,5 +312,34 @@ export const areaDomainActivity = defineTool({
       senderEmail: args.senderEmail,
       max: args.max,
     });
+  },
+});
+
+export const areaDiscoverContext = defineTool({
+  name: 'area_discover_context',
+  description:
+    "Run an agentic, cross-connector discovery pass for one Area or all Areas. It searches the user's indexed mail, calendar, tasks, GitHub, Granola, Bitbucket, Jira, Slack, and future connected corpora; files strong matches as candidates; and returns evidence the Teach conversation should ask the user to confirm. Call immediately after area_create and whenever the user asks an Area to look for more context.",
+  category: 'memory',
+  mutating: true,
+  input: z.object({ areaId: z.string().optional() }),
+  output: z.object({
+    ok: z.boolean(),
+    sources: z.array(z.string()),
+    discoveries: z.array(z.any()),
+    pendingCandidates: z.array(z.any()),
+    pendingFacts: z.array(z.any()),
+  }),
+  async handler(args, ctx) {
+    const result = await deps.prepareAreaDiscoveryContext({
+      userId: requireUserId(ctx.userId),
+      areaId: args.areaId,
+    });
+    return {
+      ok: true,
+      sources: result.sources,
+      discoveries: result.discoveries,
+      pendingCandidates: result.pendingCandidates,
+      pendingFacts: result.pendingFacts,
+    };
   },
 });

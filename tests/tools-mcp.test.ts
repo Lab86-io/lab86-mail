@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import {
   __setMcpToolDepsForTest,
   githubSearch,
+  mcpConnectionStatus,
   mcpCreateTask,
   mcpListItems,
   mcpSearch,
@@ -85,7 +86,7 @@ describe('MCP tools', () => {
   });
 
   test('lists brief items and creates a linked, undoable task', async () => {
-    const listed = await runTool(mcpListItems.handler, { limit: 3 });
+    const listed = await runTool(mcpListItems.handler, { server: 'granola', limit: 3 });
     const created = await runTool(mcpCreateTask.handler, {
       connectionId: 'conn_1',
       externalId: item.externalId,
@@ -97,6 +98,7 @@ describe('MCP tools', () => {
     });
 
     expect(listed.items).toHaveLength(1);
+    expect(queryCalls[0]?.args).toMatchObject({ server: 'granola', limit: 3 });
     expect(created).toEqual({ ok: true, cardId: 'card_1', operationId: 'operation_1' });
     expect(mutationCalls).toHaveLength(2);
     expect(mutationCalls[0]?.args.source).toMatchObject({
@@ -111,6 +113,36 @@ describe('MCP tools', () => {
       target: { kind: 'card', id: 'card_1', boardId: 'board_1' },
       inverse: { kind: 'tasks.delete_card', payload: { cardId: 'card_1' } },
     });
+  });
+
+  test('reports source sync identity and indexed count after an empty-result dogfood', async () => {
+    __setMcpToolDepsForTest({
+      convexQuery: (async () => [
+        {
+          server: 'granola',
+          displayName: 'Granola',
+          status: 'connected',
+          syncStatus: 'ready',
+          itemCount: 8,
+          includeInSearch: true,
+          accountEmail: 'josh@example.com',
+          workspaceName: 'StatPearls',
+        },
+        { server: 'github', status: 'connected', itemCount: 30 },
+      ]) as any,
+    });
+
+    const result = await runTool(mcpConnectionStatus.handler, { server: 'granola' });
+
+    expect(result.connections).toEqual([
+      expect.objectContaining({
+        server: 'granola',
+        syncStatus: 'ready',
+        itemCount: 8,
+        accountEmail: 'josh@example.com',
+        workspaceName: 'StatPearls',
+      }),
+    ]);
   });
 
   test('still requires authentication for the GitHub-specific search', async () => {

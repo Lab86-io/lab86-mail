@@ -1712,6 +1712,8 @@ export default defineSchema({
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),
     itemCount: v.optional(v.number()),
+    accountEmail: v.optional(v.string()),
+    workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),

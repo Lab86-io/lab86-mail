@@ -88,12 +88,50 @@ export const mcpListItems = defineTool({
     "List the user's most recently updated items from connected sources (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) that are enabled for the brief. Use to see meetings, open issues, PRs awaiting review, assigned tickets, and recent mentions across tools.",
   category: 'mcp',
   mutating: false,
-  input: z.object({ limit: z.number().int().min(1).max(50).default(25) }),
+  input: z.object({
+    server: serverEnum.optional().describe('Restrict to one source. Use this for latest Granola meeting.'),
+    limit: z.number().int().min(1).max(50).default(25),
+  }),
   output: z.object({ items: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const items = await deps.convexQuery<any[]>(mcpApi.listItemsForBrief, { userId, limit: args.limit });
+    const items = await deps.convexQuery<any[]>(mcpApi.listItemsForBrief, {
+      userId,
+      server: args.server,
+      limit: args.limit,
+    });
     return { items: (items || []).map(toToolItem) };
+  },
+});
+
+export const mcpConnectionStatus = defineTool({
+  name: 'mcp_connection_status',
+  description:
+    'Inspect whether connected sources actually synced, including indexed item counts and Granola account/workspace identity. Use after an empty source-specific search instead of guessing that the source is disconnected.',
+  category: 'mcp',
+  mutating: false,
+  input: z.object({ server: serverEnum.optional().describe('Restrict to one source.') }),
+  output: z.object({ connections: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const rows = await deps.convexQuery<any[]>(mcpApi.listConnections, {
+      userId: requireUserId(ctx.userId),
+    });
+    return {
+      connections: (rows || [])
+        .filter((row) => !args.server || row.server === args.server)
+        .map((row) => ({
+          server: row.server,
+          displayName: row.displayName,
+          status: row.status,
+          syncStatus: row.syncStatus,
+          itemCount: row.itemCount ?? 0,
+          lastSyncedAt: row.lastSyncedAt,
+          includeInSearch: row.includeInSearch,
+          accountEmail: row.accountEmail,
+          workspaceName: row.workspaceName,
+          error: row.syncError || row.error,
+        })),
+    };
   },
 });
 

@@ -4,6 +4,7 @@
 // best-effort and skips any tool a server doesn't actually expose, so a vendor
 // renaming a tool degrades gracefully instead of crashing the run.
 import type { McpAuthMode } from './auth';
+import { granolaMeetingsFromText } from './granola';
 
 export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
 export type McpServerTransport = 'mcp' | 'bitbucket-rest' | 'github-rest';
@@ -207,7 +208,8 @@ function extractRawArray(result: any): any[] {
       try {
         candidates.push(JSON.parse(block.text));
       } catch {
-        // non-JSON text block — ignore
+        const meetings = granolaMeetingsFromText(block.text);
+        if (meetings.length) candidates.push(meetings);
       }
     }
   }

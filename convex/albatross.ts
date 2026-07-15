@@ -1809,8 +1809,284 @@ export const areaHome = query({
   },
 });
 
+// Compact pending-evidence read for the Teach and Area-scoped conversations.
+// These are hypotheses, never silent truth: the agent uses them to ask one
+// evidence-backed confirmation question at a time.
+export const areaDiscoveryBrief = query({
+  args: { ...callerArgs, areaId: v.optional(v.id('areas')), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    if (args.areaId) await requireArea(ctx, args.areaId, userId);
+    const limit = Math.min(Math.max(args.limit ?? 20, 1), 30);
+    const [areas, links, facts] = await Promise.all([
+      ctx.db
+        .query('areas')
+        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
+        .collect(),
+      ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'))
+        .take(200),
+      ctx.db
+        .query('areaFacts')
+        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'))
+        .take(100),
+    ]);
+    const areaById = new Map(areas.map((area) => [String(area._id), area]));
+    const scoped = links
+      .filter((link) => !args.areaId || link.areaId === args.areaId)
+      .filter((link) => areaById.has(String(link.areaId)))
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, limit);
+    const candidates = await Promise.all(
+      scoped.map(async (link) => {
+        const area = areaById.get(String(link.areaId))!;
+        let source = link.artifactKind;
+        let title = link.artifactId;
+        let occurredAt = link.updatedAt;
+        if (link.artifactKind === 'mailThread') {
+          const row = await resolveMailLink(ctx, userId, link);
+          if (row) {
+            source = 'mail';
+            title = row.subject;
+            occurredAt = row.lastDate;
+          }
+        } else if (link.artifactKind === 'calendarEvent') {
+          const row = await resolveEventLink(ctx, userId, link);
+          if (row) {
+            source = 'calendar';
+            title = row.title;
+            occurredAt = row.startAt;
+          }
+        } else if (link.artifactKind === 'task') {
+          const row = await resolveTaskLink(ctx, userId, link);
+          if (row) {
+            source = 'tasks';
+            title = row.title;
+            occurredAt = row.updatedAt;
+          }
+        } else if (link.artifactKind === 'mcpItem') {
+          const row = await resolveMcpLink(ctx, userId, link);
+          if (row) {
+            source = row.server;
+            title = row.title;
+            occurredAt = row.occurredAt;
+          }
+        }
+        return {
+          areaId: String(area._id),
+          areaName: area.name,
+          artifactKind: link.artifactKind,
+          artifactId: link.artifactId,
+          source,
+          title,
+          occurredAt,
+          confidence: link.confidence ?? null,
+          reason: link.reason ?? null,
+        };
+      }),
+    );
+    return {
+      candidates,
+      candidateFacts: facts
+        .filter((fact) => !args.areaId || fact.areaId === args.areaId)
+        .filter((fact) => areaById.has(String(fact.areaId)))
+        .map((fact) => ({
+          factId: String(fact._id),
+          areaId: String(fact.areaId),
+          areaName: areaById.get(String(fact.areaId))!.name,
+          kind: fact.kind,
+          value: fact.value,
+          sourceRefs: fact.sourceRefs,
+        })),
+    };
+  },
+});
+
 const UNCLASSIFIED_SCAN = 200;
 const UNCLASSIFIED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const AREA_DISCOVERY_SCAN_PER_SOURCE = 120;
+const AREA_DISCOVERY_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+async function hasAreaArtifactLink(
+  ctx: QueryCtx,
+  userId: string,
+  artifactKind: 'mailThread' | 'calendarEvent' | 'task' | 'mcpItem',
+  artifactId: string,
+  accountId?: string,
+) {
+  if (accountId) {
+    return Boolean(
+      await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_account_artifact', (q) =>
+          q
+            .eq('userId', userId)
+            .eq('accountId', accountId)
+            .eq('artifactKind', artifactKind)
+            .eq('artifactId', artifactId),
+        )
+        .first(),
+    );
+  }
+  return Boolean(
+    await ctx.db
+      .query('areaArtifactLinks')
+      .withIndex('by_user_artifact', (q) =>
+        q.eq('userId', userId).eq('artifactKind', artifactKind).eq('artifactId', artifactId),
+      )
+      .first(),
+  );
+}
+
+// One bounded discovery pass across every locally indexed source. Connector
+// sync owns the remote crawl; Area discovery consumes the private local
+// corpora so teaching never sends connector credentials or full histories to
+// the model. Only unclaimed artifacts leave this query.
+export const unclassifiedAreaArtifacts = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(args.limit ?? 80, 1), 100);
+    const cutoff = now() - AREA_DISCOVERY_WINDOW_MS;
+    const [mail, events, cards, mcp, connections] = await Promise.all([
+      ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gte('lastDate', cutoff))
+        .order('desc')
+        .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+      ctx.db
+        .query('calendarEvents')
+        .withIndex('by_user_start', (q) => q.eq('userId', args.userId).gte('startAt', cutoff))
+        .order('desc')
+        .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+      ctx.db
+        .query('cards')
+        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .take(200),
+      ctx.db
+        .query('mcpItems')
+        .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
+        .order('desc')
+        .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+      ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .collect(),
+    ]);
+    const searchableConnectionIds = new Set(
+      connections
+        .filter((connection) => connection.status === 'connected' && connection.includeInSearch)
+        .map((connection) => connection.connectionId),
+    );
+    const candidates = [
+      ...mail.map((row) => ({
+        artifactKind: 'mailThread' as const,
+        artifactId: row.providerThreadId,
+        accountId: row.accountId,
+        source: 'mail',
+        title: row.subject || '(no subject)',
+        text: [row.subject, row.snippet, row.fromAddress].filter(Boolean).join('\n'),
+        occurredAt: row.lastDate,
+      })),
+      ...events.map((row) => ({
+        artifactKind: 'calendarEvent' as const,
+        artifactId: String(row._id),
+        accountId: row.accountId,
+        source: 'calendar',
+        title: row.title || '(untitled event)',
+        text: [
+          row.title,
+          row.description,
+          row.location,
+          JSON.stringify(row.participants || []),
+          JSON.stringify(row.organizer || {}),
+        ]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 8_000),
+        occurredAt: row.startAt,
+      })),
+      ...cards
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .slice(0, AREA_DISCOVERY_SCAN_PER_SOURCE)
+        .map((row) => ({
+          artifactKind: 'task' as const,
+          artifactId: String(row._id),
+          source: 'tasks',
+          title: row.title,
+          text: [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
+            .filter(Boolean)
+            .join('\n')
+            .slice(0, 8_000),
+          occurredAt: row.updatedAt,
+        })),
+      ...mcp
+        .filter((row) => searchableConnectionIds.has(row.connectionId))
+        .map((row) => ({
+          artifactKind: 'mcpItem' as const,
+          artifactId: row.externalId,
+          source: row.server,
+          title: row.title,
+          text: row.searchText.slice(0, 8_000),
+          occurredAt: row.updatedAtSource ?? row.updatedAt,
+        })),
+    ].sort((left, right) => right.occurredAt - left.occurredAt);
+
+    // Preserve recency within each source, but rotate across source groups so
+    // a busy inbox cannot crowd GitHub, Granola, calendar, or task evidence
+    // out of a Teach-time discovery pass.
+    const groups = new Map<string, typeof candidates>();
+    for (const candidate of candidates) {
+      groups.set(candidate.source, [...(groups.get(candidate.source) || []), candidate]);
+    }
+    const items: Array<(typeof candidates)[number]> = [];
+    const positions = new Map<string, number>();
+    while (items.length < limit) {
+      let advanced = false;
+      for (const [source, group] of groups) {
+        let position = positions.get(source) || 0;
+        while (position < group.length) {
+          const candidate = group[position++];
+          positions.set(source, position);
+          if (
+            await hasAreaArtifactLink(
+              ctx,
+              args.userId,
+              candidate.artifactKind,
+              candidate.artifactId,
+              'accountId' in candidate ? candidate.accountId : undefined,
+            )
+          ) {
+            continue;
+          }
+          items.push(candidate);
+          advanced = true;
+          break;
+        }
+        if (items.length >= limit) break;
+      }
+      if (!advanced) break;
+    }
+    return {
+      items,
+      sources: [
+        'mail',
+        'calendar',
+        'tasks',
+        ...new Set(
+          connections
+            .filter((connection) => connection.status === 'connected' && connection.includeInSearch)
+            .map((connection) => connection.server),
+        ),
+      ],
+    };
+  },
+});
 
 // Recent corpus threads that no area has claimed yet — the classifier's work
 // queue. Internal-secret-gated: only the cron/classifier path reads this.
@@ -1869,7 +2145,7 @@ export const recordAreaLinks = mutation({
     links: v.array(
       v.object({
         areaId: v.id('areas'),
-        artifactKind: v.optional(v.literal('mailThread')),
+        artifactKind: v.optional(artifactKindValidator),
         artifactId: v.string(),
         accountId: v.optional(v.string()),
         status: v.union(v.literal('candidate'), v.literal('verified')),
@@ -1896,13 +2172,14 @@ export const recordAreaLinks = mutation({
         skipped += 1;
         continue;
       }
+      const artifactKind = link.artifactKind ?? 'mailThread';
       const { artifactId, accountId } = normalizedArtifactIdentity(link);
       const refs = normalizedRefs(link);
       assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
       const existing = await ctx.db
         .query('areaArtifactLinks')
         .withIndex('by_user_artifact', (q) =>
-          q.eq('userId', userId).eq('artifactKind', 'mailThread').eq('artifactId', artifactId),
+          q.eq('userId', userId).eq('artifactKind', artifactKind).eq('artifactId', artifactId),
         )
         .collect();
       if (existing.some((row) => row.areaId === link.areaId)) {
@@ -1912,7 +2189,8 @@ export const recordAreaLinks = mutation({
       await ctx.db.insert('areaArtifactLinks', {
         userId,
         areaId: link.areaId,
-        artifactKind: 'mailThread',
+        artifactKind,
+        externalId: artifactKind === 'mcpItem' ? artifactId : undefined,
         artifactId,
         accountId,
         role: 'supporting',
