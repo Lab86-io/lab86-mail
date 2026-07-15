@@ -1826,10 +1826,12 @@ export const areaDiscoveryBrief = query({
       ctx.db
         .query('areaArtifactLinks')
         .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'))
+        .order('desc')
         .take(200),
       ctx.db
         .query('areaFacts')
         .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'))
+        .order('desc')
         .take(100),
     ]);
     const areaById = new Map(areas.map((area) => [String(area._id), area]));
