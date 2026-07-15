@@ -71,4 +71,13 @@ describe('connection-scoped MCP Area identity', () => {
       patch: { targetKind: 'project', targetId: 'project_one' },
     });
   });
+
+  test('suppresses a rejected Area match when no existing target is present', () => {
+    expect(
+      mcpAreaTargetDecision({
+        matchedAreaId: 'area_rejected',
+        rejectedAreaIds: ['area_rejected'],
+      }),
+    ).toEqual({ contradicted: true, patch: {} });
+  });
 });
