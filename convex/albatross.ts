@@ -10,6 +10,7 @@ import {
 import { validateAreaImageUpload } from '../lib/albatross/area-image';
 import { areaMailMoveConfirmation, areaMailMoveReason } from '../lib/albatross/area-mail';
 import { matchAreaContext } from '../lib/albatross/area-matching';
+import { areaMcpExternalId } from '../lib/albatross/area-mcp-identity';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -115,11 +116,6 @@ function normalizedArtifactIdentity(input: { artifactId: string; accountId?: str
     artifactId: normalizeText(input.artifactId).slice(0, ARTIFACT_ID_MAX),
     accountId: accountId || undefined,
   };
-}
-
-function mcpExternalId(artifactId: string, connectionId?: string) {
-  const prefix = connectionId ? `${connectionId}:` : '';
-  return prefix && artifactId.startsWith(prefix) ? artifactId.slice(prefix.length) : artifactId;
 }
 
 function verifiedFactPatch(status: AreaFactStatus, confirmationRefs: AlbatrossConfirmationRef[], ts: number) {
@@ -1150,7 +1146,7 @@ export const setAreaArtifactLinkStatus = mutation({
     if (args.status === 'rejected') {
       const sourceId =
         link.artifactKind === 'mcpItem'
-          ? link.externalId || mcpExternalId(link.artifactId, link.accountId)
+          ? link.externalId || areaMcpExternalId(link.artifactId, link.accountId)
           : link.artifactId;
       const evidenceRows = await ctx.db
         .query('albatrossEvidence')
@@ -1612,7 +1608,7 @@ async function resolveTaskLink(ctx: QueryCtx | MutationCtx, userId: string, link
 }
 
 async function resolveMcpLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
-  const externalId = link.externalId || mcpExternalId(link.artifactId, link.accountId);
+  const externalId = link.externalId || areaMcpExternalId(link.artifactId, link.accountId);
   const item = link.accountId
     ? await ctx.db
         .query('mcpItems')
@@ -2292,7 +2288,7 @@ export const recordAreaLinks = mutation({
       }
       const artifactKind = link.artifactKind ?? 'mailThread';
       const { artifactId, accountId } = normalizedArtifactIdentity(link);
-      const externalId = artifactKind === 'mcpItem' ? mcpExternalId(artifactId, accountId) : undefined;
+      const externalId = artifactKind === 'mcpItem' ? areaMcpExternalId(artifactId, accountId) : undefined;
       const refs = normalizedRefs(link);
       assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
       const existing = await ctx.db

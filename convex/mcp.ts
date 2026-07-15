@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { v } from 'convex/values';
 import { matchAreaContext } from '../lib/albatross/area-matching';
+import { areaMcpArtifactId, mcpAreaTargetDecision } from '../lib/albatross/area-mcp-identity';
 import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
 import { detachedMcpSource } from '../lib/mcp/disconnect';
 import { internal } from './_generated/api';
@@ -8,10 +9,6 @@ import { internalMutation, internalQuery, mutation, query } from './_generated/s
 import { now, requireInternalSecret } from './lib';
 
 const DISCONNECT_BATCH_SIZE = 100;
-
-function areaMcpArtifactId(connectionId, externalId) {
-  return `${connectionId}:${externalId}`.slice(0, 500);
-}
 
 const serverValidator = v.union(
   v.literal('github'),
@@ -613,24 +610,18 @@ export const upsertItems = mutation({
             .eq('artifactId', artifactId),
         )
         .collect();
-      const rejectedAreaIds = new Set(
-        existingLinks.filter((link) => link.status === 'rejected').map((link) => String(link.areaId)),
-      );
-      const contradicted = Boolean(
-        (areaMatch && rejectedAreaIds.has(areaMatch.areaId)) ||
-          (existingEvidence?.targetKind === 'area' &&
-            existingEvidence.targetId &&
-            rejectedAreaIds.has(existingEvidence.targetId)),
-      );
+      const target = mcpAreaTargetDecision({
+        matchedAreaId: areaMatch?.areaId,
+        existingTargetKind: existingEvidence?.targetKind,
+        existingTargetId: existingEvidence?.targetId,
+        rejectedAreaIds: existingLinks
+          .filter((link) => link.status === 'rejected')
+          .map((link) => String(link.areaId)),
+      });
+      const contradicted = target.contradicted;
       const evidenceRow = {
         userId: args.userId,
-        ...(contradicted
-          ? { targetKind: undefined, targetId: undefined }
-          : areaMatch && !existingEvidence?.targetKind
-            ? { targetKind: 'area', targetId: areaMatch.areaId }
-            : existingEvidence?.targetKind && existingEvidence?.targetId
-              ? { targetKind: existingEvidence.targetKind, targetId: existingEvidence.targetId }
-              : {}),
+        ...target.patch,
         sourceKind,
         sourceId: item.externalId,
         connectionId: args.connectionId,
