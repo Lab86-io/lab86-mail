@@ -273,12 +273,12 @@ export function normalizeItems(query: McpSyncQuery, result: any): NormalizedMcpI
       : undefined;
     const summary = firstString(
       row.summary,
-      row.notes,
       compactText(row.notes),
+      row.notes,
       compactText(row.summarized_notes),
       row.description,
-      row.private_notes,
       compactText(row.private_notes),
+      row.private_notes,
       attendeeNames ? `Attendees: ${attendeeNames}` : undefined,
     );
     const url = firstString(row.html_url, row.url, row.permalink, row.self, row.link);

@@ -4,6 +4,7 @@ import {
   classifyAreaArtifacts,
   parseAreaDiscoveryOutput,
   prepareAreaDiscoveryContext,
+  readAreaDiscoveryContext,
 } from '../lib/albatross/area-discovery';
 
 const USER = 'user_area_discovery';
@@ -187,6 +188,20 @@ describe('cross-source Area discovery', () => {
     expect(context.systemContext).toContain('mail, calendar, tasks, github, granola');
     expect(context.systemContext).toContain('Albatross ↔ github: PR #42 merged');
     expect(context.systemContext).toContain('ask one focused confirmation question');
+  });
+
+  test('reads precomputed Teach context without running classification on the chat path', async () => {
+    brief = {
+      candidates: [{ areaName: 'Albatross', source: 'github', title: 'PR #42', reason: 'repository match' }],
+      candidateFacts: [],
+    };
+
+    const context = await readAreaDiscoveryContext({ userId: USER, areaId: 'area_albatross' });
+
+    expect(context.sources).toEqual(['github']);
+    expect(context.systemContext).toContain('Albatross ↔ github: PR #42');
+    expect(llmCalls).toHaveLength(0);
+    expect(mutationCalls).toHaveLength(0);
   });
 });
 

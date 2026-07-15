@@ -11,6 +11,14 @@ export interface McpClientHandle {
   close: () => Promise<void>;
 }
 
+export function indexMcpTools(tools: Array<{ name: string; inputSchema?: unknown }> | undefined) {
+  const available = tools || [];
+  return {
+    toolNames: new Set(available.map((tool) => tool.name)),
+    toolSchemas: new Map(available.map((tool) => [tool.name, tool.inputSchema])),
+  };
+}
+
 export async function connectMcp(
   serverUrl: string,
   token: string,
@@ -31,10 +39,7 @@ export async function connectMcp(
   let toolSchemas = new Map<string, unknown>();
   try {
     const { tools } = await client.listTools();
-    toolNames = new Set((tools || []).map((t: { name: string }) => t.name));
-    toolSchemas = new Map(
-      (tools || []).map((tool: { name: string; inputSchema?: unknown }) => [tool.name, tool.inputSchema]),
-    );
+    ({ toolNames, toolSchemas } = indexMcpTools(tools));
   } catch {
     // Some servers gate tools/list; leave it empty and let callers attempt
     // their known tools anyway.

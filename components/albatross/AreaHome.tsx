@@ -1581,7 +1581,7 @@ function AreaArtifactCanvas({
         sandbox="allow-scripts"
         aria-busy={!artifactReady}
         className={cn(
-          'h-full w-full border-0 bg-[var(--color-bg)]',
+          'h-full w-full border-0 bg-[var(--color-bg)] transition-opacity duration-300',
           artifactReady ? 'opacity-100' : 'opacity-0',
         )}
       />

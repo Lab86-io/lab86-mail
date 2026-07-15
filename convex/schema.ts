@@ -1380,6 +1380,7 @@ export default defineSchema({
     .index('by_board_updatedAt', ['boardId', 'updatedAt'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_source_thread', ['userId', 'sourceThreadId'])
     .index('by_user_source_calendar_event', ['userId', 'sourceCalendarEventId'])
     .index('by_user_due', ['userId', 'dueAt']),

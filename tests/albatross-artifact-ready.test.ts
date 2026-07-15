@@ -10,6 +10,7 @@ describe('brief artifact first-paint handshake', () => {
     expect(BRIEF_ARTIFACT_READY_RUNTIME_JS).toContain("d.type!=='theme'");
     expect(BRIEF_ARTIFACT_READY_RUNTIME_JS).toContain('document.fonts.ready');
     expect(BRIEF_ARTIFACT_READY_RUNTIME_JS).toContain("type:'ready'");
+    expect(BRIEF_ARTIFACT_READY_RUNTIME_JS).toContain('setTimeout(announce,2500)');
   });
 
   test('injects idempotently before the body closes', () => {

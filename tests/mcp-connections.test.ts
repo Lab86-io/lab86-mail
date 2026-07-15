@@ -1,180 +1,248 @@
-import { describe, expect, test } from 'bun:test';
-import { Buffer } from 'node:buffer';
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import {
+  __setMcpConnectionDepsForTest,
+  disconnectConnection,
+  getConnectionToken,
+  listUserConnections,
+  saveOAuthConnection,
+  saveTokenConnection,
+  setConnectionToggles,
+} from '../lib/mcp/connections';
 
-describe('MCP connection auth', () => {
-  test('builds bearer headers defensively', async () => {
-    const { buildAuthorizationHeader } = await import('../lib/mcp/auth');
+const NOW = 1_760_000_000_000;
+const granolaRow = {
+  connectionId: 'granola_conn',
+  server: 'granola',
+  serverUrl: 'https://mcp.granola.ai/mcp',
+  authKind: 'oauth',
+  status: 'connected',
+  scopes: ['mcp'],
+  includeInBrief: true,
+  includeInSearch: true,
+} as const;
 
-    expect(buildAuthorizationHeader(' Bearer abc\n123 ')).toBe('Bearer abc123');
-    expect(buildAuthorizationHeader('token ghp_123')).toBe('Bearer ghp_123');
+let mutations: Array<{ fn: unknown; args: Record<string, unknown> }> = [];
+let queryResult: unknown = null;
+
+beforeEach(() => {
+  mutations = [];
+  queryResult = null;
+  __setMcpConnectionDepsForTest({
+    now: () => NOW,
+    convexQuery: (async () => queryResult) as any,
+    convexMutation: (async (fn: unknown, args: Record<string, unknown>) => {
+      mutations.push({ fn, args });
+      return undefined;
+    }) as any,
+    encryptSecret: (value: string) => `encrypted:${value}`,
+    decryptSecret: (value: string) => {
+      if (!value.startsWith('encrypted:')) throw new Error('bad ciphertext');
+      return value.slice('encrypted:'.length);
+    },
+    secretFingerprint: () => 'fingerprint1234',
+    maskFingerprint: () => '...1234',
+    refreshMcpOAuth: async ({ persisted }) => ({
+      ...persisted,
+      clientInformation: persisted.clientInformation,
+      tokens: {
+        access_token: 'access_refreshed',
+        refresh_token: 'refresh_rotated',
+        token_type: 'Bearer',
+        expires_in: 7200,
+        scope: 'mcp profile',
+      },
+    }),
+  } as any);
+});
+
+afterAll(() => __setMcpConnectionDepsForTest());
+
+describe('MCP connection persistence', () => {
+  test('stores Granola OAuth credentials encrypted with sync metadata', async () => {
+    const result = await saveOAuthConnection({
+      userId: 'user_1',
+      server: 'granola',
+      displayName: 'Work meetings',
+      persisted: {
+        state: 'state_1',
+        clientInformation: { client_id: 'client_1' },
+        tokens: {
+          access_token: 'access_1',
+          refresh_token: 'refresh_1',
+          token_type: 'Bearer',
+          expires_in: 3600,
+          scope: 'mcp',
+        },
+      },
+    });
+
+    expect(result.connectionId).toStartWith('granola_');
+    expect(mutations[0]?.args).toMatchObject({
+      userId: 'user_1',
+      server: 'granola',
+      authKind: 'oauth',
+      displayName: 'Work meetings',
+      accessTokenEncrypted: 'encrypted:access_1',
+      refreshTokenEncrypted: 'encrypted:refresh_1',
+      oauthClientInformationEncrypted: 'encrypted:{"client_id":"client_1"}',
+      scopes: ['mcp'],
+      fingerprint: 'fingerprint1234',
+      masked: '...1234',
+    });
+    expect(typeof mutations[0]?.args.expiresAt).toBe('number');
   });
 
-  test('builds Basic auth for Atlassian-style email token pairs', async () => {
-    const { buildAuthorizationHeader } = await import('../lib/mcp/auth');
-
-    expect(buildAuthorizationHeader('person@example.com:api-token', 'basic-or-bearer')).toBe(
-      `Basic ${Buffer.from('person@example.com:api-token', 'utf8').toString('base64')}`,
-    );
-    expect(buildAuthorizationHeader('Basic cGVyc29uOmFwaS10b2tlbg==', 'basic-or-bearer')).toBe(
-      'Basic cGVyc29uOmFwaS10b2tlbg==',
-    );
+  test('rejects OAuth on token servers and incomplete OAuth credentials', async () => {
+    await expect(
+      saveOAuthConnection({ userId: 'user_1', server: 'github', persisted: { state: 'state_1' } }),
+    ).rejects.toThrow('OAuth is not supported');
+    await expect(
+      saveOAuthConnection({ userId: 'user_1', server: 'granola', persisted: { state: 'state_1' } }),
+    ).rejects.toThrow('incomplete');
   });
 
-  test('matches each provider definition to the expected auth header scheme', async () => {
-    const { buildAuthorizationHeader } = await import('../lib/mcp/auth');
-    const { getServerDef } = await import('../lib/mcp/servers');
-    const emailToken = 'person@example.com:api-token';
-
-    const cases = [
-      ['github', 'ghp_123', 'Bearer ghp_123'],
-      ['slack', 'xoxb-123', 'Bearer xoxb-123'],
-      ['bitbucket', emailToken, `Basic ${Buffer.from(emailToken, 'utf8').toString('base64')}`],
-      ['jira', emailToken, `Basic ${Buffer.from(emailToken, 'utf8').toString('base64')}`],
-    ] as const;
-
-    for (const [server, credential, expected] of cases) {
-      const def = getServerDef(server);
-      expect(def).toBeTruthy();
-      expect(buildAuthorizationHeader(credential, def!.authMode)).toBe(expected);
-    }
+  test('keeps browser-only OAuth servers out of the token path', async () => {
+    await expect(
+      saveTokenConnection({ userId: 'user_1', server: 'granola', token: 'token' }),
+    ).rejects.toThrow('browser authorization');
   });
 });
 
-describe('Bitbucket connection sync', () => {
-  test('loads authored pull requests across open and terminal states from user workspaces', async () => {
-    const originalFetch = globalThis.fetch;
-    const requests: Array<{ url: string; authorization: string | null }> = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const headers = new Headers(init?.headers);
-      requests.push({ url, authorization: headers.get('authorization') });
+describe('MCP OAuth token reads', () => {
+  test('returns an unexpired decrypted token without refreshing', async () => {
+    queryResult = {
+      connection: granolaRow,
+      credentials: { accessTokenEncrypted: 'encrypted:access_1', expiresAt: NOW + 120_000 },
+    };
 
-      if (url.endsWith('/user')) {
-        return jsonResponse({ account_id: 'acct-123', display_name: 'Ada Lovelace' });
-      }
-      if (url.includes('/user/workspaces')) {
-        return jsonResponse({ values: [{ slug: 'lab86' }] });
-      }
-      if (url.includes('/workspaces/lab86/pullrequests/acct-123') && !url.includes('page=2')) {
-        return jsonResponse({
-          next: 'https://api.bitbucket.org/2.0/workspaces/lab86/pullrequests/acct-123?page=2',
-          values: [
-            {
-              id: 42,
-              title: 'Add Bitbucket access',
-              state: 'OPEN',
-              updated_on: '2026-06-25T16:00:00.000Z',
-              links: { html: { href: 'https://bitbucket.org/lab86/mail/pull-requests/42' } },
-              author: { display_name: 'Ada Lovelace' },
-              source: {
-                branch: { name: 'bitbucket-access' },
-                repository: { full_name: 'lab86/mail' },
-              },
-              destination: {
-                branch: { name: 'main' },
-                repository: { full_name: 'lab86/mail' },
-              },
-            },
-          ],
-        });
-      }
-      if (url.includes('/workspaces/lab86/pullrequests/acct-123') && url.includes('page=2')) {
-        return jsonResponse({
-          values: [
-            {
-              id: 43,
-              title: 'Review staged rollout',
-              state: 'OPEN',
-              links: { html: { href: 'https://bitbucket.org/lab86/mail/pull-requests/43' } },
-              author: { display_name: 'Ada Lovelace' },
-              source: {
-                branch: { name: 'staged-rollout' },
-                repository: { full_name: 'lab86/mail' },
-              },
-              destination: {
-                branch: { name: 'main' },
-                repository: { full_name: 'lab86/mail' },
-              },
-            },
-          ],
-        });
-      }
-      return jsonResponse({ error: 'unexpected' }, 404);
-    }) as typeof fetch;
-
-    try {
-      const { loadBitbucketItems } = await import('../lib/mcp/bitbucket');
-      const result = await loadBitbucketItems(
-        'https://api.bitbucket.org/2.0',
-        'person@example.com:api-token',
-      );
-
-      expect(requests[0]?.authorization).toBe(
-        `Basic ${Buffer.from('person@example.com:api-token', 'utf8').toString('base64')}`,
-      );
-      expect(result.displayName).toBe('Ada Lovelace');
-      expect(result.items).toHaveLength(2);
-      expect(result.items[0]).toMatchObject({
-        externalId: 'https://bitbucket.org/lab86/mail/pull-requests/42',
-        kind: 'pull_request',
-        title: 'Add Bitbucket access',
-        state: 'open',
-        author: 'Ada Lovelace',
-        assignedToUser: true,
-      });
-      expect(result.items[0]?.searchText).toContain('bitbucket-access');
-      expect(result.items[1]?.title).toBe('Review staged rollout');
-      expect(requests.some((request) => request.url.includes('page=2'))).toBe(true);
-      expect(requests.some((request) => request.url.includes('state=MERGED'))).toBe(true);
-      expect(requests.some((request) => request.url.includes('state=DECLINED'))).toBe(true);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual({
+      row: granolaRow,
+      token: 'access_1',
+    });
+    expect(mutations).toHaveLength(0);
   });
 
-  test('surfaces partial workspace failures instead of returning a partial success', async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input);
+  test('refreshes an expiring token and persists rotated credentials', async () => {
+    queryResult = {
+      connection: granolaRow,
+      credentials: {
+        accessTokenEncrypted: 'encrypted:access_1',
+        refreshTokenEncrypted: 'encrypted:refresh_1',
+        oauthClientInformationEncrypted: 'encrypted:{"client_id":"client_1"}',
+        expiresAt: NOW + 30_000,
+      },
+    };
 
-      if (url.endsWith('/user')) {
-        return jsonResponse({ account_id: 'acct-123', display_name: 'Ada Lovelace' });
-      }
-      if (url.includes('/user/workspaces')) {
-        return jsonResponse({ values: [{ slug: 'lab86' }, { slug: 'other' }] });
-      }
-      if (url.includes('/workspaces/lab86/pullrequests/acct-123')) {
-        return jsonResponse({
-          values: [
-            {
-              id: 42,
-              title: 'Add Bitbucket access',
-              state: 'OPEN',
-            },
-          ],
-        });
-      }
-      if (url.includes('/workspaces/other/pullrequests/acct-123')) {
-        return jsonResponse({ error: 'workspace unavailable' }, 500);
-      }
-      return jsonResponse({ error: 'unexpected' }, 404);
-    }) as typeof fetch;
+    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual({
+      row: granolaRow,
+      token: 'access_refreshed',
+    });
+    expect(mutations[0]?.args).toMatchObject({
+      userId: 'user_1',
+      connectionId: 'granola_conn',
+      accessTokenEncrypted: 'encrypted:access_refreshed',
+      refreshTokenEncrypted: 'encrypted:refresh_rotated',
+      scopes: ['mcp', 'profile'],
+    });
+  });
 
-    try {
-      const { loadBitbucketItems } = await import('../lib/mcp/bitbucket');
+  test('shares one refresh across concurrent callers and preserves expiry when omitted', async () => {
+    let refreshCalls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    queryResult = {
+      connection: granolaRow,
+      credentials: {
+        accessTokenEncrypted: 'encrypted:access_1',
+        refreshTokenEncrypted: 'encrypted:refresh_1',
+        oauthClientInformationEncrypted: 'encrypted:{"client_id":"client_1"}',
+        expiresAt: NOW,
+      },
+    };
+    __setMcpConnectionDepsForTest({
+      now: () => NOW,
+      convexQuery: (async () => queryResult) as any,
+      convexMutation: (async (fn: unknown, args: Record<string, unknown>) => {
+        mutations.push({ fn, args });
+        return undefined;
+      }) as any,
+      encryptSecret: (value: string) => `encrypted:${value}`,
+      decryptSecret: (value: string) => value.slice('encrypted:'.length),
+      refreshMcpOAuth: async ({ persisted }) => {
+        refreshCalls += 1;
+        await gate;
+        return {
+          ...persisted,
+          tokens: { access_token: 'shared_access', token_type: 'Bearer' },
+          clientInformation: persisted.clientInformation,
+        };
+      },
+    } as any);
 
-      await expect(
-        loadBitbucketItems('https://api.bitbucket.org/2.0', 'person@example.com:api-token'),
-      ).rejects.toThrow(/Bitbucket list open pull requests for other failed with HTTP 500/);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    const first = getConnectionToken('user_1', 'granola_conn');
+    const second = getConnectionToken('user_1', 'granola_conn');
+    await Promise.resolve();
+    expect(refreshCalls).toBe(1);
+    release();
+
+    expect((await Promise.all([first, second])).map((result) => result?.token)).toEqual([
+      'shared_access',
+      'shared_access',
+    ]);
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0]?.args).not.toHaveProperty('expiresAt');
+  });
+
+  test('fails closed for missing, unreadable, or unrefreshable credentials', async () => {
+    expect(await getConnectionToken('user_1', 'missing')).toBeNull();
+
+    queryResult = { connection: granolaRow, credentials: { accessTokenEncrypted: 'invalid' } };
+    expect(await getConnectionToken('user_1', 'invalid')).toBeNull();
+
+    queryResult = {
+      connection: granolaRow,
+      credentials: { accessTokenEncrypted: 'encrypted:access_1', expiresAt: NOW },
+    };
+    expect(await getConnectionToken('user_1', 'missing_refresh')).toBeNull();
+
+    __setMcpConnectionDepsForTest({
+      now: () => NOW,
+      convexQuery: (async () => queryResult) as any,
+      convexMutation: (async (fn: unknown, args: Record<string, unknown>) => {
+        mutations.push({ fn, args });
+        return undefined;
+      }) as any,
+      decryptSecret: (value: string) => {
+        if (!value.startsWith('encrypted:')) throw new Error('bad ciphertext');
+        return value.slice('encrypted:'.length);
+      },
+      refreshMcpOAuth: async () => {
+        throw new Error('refresh rejected');
+      },
+    } as any);
+    queryResult = {
+      connection: granolaRow,
+      credentials: {
+        accessTokenEncrypted: 'encrypted:access_1',
+        refreshTokenEncrypted: 'encrypted:refresh_1',
+        oauthClientInformationEncrypted: 'encrypted:{"client_id":"client_1"}',
+        expiresAt: NOW,
+      },
+    };
+    expect(await getConnectionToken('user_1', 'refresh_rejected')).toBeNull();
   });
 });
 
-function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+test('lists, disconnects, and updates connection toggles through Convex', async () => {
+  queryResult = [granolaRow];
+  expect(await listUserConnections('user_1')).toEqual([granolaRow]);
+  await disconnectConnection('user_1', 'granola_conn');
+  await setConnectionToggles('user_1', 'granola_conn', { includeInBrief: false });
+
+  expect(mutations.map(({ args }) => args)).toEqual([
+    { userId: 'user_1', connectionId: 'granola_conn' },
+    { userId: 'user_1', connectionId: 'granola_conn', includeInBrief: false },
+  ]);
+});

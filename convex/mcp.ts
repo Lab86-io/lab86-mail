@@ -9,6 +9,10 @@ import { now, requireInternalSecret } from './lib';
 
 const DISCONNECT_BATCH_SIZE = 100;
 
+function areaMcpArtifactId(connectionId, externalId) {
+  return `${connectionId}:${externalId}`.slice(0, 500);
+}
+
 const serverValidator = v.union(
   v.literal('github'),
   v.literal('bitbucket'),
@@ -193,7 +197,7 @@ export const updateOAuthCredentials = mutation({
     await ctx.db.patch(credentials._id, {
       accessTokenEncrypted: args.accessTokenEncrypted,
       ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
-      expiresAt: args.expiresAt,
+      ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
       oauthClientInformationEncrypted: args.oauthClientInformationEncrypted,
       updatedAt: now(),
     });
@@ -598,13 +602,35 @@ export const upsertItems = mutation({
         })),
         facts: matchFacts,
       });
+      const artifactId = areaMcpArtifactId(args.connectionId, item.externalId);
+      const existingLinks = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_account_artifact', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', args.connectionId)
+            .eq('artifactKind', 'mcpItem')
+            .eq('artifactId', artifactId),
+        )
+        .collect();
+      const rejectedAreaIds = new Set(
+        existingLinks.filter((link) => link.status === 'rejected').map((link) => String(link.areaId)),
+      );
+      const contradicted = Boolean(
+        (areaMatch && rejectedAreaIds.has(areaMatch.areaId)) ||
+          (existingEvidence?.targetKind === 'area' &&
+            existingEvidence.targetId &&
+            rejectedAreaIds.has(existingEvidence.targetId)),
+      );
       const evidenceRow = {
         userId: args.userId,
-        ...(areaMatch && !existingEvidence?.targetKind
-          ? { targetKind: 'area', targetId: areaMatch.areaId }
-          : existingEvidence?.targetKind && existingEvidence?.targetId
-            ? { targetKind: existingEvidence.targetKind, targetId: existingEvidence.targetId }
-            : {}),
+        ...(contradicted
+          ? { targetKind: undefined, targetId: undefined }
+          : areaMatch && !existingEvidence?.targetKind
+            ? { targetKind: 'area', targetId: areaMatch.areaId }
+            : existingEvidence?.targetKind && existingEvidence?.targetId
+              ? { targetKind: existingEvidence.targetKind, targetId: existingEvidence.targetId }
+              : {}),
         sourceKind,
         sourceId: item.externalId,
         connectionId: args.connectionId,
@@ -632,17 +658,7 @@ export const upsertItems = mutation({
       else await ctx.db.insert('albatrossEvidence', { ...evidenceRow, createdAt: ts });
 
       if (areaMatch) {
-        const artifactId = item.externalId.slice(0, 200);
-        const existingLinks = await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_artifact', (q) =>
-            q.eq('userId', args.userId).eq('artifactKind', 'mcpItem').eq('artifactId', artifactId),
-          )
-          .collect();
         const areaId = ctx.db.normalizeId('areas', areaMatch.areaId);
-        const contradicted = existingLinks.some(
-          (link) => String(link.areaId) === areaMatch.areaId && link.status === 'rejected',
-        );
         if (
           areaId &&
           !contradicted &&
@@ -654,6 +670,7 @@ export const upsertItems = mutation({
             externalId: item.externalId,
             artifactKind: 'mcpItem',
             artifactId,
+            accountId: args.connectionId,
             role: 'supporting',
             status: 'candidate',
             confidence: areaMatch.confidence,
@@ -756,17 +773,31 @@ export const listItemsForBrief = query({
       .query('mcpConnections')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
-    const enabled = new Set(
-      connections.filter((c) => c.status === 'connected' && c.includeInBrief).map((c) => c.connectionId),
+    const enabled = connections.filter(
+      (connection) =>
+        connection.status === 'connected' &&
+        connection.includeInBrief &&
+        (!args.server || connection.server === args.server),
     );
-    if (enabled.size === 0) return [];
-    const rows = await ctx.db
-      .query('mcpItems')
-      .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
-      .order('desc')
-      .take(400);
+    if (enabled.length === 0) return [];
+    const rows = (
+      await Promise.all(
+        enabled.map((connection) =>
+          ctx.db
+            .query('mcpItems')
+            .withIndex('by_user_connection', (q) =>
+              q.eq('userId', args.userId).eq('connectionId', connection.connectionId),
+            )
+            .order('desc')
+            .take(args.limit ?? 40),
+        ),
+      )
+    ).flat();
     return rows
-      .filter((r) => enabled.has(r.connectionId) && (!args.server || r.server === args.server))
+      .sort(
+        (left, right) =>
+          (right.updatedAtSource ?? right.updatedAt) - (left.updatedAtSource ?? left.updatedAt),
+      )
       .slice(0, args.limit ?? 40);
   },
 });

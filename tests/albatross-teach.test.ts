@@ -191,6 +191,14 @@ describe('factRowFromToolOutput', () => {
     expect(factRowFromToolOutput('area_fact_set_status', { status: 'verified' }, { ok: true })?.tone).toBe(
       'verified',
     );
+    expect(factRowFromToolOutput('area_artifact_set_status', { status: 'verified' }, { ok: true })).toEqual({
+      tone: 'verified',
+      text: 'Area relationship verified',
+    });
+    expect(factRowFromToolOutput('area_artifact_set_status', { status: 'rejected' }, { ok: true })).toEqual({
+      tone: 'retired',
+      text: 'Area relationship rejected',
+    });
   });
 
   test('returns null for failed output, unknown tools, and empty facts', () => {

@@ -15,18 +15,26 @@ const areas = [
 describe('proactive Area context matching', () => {
   test('recognizes GitHub notifications by repository/project context, not sender domain', () => {
     const match = matchAreaContext({
-      text: '[Lab86-io/lab86-mail] Albatross area context PR was merged',
-      areas,
-      facts: [],
+      text: '[Lab86-io/lab86-mail] area context PR was merged',
+      areas: [{ _id: 'area_albatross', name: 'Workspace', primaryDomain: 'example.test' }],
+      facts: [
+        {
+          _id: 'fact_repo',
+          areaId: 'area_albatross',
+          kind: 'repository',
+          value: 'Lab86-io/lab86-mail',
+          status: 'verified',
+        },
+      ],
     });
-    expect(match).toMatchObject({ areaId: 'area_albatross', areaName: 'Albatross' });
+    expect(match).toMatchObject({ areaId: 'area_albatross', areaName: 'Workspace' });
     expect(match!.confidence).toBeGreaterThanOrEqual(0.7);
   });
 
   test('uses repository facts for commits, pull requests, and issues', () => {
     const match = matchAreaContext({
       text: 'commit 4f32 in Lab86-io/lab86-mail: fix area indexing',
-      areas,
+      areas: [{ _id: 'area_albatross', name: 'Workspace', primaryDomain: 'example.test' }],
       facts: [
         {
           _id: 'fact_repo',

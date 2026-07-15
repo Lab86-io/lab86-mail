@@ -277,8 +277,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
   return { deterministic, llm, skipped, sources, discoveries };
 }
 
-export async function prepareAreaDiscoveryContext(input: { userId: string; areaId?: string }) {
-  const result = await classifyAreaArtifacts(input);
+async function areaDiscoveryBrief(input: { userId: string; areaId?: string }) {
   const brief = await deps.convexQuery<any>((deps.api as any).albatross.areaDiscoveryBrief, {
     userId: input.userId,
     areaId: input.areaId,
@@ -299,13 +298,34 @@ export async function prepareAreaDiscoveryContext(input: { userId: string; areaI
   const factLines = candidateFacts
     .slice(0, 8)
     .map((fact) => `- ${fact.areaName} candidate ${fact.kind}: ${fact.value}`);
+  return { candidates, candidateFacts, lines, factLines };
+}
+
+function systemContextFor(sources: string[], brief: Awaited<ReturnType<typeof areaDiscoveryBrief>>) {
+  return `Automatic Area discovery searched: ${sources.join(', ') || 'no connected corpora yet'}.
+${brief.lines.length ? `Possible relationships awaiting confirmation:\n${brief.lines.join('\n')}` : 'No unconfirmed artifact relationships are currently queued.'}
+${brief.factLines.length ? `Candidate durable facts awaiting confirmation:\n${brief.factLines.join('\n')}` : ''}
+When a possible relationship is present, ask one focused confirmation question about the strongest useful item in this turn. Explain which source suggested it. Do not verify a relationship or durable fact without the user's explicit answer. Do not repeat a question already answered in the transcript.`;
+}
+
+export async function readAreaDiscoveryContext(input: { userId: string; areaId?: string }) {
+  const brief = await areaDiscoveryBrief(input);
+  const sources = [...new Set(brief.candidates.map((candidate) => candidate.source).filter(Boolean))];
+  return {
+    sources,
+    pendingCandidates: brief.candidates,
+    pendingFacts: brief.candidateFacts,
+    systemContext: systemContextFor(sources, brief),
+  };
+}
+
+export async function prepareAreaDiscoveryContext(input: { userId: string; areaId?: string }) {
+  const result = await classifyAreaArtifacts(input);
+  const brief = await areaDiscoveryBrief(input);
   return {
     ...result,
-    pendingCandidates: candidates,
-    pendingFacts: candidateFacts,
-    systemContext: `Automatic Area discovery searched: ${result.sources.join(', ') || 'no connected corpora yet'}.
-${lines.length ? `Possible relationships awaiting confirmation:\n${lines.join('\n')}` : 'No unconfirmed artifact relationships are currently queued.'}
-${factLines.length ? `Candidate durable facts awaiting confirmation:\n${factLines.join('\n')}` : ''}
-When a possible relationship is present, ask one focused confirmation question about the strongest useful item in this turn. Explain which source suggested it. Do not verify a relationship or durable fact without the user's explicit answer. Do not repeat a question already answered in the transcript.`,
+    pendingCandidates: brief.candidates,
+    pendingFacts: brief.candidateFacts,
+    systemContext: systemContextFor(result.sources, brief),
   };
 }

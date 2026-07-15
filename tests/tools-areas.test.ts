@@ -5,6 +5,7 @@ import {
   areaArchive,
   areaArtifactSetStatus,
   areaCreate,
+  areaDiscoverContext,
   areaDomainActivity,
   areaFactSetStatus,
   areaList,
@@ -39,6 +40,12 @@ beforeEach(() => {
   __setAreaToolDepsForTest({
     api: apiMock as any,
     now: () => NOW,
+    prepareAreaDiscoveryContext: async () => ({
+      sources: ['mail', 'github'],
+      discoveries: [{ areaId: 'area_1', artifactId: 'artifact_1' }],
+      pendingCandidates: [{ linkId: 'link_1' }],
+      pendingFacts: [{ factId: 'fact_1' }],
+    }),
     convexMutation: (async (fn: any, args: any) => {
       mutationCalls.push({ fn, args });
       if (fn === apiMock.albatross.createArea) return 'area_new';
@@ -201,6 +208,15 @@ describe('area_update_identity', () => {
         officialSourceUrl: 'https://unrelated.example/about',
       }),
     ).rejects.toThrow('must match');
+
+    await expect(
+      runTool(areaUpdateIdentity.handler, {
+        areaId: 'area_1',
+        primaryDomain: 'statpearls.com',
+        identityBasis: 'official_web',
+        officialSourceUrl: 'ftp://statpearls.com/about',
+      }),
+    ).rejects.toThrow('HTTP or HTTPS');
   });
 });
 
@@ -251,6 +267,28 @@ describe('area_add_fact', () => {
       }),
     ).rejects.toThrow('attributable');
     expect(mutationCalls).toHaveLength(0);
+
+    await expect(
+      runTool(areaAddFact.handler, {
+        areaId: 'area_1',
+        kind: 'organization',
+        value: 'Untrusted source',
+        confirmedByUser: false,
+        evidenceKind: 'official_web',
+        sourceRefs: [{ kind: 'web', id: 'bad', url: 'not a URL' }],
+      }),
+    ).rejects.toThrow('attributable');
+
+    await expect(
+      runTool(areaAddFact.handler, {
+        areaId: 'area_1',
+        kind: 'organization',
+        value: 'Wrong protocol',
+        confirmedByUser: false,
+        evidenceKind: 'official_web',
+        sourceRefs: [{ kind: 'web', id: 'ftp', url: 'ftp://example.test' }],
+      }),
+    ).rejects.toThrow('attributable');
   });
 
   test('the tool contract demands an explicit per-fact yes', () => {
@@ -342,6 +380,26 @@ describe('area_domain_activity', () => {
   test('input schema rejects a call with neither domain nor senderEmail', () => {
     expect(areaDomainActivity.input.safeParse({ max: 5 }).success).toBe(false);
     expect(areaDomainActivity.input.safeParse({ senderEmail: 'a@b.com' }).success).toBe(true);
+  });
+});
+
+describe('area_discover_context', () => {
+  test('runs cross-connector discovery and returns confirmation candidates', async () => {
+    const result = await runTool(areaDiscoverContext.handler, { areaId: 'area_1' });
+
+    expect(result).toEqual({
+      ok: true,
+      sources: ['mail', 'github'],
+      discoveries: [{ areaId: 'area_1', artifactId: 'artifact_1' }],
+      pendingCandidates: [{ linkId: 'link_1' }],
+      pendingFacts: [{ factId: 'fact_1' }],
+    });
+  });
+
+  test('requires an authenticated user', async () => {
+    await expect(runTool(areaDiscoverContext.handler, {}, { userId: null })).rejects.toThrow(
+      'Not authenticated',
+    );
   });
 });
 

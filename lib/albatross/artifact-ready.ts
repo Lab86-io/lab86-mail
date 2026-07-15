@@ -12,6 +12,7 @@ var announced=false;
 function announce(){if(announced)return;announced=true;window.parent.postMessage({source:'${BRIEF_ARTIFACT_READY_SOURCE}',type:'ready'},'*');}
 function settle(){var ready=document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve();var timeout=new Promise(function(resolve){setTimeout(resolve,2000);});Promise.race([ready,timeout]).then(function(){requestAnimationFrame(function(){requestAnimationFrame(announce);});},announce);}
 window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='lab86-host'||d.type!=='theme'||!d.theme)return;for(var k in d.theme){document.documentElement.style.setProperty(k,d.theme[k]);}settle();});
+setTimeout(announce,2500);
 })();
 </script>`;
 

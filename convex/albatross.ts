@@ -70,7 +70,7 @@ const artifactKindValidator = v.union(
   v.literal('manual'),
 );
 const linkRoleValidator = v.union(v.literal('primary'), v.literal('secondary'), v.literal('supporting'));
-const ARTIFACT_ID_MAX = 200;
+const ARTIFACT_ID_MAX = 500;
 const ACCOUNT_ID_MAX = 120;
 
 async function resolveUserId(
@@ -115,6 +115,11 @@ function normalizedArtifactIdentity(input: { artifactId: string; accountId?: str
     artifactId: normalizeText(input.artifactId).slice(0, ARTIFACT_ID_MAX),
     accountId: accountId || undefined,
   };
+}
+
+function mcpExternalId(artifactId: string, connectionId?: string) {
+  const prefix = connectionId ? `${connectionId}:` : '';
+  return prefix && artifactId.startsWith(prefix) ? artifactId.slice(prefix.length) : artifactId;
 }
 
 function verifiedFactPatch(status: AreaFactStatus, confirmationRefs: AlbatrossConfirmationRef[], ts: number) {
@@ -1142,6 +1147,27 @@ export const setAreaArtifactLinkStatus = mutation({
       confirmationRefs,
       updatedAt: ts,
     });
+    if (args.status === 'rejected') {
+      const sourceId =
+        link.artifactKind === 'mcpItem'
+          ? link.externalId || mcpExternalId(link.artifactId, link.accountId)
+          : link.artifactId;
+      const evidenceRows = await ctx.db
+        .query('albatrossEvidence')
+        .withIndex('by_user_source', (q) =>
+          q
+            .eq('userId', userId)
+            .eq('sourceKind', artifactEvidenceKind(link.artifactKind))
+            .eq('sourceId', sourceId),
+        )
+        .collect();
+      for (const evidence of evidenceRows) {
+        const sameScope = !link.accountId || (evidence.connectionId || evidence.accountId) === link.accountId;
+        if (sameScope && evidence.targetKind === 'area' && evidence.targetId === String(link.areaId)) {
+          await ctx.db.patch(evidence._id, { targetKind: undefined, targetId: undefined, updatedAt: ts });
+        }
+      }
+    }
     await upsertAreaEvidence(ctx, {
       userId,
       areaId: link.areaId,
@@ -1586,11 +1612,18 @@ async function resolveTaskLink(ctx: QueryCtx | MutationCtx, userId: string, link
 }
 
 async function resolveMcpLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
-  const externalId = link.externalId || link.artifactId;
-  const item = await ctx.db
-    .query('mcpItems')
-    .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', externalId))
-    .first();
+  const externalId = link.externalId || mcpExternalId(link.artifactId, link.accountId);
+  const item = link.accountId
+    ? await ctx.db
+        .query('mcpItems')
+        .withIndex('by_connection_external', (q) =>
+          q.eq('connectionId', link.accountId).eq('externalId', externalId),
+        )
+        .first()
+    : await ctx.db
+        .query('mcpItems')
+        .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', externalId))
+        .first();
   if (!item) return null;
   return {
     externalId: item.externalId,
@@ -1865,7 +1898,7 @@ export const areaHome = query({
 // These are hypotheses, never silent truth: the agent uses them to ask one
 // evidence-backed confirmation question at a time.
 function hasDurableIdentityReason(reason: string | undefined) {
-  return /(?:Area name|Area domain|\b(?:domain|repository|repo|organization|product|website|url):)/iu.test(
+  return /(?:Area name|Area domain|\b(?:domain|repository|repo|project|organization|product|website|url):)/iu.test(
     reason || '',
   );
 }
@@ -1876,21 +1909,31 @@ export const areaDiscoveryBrief = query({
     const userId = await resolveUserId(ctx, args);
     if (args.areaId) await requireArea(ctx, args.areaId, userId);
     const limit = Math.min(Math.max(args.limit ?? 20, 1), 30);
+    const linksQuery = args.areaId
+      ? ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_area_status', (q) =>
+            q.eq('userId', userId).eq('areaId', args.areaId!).eq('status', 'candidate'),
+          )
+      : ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'));
+    const factsQuery = args.areaId
+      ? ctx.db
+          .query('areaFacts')
+          .withIndex('by_user_area_status', (q) =>
+            q.eq('userId', userId).eq('areaId', args.areaId!).eq('status', 'candidate'),
+          )
+      : ctx.db
+          .query('areaFacts')
+          .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'));
     const [areas, links, facts] = await Promise.all([
       ctx.db
         .query('areas')
         .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
         .collect(),
-      ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'))
-        .order('desc')
-        .take(200),
-      ctx.db
-        .query('areaFacts')
-        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'))
-        .order('desc')
-        .take(100),
+      linksQuery.order('desc').take(200),
+      factsQuery.order('desc').take(100),
     ]);
     const areaById = new Map(areas.map((area) => [String(area._id), area]));
     const scoped = links
@@ -2015,7 +2058,14 @@ export const unclassifiedAreaArtifacts = query({
     requireInternalSecret(args.internalSecret);
     const limit = Math.min(Math.max(args.limit ?? 80, 1), 100);
     const cutoff = now() - AREA_DISCOVERY_WINDOW_MS;
-    const [mail, events, cards, mcp, connections] = await Promise.all([
+    const connections = await ctx.db
+      .query('mcpConnections')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    const searchableConnections = connections.filter(
+      (connection) => connection.status === 'connected' && connection.includeInSearch,
+    );
+    const [mail, events, cards, mcpByConnection] = await Promise.all([
       ctx.db
         .query('mailCorpusThreads')
         .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gte('lastDate', cutoff))
@@ -2028,23 +2078,28 @@ export const unclassifiedAreaArtifacts = query({
         .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
       ctx.db
         .query('cards')
-        .withIndex('by_user', (q) => q.eq('userId', args.userId))
-        .take(200),
-      ctx.db
-        .query('mcpItems')
-        .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
         .order('desc')
         .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
-      ctx.db
-        .query('mcpConnections')
-        .withIndex('by_user', (q) => q.eq('userId', args.userId))
-        .collect(),
+      Promise.all(
+        searchableConnections.map((connection) =>
+          ctx.db
+            .query('mcpItems')
+            .withIndex('by_user_connection', (q) =>
+              q.eq('userId', args.userId).eq('connectionId', connection.connectionId),
+            )
+            .order('desc')
+            .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+        ),
+      ),
     ]);
-    const searchableConnectionIds = new Set(
-      connections
-        .filter((connection) => connection.status === 'connected' && connection.includeInSearch)
-        .map((connection) => connection.connectionId),
-    );
+    const mcp = mcpByConnection
+      .flat()
+      .sort(
+        (left, right) =>
+          (right.updatedAtSource ?? right.updatedAt) - (left.updatedAtSource ?? left.updatedAt),
+      )
+      .slice(0, AREA_DISCOVERY_SCAN_PER_SOURCE);
     const candidates = [
       ...mail.map((row) => ({
         artifactKind: 'mailThread' as const,
@@ -2073,30 +2128,26 @@ export const unclassifiedAreaArtifacts = query({
           .slice(0, 8_000),
         occurredAt: row.startAt,
       })),
-      ...cards
-        .sort((left, right) => right.updatedAt - left.updatedAt)
-        .slice(0, AREA_DISCOVERY_SCAN_PER_SOURCE)
-        .map((row) => ({
-          artifactKind: 'task' as const,
-          artifactId: String(row._id),
-          source: 'tasks',
-          title: row.title,
-          text: [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
-            .filter(Boolean)
-            .join('\n')
-            .slice(0, 8_000),
-          occurredAt: row.updatedAt,
-        })),
-      ...mcp
-        .filter((row) => searchableConnectionIds.has(row.connectionId))
-        .map((row) => ({
-          artifactKind: 'mcpItem' as const,
-          artifactId: row.externalId,
-          source: row.server,
-          title: row.title,
-          text: row.searchText.slice(0, 8_000),
-          occurredAt: row.updatedAtSource ?? row.updatedAt,
-        })),
+      ...cards.map((row) => ({
+        artifactKind: 'task' as const,
+        artifactId: String(row._id),
+        source: 'tasks',
+        title: row.title,
+        text: [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 8_000),
+        occurredAt: row.updatedAt,
+      })),
+      ...mcp.map((row) => ({
+        artifactKind: 'mcpItem' as const,
+        artifactId: `${row.connectionId}:${row.externalId}`,
+        accountId: row.connectionId,
+        source: row.server,
+        title: row.title,
+        text: row.searchText.slice(0, 8_000),
+        occurredAt: row.updatedAtSource ?? row.updatedAt,
+      })),
     ].sort((left, right) => right.occurredAt - left.occurredAt);
 
     // Preserve recency within each source, but rotate across source groups so
@@ -2241,6 +2292,7 @@ export const recordAreaLinks = mutation({
       }
       const artifactKind = link.artifactKind ?? 'mailThread';
       const { artifactId, accountId } = normalizedArtifactIdentity(link);
+      const externalId = artifactKind === 'mcpItem' ? mcpExternalId(artifactId, accountId) : undefined;
       const refs = normalizedRefs(link);
       assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
       const existing = await ctx.db
@@ -2257,7 +2309,7 @@ export const recordAreaLinks = mutation({
         userId,
         areaId: link.areaId,
         artifactKind,
-        externalId: artifactKind === 'mcpItem' ? artifactId : undefined,
+        externalId,
         artifactId,
         accountId,
         role: 'supporting',

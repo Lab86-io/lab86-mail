@@ -1,7 +1,49 @@
 import { describe, expect, test } from 'bun:test';
+import {
+  granolaAccountInfo,
+  granolaMeetingCountHint,
+  granolaMeetingDetailArgs,
+  mergeGranolaMeetingDetails,
+} from '../lib/mcp/granola';
 import { getServerDef, MCP_SERVERS, normalizeItems, resolveMcpConnectionConfig } from '../lib/mcp/servers';
 
 describe('MCP server registry and normalizer', () => {
+  test('adapts Granola account, count, detail arguments, and merged meeting results', () => {
+    expect(
+      granolaAccountInfo({
+        content: [
+          { type: 'text', text: 'not json' },
+          {
+            type: 'text',
+            text: JSON.stringify({ email: 'josh@example.com', active_workspace: { display_name: 'Lab86' } }),
+          },
+        ],
+      }),
+    ).toEqual({ email: 'josh@example.com', workspaceName: 'Lab86' });
+    expect(granolaAccountInfo({})).toEqual({});
+    expect(granolaMeetingCountHint({ content: [{ type: 'text', text: '<meetings_data count="12">' }] })).toBe(
+      12,
+    );
+    expect(granolaMeetingCountHint({ content: [{ type: 'image' }] })).toBeNull();
+    expect(
+      granolaMeetingDetailArgs({ properties: { meeting_ids: { type: 'array' } } }, [
+        'meeting_1',
+        'meeting_2',
+      ]),
+    ).toEqual({ meeting_ids: ['meeting_1', 'meeting_2'] });
+    expect(
+      granolaMeetingDetailArgs({ properties: { meeting_id: { type: 'string' } } }, ['meeting_1']),
+    ).toEqual({ meeting_id: 'meeting_1' });
+    expect(granolaMeetingDetailArgs({}, ['meeting_1'])).toBeNull();
+    expect(granolaMeetingDetailArgs({ properties: {} }, [])).toBeNull();
+
+    const listed = [{ externalId: 'meeting_1', kind: 'meeting', title: 'Listed', searchText: 'Listed' }];
+    const detailed = [
+      { externalId: 'meeting_1', kind: 'meeting', title: 'Detailed', searchText: 'Detailed' },
+      { externalId: 'meeting_2', kind: 'meeting', title: 'Unseen', searchText: 'Unseen' },
+    ];
+    expect(mergeGranolaMeetingDetails(listed as any, detailed as any)).toEqual(detailed);
+  });
   test('declares direct GitHub/Bitbucket transports and hosted Jira/Slack transports', () => {
     expect(getServerDef('github')).toMatchObject({ transport: 'github-rest', authMode: 'bearer' });
     expect(getServerDef('bitbucket')).toMatchObject({
@@ -44,6 +86,32 @@ describe('MCP server registry and normalizer', () => {
       updatedAtSource: Date.parse('2026-07-15T14:00:00Z'),
     });
     expect(meetings[0]?.searchText).toContain('Ada, grace@example.com');
+  });
+
+  test('ignores notes that cannot be compacted safely', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const meetings = normalizeItems(
+      { tool: 'list_meetings', args: {}, kind: 'meeting' },
+      { structuredContent: { meetings: [{ id: 'meeting_circular', title: 'Planning', notes: circular }] } },
+    );
+
+    expect(meetings[0]?.summary).toBeUndefined();
+    expect(meetings[0]?.title).toBe('Planning');
+  });
+
+  test('caps long Granola notes before adding them to searchable text', () => {
+    const meetings = normalizeItems(
+      { tool: 'list_meetings', args: {}, kind: 'meeting' },
+      {
+        structuredContent: {
+          meetings: [{ id: 'meeting_long', title: 'Planning', notes: 'x'.repeat(15_000) }],
+        },
+      },
+    );
+
+    expect(meetings[0]?.summary).toHaveLength(12_000);
+    expect(meetings[0]?.searchText.length).toBeLessThan(12_100);
   });
 
   test('normalizes the XML-like meeting payload returned by the live Granola MCP', () => {

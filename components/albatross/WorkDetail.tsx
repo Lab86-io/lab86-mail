@@ -110,6 +110,7 @@ export function WorkDetail({ workId }: { workId: string }) {
   useEffect(() => {
     postTheme();
   }, [postTheme, accentHue, accentChroma, accent2Hue, accent2Chroma, bgHue, surfaceTint]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new artifact must restart its readiness fallback.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (
@@ -121,8 +122,12 @@ export function WorkDetail({ workId }: { workId: string }) {
       }
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, []);
+    const fallback = window.setTimeout(() => setArtifactReady(true), 2_500);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      window.clearTimeout(fallback);
+    };
+  }, [detail?.plan?.artifactHtml]);
 
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));

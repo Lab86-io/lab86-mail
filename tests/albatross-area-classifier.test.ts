@@ -266,17 +266,20 @@ describe('classifyThreads', () => {
     queryFixtures[apiMock.albatross.listAreas] = [
       {
         _id: 'area_work',
-        name: 'Albatross',
+        name: 'Workspace',
         kind: 'software',
-        description: 'The Lab86 mail codebase',
-        primaryDomain: 'lab86.com',
+        description: 'Software maintenance',
+        primaryDomain: 'example.test',
       },
+    ];
+    queryFixtures['facts:verified'] = [
+      fact({ kind: 'repository', value: 'Lab86-io/lab86-mail', areaId: 'area_work' }),
     ];
     queryFixtures[apiMock.albatross.unclassifiedThreads] = [
       thread({
         providerThreadId: 'thread_github',
         fromAddress: 'notifications@github.com',
-        subject: '[Lab86-io/lab86-mail] Albatross evidence PR merged',
+        subject: '[Lab86-io/lab86-mail] evidence PR merged',
       }),
     ];
     const result = await classifyThreads({ userId: USER });

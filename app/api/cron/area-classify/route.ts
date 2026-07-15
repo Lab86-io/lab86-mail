@@ -10,7 +10,7 @@ export const maxDuration = 120;
 
 // Called by the Convex area-classify cron (convex/albatross.ts classifyTick)
 // for one user. The classifier runs bounded work — indexed reads plus at most
-// one nano-LLM call — so the route awaits it and reports the counts.
+// two independent nano-LLM calls — so the route awaits both and reports the counts.
 export async function POST(req: NextRequest) {
   if (!isInternalCronRequest(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
@@ -27,8 +27,10 @@ export async function POST(req: NextRequest) {
   }
   try {
     const counts = await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
-      const mail = await classifyThreads({ userId });
-      const connected = await classifyAreaArtifacts({ userId });
+      const [mail, connected] = await Promise.all([
+        classifyThreads({ userId }),
+        classifyAreaArtifacts({ userId }),
+      ]);
       return { mail, connected };
     });
     return NextResponse.json({ ok: true, userId, ...counts }, { status: 200 });

@@ -59,6 +59,6 @@ crons.interval(
   {},
 );
 
-crons.interval('mcp oauth state cleanup', { minutes: 30 }, (internal as any).mcp.sweepExpiredOAuthStates, {});
+crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
 export default crons;

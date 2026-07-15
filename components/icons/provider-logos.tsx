@@ -177,7 +177,7 @@ export function GranolaLogo({ className }: { className?: string }) {
       role="img"
       aria-label="Granola"
       className={cn('inline-block size-4 bg-center bg-contain bg-no-repeat', className)}
-      style={{ backgroundImage: 'url(https://www.granola.ai/favicon/favicon-96x96.png)' }}
+      style={{ backgroundImage: "url('/provider-logos/granola.svg')" }}
     />
   );
 }

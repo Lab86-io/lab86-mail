@@ -773,7 +773,7 @@ function ReportArtifact({
       // links open in a new tab.
       sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       className={cn(
-        'h-full w-full border-0 bg-[var(--color-bg)]',
+        'h-full w-full border-0 bg-[var(--color-bg)] transition-opacity duration-300',
         artifactReady ? 'opacity-100' : 'opacity-0',
       )}
     />
