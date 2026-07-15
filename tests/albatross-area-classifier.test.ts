@@ -10,6 +10,7 @@ import {
   LLM_BATCH_CAP,
   matchThreadToFacts,
   parseClassifierOutput,
+  parseIntentClassifierOutput,
 } from '../lib/albatross/area-classifier';
 
 const USER = 'user_classifier_test';
@@ -162,6 +163,8 @@ describe('parseClassifierOutput', () => {
     expect(parseClassifierOutput('the model refused to answer')).toEqual([]);
     expect(parseClassifierOutput('')).toEqual([]);
     expect(parseClassifierOutput('[{"threadId": broken')).toEqual([]);
+    // Bracketed but unparseable: the JSON.parse throw is swallowed, never raised.
+    expect(parseClassifierOutput('[{"threadId": broken}]')).toEqual([]);
   });
 });
 
@@ -396,6 +399,24 @@ describe('classifyThreads', () => {
     expect(result).toEqual({ deterministic: 0, llm: 1, skipped: 0 });
     expect(mutationCalls[0].args.links).toHaveLength(1);
     expect(mutationCalls[0].args.links[0].areaId).toBe('area_work');
+  });
+});
+
+describe('parseIntentClassifierOutput', () => {
+  test('parses fenced verdicts keyed on intentId and drops malformed entries', () => {
+    const raw = `\`\`\`json\n${JSON.stringify([
+      { intentId: 'i1', areaName: 'Work', confidence: 'high' },
+      { areaName: 'Work' },
+    ])}\n\`\`\``;
+    expect(parseIntentClassifierOutput(raw)).toEqual([
+      { intentId: 'i1', areaName: 'Work', confidence: 'high' },
+    ]);
+  });
+
+  test('returns empty for garbage, non-array JSON, and unparseable bracketed output', () => {
+    expect(parseIntentClassifierOutput('no verdicts today')).toEqual([]);
+    expect(parseIntentClassifierOutput(JSON.stringify({ intentId: 'i1' }))).toEqual([]);
+    expect(parseIntentClassifierOutput('[{"intentId": broken}]')).toEqual([]);
   });
 });
 
