@@ -40,17 +40,23 @@ export async function POST(req: NextRequest) {
     });
     let refreshed = 0;
     const errors: Array<{ areaId: string; error: string }> = [];
+    // A small worker pool: one slow brief must not serialize the whole morning
+    // behind it, but unbounded parallelism would stampede the model gateway.
+    const queue = areas.map((area) => String(area._id));
     await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
-      for (const area of areas) {
-        try {
-          await generateAreaLivingBrief({ userId, areaId: String(area._id), force: true });
-          refreshed += 1;
-        } catch (err: any) {
-          // One area failing (model hiccup, empty context) must not stop the
-          // rest of the morning's briefs.
-          errors.push({ areaId: String(area._id), error: err?.message || 'brief generation failed' });
+      const worker = async () => {
+        for (let areaId = queue.shift(); areaId; areaId = queue.shift()) {
+          try {
+            await generateAreaLivingBrief({ userId, areaId, force: true });
+            refreshed += 1;
+          } catch (err: any) {
+            // One area failing (model hiccup, empty context) must not stop the
+            // rest of the morning's briefs.
+            errors.push({ areaId, error: err?.message || 'brief generation failed' });
+          }
         }
-      }
+      };
+      await Promise.all(Array.from({ length: Math.min(3, areas.length) }, worker));
     });
     return NextResponse.json({ ok: true, userId, areas: areas.length, refreshed, errors }, { status: 200 });
   } catch (err: any) {

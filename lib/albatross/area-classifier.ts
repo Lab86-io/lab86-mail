@@ -470,10 +470,15 @@ export async function classifyIntents({ userId }: { userId: string }): Promise<I
   }
   const skipped = intents.length - verdicts.length;
   if (!verdicts.length) return { assigned: 0, keptPersonal: 0, skipped };
-  await deps.convexMutation(albatrossIntents.applyAreaVerdicts, { userId, verdicts });
+  // Report what the mutation committed, not what we attempted — it skips
+  // verdicts that lost a race with a manual re-home or a deactivated area.
+  const applied = await deps.convexMutation<{ assigned: number; kept: number; skipped: number }>(
+    albatrossIntents.applyAreaVerdicts,
+    { userId, verdicts },
+  );
   return {
-    assigned: verdicts.filter((verdict) => verdict.areaId).length,
-    keptPersonal: verdicts.filter((verdict) => !verdict.areaId).length,
-    skipped,
+    assigned: applied.assigned,
+    keptPersonal: applied.kept,
+    skipped: skipped + applied.skipped,
   };
 }

@@ -957,6 +957,7 @@ export default defineSchema({
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
+    .index('by_user_autoassigned', ['userId', 'areaAutoAssigned'])
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_user_project', ['userId', 'primaryProjectId'])

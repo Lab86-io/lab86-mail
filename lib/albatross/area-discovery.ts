@@ -153,21 +153,17 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
       { userId: input.userId, limit: 100 },
     ),
   ]);
-  const areas = input.areaId ? allAreas.filter((area) => String(area._id) === input.areaId) : allAreas;
+  const areas = input.areaId
+    ? allAreas.filter((area) => String(area._id) === input.areaId)
+    : // In a full sweep Personal is reachable only through the catch-all
+      // fallback — never as a normal deterministic/model candidate, which
+      // would mint supporting-role links (and claim tasks/connectors) that
+      // bypass the low-trust secondary contract.
+      allAreas.filter((area) => String(area._id) !== String(personalAreaId));
   const areaIds = new Set(areas.map((area) => String(area._id)));
   const facts = [...verifiedFacts, ...candidateFacts].filter((fact) => areaIds.has(String(fact.areaId)));
   const artifacts = corpus?.items || [];
   const sources = corpus?.sources || [];
-  if (!artifacts.length || !areas.length) {
-    return {
-      deterministic: 0,
-      llm: 0,
-      personal: 0,
-      skipped: areas.length ? 0 : artifacts.length,
-      sources,
-      discoveries: [],
-    };
-  }
 
   // The Personal catch-all applies only to the full cron sweep, and only to
   // mail/calendar (the kinds the user expects filed somewhere). Tasks and
@@ -177,6 +173,38 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
     !input.areaId &&
     (artifact.artifactKind === 'mailThread' || artifact.artifactKind === 'calendarEvent') &&
     !(artifact.rejectedAreaIds || []).includes(String(personalAreaId));
+  const personalLink = (artifact: ClassifiableAreaArtifact) => ({
+    areaId: String(personalAreaId),
+    artifactKind: artifact.artifactKind,
+    artifactId: artifact.artifactId,
+    externalId: artifact.externalId,
+    accountId: artifact.accountId,
+    role: 'secondary',
+    status: 'candidate',
+    confidence: 0.25,
+    reason: 'No confident area match — filed to Personal',
+    sourceRefs: [sourceRef(artifact)],
+  });
+
+  if (!artifacts.length || !areas.length) {
+    // Nothing to sweep, or Personal is the only area there is — no candidate
+    // can beat the catch-all, so eligible mail/calendar files straight there.
+    const fallbackLinks = artifacts.filter(personalFallbackFor).map(personalLink);
+    if (fallbackLinks.length) {
+      await deps.convexMutation(albatross.recordAreaLinks, {
+        userId: input.userId,
+        links: fallbackLinks,
+      });
+    }
+    return {
+      deterministic: 0,
+      llm: 0,
+      personal: fallbackLinks.length,
+      skipped: artifacts.length - fallbackLinks.length,
+      sources,
+      discoveries: [],
+    };
+  }
 
   const links: Array<Record<string, unknown>> = [];
   const discoveries: AreaDiscoveryMatch[] = [];
@@ -256,18 +284,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
         if (!area || verdict.confidence !== 'high' || artifact.rejectedAreaIds?.includes(String(area._id))) {
           // The model looked and could not place it — catch-all, not limbo.
           if (personalFallbackFor(artifact)) {
-            links.push({
-              areaId: String(personalAreaId),
-              artifactKind: artifact.artifactKind,
-              artifactId: artifact.artifactId,
-              externalId: artifact.externalId,
-              accountId: artifact.accountId,
-              role: 'secondary',
-              status: 'candidate',
-              confidence: 0.25,
-              reason: 'No confident area match — filed to Personal',
-              sourceRefs: [sourceRef(artifact)],
-            });
+            links.push(personalLink(artifact));
             personal += 1;
           } else {
             skipped += 1;

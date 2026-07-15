@@ -472,7 +472,12 @@ describe('classifyIntents', () => {
       convexMutation: (async (fn: any, args: any) => {
         if (fn === intentsApiMock.albatross.ensurePersonal) return { areaId: 'area_personal' };
         verdictCalls.push({ fn, args });
-        return { assigned: 0, kept: 0, skipped: 0 };
+        // Mirror applyAreaVerdicts' committed-count contract for a clean apply.
+        return {
+          assigned: args.verdicts.filter((verdict: any) => verdict.areaId).length,
+          kept: args.verdicts.filter((verdict: any) => !verdict.areaId).length,
+          skipped: 0,
+        };
       }) as any,
       generateTextForCurrentUser: (async (options: any) => {
         llmCalls.push(options);

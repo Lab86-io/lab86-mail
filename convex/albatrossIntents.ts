@@ -311,15 +311,15 @@ export const listAutoAssigned = query({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
-    // Flags are set at capture and cleared on the next tick, so flagged rows
-    // are always among the most recently updated — a bounded scan suffices.
+    // Indexed on the flag itself: a flagged intent kept for retry (model
+    // outage) can never fall out of a recency window and strand.
     const rows = await ctx.db
       .query('albatrossIntents')
-      .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
+      .withIndex('by_user_autoassigned', (q) => q.eq('userId', args.userId).eq('areaAutoAssigned', true))
       .order('desc')
-      .take(200);
+      .take(limit + 50);
     return rows
-      .filter((row) => row.areaAutoAssigned === true && row.status !== 'archived')
+      .filter((row) => row.status !== 'archived')
       .slice(0, limit)
       .map((row) => ({
         intentId: String(row._id),

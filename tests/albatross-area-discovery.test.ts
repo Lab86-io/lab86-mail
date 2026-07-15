@@ -25,6 +25,7 @@ describe('cross-source Area discovery', () => {
   let llmText: string;
   let mutationCalls: any[];
   let llmCalls: any[];
+  let areasFixture: any[];
 
   beforeEach(() => {
     corpus = { items: [], sources: ['mail', 'calendar', 'tasks', 'github', 'granola'] };
@@ -32,19 +33,20 @@ describe('cross-source Area discovery', () => {
     llmText = '[]';
     mutationCalls = [];
     llmCalls = [];
+    areasFixture = [
+      {
+        _id: 'area_albatross',
+        name: 'Albatross',
+        kind: 'project',
+        description: 'Personal operating system and mail workspace',
+        primaryDomain: 'lab86.ai',
+      },
+    ];
     __setAreaDiscoveryDepsForTest({
       api: apiMock as any,
       convexQuery: (async (fn: string, args: any) => {
         if (fn === apiMock.albatross.listAreas) {
-          return [
-            {
-              _id: 'area_albatross',
-              name: 'Albatross',
-              kind: 'project',
-              description: 'Personal operating system and mail workspace',
-              primaryDomain: 'lab86.ai',
-            },
-          ];
+          return areasFixture;
         }
         if (fn === apiMock.albatross.listUserAreaFacts) {
           return args.status === 'verified'
@@ -271,6 +273,103 @@ describe('cross-source Area discovery', () => {
 
     expect(result).toMatchObject({ personal: 0, skipped: 1 });
     expect(mutationCalls).toHaveLength(0);
+  });
+
+  test('Personal is never a full-sweep candidate: a Personal verdict lands as the secondary fallback', async () => {
+    areasFixture = [
+      ...areasFixture,
+      { _id: 'area_personal', name: 'Personal', kind: 'personal', description: 'Catch-all context' },
+    ];
+    corpus.items = [
+      {
+        artifactKind: 'mailThread',
+        artifactId: 'thread_personalish',
+        accountId: 'acct_1',
+        source: 'mail',
+        title: 'Dentist reminder',
+        text: 'Your appointment is confirmed',
+        occurredAt: 1_780_000_000_000,
+      },
+    ];
+    llmText = JSON.stringify([
+      { candidateId: 'mailThread:acct_1:thread_personalish', areaName: 'Personal', confidence: 'high' },
+    ]);
+
+    const result = await classifyAreaArtifacts({ userId: USER });
+
+    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 1, skipped: 0 });
+    // Personal never appears as a candidate area entry in the sweep prompt
+    // (the word may still occur inside another area's description).
+    expect(llmCalls[0].prompt.split('## Recent unclaimed evidence')[0]).not.toContain('- Personal (');
+    expect(mutationCalls[0]?.args.links[0]).toMatchObject({
+      areaId: 'area_personal',
+      role: 'secondary',
+      status: 'candidate',
+    });
+  });
+
+  test('with Personal as the only area, eligible artifacts file straight there without a model call', async () => {
+    areasFixture = [{ _id: 'area_personal', name: 'Personal', kind: 'personal' }];
+    corpus.items = [
+      {
+        artifactKind: 'mailThread',
+        artifactId: 'thread_only_personal',
+        accountId: 'acct_1',
+        source: 'mail',
+        title: 'Receipt',
+        text: 'Order confirmation',
+        occurredAt: 1_780_000_000_000,
+      },
+      {
+        artifactKind: 'task',
+        artifactId: 'card_1',
+        source: 'tasks',
+        title: 'Water plants',
+        text: 'Water plants',
+        occurredAt: 1_780_000_000_000,
+      },
+    ];
+
+    const result = await classifyAreaArtifacts({ userId: USER });
+
+    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 1, skipped: 1 });
+    expect(llmCalls).toHaveLength(0);
+    expect(mutationCalls[0]?.args.links).toHaveLength(1);
+    expect(mutationCalls[0]?.args.links[0]).toMatchObject({
+      areaId: 'area_personal',
+      artifactId: 'thread_only_personal',
+      role: 'secondary',
+    });
+  });
+
+  test('an area-scoped Teach pass on Personal itself still classifies normally', async () => {
+    areasFixture = [
+      ...areasFixture,
+      { _id: 'area_personal', name: 'Personal', kind: 'personal', description: 'Catch-all context' },
+    ];
+    corpus.items = [
+      {
+        artifactKind: 'mailThread',
+        artifactId: 'thread_teach_personal',
+        accountId: 'acct_1',
+        source: 'mail',
+        title: 'Dentist reminder',
+        text: 'Your appointment is confirmed',
+        occurredAt: 1_780_000_000_000,
+      },
+    ];
+    llmText = JSON.stringify([
+      { candidateId: 'mailThread:acct_1:thread_teach_personal', areaName: 'Personal', confidence: 'high' },
+    ]);
+
+    const result = await classifyAreaArtifacts({ userId: USER, areaId: 'area_personal' });
+
+    expect(result).toMatchObject({ deterministic: 0, llm: 1, personal: 0, skipped: 0 });
+    expect(mutationCalls[0]?.args.links[0]).toMatchObject({
+      areaId: 'area_personal',
+      status: 'candidate',
+      confidence: 0.62,
+    });
   });
 
   test('injects connected sources and a focused confirmation instruction into Teach', async () => {
