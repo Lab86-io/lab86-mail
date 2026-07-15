@@ -128,7 +128,7 @@ export const BriefBlockSchema = z.discriminatedUnion('type', [
     items: z
       .array(
         z.object({
-          server: z.enum(['github', 'bitbucket', 'jira', 'slack']),
+          server: z.enum(['github', 'bitbucket', 'jira', 'slack', 'granola']),
           title: z.string().min(1).max(500),
           state: z.string().nullable().optional(),
           author: z.string().nullable().optional(),

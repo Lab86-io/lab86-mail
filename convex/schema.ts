@@ -1613,7 +1613,13 @@ export default defineSchema({
   mcpConnections: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     serverUrl: v.string(),
     authKind: v.union(v.literal('token'), v.literal('oauth')),
     status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
@@ -1639,6 +1645,7 @@ export default defineSchema({
     accessTokenEncrypted: v.optional(v.string()),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.optional(v.string()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
     createdAt: v.number(),
@@ -1647,10 +1654,28 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId']),
 
+  mcpOAuthStates: defineTable({
+    userId: v.string(),
+    state: v.string(),
+    server: v.string(),
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
+
   mcpItems: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     externalId: v.string(),
     kind: v.string(),
     title: v.string(),

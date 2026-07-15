@@ -85,6 +85,16 @@ function SettingsPageBody() {
   // Local state owns the active tab; the URL mirrors it (replaceState, no
   // navigation) so /settings?tab=areas deep-links and refresh keeps its place.
   const [tab, setTab] = useState<SettingsTabId>(() => settingsTabFromSearch(searchParams.get('tab')));
+  useEffect(() => {
+    const connected = searchParams.get('mcp_connected');
+    const error = searchParams.get('mcp_error');
+    if (connected) toast.success(`${connected} connected`);
+    if (error) toast.error(error);
+    if (connected || error) {
+      setTab('connections');
+      window.history.replaceState(null, '', '/settings?tab=connections');
+    }
+  }, [searchParams]);
   const selectTab = (next: SettingsTabId) => {
     setTab(next);
     window.history.replaceState(null, '', `/settings?tab=${next}`);
@@ -710,7 +720,7 @@ function SyncStatusLine({ sync, connected }: { sync?: SyncState; connected: bool
 // Connections (connected tools)
 // ---------------------------------------------------------------------------
 
-type McpServer = 'github' | 'bitbucket' | 'jira' | 'slack';
+type McpServer = 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
 
 interface McpConnectionRow {
   connectionId: string;
@@ -730,6 +740,7 @@ interface McpServerInfo {
   label: string;
   tokenLabel: string;
   tokenHelp: string;
+  connectMode: 'token' | 'oauth';
 }
 
 function relativeTime(ms: number) {
@@ -815,7 +826,7 @@ function ConnectionsSection() {
       <SectionHeading
         title="Connections"
         badge={<BetaBadge />}
-        blurb="Bring GitHub, Bitbucket, Atlassian/Jira, and Slack into your brief and search. Beta — Slack and Atlassian MCP can require admin setup."
+        blurb="Bring GitHub, Granola, Bitbucket, Atlassian/Jira, and Slack into your brief, Areas, and search."
       />
       <div className="space-y-2.5">
         {connections.map((connection) => (
@@ -919,6 +930,35 @@ function ConnectionsSection() {
         <div className="mt-4 space-y-2.5">
           {availableServers.map((server) => {
             const token = tokenInputs[server.id] || '';
+            if (server.connectMode === 'oauth') {
+              return (
+                <div
+                  key={server.id}
+                  className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+                      <ConnectionLogo server={server.id} className="size-4.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13.5px] font-medium">{server.label}</span>
+                        <BetaBadge />
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
+                        {server.tokenHelp}
+                      </p>
+                    </div>
+                    <Button asChild size="sm" variant="outline">
+                      <a href={`/api/mcp/oauth/start?server=${encodeURIComponent(server.id)}`}>
+                        <Plus className="size-3.5" />
+                        Connect
+                      </a>
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
             return (
               <form
                 key={server.id}

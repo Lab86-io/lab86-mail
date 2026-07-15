@@ -10,8 +10,40 @@ describe('MCP server registry and normalizer', () => {
     });
     expect(getServerDef('jira')?.syncQueries[0]?.tool).toBe('searchJiraIssuesUsingJql');
     expect(getServerDef('slack')?.syncQueries[0]?.tool).toBe('search_messages');
+    expect(getServerDef('granola')).toMatchObject({
+      transport: 'mcp',
+      connectMode: 'oauth',
+      defaultUrl: 'https://mcp.granola.ai/mcp',
+    });
     expect(getServerDef('missing')).toBeNull();
-    expect(Object.keys(MCP_SERVERS)).toEqual(['github', 'bitbucket', 'jira', 'slack']);
+    expect(Object.keys(MCP_SERVERS)).toEqual(['github', 'bitbucket', 'jira', 'slack', 'granola']);
+  });
+
+  test('normalizes Granola meetings with attendees into searchable evidence', () => {
+    const meetings = normalizeItems(
+      { tool: 'list_meetings', args: {}, kind: 'meeting' },
+      {
+        structuredContent: {
+          meetings: [
+            {
+              id: 'meeting_1',
+              title: 'Albatross planning',
+              date: '2026-07-15T14:00:00Z',
+              attendees: [{ name: 'Ada' }, { email: 'grace@example.com' }],
+            },
+          ],
+        },
+      },
+    );
+
+    expect(meetings[0]).toMatchObject({
+      externalId: 'meeting_1',
+      kind: 'meeting',
+      title: 'Albatross planning',
+      summary: 'Attendees: Ada, grace@example.com',
+      updatedAtSource: Date.parse('2026-07-15T14:00:00Z'),
+    });
+    expect(meetings[0]?.searchText).toContain('Ada, grace@example.com');
   });
 
   test('migrates legacy GitHub MCP connections without rewriting enterprise REST hosts', () => {

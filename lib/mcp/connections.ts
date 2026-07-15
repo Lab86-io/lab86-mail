@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { decryptSecret, encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
+import { oauthExpiresAt, oauthScopes, type PersistedMcpOAuthState, refreshMcpOAuth } from './oauth';
 import { getServerDef, type McpServerId } from './servers';
 
 const mcpApi = (api as any).mcp;
@@ -19,6 +20,13 @@ export interface McpConnectionRow {
   error?: string;
 }
 
+interface McpCredentialsRow {
+  accessTokenEncrypted?: string;
+  refreshTokenEncrypted?: string;
+  expiresAt?: number;
+  oauthClientInformationEncrypted?: string;
+}
+
 export function newConnectionId(server: string): string {
   return `${server}_${randomBytes(8).toString('hex')}`;
 }
@@ -34,6 +42,7 @@ export async function saveTokenConnection(opts: {
 }): Promise<{ connectionId: string }> {
   const def = getServerDef(opts.server);
   if (!def) throw new Error(`Unknown MCP server: ${opts.server}`);
+  if (def.connectMode !== 'token') throw new Error(`${def.label} requires browser authorization.`);
   const token = opts.token.trim();
   if (!token) throw new Error('A token is required to connect.');
 
@@ -57,6 +66,37 @@ export async function saveTokenConnection(opts: {
   return { connectionId };
 }
 
+export async function saveOAuthConnection(opts: {
+  userId: string;
+  server: McpServerId;
+  persisted: PersistedMcpOAuthState;
+  displayName?: string;
+}): Promise<{ connectionId: string }> {
+  const def = getServerDef(opts.server);
+  const tokens = opts.persisted.tokens;
+  const clientInformation = opts.persisted.clientInformation;
+  if (!def || def.connectMode !== 'oauth') throw new Error(`OAuth is not supported for ${opts.server}.`);
+  if (!tokens?.access_token || !clientInformation) throw new Error('OAuth credentials are incomplete.');
+  const connectionId = newConnectionId(opts.server);
+  const fingerprint = secretFingerprint(tokens.access_token);
+  await convexMutation(mcpApi.upsertConnection, {
+    userId: opts.userId,
+    connectionId,
+    server: opts.server,
+    serverUrl: def.defaultUrl,
+    authKind: 'oauth',
+    displayName: opts.displayName || def.label,
+    scopes: oauthScopes(tokens, def.scopes),
+    accessTokenEncrypted: encryptSecret(tokens.access_token),
+    refreshTokenEncrypted: tokens.refresh_token ? encryptSecret(tokens.refresh_token) : undefined,
+    expiresAt: oauthExpiresAt(tokens),
+    oauthClientInformationEncrypted: encryptSecret(JSON.stringify(clientInformation)),
+    fingerprint,
+    masked: maskFingerprint(fingerprint),
+  });
+  return { connectionId };
+}
+
 export async function listUserConnections(userId: string): Promise<McpConnectionRow[]> {
   const rows = await convexQuery<McpConnectionRow[]>(mcpApi.listConnections, { userId });
   return rows || [];
@@ -68,7 +108,7 @@ export async function getConnectionToken(
   userId: string,
   connectionId: string,
 ): Promise<{ row: McpConnectionRow; token: string } | null> {
-  const result = await convexQuery<{ connection: any; credentials: any } | null>(
+  const result = await convexQuery<{ connection: any; credentials: McpCredentialsRow } | null>(
     mcpApi.getConnectionWithCredentials,
     { userId, connectionId },
   );
@@ -79,7 +119,44 @@ export async function getConnectionToken(
   } catch {
     return null;
   }
-  return { row: result.connection as McpConnectionRow, token };
+  const row = result.connection as McpConnectionRow;
+  const credentials = result.credentials;
+  if (
+    row.authKind === 'oauth' &&
+    credentials.expiresAt !== undefined &&
+    credentials.expiresAt <= Date.now() + 60_000
+  ) {
+    if (!credentials.refreshTokenEncrypted || !credentials.oauthClientInformationEncrypted) return null;
+    try {
+      const refreshToken = decryptSecret(credentials.refreshTokenEncrypted);
+      const clientInformation = JSON.parse(
+        decryptSecret(credentials.oauthClientInformationEncrypted),
+      ) as PersistedMcpOAuthState['clientInformation'];
+      const refreshed = await refreshMcpOAuth({
+        serverUrl: row.serverUrl,
+        persisted: {
+          state: `refresh:${connectionId}`,
+          clientInformation,
+          tokens: { access_token: token, refresh_token: refreshToken, token_type: 'Bearer' },
+        },
+      });
+      const nextTokens = refreshed.tokens!;
+      const nextClientInformation = refreshed.clientInformation!;
+      token = nextTokens.access_token;
+      await convexMutation(mcpApi.updateOAuthCredentials, {
+        userId,
+        connectionId,
+        accessTokenEncrypted: encryptSecret(token),
+        refreshTokenEncrypted: nextTokens.refresh_token ? encryptSecret(nextTokens.refresh_token) : undefined,
+        expiresAt: oauthExpiresAt(nextTokens),
+        oauthClientInformationEncrypted: encryptSecret(JSON.stringify(nextClientInformation)),
+        scopes: oauthScopes(nextTokens, row.scopes),
+      });
+    } catch {
+      return null;
+    }
+  }
+  return { row, token };
 }
 
 export async function disconnectConnection(userId: string, connectionId: string): Promise<void> {

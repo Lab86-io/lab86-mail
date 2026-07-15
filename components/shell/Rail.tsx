@@ -70,7 +70,6 @@ import { railAreaBadge, railAreaRows } from '@/lib/albatross/area-home';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
-import { showRailNotificationCenter } from '@/lib/notifications/rail-visibility';
 import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { NotificationCenter } from './NotificationCenter';
@@ -400,7 +399,6 @@ export function Rail({
           <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
-          {showRailNotificationCenter({ albatrossEnabled, railCollapsed }) ? <NotificationCenter /> : null}
           <SidebarTrigger
             title="Toggle navigation rail"
             className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
@@ -758,7 +756,12 @@ export function Rail({
             setAccountFilter={setAccountFilter}
             indexingCount={indexingAccounts.length}
           />
-          <div className="ml-auto group-data-[collapsible=icon]:ml-0">
+          {albatrossEnabled ? (
+            <div className="ml-auto group-data-[collapsible=icon]:ml-0">
+              <NotificationCenter />
+            </div>
+          ) : null}
+          <div className={albatrossEnabled ? undefined : 'ml-auto group-data-[collapsible=icon]:ml-0'}>
             <ThemePanel className="group-data-[collapsible=icon]:size-8" />
           </div>
         </div>

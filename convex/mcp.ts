@@ -14,6 +14,7 @@ const serverValidator = v.union(
   v.literal('bitbucket'),
   v.literal('jira'),
   v.literal('slack'),
+  v.literal('granola'),
 );
 
 // A "the work is done" state across connected-tool vocabularies.
@@ -38,6 +39,7 @@ export const upsertConnection = mutation({
     accessTokenEncrypted: v.optional(v.string()),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.optional(v.string()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
   },
@@ -86,6 +88,7 @@ export const upsertConnection = mutation({
       accessTokenEncrypted: args.accessTokenEncrypted,
       refreshTokenEncrypted: args.refreshTokenEncrypted,
       expiresAt: args.expiresAt,
+      oauthClientInformationEncrypted: args.oauthClientInformationEncrypted,
       fingerprint: args.fingerprint,
       masked: args.masked,
       updatedAt: ts,
@@ -93,6 +96,108 @@ export const upsertConnection = mutation({
     if (cred) await ctx.db.patch(cred._id, credRow);
     else await ctx.db.insert('mcpCredentials', { ...credRow, createdAt: ts });
 
+    return { ok: true };
+  },
+});
+
+export const saveOAuthState = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    state: v.string(),
+    server: serverValidator,
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const existing = await ctx.db
+      .query('mcpOAuthStates')
+      .withIndex('by_state', (q) => q.eq('state', args.state))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+    await ctx.db.insert('mcpOAuthStates', {
+      userId: args.userId,
+      state: args.state,
+      server: args.server,
+      payloadEncrypted: args.payloadEncrypted,
+      expiresAt: args.expiresAt,
+      createdAt: now(),
+    });
+    return { ok: true };
+  },
+});
+
+export const consumeOAuthState = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    state: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('mcpOAuthStates')
+      .withIndex('by_state', (q) => q.eq('state', args.state))
+      .unique();
+    if (!row || row.userId !== args.userId) return null;
+    await ctx.db.delete(row._id);
+    if (row.expiresAt < now()) return null;
+    return { server: row.server, payloadEncrypted: row.payloadEncrypted };
+  },
+});
+
+export const sweepExpiredOAuthStates = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const expired = await ctx.db
+      .query('mcpOAuthStates')
+      .withIndex('by_expires', (q) => q.lte('expiresAt', now()))
+      .take(DISCONNECT_BATCH_SIZE);
+    for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === DISCONNECT_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.mcp.sweepExpiredOAuthStates, {});
+    }
+    return { deleted: expired.length };
+  },
+});
+
+export const updateOAuthCredentials = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    connectionId: v.string(),
+    accessTokenEncrypted: v.string(),
+    refreshTokenEncrypted: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.string(),
+    scopes: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const [connection, credentials] = await Promise.all([
+      ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user_connection', (q) =>
+          q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+        )
+        .unique(),
+      ctx.db
+        .query('mcpCredentials')
+        .withIndex('by_user_connection', (q) =>
+          q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+        )
+        .unique(),
+    ]);
+    if (!connection || !credentials || connection.authKind !== 'oauth') return { ok: false };
+    await ctx.db.patch(credentials._id, {
+      accessTokenEncrypted: args.accessTokenEncrypted,
+      ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
+      expiresAt: args.expiresAt,
+      oauthClientInformationEncrypted: args.oauthClientInformationEncrypted,
+      updatedAt: now(),
+    });
+    if (args.scopes) await ctx.db.patch(connection._id, { scopes: args.scopes, updatedAt: now() });
     return { ok: true };
   },
 });

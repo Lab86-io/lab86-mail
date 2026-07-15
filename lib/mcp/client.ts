@@ -7,6 +7,7 @@ import { buildAuthorizationHeader, type McpAuthMode } from './auth';
 export interface McpClientHandle {
   client: Client;
   toolNames: Set<string>;
+  toolSchemas?: Map<string, unknown>;
   close: () => Promise<void>;
 }
 
@@ -27,9 +28,13 @@ export async function connectMcp(
   await client.connect(transport);
 
   let toolNames = new Set<string>();
+  let toolSchemas = new Map<string, unknown>();
   try {
     const { tools } = await client.listTools();
     toolNames = new Set((tools || []).map((t: { name: string }) => t.name));
+    toolSchemas = new Map(
+      (tools || []).map((tool: { name: string; inputSchema?: unknown }) => [tool.name, tool.inputSchema]),
+    );
   } catch {
     // Some servers gate tools/list; leave it empty and let callers attempt
     // their known tools anyway.
@@ -38,6 +43,7 @@ export async function connectMcp(
   return {
     client,
     toolNames,
+    toolSchemas,
     close: async () => {
       try {
         await (transport as { terminateSession?: () => Promise<void> }).terminateSession?.();

@@ -106,7 +106,7 @@ interface DailyReportCalendarItem {
 }
 
 interface DailyReportMcpItem {
-  server: 'github' | 'bitbucket' | 'jira' | 'slack';
+  server: 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
   kind: string;
   title: string;
   state?: string | null;
@@ -366,7 +366,8 @@ function ServiceLogo({ service }: { service: BriefService }) {
     service.id === 'github' ||
     service.id === 'bitbucket' ||
     service.id === 'jira' ||
-    service.id === 'slack'
+    service.id === 'slack' ||
+    service.id === 'granola'
   ) {
     return <ConnectionLogo server={service.id} className={className} />;
   }

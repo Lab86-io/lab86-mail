@@ -31,8 +31,15 @@ export async function POST(req: NextRequest) {
   };
   const server = String(body.server || '');
   const token = String(body.token || '');
-  if (!getServerDef(server)) {
+  const definition = getServerDef(server);
+  if (!definition) {
     return NextResponse.json({ ok: false, error: `Unsupported server: ${server}` }, { status: 400 });
+  }
+  if (definition.connectMode !== 'token') {
+    return NextResponse.json(
+      { ok: false, error: `${definition.label} must be connected through browser authorization.` },
+      { status: 400 },
+    );
   }
   if (!token.trim()) {
     return NextResponse.json({ ok: false, error: 'A token is required.' }, { status: 400 });

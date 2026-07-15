@@ -440,6 +440,7 @@ export const deleteUserCascade = mutation({
       'areas',
       'mcpConnections',
       'mcpCredentials',
+      'mcpOAuthStates',
       'mcpItems',
       'mcpSyncStates',
       'mcpTaskLinks',

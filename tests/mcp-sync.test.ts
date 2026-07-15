@@ -403,6 +403,71 @@ describe('MCP syncConnection state transitions', () => {
     expect(mutations.at(-1)).toMatchObject({ status: 'ready', itemCount: 1 });
   });
 
+  test('enriches Granola meeting listings with notes using the advertised tool schema', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const granolaRow = {
+      ...bitbucketRow,
+      connectionId: 'granola_conn',
+      server: 'granola',
+      serverUrl: 'https://mcp.granola.ai/mcp',
+      authKind: 'oauth',
+      scopes: ['mcp'],
+    } as any;
+    const result = await syncConnection(
+      'user_1',
+      granolaRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: granolaRow, token: 'oauth-access' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['list_meetings', 'get_meetings']),
+            toolSchemas: new Map([
+              ['get_meetings', { type: 'object', properties: { meeting_ids: { type: 'array' } } }],
+            ]),
+            close: async () => undefined,
+          }) as any,
+        callMcpTool: async (_handle, tool, args) => {
+          calls.push({ tool, args });
+          if (tool === 'list_meetings') {
+            return {
+              structuredContent: {
+                meetings: [{ id: 'meeting_1', title: 'Albatross planning', date: '2026-07-15T14:00:00Z' }],
+              },
+            } as any;
+          }
+          return {
+            structuredContent: {
+              meetings: [
+                {
+                  id: 'meeting_1',
+                  title: 'Albatross planning',
+                  notes: { decisions: ['Ship OAuth'], actions: ['Verify staging'] },
+                },
+              ],
+            },
+          } as any;
+        },
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(calls).toEqual([
+      { tool: 'list_meetings', args: {} },
+      { tool: 'get_meetings', args: { meeting_ids: ['meeting_1'] } },
+    ]);
+    expect(mutations.find((entry) => Array.isArray(entry.items))?.items[0]).toMatchObject({
+      externalId: 'meeting_1',
+      kind: 'meeting',
+      summary: '{"decisions":["Ship OAuth"],"actions":["Verify staging"]}',
+    });
+  });
+
   test('syncAllMcpConnections retries errored rows, skips disconnected rows, and totals item counts', async () => {
     const { syncAllMcpConnections } = await import('../lib/mcp/sync');
 

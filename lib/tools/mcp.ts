@@ -25,12 +25,12 @@ function requireUserId(userId: string | null | undefined): string {
   return userId;
 }
 
-const serverEnum = z.enum(['github', 'bitbucket', 'jira', 'slack']);
+const serverEnum = z.enum(['github', 'bitbucket', 'jira', 'slack', 'granola']);
 
 export const mcpSearch = defineTool({
   name: 'mcp_search',
   description:
-    "Search the user's connected sources (GitHub, Bitbucket, Atlassian/Jira, Slack) for items — issues, pull requests, tickets, messages — by text. Only searches connections the user enabled for search. Returns items with title, source, state, url, and updated time.",
+    "Search the user's connected sources (GitHub, Granola, Bitbucket, Atlassian/Jira, Slack) for items — issues, pull requests, meetings, tickets, messages — by text. Only searches connections the user enabled for search. Returns items with title, source, state, url, and updated time.",
   category: 'mcp',
   mutating: false,
   input: z.object({
@@ -85,7 +85,7 @@ export const githubSearch = defineTool({
 export const mcpListItems = defineTool({
   name: 'mcp_list_items',
   description:
-    "List the user's most recently updated items from connected sources (GitHub/Bitbucket/Atlassian/Jira/Slack) that are enabled for the brief. Use to see open issues, PRs awaiting review, assigned tickets, and recent mentions across tools.",
+    "List the user's most recently updated items from connected sources (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) that are enabled for the brief. Use to see meetings, open issues, PRs awaiting review, assigned tickets, and recent mentions across tools.",
   category: 'mcp',
   mutating: false,
   input: z.object({ limit: z.number().int().min(1).max(50).default(25) }),

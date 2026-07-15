@@ -413,7 +413,7 @@ export interface DailyReportCalendarItem {
 }
 
 export interface DailyReportMcpItem {
-  server: 'github' | 'bitbucket' | 'jira' | 'slack';
+  server: 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
   externalId?: string;
   kind: string;
   title: string;

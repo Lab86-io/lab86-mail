@@ -5,7 +5,7 @@
 // renaming a tool degrades gracefully instead of crashing the run.
 import type { McpAuthMode } from './auth';
 
-export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack';
+export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
 export type McpServerTransport = 'mcp' | 'bitbucket-rest' | 'github-rest';
 
 export interface McpSyncQuery {
@@ -19,6 +19,7 @@ export interface McpServerDef {
   label: string;
   transport: McpServerTransport;
   authMode: McpAuthMode;
+  connectMode: 'token' | 'oauth';
   // Hosted Streamable-HTTP MCP endpoints for MCP transports; REST API base URL
   // for direct API transports.
   defaultUrl: string;
@@ -34,6 +35,7 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     label: 'GitHub',
     transport: 'github-rest',
     authMode: 'bearer',
+    connectMode: 'token',
     defaultUrl: 'https://api.github.com',
     tokenLabel: 'GitHub personal access token',
     tokenHelp:
@@ -46,6 +48,7 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     label: 'Bitbucket',
     transport: 'bitbucket-rest',
     authMode: 'basic-or-bearer',
+    connectMode: 'token',
     defaultUrl: 'https://api.bitbucket.org/2.0',
     tokenLabel: 'Bitbucket token',
     tokenHelp:
@@ -58,6 +61,7 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     label: 'Atlassian / Jira',
     transport: 'mcp',
     authMode: 'basic-or-bearer',
+    connectMode: 'token',
     defaultUrl: 'https://mcp.atlassian.com/v1/mcp',
     tokenLabel: 'Atlassian token',
     tokenHelp:
@@ -79,12 +83,26 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     label: 'Slack',
     transport: 'mcp',
     authMode: 'bearer',
+    connectMode: 'token',
     defaultUrl: 'https://mcp.slack.com/mcp',
     tokenLabel: 'Slack token',
     tokenHelp:
       'Connect via a Slack token with search scope. Your workspace admin must approve the Slack MCP integration first.',
     scopes: ['search:read'],
     syncQueries: [{ tool: 'search_messages', args: { query: 'is:mention', count: 30 }, kind: 'message' }],
+  },
+  granola: {
+    id: 'granola',
+    label: 'Granola',
+    transport: 'mcp',
+    authMode: 'bearer',
+    connectMode: 'oauth',
+    defaultUrl: 'https://mcp.granola.ai/mcp',
+    tokenLabel: 'Granola browser authorization',
+    tokenHelp:
+      'Connect with Granola in your browser. Lab86 indexes the meeting notes visible to your active Granola workspace.',
+    scopes: ['mcp'],
+    syncQueries: [{ tool: 'list_meetings', args: {}, kind: 'meeting' }],
   },
 };
 
@@ -156,6 +174,17 @@ function firstString(...vals: unknown[]): string | undefined {
   return undefined;
 }
 
+function compactText(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 12_000);
+  if (!value || typeof value !== 'object') return undefined;
+  try {
+    const text = JSON.stringify(value);
+    return text === '{}' || text === '[]' ? undefined : text.slice(0, 12_000);
+  } catch {
+    return undefined;
+  }
+}
+
 function parseTimestamp(value: unknown): number | undefined {
   if (typeof value === 'number') return value > 1e12 ? value : value * 1000;
   if (typeof value === 'string') {
@@ -184,7 +213,16 @@ function extractRawArray(result: any): any[] {
   }
   for (const c of candidates) {
     if (Array.isArray(c)) return c;
-    for (const key of ['items', 'issues', 'results', 'messages', 'pull_requests', 'matches', 'data']) {
+    for (const key of [
+      'items',
+      'issues',
+      'results',
+      'messages',
+      'meetings',
+      'pull_requests',
+      'matches',
+      'data',
+    ]) {
       if (Array.isArray(c?.[key])) return c[key];
     }
     // Slack search nests under messages.matches
@@ -223,6 +261,24 @@ export function normalizeItems(query: McpSyncQuery, result: any): NormalizedMcpI
       row.text,
       row.message?.text,
     );
+    const attendeeNames = Array.isArray(row.attendees)
+      ? row.attendees
+          .map((attendee: any) =>
+            firstString(attendee?.name, attendee?.display_name, attendee?.email, attendee),
+          )
+          .filter(Boolean)
+          .join(', ')
+      : undefined;
+    const summary = firstString(
+      row.summary,
+      row.notes,
+      compactText(row.notes),
+      compactText(row.summarized_notes),
+      row.description,
+      row.private_notes,
+      compactText(row.private_notes),
+      attendeeNames ? `Attendees: ${attendeeNames}` : undefined,
+    );
     const url = firstString(row.html_url, row.url, row.permalink, row.self, row.link);
     const state = firstString(
       row.state,
@@ -240,19 +296,27 @@ export function normalizeItems(query: McpSyncQuery, result: any): NormalizedMcpI
       row.user,
     );
     const updatedAtSource = parseTimestamp(
-      row.updated_at ?? row.updatedAt ?? row.updated ?? row.fields?.updated ?? row.ts,
+      row.updated_at ??
+        row.updatedAt ??
+        row.updated ??
+        row.fields?.updated ??
+        row.date ??
+        row.start_time ??
+        row.created_at ??
+        row.ts,
     );
     const finalTitle = title || `${query.kind} ${externalId}`;
     out.push({
       externalId,
       kind: query.kind,
       title: finalTitle,
+      summary,
       url,
       state,
       author,
       updatedAtSource,
       raw: row,
-      searchText: [finalTitle, state, author, query.kind].filter(Boolean).join(' '),
+      searchText: [finalTitle, summary, attendeeNames, state, author, query.kind].filter(Boolean).join(' '),
     });
   }
   return out;

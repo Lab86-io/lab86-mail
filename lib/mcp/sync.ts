@@ -3,6 +3,7 @@ import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
 import { loadGitHubItems } from './github';
+import { granolaMeetingDetailArgs, mergeGranolaMeetingDetails } from './granola';
 import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
 
 const mcpApi = (api as any).mcp;
@@ -144,7 +145,7 @@ export async function syncConnection(
     return { ok: false, count: 0, error };
   }
 
-  const items: NormalizedMcpItem[] = [];
+  let items: NormalizedMcpItem[] = [];
   const seen = new Set<string>();
   let supportedQueries = 0;
   let successfulQueries = 0;
@@ -164,6 +165,25 @@ export async function syncConnection(
         }
       } catch (err) {
         queryErrors.push(classifyError(err));
+      }
+    }
+    if (row.server === 'granola' && handle.toolNames.has('get_meetings')) {
+      const ids = items
+        .filter((item) => item.kind === 'meeting')
+        .map((item) => item.externalId)
+        .slice(0, 30);
+      const detailArgs = granolaMeetingDetailArgs(handle.toolSchemas?.get('get_meetings'), ids);
+      if (detailArgs) {
+        try {
+          const result = await deps.callMcpTool(handle, 'get_meetings', detailArgs);
+          const detailed = normalizeItems(
+            { tool: 'get_meetings', args: detailArgs, kind: 'meeting' },
+            result,
+          );
+          items = mergeGranolaMeetingDetails(items, detailed);
+        } catch (err) {
+          queryErrors.push(classifyError(err));
+        }
       }
     }
   } finally {
