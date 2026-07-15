@@ -1380,6 +1380,7 @@ export default defineSchema({
     .index('by_board_updatedAt', ['boardId', 'updatedAt'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_source_thread', ['userId', 'sourceThreadId'])
     .index('by_user_source_calendar_event', ['userId', 'sourceCalendarEventId'])
     .index('by_user_due', ['userId', 'dueAt']),
@@ -1613,7 +1614,13 @@ export default defineSchema({
   mcpConnections: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     serverUrl: v.string(),
     authKind: v.union(v.literal('token'), v.literal('oauth')),
     status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
@@ -1639,6 +1646,7 @@ export default defineSchema({
     accessTokenEncrypted: v.optional(v.string()),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.optional(v.string()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
     createdAt: v.number(),
@@ -1647,10 +1655,28 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId']),
 
+  mcpOAuthStates: defineTable({
+    userId: v.string(),
+    state: v.string(),
+    server: v.string(),
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
+
   mcpItems: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     externalId: v.string(),
     kind: v.string(),
     title: v.string(),
@@ -1670,7 +1696,9 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_user_connection_updated', ['userId', 'connectionId', 'updatedAtSource'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_user_updated', ['userId', 'updatedAtSource'])
     .searchIndex('by_search_text', {
@@ -1686,6 +1714,8 @@ export default defineSchema({
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),
     itemCount: v.optional(v.number()),
+    accountEmail: v.optional(v.string()),
+    workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),

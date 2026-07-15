@@ -4,6 +4,7 @@
 // capture mutation. It intentionally has no access to app APIs.
 
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
+import { injectBriefArtifactReadyRuntime } from './artifact-ready';
 
 export const AREA_ARTIFACT_MESSAGE_SOURCE = 'lab86-area-artifact';
 export const AREA_ARTIFACT_HOST_SOURCE = 'lab86-host';
@@ -141,5 +142,5 @@ export function injectAreaArtifactRuntime(html: string) {
     bodyClose >= 0
       ? `${next.slice(0, bodyClose)}${AREA_ARTIFACT_RUNTIME_JS}${next.slice(bodyClose)}`
       : `${next}${AREA_ARTIFACT_RUNTIME_JS}`;
-  return next;
+  return injectBriefArtifactReadyRuntime(next);
 }

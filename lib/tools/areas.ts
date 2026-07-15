@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { prepareAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { defineTool } from './registry';
 
@@ -14,6 +15,7 @@ const defaultDeps = {
   api: api as any,
   convexQuery,
   convexMutation,
+  prepareAreaDiscoveryContext,
   now: () => Date.now(),
 };
 
@@ -281,6 +283,33 @@ export const areaFactSetStatus = defineTool({
   },
 });
 
+export const areaArtifactSetStatus = defineTool({
+  name: 'area_artifact_set_status',
+  description:
+    'Record the user’s explicit answer to an Area discovery question. Set verified only after the user said yes to this exact relationship; set rejected after no so it is retained as negative evidence and is not proposed again.',
+  category: 'memory',
+  mutating: true,
+  input: z.object({
+    linkId: z.string(),
+    status: z.enum(['verified', 'rejected']),
+    reason: z.string().max(300).optional(),
+  }),
+  output: z.object({ ok: z.boolean(), status: z.enum(['verified', 'rejected']) }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    await deps.convexMutation(areasApi().setAreaArtifactLinkStatus, {
+      userId,
+      linkId: args.linkId,
+      status: args.status,
+      reason: args.reason,
+      ...(args.status === 'verified'
+        ? { confirmationRefs: [teachConfirmationRef(userId, `artifact:${args.linkId}`)] }
+        : {}),
+    });
+    return { ok: true, status: args.status };
+  },
+});
+
 export const areaDomainActivity = defineTool({
   name: 'area_domain_activity',
   description:
@@ -310,5 +339,34 @@ export const areaDomainActivity = defineTool({
       senderEmail: args.senderEmail,
       max: args.max,
     });
+  },
+});
+
+export const areaDiscoverContext = defineTool({
+  name: 'area_discover_context',
+  description:
+    "Run an agentic, cross-connector discovery pass for one Area or all Areas. It searches the user's indexed mail, calendar, tasks, GitHub, Granola, Bitbucket, Jira, Slack, and future connected corpora; files strong matches as candidates; and returns evidence the Teach conversation should ask the user to confirm. Call immediately after area_create and whenever the user asks an Area to look for more context.",
+  category: 'memory',
+  mutating: true,
+  input: z.object({ areaId: z.string().optional() }),
+  output: z.object({
+    ok: z.boolean(),
+    sources: z.array(z.string()),
+    discoveries: z.array(z.any()),
+    pendingCandidates: z.array(z.any()),
+    pendingFacts: z.array(z.any()),
+  }),
+  async handler(args, ctx) {
+    const result = await deps.prepareAreaDiscoveryContext({
+      userId: requireUserId(ctx.userId),
+      areaId: args.areaId,
+    });
+    return {
+      ok: true,
+      sources: result.sources,
+      discoveries: result.discoveries,
+      pendingCandidates: result.pendingCandidates,
+      pendingFacts: result.pendingFacts,
+    };
   },
 });

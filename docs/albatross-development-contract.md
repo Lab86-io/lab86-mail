@@ -6,13 +6,13 @@ This contract applies to every Albatross 0.9 issue and every future issue that c
 
 If an issue designs or materially changes a UI component, all three conditions must be true before code is written:
 
-1. The UI component must not be generated directly by ChatGPT/Codex.
-2. A Claude Code sub-agent must be spawned with a full-context Opus prompt, e.g. `claude -p "{prompt}" --model opus`.
-3. The Claude prompt must name the UI to design, where to design it, and require Mobbin plus browser-based research for comparable UIs, UX flows, and animation/interaction grounding before implementation.
+1. The UI component must be implemented either directly by 5.6-sol or by a Claude Code sub-agent using Opus.
+2. The implementation scope must name the UI to design, the files to edit, the product constraints, and the acceptance criteria. For the Claude path, provide this scope in a full-context prompt, e.g. `claude -p "{prompt}" --model opus`. The 5.6-sol path does not require a sub-agent.
+3. Both paths must perform fresh Mobbin plus browser-based research for comparable UIs, UX flows, and animation/interaction grounding before implementation.
 
-Do not use tiny prompts, no-tool prompts, or lightweight model fallbacks for Albatross UI implementation. Opus work can take a while; let the full tool-enabled run complete unless it clearly errors.
+Do not use tiny prompts, no-tool prompts, or lightweight model fallbacks for Albatross UI implementation. When the Claude path is chosen, Opus work can take a while; let the full tool-enabled run complete unless it clearly errors.
 
-The prompt must include:
+The implementation scope, and the Claude prompt when that path is chosen, must include:
 
 - The exact issue number and acceptance criteria.
 - The files the sub-agent may edit.
@@ -25,8 +25,8 @@ The prompt must include:
 
 The PR summary must include:
 
-- The Claude sub-agent prompt or a concise linkable summary of it.
-- The Claude model used, with Opus expected for Albatross UI work.
+- The implementation path and model used (5.6-sol direct or Claude Code Opus).
+- For the Claude path, the sub-agent prompt or a concise linkable summary of it.
 - Mobbin screens/flows used as grounding.
 - Browser-based references used as grounding.
 - Any research constraints or unavailable tools.

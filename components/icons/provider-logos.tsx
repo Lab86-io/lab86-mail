@@ -171,11 +171,23 @@ export function SlackLogo({ className }: { className?: string }) {
   );
 }
 
+export function GranolaLogo({ className }: { className?: string }) {
+  return (
+    <span
+      role="img"
+      aria-label="Granola"
+      className={cn('inline-block size-4 bg-center bg-contain bg-no-repeat', className)}
+      style={{ backgroundImage: "url('/provider-logos/granola.svg')" }}
+    />
+  );
+}
+
 export function ConnectionLogo({ server, className }: { server: string; className?: string }) {
   if (server === 'github') return <GitHubLogo className={className} />;
   if (server === 'bitbucket') return <BitbucketLogo className={className} />;
   if (server === 'jira') return <JiraLogo className={className} />;
   if (server === 'slack') return <SlackLogo className={className} />;
+  if (server === 'granola') return <GranolaLogo className={className} />;
   return <Plug aria-hidden className={cn('size-4', className)} />;
 }
 
@@ -183,7 +195,13 @@ export function ProviderLogo({ provider, className }: { provider: string; classN
   if (provider === 'google') return <GoogleLogo className={className} />;
   if (provider === 'microsoft') return <MicrosoftLogo className={className} />;
   if (provider === 'icloud') return <AppleLogo className={className} />;
-  if (provider === 'github' || provider === 'bitbucket' || provider === 'jira' || provider === 'slack') {
+  if (
+    provider === 'github' ||
+    provider === 'bitbucket' ||
+    provider === 'jira' ||
+    provider === 'slack' ||
+    provider === 'granola'
+  ) {
     return <ConnectionLogo server={provider} className={className} />;
   }
   return <Mail aria-hidden className={cn('size-4', className)} />;
@@ -198,5 +216,6 @@ export function providerDisplayName(provider: string) {
   if (provider === 'bitbucket') return 'Bitbucket';
   if (provider === 'jira') return 'Jira';
   if (provider === 'slack') return 'Slack';
+  if (provider === 'granola') return 'Granola';
   return provider;
 }

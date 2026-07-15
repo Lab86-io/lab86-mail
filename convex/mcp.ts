@@ -1,7 +1,10 @@
 // @ts-nocheck
 import { v } from 'convex/values';
+import { matchAreaContext } from '../lib/albatross/area-matching';
+import { areaMcpArtifactId, mcpAreaTargetDecision } from '../lib/albatross/area-mcp-identity';
 import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
 import { detachedMcpSource } from '../lib/mcp/disconnect';
+import { mcpSyncStateFields } from '../lib/mcp/sync-state';
 import { internal } from './_generated/api';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -13,6 +16,7 @@ const serverValidator = v.union(
   v.literal('bitbucket'),
   v.literal('jira'),
   v.literal('slack'),
+  v.literal('granola'),
 );
 
 // A "the work is done" state across connected-tool vocabularies.
@@ -37,6 +41,7 @@ export const upsertConnection = mutation({
     accessTokenEncrypted: v.optional(v.string()),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.optional(v.string()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
   },
@@ -85,6 +90,7 @@ export const upsertConnection = mutation({
       accessTokenEncrypted: args.accessTokenEncrypted,
       refreshTokenEncrypted: args.refreshTokenEncrypted,
       expiresAt: args.expiresAt,
+      oauthClientInformationEncrypted: args.oauthClientInformationEncrypted,
       fingerprint: args.fingerprint,
       masked: args.masked,
       updatedAt: ts,
@@ -92,6 +98,108 @@ export const upsertConnection = mutation({
     if (cred) await ctx.db.patch(cred._id, credRow);
     else await ctx.db.insert('mcpCredentials', { ...credRow, createdAt: ts });
 
+    return { ok: true };
+  },
+});
+
+export const saveOAuthState = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    state: v.string(),
+    server: serverValidator,
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const existing = await ctx.db
+      .query('mcpOAuthStates')
+      .withIndex('by_state', (q) => q.eq('state', args.state))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+    await ctx.db.insert('mcpOAuthStates', {
+      userId: args.userId,
+      state: args.state,
+      server: args.server,
+      payloadEncrypted: args.payloadEncrypted,
+      expiresAt: args.expiresAt,
+      createdAt: now(),
+    });
+    return { ok: true };
+  },
+});
+
+export const consumeOAuthState = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    state: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('mcpOAuthStates')
+      .withIndex('by_state', (q) => q.eq('state', args.state))
+      .unique();
+    if (!row || row.userId !== args.userId) return null;
+    await ctx.db.delete(row._id);
+    if (row.expiresAt < now()) return null;
+    return { server: row.server, payloadEncrypted: row.payloadEncrypted };
+  },
+});
+
+export const sweepExpiredOAuthStates = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const expired = await ctx.db
+      .query('mcpOAuthStates')
+      .withIndex('by_expires', (q) => q.lte('expiresAt', now()))
+      .take(DISCONNECT_BATCH_SIZE);
+    for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === DISCONNECT_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.mcp.sweepExpiredOAuthStates, {});
+    }
+    return { deleted: expired.length };
+  },
+});
+
+export const updateOAuthCredentials = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    connectionId: v.string(),
+    accessTokenEncrypted: v.string(),
+    refreshTokenEncrypted: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.string(),
+    scopes: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const [connection, credentials] = await Promise.all([
+      ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user_connection', (q) =>
+          q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+        )
+        .unique(),
+      ctx.db
+        .query('mcpCredentials')
+        .withIndex('by_user_connection', (q) =>
+          q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+        )
+        .unique(),
+    ]);
+    if (!connection || !credentials || connection.authKind !== 'oauth') return { ok: false };
+    await ctx.db.patch(credentials._id, {
+      accessTokenEncrypted: args.accessTokenEncrypted,
+      ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
+      ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
+      oauthClientInformationEncrypted: args.oauthClientInformationEncrypted,
+      updatedAt: now(),
+    });
+    if (args.scopes) await ctx.db.patch(connection._id, { scopes: args.scopes, updatedAt: now() });
     return { ok: true };
   },
 });
@@ -131,7 +239,25 @@ export const listConnections = query({
       .query('mcpConnections')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
-    return rows.filter((row) => row.status !== 'disconnected');
+    const active = rows.filter((row) => row.status !== 'disconnected');
+    return await Promise.all(
+      active.map(async (row) => {
+        const sync = await ctx.db
+          .query('mcpSyncStates')
+          .withIndex('by_user_connection', (q) =>
+            q.eq('userId', args.userId).eq('connectionId', row.connectionId),
+          )
+          .first();
+        return {
+          ...row,
+          syncStatus: sync?.status,
+          itemCount: sync?.itemCount,
+          accountEmail: sync?.accountEmail,
+          workspaceName: sync?.workspaceName,
+          syncError: sync?.error,
+        };
+      }),
+    );
   },
 });
 
@@ -342,6 +468,8 @@ export const setSyncState = mutation({
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),
     itemCount: v.optional(v.number()),
+    accountEmail: v.optional(v.string()),
+    workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -353,17 +481,7 @@ export const setSyncState = mutation({
         q.eq('userId', args.userId).eq('connectionId', args.connectionId),
       )
       .unique();
-    const next = {
-      userId: args.userId,
-      connectionId: args.connectionId,
-      server: args.server,
-      status: args.status,
-      lastSyncedAt: args.lastSyncedAt,
-      lastCursor: args.lastCursor,
-      itemCount: args.itemCount,
-      error: args.error,
-      updatedAt: ts,
-    };
+    const next = mcpSyncStateFields(args, ts);
     if (row) await ctx.db.patch(row._id, next);
     else await ctx.db.insert('mcpSyncStates', { ...next, createdAt: ts });
     // Surface the latest sync time/error on the connection row too.
@@ -416,6 +534,23 @@ export const upsertItems = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const ts = now();
+    const [activeAreas, areaFacts] = await Promise.all([
+      ctx.db
+        .query('areas')
+        .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
+        .collect(),
+      ctx.db
+        .query('areaFacts')
+        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .collect(),
+    ]);
+    const matchFacts = areaFacts.map((fact) => ({
+      _id: String(fact._id),
+      areaId: String(fact.areaId),
+      kind: fact.kind,
+      value: fact.value,
+      status: fact.status,
+    }));
     for (const item of args.items) {
       const existing = await ctx.db
         .query('mcpItems')
@@ -440,8 +575,42 @@ export const upsertItems = mutation({
         .unique();
       const sourceKind = args.server === 'github' ? githubEvidenceKind(item.kind) : 'mcp_item';
       const occurredAt = item.updatedAtSource ?? ts;
+      const areaMatch = matchAreaContext({
+        text: [item.searchText, item.repository, item.organization, item.title, item.summary]
+          .filter(Boolean)
+          .join(' '),
+        areas: activeAreas.map((area) => ({
+          _id: String(area._id),
+          name: area.name,
+          kind: area.kind,
+          description: area.description,
+          primaryDomain: area.primaryDomain,
+        })),
+        facts: matchFacts,
+      });
+      const artifactId = areaMcpArtifactId(args.connectionId, item.externalId);
+      const existingLinks = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_account_artifact', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', args.connectionId)
+            .eq('artifactKind', 'mcpItem')
+            .eq('artifactId', artifactId),
+        )
+        .collect();
+      const target = mcpAreaTargetDecision({
+        matchedAreaId: areaMatch?.areaId,
+        existingTargetKind: existingEvidence?.targetKind,
+        existingTargetId: existingEvidence?.targetId,
+        rejectedAreaIds: existingLinks
+          .filter((link) => link.status === 'rejected')
+          .map((link) => String(link.areaId)),
+      });
+      const contradicted = target.contradicted;
       const evidenceRow = {
         userId: args.userId,
+        ...target.patch,
         sourceKind,
         sourceId: item.externalId,
         connectionId: args.connectionId,
@@ -467,6 +636,39 @@ export const upsertItems = mutation({
       };
       if (existingEvidence) await ctx.db.patch(existingEvidence._id, evidenceRow);
       else await ctx.db.insert('albatrossEvidence', { ...evidenceRow, createdAt: ts });
+
+      if (areaMatch) {
+        const areaId = ctx.db.normalizeId('areas', areaMatch.areaId);
+        if (
+          areaId &&
+          !contradicted &&
+          !existingLinks.some((link) => String(link.areaId) === areaMatch.areaId)
+        ) {
+          await ctx.db.insert('areaArtifactLinks', {
+            userId: args.userId,
+            areaId,
+            externalId: item.externalId,
+            artifactKind: 'mcpItem',
+            artifactId,
+            accountId: args.connectionId,
+            role: 'supporting',
+            status: 'candidate',
+            confidence: areaMatch.confidence,
+            reason: areaMatch.reason,
+            sourceRefs: [
+              {
+                kind: args.server === 'github' ? `github_${item.kind}` : 'mcpItem',
+                id: item.externalId.slice(0, 500),
+                label: item.title.slice(0, 200),
+                ...(item.url ? { url: item.url.slice(0, 1_200) } : {}),
+              },
+            ],
+            confirmationRefs: [],
+            createdAt: ts,
+            updatedAt: ts,
+          });
+        }
+      }
 
       // "External wins for status": when an item transitions INTO a terminal
       // state, auto-complete any task created from it. Only act on a real
@@ -539,23 +741,44 @@ export const linkTask = mutation({
 
 // Recent items across the user's brief-enabled connections, newest first.
 export const listItemsForBrief = query({
-  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    server: v.optional(serverValidator),
+    limit: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const connections = await ctx.db
       .query('mcpConnections')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
-    const enabled = new Set(
-      connections.filter((c) => c.status === 'connected' && c.includeInBrief).map((c) => c.connectionId),
+    const enabled = connections.filter(
+      (connection) =>
+        connection.status === 'connected' &&
+        connection.includeInBrief &&
+        (!args.server || connection.server === args.server),
     );
-    if (enabled.size === 0) return [];
-    const rows = await ctx.db
-      .query('mcpItems')
-      .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
-      .order('desc')
-      .take(400);
-    return rows.filter((r) => enabled.has(r.connectionId)).slice(0, args.limit ?? 40);
+    if (enabled.length === 0) return [];
+    const rows = (
+      await Promise.all(
+        enabled.map((connection) =>
+          ctx.db
+            .query('mcpItems')
+            .withIndex('by_user_connection_updated', (q) =>
+              q.eq('userId', args.userId).eq('connectionId', connection.connectionId),
+            )
+            .order('desc')
+            .take(args.limit ?? 40),
+        ),
+      )
+    ).flat();
+    return rows
+      .sort(
+        (left, right) =>
+          (right.updatedAtSource ?? right.updatedAt) - (left.updatedAtSource ?? left.updatedAt),
+      )
+      .slice(0, args.limit ?? 40);
   },
 });
 

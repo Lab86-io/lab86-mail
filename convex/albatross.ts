@@ -9,6 +9,8 @@ import {
 } from '../lib/albatross/area-home';
 import { validateAreaImageUpload } from '../lib/albatross/area-image';
 import { areaMailMoveConfirmation, areaMailMoveReason } from '../lib/albatross/area-mail';
+import { matchAreaContext } from '../lib/albatross/area-matching';
+import { areaMcpExternalId, mcpAreaLinkIdentity } from '../lib/albatross/area-mcp-identity';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -69,7 +71,7 @@ const artifactKindValidator = v.union(
   v.literal('manual'),
 );
 const linkRoleValidator = v.union(v.literal('primary'), v.literal('secondary'), v.literal('supporting'));
-const ARTIFACT_ID_MAX = 200;
+const ARTIFACT_ID_MAX = 500;
 const ACCOUNT_ID_MAX = 120;
 
 async function resolveUserId(
@@ -1111,6 +1113,79 @@ export const listArtifactLinks = query({
   },
 });
 
+// Persist the user's answer to a discovery question. Verification requires a
+// server-minted confirmation ref from the Teach tool; rejection is retained
+// as negative evidence so the crawler does not keep proposing the same item.
+export const setAreaArtifactLinkStatus = mutation({
+  args: {
+    ...callerArgs,
+    linkId: v.id('areaArtifactLinks'),
+    status: v.union(v.literal('verified'), v.literal('rejected')),
+    reason: v.optional(v.string()),
+    confirmationRefs: v.optional(v.array(confirmationRefValidator)),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const link = await ctx.db.get(args.linkId);
+    if (!link || link.userId !== userId) throw new Error('Area artifact link not found.');
+    const confirmationRefs =
+      args.status === 'verified' ? normalizeConfirmationRefs(args.confirmationRefs) : [];
+    assertVerifiedArtifactLinkAllowed(args.status, confirmationRefs);
+    const userReason = args.reason ? normalizeText(args.reason).slice(0, 300) : '';
+    const reason = userReason
+      ? `${link.reason ? `${link.reason}; ` : ''}user response: ${userReason}`.slice(0, 700)
+      : link.reason;
+    const ts = now();
+    await ctx.db.patch(link._id, {
+      status: args.status,
+      confidence: args.status === 'verified' ? 1 : 0,
+      reason,
+      confirmationRefs,
+      updatedAt: ts,
+    });
+    if (args.status === 'rejected') {
+      const sourceId =
+        link.artifactKind === 'mcpItem'
+          ? link.externalId || areaMcpExternalId(link.artifactId, link.accountId)
+          : link.artifactId;
+      const evidenceRows = await ctx.db
+        .query('albatrossEvidence')
+        .withIndex('by_user_source', (q) =>
+          q
+            .eq('userId', userId)
+            .eq('sourceKind', artifactEvidenceKind(link.artifactKind))
+            .eq('sourceId', sourceId),
+        )
+        .collect();
+      for (const evidence of evidenceRows) {
+        const sameScope = !link.accountId || (evidence.connectionId || evidence.accountId) === link.accountId;
+        if (sameScope && evidence.targetKind === 'area' && evidence.targetId === String(link.areaId)) {
+          await ctx.db.patch(evidence._id, { targetKind: undefined, targetId: undefined, updatedAt: ts });
+        }
+      }
+    }
+    await upsertAreaEvidence(ctx, {
+      userId,
+      areaId: link.areaId,
+      sourceKind: artifactEvidenceKind(link.artifactKind),
+      sourceId: link.artifactId,
+      title: `${link.artifactKind} discovery ${args.status}`,
+      summary: reason,
+      occurredAt: ts,
+      trust: args.status === 'verified' ? 'confirmed' : 'rejected',
+      confidence: args.status === 'verified' ? 1 : 0,
+      dedupeKey: `area-link:${String(link.areaId)}:${link.artifactKind}:${link.accountId || ''}:${link.artifactId}`,
+      metadata: {
+        artifactKind: link.artifactKind,
+        role: link.role,
+        status: args.status,
+        linkId: String(link._id),
+      },
+    });
+    return { linkId: String(link._id), status: args.status };
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Areas-become-the-app: read models and classifier plumbing.
 // ---------------------------------------------------------------------------
@@ -1532,6 +1607,38 @@ async function resolveTaskLink(ctx: QueryCtx | MutationCtx, userId: string, link
   };
 }
 
+async function resolveMcpLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
+  const externalId = link.externalId || areaMcpExternalId(link.artifactId, link.accountId);
+  const item = link.accountId
+    ? await ctx.db
+        .query('mcpItems')
+        .withIndex('by_connection_external', (q) =>
+          q.eq('connectionId', link.accountId).eq('externalId', externalId),
+        )
+        .first()
+    : await ctx.db
+        .query('mcpItems')
+        .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', externalId))
+        .first();
+  if (!item) return null;
+  return {
+    externalId: item.externalId,
+    server: item.server,
+    kind: item.kind,
+    title: item.title,
+    summary: item.summary ?? null,
+    url: item.url ?? null,
+    state: item.state ?? null,
+    author: item.author ?? null,
+    repository: item.repository ?? null,
+    organization: item.organization ?? null,
+    occurredAt: item.updatedAtSource ?? item.updatedAt,
+    linkStatus: link.status,
+    confidence: link.confidence ?? null,
+    reason: link.reason ?? null,
+  };
+}
+
 // The Area home read model: the area, its facts by trust level, and its
 // linked artifacts resolved to real rows the UI can render directly.
 export const areaHome = query({
@@ -1615,6 +1722,12 @@ export const areaHome = query({
       (a, b) => Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,
     );
     const tasks = resolvedTasks.slice(0, AREA_HOME_TASK_CAP);
+    const mcpItems = (
+      await Promise.all((byKind.get('mcpItem') || []).map((link) => resolveMcpLink(ctx, userId, link)))
+    )
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => b.occurredAt - a.occurredAt)
+      .slice(0, AREA_HOME_LINK_SCAN_CAPS.mcpItem);
 
     // Plans become components of the area: its active Work (+ latest plan)
     // surface here rather than on a separate Plans page. Read both the typed
@@ -1733,6 +1846,7 @@ export const areaHome = query({
       mail,
       events,
       tasks,
+      mcpItems,
       plans,
       projects,
       places,
@@ -1776,8 +1890,318 @@ export const areaHome = query({
   },
 });
 
+// Compact pending-evidence read for the Teach and Area-scoped conversations.
+// These are hypotheses, never silent truth: the agent uses them to ask one
+// evidence-backed confirmation question at a time.
+function hasDurableIdentityReason(reason: string | undefined) {
+  return /(?:Area name|Area domain|\b(?:domain|repository|repo|project|organization|product|website|url):)/iu.test(
+    reason || '',
+  );
+}
+
+export const areaDiscoveryBrief = query({
+  args: { ...callerArgs, areaId: v.optional(v.id('areas')), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    if (args.areaId) await requireArea(ctx, args.areaId, userId);
+    const limit = Math.min(Math.max(args.limit ?? 20, 1), 30);
+    const linksQuery = args.areaId
+      ? ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_area_status', (q) =>
+            q.eq('userId', userId).eq('areaId', args.areaId!).eq('status', 'candidate'),
+          )
+      : ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'));
+    const factsQuery = args.areaId
+      ? ctx.db
+          .query('areaFacts')
+          .withIndex('by_user_area_status', (q) =>
+            q.eq('userId', userId).eq('areaId', args.areaId!).eq('status', 'candidate'),
+          )
+      : ctx.db
+          .query('areaFacts')
+          .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'candidate'));
+    const [areas, links, facts] = await Promise.all([
+      ctx.db
+        .query('areas')
+        .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
+        .collect(),
+      linksQuery.order('desc').take(200),
+      factsQuery.order('desc').take(100),
+    ]);
+    const areaById = new Map(areas.map((area) => [String(area._id), area]));
+    const scoped = links
+      .filter((link) => !args.areaId || link.areaId === args.areaId)
+      .filter((link) => areaById.has(String(link.areaId)))
+      // Older discovery builds allowed broad description/note overlap into
+      // the deterministic path. Keep those hypotheses stored for audit and
+      // correction, but do not turn them into noisy Teach questions unless
+      // the reason names a durable identity signal.
+      .filter((link) => !link.reason?.startsWith('context match') || hasDurableIdentityReason(link.reason))
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, limit);
+    const candidates = await Promise.all(
+      scoped.map(async (link) => {
+        const area = areaById.get(String(link.areaId))!;
+        let source: string = link.artifactKind;
+        let title = link.artifactId;
+        let occurredAt = link.updatedAt;
+        if (link.artifactKind === 'mailThread') {
+          const row = await resolveMailLink(ctx, userId, link);
+          if (row) {
+            source = 'mail';
+            title = row.subject;
+            occurredAt = row.lastDate;
+          }
+        } else if (link.artifactKind === 'calendarEvent') {
+          const row = await resolveEventLink(ctx, userId, link);
+          if (row) {
+            source = 'calendar';
+            title = row.title;
+            occurredAt = row.startAt;
+          }
+        } else if (link.artifactKind === 'task') {
+          const row = await resolveTaskLink(ctx, userId, link);
+          if (row) {
+            source = 'tasks';
+            title = row.title;
+            occurredAt = row.updatedAt;
+          }
+        } else if (link.artifactKind === 'mcpItem') {
+          const row = await resolveMcpLink(ctx, userId, link);
+          if (row) {
+            source = row.server;
+            title = row.title;
+            occurredAt = row.occurredAt;
+          }
+        }
+        return {
+          linkId: String(link._id),
+          areaId: String(area._id),
+          areaName: area.name,
+          artifactKind: link.artifactKind,
+          artifactId: link.artifactId,
+          source,
+          title,
+          occurredAt,
+          confidence: link.confidence ?? null,
+          reason: link.reason ?? null,
+        };
+      }),
+    );
+    return {
+      candidates,
+      candidateFacts: facts
+        .filter((fact) => !args.areaId || fact.areaId === args.areaId)
+        .filter((fact) => areaById.has(String(fact.areaId)))
+        .map((fact) => ({
+          factId: String(fact._id),
+          areaId: String(fact.areaId),
+          areaName: areaById.get(String(fact.areaId))!.name,
+          kind: fact.kind,
+          value: fact.value,
+          sourceRefs: fact.sourceRefs,
+        })),
+    };
+  },
+});
+
 const UNCLASSIFIED_SCAN = 200;
 const UNCLASSIFIED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const AREA_DISCOVERY_SCAN_PER_SOURCE = 120;
+const AREA_DISCOVERY_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+async function areaArtifactLinks(
+  ctx: QueryCtx,
+  userId: string,
+  artifactKind: 'mailThread' | 'calendarEvent' | 'task' | 'mcpItem',
+  artifactId: string,
+  accountId?: string,
+) {
+  if (accountId) {
+    return await ctx.db
+      .query('areaArtifactLinks')
+      .withIndex('by_user_account_artifact', (q) =>
+        q
+          .eq('userId', userId)
+          .eq('accountId', accountId)
+          .eq('artifactKind', artifactKind)
+          .eq('artifactId', artifactId),
+      )
+      .collect();
+  }
+  return await ctx.db
+    .query('areaArtifactLinks')
+    .withIndex('by_user_artifact', (q) =>
+      q.eq('userId', userId).eq('artifactKind', artifactKind).eq('artifactId', artifactId),
+    )
+    .collect();
+}
+
+// One bounded discovery pass across every locally indexed source. Connector
+// sync owns the remote crawl; Area discovery consumes the private local
+// corpora so teaching never sends connector credentials or full histories to
+// the model. Only unclaimed artifacts leave this query.
+export const unclassifiedAreaArtifacts = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(args.limit ?? 80, 1), 100);
+    const cutoff = now() - AREA_DISCOVERY_WINDOW_MS;
+    const connections = await ctx.db
+      .query('mcpConnections')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    const searchableConnections = connections.filter(
+      (connection) => connection.status === 'connected' && connection.includeInSearch,
+    );
+    const [mail, events, cards, mcpByConnection] = await Promise.all([
+      ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gte('lastDate', cutoff))
+        .order('desc')
+        .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+      ctx.db
+        .query('calendarEvents')
+        .withIndex('by_user_start', (q) => q.eq('userId', args.userId).gte('startAt', cutoff))
+        .order('desc')
+        .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+      ctx.db
+        .query('cards')
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
+        .order('desc')
+        .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+      Promise.all(
+        searchableConnections.map((connection) =>
+          ctx.db
+            .query('mcpItems')
+            .withIndex('by_user_connection', (q) =>
+              q.eq('userId', args.userId).eq('connectionId', connection.connectionId),
+            )
+            .order('desc')
+            .take(AREA_DISCOVERY_SCAN_PER_SOURCE),
+        ),
+      ),
+    ]);
+    const mcp = mcpByConnection
+      .flat()
+      .sort(
+        (left, right) =>
+          (right.updatedAtSource ?? right.updatedAt) - (left.updatedAtSource ?? left.updatedAt),
+      )
+      .slice(0, AREA_DISCOVERY_SCAN_PER_SOURCE);
+    const candidates = [
+      ...mail.map((row) => ({
+        artifactKind: 'mailThread' as const,
+        artifactId: row.providerThreadId,
+        accountId: row.accountId,
+        source: 'mail',
+        title: row.subject || '(no subject)',
+        text: [row.subject, row.snippet, row.fromAddress].filter(Boolean).join('\n'),
+        occurredAt: row.lastDate,
+      })),
+      ...events.map((row) => ({
+        artifactKind: 'calendarEvent' as const,
+        artifactId: String(row._id),
+        accountId: row.accountId,
+        source: 'calendar',
+        title: row.title || '(untitled event)',
+        text: [
+          row.title,
+          row.description,
+          row.location,
+          JSON.stringify(row.participants || []),
+          JSON.stringify(row.organizer || {}),
+        ]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 8_000),
+        occurredAt: row.startAt,
+      })),
+      ...cards.map((row) => ({
+        artifactKind: 'task' as const,
+        artifactId: String(row._id),
+        source: 'tasks',
+        title: row.title,
+        text: [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 8_000),
+        occurredAt: row.updatedAt,
+      })),
+      ...mcp.map((row) => ({
+        artifactKind: 'mcpItem' as const,
+        artifactId: `${row.connectionId}:${row.externalId}`,
+        externalId: row.externalId,
+        accountId: row.connectionId,
+        source: row.server,
+        title: row.title,
+        text: row.searchText.slice(0, 8_000),
+        occurredAt: row.updatedAtSource ?? row.updatedAt,
+      })),
+    ].sort((left, right) => right.occurredAt - left.occurredAt);
+
+    // Preserve recency within each source, but rotate across source groups so
+    // a busy inbox cannot crowd GitHub, Granola, calendar, or task evidence
+    // out of a Teach-time discovery pass.
+    const groups = new Map<string, typeof candidates>();
+    for (const candidate of candidates) {
+      groups.set(candidate.source, [...(groups.get(candidate.source) || []), candidate]);
+    }
+    const items: Array<(typeof candidates)[number] & { rejectedAreaIds?: string[] }> = [];
+    const positions = new Map<string, number>();
+    while (items.length < limit) {
+      let advanced = false;
+      for (const [source, group] of groups) {
+        let position = positions.get(source) || 0;
+        while (position < group.length) {
+          const candidate = group[position++];
+          positions.set(source, position);
+          const links = await areaArtifactLinks(
+            ctx,
+            args.userId,
+            candidate.artifactKind,
+            candidate.artifactId,
+            'accountId' in candidate ? candidate.accountId : undefined,
+          );
+          if (links.some((link) => link.status !== 'rejected')) {
+            continue;
+          }
+          const rejectedAreaIds = links
+            .filter((link) => link.status === 'rejected')
+            .map((link) => String(link.areaId));
+          items.push({
+            ...candidate,
+            ...(rejectedAreaIds.length ? { rejectedAreaIds } : {}),
+          });
+          advanced = true;
+          break;
+        }
+        if (items.length >= limit) break;
+      }
+      if (!advanced) break;
+    }
+    return {
+      items,
+      sources: [
+        'mail',
+        'calendar',
+        'tasks',
+        ...new Set(
+          connections
+            .filter((connection) => connection.status === 'connected' && connection.includeInSearch)
+            .map((connection) => connection.server),
+        ),
+      ],
+    };
+  },
+});
 
 // Recent corpus threads that no area has claimed yet — the classifier's work
 // queue. Internal-secret-gated: only the cron/classifier path reads this.
@@ -1836,8 +2260,9 @@ export const recordAreaLinks = mutation({
     links: v.array(
       v.object({
         areaId: v.id('areas'),
-        artifactKind: v.optional(v.literal('mailThread')),
+        artifactKind: v.optional(artifactKindValidator),
         artifactId: v.string(),
+        externalId: v.optional(v.string()),
         accountId: v.optional(v.string()),
         status: v.union(v.literal('candidate'), v.literal('verified')),
         confidence: v.optional(v.number()),
@@ -1863,13 +2288,25 @@ export const recordAreaLinks = mutation({
         skipped += 1;
         continue;
       }
-      const { artifactId, accountId } = normalizedArtifactIdentity(link);
+      const artifactKind = link.artifactKind ?? 'mailThread';
+      const normalizedIdentity = normalizedArtifactIdentity(link);
+      const { accountId } = normalizedIdentity;
+      const mcpIdentity =
+        artifactKind === 'mcpItem'
+          ? mcpAreaLinkIdentity({
+              connectionId: accountId,
+              artifactId: normalizeText(link.artifactId),
+              externalId: link.externalId ? normalizeText(link.externalId) : undefined,
+            })
+          : undefined;
+      const externalId = mcpIdentity?.externalId;
+      const artifactId = mcpIdentity?.artifactId ?? normalizedIdentity.artifactId;
       const refs = normalizedRefs(link);
       assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
       const existing = await ctx.db
         .query('areaArtifactLinks')
         .withIndex('by_user_artifact', (q) =>
-          q.eq('userId', userId).eq('artifactKind', 'mailThread').eq('artifactId', artifactId),
+          q.eq('userId', userId).eq('artifactKind', artifactKind).eq('artifactId', artifactId),
         )
         .collect();
       if (existing.some((row) => row.areaId === link.areaId)) {
@@ -1879,7 +2316,8 @@ export const recordAreaLinks = mutation({
       await ctx.db.insert('areaArtifactLinks', {
         userId,
         areaId: link.areaId,
-        artifactKind: 'mailThread',
+        artifactKind,
+        externalId,
         artifactId,
         accountId,
         role: 'supporting',
@@ -1990,6 +2428,25 @@ export const reindexUserAreaArtifacts = internalMutation({
           )
           .collect();
         const match = matchMailRowToAreaFact(row, facts);
+        const contextMatch = match
+          ? null
+          : matchAreaContext({
+              text: [row.subject, row.snippet, row.fromAddress].filter(Boolean).join(' '),
+              areas: areas.map((area) => ({
+                _id: String(area._id),
+                name: area.name,
+                kind: area.kind,
+                description: area.description,
+                primaryDomain: area.primaryDomain,
+              })),
+              facts: facts.map((fact) => ({
+                _id: fact._id,
+                areaId: String(fact.areaId),
+                kind: fact.kind,
+                value: fact.value,
+                status: fact.status,
+              })),
+            });
         const categorized = existing.some(
           (link) => link.status !== 'rejected' && activeAreaIds.has(String(link.areaId)),
         );
@@ -2008,16 +2465,29 @@ export const reindexUserAreaArtifacts = internalMutation({
               ],
               confirmationRefs: match.status === 'verified' ? confirmationForVerifiedFact(match.fact) : [],
             }
-          : categorized
-            ? null
-            : {
-                areaId: personalAreaId,
+          : contextMatch
+            ? {
+                areaId: ctx.db.normalizeId('areas', contextMatch.areaId)!,
                 status: 'candidate' as const,
-                confidence: 0.25,
-                reason: 'legacy mail fallback to Personal',
-                sourceRefs: [{ kind: 'system', id: 'area-reindex', label: 'Historical area backfill' }],
+                confidence: contextMatch.confidence,
+                reason: contextMatch.reason,
+                sourceRefs: contextMatch.signals.map((label, index) => ({
+                  kind: 'areaContext',
+                  id: `${contextMatch.areaId}:${index}`,
+                  label,
+                })),
                 confirmationRefs: [],
-              };
+              }
+            : categorized
+              ? null
+              : {
+                  areaId: personalAreaId,
+                  status: 'candidate' as const,
+                  confidence: 0.25,
+                  reason: 'legacy mail fallback to Personal',
+                  sourceRefs: [{ kind: 'system', id: 'area-reindex', label: 'Historical area backfill' }],
+                  confirmationRefs: [],
+                };
         if (!target) {
           skipped += 1;
           continue;
@@ -2033,7 +2503,7 @@ export const reindexUserAreaArtifacts = internalMutation({
           artifactKind: 'mailThread',
           artifactId: row.providerThreadId,
           accountId: row.accountId,
-          role: match ? 'supporting' : 'secondary',
+          role: match || contextMatch ? 'supporting' : 'secondary',
           status: target.status,
           confidence: target.confidence,
           reason: target.reason,
@@ -2043,7 +2513,7 @@ export const reindexUserAreaArtifacts = internalMutation({
           updatedAt: ts,
         });
         inserted += 1;
-        if (match) matched += 1;
+        if (match || contextMatch) matched += 1;
         else personal += 1;
       }
 

@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { checkinCallerArgs } from '@/lib/albatross/checkin';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -48,7 +49,11 @@ export async function POST(req: NextRequest, context: { params: Promise<{ checki
     if (!responseText && !selected.length) {
       return Response.json({ ok: false, error: 'Tell Albatross what happened.' }, { status: 400 });
     }
-    const checkin = await convexQuery<any>((api as any).albatrossNotifications.getCheckin, { checkinId });
+    const caller = checkinCallerArgs(user.userId);
+    const checkin = await convexQuery<any>((api as any).albatrossNotifications.getCheckin, {
+      ...caller,
+      checkinId,
+    });
     if (!checkin) return Response.json({ ok: false, error: 'Check-in not found.' }, { status: 404 });
     let inferred: Array<{ kind: string; id: string }> = [];
     if (responseText) {
@@ -70,6 +75,7 @@ Mark an item completed only when the user's words explicitly say it was done, fi
         all.findIndex((candidate) => candidate.kind === entry.kind && candidate.id === entry.id) === index,
     );
     const result = await convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
+      ...caller,
       checkinId,
       responseText,
       completed: deduped,

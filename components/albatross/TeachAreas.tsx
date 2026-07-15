@@ -90,6 +90,12 @@ function newTeachChatId() {
   );
 }
 
+// UIMessage parts are append-only and do not expose a stable id for text
+// segments. Keep their positional identity stable while a response streams.
+function teachPartKey(messageId: string, position: number) {
+  return `${messageId}-${position}`;
+}
+
 // The seeded opener is rendered locally and never persisted: the real thread
 // starts with the user's first reply, so the saved transcript stays clean.
 const TEACH_OPENER =
@@ -108,6 +114,7 @@ function TeachChat() {
         api: '/api/agent',
         body: {
           extraSystem: TEACH_SYSTEM_PROMPT,
+          areaDiscovery: { mode: 'teach' },
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
       }),
@@ -270,10 +277,16 @@ function TeachChat() {
               <UserBubble key={message.id} message={message} />
             ) : (
               <div key={message.id} className="flex w-full min-w-0 flex-col gap-2">
-                {(message.parts || []).map((part: any, i: number) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: streamed parts are append-only with no stable id
-                  <TeachPart key={`${message.id}-${i}`} part={part} onAnswer={answerHitl} />
-                ))}
+                {(message.parts || []).map((part: any, i: number) => {
+                  return (
+                    <TeachPart
+                      key={teachPartKey(message.id, i)}
+                      part={part}
+                      onAnswer={answerHitl}
+                      streaming={streaming && message.id === messages.at(-1)?.id}
+                    />
+                  );
+                })}
               </div>
             ),
           )}
@@ -368,9 +381,11 @@ function UserBubble({ message }: { message: any }) {
 function TeachPart({
   part,
   onAnswer,
+  streaming = false,
 }: {
   part: any;
   onAnswer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
+  streaming?: boolean;
 }) {
   const type = part?.type;
   if (type === 'text') {
@@ -378,7 +393,10 @@ function TeachPart({
     if (!text.trim()) return null;
     return (
       <AssistantBubble>
-        <Markdown className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]">
+        <Markdown
+          streaming={streaming}
+          className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]"
+        >
           {text}
         </Markdown>
       </AssistantBubble>

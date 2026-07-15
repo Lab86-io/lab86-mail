@@ -3,6 +3,12 @@ import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
 import { loadGitHubItems } from './github';
+import {
+  granolaAccountInfo,
+  granolaMeetingCountHint,
+  granolaMeetingDetailArgs,
+  mergeGranolaMeetingDetails,
+} from './granola';
 import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
 
 const mcpApi = (api as any).mcp;
@@ -144,26 +150,59 @@ export async function syncConnection(
     return { ok: false, count: 0, error };
   }
 
-  const items: NormalizedMcpItem[] = [];
+  let items: NormalizedMcpItem[] = [];
   const seen = new Set<string>();
   let supportedQueries = 0;
   let successfulQueries = 0;
   const queryErrors: string[] = [];
+  let accountInfo: { email?: string; workspaceName?: string } = {};
   try {
+    if (row.server === 'granola' && handle.toolNames.has('get_account_info')) {
+      try {
+        accountInfo = granolaAccountInfo(await deps.callMcpTool(handle, 'get_account_info', {}));
+      } catch (err) {
+        queryErrors.push(`account check: ${classifyError(err)}`);
+      }
+    }
     for (const query of def.syncQueries) {
       // Skip tools the server doesn't actually expose (graceful vendor drift).
       if (handle.toolNames.size && !handle.toolNames.has(query.tool)) continue;
       supportedQueries += 1;
       try {
         const result = await deps.callMcpTool(handle, query.tool, query.args);
+        const normalized = normalizeItems(query, result);
+        const advertisedCount = row.server === 'granola' ? granolaMeetingCountHint(result) : null;
+        if (advertisedCount && normalized.length === 0) {
+          queryErrors.push(`Granola returned ${advertisedCount} meetings in an unsupported response shape`);
+          continue;
+        }
         successfulQueries += 1;
-        for (const item of normalizeItems(query, result)) {
+        for (const item of normalized) {
           if (seen.has(item.externalId)) continue;
           seen.add(item.externalId);
           items.push(item);
         }
       } catch (err) {
         queryErrors.push(classifyError(err));
+      }
+    }
+    if (row.server === 'granola' && handle.toolNames.has('get_meetings')) {
+      const ids = items
+        .filter((item) => item.kind === 'meeting')
+        .map((item) => item.externalId)
+        .slice(0, 30);
+      const detailArgs = granolaMeetingDetailArgs(handle.toolSchemas?.get('get_meetings'), ids);
+      if (detailArgs) {
+        try {
+          const result = await deps.callMcpTool(handle, 'get_meetings', detailArgs);
+          const detailed = normalizeItems(
+            { tool: 'get_meetings', args: detailArgs, kind: 'meeting' },
+            result,
+          );
+          items = mergeGranolaMeetingDetails(items, detailed);
+        } catch (err) {
+          queryErrors.push(classifyError(err));
+        }
       }
     }
   } finally {
@@ -203,6 +242,8 @@ export async function syncConnection(
     status: 'ready',
     lastSyncedAt: Date.now(),
     itemCount: items.length,
+    accountEmail: accountInfo.email,
+    workspaceName: accountInfo.workspaceName,
   });
   return { ok: true, count: items.length };
 }

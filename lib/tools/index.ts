@@ -30,7 +30,9 @@ import {
 import {
   areaAddFact,
   areaArchive,
+  areaArtifactSetStatus,
   areaCreate,
+  areaDiscoverContext,
   areaDomainActivity,
   areaFactSetStatus,
   areaList,
@@ -112,7 +114,7 @@ import {
   unsnoozeThreadTool,
   unstarMessage,
 } from './mail-mutate';
-import { githubSearch, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
+import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
@@ -170,6 +172,7 @@ const allTools: AnyTool[] = [
   mcpSearch,
   githubSearch,
   mcpListItems,
+  mcpConnectionStatus,
   mcpCreateTask,
   listAccounts,
   searchThreads,
@@ -295,8 +298,10 @@ const allTools: AnyTool[] = [
   salvageContext,
   areaList,
   areaCreate,
+  areaDiscoverContext,
   areaUpdateIdentity,
   areaArchive,
+  areaArtifactSetStatus,
   areaAddFact,
   areaFactSetStatus,
   areaDomainActivity,

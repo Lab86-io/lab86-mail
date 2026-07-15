@@ -3,7 +3,9 @@ import {
   __setAreaToolDepsForTest,
   areaAddFact,
   areaArchive,
+  areaArtifactSetStatus,
   areaCreate,
+  areaDiscoverContext,
   areaDomainActivity,
   areaFactSetStatus,
   areaList,
@@ -19,6 +21,7 @@ const apiMock = {
     getArea: 'albatross.getArea',
     updateArea: 'albatross.updateArea',
     archiveArea: 'albatross.archiveArea',
+    setAreaArtifactLinkStatus: 'albatross.setAreaArtifactLinkStatus',
     addAreaFact: 'albatross.addAreaFact',
     verifyAreaFact: 'albatross.verifyAreaFact',
     rejectAreaFact: 'albatross.rejectAreaFact',
@@ -37,6 +40,12 @@ beforeEach(() => {
   __setAreaToolDepsForTest({
     api: apiMock as any,
     now: () => NOW,
+    prepareAreaDiscoveryContext: async () => ({
+      sources: ['mail', 'github'],
+      discoveries: [{ areaId: 'area_1', artifactId: 'artifact_1' }],
+      pendingCandidates: [{ linkId: 'link_1' }],
+      pendingFacts: [{ factId: 'fact_1' }],
+    }),
     convexMutation: (async (fn: any, args: any) => {
       mutationCalls.push({ fn, args });
       if (fn === apiMock.albatross.createArea) return 'area_new';
@@ -199,6 +208,15 @@ describe('area_update_identity', () => {
         officialSourceUrl: 'https://unrelated.example/about',
       }),
     ).rejects.toThrow('must match');
+
+    await expect(
+      runTool(areaUpdateIdentity.handler, {
+        areaId: 'area_1',
+        primaryDomain: 'statpearls.com',
+        identityBasis: 'official_web',
+        officialSourceUrl: 'ftp://statpearls.com/about',
+      }),
+    ).rejects.toThrow('HTTP or HTTPS');
   });
 });
 
@@ -249,6 +267,28 @@ describe('area_add_fact', () => {
       }),
     ).rejects.toThrow('attributable');
     expect(mutationCalls).toHaveLength(0);
+
+    await expect(
+      runTool(areaAddFact.handler, {
+        areaId: 'area_1',
+        kind: 'organization',
+        value: 'Untrusted source',
+        confirmedByUser: false,
+        evidenceKind: 'official_web',
+        sourceRefs: [{ kind: 'web', id: 'bad', url: 'not a URL' }],
+      }),
+    ).rejects.toThrow('attributable');
+
+    await expect(
+      runTool(areaAddFact.handler, {
+        areaId: 'area_1',
+        kind: 'organization',
+        value: 'Wrong protocol',
+        confirmedByUser: false,
+        evidenceKind: 'official_web',
+        sourceRefs: [{ kind: 'web', id: 'ftp', url: 'ftp://example.test' }],
+      }),
+    ).rejects.toThrow('attributable');
   });
 
   test('the tool contract demands an explicit per-fact yes', () => {
@@ -285,6 +325,47 @@ describe('area_fact_set_status', () => {
   });
 });
 
+describe('area_artifact_set_status', () => {
+  test('verified mints a user confirmation for the exact candidate link', async () => {
+    const result = await runTool(areaArtifactSetStatus.handler, {
+      linkId: 'link_1',
+      status: 'verified',
+      reason: 'Yes, this PR belongs to Albatross',
+    });
+
+    expect(result).toEqual({ ok: true, status: 'verified' });
+    expect(mutationCalls[0]).toMatchObject({
+      fn: apiMock.albatross.setAreaArtifactLinkStatus,
+      args: {
+        userId: TEST_USER.userId,
+        linkId: 'link_1',
+        status: 'verified',
+        reason: 'Yes, this PR belongs to Albatross',
+      },
+    });
+    expect(mutationCalls[0].args.confirmationRefs[0]).toMatchObject({
+      kind: 'userConfirmation',
+      confirmedAt: NOW,
+      confirmedBy: TEST_USER.userId,
+    });
+  });
+
+  test('rejected records negative evidence without fabricating confirmation', async () => {
+    await runTool(areaArtifactSetStatus.handler, {
+      linkId: 'link_2',
+      status: 'rejected',
+      reason: 'That meeting was for CardHunt',
+    });
+
+    expect(mutationCalls[0].args).toMatchObject({
+      linkId: 'link_2',
+      status: 'rejected',
+      reason: 'That meeting was for CardHunt',
+    });
+    expect(mutationCalls[0].args.confirmationRefs).toBeUndefined();
+  });
+});
+
 describe('area_domain_activity', () => {
   test('returns top senders for a domain', async () => {
     const result: any = await runTool(areaDomainActivity.handler, { domain: 'cardhunt.com', max: 10 });
@@ -302,6 +383,26 @@ describe('area_domain_activity', () => {
   });
 });
 
+describe('area_discover_context', () => {
+  test('runs cross-connector discovery and returns confirmation candidates', async () => {
+    const result = await runTool(areaDiscoverContext.handler, { areaId: 'area_1' });
+
+    expect(result).toEqual({
+      ok: true,
+      sources: ['mail', 'github'],
+      discoveries: [{ areaId: 'area_1', artifactId: 'artifact_1' }],
+      pendingCandidates: [{ linkId: 'link_1' }],
+      pendingFacts: [{ factId: 'fact_1' }],
+    });
+  });
+
+  test('requires an authenticated user', async () => {
+    await expect(runTool(areaDiscoverContext.handler, {}, { userId: null })).rejects.toThrow(
+      'Not authenticated',
+    );
+  });
+});
+
 describe('teach prompt', () => {
   test('mentions the task board that area_create gives every area', () => {
     expect(TEACH_SYSTEM_PROMPT).toContain('with its own task board');
@@ -311,6 +412,7 @@ describe('teach prompt', () => {
     expect(TEACH_SYSTEM_PROMPT).toContain('confirmedByUser=true ONLY after the user explicitly said yes');
     expect(TEACH_SYSTEM_PROMPT).toContain('ask_user');
     expect(TEACH_SYSTEM_PROMPT).toContain('area_domain_activity');
+    expect(TEACH_SYSTEM_PROMPT).toContain('area_artifact_set_status');
     expect(TEACH_SYSTEM_PROMPT).toContain('any other areas');
     expect(TEACH_SYSTEM_PROMPT).toContain('Archiving never deletes');
     expect(TEACH_SYSTEM_PROMPT).not.toContain('!');
