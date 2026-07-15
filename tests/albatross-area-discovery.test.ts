@@ -10,6 +10,7 @@ import {
 const USER = 'user_area_discovery';
 const apiMock = {
   albatross: {
+    ensurePersonal: 'albatross.ensurePersonal',
     listAreas: 'albatross.listAreas',
     listUserAreaFacts: 'albatross.listUserAreaFacts',
     unclassifiedAreaArtifacts: 'albatross.unclassifiedAreaArtifacts',
@@ -63,6 +64,9 @@ describe('cross-source Area discovery', () => {
         throw new Error(`Unexpected query ${fn}`);
       }) as any,
       convexMutation: (async (fn: string, args: any) => {
+        // The Personal-area ensure is bookkeeping, not a link write — keep it
+        // out of mutationCalls so assertions read link writes positionally.
+        if (fn === apiMock.albatross.ensurePersonal) return { areaId: 'area_personal' };
         mutationCalls.push({ fn, args });
         return { inserted: args.links.length, skipped: 0 };
       }) as any,
@@ -169,6 +173,103 @@ describe('cross-source Area discovery', () => {
 
     expect(result).toMatchObject({ deterministic: 0, llm: 0, skipped: 1 });
     expect(llmCalls).toHaveLength(0);
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  test('mail and calendar the model cannot place fall back to Personal instead of limbo', async () => {
+    corpus.items = [
+      {
+        artifactKind: 'mailThread',
+        artifactId: 'thread_unsure',
+        accountId: 'acct_1',
+        source: 'mail',
+        title: 'Receipt from a one-off store',
+        text: 'Order confirmation 8841',
+        occurredAt: 1_780_000_000_000,
+      },
+      {
+        artifactKind: 'calendarEvent',
+        artifactId: 'event_unsure',
+        accountId: 'acct_1',
+        source: 'calendar',
+        title: 'Untitled block',
+        text: 'Untitled block',
+        occurredAt: 1_780_000_000_000,
+      },
+      {
+        artifactKind: 'mcpItem',
+        artifactId: 'github:issue:9',
+        source: 'github',
+        title: 'Unrelated issue',
+        text: 'Some other repository entirely',
+        occurredAt: 1_780_000_000_000,
+      },
+    ];
+    llmText = JSON.stringify([
+      { candidateId: 'mailThread:acct_1:thread_unsure', areaName: null, confidence: 'low' },
+      { candidateId: 'calendarEvent:acct_1:event_unsure', areaName: 'Not An Area', confidence: 'high' },
+      { candidateId: 'mcpItem:-:github:issue:9', areaName: null, confidence: 'low' },
+    ]);
+
+    const result = await classifyAreaArtifacts({ userId: USER });
+
+    // Mail + calendar settle in Personal; connector items stay unclaimed.
+    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 2, skipped: 1 });
+    const links = mutationCalls[0]?.args.links;
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toMatchObject({
+        areaId: 'area_personal',
+        role: 'secondary',
+        status: 'candidate',
+      });
+      expect(link.confidence).toBeLessThan(0.5);
+    }
+    expect(links.map((link: any) => link.artifactId).sort()).toEqual(['event_unsure', 'thread_unsure']);
+  });
+
+  test('the Personal fallback never applies to an area-scoped Teach pass', async () => {
+    corpus.items = [
+      {
+        artifactKind: 'mailThread',
+        artifactId: 'thread_scoped',
+        accountId: 'acct_1',
+        source: 'mail',
+        title: 'Receipt',
+        text: 'Order confirmation',
+        occurredAt: 1_780_000_000_000,
+      },
+    ];
+    llmText = JSON.stringify([
+      { candidateId: 'mailThread:acct_1:thread_scoped', areaName: null, confidence: 'low' },
+    ]);
+
+    const result = await classifyAreaArtifacts({ userId: USER, areaId: 'area_albatross' });
+
+    expect(result).toMatchObject({ personal: 0, skipped: 1 });
+    expect(mutationCalls).toHaveLength(0);
+  });
+
+  test('an artifact the user rejected from Personal is never re-filed there', async () => {
+    corpus.items = [
+      {
+        artifactKind: 'mailThread',
+        artifactId: 'thread_rejected_personal',
+        accountId: 'acct_1',
+        source: 'mail',
+        title: 'Receipt',
+        text: 'Order confirmation',
+        occurredAt: 1_780_000_000_000,
+      },
+    ];
+    corpus.items[0].rejectedAreaIds = ['area_personal'];
+    llmText = JSON.stringify([
+      { candidateId: 'mailThread:acct_1:thread_rejected_personal', areaName: null, confidence: 'low' },
+    ]);
+
+    const result = await classifyAreaArtifacts({ userId: USER });
+
+    expect(result).toMatchObject({ personal: 0, skipped: 1 });
     expect(mutationCalls).toHaveLength(0);
   });
 

@@ -95,11 +95,24 @@ export const tick = internalAction({
         due.push({ userId: target.userId, kind: 'morning', timezone: target.timezone });
       }
     }
-    const fired = await fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
-      label: 'daily-report cron',
-      concurrency: 2,
-      timeoutMs: 285_000,
-    });
-    console.log(`[daily-report cron] tick fired ${fired}/${due.length} editions`);
+    // The morning hour also rewrites every area's living brief so the Daily
+    // Brief and the area views open on the same fresh context. The two
+    // fan-outs run concurrently — neither reads the other's output.
+    const [fired, briefed] = await Promise.all([
+      fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
+        label: 'daily-report cron',
+        concurrency: 2,
+        timeoutMs: 285_000,
+      }),
+      fanOutInternalPost(
+        `${appUrl}/api/cron/area-briefs`,
+        secret,
+        due.map((target) => ({ userId: target.userId })),
+        { label: 'area-briefs cron', concurrency: 2, timeoutMs: 285_000 },
+      ),
+    ]);
+    console.log(
+      `[daily-report cron] tick fired ${fired}/${due.length} editions, ${briefed}/${due.length} area-brief refreshes`,
+    );
   },
 });

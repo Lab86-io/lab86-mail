@@ -888,6 +888,10 @@ export default defineSchema({
     ),
     kind: v.optional(v.string()),
     areaId: v.optional(v.string()),
+    // True while the area was defaulted (Personal catch-all) rather than chosen
+    // by the user or the capture splitter. The area-classify cron re-homes
+    // flagged intents with one fast-model pass, then clears the flag.
+    areaAutoAssigned: v.optional(v.boolean()),
     // Work-v2 additions. Legacy areaId/status remain readable during the
     // additive migration; these fields become the user-facing Work contract.
     captureId: v.optional(v.id('albatrossCaptures')),

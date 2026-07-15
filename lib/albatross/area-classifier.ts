@@ -340,3 +340,140 @@ export async function classifyThreads({ userId }: { userId: string }): Promise<C
   }
   return { deterministic, llm, skipped };
 }
+
+export interface ClassifiableIntent {
+  intentId: string;
+  title: string | null;
+  rawText: string;
+  source: string;
+}
+
+export interface IntentClassifyResult {
+  assigned: number;
+  keptPersonal: number;
+  skipped: number;
+}
+
+const intentVerdictSchema = z.object({
+  intentId: z.string().min(1),
+  areaName: z.string().nullish(),
+  confidence: z.enum(['high', 'medium', 'low']).catch('low'),
+});
+
+/** Same defensive parse as parseClassifierOutput, keyed on intentId. */
+export function parseIntentClassifierOutput(raw: string): z.infer<typeof intentVerdictSchema>[] {
+  try {
+    let text = (raw || '').trim();
+    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fence) text = fence[1].trim();
+    const start = text.indexOf('[');
+    const end = text.lastIndexOf(']');
+    if (start === -1 || end <= start) return [];
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    if (!Array.isArray(parsed)) return [];
+    const verdicts: z.infer<typeof intentVerdictSchema>[] = [];
+    for (const entry of parsed) {
+      const result = intentVerdictSchema.safeParse(entry);
+      if (result.success) verdicts.push(result.data);
+    }
+    return verdicts;
+  } catch {
+    return [];
+  }
+}
+
+const INTENT_CLASSIFY_SYSTEM = `You assign captured intents — short tasks and plans the user wrote down — to the user's life areas. You get the areas with their known facts, then a list of intents (id, title, text).
+
+Rules:
+- Only assign an intent when its text clearly belongs to one area's facts or obvious scope. When unsure, use null.
+- confidence "high" means you would defend the assignment from the listed facts alone. Anything weaker is "medium" or "low".
+- Respond with ONE JSON array, no prose: [{"intentId": string, "areaName": string|null, "confidence": "high"|"medium"|"low"}]. Include every intent exactly once. areaName must be copied exactly from the provided area names.`;
+
+function intentsBlock(intents: ClassifiableIntent[]): string {
+  return intents
+    .map(
+      (intent) =>
+        `- intentId=${intent.intentId} | title=${(intent.title || '(untitled)').slice(0, 120)} | text=${intent.rawText.replace(/\s+/g, ' ').slice(0, 240)}`,
+    )
+    .join('\n');
+}
+
+/**
+ * Re-home intents captured without an area: they default to Personal, flagged
+ * areaAutoAssigned. One fast-model pass — a confident match moves the intent,
+ * anything else clears the flag so it settles in Personal. Intents the model
+ * never answered for keep their flag and retry on the next cron tick.
+ */
+export async function classifyIntents({ userId }: { userId: string }): Promise<IntentClassifyResult> {
+  const albatross = (deps.api as any).albatross;
+  const albatrossIntents = (deps.api as any).albatrossIntents;
+  const intents = await deps.convexQuery<ClassifiableIntent[]>(albatrossIntents.listAutoAssigned, {
+    userId,
+    limit: LLM_BATCH_CAP,
+  });
+  if (!intents.length) return { assigned: 0, keptPersonal: 0, skipped: 0 };
+
+  const [{ areaId: personalAreaId }, areas, verifiedFacts, candidateFacts] = await Promise.all([
+    deps.convexMutation<{ areaId: string }>(albatross.ensurePersonal, { userId }),
+    deps.convexQuery<any[]>(albatross.listAreas, { userId, status: 'active' }),
+    deps.convexQuery<AreaFactLite[]>(albatross.listUserAreaFacts, { userId, status: 'verified' }),
+    deps.convexQuery<AreaFactLite[]>(albatross.listUserAreaFacts, { userId, status: 'candidate' }),
+  ]);
+  const nonPersonalAreas = areas.filter((area) => String(area._id) !== String(personalAreaId));
+  if (!nonPersonalAreas.length) {
+    // Personal is the only area — nothing to re-home to; settle the flags.
+    await deps.convexMutation(albatrossIntents.applyAreaVerdicts, {
+      userId,
+      verdicts: intents.map((intent) => ({ intentId: intent.intentId })),
+    });
+    return { assigned: 0, keptPersonal: intents.length, skipped: 0 };
+  }
+
+  const activeAreaIds = new Set(areas.map((area) => String(area._id)));
+  const facts = [...verifiedFacts, ...candidateFacts].filter((fact) =>
+    activeAreaIds.has(String(fact.areaId)),
+  );
+  const factsByArea = new Map<string, AreaFactLite[]>();
+  for (const fact of facts) {
+    const key = String(fact.areaId);
+    factsByArea.set(key, [...(factsByArea.get(key) || []), fact]);
+  }
+  const areaByName = new Map(areas.map((area) => [String(area.name).toLowerCase(), area]));
+  const intentById = new Map(intents.map((intent) => [intent.intentId, intent]));
+  const verdicts: Array<{ intentId: string; areaId?: string; reason?: string }> = [];
+  try {
+    const { text } = await deps.generateTextForCurrentUser({
+      feature: 'albatross_classify',
+      speed: 'fast',
+      userId,
+      system: INTENT_CLASSIFY_SYSTEM,
+      prompt: `## Areas\n${areasBlock(areas, factsByArea)}\n\n## Intents\n${intentsBlock(intents)}`,
+    });
+    const claimed = new Set<string>();
+    for (const verdict of parseIntentClassifierOutput(text)) {
+      if (!intentById.has(verdict.intentId) || claimed.has(verdict.intentId)) continue;
+      claimed.add(verdict.intentId);
+      const area = verdict.areaName ? areaByName.get(verdict.areaName.toLowerCase()) : undefined;
+      if (area && verdict.confidence === 'high' && String(area._id) !== String(personalAreaId)) {
+        verdicts.push({
+          intentId: verdict.intentId,
+          areaId: String(area._id),
+          reason: `llm high-confidence match to ${area.name}`,
+        });
+      } else {
+        // The model looked and could not place it — it settles in Personal.
+        verdicts.push({ intentId: verdict.intentId });
+      }
+    }
+  } catch (err) {
+    console.warn('[area-classifier] intent llm phase failed:', err);
+  }
+  const skipped = intents.length - verdicts.length;
+  if (!verdicts.length) return { assigned: 0, keptPersonal: 0, skipped };
+  await deps.convexMutation(albatrossIntents.applyAreaVerdicts, { userId, verdicts });
+  return {
+    assigned: verdicts.filter((verdict) => verdict.areaId).length,
+    keptPersonal: verdicts.filter((verdict) => !verdict.areaId).length,
+    skipped,
+  };
+}

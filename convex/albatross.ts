@@ -2251,7 +2251,7 @@ export const unclassifiedThreads = query({
 });
 
 // Batch write for classifier verdicts. Dedupe on by_user_artifact + areaId:
-// an existing link for the same (thread, area) is left untouched — the
+// an existing link for the same (artifact, area) is left untouched — the
 // classifier never downgrades or churns prior decisions.
 export const recordAreaLinks = mutation({
   args: {
@@ -2264,6 +2264,9 @@ export const recordAreaLinks = mutation({
         artifactId: v.string(),
         externalId: v.optional(v.string()),
         accountId: v.optional(v.string()),
+        // Personal catch-all fallbacks arrive as 'secondary' (mirrors the
+        // reindex backfill); real matches keep the default 'supporting'.
+        role: v.optional(v.union(v.literal('secondary'), v.literal('supporting'))),
         status: v.union(v.literal('candidate'), v.literal('verified')),
         confidence: v.optional(v.number()),
         reason: v.optional(v.string()),
@@ -2320,7 +2323,7 @@ export const recordAreaLinks = mutation({
         externalId,
         artifactId,
         accountId,
-        role: 'supporting',
+        role: link.role ?? 'supporting',
         status: link.status,
         confidence: link.confidence,
         reason: link.reason ? normalizeText(link.reason).slice(0, 700) : undefined,
