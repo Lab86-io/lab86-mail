@@ -27,6 +27,21 @@ export function areaMcpExternalId(artifactId: string, connectionId?: string): st
   return prefix && artifactId.startsWith(prefix) ? artifactId.slice(prefix.length) : artifactId;
 }
 
+export function mcpAreaLinkIdentity(input: {
+  connectionId?: string;
+  artifactId: string;
+  externalId?: string;
+}) {
+  const externalId = input.externalId || areaMcpExternalId(input.artifactId, input.connectionId);
+  return {
+    externalId,
+    artifactId:
+      input.connectionId && externalId
+        ? areaMcpArtifactId(input.connectionId, externalId)
+        : input.artifactId.slice(0, MAX_ARTIFACT_ID_LENGTH),
+  };
+}
+
 export function mcpAreaTargetDecision(input: {
   matchedAreaId?: string;
   existingTargetKind?: 'area' | 'project' | 'work' | 'routine';

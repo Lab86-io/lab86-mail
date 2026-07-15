@@ -10,7 +10,7 @@ import {
 import { validateAreaImageUpload } from '../lib/albatross/area-image';
 import { areaMailMoveConfirmation, areaMailMoveReason } from '../lib/albatross/area-mail';
 import { matchAreaContext } from '../lib/albatross/area-matching';
-import { areaMcpArtifactId, areaMcpExternalId } from '../lib/albatross/area-mcp-identity';
+import { areaMcpExternalId, mcpAreaLinkIdentity } from '../lib/albatross/area-mcp-identity';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -2138,6 +2138,7 @@ export const unclassifiedAreaArtifacts = query({
       ...mcp.map((row) => ({
         artifactKind: 'mcpItem' as const,
         artifactId: `${row.connectionId}:${row.externalId}`,
+        externalId: row.externalId,
         accountId: row.connectionId,
         source: row.server,
         title: row.title,
@@ -2261,6 +2262,7 @@ export const recordAreaLinks = mutation({
         areaId: v.id('areas'),
         artifactKind: v.optional(artifactKindValidator),
         artifactId: v.string(),
+        externalId: v.optional(v.string()),
         accountId: v.optional(v.string()),
         status: v.union(v.literal('candidate'), v.literal('verified')),
         confidence: v.optional(v.number()),
@@ -2289,12 +2291,16 @@ export const recordAreaLinks = mutation({
       const artifactKind = link.artifactKind ?? 'mailThread';
       const normalizedIdentity = normalizedArtifactIdentity(link);
       const { accountId } = normalizedIdentity;
-      const externalId =
-        artifactKind === 'mcpItem' ? areaMcpExternalId(normalizeText(link.artifactId), accountId) : undefined;
-      const artifactId =
-        artifactKind === 'mcpItem' && accountId && externalId
-          ? areaMcpArtifactId(accountId, externalId)
-          : normalizedIdentity.artifactId;
+      const mcpIdentity =
+        artifactKind === 'mcpItem'
+          ? mcpAreaLinkIdentity({
+              connectionId: accountId,
+              artifactId: normalizeText(link.artifactId),
+              externalId: link.externalId ? normalizeText(link.externalId) : undefined,
+            })
+          : undefined;
+      const externalId = mcpIdentity?.externalId;
+      const artifactId = mcpIdentity?.artifactId ?? normalizedIdentity.artifactId;
       const refs = normalizedRefs(link);
       assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
       const existing = await ctx.db

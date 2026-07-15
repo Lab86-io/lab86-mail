@@ -80,6 +80,7 @@ describe('cross-source Area discovery', () => {
       {
         artifactKind: 'mcpItem',
         artifactId: 'github:pull_request:42',
+        externalId: 'pull_request:42',
         source: 'github',
         title: 'Fix area context discovery',
         text: 'GitHub notification Lab86-io/lab86-mail pull request #42 merged by dependabot',
@@ -95,6 +96,7 @@ describe('cross-source Area discovery', () => {
       areaId: 'area_albatross',
       artifactKind: 'mcpItem',
       artifactId: 'github:pull_request:42',
+      externalId: 'pull_request:42',
       status: 'candidate',
     });
     expect(mutationCalls[0]?.args.links[0].sourceRefs[0].label).toContain('github');

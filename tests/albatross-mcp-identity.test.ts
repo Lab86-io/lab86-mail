@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   areaMcpArtifactId,
   areaMcpExternalId,
+  mcpAreaLinkIdentity,
   mcpAreaTargetDecision,
 } from '../lib/albatross/area-mcp-identity';
 
@@ -20,6 +21,15 @@ describe('connection-scoped MCP Area identity', () => {
     expect(first).toHaveLength(500);
     expect(second).toHaveLength(500);
     expect(first).not.toBe(second);
+  });
+
+  test('keeps the raw external ID separate from its opaque bounded link key', () => {
+    const externalId = `issue:${'x'.repeat(600)}`;
+    const artifactId = areaMcpArtifactId('github_one', externalId);
+    expect(mcpAreaLinkIdentity({ connectionId: 'github_one', artifactId, externalId })).toEqual({
+      externalId,
+      artifactId,
+    });
   });
 
   test('clears a rejected Area target and does not restore it during resync', () => {

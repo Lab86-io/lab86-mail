@@ -22,6 +22,7 @@ export const AREA_DISCOVERY_LLM_CAP = 30;
 export interface ClassifiableAreaArtifact {
   artifactKind: 'mailThread' | 'calendarEvent' | 'task' | 'mcpItem';
   artifactId: string;
+  externalId?: string;
   accountId?: string;
   source: string;
   title: string;
@@ -199,6 +200,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
       areaId: match.areaId,
       artifactKind: artifact.artifactKind,
       artifactId: artifact.artifactId,
+      externalId: artifact.externalId,
       accountId: artifact.accountId,
       status: 'candidate',
       confidence: match.confidence,
@@ -247,6 +249,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
           areaId: String(area._id),
           artifactKind: artifact.artifactKind,
           artifactId: artifact.artifactId,
+          externalId: artifact.externalId,
           accountId: artifact.accountId,
           status: 'candidate',
           confidence: 0.62,
