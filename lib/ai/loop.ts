@@ -104,6 +104,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'area_create',
   'area_update_identity',
   'area_archive',
+  'area_artifact_set_status',
   'area_add_fact',
   'area_fact_set_status',
   'area_domain_activity',

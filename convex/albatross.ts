@@ -1112,6 +1112,58 @@ export const listArtifactLinks = query({
   },
 });
 
+// Persist the user's answer to a discovery question. Verification requires a
+// server-minted confirmation ref from the Teach tool; rejection is retained
+// as negative evidence so the crawler does not keep proposing the same item.
+export const setAreaArtifactLinkStatus = mutation({
+  args: {
+    ...callerArgs,
+    linkId: v.id('areaArtifactLinks'),
+    status: v.union(v.literal('verified'), v.literal('rejected')),
+    reason: v.optional(v.string()),
+    confirmationRefs: v.optional(v.array(confirmationRefValidator)),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const link = await ctx.db.get(args.linkId);
+    if (!link || link.userId !== userId) throw new Error('Area artifact link not found.');
+    const confirmationRefs =
+      args.status === 'verified' ? normalizeConfirmationRefs(args.confirmationRefs) : [];
+    assertVerifiedArtifactLinkAllowed(args.status, confirmationRefs);
+    const userReason = args.reason ? normalizeText(args.reason).slice(0, 300) : '';
+    const reason = userReason
+      ? `${link.reason ? `${link.reason}; ` : ''}user response: ${userReason}`.slice(0, 700)
+      : link.reason;
+    const ts = now();
+    await ctx.db.patch(link._id, {
+      status: args.status,
+      confidence: args.status === 'verified' ? 1 : 0,
+      reason,
+      confirmationRefs,
+      updatedAt: ts,
+    });
+    await upsertAreaEvidence(ctx, {
+      userId,
+      areaId: link.areaId,
+      sourceKind: artifactEvidenceKind(link.artifactKind),
+      sourceId: link.artifactId,
+      title: `${link.artifactKind} discovery ${args.status}`,
+      summary: reason,
+      occurredAt: ts,
+      trust: args.status === 'verified' ? 'confirmed' : 'rejected',
+      confidence: args.status === 'verified' ? 1 : 0,
+      dedupeKey: `area-link:${String(link.areaId)}:${link.artifactKind}:${link.accountId || ''}:${link.artifactId}`,
+      metadata: {
+        artifactKind: link.artifactKind,
+        role: link.role,
+        status: args.status,
+        linkId: String(link._id),
+      },
+    });
+    return { linkId: String(link._id), status: args.status };
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Areas-become-the-app: read models and classifier plumbing.
 // ---------------------------------------------------------------------------
@@ -1887,6 +1939,7 @@ export const areaDiscoveryBrief = query({
           }
         }
         return {
+          linkId: String(link._id),
           areaId: String(area._id),
           areaName: area.name,
           artifactKind: link.artifactKind,

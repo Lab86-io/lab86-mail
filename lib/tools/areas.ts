@@ -283,6 +283,33 @@ export const areaFactSetStatus = defineTool({
   },
 });
 
+export const areaArtifactSetStatus = defineTool({
+  name: 'area_artifact_set_status',
+  description:
+    'Record the user’s explicit answer to an Area discovery question. Set verified only after the user said yes to this exact relationship; set rejected after no so it is retained as negative evidence and is not proposed again.',
+  category: 'memory',
+  mutating: true,
+  input: z.object({
+    linkId: z.string(),
+    status: z.enum(['verified', 'rejected']),
+    reason: z.string().max(300).optional(),
+  }),
+  output: z.object({ ok: z.boolean(), status: z.enum(['verified', 'rejected']) }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    await deps.convexMutation(areasApi().setAreaArtifactLinkStatus, {
+      userId,
+      linkId: args.linkId,
+      status: args.status,
+      reason: args.reason,
+      ...(args.status === 'verified'
+        ? { confirmationRefs: [teachConfirmationRef(userId, `artifact:${args.linkId}`)] }
+        : {}),
+    });
+    return { ok: true, status: args.status };
+  },
+});
+
 export const areaDomainActivity = defineTool({
   name: 'area_domain_activity',
   description:

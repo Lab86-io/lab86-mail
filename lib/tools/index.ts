@@ -30,6 +30,7 @@ import {
 import {
   areaAddFact,
   areaArchive,
+  areaArtifactSetStatus,
   areaCreate,
   areaDiscoverContext,
   areaDomainActivity,
@@ -300,6 +301,7 @@ const allTools: AnyTool[] = [
   areaDiscoverContext,
   areaUpdateIdentity,
   areaArchive,
+  areaArtifactSetStatus,
   areaAddFact,
   areaFactSetStatus,
   areaDomainActivity,

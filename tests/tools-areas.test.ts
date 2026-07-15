@@ -3,6 +3,7 @@ import {
   __setAreaToolDepsForTest,
   areaAddFact,
   areaArchive,
+  areaArtifactSetStatus,
   areaCreate,
   areaDomainActivity,
   areaFactSetStatus,
@@ -19,6 +20,7 @@ const apiMock = {
     getArea: 'albatross.getArea',
     updateArea: 'albatross.updateArea',
     archiveArea: 'albatross.archiveArea',
+    setAreaArtifactLinkStatus: 'albatross.setAreaArtifactLinkStatus',
     addAreaFact: 'albatross.addAreaFact',
     verifyAreaFact: 'albatross.verifyAreaFact',
     rejectAreaFact: 'albatross.rejectAreaFact',
@@ -285,6 +287,47 @@ describe('area_fact_set_status', () => {
   });
 });
 
+describe('area_artifact_set_status', () => {
+  test('verified mints a user confirmation for the exact candidate link', async () => {
+    const result = await runTool(areaArtifactSetStatus.handler, {
+      linkId: 'link_1',
+      status: 'verified',
+      reason: 'Yes, this PR belongs to Albatross',
+    });
+
+    expect(result).toEqual({ ok: true, status: 'verified' });
+    expect(mutationCalls[0]).toMatchObject({
+      fn: apiMock.albatross.setAreaArtifactLinkStatus,
+      args: {
+        userId: TEST_USER.userId,
+        linkId: 'link_1',
+        status: 'verified',
+        reason: 'Yes, this PR belongs to Albatross',
+      },
+    });
+    expect(mutationCalls[0].args.confirmationRefs[0]).toMatchObject({
+      kind: 'userConfirmation',
+      confirmedAt: NOW,
+      confirmedBy: TEST_USER.userId,
+    });
+  });
+
+  test('rejected records negative evidence without fabricating confirmation', async () => {
+    await runTool(areaArtifactSetStatus.handler, {
+      linkId: 'link_2',
+      status: 'rejected',
+      reason: 'That meeting was for CardHunt',
+    });
+
+    expect(mutationCalls[0].args).toMatchObject({
+      linkId: 'link_2',
+      status: 'rejected',
+      reason: 'That meeting was for CardHunt',
+    });
+    expect(mutationCalls[0].args.confirmationRefs).toBeUndefined();
+  });
+});
+
 describe('area_domain_activity', () => {
   test('returns top senders for a domain', async () => {
     const result: any = await runTool(areaDomainActivity.handler, { domain: 'cardhunt.com', max: 10 });
@@ -311,6 +354,7 @@ describe('teach prompt', () => {
     expect(TEACH_SYSTEM_PROMPT).toContain('confirmedByUser=true ONLY after the user explicitly said yes');
     expect(TEACH_SYSTEM_PROMPT).toContain('ask_user');
     expect(TEACH_SYSTEM_PROMPT).toContain('area_domain_activity');
+    expect(TEACH_SYSTEM_PROMPT).toContain('area_artifact_set_status');
     expect(TEACH_SYSTEM_PROMPT).toContain('any other areas');
     expect(TEACH_SYSTEM_PROMPT).toContain('Archiving never deletes');
     expect(TEACH_SYSTEM_PROMPT).not.toContain('!');

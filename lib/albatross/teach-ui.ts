@@ -273,6 +273,11 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     'Searched connected context for Areas',
     'Area context search failed',
   ),
+  area_artifact_set_status: fixed(
+    'Saving your answer about this relationship',
+    'Saved your answer about this relationship',
+    'Saving the relationship answer failed',
+  ),
   mcp_connection_status: fixed(
     'Checking connection sync status',
     'Checked connection sync status',
@@ -814,6 +819,10 @@ export function factRowFromToolOutput(toolName: string, input: any, output: any)
       if (status === 'superseded') return { tone: 'retired', text: 'Fact superseded' };
       return null;
     }
+    case 'area_artifact_set_status':
+      return input?.status === 'verified'
+        ? { tone: 'verified', text: 'Area relationship verified' }
+        : { tone: 'retired', text: 'Area relationship rejected' };
     default:
       return null;
   }
