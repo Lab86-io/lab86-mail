@@ -81,6 +81,14 @@ function sourceRef(artifact: ClassifiableAreaArtifact) {
   };
 }
 
+function hasStrongIdentitySignal(signals: string[]) {
+  return signals.some((signal) =>
+    /^(?:Area name|Area domain|domain:|repository:|repo:|organization:|product:|website:|url:)/iu.test(
+      signal,
+    ),
+  );
+}
+
 const DISCOVERY_SYSTEM = `You classify recent evidence from mail, calendar, tasks, and connected tools into the user's Areas.
 
 Rules:
@@ -170,7 +178,11 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
       })),
       facts: facts.map((fact) => ({ ...fact, areaId: String(fact.areaId) })),
     });
-    if (!match) {
+    // Descriptive prose and long note facts are useful context for the model,
+    // but too broad for a deterministic filing decision. Reserve the direct
+    // path for names/domains/repos/orgs; semantic relationships go through
+    // the conservative high-confidence agentic pass below.
+    if (!match || !hasStrongIdentitySignal(match.signals)) {
       remaining.push(artifact);
       continue;
     }
@@ -221,7 +233,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
           skipped += 1;
           continue;
         }
-        const reason = verdict.reason || `agentic discovery match to ${area.name}`;
+        const reason = `agentic discovery: ${verdict.reason || `semantic match to ${area.name}`}`;
         links.push({
           areaId: String(area._id),
           artifactKind: artifact.artifactKind,

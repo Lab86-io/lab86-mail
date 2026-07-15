@@ -130,6 +130,25 @@ describe('cross-source Area discovery', () => {
     });
   });
 
+  test('routes broad description overlap through the conservative agentic pass', async () => {
+    corpus.items = [
+      {
+        artifactKind: 'mcpItem',
+        artifactId: 'granola:meeting:description-only',
+        source: 'granola',
+        title: 'Workspace review',
+        text: 'Personal operating system and mail workspace planning.',
+        occurredAt: 1_780_000_000_000,
+      },
+    ];
+
+    const result = await classifyAreaArtifacts({ userId: USER });
+
+    expect(result).toMatchObject({ deterministic: 0, llm: 0, skipped: 1 });
+    expect(llmCalls).toHaveLength(1);
+    expect(mutationCalls).toHaveLength(0);
+  });
+
   test('injects connected sources and a focused confirmation instruction into Teach', async () => {
     brief = {
       candidates: [

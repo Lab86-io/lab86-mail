@@ -1812,6 +1812,12 @@ export const areaHome = query({
 // Compact pending-evidence read for the Teach and Area-scoped conversations.
 // These are hypotheses, never silent truth: the agent uses them to ask one
 // evidence-backed confirmation question at a time.
+function hasDurableIdentityReason(reason: string | undefined) {
+  return /(?:Area name|Area domain|\b(?:domain|repository|repo|organization|product|website|url):)/iu.test(
+    reason || '',
+  );
+}
+
 export const areaDiscoveryBrief = query({
   args: { ...callerArgs, areaId: v.optional(v.id('areas')), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -1838,6 +1844,11 @@ export const areaDiscoveryBrief = query({
     const scoped = links
       .filter((link) => !args.areaId || link.areaId === args.areaId)
       .filter((link) => areaById.has(String(link.areaId)))
+      // Older discovery builds allowed broad description/note overlap into
+      // the deterministic path. Keep those hypotheses stored for audit and
+      // correction, but do not turn them into noisy Teach questions unless
+      // the reason names a durable identity signal.
+      .filter((link) => !link.reason?.startsWith('context match') || hasDurableIdentityReason(link.reason))
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .slice(0, limit);
     const candidates = await Promise.all(
