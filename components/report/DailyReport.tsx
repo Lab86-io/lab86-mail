@@ -33,6 +33,7 @@ import { Markdown } from '@/components/ui/markdown';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { api } from '@/convex/_generated/api';
+import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -468,7 +469,7 @@ function withReportArtifactRuntime(
     bodyClose >= 0
       ? `${next.slice(0, bodyClose)}${REPORT_ARTIFACT_RUNTIME_JS}${next.slice(bodyClose)}`
       : `${next}${REPORT_ARTIFACT_RUNTIME_JS}`;
-  return next;
+  return injectBriefArtifactReadyRuntime(next);
 }
 
 function ReportArtifact({
@@ -485,6 +486,7 @@ function ReportArtifact({
   onChanged?: () => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [artifactReady, setArtifactReady] = useState(false);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
@@ -544,9 +546,22 @@ function ReportArtifact({
     html,
   ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new artifact must be hidden before its own readiness handshake.
+  useEffect(() => {
+    setArtifactReady(false);
+  }, [html]);
+
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
       const data = event.data as { source?: string; action?: string; payload?: any } | null;
+      if (
+        frameRef.current &&
+        event.source === frameRef.current.contentWindow &&
+        isBriefArtifactReadyMessage(data)
+      ) {
+        setArtifactReady(true);
+        return;
+      }
       if (!data || data.source !== 'lab86-daily-report') return;
       // Only trust messages from our own iframe document.
       if (frameRef.current && event.source !== frameRef.current.contentWindow) return;
@@ -746,6 +761,7 @@ function ReportArtifact({
       ref={frameRef}
       title="The Daily Brief"
       srcDoc={withReportArtifactRuntime(html, albatrossContext)}
+      aria-busy={!artifactReady}
       onLoad={() => {
         postTheme();
         postDismissedTasks();
@@ -755,7 +771,10 @@ function ReportArtifact({
       // artifact sandboxed from the app origin; allow-popups lets external
       // links open in a new tab.
       sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-      className="h-full w-full border-0 bg-[var(--color-bg)]"
+      className={cn(
+        'h-full w-full border-0 bg-[var(--color-bg)]',
+        artifactReady ? 'opacity-100' : 'opacity-0',
+      )}
     />
   );
 }

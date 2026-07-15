@@ -14,6 +14,23 @@ async function authenticatedUserId(ctx: QueryCtx | MutationCtx) {
   return identity.subject;
 }
 
+const notificationCallerArgs = {
+  internalSecret: v.optional(v.string()),
+  userId: v.optional(v.string()),
+};
+
+async function notificationCallerUserId(
+  ctx: QueryCtx | MutationCtx,
+  args: { internalSecret?: string; userId?: string },
+) {
+  if (args.internalSecret !== undefined) {
+    requireInternalSecret(args.internalSecret);
+    if (!args.userId) throw new Error('userId required with internal secret.');
+    return args.userId;
+  }
+  return authenticatedUserId(ctx);
+}
+
 function localDayStartUtc(timezone: string, localDate: string) {
   const [year, month, day] = localDate.split('-').map(Number);
   const noonUtc = Date.UTC(year, month - 1, day, 12);
@@ -211,12 +228,13 @@ export const openCheckin = mutation({
 
 export const answerCheckin = mutation({
   args: {
+    ...notificationCallerArgs,
     checkinId: v.id('albatrossDailyCheckins'),
     responseText: v.string(),
     completed: v.optional(v.array(v.object({ kind: v.string(), id: v.string() }))),
   },
   handler: async (ctx, args) => {
-    const userId = await authenticatedUserId(ctx);
+    const userId = await notificationCallerUserId(ctx, args);
     const row = await ctx.db.get(args.checkinId);
     if (!row || row.userId !== userId) throw new Error('Check-in not found.');
     const responseText = args.responseText.trim().slice(0, 10_000);
@@ -305,9 +323,9 @@ export const currentCheckin = query({
 });
 
 export const getCheckin = query({
-  args: { checkinId: v.id('albatrossDailyCheckins') },
+  args: { ...notificationCallerArgs, checkinId: v.id('albatrossDailyCheckins') },
   handler: async (ctx, args) => {
-    const userId = await authenticatedUserId(ctx);
+    const userId = await notificationCallerUserId(ctx, args);
     const row = await ctx.db.get(args.checkinId);
     return row?.userId === userId ? row : null;
   },

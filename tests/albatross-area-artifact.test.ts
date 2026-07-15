@@ -52,6 +52,23 @@ const home = {
       linkStatus: 'candidate',
     },
   ],
+  mcpItems: [
+    {
+      externalId: 'github:pull_request:Lab86-io/lab86-mail#123',
+      server: 'github',
+      kind: 'pull_request',
+      title: 'Ship proactive Area evidence',
+      summary: 'Connect repository activity to Albatross.',
+      state: 'merged',
+      author: 'jakob',
+      repository: 'Lab86-io/lab86-mail',
+      organization: 'Lab86-io',
+      url: 'https://github.com/Lab86-io/lab86-mail/pull/123',
+      occurredAt: 70,
+      linkStatus: 'candidate',
+      reason: 'context match to Studio',
+    },
+  ],
   places: [],
   facts: {
     verified: [{ kind: 'domain', value: 'example.test' }],
@@ -73,6 +90,13 @@ describe('Area artifact data contract', () => {
     });
     expect(context.context.verified[0]?.value).toBe('example.test');
     expect(context.context.candidates[0]?.value).toBe('Maybe the owner');
+    expect(context.connectedActivity[0]).toMatchObject({
+      server: 'github',
+      kind: 'pull_request',
+      repository: 'Lab86-io/lab86-mail',
+      state: 'merged',
+      assignment: 'candidate',
+    });
     expect(context.actions.discussArea.payload.areaId).toBe('area_1');
   });
 

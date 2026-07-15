@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { v } from 'convex/values';
+import { matchAreaContext } from '../lib/albatross/area-matching';
 import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
 import { detachedMcpSource } from '../lib/mcp/disconnect';
 import { internal } from './_generated/api';
@@ -416,6 +417,23 @@ export const upsertItems = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const ts = now();
+    const [activeAreas, areaFacts] = await Promise.all([
+      ctx.db
+        .query('areas')
+        .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
+        .collect(),
+      ctx.db
+        .query('areaFacts')
+        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .collect(),
+    ]);
+    const matchFacts = areaFacts.map((fact) => ({
+      _id: String(fact._id),
+      areaId: String(fact.areaId),
+      kind: fact.kind,
+      value: fact.value,
+      status: fact.status,
+    }));
     for (const item of args.items) {
       const existing = await ctx.db
         .query('mcpItems')
@@ -440,8 +458,26 @@ export const upsertItems = mutation({
         .unique();
       const sourceKind = args.server === 'github' ? githubEvidenceKind(item.kind) : 'mcp_item';
       const occurredAt = item.updatedAtSource ?? ts;
+      const areaMatch = matchAreaContext({
+        text: [item.searchText, item.repository, item.organization, item.title, item.summary]
+          .filter(Boolean)
+          .join(' '),
+        areas: activeAreas.map((area) => ({
+          _id: String(area._id),
+          name: area.name,
+          kind: area.kind,
+          description: area.description,
+          primaryDomain: area.primaryDomain,
+        })),
+        facts: matchFacts,
+      });
       const evidenceRow = {
         userId: args.userId,
+        ...(areaMatch && !existingEvidence?.targetKind
+          ? { targetKind: 'area', targetId: areaMatch.areaId }
+          : existingEvidence?.targetKind && existingEvidence?.targetId
+            ? { targetKind: existingEvidence.targetKind, targetId: existingEvidence.targetId }
+            : {}),
         sourceKind,
         sourceId: item.externalId,
         connectionId: args.connectionId,
@@ -467,6 +503,48 @@ export const upsertItems = mutation({
       };
       if (existingEvidence) await ctx.db.patch(existingEvidence._id, evidenceRow);
       else await ctx.db.insert('albatrossEvidence', { ...evidenceRow, createdAt: ts });
+
+      if (areaMatch) {
+        const artifactId = item.externalId.slice(0, 200);
+        const existingLinks = await ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_artifact', (q) =>
+            q.eq('userId', args.userId).eq('artifactKind', 'mcpItem').eq('artifactId', artifactId),
+          )
+          .collect();
+        const areaId = ctx.db.normalizeId('areas', areaMatch.areaId);
+        const contradicted = existingLinks.some(
+          (link) => String(link.areaId) === areaMatch.areaId && link.status === 'rejected',
+        );
+        if (
+          areaId &&
+          !contradicted &&
+          !existingLinks.some((link) => String(link.areaId) === areaMatch.areaId)
+        ) {
+          await ctx.db.insert('areaArtifactLinks', {
+            userId: args.userId,
+            areaId,
+            externalId: item.externalId,
+            artifactKind: 'mcpItem',
+            artifactId,
+            role: 'supporting',
+            status: 'candidate',
+            confidence: areaMatch.confidence,
+            reason: areaMatch.reason,
+            sourceRefs: [
+              {
+                kind: args.server === 'github' ? `github_${item.kind}` : 'mcpItem',
+                id: item.externalId.slice(0, 500),
+                label: item.title.slice(0, 200),
+                ...(item.url ? { url: item.url.slice(0, 1_200) } : {}),
+              },
+            ],
+            confirmationRefs: [],
+            createdAt: ts,
+            updatedAt: ts,
+          });
+        }
+      }
 
       // "External wins for status": when an item transitions INTO a terminal
       // state, auto-complete any task created from it. Only act on a real

@@ -2,14 +2,16 @@
 
 import { useConvexAuth, useQuery } from 'convex/react';
 import { ArrowLeft, CheckCircle2, CircleAlert, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import { injectPlanArtifactRuntime } from '@/lib/albatross/plan-artifact-runtime';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
 interface WorkQuestion {
@@ -84,11 +86,43 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [advancing, setAdvancing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
+  const artifactFrameRef = useRef<HTMLIFrameElement>(null);
+  const [artifactReady, setArtifactReady] = useState(false);
+  const appFont = useClientStore((state) => state.appFont);
+  const accentHue = useClientStore((state) => state.accentHue);
+  const accentChroma = useClientStore((state) => state.accentChroma);
+  const accent2Hue = useClientStore((state) => state.accent2Hue);
+  const accent2Chroma = useClientStore((state) => state.accent2Chroma);
+  const bgHue = useClientStore((state) => state.bgHue);
+  const surfaceTint = useClientStore((state) => state.surfaceTint);
 
   const artifact = useMemo(
     () => (detail?.plan?.artifactHtml ? injectPlanArtifactRuntime(detail.plan.artifactHtml) : null),
     [detail?.plan?.artifactHtml],
   );
+  const postTheme = useCallback(() => {
+    postBriefTheme(artifactFrameRef.current?.contentWindow, appFont);
+  }, [appFont]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new artifact must restart its own readiness handshake.
+  useEffect(() => setArtifactReady(false), [detail?.plan?.artifactHtml]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolved CSS is read by postBriefTheme; customization slices intentionally retrigger it.
+  useEffect(() => {
+    postTheme();
+  }, [postTheme, accentHue, accentChroma, accent2Hue, accent2Chroma, bgHue, surfaceTint]);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (
+        artifactFrameRef.current &&
+        event.source === artifactFrameRef.current.contentWindow &&
+        isBriefArtifactReadyMessage(event.data)
+      ) {
+        setArtifactReady(true);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
 
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));
@@ -306,10 +340,16 @@ export function WorkDetail({ workId }: { workId: string }) {
                 Brief
               </h2>
               <iframe
+                ref={artifactFrameRef}
                 title={`Brief for ${work.title || 'Work'}`}
                 srcDoc={artifact}
                 sandbox="allow-scripts allow-popups"
-                className="min-h-[680px] w-full rounded-xl border border-[var(--color-border)] bg-white"
+                onLoad={postTheme}
+                aria-busy={!artifactReady}
+                className={cn(
+                  'min-h-[680px] w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]',
+                  artifactReady ? 'opacity-100' : 'opacity-0',
+                )}
               />
             </section>
           ) : null}

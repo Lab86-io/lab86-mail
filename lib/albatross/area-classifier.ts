@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { matchAreaContext } from './area-matching';
 
 // Background area classification: file recent unclaimed mail threads into the
 // user's areas. Two phases, cheapest first:
@@ -256,8 +257,38 @@ export async function classifyThreads({ userId }: { userId: string }): Promise<C
   const remaining: ClassifiableThread[] = [];
   for (const thread of threads) {
     const match = matchThreadToFacts(thread, facts);
-    if (match) links.push(deterministicLink(thread, match));
-    else remaining.push(thread);
+    if (match) {
+      links.push(deterministicLink(thread, match));
+      continue;
+    }
+    const contextMatch = matchAreaContext({
+      text: [thread.subject, thread.snippet, thread.fromAddress].filter(Boolean).join(' '),
+      areas: areas.map((area) => ({
+        _id: String(area._id),
+        name: String(area.name),
+        kind: area.kind,
+        description: area.description,
+        primaryDomain: area.primaryDomain,
+      })),
+      facts: facts.map((fact) => ({ ...fact, areaId: String(fact.areaId) })),
+    });
+    if (contextMatch) {
+      links.push({
+        areaId: contextMatch.areaId,
+        artifactId: thread.providerThreadId,
+        accountId: thread.accountId,
+        status: 'candidate',
+        confidence: contextMatch.confidence,
+        reason: contextMatch.reason,
+        sourceRefs: contextMatch.signals.map((label, index) => ({
+          kind: 'areaContext',
+          id: `${contextMatch.areaId}:${index}`,
+          label,
+        })),
+      });
+      continue;
+    }
+    remaining.push(thread);
   }
   const deterministic = links.length;
 

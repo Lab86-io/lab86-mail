@@ -262,6 +262,33 @@ describe('classifyThreads', () => {
     expect(link.areaId).toBe('area_work');
   });
 
+  test('indirect GitHub notifications match Area identity before the llm phase', async () => {
+    queryFixtures[apiMock.albatross.listAreas] = [
+      {
+        _id: 'area_work',
+        name: 'Albatross',
+        kind: 'software',
+        description: 'The Lab86 mail codebase',
+        primaryDomain: 'lab86.com',
+      },
+    ];
+    queryFixtures[apiMock.albatross.unclassifiedThreads] = [
+      thread({
+        providerThreadId: 'thread_github',
+        fromAddress: 'notifications@github.com',
+        subject: '[Lab86-io/lab86-mail] Albatross evidence PR merged',
+      }),
+    ];
+    const result = await classifyThreads({ userId: USER });
+    expect(result).toEqual({ deterministic: 1, llm: 0, skipped: 0 });
+    expect(llmCalls).toHaveLength(0);
+    expect(mutationCalls[0].args.links[0]).toMatchObject({
+      areaId: 'area_work',
+      status: 'candidate',
+      artifactId: 'thread_github',
+    });
+  });
+
   test('medium/low confidence and null areas are skipped', async () => {
     queryFixtures[apiMock.albatross.unclassifiedThreads] = [
       thread({ providerThreadId: 't_medium', fromAddress: 'a@x.io' }),

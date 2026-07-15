@@ -91,6 +91,7 @@ import {
   workNeedsYouRows,
 } from '@/lib/albatross/area-home';
 import { areaMailRowKey, filterAreaMailRows, selectedVisibleAreaMailRows } from '@/lib/albatross/area-mail';
+import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
@@ -1391,6 +1392,7 @@ function AreaArtifactCanvas({
 }) {
   const area = home.area;
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [artifactReady, setArtifactReady] = useState(false);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -1406,6 +1408,8 @@ function AreaArtifactCanvas({
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
   const srcDoc = useMemo(() => injectAreaArtifactRuntime(html), [html]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new artifact must restart its own readiness handshake.
+  useEffect(() => setArtifactReady(false), [html]);
   const areaId = area._id;
   const allowedWorkIds = useMemo(
     () =>
@@ -1446,6 +1450,10 @@ function AreaArtifactCanvas({
     const onMessage = async (event: MessageEvent) => {
       const frame = frameRef.current;
       if (!frame || event.source !== frame.contentWindow) return;
+      if (isBriefArtifactReadyMessage(event.data)) {
+        setArtifactReady(true);
+        return;
+      }
       const message = parseAreaArtifactMessage(event.data, areaId);
       if (!message) return;
       const ack = (ok: boolean, error?: string) =>
@@ -1571,7 +1579,11 @@ function AreaArtifactCanvas({
         srcDoc={srcDoc}
         onLoad={postTheme}
         sandbox="allow-scripts"
-        className="h-full w-full border-0 bg-[var(--color-bg)]"
+        aria-busy={!artifactReady}
+        className={cn(
+          'h-full w-full border-0 bg-[var(--color-bg)]',
+          artifactReady ? 'opacity-100' : 'opacity-0',
+        )}
       />
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3">

@@ -35,6 +35,7 @@ type AreaHomeLike = {
   mail?: any[];
   events?: any[];
   tasks?: any[];
+  mcpItems?: any[];
   plans?: any[];
   projects?: any[];
   places?: any[];
@@ -140,6 +141,21 @@ export function buildAreaArtifactContext(
       receivedAtIso: iso(row.lastDate),
       snippet: clean(row.snippet, 700),
       unread: Boolean(row.unread),
+      assignment: row.linkStatus === 'candidate' ? 'candidate' : 'verified',
+      assignmentReason: clean(row.reason, 500),
+    })),
+    connectedActivity: (home.mcpItems || []).slice(0, 32).map((row: any) => ({
+      externalId: clean(row.externalId, 240),
+      server: clean(row.server, 80),
+      kind: clean(row.kind, 80),
+      title: clean(row.title, 500),
+      summary: clean(row.summary, 900),
+      state: clean(row.state, 80),
+      author: clean(row.author, 200),
+      repository: clean(row.repository, 300),
+      organization: clean(row.organization, 200),
+      url: clean(row.url, 1_200),
+      occurredAtIso: iso(row.occurredAt),
       assignment: row.linkStatus === 'candidate' ? 'candidate' : 'verified',
       assignmentReason: clean(row.reason, 500),
     })),

@@ -9,6 +9,7 @@ import {
 } from '../lib/albatross/area-home';
 import { validateAreaImageUpload } from '../lib/albatross/area-image';
 import { areaMailMoveConfirmation, areaMailMoveReason } from '../lib/albatross/area-mail';
+import { matchAreaContext } from '../lib/albatross/area-matching';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -1532,6 +1533,31 @@ async function resolveTaskLink(ctx: QueryCtx | MutationCtx, userId: string, link
   };
 }
 
+async function resolveMcpLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
+  const externalId = link.externalId || link.artifactId;
+  const item = await ctx.db
+    .query('mcpItems')
+    .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', externalId))
+    .first();
+  if (!item) return null;
+  return {
+    externalId: item.externalId,
+    server: item.server,
+    kind: item.kind,
+    title: item.title,
+    summary: item.summary ?? null,
+    url: item.url ?? null,
+    state: item.state ?? null,
+    author: item.author ?? null,
+    repository: item.repository ?? null,
+    organization: item.organization ?? null,
+    occurredAt: item.updatedAtSource ?? item.updatedAt,
+    linkStatus: link.status,
+    confidence: link.confidence ?? null,
+    reason: link.reason ?? null,
+  };
+}
+
 // The Area home read model: the area, its facts by trust level, and its
 // linked artifacts resolved to real rows the UI can render directly.
 export const areaHome = query({
@@ -1615,6 +1641,12 @@ export const areaHome = query({
       (a, b) => Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.updatedAt - a.updatedAt,
     );
     const tasks = resolvedTasks.slice(0, AREA_HOME_TASK_CAP);
+    const mcpItems = (
+      await Promise.all((byKind.get('mcpItem') || []).map((link) => resolveMcpLink(ctx, userId, link)))
+    )
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => b.occurredAt - a.occurredAt)
+      .slice(0, AREA_HOME_LINK_SCAN_CAPS.mcpItem);
 
     // Plans become components of the area: its active Work (+ latest plan)
     // surface here rather than on a separate Plans page. Read both the typed
@@ -1733,6 +1765,7 @@ export const areaHome = query({
       mail,
       events,
       tasks,
+      mcpItems,
       plans,
       projects,
       places,
@@ -1990,6 +2023,25 @@ export const reindexUserAreaArtifacts = internalMutation({
           )
           .collect();
         const match = matchMailRowToAreaFact(row, facts);
+        const contextMatch = match
+          ? null
+          : matchAreaContext({
+              text: [row.subject, row.snippet, row.fromAddress].filter(Boolean).join(' '),
+              areas: areas.map((area) => ({
+                _id: String(area._id),
+                name: area.name,
+                kind: area.kind,
+                description: area.description,
+                primaryDomain: area.primaryDomain,
+              })),
+              facts: facts.map((fact) => ({
+                _id: fact._id,
+                areaId: String(fact.areaId),
+                kind: fact.kind,
+                value: fact.value,
+                status: fact.status,
+              })),
+            });
         const categorized = existing.some(
           (link) => link.status !== 'rejected' && activeAreaIds.has(String(link.areaId)),
         );
@@ -2008,16 +2060,29 @@ export const reindexUserAreaArtifacts = internalMutation({
               ],
               confirmationRefs: match.status === 'verified' ? confirmationForVerifiedFact(match.fact) : [],
             }
-          : categorized
-            ? null
-            : {
-                areaId: personalAreaId,
+          : contextMatch
+            ? {
+                areaId: ctx.db.normalizeId('areas', contextMatch.areaId)!,
                 status: 'candidate' as const,
-                confidence: 0.25,
-                reason: 'legacy mail fallback to Personal',
-                sourceRefs: [{ kind: 'system', id: 'area-reindex', label: 'Historical area backfill' }],
+                confidence: contextMatch.confidence,
+                reason: contextMatch.reason,
+                sourceRefs: contextMatch.signals.map((label, index) => ({
+                  kind: 'areaContext',
+                  id: `${contextMatch.areaId}:${index}`,
+                  label,
+                })),
                 confirmationRefs: [],
-              };
+              }
+            : categorized
+              ? null
+              : {
+                  areaId: personalAreaId,
+                  status: 'candidate' as const,
+                  confidence: 0.25,
+                  reason: 'legacy mail fallback to Personal',
+                  sourceRefs: [{ kind: 'system', id: 'area-reindex', label: 'Historical area backfill' }],
+                  confirmationRefs: [],
+                };
         if (!target) {
           skipped += 1;
           continue;
@@ -2033,7 +2098,7 @@ export const reindexUserAreaArtifacts = internalMutation({
           artifactKind: 'mailThread',
           artifactId: row.providerThreadId,
           accountId: row.accountId,
-          role: match ? 'supporting' : 'secondary',
+          role: match || contextMatch ? 'supporting' : 'secondary',
           status: target.status,
           confidence: target.confidence,
           reason: target.reason,
@@ -2043,7 +2108,7 @@ export const reindexUserAreaArtifacts = internalMutation({
           updatedAt: ts,
         });
         inserted += 1;
-        if (match) matched += 1;
+        if (match || contextMatch) matched += 1;
         else personal += 1;
       }
 
