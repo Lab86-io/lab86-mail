@@ -309,8 +309,14 @@ When a possible relationship is present, ask one focused confirmation question a
 }
 
 export async function readAreaDiscoveryContext(input: { userId: string; areaId?: string }) {
-  const brief = await areaDiscoveryBrief(input);
-  const sources = [...new Set(brief.candidates.map((candidate) => candidate.source).filter(Boolean))];
+  const [brief, corpus] = await Promise.all([
+    areaDiscoveryBrief(input),
+    deps.convexQuery<{ sources?: string[] }>(deps.api.albatross.unclassifiedAreaArtifacts, {
+      userId: input.userId,
+      limit: 1,
+    }),
+  ]);
+  const sources = [...new Set((corpus.sources || []).filter(Boolean))];
   return {
     sources,
     pendingCandidates: brief.candidates,

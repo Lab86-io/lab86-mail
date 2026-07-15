@@ -32,7 +32,7 @@ beforeEach(() => {
     convexQuery: (async () => queryResult) as any,
     convexMutation: (async (fn: unknown, args: Record<string, unknown>) => {
       mutations.push({ fn, args });
-      return undefined;
+      return { ok: true };
     }) as any,
     encryptSecret: (value: string) => `encrypted:${value}`,
     decryptSecret: (value: string) => {
@@ -166,7 +166,7 @@ describe('MCP OAuth token reads', () => {
       convexQuery: (async () => queryResult) as any,
       convexMutation: (async (fn: unknown, args: Record<string, unknown>) => {
         mutations.push({ fn, args });
-        return undefined;
+        return { ok: true };
       }) as any,
       encryptSecret: (value: string) => `encrypted:${value}`,
       decryptSecret: (value: string) => value.slice('encrypted:'.length),
@@ -232,6 +232,40 @@ describe('MCP OAuth token reads', () => {
       },
     };
     expect(await getConnectionToken('user_1', 'refresh_rejected')).toBeNull();
+  });
+
+  test('does not return a rotated access token when credential persistence is rejected', async () => {
+    queryResult = {
+      connection: granolaRow,
+      credentials: {
+        accessTokenEncrypted: 'encrypted:access_1',
+        refreshTokenEncrypted: 'encrypted:refresh_1',
+        oauthClientInformationEncrypted: 'encrypted:{"client_id":"client_1"}',
+        expiresAt: NOW,
+      },
+    };
+    __setMcpConnectionDepsForTest({
+      now: () => NOW,
+      convexQuery: (async () => queryResult) as any,
+      convexMutation: (async (fn: unknown, args: Record<string, unknown>) => {
+        mutations.push({ fn, args });
+        return { ok: false };
+      }) as any,
+      encryptSecret: (value: string) => `encrypted:${value}`,
+      decryptSecret: (value: string) => value.slice('encrypted:'.length),
+      refreshMcpOAuth: async ({ persisted }) => ({
+        ...persisted,
+        clientInformation: persisted.clientInformation,
+        tokens: {
+          access_token: 'access_refreshed',
+          refresh_token: 'refresh_rotated',
+          token_type: 'Bearer',
+        },
+      }),
+    });
+
+    expect(await getConnectionToken('user_1', 'granola_conn')).toBeNull();
+    expect(mutations).toHaveLength(1);
   });
 });
 

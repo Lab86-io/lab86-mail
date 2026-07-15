@@ -13,6 +13,15 @@ describe('connection-scoped MCP Area identity', () => {
     expect(areaMcpExternalId('legacy-external-id')).toBe('legacy-external-id');
   });
 
+  test('keeps long identities distinct when their first 500 characters match', () => {
+    const shared = 'x'.repeat(520);
+    const first = areaMcpArtifactId('github_one', `${shared}:one`);
+    const second = areaMcpArtifactId('github_one', `${shared}:two`);
+    expect(first).toHaveLength(500);
+    expect(second).toHaveLength(500);
+    expect(first).not.toBe(second);
+  });
+
   test('clears a rejected Area target and does not restore it during resync', () => {
     expect(
       mcpAreaTargetDecision({

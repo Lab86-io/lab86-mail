@@ -4,6 +4,7 @@ import { matchAreaContext } from '../lib/albatross/area-matching';
 import { areaMcpArtifactId, mcpAreaTargetDecision } from '../lib/albatross/area-mcp-identity';
 import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
 import { detachedMcpSource } from '../lib/mcp/disconnect';
+import { mcpSyncStateFields } from '../lib/mcp/sync-state';
 import { internal } from './_generated/api';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -480,19 +481,7 @@ export const setSyncState = mutation({
         q.eq('userId', args.userId).eq('connectionId', args.connectionId),
       )
       .unique();
-    const next = {
-      userId: args.userId,
-      connectionId: args.connectionId,
-      server: args.server,
-      status: args.status,
-      lastSyncedAt: args.lastSyncedAt,
-      lastCursor: args.lastCursor,
-      itemCount: args.itemCount,
-      accountEmail: args.accountEmail,
-      workspaceName: args.workspaceName,
-      error: args.error,
-      updatedAt: ts,
-    };
+    const next = mcpSyncStateFields(args, ts);
     if (row) await ctx.db.patch(row._id, next);
     else await ctx.db.insert('mcpSyncStates', { ...next, createdAt: ts });
     // Surface the latest sync time/error on the connection row too.
@@ -776,7 +765,7 @@ export const listItemsForBrief = query({
         enabled.map((connection) =>
           ctx.db
             .query('mcpItems')
-            .withIndex('by_user_connection', (q) =>
+            .withIndex('by_user_connection_updated', (q) =>
               q.eq('userId', args.userId).eq('connectionId', connection.connectionId),
             )
             .order('desc')

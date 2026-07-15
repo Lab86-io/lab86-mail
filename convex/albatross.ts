@@ -10,7 +10,7 @@ import {
 import { validateAreaImageUpload } from '../lib/albatross/area-image';
 import { areaMailMoveConfirmation, areaMailMoveReason } from '../lib/albatross/area-mail';
 import { matchAreaContext } from '../lib/albatross/area-matching';
-import { areaMcpExternalId } from '../lib/albatross/area-mcp-identity';
+import { areaMcpArtifactId, areaMcpExternalId } from '../lib/albatross/area-mcp-identity';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -2287,8 +2287,14 @@ export const recordAreaLinks = mutation({
         continue;
       }
       const artifactKind = link.artifactKind ?? 'mailThread';
-      const { artifactId, accountId } = normalizedArtifactIdentity(link);
-      const externalId = artifactKind === 'mcpItem' ? areaMcpExternalId(artifactId, accountId) : undefined;
+      const normalizedIdentity = normalizedArtifactIdentity(link);
+      const { accountId } = normalizedIdentity;
+      const externalId =
+        artifactKind === 'mcpItem' ? areaMcpExternalId(normalizeText(link.artifactId), accountId) : undefined;
+      const artifactId =
+        artifactKind === 'mcpItem' && accountId && externalId
+          ? areaMcpArtifactId(accountId, externalId)
+          : normalizedIdentity.artifactId;
       const refs = normalizedRefs(link);
       assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
       const existing = await ctx.db

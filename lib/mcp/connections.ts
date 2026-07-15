@@ -77,7 +77,7 @@ async function refreshConnectionToken(input: {
     const nextClientInformation = refreshed.clientInformation!;
     const nextToken = nextTokens.access_token;
     const expiresAt = oauthExpiresAt(nextTokens);
-    await deps.convexMutation(mcpApi.updateOAuthCredentials, {
+    const persisted = await deps.convexMutation(mcpApi.updateOAuthCredentials, {
       userId,
       connectionId,
       accessTokenEncrypted: deps.encryptSecret(nextToken),
@@ -88,6 +88,9 @@ async function refreshConnectionToken(input: {
       oauthClientInformationEncrypted: deps.encryptSecret(JSON.stringify(nextClientInformation)),
       scopes: oauthScopes(nextTokens, row.scopes),
     });
+    if (!persisted || typeof persisted !== 'object' || (persisted as { ok?: unknown }).ok !== true) {
+      return null;
+    }
     return nextToken;
   } catch {
     return null;

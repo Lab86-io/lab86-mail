@@ -1698,6 +1698,7 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_user_connection_updated', ['userId', 'connectionId', 'updatedAtSource'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_user_updated', ['userId', 'updatedAtSource'])
     .searchIndex('by_search_text', {

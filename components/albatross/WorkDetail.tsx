@@ -7,7 +7,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
-import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
+import {
+  isBriefArtifactReadyMessage,
+  scheduleBriefArtifactReadyFallback,
+} from '@/lib/albatross/artifact-ready';
 import { injectPlanArtifactRuntime } from '@/lib/albatross/plan-artifact-runtime';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -122,10 +125,10 @@ export function WorkDetail({ workId }: { workId: string }) {
       }
     };
     window.addEventListener('message', onMessage);
-    const fallback = window.setTimeout(() => setArtifactReady(true), 2_500);
+    const cancelFallback = scheduleBriefArtifactReadyFallback(() => setArtifactReady(true));
     return () => {
       window.removeEventListener('message', onMessage);
-      window.clearTimeout(fallback);
+      cancelFallback();
     };
   }, [detail?.plan?.artifactHtml]);
 

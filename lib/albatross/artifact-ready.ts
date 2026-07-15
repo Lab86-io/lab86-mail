@@ -3,6 +3,7 @@
 // has settled, preventing the fallback -> colors -> fonts cascade.
 
 export const BRIEF_ARTIFACT_READY_SOURCE = 'lab86-brief-artifact';
+export const BRIEF_ARTIFACT_READY_FALLBACK_MS = 2_500;
 
 export const BRIEF_ARTIFACT_READY_RUNTIME_JS = `<script id="lab86-brief-ready-js">
 (function(){
@@ -20,6 +21,15 @@ export function isBriefArtifactReadyMessage(data: unknown): boolean {
   if (!data || typeof data !== 'object') return false;
   const message = data as { source?: unknown; type?: unknown };
   return message.source === BRIEF_ARTIFACT_READY_SOURCE && message.type === 'ready';
+}
+
+export function scheduleBriefArtifactReadyFallback(
+  onReady: () => void,
+  schedule: (callback: () => void, delay: number) => number = window.setTimeout.bind(window),
+  cancel: (handle: number) => void = window.clearTimeout.bind(window),
+) {
+  const handle = schedule(onReady, BRIEF_ARTIFACT_READY_FALLBACK_MS);
+  return () => cancel(handle);
 }
 
 /** Idempotently append the trusted readiness runtime to a complete document. */

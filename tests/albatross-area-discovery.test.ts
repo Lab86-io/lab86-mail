@@ -198,7 +198,7 @@ describe('cross-source Area discovery', () => {
 
     const context = await readAreaDiscoveryContext({ userId: USER, areaId: 'area_albatross' });
 
-    expect(context.sources).toEqual(['github']);
+    expect(context.sources).toEqual(['mail', 'calendar', 'tasks', 'github', 'granola']);
     expect(context.systemContext).toContain('Albatross ↔ github: PR #42');
     expect(llmCalls).toHaveLength(0);
     expect(mutationCalls).toHaveLength(0);
