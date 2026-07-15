@@ -85,7 +85,7 @@ export const githubSearch = defineTool({
 export const mcpListItems = defineTool({
   name: 'mcp_list_items',
   description:
-    "List the user's most recently updated items from connected sources (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) that are enabled for the brief. Use to see meetings, open issues, PRs awaiting review, assigned tickets, and recent mentions across tools.",
+    "List the user's most recently updated items from connected sources (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) that are enabled for the brief. Results include the indexed summary/notes and an ISO timestamp when available. Use to see meetings, open issues, PRs awaiting review, assigned tickets, and recent mentions across tools.",
   category: 'mcp',
   mutating: false,
   input: z.object({
@@ -190,10 +190,12 @@ export const mcpCreateTask = defineTool({
 });
 
 function toToolItem(row: any) {
+  const updatedAt = row.updatedAtSource ?? row.updatedAt ?? null;
   return {
     server: row.server,
     kind: row.kind,
     title: row.title,
+    summary: row.summary ?? null,
     state: row.state ?? null,
     author: row.author ?? null,
     repository: row.repository ?? null,
@@ -201,7 +203,9 @@ function toToolItem(row: any) {
     parentExternalId: row.parentExternalId ?? null,
     sha: row.sha ?? null,
     url: row.url ?? null,
-    updatedAt: row.updatedAtSource ?? row.updatedAt ?? null,
+    updatedAt,
+    updatedAtIso:
+      typeof updatedAt === 'number' && Number.isFinite(updatedAt) ? new Date(updatedAt).toISOString() : null,
     connectionId: row.connectionId,
     // Needed to create/link a task from this item.
     externalId: row.externalId,

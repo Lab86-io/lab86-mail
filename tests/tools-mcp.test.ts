@@ -17,6 +17,7 @@ const item = {
   server: 'github',
   kind: 'commit',
   title: 'Living index',
+  summary: 'Indexed notes about the living evidence pipeline.',
   state: 'committed',
   author: 'jakob',
   repository: 'Lab86-io/lab86-mail',
@@ -67,7 +68,12 @@ describe('MCP tools', () => {
       limit: 7,
     });
 
-    expect(general.items[0]).toMatchObject({ sha: 'abc', connectionId: 'conn_1' });
+    expect(general.items[0]).toMatchObject({
+      sha: 'abc',
+      connectionId: 'conn_1',
+      summary: 'Indexed notes about the living evidence pipeline.',
+      updatedAtIso: '1970-01-01T00:00:00.123Z',
+    });
     expect(github.items[0]).toMatchObject({ repository: 'Lab86-io/lab86-mail' });
     expect(queryCalls[0]?.args).toMatchObject({
       userId: TEST_USER.userId,
@@ -98,6 +104,11 @@ describe('MCP tools', () => {
     });
 
     expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]).toMatchObject({
+      summary: 'Indexed notes about the living evidence pipeline.',
+      updatedAt: 123,
+      updatedAtIso: '1970-01-01T00:00:00.123Z',
+    });
     expect(queryCalls[0]?.args).toMatchObject({ server: 'granola', limit: 3 });
     expect(created).toEqual({ ok: true, cardId: 'card_1', operationId: 'operation_1' });
     expect(mutationCalls).toHaveLength(2);
