@@ -735,15 +735,12 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-12">
         <BriefLead home={home} brief={brief} indexStatus={indexStatus} now={now} onDiscuss={discuss} />
-        {/* One capture line, in the brief's voice — a real intent, not a form. */}
-        <CaptureBar areaId={home.area._id} areaName={home.area.name} />
-
         {briefEmpty ? (
           <>
             <div className="mx-3 mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
               <p className="text-[13px] font-medium">Nothing filed here yet.</p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                Get something out of your head above, or teach this area in Settings. As mail, events, and
+                Teach this area in Settings, or capture from anywhere with the launcher. As mail, events, and
                 tasks arrive, Albatross files them here and keeps this brief current.
               </p>
             </div>
@@ -1841,76 +1838,6 @@ function OverflowRow({ overflow, noun, action }: { overflow: number; noun: strin
         {overflow} more {noun}
       </span>
       {action}
-    </div>
-  );
-}
-
-// The area-scoped capture bar. It is a capture input, not a chatbot: on submit
-// it creates a real albatross intent (source=chat, areaId) and hands off to the
-// existing Plans surface — no fake conversational chrome.
-function CaptureBar({ areaId, areaName }: { areaId: string; areaName: string }) {
-  const setPendingOpenWorkId = useClientStore((s) => s.setPendingOpenWorkId);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    const trimmed = text.trim();
-    if (!trimmed || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/albatross/capture', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          rawText: trimmed,
-          source: 'chat',
-          areaId,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Capture failed.');
-      const workIds = Array.isArray(body.workIds) ? body.workIds.map(String) : [];
-      setText('');
-      if (workIds[0]) setPendingOpenWorkId(workIds[0]);
-      for (const workId of workIds) {
-        void fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-        }).catch(() => undefined);
-      }
-    } catch {
-      setError("Couldn't capture that — it's still here, try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="px-3 pb-1 pt-3">
-      <div className="flex items-end gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 transition-colors focus-within:border-[var(--color-border-strong)]">
-        <textarea
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          rows={1}
-          aria-label={`Get something out of your head in ${areaName}`}
-          placeholder={`Get something in ${areaName} out of your head…`}
-          className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-[13px] leading-snug outline-none placeholder:text-[var(--color-text-faint)]"
-        />
-        <Button type="button" size="sm" disabled={busy || !text.trim()} onClick={() => void submit()}>
-          {busy ? 'Working…' : 'Capture'}
-        </Button>
-      </div>
-      {error ? <p className="mt-1 px-1 text-[11.5px] text-[var(--color-danger)]">{error}</p> : null}
     </div>
   );
 }

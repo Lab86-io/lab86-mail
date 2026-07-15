@@ -131,12 +131,14 @@ function artifactsPrompt(artifacts: ClassifiableAreaArtifact[]) {
 export async function classifyAreaArtifacts(input: { userId: string; areaId?: string }): Promise<{
   deterministic: number;
   llm: number;
+  personal: number;
   skipped: number;
   sources: string[];
   discoveries: AreaDiscoveryMatch[];
 }> {
   const albatross = (deps.api as any).albatross;
-  const [allAreas, verifiedFacts, candidateFacts, corpus] = await Promise.all([
+  const [{ areaId: personalAreaId }, allAreas, verifiedFacts, candidateFacts, corpus] = await Promise.all([
+    deps.convexMutation<{ areaId: string }>(albatross.ensurePersonal, { userId: input.userId }),
     deps.convexQuery<any[]>(albatross.listAreas, { userId: input.userId, status: 'active' }),
     deps.convexQuery<AreaFactLite[]>(albatross.listUserAreaFacts, {
       userId: input.userId,
@@ -151,16 +153,54 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
       { userId: input.userId, limit: 100 },
     ),
   ]);
-  const areas = input.areaId ? allAreas.filter((area) => String(area._id) === input.areaId) : allAreas;
+  const areas = input.areaId
+    ? allAreas.filter((area) => String(area._id) === input.areaId)
+    : // In a full sweep Personal is reachable only through the catch-all
+      // fallback — never as a normal deterministic/model candidate, which
+      // would mint supporting-role links (and claim tasks/connectors) that
+      // bypass the low-trust secondary contract.
+      allAreas.filter((area) => String(area._id) !== String(personalAreaId));
   const areaIds = new Set(areas.map((area) => String(area._id)));
   const facts = [...verifiedFacts, ...candidateFacts].filter((fact) => areaIds.has(String(fact.areaId)));
   const artifacts = corpus?.items || [];
   const sources = corpus?.sources || [];
+
+  // The Personal catch-all applies only to the full cron sweep, and only to
+  // mail/calendar (the kinds the user expects filed somewhere). Tasks and
+  // connector items linger unclaimed instead — filing a GitHub issue under
+  // Personal would be noise, not filing.
+  const personalFallbackFor = (artifact: ClassifiableAreaArtifact) =>
+    !input.areaId &&
+    (artifact.artifactKind === 'mailThread' || artifact.artifactKind === 'calendarEvent') &&
+    !(artifact.rejectedAreaIds || []).includes(String(personalAreaId));
+  const personalLink = (artifact: ClassifiableAreaArtifact) => ({
+    areaId: String(personalAreaId),
+    artifactKind: artifact.artifactKind,
+    artifactId: artifact.artifactId,
+    externalId: artifact.externalId,
+    accountId: artifact.accountId,
+    role: 'secondary',
+    status: 'candidate',
+    confidence: 0.25,
+    reason: 'No confident area match — filed to Personal',
+    sourceRefs: [sourceRef(artifact)],
+  });
+
   if (!artifacts.length || !areas.length) {
+    // Nothing to sweep, or Personal is the only area there is — no candidate
+    // can beat the catch-all, so eligible mail/calendar files straight there.
+    const fallbackLinks = artifacts.filter(personalFallbackFor).map(personalLink);
+    if (fallbackLinks.length) {
+      await deps.convexMutation(albatross.recordAreaLinks, {
+        userId: input.userId,
+        links: fallbackLinks,
+      });
+    }
     return {
       deterministic: 0,
       llm: 0,
-      skipped: areas.length ? 0 : artifacts.length,
+      personal: fallbackLinks.length,
+      skipped: artifacts.length - fallbackLinks.length,
       sources,
       discoveries: [],
     };
@@ -221,6 +261,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
 
   const deterministic = links.length;
   let llm = 0;
+  let personal = 0;
   let skipped = rejectedEverywhere + Math.max(0, remaining.length - AREA_DISCOVERY_LLM_CAP);
   const batch = remaining.slice(0, AREA_DISCOVERY_LLM_CAP);
   if (batch.length) {
@@ -241,7 +282,13 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
         answered.add(verdict.candidateId);
         const area = verdict.areaName ? areaByName.get(verdict.areaName.toLowerCase()) : undefined;
         if (!area || verdict.confidence !== 'high' || artifact.rejectedAreaIds?.includes(String(area._id))) {
-          skipped += 1;
+          // The model looked and could not place it — catch-all, not limbo.
+          if (personalFallbackFor(artifact)) {
+            links.push(personalLink(artifact));
+            personal += 1;
+          } else {
+            skipped += 1;
+          }
           continue;
         }
         const reason = `agentic discovery: ${verdict.reason || `semantic match to ${area.name}`}`;
@@ -277,7 +324,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
   if (links.length) {
     await deps.convexMutation(albatross.recordAreaLinks, { userId: input.userId, links });
   }
-  return { deterministic, llm, skipped, sources, discoveries };
+  return { deterministic, llm, personal, skipped, sources, discoveries };
 }
 
 async function areaDiscoveryBrief(input: { userId: string; areaId?: string }) {

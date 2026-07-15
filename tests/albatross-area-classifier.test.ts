@@ -2,12 +2,15 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import {
   __setAreaClassifierDepsForTest,
   type AreaFactLite,
+  type ClassifiableIntent,
   type ClassifiableThread,
+  classifyIntents,
   classifyThreads,
   extractEmail,
   LLM_BATCH_CAP,
   matchThreadToFacts,
   parseClassifierOutput,
+  parseIntentClassifierOutput,
 } from '../lib/albatross/area-classifier';
 
 const USER = 'user_classifier_test';
@@ -160,6 +163,8 @@ describe('parseClassifierOutput', () => {
     expect(parseClassifierOutput('the model refused to answer')).toEqual([]);
     expect(parseClassifierOutput('')).toEqual([]);
     expect(parseClassifierOutput('[{"threadId": broken')).toEqual([]);
+    // Bracketed but unparseable: the JSON.parse throw is swallowed, never raised.
+    expect(parseClassifierOutput('[{"threadId": broken}]')).toEqual([]);
   });
 });
 
@@ -394,5 +399,181 @@ describe('classifyThreads', () => {
     expect(result).toEqual({ deterministic: 0, llm: 1, skipped: 0 });
     expect(mutationCalls[0].args.links).toHaveLength(1);
     expect(mutationCalls[0].args.links[0].areaId).toBe('area_work');
+  });
+});
+
+describe('parseIntentClassifierOutput', () => {
+  test('parses fenced verdicts keyed on intentId and drops malformed entries', () => {
+    const raw = `\`\`\`json\n${JSON.stringify([
+      { intentId: 'i1', areaName: 'Work', confidence: 'high' },
+      { areaName: 'Work' },
+    ])}\n\`\`\``;
+    expect(parseIntentClassifierOutput(raw)).toEqual([
+      { intentId: 'i1', areaName: 'Work', confidence: 'high' },
+    ]);
+  });
+
+  test('returns empty for garbage, non-array JSON, and unparseable bracketed output', () => {
+    expect(parseIntentClassifierOutput('no verdicts today')).toEqual([]);
+    expect(parseIntentClassifierOutput(JSON.stringify({ intentId: 'i1' }))).toEqual([]);
+    expect(parseIntentClassifierOutput('[{"intentId": broken}]')).toEqual([]);
+  });
+});
+
+describe('classifyIntents', () => {
+  const intentsApiMock = {
+    albatross: {
+      ensurePersonal: 'albatross.ensurePersonal',
+      listAreas: 'albatross.listAreas',
+      listUserAreaFacts: 'albatross.listUserAreaFacts',
+    },
+    albatrossIntents: {
+      listAutoAssigned: 'albatrossIntents.listAutoAssigned',
+      applyAreaVerdicts: 'albatrossIntents.applyAreaVerdicts',
+    },
+  };
+
+  let queryFixtures: Record<string, any>;
+  let verdictCalls: Array<{ fn: string; args: any }>;
+  let llmCalls: any[];
+  let llmResponse: string | (() => string);
+
+  function intent(overrides: Partial<ClassifiableIntent> = {}): ClassifiableIntent {
+    return {
+      intentId: 'intent_1',
+      title: 'Prep sprint demo',
+      rawText: 'Put the demo deck together before the cardhunt sprint review',
+      source: 'text',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    queryFixtures = {
+      [intentsApiMock.albatross.listAreas]: [
+        { _id: 'area_work', name: 'Cardhunt job', kind: 'job', description: 'Day job' },
+        { _id: 'area_personal', name: 'Personal', kind: 'personal' },
+      ],
+      'facts:verified': [fact()],
+      'facts:candidate': [],
+      [intentsApiMock.albatrossIntents.listAutoAssigned]: [],
+    };
+    verdictCalls = [];
+    llmCalls = [];
+    llmResponse = '[]';
+    __setAreaClassifierDepsForTest({
+      api: intentsApiMock as any,
+      convexQuery: (async (fn: any, args: any) => {
+        if (fn === intentsApiMock.albatross.listUserAreaFacts) {
+          return queryFixtures[`facts:${args.status}`] ?? [];
+        }
+        return queryFixtures[fn] ?? [];
+      }) as any,
+      convexMutation: (async (fn: any, args: any) => {
+        if (fn === intentsApiMock.albatross.ensurePersonal) return { areaId: 'area_personal' };
+        verdictCalls.push({ fn, args });
+        // Mirror applyAreaVerdicts' committed-count contract for a clean apply.
+        return {
+          assigned: args.verdicts.filter((verdict: any) => verdict.areaId).length,
+          kept: args.verdicts.filter((verdict: any) => !verdict.areaId).length,
+          skipped: 0,
+        };
+      }) as any,
+      generateTextForCurrentUser: (async (options: any) => {
+        llmCalls.push(options);
+        return { text: typeof llmResponse === 'function' ? llmResponse() : llmResponse } as any;
+      }) as any,
+    });
+  });
+
+  afterAll(() => {
+    __setAreaClassifierDepsForTest();
+  });
+
+  test('a confident verdict re-homes the intent; unsure intents settle in Personal', async () => {
+    queryFixtures[intentsApiMock.albatrossIntents.listAutoAssigned] = [
+      intent(),
+      intent({ intentId: 'intent_vague', title: null, rawText: 'do the thing' }),
+    ];
+    llmResponse = JSON.stringify([
+      { intentId: 'intent_1', areaName: 'Cardhunt job', confidence: 'high' },
+      { intentId: 'intent_vague', areaName: null, confidence: 'low' },
+    ]);
+    const result = await classifyIntents({ userId: USER });
+    expect(result).toEqual({ assigned: 1, keptPersonal: 1, skipped: 0 });
+    expect(llmCalls).toHaveLength(1);
+    expect(llmCalls[0].feature).toBe('albatross_classify');
+    expect(llmCalls[0].speed).toBe('fast');
+    expect(verdictCalls).toHaveLength(1);
+    const verdicts = verdictCalls[0].args.verdicts;
+    expect(verdicts).toContainEqual({
+      intentId: 'intent_1',
+      areaId: 'area_work',
+      reason: 'llm high-confidence match to Cardhunt job',
+    });
+    expect(verdicts).toContainEqual({ intentId: 'intent_vague' });
+  });
+
+  test('a confident Personal verdict just settles the flag without a move', async () => {
+    queryFixtures[intentsApiMock.albatrossIntents.listAutoAssigned] = [intent()];
+    llmResponse = JSON.stringify([{ intentId: 'intent_1', areaName: 'Personal', confidence: 'high' }]);
+    const result = await classifyIntents({ userId: USER });
+    expect(result).toEqual({ assigned: 0, keptPersonal: 1, skipped: 0 });
+    expect(verdictCalls[0].args.verdicts).toEqual([{ intentId: 'intent_1' }]);
+  });
+
+  test('medium confidence and hallucinated areas settle in Personal, never assign', async () => {
+    queryFixtures[intentsApiMock.albatrossIntents.listAutoAssigned] = [
+      intent({ intentId: 'i_medium' }),
+      intent({ intentId: 'i_invented' }),
+    ];
+    llmResponse = JSON.stringify([
+      { intentId: 'i_medium', areaName: 'Cardhunt job', confidence: 'medium' },
+      { intentId: 'i_invented', areaName: 'Not An Area', confidence: 'high' },
+    ]);
+    const result = await classifyIntents({ userId: USER });
+    expect(result).toEqual({ assigned: 0, keptPersonal: 2, skipped: 0 });
+    expect(verdictCalls[0].args.verdicts).toEqual([{ intentId: 'i_medium' }, { intentId: 'i_invented' }]);
+  });
+
+  test('with no areas beyond Personal, flags settle without a model call', async () => {
+    queryFixtures[intentsApiMock.albatross.listAreas] = [
+      { _id: 'area_personal', name: 'Personal', kind: 'personal' },
+    ];
+    queryFixtures[intentsApiMock.albatrossIntents.listAutoAssigned] = [intent()];
+    const result = await classifyIntents({ userId: USER });
+    expect(result).toEqual({ assigned: 0, keptPersonal: 1, skipped: 0 });
+    expect(llmCalls).toHaveLength(0);
+    expect(verdictCalls[0].args.verdicts).toEqual([{ intentId: 'intent_1' }]);
+  });
+
+  test('an llm failure leaves flags untouched so intents retry next tick', async () => {
+    queryFixtures[intentsApiMock.albatrossIntents.listAutoAssigned] = [intent()];
+    llmResponse = () => {
+      throw new Error('provider outage');
+    };
+    const result = await classifyIntents({ userId: USER });
+    expect(result).toEqual({ assigned: 0, keptPersonal: 0, skipped: 1 });
+    expect(verdictCalls).toHaveLength(0);
+  });
+
+  test('unanswered intents keep their flag while answered ones settle', async () => {
+    queryFixtures[intentsApiMock.albatrossIntents.listAutoAssigned] = [
+      intent(),
+      intent({ intentId: 'i_unanswered' }),
+    ];
+    llmResponse = JSON.stringify([{ intentId: 'intent_1', areaName: 'Cardhunt job', confidence: 'high' }]);
+    const result = await classifyIntents({ userId: USER });
+    expect(result).toEqual({ assigned: 1, keptPersonal: 0, skipped: 1 });
+    expect(verdictCalls[0].args.verdicts).toEqual([
+      { intentId: 'intent_1', areaId: 'area_work', reason: 'llm high-confidence match to Cardhunt job' },
+    ]);
+  });
+
+  test('no flagged intents means no area reads and no model call', async () => {
+    const result = await classifyIntents({ userId: USER });
+    expect(result).toEqual({ assigned: 0, keptPersonal: 0, skipped: 0 });
+    expect(llmCalls).toHaveLength(0);
+    expect(verdictCalls).toHaveLength(0);
   });
 });
