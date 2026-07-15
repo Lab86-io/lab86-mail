@@ -27,6 +27,7 @@ export interface ClassifiableAreaArtifact {
   title: string;
   text: string;
   occurredAt: number;
+  rejectedAreaIds?: string[];
 }
 
 export interface AreaDiscoveryMatch {
@@ -94,6 +95,7 @@ const DISCOVERY_SYSTEM = `You classify recent evidence from mail, calendar, task
 Rules:
 - Use the Area name, description, domain, repository/project facts, people, and recurring terminology together. A GitHub/Slack/Granola sender domain does not need to match when the repository, meeting, issue, message, or subject clearly belongs.
 - Assign only when the relationship is strong enough to ask the user for confirmation. Use null when uncertain.
+- A candidate may list doNotAssignAreaIds from prior user rejections. Never assign it to those Areas.
 - Never turn evidence into a verified fact. These are candidate relationships only.
 - Return one JSON array and no prose: [{"candidateId":string,"areaName":string|null,"confidence":"high"|"medium"|"low","reason":string}]. Include every candidate exactly once and copy Area names exactly.`;
 
@@ -120,7 +122,7 @@ function artifactsPrompt(artifacts: ClassifiableAreaArtifact[]) {
   return artifacts
     .map(
       (artifact) =>
-        `- candidateId=${candidateId(artifact)} | source=${artifact.source} | title=${artifact.title.slice(0, 180)} | context=${artifact.text.replace(/\s+/gu, ' ').slice(0, 700)}`,
+        `- candidateId=${candidateId(artifact)} | source=${artifact.source} | title=${artifact.title.slice(0, 180)}${artifact.rejectedAreaIds?.length ? ` | doNotAssignAreaIds=${artifact.rejectedAreaIds.join(',')}` : ''} | context=${artifact.text.replace(/\s+/gu, ' ').slice(0, 700)}`,
     )
     .join('\n');
 }
@@ -166,10 +168,17 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
   const links: Array<Record<string, unknown>> = [];
   const discoveries: AreaDiscoveryMatch[] = [];
   const remaining: ClassifiableAreaArtifact[] = [];
+  let rejectedEverywhere = 0;
   for (const artifact of artifacts) {
+    const rejectedAreaIds = new Set(artifact.rejectedAreaIds || []);
+    const eligibleAreas = areas.filter((area) => !rejectedAreaIds.has(String(area._id)));
+    if (!eligibleAreas.length) {
+      rejectedEverywhere += 1;
+      continue;
+    }
     const match = matchAreaContext({
       text: artifact.text,
-      areas: areas.map((area) => ({
+      areas: eligibleAreas.map((area) => ({
         _id: String(area._id),
         name: String(area.name),
         kind: area.kind,
@@ -210,7 +219,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
 
   const deterministic = links.length;
   let llm = 0;
-  let skipped = Math.max(0, remaining.length - AREA_DISCOVERY_LLM_CAP);
+  let skipped = rejectedEverywhere + Math.max(0, remaining.length - AREA_DISCOVERY_LLM_CAP);
   const batch = remaining.slice(0, AREA_DISCOVERY_LLM_CAP);
   if (batch.length) {
     const byCandidate = new Map(batch.map((artifact) => [candidateId(artifact), artifact]));
@@ -229,7 +238,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
         if (!artifact || answered.has(verdict.candidateId)) continue;
         answered.add(verdict.candidateId);
         const area = verdict.areaName ? areaByName.get(verdict.areaName.toLowerCase()) : undefined;
-        if (!area || verdict.confidence !== 'high') {
+        if (!area || verdict.confidence !== 'high' || artifact.rejectedAreaIds?.includes(String(area._id))) {
           skipped += 1;
           continue;
         }

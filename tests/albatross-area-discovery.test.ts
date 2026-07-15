@@ -149,6 +149,26 @@ describe('cross-source Area discovery', () => {
     expect(mutationCalls).toHaveLength(0);
   });
 
+  test('never reassigns an artifact to an Area the user already rejected', async () => {
+    corpus.items = [
+      {
+        artifactKind: 'mcpItem',
+        artifactId: 'github:pull_request:rejected',
+        source: 'github',
+        title: 'Lab86 change',
+        text: 'Lab86-io/lab86-mail pull request',
+        occurredAt: 1_780_000_000_000,
+        rejectedAreaIds: ['area_albatross'],
+      },
+    ];
+
+    const result = await classifyAreaArtifacts({ userId: USER });
+
+    expect(result).toMatchObject({ deterministic: 0, llm: 0, skipped: 1 });
+    expect(llmCalls).toHaveLength(0);
+    expect(mutationCalls).toHaveLength(0);
+  });
+
   test('injects connected sources and a focused confirmation instruction into Teach', async () => {
     brief = {
       candidates: [

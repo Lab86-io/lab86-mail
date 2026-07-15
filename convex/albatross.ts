@@ -1974,7 +1974,7 @@ const UNCLASSIFIED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const AREA_DISCOVERY_SCAN_PER_SOURCE = 120;
 const AREA_DISCOVERY_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
-async function hasAreaArtifactLink(
+async function areaArtifactLinks(
   ctx: QueryCtx,
   userId: string,
   artifactKind: 'mailThread' | 'calendarEvent' | 'task' | 'mcpItem',
@@ -1982,27 +1982,23 @@ async function hasAreaArtifactLink(
   accountId?: string,
 ) {
   if (accountId) {
-    return Boolean(
-      await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_account_artifact', (q) =>
-          q
-            .eq('userId', userId)
-            .eq('accountId', accountId)
-            .eq('artifactKind', artifactKind)
-            .eq('artifactId', artifactId),
-        )
-        .first(),
-    );
-  }
-  return Boolean(
-    await ctx.db
+    return await ctx.db
       .query('areaArtifactLinks')
-      .withIndex('by_user_artifact', (q) =>
-        q.eq('userId', userId).eq('artifactKind', artifactKind).eq('artifactId', artifactId),
+      .withIndex('by_user_account_artifact', (q) =>
+        q
+          .eq('userId', userId)
+          .eq('accountId', accountId)
+          .eq('artifactKind', artifactKind)
+          .eq('artifactId', artifactId),
       )
-      .first(),
-  );
+      .collect();
+  }
+  return await ctx.db
+    .query('areaArtifactLinks')
+    .withIndex('by_user_artifact', (q) =>
+      q.eq('userId', userId).eq('artifactKind', artifactKind).eq('artifactId', artifactId),
+    )
+    .collect();
 }
 
 // One bounded discovery pass across every locally indexed source. Connector
@@ -2110,7 +2106,7 @@ export const unclassifiedAreaArtifacts = query({
     for (const candidate of candidates) {
       groups.set(candidate.source, [...(groups.get(candidate.source) || []), candidate]);
     }
-    const items: Array<(typeof candidates)[number]> = [];
+    const items: Array<(typeof candidates)[number] & { rejectedAreaIds?: string[] }> = [];
     const positions = new Map<string, number>();
     while (items.length < limit) {
       let advanced = false;
@@ -2119,18 +2115,23 @@ export const unclassifiedAreaArtifacts = query({
         while (position < group.length) {
           const candidate = group[position++];
           positions.set(source, position);
-          if (
-            await hasAreaArtifactLink(
-              ctx,
-              args.userId,
-              candidate.artifactKind,
-              candidate.artifactId,
-              'accountId' in candidate ? candidate.accountId : undefined,
-            )
-          ) {
+          const links = await areaArtifactLinks(
+            ctx,
+            args.userId,
+            candidate.artifactKind,
+            candidate.artifactId,
+            'accountId' in candidate ? candidate.accountId : undefined,
+          );
+          if (links.some((link) => link.status !== 'rejected')) {
             continue;
           }
-          items.push(candidate);
+          const rejectedAreaIds = links
+            .filter((link) => link.status === 'rejected')
+            .map((link) => String(link.areaId));
+          items.push({
+            ...candidate,
+            ...(rejectedAreaIds.length ? { rejectedAreaIds } : {}),
+          });
           advanced = true;
           break;
         }
