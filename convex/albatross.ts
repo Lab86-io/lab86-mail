@@ -1841,7 +1841,7 @@ export const areaDiscoveryBrief = query({
     const candidates = await Promise.all(
       scoped.map(async (link) => {
         const area = areaById.get(String(link.areaId))!;
-        let source = link.artifactKind;
+        let source: string = link.artifactKind;
         let title = link.artifactId;
         let occurredAt = link.updatedAt;
         if (link.artifactKind === 'mailThread') {
