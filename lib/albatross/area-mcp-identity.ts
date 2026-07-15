@@ -34,23 +34,24 @@ export function mcpAreaTargetDecision(input: {
   rejectedAreaIds: Iterable<string>;
 }) {
   const rejected = new Set(input.rejectedAreaIds);
-  const contradicted = Boolean(
-    (input.matchedAreaId && rejected.has(input.matchedAreaId)) ||
-      (input.existingTargetKind === 'area' && input.existingTargetId && rejected.has(input.existingTargetId)),
+  const matchedAreaRejected = Boolean(input.matchedAreaId && rejected.has(input.matchedAreaId));
+  const existingAreaRejected = Boolean(
+    input.existingTargetKind === 'area' && input.existingTargetId && rejected.has(input.existingTargetId),
   );
-  if (contradicted) {
+  if (existingAreaRejected) {
     return { contradicted: true, patch: { targetKind: undefined, targetId: undefined } } as const;
-  }
-  if (input.matchedAreaId && !input.existingTargetKind) {
-    return {
-      contradicted: false,
-      patch: { targetKind: 'area' as const, targetId: input.matchedAreaId },
-    };
   }
   if (input.existingTargetKind && input.existingTargetId) {
     return {
-      contradicted: false,
+      contradicted: matchedAreaRejected,
       patch: { targetKind: input.existingTargetKind, targetId: input.existingTargetId },
+    };
+  }
+  if (matchedAreaRejected) return { contradicted: true, patch: {} } as const;
+  if (input.matchedAreaId) {
+    return {
+      contradicted: false,
+      patch: { targetKind: 'area' as const, targetId: input.matchedAreaId },
     };
   }
   return { contradicted: false, patch: {} } as const;

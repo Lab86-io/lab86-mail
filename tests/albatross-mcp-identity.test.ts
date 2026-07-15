@@ -47,4 +47,18 @@ describe('connection-scoped MCP Area identity', () => {
       }),
     ).toEqual({ contradicted: false, patch: { targetKind: 'project', targetId: 'project_one' } });
   });
+
+  test('preserves a project target while suppressing a rejected Area match', () => {
+    expect(
+      mcpAreaTargetDecision({
+        matchedAreaId: 'area_rejected',
+        existingTargetKind: 'project',
+        existingTargetId: 'project_one',
+        rejectedAreaIds: ['area_rejected'],
+      }),
+    ).toEqual({
+      contradicted: true,
+      patch: { targetKind: 'project', targetId: 'project_one' },
+    });
+  });
 });
