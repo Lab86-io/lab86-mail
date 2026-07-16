@@ -1,4 +1,9 @@
 import { v } from 'convex/values';
+import {
+  areaArtifactHtmlForWrite,
+  assertAreaArtifactDocumentSize,
+} from '../lib/albatross/area-artifact-storage';
+import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -105,6 +110,9 @@ export const finishCapture = mutation({
       if (!rawText) continue;
       if (item.primaryAreaId) await requireArea(ctx, item.primaryAreaId, userId);
       for (const related of item.relatedAreaIds || []) await requireArea(ctx, related, userId);
+      // Areas are opt-in. The splitter may leave Work unassigned; no system
+      // catch-all is created behind the user's back.
+      const primaryAreaId = item.primaryAreaId;
       const workId = await ctx.db.insert('albatrossIntents', {
         userId,
         rawText,
@@ -112,9 +120,10 @@ export const finishCapture = mutation({
         source: capture.source,
         title: bounded(item.title, 180),
         status: 'captured',
-        areaId: item.primaryAreaId ? String(item.primaryAreaId) : undefined,
+        areaId: primaryAreaId ? String(primaryAreaId) : undefined,
+        areaAutoAssigned: undefined,
         captureId: args.captureId,
-        primaryAreaId: item.primaryAreaId,
+        primaryAreaId,
         workState: 'active',
         agentState: 'researching',
         lastAgentRunAt: ts,
@@ -207,6 +216,81 @@ export const upsertQuestion = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     await requireWork(ctx, args.workId, userId);
+    const dedupeKey = questionDedupeKey({
+      workId: String(args.workId),
+      kind: args.kind,
+      prompt: args.prompt,
+    });
+    const duplicate = await ctx.db
+      .query('albatrossWorkQuestions')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    if (duplicate) {
+      const ts = now();
+      const refreshed = {
+        legacyQuestionId: bounded(args.legacyQuestionId, 80),
+        prompt: args.prompt.slice(0, 500),
+        reason: bounded(args.reason, 500),
+        options: args.options?.slice(0, 6).map((option) => ({
+          id: option.id.slice(0, 80),
+          label: option.label.slice(0, 180),
+          description: bounded(option.description, 400),
+        })),
+        sourceRefs: args.sourceRefs || duplicate.sourceRefs,
+        updatedAt: ts,
+      };
+      if (duplicate.status === 'pending') {
+        await ctx.db.patch(duplicate._id, refreshed);
+        await ctx.db.patch(args.workId, {
+          agentState: 'needs_input',
+          status: 'needs_answers',
+          updatedAt: ts,
+        });
+      } else if (duplicate.status === 'answered' && duplicate.answer) {
+        await ctx.db.patch(duplicate._id, refreshed);
+        const work = await requireWork(ctx, args.workId, userId);
+        await ctx.db.patch(args.workId, {
+          questions: (work.questions || []).map((entry) =>
+            args.legacyQuestionId && entry.id === args.legacyQuestionId
+              ? {
+                  ...entry,
+                  answer: duplicate.answer,
+                  answeredOptionId: duplicate.answeredOptionId,
+                  answeredAt: duplicate.answeredAt,
+                }
+              : entry,
+          ),
+          agentState: 'researching',
+          status: work.status === 'needs_answers' ? 'captured' : work.status,
+          updatedAt: ts,
+        });
+      } else {
+        const pending = await ctx.db
+          .query('albatrossWorkQuestions')
+          .withIndex('by_user_work_status', (q) =>
+            q.eq('userId', userId).eq('workId', args.workId).eq('status', 'pending'),
+          )
+          .collect();
+        for (const row of pending) {
+          if (row._id !== duplicate._id) {
+            await ctx.db.patch(row._id, { status: 'superseded', updatedAt: ts });
+          }
+        }
+        await ctx.db.patch(duplicate._id, {
+          ...refreshed,
+          status: 'pending',
+          answer: undefined,
+          answeredOptionId: undefined,
+          answeredAt: undefined,
+        });
+        await ctx.db.patch(args.workId, {
+          agentState: 'needs_input',
+          status: 'needs_answers',
+          updatedAt: ts,
+        });
+      }
+      return duplicate._id;
+    }
     const existing = await ctx.db
       .query('albatrossWorkQuestions')
       .withIndex('by_user_work_status', (q) =>
@@ -218,6 +302,7 @@ export const upsertQuestion = mutation({
     const questionId = await ctx.db.insert('albatrossWorkQuestions', {
       userId,
       workId: args.workId,
+      dedupeKey,
       legacyQuestionId: bounded(args.legacyQuestionId, 80),
       kind: args.kind,
       prompt: args.prompt.slice(0, 500),
@@ -248,7 +333,14 @@ export const answerQuestion = mutation({
     const userId = await resolveUserId(ctx, args);
     const question = await ctx.db.get(args.questionId);
     if (!question || question.userId !== userId) throw new Error('Question not found.');
-    if (question.status !== 'pending') return question.workId;
+    if (question.status !== 'pending') {
+      return {
+        workId: question.workId ? String(question.workId) : undefined,
+        projectId: question.projectId ? String(question.projectId) : undefined,
+        routineId: question.routineId ? String(question.routineId) : undefined,
+        shouldAdvance: false,
+      };
+    }
     const answer = preserveRaw(args.answer, 2_000);
     if (!answer) throw new Error('Answer required.');
     const ts = now();
@@ -259,34 +351,91 @@ export const answerQuestion = mutation({
       answeredAt: ts,
       updatedAt: ts,
     });
-    const work = await requireWork(ctx, question.workId, userId);
-    const legacyQuestions = (work.questions || []).map((entry) =>
-      question.legacyQuestionId && entry.id === question.legacyQuestionId
-        ? {
-            ...entry,
-            answer,
-            answeredOptionId: bounded(args.answeredOptionId, 80),
-            answeredAt: ts,
-          }
-        : entry,
-    );
-    if (question.kind === 'completion' && /^(yes|done|completed|finished)$/i.test(answer.trim())) {
-      await ctx.db.patch(question.workId, {
-        workState: 'done',
-        status: 'done',
-        agentState: 'idle',
-        questions: legacyQuestions,
-        updatedAt: ts,
-      });
-    } else {
-      await ctx.db.patch(question.workId, {
-        agentState: 'researching',
-        status: work.status === 'needs_answers' ? 'captured' : work.status,
-        questions: legacyQuestions,
-        updatedAt: ts,
-      });
+    let shouldAdvance = false;
+    if (question.workId) {
+      const work = await requireWork(ctx, question.workId, userId);
+      const legacyQuestions = (work.questions || []).map((entry) =>
+        question.legacyQuestionId && entry.id === question.legacyQuestionId
+          ? {
+              ...entry,
+              answer,
+              answeredOptionId: bounded(args.answeredOptionId, 80),
+              answeredAt: ts,
+            }
+          : entry,
+      );
+      if (!shouldAdvanceWorkAfterAnswer(question.kind, answer)) {
+        await ctx.db.patch(question.workId, {
+          workState: 'done',
+          status: 'done',
+          agentState: 'idle',
+          questions: legacyQuestions,
+          updatedAt: ts,
+        });
+      } else {
+        shouldAdvance = true;
+        await ctx.db.patch(question.workId, {
+          agentState: 'researching',
+          status: work.status === 'needs_answers' ? 'captured' : work.status,
+          questions: legacyQuestions,
+          updatedAt: ts,
+        });
+      }
     }
-    return question.workId;
+    if (
+      question.kind === 'consent' &&
+      question.routineId &&
+      question.metadata?.action === 'routine_notification_consent'
+    ) {
+      const routine = await ctx.db.get(question.routineId);
+      if (routine?.userId === userId) {
+        const enabled = args.answeredOptionId
+          ? args.answeredOptionId === 'enable'
+          : /^(yes|enable|enabled|notify|yes, notify me)$/i.test(answer.trim());
+        await ctx.db.patch(question.routineId, {
+          notification: { ...routine.notification, enabled },
+          updatedAt: ts,
+        });
+      }
+    }
+    const evidenceKey = `question-answer:${String(question._id)}`;
+    const existingEvidence = await ctx.db
+      .query('albatrossEvidence')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', evidenceKey))
+      .unique();
+    const targetKind = question.routineId
+      ? ('routine' as const)
+      : question.projectId
+        ? ('project' as const)
+        : question.workId
+          ? ('work' as const)
+          : undefined;
+    const targetId = question.routineId || question.projectId || question.workId;
+    const evidence = {
+      userId,
+      targetKind,
+      targetId: targetId ? String(targetId) : undefined,
+      sourceKind: 'question_answer' as const,
+      sourceId: String(question._id),
+      title: question.prompt.slice(0, 500),
+      summary: answer,
+      occurredAt: ts,
+      weight: 1,
+      confidence: 1,
+      trust: 'confirmed' as const,
+      dedupeKey: evidenceKey,
+      searchText: `${question.prompt} ${answer}`.slice(0, 4_000),
+      metadata: { answeredOptionId: bounded(args.answeredOptionId, 80), kind: question.kind },
+      updatedAt: ts,
+    };
+    if (existingEvidence) await ctx.db.patch(existingEvidence._id, evidence);
+    else await ctx.db.insert('albatrossEvidence', { ...evidence, createdAt: ts });
+    return {
+      workId: question.workId ? String(question.workId) : undefined,
+      projectId: question.projectId ? String(question.projectId) : undefined,
+      routineId: question.routineId ? String(question.routineId) : undefined,
+      shouldAdvance,
+    };
   },
 });
 
@@ -301,11 +450,26 @@ export const livePendingQuestions = query({
       .order('asc')
       .take(100);
     const rows = await Promise.all(
-      questions.map(async (question) => ({ question, work: await ctx.db.get(question.workId) })),
+      questions.map(async (question) => ({
+        question,
+        work: question.workId ? await ctx.db.get(question.workId) : null,
+        project: question.projectId ? await ctx.db.get(question.projectId) : null,
+        routine: question.routineId ? await ctx.db.get(question.routineId) : null,
+      })),
     );
-    const kindRank: Record<string, number> = { completion: 3, correction: 2, clarification: 1 };
+    const kindRank: Record<string, number> = {
+      consent: 6,
+      completion: 5,
+      checkin: 4,
+      correction: 3,
+      reflection: 2,
+      clarification: 1,
+    };
     return rows
-      .filter((row) => row.work?.userId === userId)
+      .filter(
+        (row) =>
+          row.work?.userId === userId || row.project?.userId === userId || row.routine?.userId === userId,
+      )
       .sort(
         (a, b) =>
           (kindRank[b.question.kind] || 0) - (kindRank[a.question.kind] || 0) ||
@@ -383,6 +547,7 @@ export const saveAreaBrief = mutation({
     status: v.union(v.literal('generating'), v.literal('ready'), v.literal('error')),
     lede: v.string(),
     summary: v.string(),
+    artifactHtml: v.optional(v.string()),
     sourceRefs: v.optional(v.array(sourceRefValidator)),
     basedOnRevision: v.string(),
     error: v.optional(v.string()),
@@ -395,18 +560,24 @@ export const saveAreaBrief = mutation({
       .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
       .unique();
     const ts = now();
+    const artifactHtml = areaArtifactHtmlForWrite(args.status, args.artifactHtml, existing?.artifactHtml);
     const doc = {
       userId,
       areaId: args.areaId,
       status: args.status,
       lede: args.lede.slice(0, 600),
       summary: args.summary.slice(0, 2_000),
+      artifactHtml,
       sourceRefs: args.sourceRefs || [],
       basedOnRevision: args.basedOnRevision.slice(0, 160),
       generatedAt: args.status === 'ready' ? ts : existing?.generatedAt,
       error: bounded(args.error, 500),
       updatedAt: ts,
     };
+    // Never truncate a complete document: doing so can persist syntactically
+    // broken HTML and replace the last good edition. Measure the whole record,
+    // including metadata/source refs, and reject before any patch or insert.
+    assertAreaArtifactDocumentSize(existing ? doc : { ...doc, createdAt: ts });
     if (existing) {
       await ctx.db.patch(existing._id, doc);
       return existing._id;
@@ -498,6 +669,11 @@ export const migrateLegacyBatch = internalMutation({
         await ctx.db.insert('albatrossWorkQuestions', {
           userId: work.userId,
           workId: work._id,
+          dedupeKey: questionDedupeKey({
+            workId: String(work._id),
+            kind: 'clarification',
+            prompt: question.prompt,
+          }),
           legacyQuestionId: question.id,
           kind: 'clarification',
           prompt: question.prompt,

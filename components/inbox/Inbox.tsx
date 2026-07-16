@@ -23,6 +23,7 @@ import {
   Fragment,
   type KeyboardEvent,
   memo,
+  type ReactNode,
   startTransition,
   useCallback,
   useEffect,
@@ -85,7 +86,7 @@ const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
 const INBOX_PAGE_SIZE = 50;
 const SKELETON_ROW_KEYS = Array.from({ length: 12 }, (_, index) => `skeleton-row-${index + 1}`);
 
-interface ThreadRow {
+export interface ThreadRow {
   _id: string;
   account?: string;
   subject?: string;
@@ -135,7 +136,7 @@ interface QuickFixSuppression {
 
 // Day bucket for the editorial date headers: Today / Yesterday / weekday for
 // the last week / month (with year once it isn't this year).
-function dateGroupLabel(ts: number): string {
+export function inboxDateGroupLabel(ts: number): string {
   if (!ts) return 'Undated';
   const date = new Date(ts);
   const now = new Date();
@@ -1012,10 +1013,11 @@ export function Inbox() {
                 const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
                 // Editorial datelines: a serif group header whenever the day
                 // bucket changes (the list is already date-sorted).
-                const groupLabel = dateGroupLabel(Number(it.lastDate ?? it.date) || 0);
+                const groupLabel = inboxDateGroupLabel(Number(it.lastDate ?? it.date) || 0);
                 const previous = index > 0 ? items[index - 1] : null;
                 const showHeader =
-                  !previous || dateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
+                  !previous ||
+                  inboxDateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
                 return (
                   <Fragment key={key}>
                     {showHeader ? (
@@ -1026,7 +1028,7 @@ export function Inbox() {
                         <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
                       </div>
                     ) : null}
-                    <ThreadRowCard
+                    <InboxThreadRow
                       item={it}
                       rowId={key}
                       rowAccount={rowAccount}
@@ -1102,7 +1104,7 @@ function useSenderLogo(email: string): string | null {
   return logo;
 }
 
-const ThreadRowCard = memo(function ThreadRowCard({
+export const InboxThreadRow = memo(function InboxThreadRow({
   item,
   rowId,
   rowAccount,
@@ -1124,6 +1126,8 @@ const ThreadRowCard = memo(function ThreadRowCard({
   showAccount,
   accountLabel,
   activeCategory,
+  actionMenu,
+  actionsDisabled = false,
 }: {
   item: ThreadRow;
   rowId: string;
@@ -1146,6 +1150,8 @@ const ThreadRowCard = memo(function ThreadRowCard({
   showAccount?: boolean;
   accountLabel?: string;
   activeCategory?: string | null;
+  actionMenu?: ReactNode;
+  actionsDisabled?: boolean;
 }) {
   const triage = (item as any).triage;
   const smart = (item as any).smartCategory;
@@ -1313,35 +1319,41 @@ const ThreadRowCard = memo(function ThreadRowCard({
             </button>
             <button
               type="button"
+              disabled={actionsDisabled}
               onClick={(e) => {
                 e.stopPropagation();
                 onArchive(rowId);
               }}
               title="Archive"
-              className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-accent)]"
+              className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-accent)] disabled:cursor-wait disabled:opacity-45"
             >
               <Archive className="size-3.5" />
               <span className="sr-only">Archive</span>
             </button>
             <button
               type="button"
+              disabled={actionsDisabled}
               onClick={(e) => {
                 e.stopPropagation();
                 onTrash(rowId);
               }}
               title="Delete"
-              className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-danger)]"
+              className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-danger)] disabled:cursor-wait disabled:opacity-45"
             >
               <Trash2 className="size-3.5" />
               <span className="sr-only">Delete</span>
             </button>
-            <QuickFixMenu
-              customLabels={customLabels}
-              onApplyLabels={() => onApplyLabels(item)}
-              onCorrect={correct}
-              onCreateLabel={() => createLabelFromThread(item, correct)}
-              onUndoLast={onUndoLast}
-            />
+            {actionMenu !== undefined ? (
+              actionMenu
+            ) : (
+              <QuickFixMenu
+                customLabels={customLabels}
+                onApplyLabels={() => onApplyLabels(item)}
+                onCorrect={correct}
+                onCreateLabel={() => createLabelFromThread(item, correct)}
+                onUndoLast={onUndoLast}
+              />
+            )}
           </div>
           {showAccount && accountColor ? (
             <Popover>

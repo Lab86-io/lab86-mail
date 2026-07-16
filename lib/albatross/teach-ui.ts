@@ -94,6 +94,33 @@ export function lastMessageAnsweredHitl(messages: Array<{ role?: string; parts?:
   );
 }
 
+/** Identify the answered pause that is eligible for an automatic continuation. */
+export function answeredHitlToolCallId(messages: Array<{ role?: string; parts?: unknown[] }>): string | null {
+  const last = messages[messages.length - 1] as { role?: string; parts?: any[] } | undefined;
+  if (!last || last.role !== 'assistant') return null;
+  for (const part of [...(last.parts || [])].reverse()) {
+    if (!isHitlToolName(toolPartName(part)) || part?.state !== 'output-available') continue;
+    const toolCallId = typeof part?.toolCallId === 'string' ? part.toolCallId.trim() : '';
+    if (toolCallId) return toolCallId;
+  }
+  return null;
+}
+
+/**
+ * AI SDK can evaluate sendAutomaticallyWhen more than once for the same
+ * message state. Consume each answered pause once so a re-render, autosave,
+ * or session restore cannot submit the same answer repeatedly.
+ */
+export function createHitlAutoContinueGuard() {
+  const continued = new Set<string>();
+  return (messages: Array<{ role?: string; parts?: unknown[] }>): boolean => {
+    const toolCallId = answeredHitlToolCallId(messages);
+    if (!toolCallId || continued.has(toolCallId)) return false;
+    continued.add(toolCallId);
+    return true;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Multi-select helpers (ask_user option lists)
 // ---------------------------------------------------------------------------
@@ -241,6 +268,21 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
       failed: 'Checking recent senders failed',
     };
   },
+  area_discover_context: fixed(
+    'Searching connected context for Areas',
+    'Searched connected context for Areas',
+    'Area context search failed',
+  ),
+  area_artifact_set_status: fixed(
+    'Saving your answer about this relationship',
+    'Saved your answer about this relationship',
+    'Saving the relationship answer failed',
+  ),
+  mcp_connection_status: fixed(
+    'Checking connection sync status',
+    'Checked connection sync status',
+    'Connection status check failed',
+  ),
   area_list: fixed('Checking saved areas', 'Checked saved areas', 'Checking saved areas failed'),
   area_create: (a, out) => {
     const name = str(a.name) || str(out.name);
@@ -777,6 +819,10 @@ export function factRowFromToolOutput(toolName: string, input: any, output: any)
       if (status === 'superseded') return { tone: 'retired', text: 'Fact superseded' };
       return null;
     }
+    case 'area_artifact_set_status':
+      return input?.status === 'verified'
+        ? { tone: 'verified', text: 'Area relationship verified' }
+        : { tone: 'retired', text: 'Area relationship rejected' };
     default:
       return null;
   }

@@ -24,7 +24,7 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
-import { ArrowUp, Check, Square } from 'lucide-react';
+import { ArrowUp, Check, ImagePlus, Square } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -48,10 +48,10 @@ import type { Id } from '@/convex/_generated/dataModel';
 import { areaCanArchive } from '@/lib/albatross/area-home';
 import { TEACH_SYSTEM_PROMPT } from '@/lib/albatross/teach-prompt';
 import {
+  createHitlAutoContinueGuard,
   factRowFromToolOutput,
   isHitlToolName,
   isTeachChatSession,
-  lastMessageAnsweredHitl,
   senderCardsFromToolOutput,
   TEACH_CHAT_TITLE,
   TEACH_PANE_INITIAL,
@@ -91,6 +91,12 @@ function newTeachChatId() {
   );
 }
 
+// UIMessage parts are append-only and do not expose a stable id for text
+// segments. Keep their positional identity stable while a response streams.
+function teachPartKey(messageId: string, position: number) {
+  return `${messageId}-${position}`;
+}
+
 // The seeded opener is rendered locally and never persisted: the real thread
 // starts with the user's first reply, so the saved transcript stays clean.
 const TEACH_OPENER =
@@ -109,18 +115,20 @@ function TeachChat() {
         api: '/api/agent',
         body: {
           extraSystem: TEACH_SYSTEM_PROMPT,
+          areaDiscovery: { mode: 'teach' },
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
       }),
     [],
   );
+  const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
 
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
     // Auto-continue ONLY after the user answers a human-in-the-loop tool call
     // — same rationale as AIBar: the server runs ordinary tools to completion
     // in one response, so the built-in predicate would resubmit in a loop.
-    sendAutomaticallyWhen: ({ messages: msgs }) => lastMessageAnsweredHitl(msgs as any),
+    sendAutomaticallyWhen: ({ messages: msgs }) => shouldAutoContinueHitl(msgs as any),
   });
 
   const answerHitl = useCallback(
@@ -270,10 +278,16 @@ function TeachChat() {
               <UserBubble key={message.id} message={message} />
             ) : (
               <div key={message.id} className="flex w-full min-w-0 flex-col gap-2">
-                {(message.parts || []).map((part: any, i: number) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: streamed parts are append-only with no stable id
-                  <TeachPart key={`${message.id}-${i}`} part={part} onAnswer={answerHitl} />
-                ))}
+                {(message.parts || []).map((part: any, i: number) => {
+                  return (
+                    <TeachPart
+                      key={teachPartKey(message.id, i)}
+                      part={part}
+                      onAnswer={answerHitl}
+                      streaming={streaming && message.id === messages.at(-1)?.id}
+                    />
+                  );
+                })}
               </div>
             ),
           )}
@@ -368,9 +382,11 @@ function UserBubble({ message }: { message: any }) {
 function TeachPart({
   part,
   onAnswer,
+  streaming = false,
 }: {
   part: any;
   onAnswer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
+  streaming?: boolean;
 }) {
   const type = part?.type;
   if (type === 'text') {
@@ -378,7 +394,10 @@ function TeachPart({
     if (!text.trim()) return null;
     return (
       <AssistantBubble>
-        <Markdown className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]">
+        <Markdown
+          streaming={streaming}
+          className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]"
+        >
           {text}
         </Markdown>
       </AssistantBubble>
@@ -537,6 +556,7 @@ function AreaManagementList() {
     | undefined;
   const archiveArea = useMutation(api.albatross.archiveArea);
   const updateArea = useMutation(api.albatross.updateArea);
+  const setAreaImage = useMutation(api.albatross.setAreaImage);
   const reindexAreas = useMutation(api.albatross.reindexMyAreas);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -577,6 +597,42 @@ function AreaManagementList() {
       toast.success(`${draft.name || area.name} updated`);
     } catch (err: any) {
       toast.error(err?.message || 'Could not update the area');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const uploadImage = async (area: AreaOverviewRow, file: File) => {
+    setBusyId(area._id);
+    try {
+      const form = new FormData();
+      form.append('files', file);
+      const response = await fetch('/api/agent/uploads', { method: 'POST', body: form });
+      const body = await response.json();
+      if (!response.ok || !body.uploads?.[0]?.uploadId) {
+        throw new Error(body.error || 'Could not upload that image.');
+      }
+      const result = await setAreaImage({
+        areaId: area._id,
+        uploadId: body.uploads[0].uploadId as Id<'agentUploads'>,
+      });
+      setDraft((previous) => ({ ...previous, imageUrl: result.imageUrl || '' }));
+      toast.success(`${area.name} image updated`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not upload that image');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const clearImage = async (area: AreaOverviewRow) => {
+    setBusyId(area._id);
+    try {
+      await setAreaImage({ areaId: area._id });
+      setDraft((previous) => ({ ...previous, imageUrl: '' }));
+      toast.success(`${area.name} image removed`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not remove that image');
     } finally {
       setBusyId(null);
     }
@@ -652,6 +708,37 @@ function AreaManagementList() {
                     className="min-w-0 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-[13px] outline-none focus:border-[var(--color-border-strong)]"
                     placeholder="https://… image"
                   />
+                  <div className="flex items-center gap-2 sm:col-span-3">
+                    <label className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 text-[11.5px] font-medium hover:bg-[var(--color-bg-muted)]">
+                      <ImagePlus className="size-3.5" />
+                      Upload image
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        disabled={busyId === area._id}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void uploadImage(area, file);
+                          event.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+                    {area.imageUrl ? (
+                      <button
+                        type="button"
+                        className="text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                        disabled={busyId === area._id}
+                        onClick={() => void clearImage(area)}
+                      >
+                        Remove custom image
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-[var(--color-text-faint)]">
+                        Otherwise Albatross uses the domain favicon, then initials.
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="min-w-0 flex-1">

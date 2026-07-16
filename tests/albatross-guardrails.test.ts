@@ -214,6 +214,17 @@ describe('agent loop tool belt exposure', () => {
       expect(AGENT_TOOL_NAMES.has(name)).toBe(true);
     }
   });
+
+  test('connected-source tools promised by the system prompt are exposed', async () => {
+    const { AGENT_TOOL_NAMES } = await import('../lib/ai/loop');
+    const { SYSTEM_PROMPT } = await import('../lib/ai/system-prompt');
+    const { TOOLS } = await import('../lib/tools/index');
+    for (const name of ['mcp_search', 'mcp_list_items', 'mcp_create_task']) {
+      expect(SYSTEM_PROMPT).toContain(name);
+      expect(TOOLS[name as keyof typeof TOOLS]).toBeTruthy();
+      expect(AGENT_TOOL_NAMES.has(name)).toBe(true);
+    }
+  });
 });
 
 describe('salvage_context registration (issue #86/#17)', () => {

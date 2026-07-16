@@ -1,0 +1,164 @@
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import {
+  __setMcpToolDepsForTest,
+  githubSearch,
+  mcpConnectionStatus,
+  mcpCreateTask,
+  mcpListItems,
+  mcpSearch,
+} from '../lib/tools/mcp';
+import { runTool, TEST_USER } from './tools/harness';
+
+const queryCalls: Array<{ fn: unknown; args: any }> = [];
+const mutationCalls: Array<{ fn: unknown; args: any }> = [];
+const operations: any[] = [];
+
+const item = {
+  server: 'github',
+  kind: 'commit',
+  title: 'Living index',
+  summary: 'Indexed notes about the living evidence pipeline.',
+  state: 'committed',
+  author: 'jakob',
+  repository: 'Lab86-io/lab86-mail',
+  organization: 'Lab86-io',
+  parentExternalId: 'github:project:PVT_1',
+  sha: 'abc',
+  url: 'https://github.com/Lab86-io/lab86-mail/commit/abc',
+  updatedAtSource: 123,
+  connectionId: 'conn_1',
+  externalId: 'github:commit:Lab86-io/lab86-mail:abc',
+};
+
+beforeEach(() => {
+  queryCalls.length = 0;
+  mutationCalls.length = 0;
+  operations.length = 0;
+  __setMcpToolDepsForTest({
+    convexQuery: (async (fn: unknown, args: any) => {
+      queryCalls.push({ fn, args });
+      return [item];
+    }) as any,
+    convexMutation: (async (fn: unknown, args: any) => {
+      mutationCalls.push({ fn, args });
+      return 'card_1';
+    }) as any,
+    resolveBoardAndColumn: (async () => ({
+      board: { boardId: 'board_1', title: 'Personal' },
+      column: { columnId: 'column_1', name: 'Inbox' },
+    })) as any,
+    recordOperation: (async (input: any) => {
+      operations.push(input);
+      return 'operation_1';
+    }) as any,
+  });
+});
+
+afterAll(() => __setMcpToolDepsForTest());
+
+describe('MCP tools', () => {
+  test('maps general and GitHub-filtered search results into actionable evidence', async () => {
+    const general = await runTool(mcpSearch.handler, { query: 'living', server: 'github', limit: 5 });
+    const github = await runTool(githubSearch.handler, {
+      query: 'living',
+      repository: 'Lab86-io/lab86-mail',
+      organization: 'Lab86-io',
+      kind: 'commit',
+      state: 'committed',
+      limit: 7,
+    });
+
+    expect(general.items[0]).toMatchObject({
+      sha: 'abc',
+      connectionId: 'conn_1',
+      summary: 'Indexed notes about the living evidence pipeline.',
+      updatedAtIso: '1970-01-01T00:00:00.123Z',
+    });
+    expect(github.items[0]).toMatchObject({ repository: 'Lab86-io/lab86-mail' });
+    expect(queryCalls[0]?.args).toMatchObject({
+      userId: TEST_USER.userId,
+      query: 'living',
+      server: 'github',
+      limit: 5,
+    });
+    expect(queryCalls[1]?.args).toMatchObject({
+      server: 'github',
+      repository: 'Lab86-io/lab86-mail',
+      organization: 'Lab86-io',
+      kind: 'commit',
+      state: 'committed',
+      limit: 7,
+    });
+  });
+
+  test('lists brief items and creates a linked, undoable task', async () => {
+    const listed = await runTool(mcpListItems.handler, { server: 'granola', limit: 3 });
+    const created = await runTool(mcpCreateTask.handler, {
+      connectionId: 'conn_1',
+      externalId: item.externalId,
+      server: 'github',
+      title: 'Follow the living-index commit',
+      url: item.url,
+      boardId: 'board_1',
+      column: 'Inbox',
+    });
+
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]).toMatchObject({
+      summary: 'Indexed notes about the living evidence pipeline.',
+      updatedAt: 123,
+      updatedAtIso: '1970-01-01T00:00:00.123Z',
+    });
+    expect(queryCalls[0]?.args).toMatchObject({ server: 'granola', limit: 3 });
+    expect(created).toEqual({ ok: true, cardId: 'card_1', operationId: 'operation_1' });
+    expect(mutationCalls).toHaveLength(2);
+    expect(mutationCalls[0]?.args.source).toMatchObject({
+      kind: 'mcp',
+      server: 'github',
+      externalId: item.externalId,
+    });
+    expect(mutationCalls[1]?.args).toMatchObject({ cardId: 'card_1', externalId: item.externalId });
+    expect(operations[0]).toMatchObject({
+      userId: TEST_USER.userId,
+      tool: 'mcp_create_task',
+      target: { kind: 'card', id: 'card_1', boardId: 'board_1' },
+      inverse: { kind: 'tasks.delete_card', payload: { cardId: 'card_1' } },
+    });
+  });
+
+  test('reports source sync identity and indexed count after an empty-result dogfood', async () => {
+    __setMcpToolDepsForTest({
+      convexQuery: (async () => [
+        {
+          server: 'granola',
+          displayName: 'Granola',
+          status: 'connected',
+          syncStatus: 'ready',
+          itemCount: 8,
+          includeInSearch: true,
+          accountEmail: 'josh@example.com',
+          workspaceName: 'StatPearls',
+        },
+        { server: 'github', status: 'connected', itemCount: 30 },
+      ]) as any,
+    });
+
+    const result = await runTool(mcpConnectionStatus.handler, { server: 'granola' });
+
+    expect(result.connections).toEqual([
+      expect.objectContaining({
+        server: 'granola',
+        syncStatus: 'ready',
+        itemCount: 8,
+        accountEmail: 'josh@example.com',
+        workspaceName: 'StatPearls',
+      }),
+    ]);
+  });
+
+  test('still requires authentication for the GitHub-specific search', async () => {
+    await expect(
+      runTool(githubSearch.handler, { query: 'anything', limit: 1 }, { userId: null }),
+    ).rejects.toThrow('Not authenticated');
+  });
+});

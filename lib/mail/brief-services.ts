@@ -7,6 +7,7 @@ export type BriefServiceId =
   | 'bitbucket'
   | 'jira'
   | 'slack'
+  | 'granola'
   | 'calendar'
   | 'tasks';
 
@@ -63,6 +64,11 @@ const SERVICES: Record<BriefServiceId, BriefService> = {
     label: 'Slack',
     logoSvg: `<svg class="${ICON_CLASS}" viewBox="0 0 24 24" role="img" aria-label="Slack"><path fill="#36C5F0" d="M8.45 2a2.05 2.05 0 0 0 0 4.1h2.05V4.05A2.05 2.05 0 0 0 8.45 2Zm0 5.47H2.98a2.05 2.05 0 0 0 0 4.1h5.47a2.05 2.05 0 0 0 0-4.1Z"/><path fill="#2EB67D" d="M22 9.52a2.05 2.05 0 0 0-4.1 0v2.05h2.05A2.05 2.05 0 0 0 22 9.52Zm-5.47 0V4.05a2.05 2.05 0 0 0-4.1 0v5.47a2.05 2.05 0 0 0 4.1 0Z"/><path fill="#ECB22E" d="M14.48 22a2.05 2.05 0 0 0 0-4.1h-2.05v2.05A2.05 2.05 0 0 0 14.48 22Zm0-5.47h5.47a2.05 2.05 0 0 0 0-4.1h-5.47a2.05 2.05 0 0 0 0 4.1Z"/><path fill="#E01E5A" d="M2 14.48a2.05 2.05 0 0 0 4.1 0v-2.05H4.05A2.05 2.05 0 0 0 2 14.48Zm5.47 0v5.47a2.05 2.05 0 0 0 4.1 0v-5.47a2.05 2.05 0 0 0-4.1 0Z"/></svg>`,
   },
+  granola: {
+    id: 'granola',
+    label: 'Granola',
+    logoSvg: `<svg class="${ICON_CLASS}" viewBox="0 0 24 24" role="img" aria-label="Granola"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 9v6m4-9v12m4-9v6m4-11v16m4-12v8"/></svg>`,
+  },
   calendar: {
     id: 'calendar',
     label: 'Calendar',
@@ -90,6 +96,7 @@ const ALIASES: Record<string, BriefServiceId> = {
   atlassian: 'jira',
   atlassianjira: 'jira',
   slack: 'slack',
+  granola: 'granola',
   calendar: 'calendar',
   tasks: 'tasks',
 };

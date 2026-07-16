@@ -2,8 +2,9 @@
 
 import { useConvexAuth, useQuery } from 'convex/react';
 import { ChevronUp, ExternalLink, X } from 'lucide-react';
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
+import { OptionList } from '@/components/tool-ui/option-list';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import {
@@ -24,6 +25,8 @@ interface PendingQuestionRow {
     options?: Array<{ id: string; label: string; description?: string }>;
   };
   work: null | { _id: string; title?: string; rawText: string };
+  project: null | { _id: string; title: string; areaId?: string };
+  routine: null | { _id: string; title: string; areaId?: string };
 }
 
 export function AlbatrossCompanion() {
@@ -33,18 +36,30 @@ export function AlbatrossCompanion() {
     | undefined;
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  const setSelectedAreaId = useClientStore((state) => state.setSelectedAreaId);
   const [open, setOpen] = useState(false);
   const [answer, setAnswer] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pipWindow = useSyncExternalStore(subscribePipWindow, getPipWindow, () => null);
-  const row = rows?.find((item) => item.work) || null;
+  const row = rows?.[0] || null;
+  const questionId = row?.question._id;
+
+  useEffect(() => {
+    if (!questionId) return;
+    setAnswer('');
+    setSelected(null);
+    setError(null);
+    setBusy(false);
+  }, [questionId]);
 
   if (!row) return null;
 
-  const openWork = () => {
-    setSelectedWorkId(String(row.work!._id));
+  const openContext = () => {
+    setSelectedWorkId(row.work ? String(row.work._id) : null);
+    const areaId = row.routine?.areaId || row.project?.areaId;
+    setSelectedAreaId(areaId ? String(areaId) : null);
     setPrimaryView('areas');
   };
 
@@ -104,28 +119,26 @@ export function AlbatrossCompanion() {
               <button
                 type="button"
                 className="text-[11px] text-[var(--color-text-muted)] hover:underline"
-                onClick={openWork}
+                onClick={openContext}
               >
-                {row.work?.title || row.work?.rawText} <ExternalLink className="ml-1 inline size-3" />
+                {row.work?.title ||
+                  row.work?.rawText ||
+                  row.project?.title ||
+                  row.routine?.title ||
+                  'Open context'}{' '}
+                <ExternalLink className="ml-1 inline size-3" />
               </button>
               {row.question.options?.length ? (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {row.question.options.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => setSelected(option.id)}
-                      className={cn(
-                        'rounded-full border px-2.5 py-1 text-[11.5px]',
-                        selected === option.id
-                          ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                          : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]',
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
+                <OptionList
+                  id={`companion-question-${row.question._id}`}
+                  options={row.question.options}
+                  selectionMode="single"
+                  value={selected}
+                  onChange={(value) => setSelected(typeof value === 'string' ? value : null)}
+                  density="compact"
+                  hideActions
+                  className="mt-2 !min-w-0 !max-w-none"
+                />
               ) : null}
               <div className="mt-2.5 flex gap-2">
                 <input
@@ -187,23 +200,16 @@ export function AlbatrossCompanion() {
                 </button>
               </div>
               {row.question.options?.length ? (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {row.question.options.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => setSelected(option.id)}
-                      className={cn(
-                        'rounded-full border px-2.5 py-1 text-[11.5px]',
-                        selected === option.id
-                          ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                          : 'border-[var(--color-border)]',
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
+                <OptionList
+                  id={`companion-pip-question-${row.question._id}`}
+                  options={row.question.options}
+                  selectionMode="single"
+                  value={selected}
+                  onChange={(value) => setSelected(typeof value === 'string' ? value : null)}
+                  density="compact"
+                  hideActions
+                  className="mt-3 !min-w-0 !max-w-none"
+                />
               ) : null}
               <div className="mt-3 flex gap-2">
                 <input

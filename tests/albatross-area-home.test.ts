@@ -1,18 +1,23 @@
 import { describe, expect, test } from 'bun:test';
+import type { NeedsYouRow } from '../lib/albatross/area-home';
 import {
   AREA_PLACE_CAP,
   areaBrandingFromFacts,
   areaBriefHeadline,
+  areaBriefState,
   areaCanArchive,
+  areaFreshness,
   areaHasNoLinks,
   areaHomeSections,
   areaIndexStatusSummary,
   areaIndexStatusTitle,
+  areaInitials,
   areaNeedsYouRows,
   areaOverviewBadges,
   areaOverviewPriority,
   areaOverviewStatus,
   areaPulse,
+  evidenceRollup,
   extractAreaPlaces,
   faviconUrlForDomain,
   formatEventTime,
@@ -24,17 +29,22 @@ import {
   isWeakAutomaticAreaLink,
   LEGACY_PERSONAL_AREA_EXTERNAL_ID,
   mapsSearchUrl,
+  mergeNeedsYouRows,
   normalizeAreaDomain,
   planActionLabel,
   planStatusMeta,
+  projectProgress,
+  projectStateMeta,
   RAIL_AREA_CAP,
   railAreaBadge,
   railAreaRows,
   resolveAreaSelection,
   shouldRetireDeterministicAreaLink,
+  shouldShowEvidenceBand,
   splitBriefRows,
   suggestIntentArea,
   taskRowMeta,
+  workNeedsYouRows,
 } from '../lib/albatross/area-home';
 
 describe('automatic Area link lifecycle', () => {
@@ -132,16 +142,23 @@ describe('areaHomeSections', () => {
 });
 
 describe('areaHasNoLinks', () => {
-  test('true only when mail, events, and tasks are all empty', () => {
+  test('true only when every rendered and other artifact link is empty', () => {
     expect(areaHasNoLinks(counts(0, 0, 0))).toBe(true);
     expect(areaHasNoLinks(counts(0, 0, 0, 5, 2))).toBe(true); // facts alone are not links
     expect(areaHasNoLinks(counts(1, 0, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 1, 0))).toBe(false);
     expect(areaHasNoLinks(counts(0, 0, 1))).toBe(false);
+    expect(areaHasNoLinks(counts(0, 0, 0), 1)).toBe(false);
   });
 });
 
 describe('area branding helpers', () => {
+  test('uses readable initials when an Area has no image or favicon', () => {
+    expect(areaInitials('Lab86 / Albatross')).toBe('LA');
+    expect(areaInitials('Personal')).toBe('PE');
+    expect(areaInitials('')).toBe('A');
+  });
+
   test('normalizes domains from URLs, emails, @domains, and plain domains', () => {
     expect(normalizeAreaDomain('https://www.statpearls.com/path?x=1')).toBe('statpearls.com');
     expect(normalizeAreaDomain('Inbox <alerts@sub.example.org>')).toBe('sub.example.org');
@@ -523,6 +540,22 @@ describe('areaBriefHeadline', () => {
     ).toBe('2 items need you before Household can move cleanly.');
   });
 
+  test('a bounded blockers queue qualifies the count', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Garden',
+        needsYou: 6,
+        needsYouBounded: true,
+        upcoming: 0,
+        plans: 0,
+        projects: 0,
+        mail: 0,
+        tasks: 0,
+        candidateFacts: 0,
+      }),
+    ).toBe('at least 6 items need you before Garden can move cleanly.');
+  });
+
   test('otherwise it summarizes upcoming events and active plans', () => {
     expect(
       areaBriefHeadline({
@@ -538,6 +571,22 @@ describe('areaBriefHeadline', () => {
     ).toBe('1 upcoming event and 2 active plans are shaping Job Search today.');
   });
 
+  test('bounded upcoming evidence qualifies the event count', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Garden',
+        needsYou: 0,
+        upcoming: 3,
+        upcomingBounded: true,
+        plans: 1,
+        projects: 0,
+        mail: 0,
+        tasks: 0,
+        candidateFacts: 0,
+      }),
+    ).toBe('at least 3 upcoming events and 1 active plan are shaping Garden today.');
+  });
+
   test('quiet areas get a quiet sentence', () => {
     expect(
       areaBriefHeadline({
@@ -551,6 +600,53 @@ describe('areaBriefHeadline', () => {
         candidateFacts: 0,
       }),
     ).toBe('Garden is quiet right now.');
+  });
+
+  test('exact filed-signals count when evidence is not bounded', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Household',
+        needsYou: 0,
+        upcoming: 1,
+        plans: 0,
+        projects: 0,
+        mail: 3,
+        tasks: 2,
+        candidateFacts: 0,
+      }),
+    ).toBe('Household has 6 filed signals to review.');
+  });
+
+  test('bounded evidence avoids an exact claim it cannot stand behind', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Household',
+        needsYou: 0,
+        upcoming: 0,
+        plans: 0,
+        projects: 0,
+        mail: 30,
+        tasks: 0,
+        candidateFacts: 0,
+        evidenceBounded: true,
+      }),
+    ).toBe('Household has at least 30 filed signals to review.');
+  });
+
+  test('a single bounded signal keeps singular wording', () => {
+    expect(
+      areaBriefHeadline({
+        areaName: 'Household',
+        needsYou: 0,
+        upcoming: 0,
+        plans: 0,
+        projects: 0,
+        mail: 1,
+        tasks: 0,
+        candidateFacts: 0,
+        evidenceBounded: true,
+      }),
+    ).toBe('Household has at least 1 filed signal to review.');
   });
 });
 
@@ -678,9 +774,9 @@ describe('areaNeedsYouRows', () => {
     expect(rows[0].kind).toBe('plan_answers');
   });
 
-  test('caps the queue', () => {
+  test('returns the complete queue so presentation can collapse it without losing actions', () => {
     const facts = Array.from({ length: 20 }, (_, i) => ({ _id: `f${i}`, kind: 'note', value: `v${i}` }));
-    expect(areaNeedsYouRows({ candidateFacts: facts }, now, 3)).toHaveLength(3);
+    expect(areaNeedsYouRows({ candidateFacts: facts }, now)).toHaveLength(20);
   });
 
   test('null/undefined inputs are treated as empty', () => {
@@ -735,5 +831,316 @@ describe('extractAreaPlaces', () => {
     const places = extractAreaPlaces([{ places: [{ name: '  ' }, ...many], mapQuery: null }], null);
     expect(places).toHaveLength(AREA_PLACE_CAP);
     expect(places[0].name).toBe('Place 0');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Area Brief v2: living-brief presentation, work-needs-you, project progress,
+// evidence rollup.
+// ---------------------------------------------------------------------------
+
+describe('areaBriefState', () => {
+  const headline = 'Household is quiet right now.';
+
+  test('ready brief renders the generated lede and summary, not the headline', () => {
+    const state = areaBriefState(
+      {
+        status: 'ready',
+        lede: 'The lease renewal is the only blocker.',
+        summary: 'Two tasks remain.',
+        generatedAt: 100,
+      },
+      headline,
+    );
+    expect(state.mode).toBe('ready');
+    expect(state.lede).toBe('The lease renewal is the only blocker.');
+    expect(state.summary).toBe('Two tasks remain.');
+    expect(state.stale).toBe(false);
+    expect(state.canGenerate).toBe(false);
+    expect(state.note).toBeNull();
+    expect(state.generatedAt).toBe(100);
+  });
+
+  test('generating over a published prior edition carries it as stale, with an honest note', () => {
+    // A real prior edition preserves its generatedAt while the next one writes.
+    const state = areaBriefState(
+      { status: 'generating', lede: 'Old lede.', summary: 'Old summary.', generatedAt: 100 },
+      headline,
+    );
+    expect(state.mode).toBe('generating');
+    expect(state.lede).toBe('Old lede.');
+    expect(state.summary).toBe('Old summary.');
+    expect(state.stale).toBe(true);
+    expect(state.note).toBe('Updating the brief…');
+    expect(state.canGenerate).toBe(false);
+  });
+
+  test('first-ever generating record shows the headline even if it carries placeholder text', () => {
+    // The backend's first generating write has generatedAt undefined; any lede it
+    // carries is a placeholder, not a published edition, so it must not go stale.
+    const withPlaceholder = areaBriefState(
+      { status: 'generating', lede: 'Preparing…', summary: '' },
+      headline,
+    );
+    expect(withPlaceholder.mode).toBe('generating');
+    expect(withPlaceholder.lede).toBe(headline);
+    expect(withPlaceholder.summary).toBeNull();
+    expect(withPlaceholder.stale).toBe(false);
+    expect(withPlaceholder.note).toBe('Writing the brief…');
+
+    const empty = areaBriefState({ status: 'generating', lede: '', summary: '' }, headline);
+    expect(empty.lede).toBe(headline);
+    expect(empty.stale).toBe(false);
+    expect(empty.note).toBe('Writing the brief…');
+  });
+
+  test('a failed refresh of a published edition keeps the last brief visible', () => {
+    const withPrior = areaBriefState(
+      { status: 'error', lede: 'Last good lede.', summary: 'Detail.', generatedAt: 100 },
+      headline,
+    );
+    expect(withPrior.mode).toBe('error');
+    expect(withPrior.lede).toBe('Last good lede.');
+    expect(withPrior.stale).toBe(true);
+    expect(withPrior.note).toBe('Couldn’t refresh — showing the last brief.');
+    expect(withPrior.canGenerate).toBe(false);
+  });
+
+  test('a first-ever error (no published edition) shows the headline and offers to generate', () => {
+    // No generatedAt: even a placeholder lede is not a real brief to fall back on.
+    const withPlaceholder = areaBriefState({ status: 'error', lede: 'Preparing…', summary: '' }, headline);
+    expect(withPlaceholder.mode).toBe('error');
+    expect(withPlaceholder.lede).toBe(headline);
+    expect(withPlaceholder.summary).toBeNull();
+    expect(withPlaceholder.stale).toBe(false);
+    expect(withPlaceholder.note).toBe('Live work and evidence are below.');
+    expect(withPlaceholder.canGenerate).toBe(true);
+
+    const empty = areaBriefState({ status: 'error', lede: '', summary: '' }, headline);
+    expect(empty.mode).toBe('error');
+    expect(empty.lede).toBe(headline);
+    expect(empty.note).toBe('Live work and evidence are below.');
+    expect(empty.canGenerate).toBe(true);
+  });
+
+  test('an unrenderable generated timestamp cannot masquerade as a published edition', () => {
+    const state = areaBriefState(
+      {
+        status: 'error',
+        lede: 'Placeholder text',
+        summary: 'Placeholder summary',
+        generatedAt: Number.MAX_VALUE,
+      },
+      headline,
+    );
+    expect(state.generatedAt).toBeNull();
+    expect(state.lede).toBe(headline);
+    expect(state.canGenerate).toBe(true);
+  });
+
+  test('absent brief (null doc) uses the headline and offers to generate', () => {
+    const state = areaBriefState(null, headline);
+    expect(state.mode).toBe('absent');
+    expect(state.lede).toBe(headline);
+    expect(state.summary).toBeNull();
+    expect(state.canGenerate).toBe(true);
+    expect(state.stale).toBe(false);
+  });
+
+  test('a ready doc with no text degrades to absent rather than showing an empty lead', () => {
+    const state = areaBriefState({ status: 'ready', lede: '   ', summary: '' }, headline);
+    expect(state.mode).toBe('absent');
+    expect(state.lede).toBe(headline);
+    expect(state.canGenerate).toBe(true);
+  });
+});
+
+describe('areaFreshness', () => {
+  const now = at(2026, 6, 8, 12, 0);
+
+  test('recent times read relative, older times read as a date', () => {
+    expect(areaFreshness(now - 20_000, now)).toBe('just now');
+    expect(areaFreshness(now - 12 * 60_000, now)).toBe('12m ago');
+    expect(areaFreshness(now - 3 * 60 * 60_000, now)).toBe('3h ago');
+    expect(areaFreshness(at(2026, 6, 5, 9, 0), now)).toBe('Jul 5');
+  });
+
+  test('missing or malformed timestamps produce nothing', () => {
+    expect(areaFreshness(null, now)).toBeNull();
+    expect(areaFreshness(undefined, now)).toBeNull();
+    expect(areaFreshness(0, now)).toBeNull();
+    expect(areaFreshness(Number.NaN, now)).toBeNull();
+    expect(areaFreshness(Number.MAX_VALUE, now)).toBeNull();
+  });
+});
+
+describe('workNeedsYouRows', () => {
+  test('only needs_input work qualifies and carries the work id', () => {
+    const rows = workNeedsYouRows([
+      { _id: 'w1', title: 'Book the venue', agentState: 'needs_input' },
+      { _id: 'w2', title: 'Draft email', agentState: 'researching' },
+      { _id: 'w3', rawText: 'no title here', agentState: 'needs_input' },
+    ]);
+    expect(rows.map((r) => r.workId)).toEqual(['w1', 'w3']);
+    expect(rows.every((r) => r.kind === 'work_input')).toBe(true);
+    expect(rows[1].title).toBe('no title here');
+    expect(rows[0].detail).toBe('Answer to continue this work');
+  });
+
+  test('null input is empty and every actionable row remains reachable', () => {
+    expect(workNeedsYouRows(null)).toEqual([]);
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      _id: `w${i}`,
+      title: `W${i}`,
+      agentState: 'needs_input',
+    }));
+    expect(workNeedsYouRows(many)).toHaveLength(10);
+  });
+});
+
+describe('mergeNeedsYouRows', () => {
+  const work = (workId: string, title = workId): NeedsYouRow => ({
+    id: `work:${workId}`,
+    kind: 'work_input',
+    title,
+    detail: 'Answer to continue this work',
+    workId,
+  });
+  const plan = (intentId: string, title = intentId): NeedsYouRow => ({
+    id: `plan:${intentId}`,
+    kind: 'plan_answers',
+    title,
+    detail: 'Answer questions to finish planning',
+    intentId,
+  });
+  const task = (cardId: string): NeedsYouRow => ({
+    id: `task:${cardId}`,
+    kind: 'overdue_task',
+    title: cardId,
+    detail: 'Overdue · Jul 1',
+  });
+  const fact = (factId: string): NeedsYouRow => ({
+    id: `fact:${factId}`,
+    kind: 'suggested_context',
+    title: factId,
+    detail: 'Suggested preference',
+  });
+
+  test('the same intent as work_input and plan_answers collapses to the actionable work row', () => {
+    const merged = mergeNeedsYouRows([work('i1')], [plan('i1')]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].kind).toBe('work_input');
+    expect(merged[0].workId).toBe('i1');
+  });
+
+  test('work_input wins the shared slot regardless of plan order (work passed first)', () => {
+    const merged = mergeNeedsYouRows([work('i1'), work('i2')], [plan('i2'), plan('i3')]);
+    expect(merged.map((r) => r.id)).toEqual(['work:i1', 'work:i2', 'plan:i3']);
+  });
+
+  test('overdue tasks and suggested context are always preserved (no shared identity)', () => {
+    const merged = mergeNeedsYouRows([work('i1')], [plan('i1'), task('c1'), fact('f1')]);
+    expect(merged.map((r) => r.kind)).toEqual(['work_input', 'overdue_task', 'suggested_context']);
+  });
+
+  test('distinct intents are all kept', () => {
+    const merged = mergeNeedsYouRows([work('i1')], [plan('i2')]);
+    expect(merged.map((r) => r.id)).toEqual(['work:i1', 'plan:i2']);
+  });
+
+  test('rows lacking their identity field are never merged away', () => {
+    const orphanWork: NeedsYouRow = { id: 'work:x', kind: 'work_input', title: 'x', detail: null };
+    const orphanPlan: NeedsYouRow = { id: 'plan:y', kind: 'plan_answers', title: 'y', detail: null };
+    const merged = mergeNeedsYouRows([orphanWork], [orphanPlan]);
+    expect(merged).toHaveLength(2);
+  });
+
+  test('dedupe never drops unrelated actionable rows; null inputs are empty', () => {
+    const merged = mergeNeedsYouRows(
+      [work('i1'), work('i2'), work('i3')],
+      [plan('i1'), task('c1'), fact('f1')],
+    );
+    expect(merged).toHaveLength(5);
+    expect(merged.map((r) => r.id)).toEqual(['work:i1', 'work:i2', 'work:i3', 'task:c1', 'fact:f1']);
+    expect(mergeNeedsYouRows(null, null)).toEqual([]);
+  });
+});
+
+describe('projectProgress', () => {
+  test('produces a clamped percent and a bar only when there is a total', () => {
+    expect(projectProgress(3, 4)).toEqual({ completed: 3, total: 4, percent: 75, hasBar: true });
+    expect(projectProgress(0, 0)).toEqual({ completed: 0, total: 0, percent: 0, hasBar: false });
+    expect(projectProgress(9, 4)).toEqual({ completed: 4, total: 4, percent: 100, hasBar: true });
+    expect(projectProgress(-2, 4).completed).toBe(0);
+    expect(projectProgress(1, undefined)).toEqual({ completed: 0, total: 0, percent: 0, hasBar: false });
+  });
+});
+
+describe('projectStateMeta', () => {
+  test('maps real statuses; unknown statuses echo without inventing health', () => {
+    expect(projectStateMeta('active')).toEqual({ label: 'Active', tone: 'active' });
+    expect(projectStateMeta('paused')).toEqual({ label: 'Paused', tone: 'paused' });
+    expect(projectStateMeta('done').tone).toBe('neutral');
+    expect(projectStateMeta('on_hold')).toEqual({ label: 'on hold', tone: 'neutral' });
+    expect(projectStateMeta(null)).toEqual({ label: 'Project', tone: 'neutral' });
+  });
+});
+
+describe('evidenceRollup', () => {
+  const preview = (shown: number, hasMore = false) => ({ shown, hasMore });
+
+  test('only non-zero facets in a fixed order, with singular/plural', () => {
+    const segments = evidenceRollup({
+      mail: preview(17),
+      events: preview(0),
+      tasks: preview(1),
+      facts: { verified: 2, candidate: 1 },
+    });
+    expect(segments.map((s) => s.id)).toEqual(['mail', 'tasks', 'verified', 'candidate']);
+    expect(segments.map((s) => s.label)).toEqual([
+      '17 threads',
+      '1 task',
+      '2 verified facts',
+      '1 context ask',
+    ]);
+  });
+
+  test('a bounded preview reads "N+" and never claims a false exact total', () => {
+    const segments = evidenceRollup({
+      mail: preview(30, true),
+      events: preview(3, false),
+      tasks: preview(1, true),
+      facts: { verified: 0, candidate: 0 },
+    });
+    expect(segments.map((s) => s.label)).toEqual(['30+ threads', '3 events', '1+ tasks']);
+  });
+
+  test('a single shown row that is not bounded stays singular', () => {
+    const segments = evidenceRollup({
+      mail: preview(1, false),
+      events: preview(0),
+      tasks: preview(0),
+      facts: { verified: 0, candidate: 0 },
+    });
+    expect(segments.map((s) => s.label)).toEqual(['1 thread']);
+  });
+
+  test('a quiet area yields no rollup (band hides)', () => {
+    expect(
+      evidenceRollup({
+        mail: preview(0),
+        events: preview(0),
+        tasks: preview(0),
+        facts: { verified: 0, candidate: 0 },
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe('shouldShowEvidenceBand', () => {
+  test('keeps a places-only Area visible in the supporting evidence band', () => {
+    expect(shouldShowEvidenceBand(0, 2)).toBe(true);
+    expect(shouldShowEvidenceBand(0, 0)).toBe(false);
+    expect(shouldShowEvidenceBand(1, 0)).toBe(true);
   });
 });

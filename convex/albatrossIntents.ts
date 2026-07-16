@@ -154,6 +154,7 @@ export const createIntent = mutation({
         if (!existing.areaId) {
           await ctx.db.patch(existing._id, {
             areaId: await normalizeIntentAreaId(ctx, userId, args.areaId),
+            areaAutoAssigned: undefined,
             updatedAt: now(),
           });
         }
@@ -171,6 +172,7 @@ export const createIntent = mutation({
       title: bounded(args.title, 180),
       status: 'captured',
       areaId,
+      areaAutoAssigned: undefined,
       createdAt: ts,
       updatedAt: ts,
     });
@@ -232,7 +234,11 @@ export const updateIntent = mutation({
     const patch: Record<string, unknown> = { updatedAt: ts };
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
     if (args.kind !== undefined) patch.kind = bounded(args.kind, 40);
-    if (args.areaId !== undefined) patch.areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
+    if (args.areaId !== undefined) {
+      patch.areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
+      // The user picked (or explicitly cleared to Personal) — stop auto-sorting.
+      patch.areaAutoAssigned = false;
+    }
     if (args.priority !== undefined) patch.priority = Math.min(Math.max(Math.round(args.priority), 1), 3);
     if (args.status !== undefined) {
       patch.status = args.status;
@@ -253,6 +259,110 @@ export const updateIntent = mutation({
       });
     }
     return args.intentId;
+  },
+});
+
+// Intents still carrying a defaulted (Personal) area — the intent half of the
+// classifier's work queue. Internal-secret-gated: only the cron path reads it.
+export const listAutoAssigned = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
+    // Indexed on the flag itself: a flagged intent kept for retry (model
+    // outage) can never fall out of a recency window and strand.
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_autoassigned', (q) => q.eq('userId', args.userId).eq('areaAutoAssigned', true))
+      .order('desc')
+      .take(limit + 50);
+    return rows
+      .filter((row) => row.status !== 'archived')
+      .slice(0, limit)
+      .map((row) => ({
+        intentId: String(row._id),
+        title: row.title ?? null,
+        rawText: row.rawText.slice(0, 500),
+        source: row.source,
+      }));
+  },
+});
+
+// Apply fast-model area verdicts to auto-assigned intents. A verdict with an
+// areaId re-homes the intent (candidate trust — the link records the model's
+// reasoning); without one the intent stays in Personal. Either way the
+// auto-assigned flag clears so the intent is classified exactly once. Intents
+// the user re-homed between the read and this write are left untouched.
+export const applyAreaVerdicts = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    verdicts: v.array(
+      v.object({
+        intentId: v.id('albatrossIntents'),
+        areaId: v.optional(v.id('areas')),
+        reason: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const userId = args.userId;
+    const ts = now();
+    let assigned = 0;
+    let kept = 0;
+    let skipped = 0;
+    for (const verdict of args.verdicts.slice(0, 50)) {
+      const intent = await ctx.db.get(verdict.intentId);
+      if (!intent || intent.userId !== userId || intent.areaAutoAssigned !== true) {
+        skipped += 1;
+        continue;
+      }
+      if (!verdict.areaId) {
+        await ctx.db.patch(intent._id, { areaAutoAssigned: false, updatedAt: ts });
+        kept += 1;
+        continue;
+      }
+      const area = await ctx.db.get(verdict.areaId);
+      if (!area || area.userId !== userId || area.status !== 'active') {
+        skipped += 1;
+        continue;
+      }
+      await ctx.db.patch(intent._id, {
+        areaId: String(area._id),
+        primaryAreaId: area._id,
+        areaAutoAssigned: false,
+        updatedAt: ts,
+      });
+      const existingLink = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_artifact', (q) =>
+          q.eq('userId', userId).eq('artifactKind', 'intent').eq('artifactId', String(intent._id)),
+        )
+        .collect();
+      if (!existingLink.some((row) => row.areaId === area._id)) {
+        await ctx.db.insert('areaArtifactLinks', {
+          userId,
+          areaId: area._id,
+          artifactKind: 'intent',
+          artifactId: String(intent._id),
+          role: 'primary',
+          status: 'candidate',
+          confidence: 0.6,
+          reason: bounded(verdict.reason, 700) || 'fast-model area classification',
+          sourceRefs: [{ kind: 'system', id: 'area-classifier', label: 'Automatic intent sorting' }],
+          confirmationRefs: [],
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      }
+      assigned += 1;
+    }
+    return { assigned, kept, skipped };
   },
 });
 

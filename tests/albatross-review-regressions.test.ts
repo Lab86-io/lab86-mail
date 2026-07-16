@@ -56,9 +56,10 @@ describe('CodeRabbit Albatross regressions', () => {
 
   test('artifact and answer controls retain their security and accessibility contracts', () => {
     const detail = read('components/albatross/WorkDetail.tsx');
+    const artifactFrame = read('components/albatross/WorkDetailArtifactFrame.tsx');
     const companion = read('components/albatross/AlbatrossCompanion.tsx');
-    expect(detail).toContain('sandbox="allow-scripts allow-popups"');
-    expect(detail).not.toContain('allow-popups-to-escape-sandbox');
+    expect(artifactFrame).toContain('sandbox="allow-scripts allow-popups"');
+    expect(artifactFrame).not.toContain('allow-popups-to-escape-sandbox');
     expect(detail).toContain('aria-label="Answer in your own words"');
     expect(companion.match(/aria-label="Answer Albatross in your own words"/g)).toHaveLength(2);
   });

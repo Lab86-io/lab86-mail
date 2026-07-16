@@ -4,9 +4,10 @@
 // best-effort and skips any tool a server doesn't actually expose, so a vendor
 // renaming a tool degrades gracefully instead of crashing the run.
 import type { McpAuthMode } from './auth';
+import { granolaMeetingsFromText } from './granola';
 
-export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack';
-export type McpServerTransport = 'mcp' | 'bitbucket-rest';
+export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
+export type McpServerTransport = 'mcp' | 'bitbucket-rest' | 'github-rest';
 
 export interface McpSyncQuery {
   tool: string;
@@ -19,6 +20,7 @@ export interface McpServerDef {
   label: string;
   transport: McpServerTransport;
   authMode: McpAuthMode;
+  connectMode: 'token' | 'oauth';
   // Hosted Streamable-HTTP MCP endpoints for MCP transports; REST API base URL
   // for direct API transports.
   defaultUrl: string;
@@ -32,32 +34,22 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
   github: {
     id: 'github',
     label: 'GitHub',
-    transport: 'mcp',
+    transport: 'github-rest',
     authMode: 'bearer',
-    defaultUrl: 'https://api.githubcopilot.com/mcp/readonly',
+    connectMode: 'token',
+    defaultUrl: 'https://api.github.com',
     tokenLabel: 'GitHub personal access token',
     tokenHelp:
-      'Create a fine-grained PAT (read access to issues & pull requests) at github.com/settings/tokens.',
-    scopes: ['issues:read', 'pull_requests:read'],
-    syncQueries: [
-      { tool: 'search_issues', args: { query: 'assignee:@me is:open is:issue', perPage: 30 }, kind: 'issue' },
-      {
-        tool: 'search_issues',
-        args: { query: 'author:@me is:open is:pull-request', perPage: 30 },
-        kind: 'pull_request',
-      },
-      {
-        tool: 'search_pull_requests',
-        args: { query: 'review-requested:@me is:open', perPage: 30 },
-        kind: 'pull_request',
-      },
-    ],
+      'Create a fine-grained PAT with read access to metadata, contents, issues, pull requests, and Projects at github.com/settings/tokens.',
+    scopes: ['metadata:read', 'contents:read', 'issues:read', 'pull_requests:read', 'projects:read'],
+    syncQueries: [],
   },
   bitbucket: {
     id: 'bitbucket',
     label: 'Bitbucket',
     transport: 'bitbucket-rest',
     authMode: 'basic-or-bearer',
+    connectMode: 'token',
     defaultUrl: 'https://api.bitbucket.org/2.0',
     tokenLabel: 'Bitbucket token',
     tokenHelp:
@@ -70,6 +62,7 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     label: 'Atlassian / Jira',
     transport: 'mcp',
     authMode: 'basic-or-bearer',
+    connectMode: 'token',
     defaultUrl: 'https://mcp.atlassian.com/v1/mcp',
     tokenLabel: 'Atlassian token',
     tokenHelp:
@@ -91,6 +84,7 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     label: 'Slack',
     transport: 'mcp',
     authMode: 'bearer',
+    connectMode: 'token',
     defaultUrl: 'https://mcp.slack.com/mcp',
     tokenLabel: 'Slack token',
     tokenHelp:
@@ -98,10 +92,61 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     scopes: ['search:read'],
     syncQueries: [{ tool: 'search_messages', args: { query: 'is:mention', count: 30 }, kind: 'message' }],
   },
+  granola: {
+    id: 'granola',
+    label: 'Granola',
+    transport: 'mcp',
+    authMode: 'bearer',
+    connectMode: 'oauth',
+    defaultUrl: 'https://mcp.granola.ai/mcp',
+    tokenLabel: 'Granola browser authorization',
+    tokenHelp:
+      'Connect with Granola in your browser. Lab86 indexes the meeting notes visible to your active Granola workspace.',
+    scopes: ['mcp'],
+    syncQueries: [{ tool: 'list_meetings', args: {}, kind: 'meeting' }],
+  },
 };
 
 export function getServerDef(id: string): McpServerDef | null {
   return (MCP_SERVERS as Record<string, McpServerDef>)[id] ?? null;
+}
+
+const LEGACY_GITHUB_MCP_HOSTS = new Set(['api.githubcopilot.com']);
+
+function sameScopes(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((scope, index) => scope === right[index]);
+}
+
+export function resolveMcpConnectionConfig(
+  server: string,
+  storedUrl: string,
+  storedScopes: readonly string[] = [],
+): { serverUrl: string; scopes: string[]; migrated: boolean } {
+  const definition = getServerDef(server);
+  if (!definition) {
+    return { serverUrl: storedUrl, scopes: [...storedScopes], migrated: false };
+  }
+
+  const normalizedStoredUrl = String(storedUrl || '').replace(/\/+$/u, '');
+  let serverUrl = normalizedStoredUrl || definition.defaultUrl;
+  if (server === 'github') {
+    try {
+      if (LEGACY_GITHUB_MCP_HOSTS.has(new URL(serverUrl).hostname.toLowerCase())) {
+        serverUrl = definition.defaultUrl;
+      }
+    } catch {
+      // Connection URLs are server-authored, but an older malformed value
+      // should still self-heal to the provider default instead of receiving a
+      // bearer token or trapping the connection in a permanent sync error.
+      serverUrl = definition.defaultUrl;
+    }
+  }
+
+  return {
+    serverUrl,
+    scopes: [...definition.scopes],
+    migrated: serverUrl !== normalizedStoredUrl || !sameScopes(storedScopes, definition.scopes),
+  };
 }
 
 export interface NormalizedMcpItem {
@@ -112,6 +157,10 @@ export interface NormalizedMcpItem {
   url?: string;
   state?: string;
   author?: string;
+  repository?: string;
+  organization?: string;
+  parentExternalId?: string;
+  sha?: string;
   assignedToUser?: boolean;
   updatedAtSource?: number;
   raw?: unknown;
@@ -124,6 +173,17 @@ function firstString(...vals: unknown[]): string | undefined {
     if (typeof v === 'number' && Number.isFinite(v)) return String(v);
   }
   return undefined;
+}
+
+function compactText(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 12_000);
+  if (!value || typeof value !== 'object') return undefined;
+  try {
+    const text = JSON.stringify(value);
+    return text === '{}' || text === '[]' ? undefined : text.slice(0, 12_000);
+  } catch {
+    return undefined;
+  }
 }
 
 function parseTimestamp(value: unknown): number | undefined {
@@ -148,13 +208,23 @@ function extractRawArray(result: any): any[] {
       try {
         candidates.push(JSON.parse(block.text));
       } catch {
-        // non-JSON text block — ignore
+        const meetings = granolaMeetingsFromText(block.text);
+        if (meetings.length) candidates.push(meetings);
       }
     }
   }
   for (const c of candidates) {
     if (Array.isArray(c)) return c;
-    for (const key of ['items', 'issues', 'results', 'messages', 'pull_requests', 'matches', 'data']) {
+    for (const key of [
+      'items',
+      'issues',
+      'results',
+      'messages',
+      'meetings',
+      'pull_requests',
+      'matches',
+      'data',
+    ]) {
       if (Array.isArray(c?.[key])) return c[key];
     }
     // Slack search nests under messages.matches
@@ -193,6 +263,24 @@ export function normalizeItems(query: McpSyncQuery, result: any): NormalizedMcpI
       row.text,
       row.message?.text,
     );
+    const attendeeNames = Array.isArray(row.attendees)
+      ? row.attendees
+          .map((attendee: any) =>
+            firstString(attendee?.name, attendee?.display_name, attendee?.email, attendee),
+          )
+          .filter(Boolean)
+          .join(', ')
+      : undefined;
+    const summary = firstString(
+      row.summary,
+      compactText(row.notes),
+      row.notes,
+      compactText(row.summarized_notes),
+      row.description,
+      compactText(row.private_notes),
+      row.private_notes,
+      attendeeNames ? `Attendees: ${attendeeNames}` : undefined,
+    );
     const url = firstString(row.html_url, row.url, row.permalink, row.self, row.link);
     const state = firstString(
       row.state,
@@ -210,19 +298,27 @@ export function normalizeItems(query: McpSyncQuery, result: any): NormalizedMcpI
       row.user,
     );
     const updatedAtSource = parseTimestamp(
-      row.updated_at ?? row.updatedAt ?? row.updated ?? row.fields?.updated ?? row.ts,
+      row.updated_at ??
+        row.updatedAt ??
+        row.updated ??
+        row.fields?.updated ??
+        row.date ??
+        row.start_time ??
+        row.created_at ??
+        row.ts,
     );
     const finalTitle = title || `${query.kind} ${externalId}`;
     out.push({
       externalId,
       kind: query.kind,
       title: finalTitle,
+      summary,
       url,
       state,
       author,
       updatedAtSource,
       raw: row,
-      searchText: [finalTitle, state, author, query.kind].filter(Boolean).join(' '),
+      searchText: [finalTitle, summary, attendeeNames, state, author, query.kind].filter(Boolean).join(' '),
     });
   }
   return out;

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  answeredHitlToolCallId,
+  createHitlAutoContinueGuard,
   HITL_TOOL_NAMES,
   isHitlToolName,
   lastMessageAnsweredHitl,
@@ -47,6 +49,37 @@ describe('lastMessageAnsweredHitl (auto-continue predicate)', () => {
     ).toBe(false);
     expect(lastMessageAnsweredHitl([{ role: 'user', parts: [] }])).toBe(false);
     expect(lastMessageAnsweredHitl([])).toBe(false);
+  });
+});
+
+describe('createHitlAutoContinueGuard', () => {
+  const assistant = (parts: any[]) => ({ role: 'assistant', parts });
+
+  test('consumes one answered tool call exactly once', () => {
+    const shouldContinue = createHitlAutoContinueGuard();
+    const messages = [
+      assistant([{ type: 'tool-ask_user', toolCallId: 'question_1', state: 'output-available' }]),
+    ];
+    expect(answeredHitlToolCallId(messages)).toBe('question_1');
+    expect(shouldContinue(messages)).toBe(true);
+    expect(shouldContinue(messages)).toBe(false);
+  });
+
+  test('allows a later distinct answer and ignores malformed answers', () => {
+    const shouldContinue = createHitlAutoContinueGuard();
+    expect(shouldContinue([assistant([{ type: 'tool-ask_user', state: 'output-available' }])])).toBe(false);
+    expect(
+      shouldContinue([
+        assistant([
+          {
+            type: 'dynamic-tool',
+            toolName: 'ask_approval',
+            toolCallId: 'approval_2',
+            state: 'output-available',
+          },
+        ]),
+      ]),
+    ).toBe(true);
   });
 });
 

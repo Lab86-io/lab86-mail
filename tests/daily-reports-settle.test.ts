@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DailyReport } from '../lib/shared/types';
-import { getDailyReport, migrateDailyReport, saveDailyReport } from '../lib/store/daily-reports';
+import {
+  getDailyReport,
+  migrateDailyReport,
+  saveDailyReport,
+  setDailyReportPersistenceForTest,
+} from '../lib/store/daily-reports';
 import { kvGet } from '../lib/store/kv';
 import { withToolContext } from './tools/harness';
 import './tools/harness';
@@ -83,6 +88,30 @@ describe('migrateDailyReport settle-on-read', () => {
       expect(fetched?.artifactStatus).toBe('rendered');
       expect(persisted?.artifactStatus).toBe('rendered');
       expect(raw.artifactStatus).toBe('enriching');
+    });
+  });
+
+  test('a failed settle persistence remains a successful read', async () => {
+    await withToolContext(async () => {
+      const raw = edition({
+        _id: 'rep_settle_persist_failure',
+        kind: 'evening',
+        generatedAt: Date.now() - STUCK_MS - 60_000,
+      });
+      await saveDailyReport(raw);
+      const warnings: unknown[][] = [];
+      const previousWarn = console.warn;
+      console.warn = (...args: unknown[]) => warnings.push(args);
+      const restore = setDailyReportPersistenceForTest((() => {
+        throw new Error('store unavailable');
+      }) as any);
+      try {
+        await expect(getDailyReport(raw._id)).resolves.toMatchObject({ artifactStatus: 'rendered' });
+        expect(warnings[0]?.join(' ')).toContain('failed to persist settled artifact status');
+      } finally {
+        restore();
+        console.warn = previousWarn;
+      }
     });
   });
 

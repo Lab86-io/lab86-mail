@@ -6,13 +6,24 @@ export type MarkdownProps = {
   id?: string;
   className?: string;
   components?: StreamdownProps['components'];
+  streaming?: boolean;
 };
 
-function MarkdownComponent({ children, id, className, components }: MarkdownProps) {
+export const STREAMING_WORD_FADE = {
+  animation: 'fadeIn' as const,
+  duration: 180,
+  sep: 'word' as const,
+  stagger: 24,
+};
+
+function MarkdownComponent({ children, id, className, components, streaming = false }: MarkdownProps) {
+  const streamProps = streaming
+    ? ({ mode: 'streaming', animated: STREAMING_WORD_FADE, isAnimating: true } as const)
+    : ({ mode: 'static' } as const);
   if (id) {
     return (
       <div id={id} className={className}>
-        <Streamdown components={components} mode="static">
+        <Streamdown components={components} {...streamProps}>
           {children}
         </Streamdown>
       </div>
@@ -20,7 +31,7 @@ function MarkdownComponent({ children, id, className, components }: MarkdownProp
   }
 
   return (
-    <Streamdown className={className} components={components} mode="static">
+    <Streamdown className={className} components={components} {...streamProps}>
       {children}
     </Streamdown>
   );

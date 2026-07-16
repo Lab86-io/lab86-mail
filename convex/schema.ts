@@ -344,6 +344,7 @@ export default defineSchema({
     primaryDomain: v.optional(v.string()),
     faviconUrl: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
+    imageStorageId: v.optional(v.id('_storage')),
     // Every area gets its own task board at creation; archiving the area never
     // deletes the board, and unarchiving reuses it (no duplicates).
     boardId: v.optional(v.id('boards')),
@@ -419,6 +420,7 @@ export default defineSchema({
     .index('by_area', ['areaId'])
     .index('by_user_area', ['userId', 'areaId'])
     .index('by_user_area_status', ['userId', 'areaId', 'status'])
+    .index('by_user_area_kind_status_updatedAt', ['userId', 'areaId', 'artifactKind', 'status', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_artifact', ['userId', 'artifactKind', 'artifactId'])
     .index('by_user_account_artifact', ['userId', 'accountId', 'artifactKind', 'artifactId'])
@@ -505,9 +507,31 @@ export default defineSchema({
   // Work detail, notification center, and optional browser PiP.
   albatrossWorkQuestions: defineTable({
     userId: v.string(),
-    workId: v.id('albatrossIntents'),
+    // Work remains optional for project/routine questions. This table predates
+    // generic questions, but is intentionally evolved in place so one ask can
+    // render in chat, a living brief, Work, and notifications without copies.
+    workId: v.optional(v.id('albatrossIntents')),
+    projectId: v.optional(v.id('albatrossProjects')),
+    routineId: v.optional(v.id('albatrossRoutines')),
+    dedupeKey: v.optional(v.string()),
     legacyQuestionId: v.optional(v.string()),
-    kind: v.union(v.literal('clarification'), v.literal('completion'), v.literal('correction')),
+    kind: v.union(
+      v.literal('clarification'),
+      v.literal('completion'),
+      v.literal('correction'),
+      v.literal('checkin'),
+      v.literal('consent'),
+      v.literal('reflection'),
+    ),
+    responseKind: v.optional(
+      v.union(
+        v.literal('text'),
+        v.literal('single_select'),
+        v.literal('multi_select'),
+        v.literal('number'),
+        v.literal('boolean'),
+      ),
+    ),
     prompt: v.string(),
     reason: v.optional(v.string()),
     options: v.optional(
@@ -528,24 +552,187 @@ export default defineSchema({
     answer: v.optional(v.string()),
     answeredOptionId: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
+    metadata: v.optional(v.any()),
     createdAt: v.number(),
     answeredAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_work', ['workId'])
+    .index('by_project', ['projectId'])
+    .index('by_routine', ['routineId'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_work_status', ['userId', 'workId', 'status']),
 
-  // Cached editorial prose for a living Area brief. Operational sections are
-  // always queried live; this record can regenerate in the background without
-  // freezing questions, Work, tasks, or Project progress in an HTML snapshot.
+  // A Routine is an explicitly consented recurring behavior attached to a
+  // durable Project/Epic. The scheduler materializes durable runs; a retry can
+  // never duplicate a task, question, or notification because runKey is stable
+  // in the user's local timezone.
+  albatrossRoutines: defineTable({
+    userId: v.string(),
+    projectId: v.id('albatrossProjects'),
+    areaId: v.optional(v.id('areas')),
+    title: v.string(),
+    purpose: v.optional(v.string()),
+    kind: v.union(
+      v.literal('task'),
+      v.literal('checkin'),
+      v.literal('task_and_checkin'),
+      v.literal('review'),
+    ),
+    status: v.union(v.literal('proposed'), v.literal('active'), v.literal('paused'), v.literal('archived')),
+    consent: v.union(v.literal('proposed'), v.literal('enabled'), v.literal('declined')),
+    cadence: v.union(v.literal('daily'), v.literal('weekly'), v.literal('weekdays'), v.literal('custom')),
+    daysOfWeek: v.optional(v.array(v.number())),
+    localTime: v.string(),
+    timezone: v.string(),
+    quietHoursStart: v.optional(v.string()),
+    quietHoursEnd: v.optional(v.string()),
+    taskTemplate: v.optional(
+      v.object({
+        title: v.string(),
+        description: v.optional(v.string()),
+        priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
+      }),
+    ),
+    questionTemplate: v.optional(
+      v.object({
+        prompt: v.string(),
+        reason: v.optional(v.string()),
+        responseKind: v.optional(
+          v.union(
+            v.literal('text'),
+            v.literal('single_select'),
+            v.literal('multi_select'),
+            v.literal('number'),
+            v.literal('boolean'),
+          ),
+        ),
+        options: v.optional(
+          v.array(v.object({ id: v.string(), label: v.string(), description: v.optional(v.string()) })),
+        ),
+      }),
+    ),
+    notification: v.object({
+      enabled: v.boolean(),
+      channel: v.union(
+        v.literal('in_app'),
+        v.literal('web_push'),
+        v.literal('email'),
+        v.literal('preferred'),
+      ),
+    }),
+    nextRunAt: v.number(),
+    lastRunAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_project', ['projectId'])
+    .index('by_area', ['areaId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_status_nextRunAt', ['status', 'nextRunAt'])
+    .index('by_user_project_status', ['userId', 'projectId', 'status']),
+
+  albatrossRoutineRuns: defineTable({
+    userId: v.string(),
+    routineId: v.id('albatrossRoutines'),
+    projectId: v.id('albatrossProjects'),
+    areaId: v.optional(v.id('areas')),
+    runKey: v.string(),
+    localDate: v.string(),
+    scheduledFor: v.number(),
+    status: v.union(
+      v.literal('queued'),
+      v.literal('running'),
+      v.literal('completed'),
+      v.literal('skipped'),
+      v.literal('error'),
+    ),
+    taskCardId: v.optional(v.id('cards')),
+    questionId: v.optional(v.id('albatrossWorkQuestions')),
+    notificationId: v.optional(v.id('albatrossNotifications')),
+    error: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_routine', ['routineId'])
+    .index('by_project', ['projectId'])
+    .index('by_routine_runKey', ['routineId', 'runKey'])
+    .index('by_user_status_scheduled', ['userId', 'status', 'scheduledFor']),
+
+  // Source-normalized evidence is the substrate for the personal index. The
+  // target is optional: unassigned evidence remains searchable until the user
+  // or classifier links it to an Area, Project, Work item, or Routine.
+  albatrossEvidence: defineTable({
+    userId: v.string(),
+    targetKind: v.optional(
+      v.union(v.literal('area'), v.literal('project'), v.literal('work'), v.literal('routine')),
+    ),
+    targetId: v.optional(v.string()),
+    sourceKind: v.union(
+      v.literal('mail_thread'),
+      v.literal('calendar_event'),
+      v.literal('task'),
+      v.literal('chat'),
+      v.literal('question_answer'),
+      v.literal('area_fact'),
+      v.literal('github_issue'),
+      v.literal('github_pull_request'),
+      v.literal('github_project'),
+      v.literal('github_project_item'),
+      v.literal('github_commit'),
+      v.literal('mcp_item'),
+      v.literal('manual'),
+    ),
+    sourceId: v.string(),
+    connectionId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    title: v.string(),
+    summary: v.optional(v.string()),
+    url: v.optional(v.string()),
+    occurredAt: v.number(),
+    weight: v.number(),
+    confidence: v.number(),
+    trust: v.union(
+      v.literal('observed'),
+      v.literal('inferred'),
+      v.literal('confirmed'),
+      v.literal('rejected'),
+    ),
+    dedupeKey: v.string(),
+    searchText: v.string(),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_occurredAt', ['userId', 'occurredAt'])
+    .index('by_user_target', ['userId', 'targetKind', 'targetId'])
+    .index('by_user_source', ['userId', 'sourceKind', 'sourceId'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
+    .index('by_user_connection', ['userId', 'connectionId'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'sourceKind', 'targetKind', 'targetId'],
+    }),
+
+  // Cached AI-composed Area document. The full selected-Area canvas is rendered
+  // from artifactHtml in an opaque sandbox; the smaller prose fields remain as
+  // an honest deterministic fallback while the first artifact is composing or
+  // when generation is unavailable. Regeneration preserves the last good HTML.
   albatrossAreaBriefs: defineTable({
     userId: v.string(),
     areaId: v.id('areas'),
     status: v.union(v.literal('generating'), v.literal('ready'), v.literal('error')),
     lede: v.string(),
     summary: v.string(),
+    artifactHtml: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
     basedOnRevision: v.string(),
     generatedAt: v.optional(v.number()),
@@ -732,6 +919,10 @@ export default defineSchema({
     ),
     kind: v.optional(v.string()),
     areaId: v.optional(v.string()),
+    // Legacy migration marker for rows once defaulted into the retired Personal catch-all.
+    // by the user or the capture splitter. The area-classify cron re-homes
+    // flagged intents with one fast-model pass, then clears the flag.
+    areaAutoAssigned: v.optional(v.boolean()),
     // Work-v2 additions. Legacy areaId/status remain readable during the
     // additive migration; these fields become the user-facing Work contract.
     captureId: v.optional(v.id('albatrossCaptures')),
@@ -797,6 +988,7 @@ export default defineSchema({
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
+    .index('by_user_autoassigned', ['userId', 'areaAutoAssigned'])
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
@@ -1221,8 +1413,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_board', ['boardId'])
+    .index('by_board_updatedAt', ['boardId', 'updatedAt'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_source_thread', ['userId', 'sourceThreadId'])
     .index('by_user_source_calendar_event', ['userId', 'sourceCalendarEventId'])
     .index('by_user_due', ['userId', 'dueAt']),
@@ -1456,7 +1650,13 @@ export default defineSchema({
   mcpConnections: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     serverUrl: v.string(),
     authKind: v.union(v.literal('token'), v.literal('oauth')),
     status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
@@ -1472,6 +1672,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_status', ['status'])
     .index('by_server', ['server']),
 
   mcpCredentials: defineTable({
@@ -1481,6 +1682,7 @@ export default defineSchema({
     accessTokenEncrypted: v.optional(v.string()),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.optional(v.string()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
     createdAt: v.number(),
@@ -1489,10 +1691,28 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId']),
 
+  mcpOAuthStates: defineTable({
+    userId: v.string(),
+    state: v.string(),
+    server: v.string(),
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
+
   mcpItems: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     externalId: v.string(),
     kind: v.string(),
     title: v.string(),
@@ -1500,6 +1720,10 @@ export default defineSchema({
     url: v.optional(v.string()),
     state: v.optional(v.string()),
     author: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    organization: v.optional(v.string()),
+    parentExternalId: v.optional(v.string()),
+    sha: v.optional(v.string()),
     assignedToUser: v.optional(v.boolean()),
     updatedAtSource: v.optional(v.number()),
     raw: v.optional(v.any()),
@@ -1508,12 +1732,14 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_user_connection_updated', ['userId', 'connectionId', 'updatedAtSource'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_user_updated', ['userId', 'updatedAtSource'])
     .searchIndex('by_search_text', {
       searchField: 'searchText',
-      filterFields: ['userId', 'server', 'connectionId', 'state'],
+      filterFields: ['userId', 'server', 'connectionId', 'kind', 'state', 'repository', 'organization'],
     }),
 
   mcpSyncStates: defineTable({
@@ -1524,6 +1750,8 @@ export default defineSchema({
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),
     itemCount: v.optional(v.number()),
+    accountEmail: v.optional(v.string()),
+    workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1546,6 +1774,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_card', ['cardId']),
 });

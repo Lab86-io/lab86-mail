@@ -17,6 +17,8 @@
 //                       ok: boolean, error?: string, payload: { stepKey } }
 //     error 'not_applied' renders a quiet inline hint on the card.
 
+import { injectBriefArtifactReadyRuntime } from './artifact-ready';
+
 export const PLAN_ARTIFACT_MESSAGE_SOURCE = 'lab86-plan-artifact';
 export const PLAN_HOST_MESSAGE_SOURCE = 'lab86-host';
 
@@ -127,7 +129,7 @@ export function injectPlanArtifactRuntime(html: string): string {
     bodyClose >= 0
       ? `${next.slice(0, bodyClose)}${PLAN_ARTIFACT_RUNTIME_JS}${next.slice(bodyClose)}`
       : `${next}${PLAN_ARTIFACT_RUNTIME_JS}`;
-  return next;
+  return injectBriefArtifactReadyRuntime(next);
 }
 
 /**

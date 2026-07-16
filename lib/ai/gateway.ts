@@ -31,6 +31,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   daily_report_insight: 1500,
   daily_report_narrative: 4000,
   daily_report_artifact: 32000,
+  albatross_area_artifact: 32000,
   albatross_plan: 8000,
   albatross_plan_artifact: 24000,
   albatross_place: 2000,
@@ -58,7 +59,7 @@ const DEFAULT_AGENT_FALLBACKS = [
 // Features that get retry + cross-provider failover. The interactive agent AND
 // the Daily Brief artifact both need it — a single provider blip on the brief
 // was silently degrading it to the plain native renderer.
-const FAILOVER_FEATURES = new Set(['agent', 'daily_report_artifact']);
+const FAILOVER_FEATURES = new Set(['agent', 'daily_report_artifact', 'albatross_area_artifact']);
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;

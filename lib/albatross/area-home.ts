@@ -187,6 +187,16 @@ export interface AreaBranding {
   imageUrl: string | null;
 }
 
+export function areaInitials(name?: string | null) {
+  const words = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return 'A';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0] || ''}${words.at(-1)?.[0] || ''}`.toUpperCase();
+}
+
 export type AreaHomeSectionId = 'mail' | 'events' | 'tasks' | 'context';
 
 export interface AreaHomeSection {
@@ -468,10 +478,11 @@ export function areaHomeSections(counts: AreaHomeCountsLike): AreaHomeSection[] 
   ];
 }
 
-// True when nothing has been linked — the page swaps the three
-// artifact sections for one whole-page explanation (context still renders).
-export function areaHasNoLinks(counts: AreaHomeCountsLike): boolean {
-  return counts.mail + counts.events + counts.tasks === 0;
+// True when nothing has been linked at all — including connected or
+// manual artifacts that do not render as mail/events/tasks. The page only uses
+// its whole-Area empty explanation when every link kind is genuinely absent.
+export function areaHasNoLinks(counts: AreaHomeCountsLike, otherLinks = 0): boolean {
+  return counts.mail + counts.events + counts.tasks + Math.max(0, otherLinks) === 0;
 }
 
 // The Areas chooser is now a work-entry surface, not a directory. This score
@@ -713,21 +724,31 @@ export function areaPulse(input: AreaPulseInput): AreaPulseSegment[] {
 export function areaBriefHeadline(input: {
   areaName: string;
   needsYou: number;
+  needsYouBounded?: boolean;
   upcoming: number;
   plans: number;
   projects: number;
   mail: number;
   tasks: number;
   candidateFacts: number;
+  // True when any supporting evidence count fed in (mail/tasks/upcoming) is a
+  // bounded preview rather than an exact total. The "filed signals" branch then
+  // avoids an exact claim it can't stand behind.
+  evidenceBounded?: boolean;
+  upcomingBounded?: boolean;
 }): string {
   if (input.needsYou > 0)
-    return `${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
+    return `${input.needsYouBounded ? 'at least ' : ''}${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
   if (input.upcoming > 0 && input.plans > 0)
-    return `${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
+    return `${input.upcomingBounded ? 'at least ' : ''}${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
   if (input.plans > 0)
     return `${input.plans} active ${input.plans === 1 ? 'plan is' : 'plans are'} in motion for ${input.areaName}.`;
-  if (input.mail + input.tasks + input.upcoming > 0)
-    return `${input.areaName} has ${input.mail + input.tasks + input.upcoming} filed ${input.mail + input.tasks + input.upcoming === 1 ? 'signal' : 'signals'} to review.`;
+  const signals = input.mail + input.tasks + input.upcoming;
+  if (signals > 0) {
+    if (input.evidenceBounded)
+      return `${input.areaName} has at least ${signals} filed ${signals === 1 ? 'signal' : 'signals'} to review.`;
+    return `${input.areaName} has ${signals} filed ${signals === 1 ? 'signal' : 'signals'} to review.`;
+  }
   if (input.candidateFacts > 0)
     return `${input.areaName} is waiting on ${input.candidateFacts} context ${input.candidateFacts === 1 ? 'confirmation' : 'confirmations'}.`;
   return `${input.areaName} is quiet right now.`;
@@ -752,7 +773,7 @@ export function splitBriefRows<T>(rows: readonly T[] | null | undefined, limit: 
   };
 }
 
-export type NeedsYouKind = 'plan_answers' | 'overdue_task' | 'suggested_context';
+export type NeedsYouKind = 'work_input' | 'plan_answers' | 'overdue_task' | 'suggested_context';
 
 export interface NeedsYouRow {
   id: string;
@@ -760,6 +781,7 @@ export interface NeedsYouRow {
   title: string;
   detail: string | null;
   intentId?: string;
+  workId?: string;
 }
 
 // The "needs you" queue: the few things in this area actually waiting on the
@@ -773,7 +795,6 @@ export function areaNeedsYouRows(
     candidateFacts?: Array<{ _id: string; kind: string; value: string }> | null;
   },
   now = Date.now(),
-  cap = 6,
 ): NeedsYouRow[] {
   const rows: NeedsYouRow[] = [];
   for (const plan of input.plans ?? []) {
@@ -805,7 +826,7 @@ export function areaNeedsYouRows(
       detail: `Suggested ${fact.kind}`,
     });
   }
-  return rows.slice(0, cap);
+  return rows;
 }
 
 export const AREA_PLACE_CAP = 8;
@@ -873,4 +894,282 @@ export function extractAreaPlaces(
     }
   }
   return out.slice(0, cap);
+}
+
+// ---------------------------------------------------------------------------
+// Living brief presentation. The Convex read model (areaHome) returns the whole
+// brief doc — status, lede, summary, generatedAt, error — so the page can be
+// honest about generating/error/absent, not just render a perfect brief. These
+// pure resolvers turn that doc into exactly what the lead should say, carrying
+// the last-known text through transient generating/error states so the thesis
+// never blinks out or fabricates progress.
+// ---------------------------------------------------------------------------
+
+export interface LivingBriefLike {
+  status?: 'generating' | 'ready' | 'error' | string | null;
+  lede?: string | null;
+  summary?: string | null;
+  generatedAt?: number | null;
+  error?: string | null;
+}
+
+export type AreaBriefMode = 'ready' | 'generating' | 'error' | 'absent';
+
+export interface AreaBriefState {
+  mode: AreaBriefMode;
+  // The editorial lead. Always present and never fabricated: for ready it is
+  // the generated lede; otherwise it is the last-known lede if we have one,
+  // else the deterministic headline the caller passes in.
+  lede: string;
+  // The supporting paragraph. Null when we have nothing real to show.
+  summary: string | null;
+  // A short, honest status note under the lead for non-ready modes. Null for
+  // ready (freshness is shown separately) and when there is nothing to say.
+  note: string | null;
+  // True when lede/summary are carried over from a previous edition while the
+  // current one is generating or errored — the UI dims them and shows `note`.
+  stale: boolean;
+  // Whether the primary affordance should offer to generate vs refresh.
+  canGenerate: boolean;
+  generatedAt: number | null;
+}
+
+function cleanBriefText(value?: string | null): string {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// The single source of truth for what the brief lead renders. `headline` is the
+// deterministic fallback (areaBriefHeadline) used only when there is no real
+// generated text to show.
+export function areaBriefState(brief: LivingBriefLike | null | undefined, headline: string): AreaBriefState {
+  const lede = cleanBriefText(brief?.lede);
+  const summary = cleanBriefText(brief?.summary);
+  const hasText = lede.length > 0;
+  const status = brief?.status ?? null;
+  // A valid generatedAt marks a *published* prior edition. The backend's very
+  // first generating/error record has no generatedAt and can carry placeholder
+  // text — so text alone must not be mistaken for a real last brief to carry
+  // over. Only a published edition is dimmed as stale with "showing the last
+  // brief"; a first-ever run shows the deterministic headline instead.
+  const rawGeneratedAt = brief?.generatedAt;
+  const generatedDate = typeof rawGeneratedAt === 'number' ? new Date(rawGeneratedAt) : null;
+  const generatedAt =
+    typeof rawGeneratedAt === 'number' &&
+    Number.isFinite(rawGeneratedAt) &&
+    rawGeneratedAt > 0 &&
+    generatedDate !== null &&
+    Number.isFinite(generatedDate.getTime())
+      ? rawGeneratedAt
+      : null;
+  const hasPriorEdition = generatedAt !== null && hasText;
+
+  if (status === 'ready' && hasText) {
+    return {
+      mode: 'ready',
+      lede,
+      summary: summary || null,
+      note: null,
+      stale: false,
+      canGenerate: false,
+      generatedAt,
+    };
+  }
+  if (status === 'generating') {
+    return {
+      mode: 'generating',
+      lede: hasPriorEdition ? lede : headline,
+      summary: hasPriorEdition ? summary || null : null,
+      note: hasPriorEdition ? 'Updating the brief…' : 'Writing the brief…',
+      stale: hasPriorEdition,
+      canGenerate: false,
+      generatedAt,
+    };
+  }
+  if (status === 'error') {
+    return {
+      mode: 'error',
+      lede: hasPriorEdition ? lede : headline,
+      summary: hasPriorEdition ? summary || null : null,
+      note: hasPriorEdition
+        ? 'Couldn’t refresh — showing the last brief.'
+        : 'Live work and evidence are below.',
+      stale: hasPriorEdition,
+      // A first-ever error has no published brief to show, so still offer to
+      // generate one; a failed *refresh* keeps the prior edition and Refresh.
+      canGenerate: !hasPriorEdition,
+      generatedAt,
+    };
+  }
+  // No brief doc yet, or a ready doc that somehow has no text: fall back to the
+  // deterministic headline and offer to generate one. Never invent a summary.
+  return {
+    mode: 'absent',
+    lede: hasText ? lede : headline,
+    summary: hasText ? summary || null : null,
+    note: null,
+    stale: false,
+    canGenerate: true,
+    generatedAt,
+  };
+}
+
+// A quiet, honest freshness string for a ready brief: "just now", "12m ago",
+// "3h ago", else the calendar date. Null when there is no timestamp.
+export function areaFreshness(
+  generatedAt?: number | null,
+  now = Date.now(),
+  locale = 'en-US',
+): string | null {
+  if (typeof generatedAt !== 'number' || !Number.isFinite(generatedAt) || generatedAt <= 0) return null;
+  const generatedDate = new Date(generatedAt);
+  if (!Number.isFinite(generatedDate.getTime())) return null;
+  const deltaMs = now - generatedAt;
+  if (deltaMs < 0) return 'just now';
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(generatedDate);
+}
+
+// Work items whose agent is explicitly waiting on the user's answer. These fold
+// into the single "Needs you" queue so there is one authoritative action region
+// rather than a duplicate needs group inside Work.
+export function workNeedsYouRows(
+  rows?: Array<{
+    _id: string;
+    title?: string | null;
+    rawText?: string | null;
+    agentState?: string | null;
+  }> | null,
+): NeedsYouRow[] {
+  const out: NeedsYouRow[] = [];
+  for (const row of rows ?? []) {
+    if (row?.agentState !== 'needs_input') continue;
+    const title = cleanBriefText(row.title) || cleanBriefText(row.rawText) || 'Untitled work';
+    out.push({
+      id: `work:${row._id}`,
+      kind: 'work_input',
+      title,
+      detail: 'Answer to continue this work',
+      workId: String(row._id),
+    });
+  }
+  return out;
+}
+
+// The single "Needs you" queue is assembled from two sources that can name the
+// same thing: workNeedsYouRows (the agent is waiting → work_input) and
+// areaNeedsYouRows (a plan needs answers → plan_answers). Because a Work item
+// and its plan share one intent id, the same intent can surface as both. Merge
+// by that shared identity, keeping the directly actionable work_input row and
+// dropping the duplicate plan_answers. Rows with no shared identity — overdue
+// tasks and suggested context — are always preserved. First-seen order is kept
+// (pass workNeedsYouRows first so work_input wins the shared slot). Presentation
+// may collapse this complete queue, but the data helper never silently drops an
+// actionable item.
+export function mergeNeedsYouRows(
+  workRows: readonly NeedsYouRow[] | null | undefined,
+  areaRows: readonly NeedsYouRow[] | null | undefined,
+): NeedsYouRow[] {
+  const sharedIntentKey = (row: NeedsYouRow): string | null => {
+    if (row.kind === 'work_input') return row.workId ? `intent:${row.workId}` : null;
+    if (row.kind === 'plan_answers') return row.intentId ? `intent:${row.intentId}` : null;
+    return null;
+  };
+  const seen = new Set<string>();
+  const out: NeedsYouRow[] = [];
+  for (const row of [...(workRows ?? []), ...(areaRows ?? [])]) {
+    const key = sharedIntentKey(row);
+    if (key !== null) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+export interface ProjectProgress {
+  completed: number;
+  total: number;
+  percent: number;
+  hasBar: boolean;
+}
+
+// Divide-by-zero-safe completion for a Project/Epic progress bar. Only produces
+// a bar when there is a real task total; percent is clamped to 0–100.
+export function projectProgress(completed?: number | null, total?: number | null): ProjectProgress {
+  const totalN = Math.max(0, Math.floor(Number(total ?? 0)));
+  const completedN = Math.min(totalN, Math.max(0, Math.floor(Number(completed ?? 0))));
+  const percent = totalN > 0 ? Math.round((completedN / totalN) * 100) : 0;
+  return { completed: completedN, total: totalN, percent, hasBar: totalN > 0 };
+}
+
+export type ProjectStateTone = 'active' | 'paused' | 'neutral';
+
+// The state chip for a Project/Epic row. Real status only — no inferred health.
+export function projectStateMeta(status?: string | null): { label: string; tone: ProjectStateTone } {
+  switch (status) {
+    case 'active':
+      return { label: 'Active', tone: 'active' };
+    case 'paused':
+      return { label: 'Paused', tone: 'paused' };
+    case 'done':
+      return { label: 'Done', tone: 'neutral' };
+    case 'archived':
+      return { label: 'Archived', tone: 'neutral' };
+    default:
+      return { label: status ? status.replaceAll('_', ' ') : 'Project', tone: 'neutral' };
+  }
+}
+
+// A bounded preview count: `shown` is how many rows the read model returned;
+// `hasMore` is true when the area owns more than were shown (the total is not
+// known here, only that it exceeds the preview). Facts remain exact totals.
+export interface EvidencePreview {
+  shown: number;
+  hasMore: boolean;
+}
+
+export interface EvidenceCountsLike {
+  mail: EvidencePreview;
+  events: EvidencePreview;
+  tasks: EvidencePreview;
+  facts: { verified: number; candidate: number };
+}
+
+// The one-line rollup above the supporting Evidence band: only non-zero facets,
+// in a fixed order, so a noisy mailbox is summarized rather than dumped. Mail,
+// events, and tasks are bounded previews — when more exist than were shown, the
+// label reads "30+ threads" (honest about the cap) rather than a false exact
+// total. Facts are exact. Empty array when the area has no evidence yet (the
+// band then hides).
+export function evidenceRollup(counts: EvidenceCountsLike): AreaPulseSegment[] {
+  const segments: AreaPulseSegment[] = [];
+  const pushPreview = (id: string, preview: EvidencePreview, one: string, many: string) => {
+    const n = Math.max(0, Math.floor(Number(preview?.shown ?? 0)));
+    if (n <= 0) return;
+    const noun = n === 1 && !preview.hasMore ? one : many;
+    segments.push({ id, label: preview.hasMore ? `${n}+ ${noun}` : `${n} ${noun}` });
+  };
+  const pushExact = (id: string, n: number, one: string, many: string) => {
+    if (n > 0) segments.push({ id, label: `${n} ${n === 1 ? one : many}` });
+  };
+  pushPreview('mail', counts.mail, 'thread', 'threads');
+  pushPreview('events', counts.events, 'event', 'events');
+  pushPreview('tasks', counts.tasks, 'task', 'tasks');
+  pushExact('verified', counts.facts.verified, 'verified fact', 'verified facts');
+  pushExact('candidate', counts.facts.candidate, 'context ask', 'context asks');
+  return segments;
+}
+
+// Places are supporting evidence too, even when an Area has no linked
+// mail/events/tasks/context yet. Keep this gate pure so the only-places state
+// cannot disappear behind the artifact rollup condition again.
+export function shouldShowEvidenceBand(evidenceSegments: number, places: number): boolean {
+  return evidenceSegments > 0 || places > 0;
 }

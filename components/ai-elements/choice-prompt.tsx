@@ -4,6 +4,7 @@ import { Check } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { OptionList } from '@/components/tool-ui/option-list';
 import { Button } from '@/components/ui/button';
+import { canonicalQuestionPrompt } from '@/lib/albatross/question-dedupe';
 import { rangeSelection, toggledOptionId } from '@/lib/albatross/teach-ui';
 
 export interface ChoiceOption {
@@ -65,10 +66,20 @@ export function AskUserForm({
     };
   }, []);
 
+  const visibleQuestions = useMemo(() => {
+    const seen = new Set<string>();
+    return questions.filter((question) => {
+      const key = canonicalQuestionPrompt(question.question);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [questions]);
+
   // Stable option ids per question ("q0-opt-1") with a map back to labels.
   const optionModel = useMemo(
     () =>
-      questions.map((q, qi) => {
+      visibleQuestions.map((q, qi) => {
         const options = (q.options ?? []).map((option, i) => ({
           id: `q${qi}-opt-${i}`,
           label: option.label,
@@ -77,23 +88,24 @@ export function AskUserForm({
         const labelById = new Map(options.map((option) => [option.id, option.label]));
         return { options, ids: options.map((option) => option.id), labelById };
       }),
-    [questions],
+    [visibleQuestions],
   );
 
   if (answered) {
     return (
       <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 text-[12px]">
-        {(answers.length ? answers : questions.map((q) => ({ question: q.question, response: '—' }))).map(
-          (a, idx) => (
-            <div key={idx}>
-              <div className="text-[var(--color-text-muted)]">{a.question}</div>
-              <div className="mt-0.5 flex items-center gap-1 font-medium text-[var(--color-accent)]">
-                <Check className="size-3 shrink-0" />
-                <span>{a.response || '—'}</span>
-              </div>
+        {(answers.length
+          ? answers
+          : visibleQuestions.map((q) => ({ question: q.question, response: '—' }))
+        ).map((a, idx) => (
+          <div key={idx}>
+            <div className="text-[var(--color-text-muted)]">{a.question}</div>
+            <div className="mt-0.5 flex items-center gap-1 font-medium text-[var(--color-accent)]">
+              <Check className="size-3 shrink-0" />
+              <span>{a.response || '—'}</span>
             </div>
-          ),
-        )}
+          </div>
+        ))}
       </div>
     );
   }
@@ -118,7 +130,7 @@ export function AskUserForm({
     if (q.multiSelect && q.minSelections && count > 0 && count < q.minSelections) return false;
     return count > 0 || text.length > 0;
   };
-  const allAnswered = questions.every((q, qi) => questionReady(q, qi));
+  const allAnswered = visibleQuestions.every((q, qi) => questionReady(q, qi));
 
   const handleChange = (qi: number, q: AskQuestion, next: string[] | string | null) => {
     const model = optionModel[qi];
@@ -140,8 +152,8 @@ export function AskUserForm({
   };
 
   return (
-    <div className="space-y-4 rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-bg-elevated)] px-3 py-3">
-      {questions.map((q, qi) => {
+    <div className="space-y-3 rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] p-3 shadow-[var(--shadow-soft)]">
+      {visibleQuestions.map((q, qi) => {
         const model = optionModel[qi];
         return (
           <div key={qi} className="space-y-2">
@@ -155,6 +167,9 @@ export function AskUserForm({
                 maxSelections={q.multiSelect ? q.maxSelections : undefined}
                 value={q.multiSelect ? (picked[qi] ?? []) : ((picked[qi] ?? [])[0] ?? null)}
                 onChange={(next) => handleChange(qi, q, next)}
+                density="compact"
+                hideActions
+                className="!min-w-0 !max-w-none"
               />
             ) : null}
             <input
@@ -162,7 +177,7 @@ export function AskUserForm({
               value={typed[qi] ?? ''}
               onChange={(event) => setTyped((prev) => ({ ...prev, [qi]: event.target.value }))}
               placeholder={model.options.length ? 'Or type your own answer…' : 'Type your answer…'}
-              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
+              className="h-9 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
             />
           </div>
         );
@@ -170,10 +185,10 @@ export function AskUserForm({
       <Button
         type="button"
         size="sm"
-        className="h-7 px-3 text-[12px]"
+        className="h-8 w-full rounded-lg px-3 text-[12px]"
         disabled={!allAnswered}
         onClick={() =>
-          onSubmit(questions.map((q, i) => ({ question: q.question, response: responseFor(i) })))
+          onSubmit(visibleQuestions.map((q, i) => ({ question: q.question, response: responseFor(i) })))
         }
       >
         Confirm

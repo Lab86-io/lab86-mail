@@ -41,8 +41,8 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/r
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
 import {
+  createHitlAutoContinueGuard,
   isHitlToolName,
-  lastMessageAnsweredHitl,
   toolActivityLine,
   toolActivityState,
   toolPartName,
@@ -191,6 +191,10 @@ export function AssistantChat() {
         api: '/api/agent',
         body: {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          areaDiscovery:
+            chatScopeKind === 'area' && chatScopeAreaId
+              ? { mode: 'area', areaId: chatScopeAreaId }
+              : undefined,
           extraSystem:
             chatScopeKind === 'work' && chatScopeWorkId
               ? `This conversation is scoped to Albatross Work ${chatScopeWorkId}. Keep questions and actions about that Work unless the user explicitly broadens scope.`
@@ -201,6 +205,7 @@ export function AssistantChat() {
       }),
     [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
   );
+  const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport,
     // Auto-continue ONLY after the user answers a human-in-the-loop tool call
@@ -209,7 +214,7 @@ export function AssistantChat() {
     // lastAssistantMessageIsCompleteWithToolCalls also fires after ordinary
     // server-tool turns, which can resubmit in a loop — our server already
     // runs server tools to completion in one response.
-    sendAutomaticallyWhen: ({ messages: msgs }) => lastMessageAnsweredHitl(msgs as any),
+    sendAutomaticallyWhen: ({ messages: msgs }) => shouldAutoContinueHitl(msgs as any),
   });
 
   // Hand human-in-the-loop answers back into the stream. Memoized so the
@@ -711,7 +716,7 @@ export function AssistantChat() {
                         reduceMotion={reduceMotion}
                         delay={i < staggerFloor ? 0 : Math.min((i - staggerFloor) * 0.05, 0.3)}
                       >
-                        <MessageView message={m} />
+                        <MessageView message={m} streaming={streaming && i === messages.length - 1} />
                       </MessageFloat>
                     ))}
                   </ChatPartContext.Provider>
@@ -873,7 +878,7 @@ function hasVisibleContent(message: any): boolean {
   return false;
 }
 
-function MessageView({ message }: { message: any }) {
+function MessageView({ message, streaming = false }: { message: any; streaming?: boolean }) {
   const isUser = message.role === 'user';
   if (isUser) {
     const text = userTextFromMessage(message);
@@ -890,7 +895,7 @@ function MessageView({ message }: { message: any }) {
       <div className="flex w-full min-w-0 flex-col gap-2">
         {(message.parts || []).map((part: any, i: number) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: streamed parts are append-only with no stable id
-          <Part key={`${message.id}-${i}`} part={part} />
+          <Part key={`${message.id}-${i}`} part={part} streaming={streaming} />
         ))}
       </div>
     </Message>
@@ -939,14 +944,17 @@ function AskUserPart({ part }: { part: any }) {
   );
 }
 
-function Part({ part }: { part: any }) {
+function Part({ part, streaming = false }: { part: any; streaming?: boolean }) {
   const type = part.type;
   if (type === 'text') {
     const text = part.text || '';
     // Skip empty text parts (the model emits these between tool calls).
     if (!text.trim()) return null;
     return (
-      <Markdown className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]">
+      <Markdown
+        streaming={streaming}
+        className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]"
+      >
         {text}
       </Markdown>
     );
