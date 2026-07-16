@@ -73,6 +73,7 @@ import {
   areaHasNoLinks,
   areaHomeSections,
   areaIndexStatusSummary,
+  areaIndexStatusTitle,
   areaInitials,
   areaNeedsYouRows,
   areaOverviewBadges,
@@ -245,7 +246,7 @@ interface AreaIndexStatusData {
     scanned: number;
     inserted: number;
     matched: number;
-    personal: number;
+    retired: number;
     skipped: number;
     error: string | null;
     startedAt: number | null;
@@ -406,7 +407,7 @@ function AreaChooser() {
               {totals && totals.needsYou > 0
                 ? `${totals.needsYou} ${totals.needsYou === 1 ? 'item needs' : 'items need'} you across your areas.`
                 : totals && totals.plans + totals.events + totals.tasks > 0
-                  ? `${totals.plans} active ${totals.plans === 1 ? 'plan' : 'plans'} · ${totals.events} ${totals.events === 1 ? 'event' : 'events'} · ${totals.tasks} ${totals.tasks === 1 ? 'task' : 'tasks'} filed by area.`
+                  ? `${totals.plans} active ${totals.plans === 1 ? 'plan' : 'plans'} · ${totals.events} ${totals.events === 1 ? 'event' : 'events'} · ${totals.tasks} ${totals.tasks === 1 ? 'task' : 'tasks'} linked to areas.`
                   : 'Your areas are quiet right now.'}
             </p>
           </div>
@@ -740,8 +741,8 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
             <div className="mx-3 mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
               <p className="text-[13px] font-medium">Nothing filed here yet.</p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                Teach this area in Settings, or capture from anywhere with the launcher. As mail, events, and
-                tasks arrive, Albatross files them here and keeps this brief current.
+                Mail is linked here only when it specifically matches this area. Capture a plan above, or add
+                verified identities in Settings to sharpen the match.
               </p>
             </div>
             <ContextSection home={home} count={sectionCount('context')} />
@@ -2483,11 +2484,7 @@ function ViewLink({
 }
 
 function SectionEmpty() {
-  return (
-    <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">
-      Nothing classified here yet — the classifier runs every 30 minutes.
-    </p>
-  );
+  return <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">Nothing in this section yet.</p>;
 }
 
 // The quiet per-row provenance tag for AI-suggested (unverified) links.
@@ -2615,10 +2612,7 @@ function AreaIndexStatusPill({ status }: { status?: AreaIndexStatusData }) {
         : summary.tone === 'done'
           ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600'
           : 'border-[var(--color-border)] text-[var(--color-text-muted)]';
-  const latestRun = status?.latestRun;
-  const title = latestRun
-    ? `${latestRun.reason || 'Area filing'} · ${latestRun.status} · ${latestRun.scanned.toLocaleString()} scanned, ${latestRun.inserted.toLocaleString()} filed`
-    : summary.label;
+  const title = areaIndexStatusTitle(status) || summary.label;
   return (
     <span
       title={title}

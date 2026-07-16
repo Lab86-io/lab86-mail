@@ -1,6 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateText, type ModelMessage, streamText } from 'ai';
+import { generateObject, generateText, type ModelMessage, streamText } from 'ai';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
@@ -18,7 +18,7 @@ import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-rou
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
-type AiSpeed = 'fast' | 'primary' | 'nano';
+type AiSpeed = 'fast' | 'primary' | 'nano' | 'classify';
 
 // Progressive output ceilings, sized to the job. An UNSET cap makes the
 // provider assume the model's max (65536) and OpenRouter reserves credits for
@@ -37,6 +37,10 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_place: 2000,
   albatross_local: 300,
   albatross_classify: 2000,
+  // One structured verdict per message: a handful of area ids plus short
+  // evidence strings. Deliberately tight — a verdict that needs more room than
+  // this is a verdict that stopped being grounded.
+  albatross_area_route: 1200,
   agent: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;
@@ -73,31 +77,42 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 // The fast tier (which drives the agent and summaries) defaults to the
 // nano model — gpt-5-nano on OpenRouter — per the operator's directive: fast
 // should be nano-cheap everywhere unless an env override or BYOK setting raises it.
-const DEFAULT_MODELS: Record<AiProvider, { primary: string; fast: string; nano: string }> = {
-  openrouter: {
-    primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'openai/gpt-5.5',
-    fast:
-      process.env.LAB86_MAIL_OPENAI_FAST_MODEL ||
-      process.env.MAIL_OS_OPENAI_FAST_MODEL ||
-      'openai/gpt-5-nano',
-    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'openai/gpt-5-nano',
-  },
-  openai: {
-    primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'gpt-5.5',
-    fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || 'gpt-5-nano',
-    nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'gpt-5-nano',
-  },
-  anthropic: {
-    primary: process.env.LAB86_MAIL_ANTHROPIC_MODEL || 'claude-sonnet-4-6',
-    fast: process.env.LAB86_MAIL_ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5-20251001',
-    nano: process.env.LAB86_MAIL_ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5-20251001',
-  },
-};
+// 'classify' is the structured-verdict tier: per-message Area routing over the
+// whole corpus, where a wrong answer is worse than no answer and the schema —
+// not prose parsing — carries the contract. It defaults to GPT-5.6 Luna
+// (gpt-5.6-luna), OpenAI's current small high-volume classification/extraction
+// model, run at reasoning effort 'none'. Kept separate from 'nano' so retuning
+// Smart Category sweeps and Area routing never move together by accident.
+const DEFAULT_MODELS: Record<AiProvider, { primary: string; fast: string; nano: string; classify: string }> =
+  {
+    openrouter: {
+      primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'openai/gpt-5.5',
+      fast:
+        process.env.LAB86_MAIL_OPENAI_FAST_MODEL ||
+        process.env.MAIL_OS_OPENAI_FAST_MODEL ||
+        'openai/gpt-5-nano',
+      nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'openai/gpt-5-nano',
+      classify: process.env.LAB86_MAIL_CLASSIFY_MODEL || 'openai/gpt-5.6-luna',
+    },
+    openai: {
+      primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'gpt-5.5',
+      fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || 'gpt-5-nano',
+      nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'gpt-5-nano',
+      classify: process.env.LAB86_MAIL_CLASSIFY_MODEL || 'gpt-5.6-luna',
+    },
+    anthropic: {
+      primary: process.env.LAB86_MAIL_ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+      fast: process.env.LAB86_MAIL_ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5-20251001',
+      nano: process.env.LAB86_MAIL_ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5-20251001',
+      classify: process.env.LAB86_MAIL_ANTHROPIC_CLASSIFY_MODEL || 'claude-haiku-4-5-20251001',
+    },
+  };
 
-// User model overrides apply to fast/primary only; nano stays on the cheap
-// platform default so a bulk sweep can never burn the user's premium model.
+// User model overrides apply to fast/primary only; nano/classify stay on the
+// cheap platform default so a bulk sweep can never burn the user's premium
+// model — and so Area routing precision doesn't drift with a user's model pick.
 function settingsModelFor(speed: AiSpeed, settings?: RuntimeState['settings'] | null) {
-  if (speed === 'nano') return undefined;
+  if (speed === 'nano' || speed === 'classify') return undefined;
   return speed === 'fast' ? settings?.fastModel : settings?.model;
 }
 
@@ -295,6 +310,70 @@ export async function generateTextForCurrentUser(
   });
 }
 
+// Structured generation: the provider enforces the schema, so callers get a
+// validated object or a throw — never prose to scrape. Used by Area routing,
+// where a half-parsed verdict is indistinguishable from a confident wrong one.
+//
+// Reasoning effort defaults to 'none' on the classify tier: these are
+// single-shot labeling calls with a tight output cap, and hidden reasoning
+// tokens would eat the budget for no accuracy gain (same failure mode as the
+// nano sweep in lib/tools/ai.ts).
+type ObjectGenerationDeps = {
+  resolveAiRuntime: typeof resolveAiRuntime;
+  generateObject: typeof generateObject;
+  recordUsage: typeof recordUsage;
+};
+
+let objectGenerationDeps: Partial<ObjectGenerationDeps> = {};
+
+export function __setObjectGenerationDepsForTest(overrides: Partial<ObjectGenerationDeps> = {}) {
+  objectGenerationDeps = overrides;
+}
+
+export async function generateObjectForCurrentUser<T>(
+  options: Record<string, any> & {
+    schema: any;
+    feature?: string;
+    speed?: AiSpeed;
+    userId?: string | null;
+    reasoningEffort?: 'none' | 'minimal' | 'low';
+  },
+): Promise<{ object: T }> {
+  const {
+    feature = 'generate_object',
+    speed = 'classify',
+    userId,
+    model: _ignored,
+    maxOutputTokens,
+    reasoningEffort = 'none',
+    providerOptions,
+    ...rest
+  } = options as any;
+  const resolveRuntime = objectGenerationDeps.resolveAiRuntime ?? resolveAiRuntime;
+  const generateStructuredObject = objectGenerationDeps.generateObject ?? generateObject;
+  const recordStructuredUsage = objectGenerationDeps.recordUsage ?? recordUsage;
+  const runtime = await resolveRuntime({ userId, speed, feature });
+  return runWithAiRequestContext({ userId: runtime.userId, agent: 'ai' }, async () => {
+    try {
+      const result = await generateStructuredObject({
+        ...rest,
+        maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
+        model: runtime.model,
+        providerOptions:
+          providerOptions ??
+          (runtime.provider === 'openai' || runtime.provider === 'openrouter'
+            ? { openai: { reasoningEffort, strictJsonSchema: true } }
+            : undefined),
+      });
+      await recordStructuredUsage(runtime, feature, result.usage, true);
+      return { object: result.object as T };
+    } catch (err: any) {
+      await recordStructuredUsage(runtime, feature, undefined, false, err?.message);
+      throw err;
+    }
+  });
+}
+
 function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): ResolvedAiRuntime[] {
   if (!FAILOVER_FEATURES.has(feature) || runtime.source !== 'lab86') return [];
   const configured = [process.env.LAB86_MAIL_AGENT_FALLBACK_MODEL, ...DEFAULT_AGENT_FALLBACKS];
@@ -463,15 +542,16 @@ function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
         'HTTP-Referer': process.env.LAB86_MAIL_PUBLIC_URL || 'https://mail.lab86.io',
         'X-Title': 'lab86-mail',
       },
-    }).chat(modelName);
+    }).chat(toOpenRouterModelId(modelName));
   }
-  if (provider === 'openai') return createOpenAI({ apiKey })(modelName);
-  return createAnthropic({ apiKey })(modelName);
+  if (provider === 'openai') return createOpenAI({ apiKey })(toDirectModelId(modelName));
+  return createAnthropic({ apiKey })(toDirectModelId(modelName));
 }
 
 function modelFor(provider: AiProvider, speed: AiSpeed) {
   if (speed === 'primary') return DEFAULT_MODELS[provider].primary;
   if (speed === 'nano') return DEFAULT_MODELS[provider].nano;
+  if (speed === 'classify') return DEFAULT_MODELS[provider].classify;
   return DEFAULT_MODELS[provider].fast;
 }
 

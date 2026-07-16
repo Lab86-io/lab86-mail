@@ -212,12 +212,23 @@ export default defineSchema({
     smartPrimary: v.optional(v.string()),
     smartCustomKeys: v.optional(v.array(v.string())),
     classifiedAt: v.optional(v.number()),
-    // LLM-once classification: threads the deterministic pass isn't sure about
-    // get exactly one model verdict (nano tier), persisted here forever.
-    // llmPending flags rows awaiting that verdict; user rules always override.
+    // Every latest message gets one lightweight Smart Category model verdict.
+    // A changed latestMessageId clears the old verdict and reopens llmPending;
+    // user rules still win when the stored verdict is merged.
+    latestMessageId: v.optional(v.string()),
     llmCategory: v.optional(v.any()),
     llmClassifiedAt: v.optional(v.number()),
+    llmClassifiedMessageId: v.optional(v.string()),
     llmPending: v.optional(v.boolean()),
+    // Area routing watermark. Areas are a SPARSE overlay: most threads belong to
+    // zero areas, so "has no areaArtifactLinks row" cannot mean "not yet
+    // classified" — a zero-area verdict is a real, successful answer. This
+    // records which classifier version last ruled on the thread, which is what
+    // makes routing both idempotent (don't re-ask) and reclassifiable (a bumped
+    // AREA_CLASSIFIER_VERSION makes every thread eligible again).
+    areaClassifierVersion: v.optional(v.number()),
+    areaClassifiedAt: v.optional(v.number()),
+    areaRoutingPending: v.optional(v.boolean()),
     yearMonth: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -236,6 +247,8 @@ export default defineSchema({
     .index('by_user_primary_unread', ['userId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_account_primary_unread', ['userId', 'accountId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_llm_pending', ['userId', 'llmPending', 'lastDate'])
+    .index('by_user_area_version', ['userId', 'areaClassifierVersion', 'lastDate'])
+    .index('by_user_area_pending', ['userId', 'areaRoutingPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.
     .index('by_smart_primary', ['smartPrimary']),
 
@@ -395,6 +408,11 @@ export default defineSchema({
     reason: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
     confirmationRefs: v.array(albatrossConfirmationRef),
+    // Which automatic classifier version produced this link. Absent on links the
+    // user authored by hand. Only ever set on automatic decisions, and only
+    // those are eligible to be superseded by a newer version — verified /
+    // user-confirmed links are authoritative and are never rewritten.
+    classifierVersion: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -417,8 +435,20 @@ export default defineSchema({
     scanned: v.number(),
     inserted: v.number(),
     matched: v.number(),
-    personal: v.number(),
+    // Legacy: the count of threads swept into the system Personal area by the
+    // old catch-all backfill. Retired with that fallback (#100) and optional so
+    // historical run rows still validate; nothing writes it any more.
+    personal: v.optional(v.number()),
+    // Links retired by the cleanup pass: system Personal fallbacks and weak
+    // areaContext-sourced candidates, minus anything the user confirmed.
+    retired: v.optional(v.number()),
     skipped: v.number(),
+    // Full-corpus work is intentionally coalesced. `pages` gives every run a
+    // hard safety budget; changes that arrive while it is running request one
+    // follow-up instead of spawning overlapping scans.
+    pages: v.optional(v.number()),
+    rerunRequestedAt: v.optional(v.number()),
+    coalescedInto: v.optional(v.string()),
     error: v.optional(v.string()),
     startedAt: v.optional(v.number()),
     finishedAt: v.optional(v.number()),
@@ -426,6 +456,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_user_status', ['userId', 'status'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_area_updatedAt', ['userId', 'areaId', 'updatedAt']),
@@ -888,7 +919,7 @@ export default defineSchema({
     ),
     kind: v.optional(v.string()),
     areaId: v.optional(v.string()),
-    // True while the area was defaulted (Personal catch-all) rather than chosen
+    // Legacy migration marker for rows once defaulted into the retired Personal catch-all.
     // by the user or the capture splitter. The area-classify cron re-homes
     // flagged intents with one fast-model pass, then clears the flag.
     areaAutoAssigned: v.optional(v.boolean()),

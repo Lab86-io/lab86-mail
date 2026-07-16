@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/prompt-input';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { areaCanArchive } from '@/lib/albatross/area-home';
 import { TEACH_SYSTEM_PROMPT } from '@/lib/albatross/teach-prompt';
 import {
   createHitlAutoContinueGuard,
@@ -546,8 +547,6 @@ interface AreaOverviewRow {
   factCounts: { verified: number; candidate: number };
 }
 
-const PERSONAL_AREA_EXTERNAL_ID = 'system:personal';
-
 function AreaManagementList() {
   // Skip until the Clerk token has reached the Convex client — first-paint
   // queries otherwise run unauthenticated and throw server-side.
@@ -657,8 +656,8 @@ function AreaManagementList() {
         <div>
           <h2 className="text-[16px] font-semibold tracking-tight">Your areas</h2>
           <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">
-            Everything the conversation has recorded. Archiving keeps history — tell the chat you left
-            something and it handles the rest.
+            Optional parts of life you want Albatross to track. Mail stays in Smart Categories unless it
+            specifically matches one of these areas.
           </p>
         </div>
         <Button
@@ -757,11 +756,6 @@ function AreaManagementList() {
                     <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
                       {area.kind}
                     </Badge>
-                    {area.externalId === PERSONAL_AREA_EXTERNAL_ID ? (
-                      <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-                        Default
-                      </Badge>
-                    ) : null}
                   </div>
                   <div className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-muted)]">
                     {area.factCounts.verified} verified
@@ -793,7 +787,7 @@ function AreaManagementList() {
                     <Button type="button" size="sm" variant="outline" onClick={() => startEdit(area)}>
                       Edit
                     </Button>
-                    {area.externalId !== PERSONAL_AREA_EXTERNAL_ID ? (
+                    {areaCanArchive(area) ? (
                       <Button
                         type="button"
                         size="sm"

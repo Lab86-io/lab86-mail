@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
-import { classifyIntents, classifyThreads } from '@/lib/albatross/area-classifier';
+import { classifyThreads } from '@/lib/albatross/area-classifier';
 import { classifyAreaArtifacts } from '@/lib/albatross/area-discovery';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
@@ -28,12 +28,11 @@ export async function POST(req: NextRequest) {
   }
   try {
     const counts = await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
-      const [mail, connected, intents] = await Promise.all([
+      const [mail, connected] = await Promise.all([
         classifyThreads({ userId }),
         classifyAreaArtifacts({ userId }),
-        classifyIntents({ userId }),
       ]);
-      return { mail, connected, intents };
+      return { mail, connected };
     });
     return NextResponse.json({ ok: true, userId, ...counts }, { status: 200 });
   } catch (err: any) {

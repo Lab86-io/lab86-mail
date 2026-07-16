@@ -5,10 +5,12 @@ import {
   areaBrandingFromFacts,
   areaBriefHeadline,
   areaBriefState,
+  areaCanArchive,
   areaFreshness,
   areaHasNoLinks,
   areaHomeSections,
   areaIndexStatusSummary,
+  areaIndexStatusTitle,
   areaInitials,
   areaNeedsYouRows,
   areaOverviewBadges,
@@ -20,10 +22,15 @@ import {
   faviconUrlForDomain,
   formatEventTime,
   intentDisplayTitle,
+  isAutomaticAreaLink,
+  isDeterministicAutomaticAreaLink,
+  isSupersedableAreaLink,
+  isUserAuthoritativeLink,
+  isWeakAutomaticAreaLink,
+  LEGACY_PERSONAL_AREA_EXTERNAL_ID,
   mapsSearchUrl,
   mergeNeedsYouRows,
   normalizeAreaDomain,
-  PERSONAL_AREA_EXTERNAL_ID,
   planActionLabel,
   planStatusMeta,
   projectProgress,
@@ -32,12 +39,75 @@ import {
   railAreaBadge,
   railAreaRows,
   resolveAreaSelection,
+  shouldRetireDeterministicAreaLink,
   shouldShowEvidenceBand,
   splitBriefRows,
   suggestIntentArea,
   taskRowMeta,
   workNeedsYouRows,
 } from '../lib/albatross/area-home';
+
+describe('automatic Area link lifecycle', () => {
+  test('protects user-confirmed and rejected decisions', () => {
+    expect(isUserAuthoritativeLink({ status: 'verified' })).toBe(true);
+    expect(isUserAuthoritativeLink({ status: 'rejected' })).toBe(true);
+    expect(
+      isUserAuthoritativeLink({ status: 'candidate', confirmationRefs: [{ kind: 'userConfirmation' }] }),
+    ).toBe(true);
+  });
+
+  test('recognizes legacy weak links and same-version automatic decisions as supersedable', () => {
+    const weak = {
+      status: 'candidate',
+      sourceRefs: [{ kind: 'areaContext', id: 'legacy' }],
+      confirmationRefs: [],
+    };
+    expect(isAutomaticAreaLink(weak)).toBe(true);
+    expect(isWeakAutomaticAreaLink(weak)).toBe(true);
+    expect(isSupersedableAreaLink({ ...weak, classifierVersion: 2 }, 2)).toBe(true);
+    expect(
+      isSupersedableAreaLink(
+        { ...weak, classifierVersion: 2, confirmationRefs: [{ kind: 'userConfirmation' }] },
+        2,
+      ),
+    ).toBe(false);
+  });
+
+  test('reconciles derived identity links when their fact changes or disappears', () => {
+    const derived = {
+      areaId: 'area_a',
+      status: 'verified',
+      classifierVersion: 2,
+      reason: 'verified domain example.com',
+      sourceRefs: [{ kind: 'areaFact', id: 'fact_old' }],
+      confirmationRefs: [
+        {
+          kind: 'userConfirmation',
+          prompt: 'Inherited from a user-verified Area identity fact',
+        },
+      ],
+    };
+    expect(isUserAuthoritativeLink(derived)).toBe(false);
+    expect(isDeterministicAutomaticAreaLink(derived)).toBe(true);
+    expect(shouldRetireDeterministicAreaLink(derived, null)).toBe(true);
+    expect(shouldRetireDeterministicAreaLink(derived, { areaId: 'area_b', factId: 'fact_new' })).toBe(true);
+    expect(shouldRetireDeterministicAreaLink(derived, { areaId: 'area_a', factId: 'fact_old' })).toBe(false);
+  });
+
+  test('preserves an explicit user confirmation even on a formerly automatic link', () => {
+    const confirmed = {
+      areaId: 'area_a',
+      status: 'verified',
+      classifierVersion: 2,
+      reason: 'verified domain example.com',
+      sourceRefs: [{ kind: 'areaFact', id: 'fact_old' }],
+      confirmationRefs: [{ kind: 'userConfirmation', prompt: 'Keep this thread in Area A' }],
+    };
+    expect(isUserAuthoritativeLink(confirmed)).toBe(true);
+    expect(isAutomaticAreaLink(confirmed)).toBe(false);
+    expect(shouldRetireDeterministicAreaLink(confirmed, null)).toBe(false);
+  });
+});
 
 const counts = (mail: number, events: number, tasks: number, verified = 0, candidate = 0) => ({
   mail,
@@ -133,7 +203,7 @@ describe('suggestIntentArea', () => {
     {
       _id: 'personal',
       name: 'Personal',
-      externalId: PERSONAL_AREA_EXTERNAL_ID,
+      externalId: LEGACY_PERSONAL_AREA_EXTERNAL_ID,
       primaryDomain: null,
     },
     {
@@ -161,26 +231,27 @@ describe('suggestIntentArea', () => {
     expect(suggestIntentArea('email legal@statpearls.com about the contract', areas)?.areaId).toBe('work');
   });
 
-  test('defaults only when there is exactly one active area', () => {
-    expect(suggestIntentArea('buy replacement filters', [areas[0]])).toEqual({
-      areaId: 'personal',
-      confidence: 'medium',
-      reason: 'Only active area',
-    });
+  test('never treats the only active Area as evidence', () => {
+    expect(suggestIntentArea('buy replacement filters', [areas[0]])).toBeNull();
     expect(suggestIntentArea('buy replacement filters', areas)).toBeNull();
   });
 });
 
 describe('resolveAreaSelection', () => {
   const areas = [
-    { _id: 'area_personal_doc', name: 'Personal', kind: 'personal', externalId: PERSONAL_AREA_EXTERNAL_ID },
+    {
+      _id: 'area_personal_doc',
+      name: 'Personal',
+      kind: 'personal',
+      externalId: LEGACY_PERSONAL_AREA_EXTERNAL_ID,
+    },
     { _id: 'area_work_doc', name: 'Work', kind: 'work' },
   ];
 
-  test('maps the persisted Personal external id to the live document id', () => {
-    expect(resolveAreaSelection(PERSONAL_AREA_EXTERNAL_ID, areas)).toEqual({
-      areaId: 'area_personal_doc',
-      state: 'replaced',
+  test('drops the retired Personal external id instead of silently selecting a name match', () => {
+    expect(resolveAreaSelection(LEGACY_PERSONAL_AREA_EXTERNAL_ID, areas)).toEqual({
+      areaId: null,
+      state: 'missing',
     });
   });
 
@@ -204,7 +275,7 @@ describe('resolveAreaSelection', () => {
 describe('areaIndexStatusSummary', () => {
   test('describes queued and running area filing runs', () => {
     expect(areaIndexStatusSummary({ latestRun: { status: 'queued' }, mail: { total: 1 } })).toEqual({
-      label: 'Area filing queued',
+      label: 'Area check queued',
       tone: 'active',
     });
     expect(
@@ -212,7 +283,7 @@ describe('areaIndexStatusSummary', () => {
         latestRun: { status: 'running', scanned: 250 },
         mail: { total: 1 },
       }),
-    ).toEqual({ label: 'Filing areas · 250 scanned', tone: 'active' });
+    ).toEqual({ label: 'Checking areas · 250 scanned', tone: 'active' });
   });
 
   test('falls back to mailbox indexing when no area run is active', () => {
@@ -223,12 +294,32 @@ describe('areaIndexStatusSummary', () => {
       }),
     ).toEqual({ label: '1 mailbox indexing · 1,200 messages', tone: 'active' });
     expect(
-      areaIndexStatusSummary({ latestRun: { status: 'done', inserted: 4 }, mail: { total: 1 } }),
+      areaIndexStatusSummary({ latestRun: { status: 'done', scanned: 10, matched: 4 }, mail: { total: 1 } }),
     ).toEqual({
-      label: 'Area filing done · 4 filed',
+      label: 'Areas checked · 10 scanned · 4 linked',
       tone: 'done',
     });
   });
+
+  test('keeps the status tooltip precise, including its fallback reason', () => {
+    expect(
+      areaIndexStatusTitle({
+        latestRun: { status: 'done', scanned: 10, matched: 4 },
+        mail: { total: 1 },
+      }),
+    ).toBe('Area check · done · 10 scanned, 4 linked');
+    expect(
+      areaIndexStatusTitle({
+        latestRun: { status: 'done', scanned: 10, matched: 4 },
+        mail: { total: 2, indexing: 1, messagesSynced: 1200 },
+      }),
+    ).toBe('1 mailbox indexing · 1,200 messages');
+  });
+});
+
+test('every Area, including a legacy Personal row, is archivable', () => {
+  expect(areaCanArchive({ externalId: LEGACY_PERSONAL_AREA_EXTERNAL_ID })).toBe(true);
+  expect(areaCanArchive({ externalId: 'user:work' })).toBe(true);
 });
 
 const overviewCounts = (over: Partial<ReturnType<typeof baseOverviewCounts>> = {}) => ({
