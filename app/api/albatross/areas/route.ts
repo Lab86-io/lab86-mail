@@ -25,7 +25,6 @@ function json(status: number, body: Record<string, unknown>) {
 export async function GET() {
   try {
     const user = await requireCurrentUser();
-    await convexMutation((api as any).albatross.ensurePersonal, { userId: user.userId }).catch(() => null);
     const [areas, onboarding] = await Promise.all([
       convexQuery<any[]>((api as any).albatross.listAreas, { userId: user.userId, status: 'active' }),
       convexQuery<any>((api as any).userData.getDoc, {

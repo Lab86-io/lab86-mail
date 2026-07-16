@@ -2,11 +2,7 @@
 
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  useConvexAuth,
-  useMutation as useConvexMutation,
-  useQuery_experimental as useConvexQuery,
-} from 'convex/react';
+import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
@@ -323,11 +319,6 @@ export function Rail({
   // areas behave like first-class inboxes instead of hiding behind one door.
   // Auth-gated: a first-paint query before the Clerk token lands would error.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
-  const ensurePersonal = useConvexMutation(api.albatross.ensurePersonal);
-  useEffect(() => {
-    if (!albatrossEnabled || !convexAuthed) return;
-    void ensurePersonal({}).catch(() => undefined);
-  }, [albatrossEnabled, convexAuthed, ensurePersonal]);
   const areasResult = useConvexQuery({
     query: (api as any).albatross.listAreasOverview,
     args: albatrossEnabled && convexAuthed ? { status: 'active' } : 'skip',

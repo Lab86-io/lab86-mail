@@ -48,9 +48,6 @@ function classifierInput(row: any, bodyText?: string) {
   };
 }
 
-// Verdicts the deterministic pass is confident about skip the model entirely.
-const OBVIOUS_CONFIDENCE = 0.9;
-
 export function classifyCorpusThread(row: any, context: SmartClassificationContext, bodyText?: string) {
   const det = classifyThreadWithContext(classifierInput(row, bodyText) as any, context);
   const ruleDriven = det.model === 'user_rule';
@@ -58,8 +55,12 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
   // labels and rule hits are always the deterministic computation (they're
   // exact matching, not judgment), and attention follows live unread state
   // rather than whatever was true when the model looked.
+  const llmVerdictIsCurrent =
+    Boolean(row.llmCategory) &&
+    Boolean(row.latestMessageId) &&
+    row.llmClassifiedMessageId === row.latestMessageId;
   const llm =
-    !ruleDriven && row.llmCategory
+    !ruleDriven && llmVerdictIsCurrent
       ? {
           ...row.llmCategory,
           customLabels: det.customLabels || [],
@@ -68,15 +69,29 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
         }
       : null;
   const verdict = llm || det;
-  const obvious = ruleDriven || det.confidence >= OBVIOUS_CONFIDENCE;
   return {
     smartCategory: verdict,
     smartPrimary: verdict.primary,
     smartCustomKeys: verdict.customLabels || [],
     classifiedAt: now(),
-    // true = waiting for its one model verdict; absent otherwise (patch with
-    // undefined removes the field, keeping the pending index small).
-    llmPending: !obvious && !row.llmCategory ? true : undefined,
+    // Every latest message gets the lightweight model pass. Exact user rules
+    // still override its result, but do not prevent the pass from happening.
+    llmPending: !llmVerdictIsCurrent ? true : undefined,
+  };
+}
+
+export function classificationFreshnessPatch(
+  existingLatestMessageId: string | undefined,
+  latestMessageId: string,
+) {
+  if (existingLatestMessageId === latestMessageId) return {};
+  return {
+    llmCategory: undefined,
+    llmClassifiedAt: undefined,
+    llmClassifiedMessageId: undefined,
+    areaClassifierVersion: undefined,
+    areaClassifiedAt: undefined,
+    areaRoutingPending: true,
   };
 }
 

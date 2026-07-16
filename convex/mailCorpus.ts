@@ -3,6 +3,7 @@ import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import {
+  classificationFreshnessPatch,
   classifyCorpusThread,
   computeCategoryUnreadCounts,
   latestThreadBody,
@@ -272,6 +273,7 @@ export const upsertCorpusBatch = mutation({
         grantId: args.grantId,
         provider: args.provider,
         providerThreadId,
+        latestMessageId: latest.providerMessageId,
         subject: latest.subject || '(no subject)',
         fromAddress: latest.from || '',
         lastDate: latest.receivedAt,
@@ -297,6 +299,7 @@ export const upsertCorpusBatch = mutation({
         patch.unread = fullThread.some((message) => Boolean(message.unread));
         patch.starred = fullThread.some((message) => Boolean(message.starred)) || undefined;
         patch.subject = fullLatest.subject || patch.subject;
+        patch.latestMessageId = fullLatest.providerMessageId;
         patch.fromAddress = fullLatest.from || patch.fromAddress;
         patch.snippet = fullLatest.snippet || patch.snippet;
         patch.yearMonth = yearMonth(fullLatest.receivedAt);
@@ -318,14 +321,22 @@ export const upsertCorpusBatch = mutation({
         patch.starred = Boolean(existing.starred) || patch.starred || undefined;
         patch.labels = [...new Set([...(existing.labels || []), ...patch.labels])];
       }
-      // Classify against the merged row so an existing stored LLM verdict
-      // (llmCategory) keeps precedence — patch alone omits it, and a webhook
-      // or backfill recompute would otherwise clobber it with the
-      // deterministic result.
-      const classifyRow = existing ? { ...existing, ...patch } : patch;
+      // A verdict belongs to one concrete latest message. Preserve it for
+      // idempotent re-syncs, but clear it when a new message becomes latest so
+      // both Smart Categories and sparse Area routing reconsider the thread.
+      const freshnessPatch = classificationFreshnessPatch(existing?.latestMessageId, patch.latestMessageId);
+      const classifyRow = existing
+        ? { ...existing, ...patch, ...freshnessPatch }
+        : { ...patch, ...freshnessPatch };
       const classified = smartContext ? classifyCorpusThread(classifyRow, smartContext, classifyBody) : {};
-      if (existing) await ctx.db.patch(existing._id, { ...patch, ...classified });
-      else await ctx.db.insert('mailCorpusThreads', { ...patch, ...classified, createdAt: ts });
+      if (existing) await ctx.db.patch(existing._id, { ...patch, ...freshnessPatch, ...classified });
+      else
+        await ctx.db.insert('mailCorpusThreads', {
+          ...patch,
+          ...freshnessPatch,
+          ...classified,
+          createdAt: ts,
+        });
     }
 
     // Backfill batches pass an explicit corpusReady boolean and own the
@@ -364,10 +375,14 @@ export const upsertCorpusBatch = mutation({
       });
     }
 
-    if (threadIds.size && (args.corpusReady === true || args.corpusReady === undefined)) {
+    // A completed historical backfill needs one cleanup/reindex pass. Ordinary
+    // webhook/reconcile updates already mark only the changed thread pending
+    // and are drained by the ingest kick; reindexing the whole mailbox for each
+    // message would repeatedly reopen every recent verdict.
+    if (threadIds.size && args.corpusReady === true) {
       await ctx.scheduler.runAfter(10_000, internal.albatross.queueUserAreaReindex, {
         userId: args.userId,
-        reason: args.corpusReady === true ? 'Mailbox backfill complete' : 'Mailbox update',
+        reason: 'Mailbox backfill complete',
       });
     }
 
@@ -841,6 +856,7 @@ export const storeLlmVerdicts = mutation({
       await ctx.db.patch(row._id, {
         ...(llmCategory ? { llmCategory } : {}),
         llmClassifiedAt: ts,
+        llmClassifiedMessageId: row.latestMessageId,
         ...merged,
         llmPending: undefined,
       });

@@ -8,7 +8,165 @@ export interface AreaHomeCountsLike {
   facts: { verified: number; candidate: number };
 }
 
-export const PERSONAL_AREA_EXTERNAL_ID = 'system:personal';
+// Retired (#100). Areas are an opt-in, sparse overlay: mail belongs to zero or
+// more active Areas, and zero is a successful verdict — so there is no system
+// catch-all any more. This id survives only so the cleanup pass can recognise
+// and retire rows the old auto-created "Personal" area left behind. Nothing
+// creates, protects, or routes to it. A user may create an ordinary Area named
+// "Personal" like any other; it will not carry this externalId.
+export const LEGACY_PERSONAL_AREA_EXTERNAL_ID = 'system:personal';
+
+// Bump to make every thread eligible for re-routing. Automatic Area decisions
+// carry the version that produced them, so a bump lets newer verdicts supersede
+// older candidate links without touching anything the user confirmed.
+//   1 — pre-#100: subject/snippet batch prompt, Personal catch-all fallback.
+//   2 — #100: per-message body-grounded structured verdicts, sparse, no fallback.
+export const AREA_CLASSIFIER_VERSION = 2;
+
+// Consumer mailbox domains are shared by millions of unrelated senders, so an
+// exact-domain fact over one of them is not identity evidence and must never
+// route. (An exact *email* fact on such a domain still may — it identifies one
+// person.) Kept deliberately small and explicit rather than heuristic.
+const SHARED_CONSUMER_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'ymail.com',
+  'hotmail.com',
+  'outlook.com',
+  'live.com',
+  'msn.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'pm.me',
+  'gmx.com',
+  'mail.com',
+  'zoho.com',
+  'yandex.com',
+  'fastmail.com',
+  'hey.com',
+  'qq.com',
+  '163.com',
+  'naver.com',
+]);
+
+export function isSharedConsumerDomain(value?: string | null): boolean {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@/, '');
+  return SHARED_CONSUMER_DOMAINS.has(normalized);
+}
+
+export interface AreaLinkLike {
+  areaId?: string | null;
+  status?: string | null;
+  reason?: string | null;
+  classifierVersion?: number | null;
+  sourceRefs?: Array<{ kind?: string | null; id?: string | null }> | null;
+  confirmationRefs?: Array<{ kind?: string | null; prompt?: string | null }> | null;
+}
+
+function hasAutomaticAreaSignature(link: AreaLinkLike): boolean {
+  const reason = String(link.reason || '').toLowerCase();
+  if (reason.includes('fallback to personal')) return true;
+  if (/^llm\b/.test(reason)) return true;
+  if (/^(verified|candidate)\s+(email|domain)\b/.test(reason)) return true;
+  return (link.sourceRefs || []).some(
+    (ref) =>
+      ref?.kind === 'areaContext' ||
+      ref?.kind === 'areaFact' ||
+      ref?.kind === 'area' ||
+      (ref?.kind === 'system' && ref?.id === 'area-reindex'),
+  );
+}
+
+/**
+ * The user stands behind this link: they verified it, they rejected it, or they
+ * confirmed it directly. Authoritative in both directions — a `verified` link is
+ * never rewritten by a classifier, and a `rejected` link is a tombstone that
+ * stops the classifier re-proposing the same area forever.
+ */
+export function isUserAuthoritativeLink(link: AreaLinkLike): boolean {
+  if (link.status === 'rejected') return true;
+  const directConfirmation = (link.confirmationRefs || []).some(
+    (ref) =>
+      ref?.kind === 'userConfirmation' &&
+      !String(ref.prompt || '')
+        .toLowerCase()
+        .includes('inherited from a user-verified area identity fact'),
+  );
+  if (directConfirmation) return true;
+  // Versioned links are classifier output. Their remaining confirmation refs
+  // are inherited from an identity fact; that confirms the fact, not this
+  // derived thread assignment.
+  if (typeof link.classifierVersion === 'number') return false;
+  if (hasAutomaticAreaSignature(link)) return false;
+  return link.status === 'verified';
+}
+
+/**
+ * This link was produced by a classifier or a backfill, not by a person.
+ *
+ * Links written since #100 carry `classifierVersion`, which settles it. Older
+ * rows predate that field, so they're recognised by the signatures the previous
+ * pipeline left behind (its reason strings and sourceRef kinds). Anything that
+ * matches neither is treated as user-authored and left alone — when in doubt,
+ * don't touch the user's data.
+ */
+export function isAutomaticAreaLink(link: AreaLinkLike): boolean {
+  if (link.status === 'rejected') return false;
+  if (isUserAuthoritativeLink(link)) return false;
+  if (typeof link.classifierVersion === 'number') return true;
+  return hasAutomaticAreaSignature(link);
+}
+
+export function isDeterministicAutomaticAreaLink(link: AreaLinkLike): boolean {
+  if (!isAutomaticAreaLink(link)) return false;
+  const reason = String(link.reason || '').toLowerCase();
+  return (
+    /^verified\s+(email|domain)\b/.test(reason) &&
+    (link.sourceRefs || []).some((ref) => ref?.kind === 'areaFact' || ref?.kind === 'area')
+  );
+}
+
+export function shouldRetireDeterministicAreaLink(
+  link: AreaLinkLike,
+  match?: { areaId: string; factId: string } | null,
+): boolean {
+  if (!isDeterministicAutomaticAreaLink(link)) return false;
+  if (!match || String(link.areaId || '') !== match.areaId) return true;
+  return !(link.sourceRefs || []).some((ref) => ref?.kind === 'areaFact' && ref.id === match.factId);
+}
+
+/**
+ * An automatic decision no newer than the incoming classifier. A verdict for a
+ * newer message may replace a same-version decision; a version bump also
+ * supersedes older decisions. User-authoritative links never qualify.
+ */
+export function isSupersedableAreaLink(link: AreaLinkLike, currentVersion: number): boolean {
+  return isAutomaticAreaLink(link) && (link.classifierVersion ?? 0) <= currentVersion;
+}
+
+/**
+ * Weak evidence that should never have routed: the system Personal catch-all,
+ * and `areaContext` sourceRefs (general/candidate context rather than a
+ * confirmed identity fact). Retired on reindex, but only while still an
+ * unconfirmed automatic candidate — a Personal link the user confirmed is a
+ * decision they made and survives.
+ */
+export function isWeakAutomaticAreaLink(link: AreaLinkLike): boolean {
+  if (isUserAuthoritativeLink(link)) return false;
+  const reason = String(link.reason || '').toLowerCase();
+  if (reason.includes('fallback to personal')) return true;
+  return (link.sourceRefs || []).some(
+    (ref) => ref?.kind === 'areaContext' || (ref?.kind === 'system' && ref?.id === 'area-reindex'),
+  );
+}
 
 export interface AreaFactLikeForBranding {
   kind?: string | null;
@@ -144,10 +302,11 @@ export interface AreaSelectionResolution {
 
 export interface AreaIndexRunLike {
   status?: string | null;
+  reason?: string | null;
   scanned?: number | null;
   inserted?: number | null;
   matched?: number | null;
-  personal?: number | null;
+  retired?: number | null;
   updatedAt?: number | null;
 }
 
@@ -169,6 +328,11 @@ export interface AreaIndexStatusSummary {
   tone: 'active' | 'done' | 'warning' | 'quiet';
 }
 
+/** Every Area is opt-in user data; there is no protected system default. */
+export function areaCanArchive(_area?: { externalId?: string | null } | null): boolean {
+  return true;
+}
+
 function areaTextTokens(value?: string | null): string[] {
   return String(value || '')
     .toLowerCase()
@@ -183,7 +347,6 @@ export function suggestIntentArea(
   const options = [...(areas ?? [])].filter((area) => area._id && area.name);
   if (!options.length) return null;
   const normalizedText = String(text || '').toLowerCase();
-  const nonPersonal = options.filter((area) => area.externalId !== PERSONAL_AREA_EXTERNAL_ID);
   if (!normalizedText.trim()) return null;
 
   let best: { area: IntentAreaOption; score: number; reason: string } | null = null;
@@ -200,7 +363,6 @@ export function suggestIntentArea(
     for (const token of areaTextTokens(area.description).slice(0, 10)) {
       if (normalizedText.includes(token)) score += 1;
     }
-    if (area.externalId === PERSONAL_AREA_EXTERNAL_ID) score -= 2;
     if (!best || score > best.score) {
       best = { area, score, reason: domain && normalizedText.includes(domain) ? domain : area.name };
     }
@@ -212,12 +374,10 @@ export function suggestIntentArea(
   if (best && best.score >= 4) {
     return { areaId: best.area._id, confidence: 'medium', reason: best.reason };
   }
-  if (options.length === 1) {
-    return { areaId: options[0]._id, confidence: 'medium', reason: 'Only active area' };
-  }
-  if (nonPersonal.length === 0 && options.length === 1) {
-    return { areaId: options[0]._id, confidence: 'medium', reason: 'Personal area' };
-  }
+  // No grounded match means no suggestion. Having exactly one Area is not
+  // evidence that this text belongs to it — the old "Only active area" fallback
+  // was a coin flip dressed as a suggestion. The chooser handles it from here,
+  // and "no Area" stays a valid answer.
   return null;
 }
 
@@ -229,15 +389,9 @@ export function resolveAreaSelection(
   if (areas === undefined) return { areaId: selectedAreaId, state: 'loading' };
   const exact = areas.find((area) => area._id === selectedAreaId);
   if (exact) return { areaId: exact._id, state: 'ready' };
-  if (selectedAreaId === PERSONAL_AREA_EXTERNAL_ID || selectedAreaId === 'personal') {
-    const personal = areas.find(
-      (area) =>
-        area.externalId === PERSONAL_AREA_EXTERNAL_ID ||
-        area.kind === 'personal' ||
-        area.name?.toLowerCase() === 'personal',
-    );
-    if (personal) return { areaId: personal._id, state: 'replaced' };
-  }
+  // A stale pointer — including one at the retired system Personal area — falls
+  // through to the chooser. Resolving it onto whatever area happens to be named
+  // "Personal" would silently put the user somewhere they never picked (#100).
   return { areaId: null, state: 'missing' };
 }
 
@@ -246,22 +400,20 @@ export function areaIndexStatusSummary(status?: AreaIndexStatusLike | null): Are
   const run = status.latestRun ?? null;
   const mail = status.mail ?? null;
   const scanned = Math.max(0, Math.floor(Number(run?.scanned ?? 0)));
-  const inserted = Math.max(0, Math.floor(Number(run?.inserted ?? 0)));
   const matched = Math.max(0, Math.floor(Number(run?.matched ?? 0)));
-  const personal = Math.max(0, Math.floor(Number(run?.personal ?? 0)));
   const mailboxTotal = Math.max(0, Math.floor(Number(mail?.total ?? 0)));
   const mailboxIndexing = Math.max(0, Math.floor(Number(mail?.indexing ?? 0)));
   const mailboxErrored = Math.max(0, Math.floor(Number(mail?.errored ?? 0)));
   const messagesSynced = Math.max(0, Math.floor(Number(mail?.messagesSynced ?? 0)));
 
-  if (run?.status === 'queued') return { label: 'Area filing queued', tone: 'active' };
+  if (run?.status === 'queued') return { label: 'Area check queued', tone: 'active' };
   if (run?.status === 'running') {
     return {
-      label: scanned ? `Filing areas · ${scanned.toLocaleString()} scanned` : 'Filing areas now',
+      label: scanned ? `Checking areas · ${scanned.toLocaleString()} scanned` : 'Checking areas now',
       tone: 'active',
     };
   }
-  if (run?.status === 'error') return { label: 'Area filing needs retry', tone: 'warning' };
+  if (run?.status === 'error') return { label: 'Area check needs retry', tone: 'warning' };
   if (mailboxErrored > 0) {
     return {
       label: mailboxErrored === 1 ? '1 mailbox sync error' : `${mailboxErrored} mailbox sync errors`,
@@ -278,13 +430,13 @@ export function areaIndexStatusSummary(status?: AreaIndexStatusLike | null): Are
     };
   }
   if (run?.status === 'done') {
-    const filed = inserted || matched + personal;
+    // Report what was examined and what matched — never imply coverage. Most
+    // mail matches no Area, and that is the expected outcome, so "N scanned ·
+    // M linked" is the honest shape. "filed" is gone with the catch-all (#100).
     return {
-      label: filed
-        ? `Area filing done · ${filed.toLocaleString()} filed`
-        : scanned
-          ? `Area filing done · ${scanned.toLocaleString()} scanned`
-          : 'Area filing done',
+      label: scanned
+        ? `Areas checked · ${scanned.toLocaleString()} scanned · ${matched.toLocaleString()} linked`
+        : 'Areas checked',
       tone: 'done',
     };
   }
@@ -292,10 +444,21 @@ export function areaIndexStatusSummary(status?: AreaIndexStatusLike | null): Are
   return { label: 'Waiting for mailbox index', tone: 'quiet' };
 }
 
+export function areaIndexStatusTitle(status?: AreaIndexStatusLike | null): string | null {
+  const summary = areaIndexStatusSummary(status);
+  if (!summary) return null;
+  const run = status?.latestRun;
+  if (!run) return summary.label;
+  if (run.status === 'done' && summary.tone !== 'done') return summary.label;
+  const scanned = Math.max(0, Math.floor(Number(run.scanned ?? 0)));
+  const matched = Math.max(0, Math.floor(Number(run.matched ?? 0)));
+  return `${run.reason || 'Area check'} · ${run.status} · ${scanned.toLocaleString()} scanned, ${matched.toLocaleString()} linked`;
+}
+
 // Fixed editorial order: the operational artifacts first (mail is the highest
 // churn), the slow-moving context last. Sections always render — an empty
 // section shows its own quiet empty state rather than vanishing, so the user
-// learns what the classifier files here.
+// learns what can be linked here.
 export function areaHomeSections(counts: AreaHomeCountsLike): AreaHomeSection[] {
   return [
     { id: 'mail', label: 'Mail', count: counts.mail },
@@ -305,7 +468,7 @@ export function areaHomeSections(counts: AreaHomeCountsLike): AreaHomeSection[] 
   ];
 }
 
-// True when the classifier has filed nothing at all — the page swaps the three
+// True when nothing has been linked — the page swaps the three
 // artifact sections for one whole-page explanation (context still renders).
 export function areaHasNoLinks(counts: AreaHomeCountsLike): boolean {
   return counts.mail + counts.events + counts.tasks === 0;
