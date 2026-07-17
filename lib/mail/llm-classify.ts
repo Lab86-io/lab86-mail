@@ -1,6 +1,6 @@
 import { getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { hasAiForCurrentUser } from '../ai/gateway';
-import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { api, convexMutation } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
 import { listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
@@ -52,7 +52,7 @@ export async function runLlmClassificationSweep(userId: string) {
       let classified = 0;
       let moreRemaining = false;
       for (let batch = 0; batch < MAX_BATCHES_PER_KICK; batch++) {
-        const pending = await convexQuery<any[]>((api as any).mailCorpus.listLlmPending, {
+        const pending = await convexMutation<any[]>((api as any).mailCorpus.listLlmPending, {
           userId,
           limit: SWEEP_BATCH,
         });

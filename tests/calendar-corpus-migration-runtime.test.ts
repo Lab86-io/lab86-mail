@@ -47,26 +47,40 @@ describe('legacy calendar corpus migration', () => {
         searchText: undefined,
         yearMonth: undefined,
       });
+      for (let index = 0; index < 499; index += 1) {
+        await ctx.db.insert('calendarEvents', {
+          ...baseEvent,
+          providerEventId: `already_searchable_${index}`,
+        });
+      }
     });
 
-    const backfill = await t.mutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
-      limit: 25,
+    const result = await t.action(internal.calendarData.completeCalendarSearchMigration, {});
+    expect(result).toEqual({
+      canonicalScanned: 501,
+      canonicalMigrated: 2,
+      legacyDeleted: 2,
+      legacyMigrated: 1,
+      legacySkipped: 0,
     });
-    expect(backfill).toEqual({ scanned: 2, migrated: 2, done: true });
-    const result = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
-    expect(result).toEqual({ deleted: 2, migrated: 1, skipped: 0, done: true });
+    expect(await t.action(internal.calendarData.completeCalendarSearchMigration, {})).toEqual({
+      canonicalScanned: 0,
+      canonicalMigrated: 0,
+      legacyDeleted: 0,
+      legacyMigrated: 0,
+      legacySkipped: 0,
+      alreadyComplete: true,
+    });
 
     const state = await t.run(async (ctx) => ({
       canonical: await ctx.db.query('calendarEvents').collect(),
       legacy: await ctx.db.query('calendarEventCorpus').collect(),
     }));
     expect(state.legacy).toHaveLength(0);
-    expect(state.canonical).toHaveLength(3);
-    expect(state.canonical.map((row) => row.providerEventId).sort()).toEqual([
-      'canonical_only_event',
-      'existing_event',
-      'orphaned_event',
-    ]);
+    expect(state.canonical).toHaveLength(502);
+    expect(state.canonical.map((row) => row.providerEventId)).toContain('canonical_only_event');
+    expect(state.canonical.map((row) => row.providerEventId)).toContain('existing_event');
+    expect(state.canonical.map((row) => row.providerEventId)).toContain('orphaned_event');
     expect(state.canonical.every((row) => row.searchText?.toLowerCase() === 'preserved event')).toBe(true);
     expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
     expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);

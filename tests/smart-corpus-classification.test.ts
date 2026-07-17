@@ -20,6 +20,7 @@ describe('per-message Smart Category model queue', () => {
       llmClassifiedMessageId: undefined,
       areaClassifierVersion: undefined,
       areaClassifiedAt: undefined,
+      areaClassifiedMessageId: undefined,
       areaRoutingPending: true,
     });
   });

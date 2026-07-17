@@ -228,6 +228,7 @@ export default defineSchema({
     // AREA_CLASSIFIER_VERSION makes every thread eligible again).
     areaClassifierVersion: v.optional(v.number()),
     areaClassifiedAt: v.optional(v.number()),
+    areaClassifiedMessageId: v.optional(v.string()),
     areaRoutingPending: v.optional(v.boolean()),
     yearMonth: v.string(),
     createdAt: v.number(),

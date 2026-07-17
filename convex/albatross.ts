@@ -2419,18 +2419,39 @@ export const recordAreaVerdicts = mutation({
           })
         : null;
       const latestMessageId = canonicalLatestMessageId(latest?.providerMessageId, thread?.latestMessageId);
-      if (thread && latestMessageId && thread.latestMessageId !== latestMessageId) {
-        await ctx.db.patch(thread._id, {
-          latestMessageId,
-          llmCategory: undefined,
-          llmClassifiedAt: undefined,
-          llmClassifiedMessageId: undefined,
-          llmPending: true,
-          areaClassifierVersion: undefined,
-          areaClassifiedAt: undefined,
-          areaRoutingPending: true,
-          updatedAt: ts,
-        });
+      if (thread && latestMessageId) {
+        const latestAdvanced = thread.latestMessageId !== latestMessageId;
+        const smartAttributionStale =
+          Boolean(thread.llmCategory || thread.llmClassifiedAt || thread.llmClassifiedMessageId) &&
+          thread.llmClassifiedMessageId !== latestMessageId;
+        const areaAttributionStale =
+          Boolean(
+            thread.areaClassifierVersion !== undefined ||
+              thread.areaClassifiedAt ||
+              thread.areaClassifiedMessageId,
+          ) && thread.areaClassifiedMessageId !== latestMessageId;
+        if (latestAdvanced || smartAttributionStale || areaAttributionStale) {
+          await ctx.db.patch(thread._id, {
+            ...(latestAdvanced ? { latestMessageId } : {}),
+            ...(latestAdvanced || smartAttributionStale
+              ? {
+                  llmCategory: undefined,
+                  llmClassifiedAt: undefined,
+                  llmClassifiedMessageId: undefined,
+                  llmPending: true,
+                }
+              : {}),
+            ...(latestAdvanced || areaAttributionStale
+              ? {
+                  areaClassifierVersion: undefined,
+                  areaClassifiedAt: undefined,
+                  areaClassifiedMessageId: undefined,
+                  areaRoutingPending: true,
+                }
+              : {}),
+            updatedAt: ts,
+          });
+        }
       }
       // The model ruled on one concrete message. If newer mail arrived while
       // the request was in flight, preserve every existing link and leave the
@@ -2531,6 +2552,7 @@ export const recordAreaVerdicts = mutation({
       await ctx.db.patch(thread._id, {
         areaClassifierVersion: version,
         areaClassifiedAt: ts,
+        areaClassifiedMessageId: latestMessageId,
         areaRoutingPending: undefined,
         updatedAt: ts,
       });

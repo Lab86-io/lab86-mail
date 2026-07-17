@@ -201,4 +201,81 @@ describe('Area reindex runtime traversal', () => {
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
     }
   });
+
+  test('repairs stale classifier attribution even when the thread watermark already advanced', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'area-attribution-race-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const userId = 'area_attribution_race_user';
+      const ts = Date.now();
+      await t.run(async (ctx) => {
+        const base = {
+          userId,
+          accountId: 'account_1',
+          grantId: 'grant_1',
+          provider: 'google' as const,
+          subject: 'Already advanced',
+          fromAddress: 'sender@example.com',
+          lastDate: ts,
+          snippet: 'The aggregate already points at message two.',
+          labels: ['inbox'],
+          unread: true,
+          latestMessageId: 'message_2',
+          yearMonth: '2026-07',
+          createdAt: ts,
+          updatedAt: ts,
+        };
+        await ctx.db.insert('mailCorpusThreads', {
+          ...base,
+          providerThreadId: 'stale_thread',
+          llmCategory: { primary: 'updates' },
+          llmClassifiedAt: ts,
+          llmClassifiedMessageId: 'message_1',
+          areaClassifierVersion: 1,
+          areaClassifiedAt: ts,
+          areaClassifiedMessageId: 'message_1',
+        });
+        await ctx.db.insert('mailCorpusThreads', {
+          ...base,
+          providerThreadId: 'current_thread',
+          llmCategory: { primary: 'updates' },
+          llmClassifiedAt: ts,
+          llmClassifiedMessageId: 'message_2',
+          areaClassifierVersion: 1,
+          areaClassifiedAt: ts,
+          areaClassifiedMessageId: 'message_2',
+        });
+      });
+
+      const result = await t.mutation(api.albatross.recordAreaVerdicts, {
+        internalSecret: 'area-attribution-race-secret',
+        userId,
+        classifierVersion: 1,
+        verdicts: [
+          { artifactId: 'stale_thread', accountId: 'account_1', messageId: 'message_1', links: [] },
+          { artifactId: 'current_thread', accountId: 'account_1', messageId: 'message_1', links: [] },
+        ],
+      });
+      expect(result).toMatchObject({ classified: 0, skipped: 2 });
+      const threads = await t.run((ctx) => ctx.db.query('mailCorpusThreads').collect());
+      const stale = threads.find((row) => row.providerThreadId === 'stale_thread');
+      const current = threads.find((row) => row.providerThreadId === 'current_thread');
+      expect(stale).toMatchObject({ llmPending: true, areaRoutingPending: true });
+      expect(stale?.llmCategory).toBeUndefined();
+      expect(stale?.llmClassifiedMessageId).toBeUndefined();
+      expect(stale?.areaClassifierVersion).toBeUndefined();
+      expect(stale?.areaClassifiedMessageId).toBeUndefined();
+      expect(current).toMatchObject({
+        llmClassifiedMessageId: 'message_2',
+        areaClassifierVersion: 1,
+        areaClassifiedMessageId: 'message_2',
+      });
+      expect(current?.llmPending).toBeUndefined();
+      expect(current?.areaRoutingPending).toBeUndefined();
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
 });

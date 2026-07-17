@@ -785,7 +785,7 @@ export const categoryCountsInternal = query({
 // LLM-once classification queue. Rows the write-time deterministic pass
 // flagged uncertain, newest first, with the body excerpt the model needs —
 // the Next server runs the sweep (it owns the AI gateway and billing).
-export const listLlmPending = query({
+export const listLlmPending = mutation({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
@@ -799,20 +799,50 @@ export const listLlmPending = query({
       .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
       .order('desc')
       .take(limit);
-    return await Promise.all(
-      rows.map(async (row) => ({
+    const pending = [];
+    for (const row of rows) {
+      const latest = await ctx.db
+        .query('mailCorpusMessages')
+        .withIndex('by_user_account_thread_received', (q) =>
+          q
+            .eq('userId', row.userId)
+            .eq('accountId', row.accountId)
+            .eq('providerThreadId', row.providerThreadId),
+        )
+        .order('desc')
+        .first();
+      const messageId = latest?.providerMessageId || row.latestMessageId;
+      if (!messageId) {
+        // A legacy aggregate with no message row cannot be grounded. Close it
+        // out until a future sync supplies a concrete message identity, which
+        // will reopen both classifiers through classificationFreshnessPatch.
+        await ctx.db.patch(row._id, { llmPending: undefined, updatedAt: now() });
+        continue;
+      }
+      if (row.latestMessageId !== messageId) {
+        await ctx.db.patch(row._id, {
+          latestMessageId: messageId,
+          ...classificationFreshnessPatch(row.latestMessageId, messageId),
+          llmPending: true,
+          updatedAt: now(),
+        });
+      }
+      pending.push({
         accountId: row.accountId,
         providerThreadId: row.providerThreadId,
-        messageId: row.latestMessageId,
+        messageId,
         subject: row.subject,
         fromAddress: row.fromAddress,
         snippet: row.snippet,
         labels: row.labels || [],
         unread: Boolean(row.unread),
         lastDate: row.lastDate,
-        bodyText: (await latestThreadBody(ctx, row)) || '',
-      })),
-    );
+        bodyText: latest
+          ? String(latest.textBody || latest.searchText || '').slice(0, 4000)
+          : (await latestThreadBody(ctx, row)) || '',
+      });
+    }
+    return pending;
   },
 });
 
@@ -828,7 +858,7 @@ export const storeLlmVerdicts = mutation({
       v.object({
         accountId: v.string(),
         providerThreadId: v.string(),
-        messageId: v.optional(v.string()),
+        messageId: v.string(),
         verdict: v.optional(v.any()),
       }),
     ),

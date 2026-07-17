@@ -91,6 +91,7 @@ export function classificationFreshnessPatch(
     llmClassifiedMessageId: undefined,
     areaClassifierVersion: undefined,
     areaClassifiedAt: undefined,
+    areaClassifiedMessageId: undefined,
     areaRoutingPending: true,
   };
 }

@@ -9,6 +9,74 @@ const convexModules = {
 };
 
 describe('Smart Category verdict freshness', () => {
+  test('repairs a pending legacy thread from its canonical latest message before enqueueing', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'smart-pending-repair-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const ts = Date.now();
+      await t.run(async (ctx) => {
+        await ctx.db.insert('mailCorpusThreads', {
+          userId: 'smart_pending_user',
+          accountId: 'account_1',
+          grantId: 'grant_1',
+          provider: 'google',
+          providerThreadId: 'thread_legacy',
+          subject: 'Legacy aggregate',
+          fromAddress: 'sender@example.com',
+          lastDate: ts,
+          snippet: 'Missing its message watermark',
+          labels: ['inbox'],
+          unread: true,
+          llmPending: true,
+          yearMonth: '2026-07',
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        await ctx.db.insert('mailCorpusMessages', {
+          userId: 'smart_pending_user',
+          accountId: 'account_1',
+          grantId: 'grant_1',
+          provider: 'google',
+          providerMessageId: 'message_canonical',
+          providerThreadId: 'thread_legacy',
+          subject: 'Canonical message',
+          from: 'sender@example.com',
+          to: 'user@example.com',
+          receivedAt: ts,
+          snippet: 'Grounded body',
+          textBody: 'This exact body belongs to the canonical message.',
+          searchText: 'canonical message grounded body',
+          labels: ['inbox'],
+          yearMonth: '2026-07',
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      });
+
+      const pending = await t.mutation(api.mailCorpus.listLlmPending, {
+        internalSecret: 'smart-pending-repair-secret',
+        userId: 'smart_pending_user',
+        limit: 10,
+      });
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({
+        providerThreadId: 'thread_legacy',
+        messageId: 'message_canonical',
+        bodyText: 'This exact body belongs to the canonical message.',
+      });
+      const thread = await t.run((ctx) => ctx.db.query('mailCorpusThreads').first());
+      expect(thread).toMatchObject({
+        latestMessageId: 'message_canonical',
+        llmPending: true,
+        areaRoutingPending: true,
+      });
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
   test('does not stamp a stale verdict as current after a newer message wins the race', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'smart-verdict-race-secret';
