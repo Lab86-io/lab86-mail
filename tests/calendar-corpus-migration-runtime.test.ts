@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
-import { internal } from '../convex/_generated/api';
+import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
 const convexModules = {
@@ -58,5 +58,37 @@ describe('legacy calendar corpus migration', () => {
     ]);
     expect(state.canonical.every((row) => row.searchText === 'preserved event')).toBe(true);
     expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
+  });
+
+  test('does not recreate an event deleted while the bounded purge is running', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-migration-test-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      await t.run(async (ctx) => {
+        const event = { ...baseEvent, providerEventId: 'deleted_event' };
+        await ctx.db.insert('calendarEvents', event);
+        await ctx.db.insert('calendarEventCorpus', event);
+      });
+
+      await t.mutation(api.calendarData.deleteEvent, {
+        internalSecret: 'calendar-migration-test-secret',
+        userId: baseEvent.userId,
+        accountId: baseEvent.accountId,
+        providerCalendarId: baseEvent.providerCalendarId,
+        providerEventId: 'deleted_event',
+      });
+      const purge = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
+      expect(purge).toEqual({ deleted: 0, migrated: 0, done: true });
+
+      const state = await t.run(async (ctx) => ({
+        canonical: await ctx.db.query('calendarEvents').collect(),
+        legacy: await ctx.db.query('calendarEventCorpus').collect(),
+      }));
+      expect(state).toEqual({ canonical: [], legacy: [] });
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
   });
 });

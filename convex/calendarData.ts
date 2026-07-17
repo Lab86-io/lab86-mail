@@ -104,6 +104,12 @@ export const upsertCalendarBatch = mutation({
         for (const event of events) {
           if (removedIds.has(event.providerCalendarId)) {
             await ctx.db.delete(event._id);
+            await deleteLegacyCorpusEvent(ctx, {
+              userId: args.userId,
+              accountId: args.accountId,
+              providerCalendarId: event.providerCalendarId,
+              providerEventId: event.providerEventId,
+            });
           }
         }
       }
@@ -175,6 +181,7 @@ export const deleteEvent = mutation({
     requireInternalSecret(args.internalSecret);
     const row = await findEventByProviderId(ctx, args);
     if (row && row.userId === args.userId) await ctx.db.delete(row._id);
+    await deleteLegacyCorpusEvent(ctx, args);
     if (args.includeInstances) {
       const instances = await ctx.db
         .query('calendarEvents')
@@ -186,6 +193,12 @@ export const deleteEvent = mutation({
         if (args.providerCalendarId && instance.providerCalendarId !== args.providerCalendarId) continue;
         if (instance.userId === args.userId) {
           await ctx.db.delete(instance._id);
+          await deleteLegacyCorpusEvent(ctx, {
+            userId: args.userId,
+            accountId: args.accountId,
+            providerCalendarId: instance.providerCalendarId,
+            providerEventId: instance.providerEventId,
+          });
         }
       }
     }
@@ -216,6 +229,12 @@ export const removeCalendar = mutation({
     for (const event of events) {
       if (event.providerCalendarId === args.providerCalendarId) {
         await ctx.db.delete(event._id);
+        await deleteLegacyCorpusEvent(ctx, {
+          userId: args.userId,
+          accountId: args.accountId,
+          providerCalendarId: event.providerCalendarId,
+          providerEventId: event.providerEventId,
+        });
       }
     }
     return { ok: true };
@@ -273,6 +292,12 @@ export const reconcileWindow = mutation({
       if (row.startAt >= args.windowEnd) continue;
       if (keep.has(row.providerEventId)) continue;
       await ctx.db.delete(row._id);
+      await deleteLegacyCorpusEvent(ctx, {
+        userId: args.userId,
+        accountId: args.accountId,
+        providerCalendarId: row.providerCalendarId,
+        providerEventId: row.providerEventId,
+      });
       pruned += 1;
     }
     return { ok: true, pruned };
@@ -702,6 +727,33 @@ async function findEventByProviderId(
       q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
     )
     .unique();
+}
+
+// Delete-only compatibility for the bounded corpus migration. New and updated
+// events are no longer dual-written, but a user deletion must remove an
+// existing legacy duplicate until the one-time purge has drained the table.
+async function deleteLegacyCorpusEvent(
+  ctx: any,
+  args: { userId: string; accountId: string; providerEventId: string; providerCalendarId?: string },
+) {
+  let row = args.providerCalendarId
+    ? await ctx.db
+        .query('calendarEventCorpus')
+        .withIndex('by_account_calendar_event', (q: any) =>
+          q
+            .eq('accountId', args.accountId)
+            .eq('providerCalendarId', args.providerCalendarId as string)
+            .eq('providerEventId', args.providerEventId),
+        )
+        .unique()
+    : null;
+  row ??= await ctx.db
+    .query('calendarEventCorpus')
+    .withIndex('by_account_event', (q: any) =>
+      q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
+    )
+    .unique();
+  if (row && row.userId === args.userId) await ctx.db.delete(row._id);
 }
 
 function filterCalendarRows(rows: any[], args: any) {
