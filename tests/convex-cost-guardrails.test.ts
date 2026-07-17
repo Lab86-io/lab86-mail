@@ -60,7 +60,7 @@ describe('Convex cost guardrails', () => {
     expect(source).not.toContain('deleteCorpusEvent(');
     expect(source).toContain('async function deleteLegacyCorpusEvent(');
     expect(legacyEventDelete.match(/\.query\('calendarEventCorpus'\)/g)).toHaveLength(2);
-    expect(legacyCalendarDelete).toContain(".withIndex('by_user_account'");
+    expect(legacyCalendarDelete).toContain(".withIndex('by_user_account_calendar_start'");
     expect(source).toContain('searchText: canonical.searchText || row.searchText');
     expect(source).toContain('yearMonth: canonical.yearMonth || row.yearMonth');
     expect(purge).toContain(".query('calendarEventCorpus')");

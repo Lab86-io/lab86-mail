@@ -211,13 +211,14 @@ export const removeCalendar = mutation({
     if (row && row.userId === args.userId) await ctx.db.delete(row._id);
     const events = await ctx.db
       .query('calendarEvents')
-      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .withIndex('by_user_account_calendar_start', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('accountId', args.accountId)
+          .eq('providerCalendarId', args.providerCalendarId),
+      )
       .collect();
-    for (const event of events) {
-      if (event.providerCalendarId === args.providerCalendarId) {
-        await ctx.db.delete(event._id);
-      }
-    }
+    for (const event of events) await ctx.db.delete(event._id);
     await deleteLegacyCalendarCorpus(ctx, args.userId, args.accountId, new Set([args.providerCalendarId]));
     return { ok: true };
   },
@@ -751,12 +752,14 @@ async function deleteLegacyCalendarCorpus(
   providerCalendarIds: Set<string>,
 ) {
   if (providerCalendarIds.size === 0) return;
-  const rows = await ctx.db
-    .query('calendarEventCorpus')
-    .withIndex('by_user_account', (q: any) => q.eq('userId', userId).eq('accountId', accountId))
-    .collect();
-  for (const row of rows) {
-    if (providerCalendarIds.has(row.providerCalendarId)) await ctx.db.delete(row._id);
+  for (const providerCalendarId of providerCalendarIds) {
+    const rows = await ctx.db
+      .query('calendarEventCorpus')
+      .withIndex('by_user_account_calendar_start', (q: any) =>
+        q.eq('userId', userId).eq('accountId', accountId).eq('providerCalendarId', providerCalendarId),
+      )
+      .collect();
+    for (const row of rows) await ctx.db.delete(row._id);
   }
 }
 
