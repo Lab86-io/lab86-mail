@@ -61,7 +61,7 @@ jobs:
           fi
 
       - name: Install Railway CLI
-        run: npm install -g @railway/cli@5.0.0
+        run: npm install -g @railway/cli@5.26.2
 
       - name: Prepare Railway deployment identity
         run: echo "RAILWAY_DEPLOY_MESSAGE=development ${GITHUB_SHA} run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
