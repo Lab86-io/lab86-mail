@@ -13,6 +13,13 @@ function between(source: string, startMarker: string, endMarker: string) {
 }
 
 describe('Convex cost guardrails', () => {
+  test('Smart Category sweeps honor source continuation after orphan repair', () => {
+    const source = read('lib/mail/llm-classify.ts');
+    expect(source).toContain('const page = await convexMutation<{ items: any[]; moreRemaining: boolean }>');
+    expect(source).toContain('if (pending.length < SWEEP_BATCH) {');
+    expect(source).toContain('if (page.moreRemaining) continue;');
+  });
+
   test('mail messages keep only indexes used by runtime reads and deletion', () => {
     const schema = read('convex/schema.ts');
     const messages = between(schema, 'mailCorpusMessages: defineTable(', 'userDocs: defineTable(');
@@ -58,6 +65,7 @@ describe('Convex cost guardrails', () => {
     expect(search).toContain(".query('calendarEventCorpus')");
     expect(search).toContain('calendarSearchCutoverReady(ctx)');
     expect(source).toContain("return state?.status === 'completed' || state?.phase === 'legacy';");
+    expect(search).toContain('count: Math.min(matched.length, CAP)');
     expect(source).not.toContain('upsertCorpusEvent(');
     expect(source).not.toContain('deleteCorpusEvent(');
     expect(source).toContain('async function deleteLegacyCorpusEvent(');

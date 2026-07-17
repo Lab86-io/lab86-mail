@@ -629,7 +629,10 @@ export const countEvents = query({
       }
     }
     const matched = filterCalendarRows(rows, args);
-    return { count: matched.length, approximate: rows.length >= CAP && matched.length >= CAP };
+    return {
+      count: Math.min(matched.length, CAP),
+      approximate: rows.length >= CAP && matched.length >= CAP,
+    };
   },
 });
 

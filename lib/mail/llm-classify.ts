@@ -107,7 +107,10 @@ export async function runLlmClassificationSweep(userId: string) {
           { userId, items },
         );
         classified += batchResult.stored;
-        if (pending.length < SWEEP_BATCH) break;
+        if (pending.length < SWEEP_BATCH) {
+          if (page.moreRemaining) continue;
+          break;
+        }
       }
       if (classified) console.log(`[llm-classify] stored ${classified} verdicts for ${userId}`);
       return { classified, moreRemaining };
