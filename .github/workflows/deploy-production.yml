@@ -86,10 +86,10 @@ jobs:
         run: |
           if grep -Fq '[allow convex index cleanup]' .release-commits.txt; then
             npx convex deploy --allow-deleting-large-indexes
-            npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'
           else
             npx convex deploy
           fi
+          npx convex run calendarData:completeCalendarSearchMigration '{}'
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@5.26.2

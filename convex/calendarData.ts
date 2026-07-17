@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { QueryCtx } from './_generated/server';
-import { internalMutation, mutation, query } from './_generated/server';
+import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 // Calendar corpus storage (see docs/productivity-platform-spec.md). Writers
@@ -630,10 +630,39 @@ export const liveEvents = query({
   },
 });
 
+// Canonical rows existed before searchText/yearMonth became required at write
+// time. Walk the whole table once, in bounded pages, before cutting search over
+// or deleting the legacy search corpus. This also covers canonical-only rows
+// that have no duplicate left to supply a backfill.
+export const backfillCanonicalEventSearchBatch = internalMutation({
+  args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 250), 25), 500);
+    const page = await ctx.db
+      .query('calendarEvents')
+      .paginate({ cursor: args.cursor ?? null, numItems: limit });
+    let migrated = 0;
+    for (const row of page.page) {
+      if (row.searchText && row.yearMonth) continue;
+      await ctx.db.patch(row._id, {
+        searchText: row.searchText || normalizeCalendarCorpusText(buildEventSearchText(row)),
+        yearMonth: row.yearMonth || yearMonth(row.startAt),
+      });
+      migrated += 1;
+    }
+    return {
+      scanned: page.page.length,
+      migrated,
+      done: page.isDone,
+      ...(!page.isDone ? { continueCursor: page.continueCursor } : {}),
+    };
+  },
+});
+
 // Search now runs on calendarEvents directly. Drain the former duplicate
-// corpus in small scheduled transactions so existing deployments reclaim its
-// document and index storage without a large mutation. Legacy canonical rows
-// may predate the searchable fields, so preserve that corpus data before each
+// corpus in small transactions so existing deployments reclaim its document
+// and index storage without a large mutation. Legacy canonical rows may
+// predate the searchable fields, so preserve that corpus data before each
 // duplicate is deleted.
 export const purgeLegacyEventCorpusBatch = internalMutation({
   args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
@@ -664,13 +693,204 @@ export const purgeLegacyEventCorpusBatch = internalMutation({
       }
       await ctx.db.delete(row._id);
     }
-    if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.calendarData.purgeLegacyEventCorpusBatch, {
-        limit,
-        cursor: page.continueCursor,
-      });
+    return {
+      deleted: page.page.length - skipped,
+      migrated,
+      skipped,
+      done: page.isDone,
+      ...(!page.isDone ? { continueCursor: page.continueCursor } : {}),
+    };
+  },
+});
+
+const CALENDAR_SEARCH_MIGRATION = 'calendar-search-canonical-v1';
+
+export const calendarSearchMigrationStatus = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db
+      .query('dataMigrations')
+      .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
+      .unique();
+  },
+});
+
+const calendarMigrationProgress = {
+  phase: v.union(v.literal('canonical'), v.literal('legacy')),
+  cursor: v.optional(v.string()),
+  canonicalScanned: v.number(),
+  canonicalMigrated: v.number(),
+  legacyDeleted: v.number(),
+  legacyMigrated: v.number(),
+  legacySkipped: v.number(),
+};
+
+export const saveCalendarSearchMigrationProgress = internalMutation({
+  args: calendarMigrationProgress,
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('dataMigrations')
+      .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
+      .unique();
+    const progress = {
+      status: 'running' as const,
+      ...args,
+      // Optional mutation args are omitted on the wire. Assign explicitly so
+      // switching phases removes the prior phase's continuation cursor.
+      cursor: args.cursor,
+      updatedAt: now(),
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, progress);
+      return existing._id;
     }
-    return { deleted: page.page.length - skipped, migrated, skipped, done: page.isDone };
+    return await ctx.db.insert('dataMigrations', {
+      name: CALENDAR_SEARCH_MIGRATION,
+      ...progress,
+    });
+  },
+});
+
+export const markCalendarSearchMigrationComplete = internalMutation({
+  args: { result: v.any() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('dataMigrations')
+      .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
+      .unique();
+    const completedAt = now();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        status: 'completed',
+        cursor: undefined,
+        updatedAt: completedAt,
+        completedAt,
+        result: args.result,
+      });
+      return existing._id;
+    }
+    return await ctx.db.insert('dataMigrations', {
+      name: CALENDAR_SEARCH_MIGRATION,
+      status: 'completed',
+      updatedAt: completedAt,
+      completedAt,
+      result: args.result,
+    });
+  },
+});
+
+// Deployment entry point: do not return until both bounded migrations are
+// complete. The durable completion marker turns later deploys into one indexed
+// read instead of repeatedly scanning the canonical calendar table.
+export const completeCalendarSearchMigration = internalAction({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{
+    canonicalScanned: number;
+    canonicalMigrated: number;
+    legacyDeleted: number;
+    legacyMigrated: number;
+    legacySkipped: number;
+    alreadyComplete?: boolean;
+  }> => {
+    const state = await ctx.runQuery(internal.calendarData.calendarSearchMigrationStatus, {});
+    if (state?.status === 'completed') {
+      return {
+        canonicalScanned: 0,
+        canonicalMigrated: 0,
+        legacyDeleted: 0,
+        legacyMigrated: 0,
+        legacySkipped: 0,
+        alreadyComplete: true,
+      };
+    }
+    const batchSize = 500;
+    const maxBatches = 1_000;
+    let phase: 'canonical' | 'legacy' = state?.phase === 'legacy' ? 'legacy' : 'canonical';
+    let canonicalCursor: string | undefined = phase === 'canonical' ? state?.cursor : undefined;
+    let canonicalScanned = state?.canonicalScanned ?? 0;
+    let canonicalMigrated = state?.canonicalMigrated ?? 0;
+    let legacyCursor: string | undefined = phase === 'legacy' ? state?.cursor : undefined;
+    let legacyDeleted = state?.legacyDeleted ?? 0;
+    let legacyMigrated = state?.legacyMigrated ?? 0;
+    let legacySkipped = state?.legacySkipped ?? 0;
+    const saveProgress = async (cursor?: string) => {
+      await ctx.runMutation(internal.calendarData.saveCalendarSearchMigrationProgress, {
+        phase,
+        ...(cursor ? { cursor } : {}),
+        canonicalScanned,
+        canonicalMigrated,
+        legacyDeleted,
+        legacyMigrated,
+        legacySkipped,
+      });
+    };
+
+    if (phase === 'canonical') {
+      let canonicalDone = false;
+      for (let batch = 0; batch < maxBatches; batch += 1) {
+        const result = (await ctx.runMutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
+          limit: batchSize,
+          ...(canonicalCursor ? { cursor: canonicalCursor } : {}),
+        })) as { scanned: number; migrated: number; done: boolean; continueCursor?: string };
+        canonicalScanned += result.scanned;
+        canonicalMigrated += result.migrated;
+        if (result.done) {
+          canonicalDone = true;
+          phase = 'legacy';
+          canonicalCursor = undefined;
+          await saveProgress();
+          break;
+        }
+        if (!result.continueCursor) throw new Error('Canonical calendar search backfill lost its cursor.');
+        canonicalCursor = result.continueCursor;
+        await saveProgress(canonicalCursor);
+      }
+      if (!canonicalDone)
+        throw new Error(`Canonical calendar search backfill exceeded ${maxBatches} batches.`);
+    }
+
+    let legacyDone = false;
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      const result = (await ctx.runMutation(internal.calendarData.purgeLegacyEventCorpusBatch, {
+        limit: batchSize,
+        ...(legacyCursor ? { cursor: legacyCursor } : {}),
+      })) as {
+        deleted: number;
+        migrated: number;
+        skipped: number;
+        done: boolean;
+        continueCursor?: string;
+      };
+      legacyDeleted += result.deleted;
+      legacyMigrated += result.migrated;
+      legacySkipped += result.skipped;
+      if (result.done) {
+        legacyDone = true;
+        legacyCursor = undefined;
+        break;
+      }
+      if (!result.continueCursor) throw new Error('Legacy calendar cleanup lost its cursor.');
+      legacyCursor = result.continueCursor;
+      await saveProgress(legacyCursor);
+    }
+    if (!legacyDone) throw new Error(`Legacy calendar cleanup exceeded ${maxBatches} batches.`);
+
+    const result = {
+      canonicalScanned,
+      canonicalMigrated,
+      legacyDeleted,
+      legacyMigrated,
+      legacySkipped,
+    };
+    // Cross-user legacy collisions are quarantined above because deleting or
+    // migrating them would corrupt ownership. They cannot be repaired by
+    // repeating the same scan, and canonical search is already complete, so
+    // retain the audit count while preventing every deploy from paying for an
+    // identical full-table retry.
+    await ctx.runMutation(internal.calendarData.markCalendarSearchMigrationComplete, { result });
+    return result;
   },
 });
 

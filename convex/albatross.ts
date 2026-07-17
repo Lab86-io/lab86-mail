@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import {
   AREA_CLASSIFIER_VERSION,
   areaBrandingFromFacts,
+  areaFactIdentity,
   extractAreaPlaces,
   faviconUrlForDomain,
   intentDisplayTitle,
@@ -1218,27 +1219,6 @@ type AreaReindexMatch = {
   fact: AreaReindexFact;
 };
 
-function factIdentityKind(value: string): 'email' | 'domain' | null {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/^mailto:/, '')
-    .replace(/^@/, '');
-  if (!normalized || /\s/.test(normalized)) return null;
-  if (normalized.includes('@')) return 'email';
-  if (normalizeAreaDomain(normalized)) return 'domain';
-  return null;
-}
-
-function factIdentityValue(value: string, kind: 'email' | 'domain') {
-  if (kind === 'domain') return normalizeAreaDomain(value) || '';
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^mailto:/, '')
-    .replace(/^@/, '');
-}
-
 function confirmationForVerifiedFact(fact: AreaReindexFact): AlbatrossConfirmationRef[] {
   const refs = normalizeConfirmationRefs(fact.confirmationRefs);
   if (refs.some((ref) => ref.kind === 'userConfirmation' && Number.isFinite(ref.confirmedAt))) return refs;
@@ -1272,9 +1252,9 @@ function matchMailRowToAreaFact(
     if (fact.status !== 'verified') continue;
     const confirmationRefs = confirmationForVerifiedFact(fact);
     if (!confirmationRefs.length) continue;
-    const kind = factIdentityKind(fact.value);
-    if (!kind) continue;
-    const value = factIdentityValue(fact.value, kind);
+    const identity = areaFactIdentity(fact.kind, fact.value);
+    if (!identity) continue;
+    const { kind, value } = identity;
     if (kind === 'domain' && isSharedConsumerDomain(value)) continue;
     const isMatch = kind === 'email' ? email === value : domain === value;
     if (!isMatch) continue;
@@ -2416,8 +2396,39 @@ export const recordAreaVerdicts = mutation({
           })
         : null;
       const latestMessageId = canonicalLatestMessageId(latest?.providerMessageId, thread?.latestMessageId);
-      if (thread && latestMessageId && thread.latestMessageId !== latestMessageId) {
-        await ctx.db.patch(thread._id, { latestMessageId, updatedAt: ts });
+      if (thread && latestMessageId) {
+        const latestAdvanced = thread.latestMessageId !== latestMessageId;
+        const smartAttributionStale =
+          Boolean(thread.llmCategory || thread.llmClassifiedAt || thread.llmClassifiedMessageId) &&
+          thread.llmClassifiedMessageId !== latestMessageId;
+        const areaAttributionStale =
+          Boolean(
+            thread.areaClassifierVersion !== undefined ||
+              thread.areaClassifiedAt ||
+              thread.areaClassifiedMessageId,
+          ) && thread.areaClassifiedMessageId !== latestMessageId;
+        if (latestAdvanced || smartAttributionStale || areaAttributionStale) {
+          await ctx.db.patch(thread._id, {
+            ...(latestAdvanced ? { latestMessageId } : {}),
+            ...(latestAdvanced || smartAttributionStale
+              ? {
+                  llmCategory: undefined,
+                  llmClassifiedAt: undefined,
+                  llmClassifiedMessageId: undefined,
+                  llmPending: true,
+                }
+              : {}),
+            ...(latestAdvanced || areaAttributionStale
+              ? {
+                  areaClassifierVersion: undefined,
+                  areaClassifiedAt: undefined,
+                  areaClassifiedMessageId: undefined,
+                  areaRoutingPending: true,
+                }
+              : {}),
+            updatedAt: ts,
+          });
+        }
       }
       // The model ruled on one concrete message. If newer mail arrived while
       // the request was in flight, preserve every existing link and leave the
@@ -2518,6 +2529,7 @@ export const recordAreaVerdicts = mutation({
       await ctx.db.patch(thread._id, {
         areaClassifierVersion: version,
         areaClassifiedAt: ts,
+        areaClassifiedMessageId: latestMessageId,
         areaRoutingPending: undefined,
         updatedAt: ts,
       });

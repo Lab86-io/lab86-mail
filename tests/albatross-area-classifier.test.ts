@@ -15,7 +15,7 @@ import {
   matchThreadToFacts,
   runAreaClassification,
 } from '../lib/albatross/area-classifier';
-import { AREA_CLASSIFIER_VERSION } from '../lib/albatross/area-home';
+import { AREA_CLASSIFIER_VERSION, areaFactIdentity } from '../lib/albatross/area-home';
 
 const USER = 'user_area_routing_test';
 
@@ -97,6 +97,14 @@ describe('identity routing', () => {
     ).toMatchObject({ matchType: 'email' });
   });
 
+  test('never turns a domain-shaped non-identity fact into a deterministic route', () => {
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ kind: 'note', value: 'cardhunt.ai' }),
+      ]),
+    ).toBeNull();
+  });
+
   test('abstains on equally strong conflicting identities', () => {
     expect(
       matchThreadToFacts(thread({ fromAddress: 'a@shared-company.test' }), [
@@ -117,6 +125,18 @@ describe('identity routing', () => {
         fact({ value: '@cardhunt.ai' }),
       ]),
     ).toMatchObject({ matchType: 'domain' });
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ value: 'https://www.cardhunt.ai/about' }),
+      ]),
+    ).toMatchObject({ matchType: 'domain', matchValue: 'cardhunt.ai' });
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ kind: 'domain', value: 'andrew@cardhunt.ai' }),
+      ]),
+    ).toBeNull();
+    expect(areaFactIdentity('email', 'user@')).toBeNull();
+    expect(areaFactIdentity('email', 'user@@example.com')).toBeNull();
   });
 
   test('an exact email identity outranks a conflicting domain identity', () => {

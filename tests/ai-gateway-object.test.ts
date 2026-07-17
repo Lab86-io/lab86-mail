@@ -7,6 +7,7 @@ describe('structured AI gateway', () => {
   test('uses the resolved model, feature cap, and default strict provider options', async () => {
     const requests: any[] = [];
     const usage: any[] = [];
+    let runtimeRequest: any;
     const runtime = {
       userId: 'user_1',
       source: 'lab86',
@@ -15,7 +16,10 @@ describe('structured AI gateway', () => {
       model: 'resolved-model',
     } as any;
     __setObjectGenerationDepsForTest({
-      resolveAiRuntime: async () => runtime,
+      resolveAiRuntime: async (input) => {
+        runtimeRequest = input;
+        return runtime;
+      },
       generateObject: (async (request: any) => {
         requests.push(request);
         return { object: { assignments: [] }, usage: { inputTokens: 10, outputTokens: 2 } } as any;
@@ -31,6 +35,11 @@ describe('structured AI gateway', () => {
     });
 
     expect(result.object).toEqual({ assignments: [] });
+    expect(runtimeRequest).toMatchObject({
+      userId: 'user_1',
+      speed: 'classify',
+      feature: 'albatross_area_route',
+    });
     expect(requests[0]).toMatchObject({
       model: 'resolved-model',
       maxOutputTokens: 1200,

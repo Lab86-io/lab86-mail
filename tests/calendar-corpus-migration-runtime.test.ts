@@ -41,23 +41,121 @@ describe('legacy calendar corpus migration', () => {
         ...baseEvent,
         providerEventId: 'existing_event',
       });
+      await ctx.db.insert('calendarEvents', {
+        ...baseEvent,
+        providerEventId: 'canonical_only_event',
+        searchText: undefined,
+        yearMonth: undefined,
+      });
+      for (let index = 0; index < 499; index += 1) {
+        await ctx.db.insert('calendarEvents', {
+          ...baseEvent,
+          providerEventId: `already_searchable_${index}`,
+        });
+      }
     });
 
-    const result = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
-    expect(result).toEqual({ deleted: 2, migrated: 2, skipped: 0, done: true });
+    const result = await t.action(internal.calendarData.completeCalendarSearchMigration, {});
+    expect(result).toEqual({
+      canonicalScanned: 501,
+      canonicalMigrated: 2,
+      legacyDeleted: 2,
+      legacyMigrated: 1,
+      legacySkipped: 0,
+    });
+    expect(await t.action(internal.calendarData.completeCalendarSearchMigration, {})).toEqual({
+      canonicalScanned: 0,
+      canonicalMigrated: 0,
+      legacyDeleted: 0,
+      legacyMigrated: 0,
+      legacySkipped: 0,
+      alreadyComplete: true,
+    });
 
     const state = await t.run(async (ctx) => ({
       canonical: await ctx.db.query('calendarEvents').collect(),
       legacy: await ctx.db.query('calendarEventCorpus').collect(),
     }));
     expect(state.legacy).toHaveLength(0);
-    expect(state.canonical).toHaveLength(2);
-    expect(state.canonical.map((row) => row.providerEventId).sort()).toEqual([
-      'existing_event',
-      'orphaned_event',
-    ]);
-    expect(state.canonical.every((row) => row.searchText === 'preserved event')).toBe(true);
+    expect(state.canonical).toHaveLength(502);
+    expect(state.canonical.map((row) => row.providerEventId)).toContain('canonical_only_event');
+    expect(state.canonical.map((row) => row.providerEventId)).toContain('existing_event');
+    expect(state.canonical.map((row) => row.providerEventId)).toContain('orphaned_event');
+    expect(state.canonical.every((row) => row.searchText?.toLowerCase() === 'preserved event')).toBe(true);
     expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
+    expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
+  });
+
+  test('resumes the deployment migration from durable batch progress', async () => {
+    const t = convexTest(schema, convexModules);
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 26; index += 1) {
+        await ctx.db.insert('calendarEvents', {
+          ...baseEvent,
+          providerEventId: `resumable_${index}`,
+          searchText: undefined,
+          yearMonth: undefined,
+        });
+      }
+    });
+    const firstPage = await t.mutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
+      limit: 25,
+    });
+    expect(firstPage).toMatchObject({ scanned: 25, migrated: 25, done: false });
+    await t.run((ctx) =>
+      ctx.db.insert('dataMigrations', {
+        name: 'calendar-search-canonical-v1',
+        status: 'running',
+        phase: 'canonical',
+        cursor: firstPage.continueCursor,
+        canonicalScanned: 25,
+        canonicalMigrated: 25,
+        legacyDeleted: 0,
+        legacyMigrated: 0,
+        legacySkipped: 0,
+        updatedAt: 1,
+      }),
+    );
+
+    expect(await t.action(internal.calendarData.completeCalendarSearchMigration, {})).toEqual({
+      canonicalScanned: 26,
+      canonicalMigrated: 26,
+      legacyDeleted: 0,
+      legacyMigrated: 0,
+      legacySkipped: 0,
+    });
+    const migration = await t.run((ctx) => ctx.db.query('dataMigrations').first());
+    expect(migration).toMatchObject({ status: 'completed', canonicalScanned: 26 });
+    expect(migration?.cursor).toBeUndefined();
+  });
+
+  test('clears the canonical cursor when durable progress advances to legacy cleanup', async () => {
+    const t = convexTest(schema, convexModules);
+    await t.run((ctx) =>
+      ctx.db.insert('dataMigrations', {
+        name: 'calendar-search-canonical-v1',
+        status: 'running',
+        phase: 'canonical',
+        cursor: 'stale-canonical-cursor',
+        canonicalScanned: 500,
+        canonicalMigrated: 2,
+        legacyDeleted: 0,
+        legacyMigrated: 0,
+        legacySkipped: 0,
+        updatedAt: 1,
+      }),
+    );
+    await t.mutation(internal.calendarData.saveCalendarSearchMigrationProgress, {
+      phase: 'legacy',
+      canonicalScanned: 500,
+      canonicalMigrated: 2,
+      legacyDeleted: 0,
+      legacyMigrated: 0,
+      legacySkipped: 0,
+    });
+    const migration = await t.run((ctx) => ctx.db.query('dataMigrations').first());
+    expect(migration).toMatchObject({ status: 'running', phase: 'legacy' });
+    expect(migration?.cursor).toBeUndefined();
   });
 
   test('does not recreate an event deleted while the bounded purge is running', async () => {
