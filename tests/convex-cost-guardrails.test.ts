@@ -42,9 +42,14 @@ describe('Convex cost guardrails', () => {
       'export const purgeLegacyEventCorpusBatch',
       'async function queryEventsInWindow',
     );
-    const legacyDelete = between(
+    const legacyEventDelete = between(
       source,
       'async function deleteLegacyCorpusEvent',
+      'async function deleteLegacyCalendarCorpus',
+    );
+    const legacyCalendarDelete = between(
+      source,
+      'async function deleteLegacyCalendarCorpus',
       'function filterCalendarRows',
     );
 
@@ -54,15 +59,15 @@ describe('Convex cost guardrails', () => {
     expect(source).not.toContain('upsertCorpusEvent(');
     expect(source).not.toContain('deleteCorpusEvent(');
     expect(source).toContain('async function deleteLegacyCorpusEvent(');
-    expect(legacyDelete.match(/\.query\('calendarEventCorpus'\)/g)).toHaveLength(2);
+    expect(legacyEventDelete.match(/\.query\('calendarEventCorpus'\)/g)).toHaveLength(2);
+    expect(legacyCalendarDelete).toContain(".withIndex('by_user_account'");
     expect(source).toContain('searchText: canonical.searchText || row.searchText');
     expect(source).toContain('yearMonth: canonical.yearMonth || row.yearMonth');
-    expect(purge).toContain(".query('calendarEventCorpus').take(limit)");
-    expect(purge).toContain('for (const row of rows)');
+    expect(purge).toContain(".query('calendarEventCorpus')");
+    expect(purge).toContain('.paginate({ cursor: args.cursor ?? null, numItems: limit })');
+    expect(purge).toContain('for (const row of page.page)');
     expect(purge).toContain('await ctx.db.delete(row._id)');
-    expect(purge).toContain(
-      'ctx.scheduler.runAfter(0, internal.calendarData.purgeLegacyEventCorpusBatch, { limit })',
-    );
+    expect(purge).toContain('ctx.scheduler.runAfter(0, internal.calendarData.purgeLegacyEventCorpusBatch, {');
   });
 
   test('calendar reconciliation selects exact overlaps from the end-time index', () => {

@@ -44,7 +44,7 @@ describe('legacy calendar corpus migration', () => {
     });
 
     const result = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
-    expect(result).toEqual({ deleted: 2, migrated: 2, done: false });
+    expect(result).toEqual({ deleted: 2, migrated: 2, skipped: 0, done: true });
 
     const state = await t.run(async (ctx) => ({
       canonical: await ctx.db.query('calendarEvents').collect(),
@@ -79,7 +79,7 @@ describe('legacy calendar corpus migration', () => {
         providerEventId: 'deleted_event',
       });
       const purge = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
-      expect(purge).toEqual({ deleted: 0, migrated: 0, done: true });
+      expect(purge).toEqual({ deleted: 0, migrated: 0, skipped: 0, done: true });
 
       const state = await t.run(async (ctx) => ({
         canonical: await ctx.db.query('calendarEvents').collect(),
@@ -167,5 +167,114 @@ describe('legacy calendar corpus migration', () => {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
     }
+  });
+
+  test('removing a calendar drains legacy-only rows before the purge can recreate them', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-remove-test-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      await t.run((ctx) =>
+        ctx.db.insert('calendarEventCorpus', {
+          ...baseEvent,
+          providerEventId: 'legacy_only_removed_event',
+        }),
+      );
+
+      await t.mutation(api.calendarData.removeCalendar, {
+        internalSecret: 'calendar-remove-test-secret',
+        userId: baseEvent.userId,
+        accountId: baseEvent.accountId,
+        providerCalendarId: baseEvent.providerCalendarId,
+      });
+      const purge = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
+      expect(purge).toEqual({ deleted: 0, migrated: 0, skipped: 0, done: true });
+
+      const state = await t.run(async (ctx) => ({
+        canonical: await ctx.db.query('calendarEvents').collect(),
+        legacy: await ctx.db.query('calendarEventCorpus').collect(),
+      }));
+      expect(state).toEqual({ canonical: [], legacy: [] });
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('pruning a missing calendar also drains its legacy-only rows', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-prune-test-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      await t.run(async (ctx) => {
+        await ctx.db.insert('calendars', {
+          userId: baseEvent.userId,
+          accountId: baseEvent.accountId,
+          grantId: baseEvent.grantId,
+          provider: baseEvent.provider,
+          providerCalendarId: baseEvent.providerCalendarId,
+          name: 'Removed calendar',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('calendarEventCorpus', {
+          ...baseEvent,
+          providerEventId: 'legacy_only_pruned_event',
+        });
+      });
+
+      await t.mutation(api.calendarData.upsertCalendarBatch, {
+        internalSecret: 'calendar-prune-test-secret',
+        userId: baseEvent.userId,
+        accountId: baseEvent.accountId,
+        grantId: baseEvent.grantId,
+        provider: baseEvent.provider,
+        calendars: [],
+        pruneMissing: true,
+      });
+      const purge = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
+      expect(purge).toEqual({ deleted: 0, migrated: 0, skipped: 0, done: true });
+
+      const state = await t.run(async (ctx) => ({
+        calendars: await ctx.db.query('calendars').collect(),
+        canonical: await ctx.db.query('calendarEvents').collect(),
+        legacy: await ctx.db.query('calendarEventCorpus').collect(),
+      }));
+      expect(state).toEqual({ calendars: [], canonical: [], legacy: [] });
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('skips corrupt cross-user collisions without stalling later rows', async () => {
+    const t = convexTest(schema, convexModules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('calendarEvents', {
+        ...baseEvent,
+        userId: 'other_user',
+        providerEventId: 'cross_user_collision',
+      });
+      await ctx.db.insert('calendarEventCorpus', {
+        ...baseEvent,
+        providerEventId: 'cross_user_collision',
+      });
+      await ctx.db.insert('calendarEventCorpus', {
+        ...baseEvent,
+        providerEventId: 'safe_later_event',
+      });
+    });
+
+    const result = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
+    expect(result).toEqual({ deleted: 1, migrated: 1, skipped: 1, done: true });
+    const state = await t.run(async (ctx) => ({
+      canonical: await ctx.db.query('calendarEvents').collect(),
+      legacy: await ctx.db.query('calendarEventCorpus').collect(),
+    }));
+    expect(state.canonical.map((row) => row.providerEventId).sort()).toEqual([
+      'cross_user_collision',
+      'safe_later_event',
+    ]);
+    expect(state.legacy.map((row) => row.providerEventId)).toEqual(['cross_user_collision']);
   });
 });
