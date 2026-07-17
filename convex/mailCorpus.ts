@@ -1,5 +1,4 @@
 import { v } from 'convex/values';
-import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import {
@@ -381,16 +380,12 @@ export const upsertCorpusBatch = mutation({
       });
     }
 
-    // A completed historical backfill needs one cleanup/reindex pass. Ordinary
-    // webhook/reconcile updates already mark only the changed thread pending
-    // and are drained by the ingest kick; reindexing the whole mailbox for each
-    // message would repeatedly reopen every recent verdict.
-    if (threadIds.size && args.corpusReady === true) {
-      await ctx.scheduler.runAfter(10_000, internal.albatross.queueUserAreaReindex, {
-        userId: args.userId,
-        reason: 'Mailbox backfill complete',
-      });
-    }
+    // Every imported or changed thread is classified through its own freshness
+    // flags above and drained by the ingest kick. Never turn a backfill batch
+    // into a full-mailbox Area reindex: for a large corpus that changes O(batch)
+    // work into O(mailbox), while producing the same routing result. Full
+    // reindexes remain reserved for Area topology/identity changes and explicit
+    // repair operations, where untouched historical threads really can change.
 
     return { ok: true, threads: args.threads.length, messages: args.messages.length };
   },
