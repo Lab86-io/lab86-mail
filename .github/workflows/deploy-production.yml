@@ -83,7 +83,14 @@ jobs:
           git tag -a "v${version}" -m "Release v${version} from ${GITHUB_SHA}"
 
       - name: Deploy Convex
-        run: npx convex deploy
+        env:
+          DEPLOY_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if [[ "$DEPLOY_COMMIT_MESSAGE" == *"[allow convex index cleanup]"* ]]; then
+            npx convex deploy --allow-deleting-large-indexes
+          else
+            npx convex deploy
+          fi
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@5.0.0
@@ -95,7 +102,6 @@ jobs:
           --environment production
           --service "$RAILWAY_SERVICE_NAME"
           --ci
-          --detach
           -m "production v${{ steps.version.outputs.version }}"
 
       - name: Smoke test

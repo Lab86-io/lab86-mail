@@ -58,12 +58,17 @@ describe('Convex cost guardrails', () => {
     expect(reconcile).not.toContain(".withIndex('by_user_account_calendar_start'");
   });
 
-  test('large index deletion requires an explicit development commit marker', () => {
-    const workflow = read('.github/workflows/deploy-development.yml');
+  test('large index deletion requires an explicit deployment commit marker', () => {
+    for (const workflowPath of [
+      '.github/workflows/deploy-development.yml',
+      '.github/workflows/deploy-production.yml',
+    ]) {
+      const workflow = read(workflowPath);
 
-    expect(workflow).toContain('[allow convex index cleanup]');
-    expect(workflow).toContain('npx convex deploy --allow-deleting-large-indexes');
-    expect(workflow).toContain('else\n            npx convex deploy');
-    expect(workflow).not.toContain('--detach');
+      expect(workflow).toContain('[allow convex index cleanup]');
+      expect(workflow).toContain('npx convex deploy --allow-deleting-large-indexes');
+      expect(workflow).toContain('else\n            npx convex deploy');
+      expect(workflow).not.toContain('--detach');
+    }
   });
 });
