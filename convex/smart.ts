@@ -55,10 +55,9 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
   // labels and rule hits are always the deterministic computation (they're
   // exact matching, not judgment), and attention follows live unread state
   // rather than whatever was true when the model looked.
-  const llmVerdictIsCurrent =
-    Boolean(row.llmCategory) &&
-    Boolean(row.latestMessageId) &&
-    row.llmClassifiedMessageId === row.latestMessageId;
+  const llmAttemptIsCurrent =
+    Boolean(row.latestMessageId) && row.llmClassifiedMessageId === row.latestMessageId;
+  const llmVerdictIsCurrent = Boolean(row.llmCategory) && llmAttemptIsCurrent;
   const llm =
     !ruleDriven && llmVerdictIsCurrent
       ? {
@@ -76,7 +75,7 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
     classifiedAt: now(),
     // Every latest message gets the lightweight model pass. Exact user rules
     // still override its result, but do not prevent the pass from happening.
-    llmPending: !llmVerdictIsCurrent ? true : undefined,
+    llmPending: !llmAttemptIsCurrent ? true : undefined,
   };
 }
 

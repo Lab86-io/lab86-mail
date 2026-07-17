@@ -264,12 +264,21 @@ export function areaFactIdentity(
   if (!normalized || /\s/.test(normalized)) return null;
   if (declaredKind === 'email') {
     const parts = normalized.split('@');
-    if (parts.length !== 2 || !parts[0] || !parts[1] || !normalizeAreaDomain(parts[1])) return null;
+    if (parts.length !== 2 || !parts[0] || !isStrictAreaHostname(parts[1])) return null;
     return { kind: 'email', value: normalized };
   }
   if (normalized.includes('@')) return null;
   const domain = normalizeAreaDomain(normalized);
   return domain ? { kind: 'domain', value: domain } : null;
+}
+
+function isStrictAreaHostname(value: string): boolean {
+  if (value.length > 253 || !/^[a-z0-9.-]+$/.test(value)) return false;
+  const labels = value.split('.');
+  if (labels.length < 2) return false;
+  return labels.every(
+    (label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+  );
 }
 
 export function faviconUrlForDomain(domain?: string | null, size = 64): string | null {

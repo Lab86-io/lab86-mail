@@ -6,6 +6,7 @@ import {
   areaBriefHeadline,
   areaBriefState,
   areaCanArchive,
+  areaFactIdentity,
   areaFreshness,
   areaHasNoLinks,
   areaHomeSections,
@@ -164,6 +165,16 @@ describe('area branding helpers', () => {
     expect(normalizeAreaDomain('Inbox <alerts@sub.example.org>')).toBe('sub.example.org');
     expect(normalizeAreaDomain('@linear.app')).toBe('linear.app');
     expect(normalizeAreaDomain('Not a domain')).toBeNull();
+  });
+
+  test('accepts email identities only when their domain is a strict hostname', () => {
+    expect(areaFactIdentity('email', 'Person@Sub.Example.com')).toEqual({
+      kind: 'email',
+      value: 'person@sub.example.com',
+    });
+    expect(areaFactIdentity('email', 'person@example.com/path')).toBeNull();
+    expect(areaFactIdentity('email', 'person@https://example.com')).toBeNull();
+    expect(areaFactIdentity('email', 'person@example.com:443')).toBeNull();
   });
 
   test('builds a bounded favicon URL from the normalized domain', () => {

@@ -794,13 +794,17 @@ export const listLlmPending = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 40), 1), 60);
-    const rows = await ctx.db
+    const maxScanned = Math.max(limit * 5, 120);
+    const pending: any[] = [];
+    const orphanIds: any[] = [];
+    const sourceRows = await ctx.db
       .query('mailCorpusThreads')
       .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
       .order('desc')
-      .take(limit);
-    const pending = [];
-    for (const row of rows) {
+      .take(maxScanned + 1);
+    let processedRows = 0;
+    for (const row of sourceRows.slice(0, maxScanned)) {
+      processedRows += 1;
       const latest = await ctx.db
         .query('mailCorpusMessages')
         .withIndex('by_user_account_thread_received', (q) =>
@@ -811,12 +815,12 @@ export const listLlmPending = mutation({
         )
         .order('desc')
         .first();
-      const messageId = latest?.providerMessageId || row.latestMessageId;
+      const messageId = latest?.providerMessageId;
       if (!messageId) {
         // A legacy aggregate with no message row cannot be grounded. Close it
         // out until a future sync supplies a concrete message identity, which
         // will reopen both classifiers through classificationFreshnessPatch.
-        await ctx.db.patch(row._id, { llmPending: undefined, updatedAt: now() });
+        orphanIds.push(row._id);
         continue;
       }
       if (row.latestMessageId !== messageId) {
@@ -831,18 +835,25 @@ export const listLlmPending = mutation({
         accountId: row.accountId,
         providerThreadId: row.providerThreadId,
         messageId,
-        subject: row.subject,
-        fromAddress: row.fromAddress,
-        snippet: row.snippet,
-        labels: row.labels || [],
-        unread: Boolean(row.unread),
-        lastDate: row.lastDate,
-        bodyText: latest
-          ? String(latest.textBody || latest.searchText || '').slice(0, 4000)
-          : (await latestThreadBody(ctx, row)) || '',
+        subject: latest.subject,
+        fromAddress: latest.from,
+        snippet: latest.snippet,
+        labels: latest.labels || [],
+        unread: Boolean(latest.unread),
+        lastDate: latest.receivedAt,
+        bodyText: String(latest.textBody || latest.searchText || '').slice(0, 4000),
       });
+      if (pending.length >= limit) {
+        break;
+      }
     }
-    return pending;
+    for (const id of orphanIds) {
+      await ctx.db.patch(id, { llmPending: undefined, updatedAt: now() });
+    }
+    return {
+      items: pending,
+      moreRemaining: processedRows < sourceRows.length || sourceRows.length > maxScanned,
+    };
   },
 });
 
@@ -881,12 +892,16 @@ export const storeLlmVerdicts = mutation({
       if (!row || !item.messageId || row.latestMessageId !== item.messageId) continue;
       const llmCategory = item.verdict ?? undefined;
       const merged = classifyCorpusThread(
-        { ...row, llmCategory: llmCategory ?? row.llmCategory },
+        {
+          ...row,
+          llmCategory,
+          llmClassifiedMessageId: item.messageId,
+        },
         context,
         await latestThreadBody(ctx, row),
       );
       await ctx.db.patch(row._id, {
-        ...(llmCategory ? { llmCategory } : {}),
+        llmCategory,
         llmClassifiedAt: ts,
         llmClassifiedMessageId: item.messageId,
         ...merged,

@@ -13,6 +13,13 @@ function between(source: string, startMarker: string, endMarker: string) {
 }
 
 describe('Convex cost guardrails', () => {
+  test('Smart Category sweeps honor source continuation after orphan repair', () => {
+    const source = read('lib/mail/llm-classify.ts');
+    expect(source).toContain('const page = await convexMutation<{ items: any[]; moreRemaining: boolean }>');
+    expect(source).toContain('if (pending.length < SWEEP_BATCH) {');
+    expect(source).toContain('if (page.moreRemaining) continue;');
+  });
+
   test('mail messages keep only indexes used by runtime reads and deletion', () => {
     const schema = read('convex/schema.ts');
     const messages = between(schema, 'mailCorpusMessages: defineTable(', 'userDocs: defineTable(');
@@ -55,7 +62,10 @@ describe('Convex cost guardrails', () => {
 
     expect(events).toContain(".searchIndex('by_search_text'");
     expect(search).toContain(".query('calendarEvents')");
-    expect(search).not.toContain(".query('calendarEventCorpus')");
+    expect(search).toContain(".query('calendarEventCorpus')");
+    expect(search).toContain('calendarSearchCutoverReady(ctx)');
+    expect(source).toContain("return state?.status === 'completed' || state?.phase === 'legacy';");
+    expect(search).toContain('count: Math.min(matched.length, CAP)');
     expect(source).not.toContain('upsertCorpusEvent(');
     expect(source).not.toContain('deleteCorpusEvent(');
     expect(source).toContain('async function deleteLegacyCorpusEvent(');
@@ -75,6 +85,8 @@ describe('Convex cost guardrails', () => {
     expect(source).toContain('ctx.runMutation(internal.calendarData.purgeLegacyEventCorpusBatch');
     expect(source).toContain('ctx.runQuery(internal.calendarData.calendarSearchMigrationStatus');
     expect(source).toContain('ctx.runMutation(internal.calendarData.markCalendarSearchMigrationComplete');
+    expect(source).toContain('const maxBatchesPerInvocation = Math.min(');
+    expect(source).toContain('done: false');
   });
 
   test('calendar reconciliation selects exact overlaps from the end-time index', () => {
@@ -114,9 +126,13 @@ describe('Convex cost guardrails', () => {
       );
       const railwayReady = between(workflow, '- name: Wait for Railway', '- name: Smoke test');
 
-      expect(convexDeploy).toContain(
-        `${markerCondition}\n            npx convex deploy --allow-deleting-large-indexes\n          else\n            npx convex deploy\n          fi\n          npx convex run calendarData:completeCalendarSearchMigration '{}'`,
-      );
+      expect(convexDeploy).toContain(markerCondition);
+      expect(convexDeploy).toContain('npx convex deploy --allow-deleting-large-indexes');
+      expect(convexDeploy).toContain('npx convex deploy');
+      expect(convexDeploy).toContain('for attempt in {1..200}');
+      expect(convexDeploy).toContain("npx convex run calendarData:completeCalendarSearchMigration '{}'");
+      expect(convexDeploy).toContain("jq -e '.done == true'");
+      expect(convexDeploy).toContain('Calendar search migration did not complete');
       expect(railwayInstall).toContain('run: npm install -g @railway/cli@5.26.2');
       expect(workflow).not.toContain('--detach');
       expect(railwayFlow).toContain('GITHUB_RUN_ID');
