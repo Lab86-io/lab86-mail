@@ -15,7 +15,7 @@ import {
   matchThreadToFacts,
   runAreaClassification,
 } from '../lib/albatross/area-classifier';
-import { AREA_CLASSIFIER_VERSION } from '../lib/albatross/area-home';
+import { AREA_CLASSIFIER_VERSION, areaFactIdentity } from '../lib/albatross/area-home';
 
 const USER = 'user_area_routing_test';
 
@@ -135,8 +135,8 @@ describe('identity routing', () => {
         fact({ kind: 'domain', value: 'andrew@cardhunt.ai' }),
       ]),
     ).toBeNull();
-    expect(matchThreadToFacts(thread(), [fact({ kind: 'email', value: 'user@' })])).toBeNull();
-    expect(matchThreadToFacts(thread(), [fact({ kind: 'email', value: 'user@@example.com' })])).toBeNull();
+    expect(areaFactIdentity('email', 'user@')).toBeNull();
+    expect(areaFactIdentity('email', 'user@@example.com')).toBeNull();
   });
 
   test('an exact email identity outranks a conflicting domain identity', () => {
