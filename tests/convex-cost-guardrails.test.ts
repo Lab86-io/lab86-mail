@@ -37,6 +37,11 @@ describe('Convex cost guardrails', () => {
     const source = read('convex/calendarData.ts');
     const events = between(schema, 'calendarEvents: defineTable(', 'calendarEventCorpus: defineTable(');
     const search = between(source, 'export const searchEvents', 'export const setCalendarColor');
+    const purge = between(
+      source,
+      'export const purgeLegacyEventCorpusBatch',
+      'async function queryEventsInWindow',
+    );
 
     expect(events).toContain(".searchIndex('by_search_text'");
     expect(search).toContain(".query('calendarEvents')");
@@ -46,6 +51,12 @@ describe('Convex cost guardrails', () => {
     expect(source.match(/\.query\('calendarEventCorpus'\)/g)).toHaveLength(1);
     expect(source).toContain('searchText: canonical.searchText || row.searchText');
     expect(source).toContain('yearMonth: canonical.yearMonth || row.yearMonth');
+    expect(purge).toContain(".query('calendarEventCorpus').take(limit)");
+    expect(purge).toContain('for (const row of rows)');
+    expect(purge).toContain('await ctx.db.delete(row._id)');
+    expect(purge).toContain(
+      'ctx.scheduler.runAfter(0, internal.calendarData.purgeLegacyEventCorpusBatch, { limit })',
+    );
   });
 
   test('calendar reconciliation selects exact overlaps from the end-time index', () => {
@@ -69,6 +80,7 @@ describe('Convex cost guardrails', () => {
 
       expect(workflow).toContain('[allow convex index cleanup]');
       expect(workflow).toContain('npx convex deploy --allow-deleting-large-indexes');
+      expect(workflow).toContain("npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'");
       expect(workflow).toContain('else\n            npx convex deploy');
       expect(workflow).not.toContain('--detach');
     }

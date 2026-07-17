@@ -55,6 +55,7 @@ jobs:
         run: |
           if [[ "$DEPLOY_COMMIT_MESSAGE" == *"[allow convex index cleanup]"* ]]; then
             npx convex deploy --allow-deleting-large-indexes
+            npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'
           else
             npx convex deploy
           fi
