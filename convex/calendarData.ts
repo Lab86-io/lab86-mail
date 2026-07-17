@@ -632,7 +632,14 @@ export const purgeLegacyEventCorpusBatch = internalMutation({
     let migrated = 0;
     for (const row of rows) {
       const canonical = await findEventByProviderId(ctx, row);
-      if (canonical && canonical.userId === row.userId && (!canonical.searchText || !canonical.yearMonth)) {
+      if (canonical && canonical.userId !== row.userId) {
+        throw new Error(`Refusing to migrate cross-user calendar event ${row.providerEventId}.`);
+      }
+      if (!canonical) {
+        const { _id, _creationTime, ...event } = row;
+        await ctx.db.insert('calendarEvents', event);
+        migrated += 1;
+      } else if (!canonical.searchText || !canonical.yearMonth) {
         await ctx.db.patch(canonical._id, {
           searchText: canonical.searchText || row.searchText,
           yearMonth: canonical.yearMonth || row.yearMonth,

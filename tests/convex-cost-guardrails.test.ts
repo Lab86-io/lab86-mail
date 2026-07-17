@@ -83,6 +83,16 @@ describe('Convex cost guardrails', () => {
       expect(workflow).toContain("npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'");
       expect(workflow).toContain('else\n            npx convex deploy');
       expect(workflow).not.toContain('--detach');
+
+      const railwayDeploy = workflow.indexOf('name: Deploy Railway');
+      const railwayReady = workflow.indexOf('name: Wait for Railway');
+      const smoke = workflow.indexOf('name: Smoke test');
+      expect(railwayDeploy).toBeGreaterThanOrEqual(0);
+      expect(railwayReady).toBeGreaterThan(railwayDeploy);
+      expect(smoke).toBeGreaterThan(railwayReady);
+      expect(workflow).toContain('.meta.cliMessage == $message');
+      expect(workflow).toContain('SUCCESS)');
+      expect(workflow).toContain('FAILED|CRASHED|REMOVED)');
     }
   });
 });

@@ -1,0 +1,62 @@
+import { describe, expect, test } from 'bun:test';
+import { convexTest } from 'convex-test';
+import { internal } from '../convex/_generated/api';
+import schema from '../convex/schema';
+
+const convexModules = {
+  '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+  '../convex/calendarData.ts': () => import('../convex/calendarData'),
+};
+
+const baseEvent = {
+  userId: 'calendar_user',
+  accountId: 'account_1',
+  grantId: 'grant_1',
+  provider: 'google' as const,
+  providerCalendarId: 'calendar_1',
+  title: 'Preserved event',
+  startAt: Date.UTC(2026, 6, 17, 12),
+  endAt: Date.UTC(2026, 6, 17, 13),
+  searchText: 'preserved event',
+  yearMonth: '2026-07',
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+describe('legacy calendar corpus migration', () => {
+  test('creates missing canonical events and backfills searchable fields before deletion', async () => {
+    const t = convexTest(schema, convexModules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('calendarEventCorpus', {
+        ...baseEvent,
+        providerEventId: 'orphaned_event',
+      });
+      await ctx.db.insert('calendarEvents', {
+        ...baseEvent,
+        providerEventId: 'existing_event',
+        searchText: undefined,
+        yearMonth: undefined,
+      });
+      await ctx.db.insert('calendarEventCorpus', {
+        ...baseEvent,
+        providerEventId: 'existing_event',
+      });
+    });
+
+    const result = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
+    expect(result).toEqual({ deleted: 2, migrated: 2, done: false });
+
+    const state = await t.run(async (ctx) => ({
+      canonical: await ctx.db.query('calendarEvents').collect(),
+      legacy: await ctx.db.query('calendarEventCorpus').collect(),
+    }));
+    expect(state.legacy).toHaveLength(0);
+    expect(state.canonical).toHaveLength(2);
+    expect(state.canonical.map((row) => row.providerEventId).sort()).toEqual([
+      'existing_event',
+      'orphaned_event',
+    ]);
+    expect(state.canonical.every((row) => row.searchText === 'preserved event')).toBe(true);
+    expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
+  });
+});
