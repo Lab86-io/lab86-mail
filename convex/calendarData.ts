@@ -715,6 +715,39 @@ export const calendarSearchMigrationStatus = internalQuery({
   },
 });
 
+const calendarMigrationProgress = {
+  phase: v.union(v.literal('canonical'), v.literal('legacy')),
+  cursor: v.optional(v.string()),
+  canonicalScanned: v.number(),
+  canonicalMigrated: v.number(),
+  legacyDeleted: v.number(),
+  legacyMigrated: v.number(),
+  legacySkipped: v.number(),
+};
+
+export const saveCalendarSearchMigrationProgress = internalMutation({
+  args: calendarMigrationProgress,
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('dataMigrations')
+      .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
+      .unique();
+    const progress = {
+      status: 'running' as const,
+      ...args,
+      updatedAt: now(),
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, progress);
+      return existing._id;
+    }
+    return await ctx.db.insert('dataMigrations', {
+      name: CALENDAR_SEARCH_MIGRATION,
+      ...progress,
+    });
+  },
+});
+
 export const markCalendarSearchMigrationComplete = internalMutation({
   args: { result: v.any() },
   handler: async (ctx, args) => {
@@ -722,10 +755,22 @@ export const markCalendarSearchMigrationComplete = internalMutation({
       .query('dataMigrations')
       .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
       .unique();
-    if (existing) return existing._id;
+    const completedAt = now();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        status: 'completed',
+        cursor: undefined,
+        updatedAt: completedAt,
+        completedAt,
+        result: args.result,
+      });
+      return existing._id;
+    }
     return await ctx.db.insert('dataMigrations', {
       name: CALENDAR_SEARCH_MIGRATION,
-      completedAt: now(),
+      status: 'completed',
+      updatedAt: completedAt,
+      completedAt,
       result: args.result,
     });
   },
@@ -746,8 +791,8 @@ export const completeCalendarSearchMigration = internalAction({
     legacySkipped: number;
     alreadyComplete?: boolean;
   }> => {
-    const completed = await ctx.runQuery(internal.calendarData.calendarSearchMigrationStatus, {});
-    if (completed) {
+    const state = await ctx.runQuery(internal.calendarData.calendarSearchMigrationStatus, {});
+    if (state?.status === 'completed') {
       return {
         canonicalScanned: 0,
         canonicalMigrated: 0,
@@ -759,30 +804,50 @@ export const completeCalendarSearchMigration = internalAction({
     }
     const batchSize = 500;
     const maxBatches = 1_000;
-    let canonicalCursor: string | undefined;
-    let canonicalScanned = 0;
-    let canonicalMigrated = 0;
-    let canonicalDone = false;
-    for (let batch = 0; batch < maxBatches; batch += 1) {
-      const result = (await ctx.runMutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
-        limit: batchSize,
-        ...(canonicalCursor ? { cursor: canonicalCursor } : {}),
-      })) as { scanned: number; migrated: number; done: boolean; continueCursor?: string };
-      canonicalScanned += result.scanned;
-      canonicalMigrated += result.migrated;
-      if (result.done) {
-        canonicalDone = true;
-        break;
-      }
-      if (!result.continueCursor) throw new Error('Canonical calendar search backfill lost its cursor.');
-      canonicalCursor = result.continueCursor;
-    }
-    if (!canonicalDone) throw new Error(`Canonical calendar search backfill exceeded ${maxBatches} batches.`);
+    let phase: 'canonical' | 'legacy' = state?.phase === 'legacy' ? 'legacy' : 'canonical';
+    let canonicalCursor: string | undefined = phase === 'canonical' ? state?.cursor : undefined;
+    let canonicalScanned = state?.canonicalScanned ?? 0;
+    let canonicalMigrated = state?.canonicalMigrated ?? 0;
+    let legacyCursor: string | undefined = phase === 'legacy' ? state?.cursor : undefined;
+    let legacyDeleted = state?.legacyDeleted ?? 0;
+    let legacyMigrated = state?.legacyMigrated ?? 0;
+    let legacySkipped = state?.legacySkipped ?? 0;
+    const saveProgress = async (cursor?: string) => {
+      await ctx.runMutation(internal.calendarData.saveCalendarSearchMigrationProgress, {
+        phase,
+        ...(cursor ? { cursor } : {}),
+        canonicalScanned,
+        canonicalMigrated,
+        legacyDeleted,
+        legacyMigrated,
+        legacySkipped,
+      });
+    };
 
-    let legacyCursor: string | undefined;
-    let legacyDeleted = 0;
-    let legacyMigrated = 0;
-    let legacySkipped = 0;
+    if (phase === 'canonical') {
+      let canonicalDone = false;
+      for (let batch = 0; batch < maxBatches; batch += 1) {
+        const result = (await ctx.runMutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
+          limit: batchSize,
+          ...(canonicalCursor ? { cursor: canonicalCursor } : {}),
+        })) as { scanned: number; migrated: number; done: boolean; continueCursor?: string };
+        canonicalScanned += result.scanned;
+        canonicalMigrated += result.migrated;
+        if (result.done) {
+          canonicalDone = true;
+          phase = 'legacy';
+          canonicalCursor = undefined;
+          await saveProgress();
+          break;
+        }
+        if (!result.continueCursor) throw new Error('Canonical calendar search backfill lost its cursor.');
+        canonicalCursor = result.continueCursor;
+        await saveProgress(canonicalCursor);
+      }
+      if (!canonicalDone)
+        throw new Error(`Canonical calendar search backfill exceeded ${maxBatches} batches.`);
+    }
+
     let legacyDone = false;
     for (let batch = 0; batch < maxBatches; batch += 1) {
       const result = (await ctx.runMutation(internal.calendarData.purgeLegacyEventCorpusBatch, {
@@ -800,10 +865,12 @@ export const completeCalendarSearchMigration = internalAction({
       legacySkipped += result.skipped;
       if (result.done) {
         legacyDone = true;
+        legacyCursor = undefined;
         break;
       }
       if (!result.continueCursor) throw new Error('Legacy calendar cleanup lost its cursor.');
       legacyCursor = result.continueCursor;
+      await saveProgress(legacyCursor);
     }
     if (!legacyDone) throw new Error(`Legacy calendar cleanup exceeded ${maxBatches} batches.`);
 

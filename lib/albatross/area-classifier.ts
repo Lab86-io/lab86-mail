@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { AREA_CLASSIFIER_VERSION, isSharedConsumerDomain, normalizeAreaDomain } from './area-home';
+import { AREA_CLASSIFIER_VERSION, areaFactIdentity, isSharedConsumerDomain } from './area-home';
 
 // Areas are a sparse overlay. Every pending thread receives either a grounded
 // set of candidate Area links or a successful empty verdict; unmatched mail
@@ -72,25 +72,6 @@ export function extractEmail(raw: string): string | null {
   return email.includes('@') ? email : null;
 }
 
-function normalizedFactValue(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^mailto:/, '')
-    .replace(/^@/, '');
-}
-
-function factIdentity(kind: string, value: string): { kind: 'email' | 'domain'; value: string } | null {
-  const declaredKind = kind.trim().toLowerCase();
-  if (declaredKind !== 'email' && declaredKind !== 'domain') return null;
-  if (!value || /\s/.test(value)) return null;
-  if (declaredKind === 'email' && value.includes('@')) return { kind: 'email', value };
-  if (value.includes('@')) return null;
-  const domain = normalizeAreaDomain(value);
-  if (declaredKind === 'domain' && domain) return { kind: 'domain', value: domain };
-  return null;
-}
-
 /**
  * Only user-verified exact identities route without a model. Candidate facts,
  * primary-domain hints, notes, and shared consumer domains are context only.
@@ -113,7 +94,7 @@ export function matchThreadToFacts(
     ) {
       continue;
     }
-    const identity = factIdentity(fact.kind, normalizedFactValue(fact.value));
+    const identity = areaFactIdentity(fact.kind, fact.value);
     if (!identity) continue;
     const { kind, value } = identity;
     if (kind === 'domain' && isSharedConsumerDomain(value)) continue;

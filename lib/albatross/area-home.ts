@@ -248,6 +248,28 @@ export function normalizeAreaDomain(value?: string | null): string | null {
   return text;
 }
 
+export function areaFactIdentity(
+  kind: string,
+  value: string,
+): { kind: 'email' | 'domain'; value: string } | null {
+  const declaredKind = String(kind || '')
+    .trim()
+    .toLowerCase();
+  if (declaredKind !== 'email' && declaredKind !== 'domain') return null;
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^mailto:/, '')
+    .replace(/^@/, '');
+  if (!normalized || /\s/.test(normalized)) return null;
+  if (declaredKind === 'email') {
+    return normalized.includes('@') ? { kind: 'email', value: normalized } : null;
+  }
+  if (normalized.includes('@')) return null;
+  const domain = normalizeAreaDomain(normalized);
+  return domain ? { kind: 'domain', value: domain } : null;
+}
+
 export function faviconUrlForDomain(domain?: string | null, size = 64): string | null {
   const normalized = normalizeAreaDomain(domain);
   if (!normalized) return null;

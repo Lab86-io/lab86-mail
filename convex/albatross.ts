@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import {
   AREA_CLASSIFIER_VERSION,
   areaBrandingFromFacts,
+  areaFactIdentity,
   extractAreaPlaces,
   faviconUrlForDomain,
   intentDisplayTitle,
@@ -1218,30 +1219,6 @@ type AreaReindexMatch = {
   fact: AreaReindexFact;
 };
 
-function factIdentityKind(kind: string, value: string): 'email' | 'domain' | null {
-  const declaredKind = kind.trim().toLowerCase();
-  if (declaredKind !== 'email' && declaredKind !== 'domain') return null;
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/^mailto:/, '')
-    .replace(/^@/, '');
-  if (!normalized || /\s/.test(normalized)) return null;
-  if (declaredKind === 'email' && normalized.includes('@')) return 'email';
-  if (normalized.includes('@')) return null;
-  if (declaredKind === 'domain' && normalizeAreaDomain(normalized)) return 'domain';
-  return null;
-}
-
-function factIdentityValue(value: string, kind: 'email' | 'domain') {
-  if (kind === 'domain') return normalizeAreaDomain(value) || '';
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^mailto:/, '')
-    .replace(/^@/, '');
-}
-
 function confirmationForVerifiedFact(fact: AreaReindexFact): AlbatrossConfirmationRef[] {
   const refs = normalizeConfirmationRefs(fact.confirmationRefs);
   if (refs.some((ref) => ref.kind === 'userConfirmation' && Number.isFinite(ref.confirmedAt))) return refs;
@@ -1275,9 +1252,9 @@ function matchMailRowToAreaFact(
     if (fact.status !== 'verified') continue;
     const confirmationRefs = confirmationForVerifiedFact(fact);
     if (!confirmationRefs.length) continue;
-    const kind = factIdentityKind(fact.kind, fact.value);
-    if (!kind) continue;
-    const value = factIdentityValue(fact.value, kind);
+    const identity = areaFactIdentity(fact.kind, fact.value);
+    if (!identity) continue;
+    const { kind, value } = identity;
     if (kind === 'domain' && isSharedConsumerDomain(value)) continue;
     const isMatch = kind === 'email' ? email === value : domain === value;
     if (!isMatch) continue;

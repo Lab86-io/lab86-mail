@@ -86,6 +86,49 @@ describe('legacy calendar corpus migration', () => {
     expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
   });
 
+  test('resumes the deployment migration from durable batch progress', async () => {
+    const t = convexTest(schema, convexModules);
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 26; index += 1) {
+        await ctx.db.insert('calendarEvents', {
+          ...baseEvent,
+          providerEventId: `resumable_${index}`,
+          searchText: undefined,
+          yearMonth: undefined,
+        });
+      }
+    });
+    const firstPage = await t.mutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
+      limit: 25,
+    });
+    expect(firstPage).toMatchObject({ scanned: 25, migrated: 25, done: false });
+    await t.run((ctx) =>
+      ctx.db.insert('dataMigrations', {
+        name: 'calendar-search-canonical-v1',
+        status: 'running',
+        phase: 'canonical',
+        cursor: firstPage.continueCursor,
+        canonicalScanned: 25,
+        canonicalMigrated: 25,
+        legacyDeleted: 0,
+        legacyMigrated: 0,
+        legacySkipped: 0,
+        updatedAt: 1,
+      }),
+    );
+
+    expect(await t.action(internal.calendarData.completeCalendarSearchMigration, {})).toEqual({
+      canonicalScanned: 26,
+      canonicalMigrated: 26,
+      legacyDeleted: 0,
+      legacyMigrated: 0,
+      legacySkipped: 0,
+    });
+    const migration = await t.run((ctx) => ctx.db.query('dataMigrations').first());
+    expect(migration).toMatchObject({ status: 'completed', canonicalScanned: 26 });
+    expect(migration?.cursor).toBeUndefined();
+  });
+
   test('does not recreate an event deleted while the bounded purge is running', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-migration-test-secret';

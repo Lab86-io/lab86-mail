@@ -52,6 +52,23 @@ describe('Smart Category verdict freshness', () => {
           createdAt: ts,
           updatedAt: ts,
         });
+        await ctx.db.insert('mailCorpusThreads', {
+          userId: 'smart_pending_user',
+          accountId: 'account_1',
+          grantId: 'grant_1',
+          provider: 'google',
+          providerThreadId: 'thread_without_message',
+          subject: 'Orphaned legacy aggregate',
+          fromAddress: 'sender@example.com',
+          lastDate: ts - 1,
+          snippet: 'No canonical message exists.',
+          labels: ['inbox'],
+          unread: false,
+          llmPending: true,
+          yearMonth: '2026-07',
+          createdAt: ts,
+          updatedAt: ts,
+        });
       });
 
       const pending = await t.mutation(api.mailCorpus.listLlmPending, {
@@ -65,12 +82,15 @@ describe('Smart Category verdict freshness', () => {
         messageId: 'message_canonical',
         bodyText: 'This exact body belongs to the canonical message.',
       });
-      const thread = await t.run((ctx) => ctx.db.query('mailCorpusThreads').first());
+      const threads = await t.run((ctx) => ctx.db.query('mailCorpusThreads').collect());
+      const thread = threads.find((row) => row.providerThreadId === 'thread_legacy');
+      const orphan = threads.find((row) => row.providerThreadId === 'thread_without_message');
       expect(thread).toMatchObject({
         latestMessageId: 'message_canonical',
         llmPending: true,
         areaRoutingPending: true,
       });
+      expect(orphan?.llmPending).toBeUndefined();
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
