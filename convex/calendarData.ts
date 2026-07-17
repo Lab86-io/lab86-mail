@@ -138,6 +138,9 @@ export const upsertEventBatch = mutation({
         )
         .unique();
       if (row) {
+        if (row.userId !== args.userId) {
+          throw new Error(`Cross-user calendar event collision for ${event.providerEventId}.`);
+        }
         await ctx.db.patch(row._id, patch);
       } else {
         await ctx.db.insert('calendarEvents', {

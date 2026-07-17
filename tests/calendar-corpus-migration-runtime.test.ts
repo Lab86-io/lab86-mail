@@ -169,6 +169,48 @@ describe('legacy calendar corpus migration', () => {
     }
   });
 
+  test('refuses to patch an exact calendar event owned by another user', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-collision-test-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      await t.run((ctx) =>
+        ctx.db.insert('calendarEvents', {
+          ...baseEvent,
+          userId: 'other_user',
+          providerEventId: 'cross_user_upsert',
+          title: 'Other user event',
+        }),
+      );
+
+      await expect(
+        t.mutation(api.calendarData.upsertEventBatch, {
+          internalSecret: 'calendar-collision-test-secret',
+          userId: baseEvent.userId,
+          accountId: baseEvent.accountId,
+          grantId: baseEvent.grantId,
+          provider: baseEvent.provider,
+          events: [
+            {
+              providerCalendarId: baseEvent.providerCalendarId,
+              providerEventId: 'cross_user_upsert',
+              title: 'Must not overwrite',
+              startAt: baseEvent.startAt,
+              endAt: baseEvent.endAt,
+            },
+          ],
+        }),
+      ).rejects.toThrow('Cross-user calendar event collision');
+
+      const canonical = await t.run((ctx) => ctx.db.query('calendarEvents').collect());
+      expect(canonical).toHaveLength(1);
+      expect(canonical[0]).toMatchObject({ userId: 'other_user', title: 'Other user event' });
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
   test('removing a calendar drains legacy-only rows before the purge can recreate them', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-remove-test-secret';
