@@ -193,6 +193,112 @@ describe('Smart Category verdict freshness', () => {
     }
   });
 
+  test('returns an empty continuation page when bounded orphan repair has more source rows', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'smart-empty-continuation-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const ts = Date.now();
+      await t.run(async (ctx) => {
+        for (let index = 0; index < 121; index += 1) {
+          await ctx.db.insert('mailCorpusThreads', {
+            userId: 'smart_empty_page_user',
+            accountId: 'account_1',
+            grantId: 'grant_1',
+            provider: 'google',
+            providerThreadId: `empty_orphan_${index}`,
+            subject: 'Orphan',
+            fromAddress: 'orphan@example.com',
+            lastDate: ts + index + 1,
+            snippet: '',
+            labels: [],
+            unread: false,
+            llmPending: true,
+            yearMonth: '2026-07',
+            createdAt: ts,
+            updatedAt: ts,
+          });
+        }
+      });
+      const page = await t.mutation(api.mailCorpus.listLlmPending, {
+        internalSecret: 'smart-empty-continuation-secret',
+        userId: 'smart_empty_page_user',
+        limit: 1,
+      });
+      expect(page).toEqual({ items: [], moreRemaining: true });
+      const remaining = await t.run((ctx) =>
+        ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_user_llm_pending', (q) =>
+            q.eq('userId', 'smart_empty_page_user').eq('llmPending', true),
+          )
+          .collect(),
+      );
+      expect(remaining).toHaveLength(1);
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('uses the same stable latest message when received timestamps tie', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'smart-tie-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const ts = Date.now();
+      const message = (providerMessageId: string, subject: string) => ({
+        providerMessageId,
+        providerThreadId: 'tied_thread',
+        subject,
+        from: `${providerMessageId}@example.com`,
+        to: 'user@example.com',
+        receivedAt: ts,
+        snippet: subject,
+        textBody: `${subject} body`,
+        searchText: `${subject} body`,
+        labels: ['inbox'],
+      });
+      const args = {
+        internalSecret: 'smart-tie-secret',
+        userId: 'smart_tie_user',
+        accountId: 'account_1',
+        grantId: 'grant_1',
+        provider: 'google' as const,
+        threads: [],
+        messages: [message('message_z', 'First inserted'), message('message_a', 'Second inserted')],
+      };
+      await t.mutation(api.mailCorpus.upsertCorpusBatch, args);
+      const firstThread = await t.run((ctx) => ctx.db.query('mailCorpusThreads').first());
+      const firstPage = await t.mutation(api.mailCorpus.listLlmPending, {
+        internalSecret: 'smart-tie-secret',
+        userId: 'smart_tie_user',
+        limit: 10,
+      });
+      expect(firstThread).toMatchObject({
+        latestMessageId: 'message_a',
+        subject: 'Second inserted',
+      });
+      expect(firstPage.items[0]).toMatchObject({
+        messageId: 'message_a',
+        subject: 'Second inserted',
+      });
+
+      await t.mutation(api.mailCorpus.upsertCorpusBatch, {
+        ...args,
+        messages: [...args.messages].reverse(),
+      });
+      const recomputed = await t.run((ctx) => ctx.db.query('mailCorpusThreads').first());
+      expect(recomputed).toMatchObject({
+        latestMessageId: 'message_a',
+        subject: 'Second inserted',
+      });
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
   test('does not stamp a stale verdict as current after a newer message wins the race', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'smart-verdict-race-secret';
