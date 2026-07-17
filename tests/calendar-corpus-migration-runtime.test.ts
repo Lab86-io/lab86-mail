@@ -129,6 +129,35 @@ describe('legacy calendar corpus migration', () => {
     expect(migration?.cursor).toBeUndefined();
   });
 
+  test('clears the canonical cursor when durable progress advances to legacy cleanup', async () => {
+    const t = convexTest(schema, convexModules);
+    await t.run((ctx) =>
+      ctx.db.insert('dataMigrations', {
+        name: 'calendar-search-canonical-v1',
+        status: 'running',
+        phase: 'canonical',
+        cursor: 'stale-canonical-cursor',
+        canonicalScanned: 500,
+        canonicalMigrated: 2,
+        legacyDeleted: 0,
+        legacyMigrated: 0,
+        legacySkipped: 0,
+        updatedAt: 1,
+      }),
+    );
+    await t.mutation(internal.calendarData.saveCalendarSearchMigrationProgress, {
+      phase: 'legacy',
+      canonicalScanned: 500,
+      canonicalMigrated: 2,
+      legacyDeleted: 0,
+      legacyMigrated: 0,
+      legacySkipped: 0,
+    });
+    const migration = await t.run((ctx) => ctx.db.query('dataMigrations').first());
+    expect(migration).toMatchObject({ status: 'running', phase: 'legacy' });
+    expect(migration?.cursor).toBeUndefined();
+  });
+
   test('does not recreate an event deleted while the bounded purge is running', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-migration-test-secret';

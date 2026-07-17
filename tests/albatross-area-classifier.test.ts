@@ -135,6 +135,8 @@ describe('identity routing', () => {
         fact({ kind: 'domain', value: 'andrew@cardhunt.ai' }),
       ]),
     ).toBeNull();
+    expect(matchThreadToFacts(thread(), [fact({ kind: 'email', value: 'user@' })])).toBeNull();
+    expect(matchThreadToFacts(thread(), [fact({ kind: 'email', value: 'user@@example.com' })])).toBeNull();
   });
 
   test('an exact email identity outranks a conflicting domain identity', () => {

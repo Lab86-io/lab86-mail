@@ -263,7 +263,9 @@ export function areaFactIdentity(
     .replace(/^@/, '');
   if (!normalized || /\s/.test(normalized)) return null;
   if (declaredKind === 'email') {
-    return normalized.includes('@') ? { kind: 'email', value: normalized } : null;
+    const parts = normalized.split('@');
+    if (parts.length !== 2 || !parts[0] || !parts[1] || !normalizeAreaDomain(parts[1])) return null;
+    return { kind: 'email', value: normalized };
   }
   if (normalized.includes('@')) return null;
   const domain = normalizeAreaDomain(normalized);

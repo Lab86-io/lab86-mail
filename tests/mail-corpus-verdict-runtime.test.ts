@@ -90,6 +90,7 @@ describe('Smart Category verdict freshness', () => {
         llmPending: true,
         areaRoutingPending: true,
       });
+      expect(orphan).toBeDefined();
       expect(orphan?.llmPending).toBeUndefined();
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;

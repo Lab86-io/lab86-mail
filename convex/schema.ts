@@ -1268,7 +1268,7 @@ export default defineSchema({
 
   dataMigrations: defineTable({
     name: v.string(),
-    status: v.union(v.literal('running'), v.literal('completed')),
+    status: v.optional(v.union(v.literal('running'), v.literal('completed'))),
     phase: v.optional(v.union(v.literal('canonical'), v.literal('legacy'))),
     cursor: v.optional(v.string()),
     canonicalScanned: v.optional(v.number()),

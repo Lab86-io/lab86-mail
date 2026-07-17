@@ -735,6 +735,9 @@ export const saveCalendarSearchMigrationProgress = internalMutation({
     const progress = {
       status: 'running' as const,
       ...args,
+      // Optional mutation args are omitted on the wire. Assign explicitly so
+      // switching phases removes the prior phase's continuation cursor.
+      cursor: args.cursor,
       updatedAt: now(),
     };
     if (existing) {
