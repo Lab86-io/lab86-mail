@@ -621,17 +621,30 @@ export const liveEvents = query({
 
 // Search now runs on calendarEvents directly. Drain the former duplicate
 // corpus in small scheduled transactions so existing deployments reclaim its
-// document and index storage without a large mutation.
+// document and index storage without a large mutation. Legacy canonical rows
+// may predate the searchable fields, so preserve that corpus data before each
+// duplicate is deleted.
 export const purgeLegacyEventCorpusBatch = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 250), 25), 500);
     const rows = await ctx.db.query('calendarEventCorpus').take(limit);
-    for (const row of rows) await ctx.db.delete(row._id);
+    let migrated = 0;
+    for (const row of rows) {
+      const canonical = await findEventByProviderId(ctx, row);
+      if (canonical && canonical.userId === row.userId && (!canonical.searchText || !canonical.yearMonth)) {
+        await ctx.db.patch(canonical._id, {
+          searchText: canonical.searchText || row.searchText,
+          yearMonth: canonical.yearMonth || row.yearMonth,
+        });
+        migrated += 1;
+      }
+      await ctx.db.delete(row._id);
+    }
     if (rows.length > 0) {
       await ctx.scheduler.runAfter(0, internal.calendarData.purgeLegacyEventCorpusBatch, { limit });
     }
-    return { deleted: rows.length, done: rows.length === 0 };
+    return { deleted: rows.length, migrated, done: rows.length === 0 };
   },
 });
 
