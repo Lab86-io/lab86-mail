@@ -11,6 +11,33 @@ import { detectMailSuggestions } from './suggestion-detectors';
 const mailCorpusApi = (api as any).mailCorpus;
 const accountsApi = (api as any).accounts;
 
+const defaultClassifierLoaders = {
+  smart: () => import('./llm-classify'),
+  areas: () => import('../albatross/area-classifier'),
+};
+
+let classifierLoaders = defaultClassifierLoaders;
+
+export function __setMailClassifierLoadersForTest(overrides: Partial<typeof defaultClassifierLoaders> = {}) {
+  classifierLoaders = { ...defaultClassifierLoaders, ...overrides };
+}
+
+export async function kickMailClassifiers(userId: string) {
+  // Dynamic imports keep the sync/provider modules out of the AI gateway's
+  // static dependency graph. Dispatch independently: one unavailable chunk
+  // must not suppress the other queue. Both classifiers debounce per user.
+  await Promise.all([
+    classifierLoaders
+      .smart()
+      .then((smart) => smart.kickLlmClassification(userId))
+      .catch((error) => console.warn('[mail-corpus] Smart classifier kick failed', error)),
+    classifierLoaders
+      .areas()
+      .then((areas) => areas.kickAreaClassification(userId))
+      .catch((error) => console.warn('[mail-corpus] Area classifier kick failed', error)),
+  ]);
+}
+
 export interface CorpusSyncResult {
   ok: true;
   accountId: string;
@@ -107,12 +134,7 @@ export async function backfillMailCorpusAccount({
         lastBatchMessages: messages.length,
       },
     });
-    // New rows may be flagged llmPending; drain them once the batch lands.
-    // Dynamic import: llm-classify pulls in the AI tool layer, which loops
-    // back into this module at static-import time.
-    void import('./llm-classify')
-      .then(({ kickLlmClassification }) => kickLlmClassification(userId))
-      .catch(() => undefined);
+    void kickMailClassifiers(userId);
     return {
       ok: true,
       accountId: row.accountId,
@@ -286,9 +308,7 @@ export async function runCorpusBackfill({
         lastBatchMessages: messages.length,
       },
     });
-    void import('./llm-classify')
-      .then(({ kickLlmClassification }) => kickLlmClassification(userId))
-      .catch(() => undefined);
+    void kickMailClassifiers(userId);
     detectMailSuggestions(row, messages);
     result = {
       ok: true,
@@ -448,9 +468,7 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
       progress: { stage: 'webhook', type: metadata.type, eventId: metadata.eventId },
       lastIncrementalSyncAt: Date.now(),
     });
-    void import('./llm-classify')
-      .then(({ kickLlmClassification }) => kickLlmClassification(row.userId))
-      .catch(() => undefined);
+    void kickMailClassifiers(row.userId);
     return { ok: true, duplicate: false, eventId: metadata.eventId };
   } catch (err: any) {
     await markWebhookProcessed(metadata, 'error', err?.message || 'webhook processing failed');

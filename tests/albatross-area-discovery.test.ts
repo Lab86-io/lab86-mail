@@ -10,7 +10,6 @@ import {
 const USER = 'user_area_discovery';
 const apiMock = {
   albatross: {
-    ensurePersonal: 'albatross.ensurePersonal',
     listAreas: 'albatross.listAreas',
     listUserAreaFacts: 'albatross.listUserAreaFacts',
     unclassifiedAreaArtifacts: 'albatross.unclassifiedAreaArtifacts',
@@ -66,9 +65,6 @@ describe('cross-source Area discovery', () => {
         throw new Error(`Unexpected query ${fn}`);
       }) as any,
       convexMutation: (async (fn: string, args: any) => {
-        // The Personal-area ensure is bookkeeping, not a link write — keep it
-        // out of mutationCalls so assertions read link writes positionally.
-        if (fn === apiMock.albatross.ensurePersonal) return { areaId: 'area_personal' };
         mutationCalls.push({ fn, args });
         return { inserted: args.links.length, skipped: 0 };
       }) as any,
@@ -178,7 +174,7 @@ describe('cross-source Area discovery', () => {
     expect(mutationCalls).toHaveLength(0);
   });
 
-  test('mail and calendar the model cannot place fall back to Personal instead of limbo', async () => {
+  test('mail and calendar the model cannot place remain unassigned', async () => {
     corpus.items = [
       {
         artifactKind: 'mailThread',
@@ -215,22 +211,11 @@ describe('cross-source Area discovery', () => {
 
     const result = await classifyAreaArtifacts({ userId: USER });
 
-    // Mail + calendar settle in Personal; connector items stay unclaimed.
-    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 2, skipped: 1 });
-    const links = mutationCalls[0]?.args.links;
-    expect(links).toHaveLength(2);
-    for (const link of links) {
-      expect(link).toMatchObject({
-        areaId: 'area_personal',
-        role: 'secondary',
-        status: 'candidate',
-      });
-      expect(link.confidence).toBeLessThan(0.5);
-    }
-    expect(links.map((link: any) => link.artifactId).sort()).toEqual(['event_unsure', 'thread_unsure']);
+    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 0, skipped: 2 });
+    expect(mutationCalls).toHaveLength(0);
   });
 
-  test('the Personal fallback never applies to an area-scoped Teach pass', async () => {
+  test('an area-scoped Teach pass also preserves a no-Area outcome', async () => {
     corpus.items = [
       {
         artifactKind: 'mailThread',
@@ -248,11 +233,12 @@ describe('cross-source Area discovery', () => {
 
     const result = await classifyAreaArtifacts({ userId: USER, areaId: 'area_albatross' });
 
-    expect(result).toMatchObject({ personal: 0, skipped: 1 });
+    expect(result).toMatchObject({ personal: 0, skipped: 0 });
+    expect(llmCalls).toHaveLength(0);
     expect(mutationCalls).toHaveLength(0);
   });
 
-  test('an artifact the user rejected from Personal is never re-filed there', async () => {
+  test('an artifact with a prior rejection remains unassigned when the model abstains', async () => {
     corpus.items = [
       {
         artifactKind: 'mailThread',
@@ -271,18 +257,18 @@ describe('cross-source Area discovery', () => {
 
     const result = await classifyAreaArtifacts({ userId: USER });
 
-    expect(result).toMatchObject({ personal: 0, skipped: 1 });
+    expect(result).toMatchObject({ personal: 0, skipped: 0 });
     expect(mutationCalls).toHaveLength(0);
   });
 
-  test('Personal is never a full-sweep candidate: a Personal verdict lands as the secondary fallback', async () => {
+  test('a user-created Personal Area is an ordinary opt-in candidate', async () => {
     areasFixture = [
       ...areasFixture,
       { _id: 'area_personal', name: 'Personal', kind: 'personal', description: 'Catch-all context' },
     ];
     corpus.items = [
       {
-        artifactKind: 'mailThread',
+        artifactKind: 'calendarEvent',
         artifactId: 'thread_personalish',
         accountId: 'acct_1',
         source: 'mail',
@@ -292,23 +278,20 @@ describe('cross-source Area discovery', () => {
       },
     ];
     llmText = JSON.stringify([
-      { candidateId: 'mailThread:acct_1:thread_personalish', areaName: 'Personal', confidence: 'high' },
+      { candidateId: 'calendarEvent:acct_1:thread_personalish', areaName: 'Personal', confidence: 'high' },
     ]);
 
     const result = await classifyAreaArtifacts({ userId: USER });
 
-    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 1, skipped: 0 });
-    // Personal never appears as a candidate area entry in the sweep prompt
-    // (the word may still occur inside another area's description).
-    expect(llmCalls[0].prompt.split('## Recent unclaimed evidence')[0]).not.toContain('- Personal (');
+    expect(result).toMatchObject({ deterministic: 0, llm: 1, personal: 0, skipped: 0 });
+    expect(llmCalls[0].prompt.split('## Recent unclaimed evidence')[0]).toContain('- Personal (');
     expect(mutationCalls[0]?.args.links[0]).toMatchObject({
       areaId: 'area_personal',
-      role: 'secondary',
       status: 'candidate',
     });
   });
 
-  test('with Personal as the only area, eligible artifacts file straight there without a model call', async () => {
+  test('with a user-created Personal Area only, abstained artifacts remain unassigned', async () => {
     areasFixture = [{ _id: 'area_personal', name: 'Personal', kind: 'personal' }];
     corpus.items = [
       {
@@ -332,14 +315,9 @@ describe('cross-source Area discovery', () => {
 
     const result = await classifyAreaArtifacts({ userId: USER });
 
-    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 1, skipped: 1 });
-    expect(llmCalls).toHaveLength(0);
-    expect(mutationCalls[0]?.args.links).toHaveLength(1);
-    expect(mutationCalls[0]?.args.links[0]).toMatchObject({
-      areaId: 'area_personal',
-      artifactId: 'thread_only_personal',
-      role: 'secondary',
-    });
+    expect(result).toMatchObject({ deterministic: 0, llm: 0, personal: 0, skipped: 1 });
+    expect(llmCalls).toHaveLength(1);
+    expect(mutationCalls).toHaveLength(0);
   });
 
   test('an area-scoped Teach pass on Personal itself still classifies normally', async () => {
@@ -349,7 +327,7 @@ describe('cross-source Area discovery', () => {
     ];
     corpus.items = [
       {
-        artifactKind: 'mailThread',
+        artifactKind: 'calendarEvent',
         artifactId: 'thread_teach_personal',
         accountId: 'acct_1',
         source: 'mail',
@@ -359,7 +337,7 @@ describe('cross-source Area discovery', () => {
       },
     ];
     llmText = JSON.stringify([
-      { candidateId: 'mailThread:acct_1:thread_teach_personal', areaName: 'Personal', confidence: 'high' },
+      { candidateId: 'calendarEvent:acct_1:thread_teach_personal', areaName: 'Personal', confidence: 'high' },
     ]);
 
     const result = await classifyAreaArtifacts({ userId: USER, areaId: 'area_personal' });

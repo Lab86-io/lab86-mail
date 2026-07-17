@@ -2,34 +2,17 @@
 
 This contract applies to every Albatross 0.9 issue and every future issue that changes Albatross behavior or UI.
 
-## UI Generation Rule
+## UI Implementation Rule
 
-If an issue designs or materially changes a UI component, all three conditions must be true before code is written:
+Codex or another assigned implementation agent may design and implement Albatross UI directly. For every material UI change:
 
-1. The UI component must be implemented either directly by 5.6-sol or by a Claude Code sub-agent using Opus.
-2. The implementation scope must name the UI to design, the files to edit, the product constraints, and the acceptance criteria. For the Claude path, provide this scope in a full-context prompt, e.g. `claude -p "{prompt}" --model opus`. The 5.6-sol path does not require a sub-agent.
-3. Both paths must perform fresh Mobbin plus browser-based research for comparable UIs, UX flows, and animation/interaction grounding before implementation.
+1. Start from the exact issue and acceptance criteria.
+2. Inspect the existing surface, adjacent states, and current design-system patterns before editing.
+3. Preserve the established app density, visual language, accessibility, and interaction conventions unless the issue explicitly changes them.
+4. Inspect relevant Mobbin examples and use browser-based product research before materially changing a UI surface. Straightforward copy-only or non-visual behavior changes do not require fresh research.
+5. Add or update focused tests for every behavior, state, routing, or data contract touched.
 
-Do not use tiny prompts, no-tool prompts, or lightweight model fallbacks for Albatross UI implementation. When the Claude path is chosen, Opus work can take a while; let the full tool-enabled run complete unless it clearly errors.
-
-The implementation scope, and the Claude prompt when that path is chosen, must include:
-
-- The exact issue number and acceptance criteria.
-- The files the sub-agent may edit.
-- The surfaces, states, and workflows to design.
-- The requirement to inspect Mobbin examples.
-- The requirement to use browser-based product research.
-- The available research links/findings already gathered, without replacing Claude's own research requirement.
-- The requirement to preserve the existing design system and app density.
-- The requirement to add or update tests for every behavior, state, routing, or data contract touched.
-
-The PR summary must include:
-
-- The implementation path and model used (5.6-sol direct or Claude Code Opus).
-- For the Claude path, the sub-agent prompt or a concise linkable summary of it.
-- Mobbin screens/flows used as grounding.
-- Browser-based references used as grounding.
-- Any research constraints or unavailable tools.
+Keep a concise research note for material UI changes and cite it in the PR summary. Include the Mobbin screens/flows used, browser-based references, and any unavailable-tool constraints. Do not claim research that was not performed.
 
 ## Implementation Quality
 
@@ -61,9 +44,9 @@ For each GitHub issue resolved by Albatross work:
 
 The issue should not be considered complete until code, tests, PR metadata, review, and project-board movement are all complete.
 
-## Current Albatross UI Research Baseline
+## Albatross UI Research Baseline
 
-Use fresh research for every UI issue. As initial grounding for the Areas, Intents, and Unassigned surfaces:
+Use fresh research for every material UI issue. These products are reasonable starting points for the Areas, Intents, and Unassigned surfaces:
 
 - Areas/dashboard patterns: ClickUp, Wrike, and Asana screens on Mobbin; Notion Projects and Asana project-management pages for view switching, status rollups, connected docs, and portfolio/task grouping.
 - Intent/planning patterns: ClickUp, Sana AI, and Plane screens on Mobbin; GTD-style capture and review guidance from Todoist for inbox, next actions, waiting-for, and weekly review structure.

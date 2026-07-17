@@ -8,7 +8,6 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
-import { ensurePersonalArea } from './albatrossIntents';
 import { now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -111,9 +110,9 @@ export const finishCapture = mutation({
       if (!rawText) continue;
       if (item.primaryAreaId) await requireArea(ctx, item.primaryAreaId, userId);
       for (const related of item.relatedAreaIds || []) await requireArea(ctx, related, userId);
-      // The splitter punting on an area is not an area-less Work item: it lands
-      // in Personal, flagged so the area-classify cron gets one re-home pass.
-      const primaryAreaId = item.primaryAreaId ?? (await ensurePersonalArea(ctx, userId));
+      // Areas are opt-in. The splitter may leave Work unassigned; no system
+      // catch-all is created behind the user's back.
+      const primaryAreaId = item.primaryAreaId;
       const workId = await ctx.db.insert('albatrossIntents', {
         userId,
         rawText,
@@ -121,8 +120,8 @@ export const finishCapture = mutation({
         source: capture.source,
         title: bounded(item.title, 180),
         status: 'captured',
-        areaId: String(primaryAreaId),
-        areaAutoAssigned: item.primaryAreaId ? undefined : true,
+        areaId: primaryAreaId ? String(primaryAreaId) : undefined,
+        areaAutoAssigned: undefined,
         captureId: args.captureId,
         primaryAreaId,
         workState: 'active',
