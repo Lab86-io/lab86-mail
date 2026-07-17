@@ -29,13 +29,13 @@ describe('Area reindex scheduling safety', () => {
     expect(shouldCoalesceAreaReindex({ ...input, latestCreatedAt: 100 })).toBe(true);
   });
 
-  test('has a hard 10,000-thread page budget', () => {
+  test('has a hard 50,000-thread page budget', () => {
     expect(AREA_REINDEX_PAGE_SIZE).toBe(100);
-    expect(AREA_REINDEX_MAX_SCANNED).toBe(10_000);
+    expect(AREA_REINDEX_MAX_SCANNED).toBe(50_000);
     expect(remainingAreaReindexPageSize(0)).toBe(100);
-    expect(remainingAreaReindexPageSize(9_950)).toBe(50);
-    expect(remainingAreaReindexPageSize(9_999)).toBe(1);
-    expect(remainingAreaReindexPageSize(10_000)).toBe(0);
+    expect(remainingAreaReindexPageSize(49_950)).toBe(50);
+    expect(remainingAreaReindexPageSize(49_999)).toBe(1);
+    expect(remainingAreaReindexPageSize(50_000)).toBe(0);
     expect(nextAreaReindexPage(AREA_REINDEX_MAX_PAGES - 1)).toEqual({
       page: AREA_REINDEX_MAX_PAGES,
       allowed: true,
@@ -69,7 +69,7 @@ describe('Area reindex scheduling safety', () => {
     expect(isCurrentAreaReindexInvocation({ hasTrackedRun: true, status: 'done', pages: 1 })).toBe(false);
   });
 
-  test('walks recent threads newest-first through the selective date index', () => {
+  test('walks the full user history newest-first through the selective date index', () => {
     const source = readFileSync(path.join(process.cwd(), 'convex/albatross.ts'), 'utf8');
     const start = source.indexOf('export const reindexUserAreaArtifacts');
     const end = source.indexOf('type SeedFixture', start);
@@ -80,7 +80,7 @@ describe('Area reindex scheduling safety', () => {
 
     expect(threadScan).toContain(".withIndex('by_user_lastDate'");
     expect(threadScan).toContain(".eq('userId', userId)");
-    expect(threadScan).toContain(".gte('lastDate', cutoff)");
+    expect(threadScan).not.toContain(".gte('lastDate'");
     expect(threadScan).toContain(".order('desc')");
     expect(threadScan).toContain('.paginate({ cursor: args.cursor ?? null, numItems: pageSize })');
     expect(threadScan).not.toContain(".withIndex('by_user'");

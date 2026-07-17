@@ -1,5 +1,5 @@
 export const AREA_REINDEX_PAGE_SIZE = 100;
-export const AREA_REINDEX_MAX_PAGES = 100;
+export const AREA_REINDEX_MAX_PAGES = 500;
 export const AREA_REINDEX_MAX_SCANNED = AREA_REINDEX_PAGE_SIZE * AREA_REINDEX_MAX_PAGES;
 
 export function remainingAreaReindexPageSize(scanned?: number | null): number {

@@ -2742,14 +2742,13 @@ export const reindexUserAreaArtifacts = internalMutation({
       // (#100). It still reaches the model as area-profile context, where a
       // wrong guess costs an abstention instead of a bad link.
 
-      // Reclassification is relevance-first and bounded to the same recent
-      // window the model drains. Newest mail is processed first, so the hard
-      // cap cannot spend its budget walking old archive rows.
-      const cutoff = trackedRun.createdAt - UNCLASSIFIED_WINDOW_MS;
+      // Preserve full-history filing while processing newest mail first. The
+      // single-flight cursor lease prevents duplicate work, and the absolute
+      // scan budget still bounds a malformed or unexpectedly large mailbox.
       const pageSize = remainingAreaReindexPageSize(trackedRun.scanned);
       const page = await ctx.db
         .query('mailCorpusThreads')
-        .withIndex('by_user_lastDate', (q) => q.eq('userId', userId).gte('lastDate', cutoff))
+        .withIndex('by_user_lastDate', (q) => q.eq('userId', userId))
         .order('desc')
         .paginate({ cursor: args.cursor ?? null, numItems: pageSize });
 
