@@ -1,4 +1,23 @@
+export const AREA_REINDEX_PAGE_SIZE = 100;
 export const AREA_REINDEX_MAX_PAGES = 100;
+export const AREA_REINDEX_MAX_SCANNED = AREA_REINDEX_PAGE_SIZE * AREA_REINDEX_MAX_PAGES;
+
+export function remainingAreaReindexPageSize(scanned?: number | null): number {
+  const used = Math.max(0, Math.floor(Number(scanned ?? 0)));
+  return Math.max(0, Math.min(AREA_REINDEX_PAGE_SIZE, AREA_REINDEX_MAX_SCANNED - used));
+}
+
+export function isCurrentAreaReindexInvocation(input: {
+  hasTrackedRun: boolean;
+  status?: 'queued' | 'running' | 'done' | 'error' | null;
+  pages?: number | null;
+  expectedCursor?: string | null;
+  cursor?: string | null;
+}): boolean {
+  if (!input.hasTrackedRun || (input.status !== 'queued' && input.status !== 'running')) return false;
+  if (input.cursor) return input.cursor === input.expectedCursor;
+  return !input.expectedCursor && Math.max(0, Math.floor(Number(input.pages ?? 0))) === 0;
+}
 
 export function canonicalLatestMessageId(
   latestCorpusMessageId?: string | null,
