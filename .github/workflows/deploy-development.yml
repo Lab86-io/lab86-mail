@@ -58,7 +58,19 @@ jobs:
           else
             npx convex deploy
           fi
-          npx convex run calendarData:completeCalendarSearchMigration '{}'
+          migration_complete=false
+          for attempt in {1..200}; do
+            migration_result="$(npx convex run calendarData:completeCalendarSearchMigration '{}')"
+            echo "$migration_result"
+            if jq -e '.done == true' <<<"$migration_result" >/dev/null; then
+              migration_complete=true
+              break
+            fi
+          done
+          if [ "$migration_complete" != true ]; then
+            echo 'Calendar search migration did not complete within 200 bounded invocations.'
+            exit 1
+          fi
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@5.26.2

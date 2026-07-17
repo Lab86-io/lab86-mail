@@ -62,6 +62,7 @@ describe('legacy calendar corpus migration', () => {
       legacyDeleted: 2,
       legacyMigrated: 1,
       legacySkipped: 0,
+      done: true,
     });
     expect(await t.action(internal.calendarData.completeCalendarSearchMigration, {})).toEqual({
       canonicalScanned: 0,
@@ -69,6 +70,7 @@ describe('legacy calendar corpus migration', () => {
       legacyDeleted: 0,
       legacyMigrated: 0,
       legacySkipped: 0,
+      done: true,
       alreadyComplete: true,
     });
 
@@ -117,16 +119,76 @@ describe('legacy calendar corpus migration', () => {
       }),
     );
 
-    expect(await t.action(internal.calendarData.completeCalendarSearchMigration, {})).toEqual({
+    expect(
+      await t.action(internal.calendarData.completeCalendarSearchMigration, {
+        batchSize: 25,
+        maxBatches: 1,
+      }),
+    ).toEqual({
       canonicalScanned: 26,
       canonicalMigrated: 26,
       legacyDeleted: 0,
       legacyMigrated: 0,
       legacySkipped: 0,
+      done: false,
     });
+    expect(
+      await t.action(internal.calendarData.completeCalendarSearchMigration, {
+        batchSize: 25,
+        maxBatches: 1,
+      }),
+    ).toMatchObject({ canonicalScanned: 26, canonicalMigrated: 26, done: true });
     const migration = await t.run((ctx) => ctx.db.query('dataMigrations').first());
     expect(migration).toMatchObject({ status: 'completed', canonicalScanned: 26 });
     expect(migration?.cursor).toBeUndefined();
+  });
+
+  test('keeps reads on the intact legacy corpus until canonical backfill is durable', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-cutover-test-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      await t.run(async (ctx) => {
+        await ctx.db.insert('calendarEvents', {
+          ...baseEvent,
+          providerEventId: 'canonical_only',
+          title: 'Canonical result',
+        });
+        await ctx.db.insert('calendarEventCorpus', {
+          ...baseEvent,
+          providerEventId: 'legacy_only',
+          title: 'Legacy result',
+        });
+      });
+      const args = {
+        internalSecret: 'calendar-cutover-test-secret',
+        userId: baseEvent.userId,
+        limit: 10,
+      };
+      expect((await t.query(api.calendarData.searchEvents, args)).map((row) => row.title).sort()).toEqual([
+        'Canonical result',
+        'Legacy result',
+      ]);
+      await t.run((ctx) =>
+        ctx.db.insert('dataMigrations', {
+          name: 'calendar-search-canonical-v1',
+          status: 'running',
+          phase: 'legacy',
+          canonicalScanned: 1,
+          canonicalMigrated: 0,
+          legacyDeleted: 0,
+          legacyMigrated: 0,
+          legacySkipped: 0,
+          updatedAt: 1,
+        }),
+      );
+      expect((await t.query(api.calendarData.searchEvents, args)).map((row) => row.title)).toEqual([
+        'Canonical result',
+      ]);
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
   });
 
   test('clears the canonical cursor when durable progress advances to legacy cleanup', async () => {

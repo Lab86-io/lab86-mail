@@ -74,4 +74,14 @@ describe('per-message Smart Category model queue', () => {
     expect(result.llmPending).toBe(true);
     expect(result.smartPrimary).not.toBe('finance_admin');
   });
+
+  test('a current model attempt with no verdict stays deterministic without retrying', () => {
+    const result = classifyCorpusThread(
+      row({ latestMessageId: 'message_2', llmClassifiedMessageId: 'message_2' }),
+      { rules: [], customLabels: [] },
+      'Use 123456 to sign in.',
+    );
+    expect(result.smartPrimary).toBeTruthy();
+    expect(result.llmPending).toBeUndefined();
+  });
 });

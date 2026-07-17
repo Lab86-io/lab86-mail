@@ -52,13 +52,21 @@ export async function runLlmClassificationSweep(userId: string) {
       let classified = 0;
       let moreRemaining = false;
       for (let batch = 0; batch < MAX_BATCHES_PER_KICK; batch++) {
-        const pending = await convexMutation<any[]>((api as any).mailCorpus.listLlmPending, {
-          userId,
-          limit: SWEEP_BATCH,
-        });
-        if (!pending.length) break;
+        const page = await convexMutation<{ items: any[]; moreRemaining: boolean }>(
+          (api as any).mailCorpus.listLlmPending,
+          { userId, limit: SWEEP_BATCH },
+        );
+        const pending = page.items;
+        if (!pending.length) {
+          if (page.moreRemaining) {
+            if (batch === MAX_BATCHES_PER_KICK - 1) moreRemaining = true;
+            continue;
+          }
+          break;
+        }
         // A full final batch under the per-kick cap means rows likely remain.
-        if (batch === MAX_BATCHES_PER_KICK - 1 && pending.length === SWEEP_BATCH) moreRemaining = true;
+        if (batch === MAX_BATCHES_PER_KICK - 1 && (page.moreRemaining || pending.length === SWEEP_BATCH))
+          moreRemaining = true;
         const verdicts = await classifyThreadsBatched(
           pending.map((row) => ({
             id: `${row.accountId}:${row.providerThreadId}`,
