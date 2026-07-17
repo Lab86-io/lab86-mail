@@ -50,10 +50,21 @@ jobs:
         run: bun run build
 
       - name: Deploy Convex
-        run: npx convex deploy
+        env:
+          DEPLOY_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if [[ "$DEPLOY_COMMIT_MESSAGE" == *"[allow convex index cleanup]"* ]]; then
+            npx convex deploy --allow-deleting-large-indexes
+            npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'
+          else
+            npx convex deploy
+          fi
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@5.0.0
+
+      - name: Prepare Railway deployment identity
+        run: echo "RAILWAY_DEPLOY_MESSAGE=development ${GITHUB_SHA} run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
       - name: Deploy Railway development
         run: >
@@ -62,8 +73,31 @@ jobs:
           --environment development
           --service "$RAILWAY_SERVICE_NAME"
           --ci
-          --detach
-          -m "development ${GITHUB_SHA}"
+          -m "$RAILWAY_DEPLOY_MESSAGE"
+
+      - name: Wait for Railway development release
+        run: |
+          set -euo pipefail
+          for attempt in {1..30}; do
+            deployment="$(railway deployment list \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment development \
+              --service "$RAILWAY_SERVICE_NAME" \
+              --limit 20 \
+              --json | jq -c --arg message "$RAILWAY_DEPLOY_MESSAGE" \
+                '[.[] | select(.meta.cliMessage == $message)] | first // empty')"
+            if [ -n "$deployment" ]; then
+              deployment_id="$(jq -r '.id' <<<"$deployment")"
+              deployment_status="$(jq -r '.status' <<<"$deployment")"
+              case "$deployment_status" in
+                SUCCESS) echo "Railway deployment $deployment_id is ready."; exit 0 ;;
+                FAILED|CRASHED|REMOVED) echo "Railway deployment $deployment_id ended as $deployment_status."; exit 1 ;;
+              esac
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for Railway deployment: $RAILWAY_DEPLOY_MESSAGE"
+          exit 1
 
       - name: Smoke test
         run: |

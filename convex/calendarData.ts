@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import type { QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
+import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 // Calendar corpus storage (see docs/productivity-platform-spec.md). Writers
@@ -103,14 +104,9 @@ export const upsertCalendarBatch = mutation({
         for (const event of events) {
           if (removedIds.has(event.providerCalendarId)) {
             await ctx.db.delete(event._id);
-            await deleteCorpusEvent(ctx, {
-              userId: args.userId,
-              accountId: args.accountId,
-              providerCalendarId: event.providerCalendarId,
-              providerEventId: event.providerEventId,
-            });
           }
         }
+        await deleteLegacyCalendarCorpus(ctx, args.userId, args.accountId, removedIds);
       }
     }
     return { ok: true, count: args.calendars.length };
@@ -132,7 +128,7 @@ export const upsertEventBatch = mutation({
         yearMonth: event.yearMonth || yearMonth(event.startAt),
         updatedAt: ts,
       };
-      let row = await ctx.db
+      const row = await ctx.db
         .query('calendarEvents')
         .withIndex('by_account_calendar_event', (q) =>
           q
@@ -141,15 +137,10 @@ export const upsertEventBatch = mutation({
             .eq('providerEventId', event.providerEventId),
         )
         .unique();
-      // Rows written before the calendar-qualified identity existed are still
-      // addressable by account+event id. Upgrade them in place.
-      row ??= await ctx.db
-        .query('calendarEvents')
-        .withIndex('by_account_event', (q) =>
-          q.eq('accountId', args.accountId).eq('providerEventId', event.providerEventId),
-        )
-        .unique();
       if (row) {
+        if (row.userId !== args.userId) {
+          throw new Error(`Cross-user calendar event collision for ${event.providerEventId}.`);
+        }
         await ctx.db.patch(row._id, patch);
       } else {
         await ctx.db.insert('calendarEvents', {
@@ -161,7 +152,6 @@ export const upsertEventBatch = mutation({
           createdAt: ts,
         });
       }
-      await upsertCorpusEvent(ctx, args, patch, ts);
     }
     return { ok: true, count: args.events.length };
   },
@@ -181,7 +171,7 @@ export const deleteEvent = mutation({
     requireInternalSecret(args.internalSecret);
     const row = await findEventByProviderId(ctx, args);
     if (row && row.userId === args.userId) await ctx.db.delete(row._id);
-    await deleteCorpusEvent(ctx, args);
+    await deleteLegacyCorpusEvent(ctx, args);
     if (args.includeInstances) {
       const instances = await ctx.db
         .query('calendarEvents')
@@ -193,7 +183,7 @@ export const deleteEvent = mutation({
         if (args.providerCalendarId && instance.providerCalendarId !== args.providerCalendarId) continue;
         if (instance.userId === args.userId) {
           await ctx.db.delete(instance._id);
-          await deleteCorpusEvent(ctx, {
+          await deleteLegacyCorpusEvent(ctx, {
             userId: args.userId,
             accountId: args.accountId,
             providerCalendarId: instance.providerCalendarId,
@@ -224,19 +214,15 @@ export const removeCalendar = mutation({
     if (row && row.userId === args.userId) await ctx.db.delete(row._id);
     const events = await ctx.db
       .query('calendarEvents')
-      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .withIndex('by_user_account_calendar_start', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('accountId', args.accountId)
+          .eq('providerCalendarId', args.providerCalendarId),
+      )
       .collect();
-    for (const event of events) {
-      if (event.providerCalendarId === args.providerCalendarId) {
-        await ctx.db.delete(event._id);
-        await deleteCorpusEvent(ctx, {
-          userId: args.userId,
-          accountId: args.accountId,
-          providerCalendarId: event.providerCalendarId,
-          providerEventId: event.providerEventId,
-        });
-      }
-    }
+    for (const event of events) await ctx.db.delete(event._id);
+    await deleteLegacyCalendarCorpus(ctx, args.userId, args.accountId, new Set([args.providerCalendarId]));
     return { ok: true };
   },
 });
@@ -279,20 +265,20 @@ export const reconcileWindow = mutation({
     const keep = new Set(args.keepProviderEventIds);
     const rows = await ctx.db
       .query('calendarEvents')
-      .withIndex('by_user_account_calendar_start', (q) =>
+      .withIndex('by_user_account_calendar_end', (q) =>
         q
           .eq('userId', args.userId)
           .eq('accountId', args.accountId)
           .eq('providerCalendarId', args.providerCalendarId)
-          .lt('startAt', args.windowEnd),
+          .gt('endAt', args.windowStart),
       )
       .collect();
     let pruned = 0;
     for (const row of rows) {
-      if (row.endAt <= args.windowStart) continue;
+      if (row.startAt >= args.windowEnd) continue;
       if (keep.has(row.providerEventId)) continue;
       await ctx.db.delete(row._id);
-      await deleteCorpusEvent(ctx, {
+      await deleteLegacyCorpusEvent(ctx, {
         userId: args.userId,
         accountId: args.accountId,
         providerCalendarId: row.providerCalendarId,
@@ -522,7 +508,7 @@ export const searchEvents = query({
     let rows: any[];
     if (text) {
       rows = await ctx.db
-        .query('calendarEventCorpus')
+        .query('calendarEvents')
         .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
         .take(limit * 4);
     } else if (typeof args.startAt === 'number' && typeof args.endAt === 'number') {
@@ -565,7 +551,7 @@ export const countEvents = query({
     let rows: any[];
     if (text) {
       rows = await ctx.db
-        .query('calendarEventCorpus')
+        .query('calendarEvents')
         .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
         .take(CAP);
     } else if (typeof args.startAt === 'number' && typeof args.endAt === 'number') {
@@ -644,6 +630,50 @@ export const liveEvents = query({
   },
 });
 
+// Search now runs on calendarEvents directly. Drain the former duplicate
+// corpus in small scheduled transactions so existing deployments reclaim its
+// document and index storage without a large mutation. Legacy canonical rows
+// may predate the searchable fields, so preserve that corpus data before each
+// duplicate is deleted.
+export const purgeLegacyEventCorpusBatch = internalMutation({
+  args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 250), 25), 500);
+    const page = await ctx.db
+      .query('calendarEventCorpus')
+      .paginate({ cursor: args.cursor ?? null, numItems: limit });
+    let migrated = 0;
+    let skipped = 0;
+    for (const row of page.page) {
+      const canonical = await findEventByProviderId(ctx, row);
+      if (canonical && canonical.userId !== row.userId) {
+        console.warn(`Skipping cross-user calendar event ${row.providerEventId}.`);
+        skipped += 1;
+        continue;
+      }
+      if (!canonical) {
+        const { _id, _creationTime, ...event } = row;
+        await ctx.db.insert('calendarEvents', event);
+        migrated += 1;
+      } else if (!canonical.searchText || !canonical.yearMonth) {
+        await ctx.db.patch(canonical._id, {
+          searchText: canonical.searchText || row.searchText,
+          yearMonth: canonical.yearMonth || row.yearMonth,
+        });
+        migrated += 1;
+      }
+      await ctx.db.delete(row._id);
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.calendarData.purgeLegacyEventCorpusBatch, {
+        limit,
+        cursor: page.continueCursor,
+      });
+    }
+    return { deleted: page.page.length - skipped, migrated, skipped, done: page.isDone };
+  },
+});
+
 async function queryEventsInWindow(
   ctx: QueryCtx,
   userId: string,
@@ -669,74 +699,12 @@ async function queryEventsInWindow(
   return rows.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled'));
 }
 
-async function upsertCorpusEvent(ctx: any, args: any, event: any, ts: number) {
-  const patch = {
-    ...event,
-    userId: args.userId,
-    accountId: args.accountId,
-    grantId: args.grantId,
-    provider: args.provider,
-    searchText: normalizeCalendarCorpusText(event.searchText || buildEventSearchText(event)),
-    yearMonth: event.yearMonth || yearMonth(event.startAt),
-    updatedAt: ts,
-  };
-  let row = await ctx.db
-    .query('calendarEventCorpus')
-    .withIndex('by_account_calendar_event', (q: any) =>
-      q
-        .eq('accountId', args.accountId)
-        .eq('providerCalendarId', event.providerCalendarId)
-        .eq('providerEventId', event.providerEventId),
-    )
-    .unique();
-  row ??= await ctx.db
-    .query('calendarEventCorpus')
-    .withIndex('by_account_event', (q: any) =>
-      q.eq('accountId', args.accountId).eq('providerEventId', event.providerEventId),
-    )
-    .unique();
-  if (row) await ctx.db.patch(row._id, patch);
-  else await ctx.db.insert('calendarEventCorpus', { ...patch, createdAt: ts });
-}
-
-async function deleteCorpusEvent(
-  ctx: any,
-  args: { userId: string; accountId: string; providerEventId: string; providerCalendarId?: string },
-) {
-  const row = await findCorpusEventByProviderId(ctx, args);
-  if (row && row.userId === args.userId) await ctx.db.delete(row._id);
-}
-
-async function findCorpusEventByProviderId(
-  ctx: any,
-  args: { accountId: string; providerEventId: string; providerCalendarId?: string },
-) {
-  if (args.providerCalendarId) {
-    const row = await ctx.db
-      .query('calendarEventCorpus')
-      .withIndex('by_account_calendar_event', (q: any) =>
-        q
-          .eq('accountId', args.accountId)
-          .eq('providerCalendarId', args.providerCalendarId as string)
-          .eq('providerEventId', args.providerEventId),
-      )
-      .unique();
-    if (row) return row;
-  }
-  return ctx.db
-    .query('calendarEventCorpus')
-    .withIndex('by_account_event', (q: any) =>
-      q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
-    )
-    .unique();
-}
-
 async function findEventByProviderId(
   ctx: any,
   args: { accountId: string; providerEventId: string; providerCalendarId?: string },
 ) {
   if (args.providerCalendarId) {
-    const row = await ctx.db
+    return ctx.db
       .query('calendarEvents')
       .withIndex('by_account_calendar_event', (q: any) =>
         q
@@ -745,7 +713,6 @@ async function findEventByProviderId(
           .eq('providerEventId', args.providerEventId),
       )
       .unique();
-    if (row) return row;
   }
   return ctx.db
     .query('calendarEvents')
@@ -753,6 +720,50 @@ async function findEventByProviderId(
       q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
     )
     .unique();
+}
+
+// Delete-only compatibility for the bounded corpus migration. New and updated
+// events are no longer dual-written, but a user deletion must remove an
+// existing legacy duplicate until the one-time purge has drained the table.
+async function deleteLegacyCorpusEvent(
+  ctx: any,
+  args: { userId: string; accountId: string; providerEventId: string; providerCalendarId?: string },
+) {
+  const row = args.providerCalendarId
+    ? await ctx.db
+        .query('calendarEventCorpus')
+        .withIndex('by_account_calendar_event', (q: any) =>
+          q
+            .eq('accountId', args.accountId)
+            .eq('providerCalendarId', args.providerCalendarId as string)
+            .eq('providerEventId', args.providerEventId),
+        )
+        .unique()
+    : await ctx.db
+        .query('calendarEventCorpus')
+        .withIndex('by_account_event', (q: any) =>
+          q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
+        )
+        .unique();
+  if (row && row.userId === args.userId) await ctx.db.delete(row._id);
+}
+
+async function deleteLegacyCalendarCorpus(
+  ctx: any,
+  userId: string,
+  accountId: string,
+  providerCalendarIds: Set<string>,
+) {
+  if (providerCalendarIds.size === 0) return;
+  for (const providerCalendarId of providerCalendarIds) {
+    const rows = await ctx.db
+      .query('calendarEventCorpus')
+      .withIndex('by_user_account_calendar_start', (q: any) =>
+        q.eq('userId', userId).eq('accountId', accountId).eq('providerCalendarId', providerCalendarId),
+      )
+      .collect();
+    for (const row of rows) await ctx.db.delete(row._id);
+  }
 }
 
 function filterCalendarRows(rows: any[], args: any) {

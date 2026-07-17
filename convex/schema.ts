@@ -281,10 +281,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_grant', ['grantId'])
-    .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_user_account_thread_received', ['userId', 'accountId', 'providerThreadId', 'receivedAt'])
     .index('by_account_message', ['accountId', 'providerMessageId'])
@@ -1218,7 +1215,12 @@ export default defineSchema({
     .index('by_account_calendar_event', ['accountId', 'providerCalendarId', 'providerEventId'])
     .index('by_account_master', ['accountId', 'masterEventId'])
     .index('by_user_account_calendar_start', ['userId', 'accountId', 'providerCalendarId', 'startAt'])
-    .index('by_grant', ['grantId']),
+    .index('by_user_account_calendar_end', ['userId', 'accountId', 'providerCalendarId', 'endAt'])
+    .index('by_grant', ['grantId'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
+    }),
 
   calendarEventCorpus: defineTable({
     userId: v.string(),
