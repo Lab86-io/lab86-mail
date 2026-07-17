@@ -1483,6 +1483,11 @@ export default defineSchema({
       v.literal('work_question'),
       v.literal('approval'),
       v.literal('completion_suggestion'),
+      // Retained for notifications written by the earlier mail/event notifier.
+      // Current writers do not create these values, but deployed rows must
+      // remain readable while they age out of the notification center.
+      v.literal('event_suggestion'),
+      v.literal('mail_message'),
       v.literal('brief_ready'),
       v.literal('agent_error'),
     ),
@@ -1495,6 +1500,8 @@ export default defineSchema({
         v.literal('project'),
         v.literal('area'),
         v.literal('approval'),
+        v.literal('suggestion'),
+        v.literal('thread'),
       ),
     ),
     entityId: v.optional(v.string()),
