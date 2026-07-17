@@ -1218,15 +1218,18 @@ type AreaReindexMatch = {
   fact: AreaReindexFact;
 };
 
-function factIdentityKind(value: string): 'email' | 'domain' | null {
+function factIdentityKind(kind: string, value: string): 'email' | 'domain' | null {
+  const declaredKind = kind.trim().toLowerCase();
+  if (declaredKind !== 'email' && declaredKind !== 'domain') return null;
   const normalized = value
     .trim()
     .toLowerCase()
     .replace(/^mailto:/, '')
     .replace(/^@/, '');
   if (!normalized || /\s/.test(normalized)) return null;
-  if (normalized.includes('@')) return 'email';
-  if (normalizeAreaDomain(normalized)) return 'domain';
+  if (declaredKind === 'email' && normalized.includes('@')) return 'email';
+  if (normalized.includes('@')) return null;
+  if (declaredKind === 'domain' && normalizeAreaDomain(normalized)) return 'domain';
   return null;
 }
 
@@ -1272,7 +1275,7 @@ function matchMailRowToAreaFact(
     if (fact.status !== 'verified') continue;
     const confirmationRefs = confirmationForVerifiedFact(fact);
     if (!confirmationRefs.length) continue;
-    const kind = factIdentityKind(fact.value);
+    const kind = factIdentityKind(fact.kind, fact.value);
     if (!kind) continue;
     const value = factIdentityValue(fact.value, kind);
     if (kind === 'domain' && isSharedConsumerDomain(value)) continue;
@@ -2417,7 +2420,17 @@ export const recordAreaVerdicts = mutation({
         : null;
       const latestMessageId = canonicalLatestMessageId(latest?.providerMessageId, thread?.latestMessageId);
       if (thread && latestMessageId && thread.latestMessageId !== latestMessageId) {
-        await ctx.db.patch(thread._id, { latestMessageId, updatedAt: ts });
+        await ctx.db.patch(thread._id, {
+          latestMessageId,
+          llmCategory: undefined,
+          llmClassifiedAt: undefined,
+          llmClassifiedMessageId: undefined,
+          llmPending: true,
+          areaClassifierVersion: undefined,
+          areaClassifiedAt: undefined,
+          areaRoutingPending: true,
+          updatedAt: ts,
+        });
       }
       // The model ruled on one concrete message. If newer mail arrived while
       // the request was in flight, preserve every existing link and leave the

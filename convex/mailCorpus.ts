@@ -803,6 +803,7 @@ export const listLlmPending = query({
       rows.map(async (row) => ({
         accountId: row.accountId,
         providerThreadId: row.providerThreadId,
+        messageId: row.latestMessageId,
         subject: row.subject,
         fromAddress: row.fromAddress,
         snippet: row.snippet,
@@ -827,6 +828,7 @@ export const storeLlmVerdicts = mutation({
       v.object({
         accountId: v.string(),
         providerThreadId: v.string(),
+        messageId: v.optional(v.string()),
         verdict: v.optional(v.any()),
       }),
     ),
@@ -846,7 +848,7 @@ export const storeLlmVerdicts = mutation({
             .eq('providerThreadId', item.providerThreadId),
         )
         .unique();
-      if (!row) continue;
+      if (!row || !item.messageId || row.latestMessageId !== item.messageId) continue;
       const llmCategory = item.verdict ?? undefined;
       const merged = classifyCorpusThread(
         { ...row, llmCategory: llmCategory ?? row.llmCategory },
@@ -856,7 +858,7 @@ export const storeLlmVerdicts = mutation({
       await ctx.db.patch(row._id, {
         ...(llmCategory ? { llmCategory } : {}),
         llmClassifiedAt: ts,
-        llmClassifiedMessageId: row.latestMessageId,
+        llmClassifiedMessageId: item.messageId,
         ...merged,
         llmPending: undefined,
       });

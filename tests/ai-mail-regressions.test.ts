@@ -581,7 +581,9 @@ describe('compliance readiness', () => {
     const accounts = readFileSync(path.join(process.cwd(), 'convex/accounts.ts'), 'utf8');
     const cleanupSource = accounts.slice(accounts.indexOf('ACCOUNT_BULK_TABLES'));
     const tables = [...schema.matchAll(/^\s{2}([a-zA-Z0-9]+): defineTable/gm)].map((match) => match[1]);
-    const exempt = new Set<string>([]);
+    // Global deployment bookkeeping is not user-owned and must survive an
+    // individual account deletion.
+    const exempt = new Set<string>(['dataMigrations']);
 
     expect(tables.length).toBeGreaterThan(10);
     for (const table of tables) {

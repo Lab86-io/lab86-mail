@@ -69,7 +69,12 @@ describe('Convex cost guardrails', () => {
     expect(purge).toContain('.paginate({ cursor: args.cursor ?? null, numItems: limit })');
     expect(purge).toContain('for (const row of page.page)');
     expect(purge).toContain('await ctx.db.delete(row._id)');
-    expect(purge).toContain('ctx.scheduler.runAfter(0, internal.calendarData.purgeLegacyEventCorpusBatch, {');
+    expect(source).toContain('export const backfillCanonicalEventSearchBatch = internalMutation({');
+    expect(source).toContain('export const completeCalendarSearchMigration = internalAction({');
+    expect(source).toContain('ctx.runMutation(internal.calendarData.backfillCanonicalEventSearchBatch');
+    expect(source).toContain('ctx.runMutation(internal.calendarData.purgeLegacyEventCorpusBatch');
+    expect(source).toContain('ctx.runQuery(internal.calendarData.calendarSearchMigrationStatus');
+    expect(source).toContain('ctx.runMutation(internal.calendarData.markCalendarSearchMigrationComplete');
   });
 
   test('calendar reconciliation selects exact overlaps from the end-time index', () => {
@@ -110,7 +115,7 @@ describe('Convex cost guardrails', () => {
       const railwayReady = between(workflow, '- name: Wait for Railway', '- name: Smoke test');
 
       expect(convexDeploy).toContain(
-        `${markerCondition}\n            npx convex deploy --allow-deleting-large-indexes\n            npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'\n          else\n            npx convex deploy\n          fi`,
+        `${markerCondition}\n            npx convex deploy --allow-deleting-large-indexes\n          else\n            npx convex deploy\n          fi\n          npx convex run calendarData:completeCalendarSearchMigration '{}'`,
       );
       expect(railwayInstall).toContain('run: npm install -g @railway/cli@5.26.2');
       expect(workflow).not.toContain('--detach');

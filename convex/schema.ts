@@ -1265,6 +1265,12 @@ export default defineSchema({
       filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
     }),
 
+  dataMigrations: defineTable({
+    name: v.string(),
+    completedAt: v.number(),
+    result: v.optional(v.any()),
+  }).index('by_name', ['name']),
+
   calendarSyncStates: defineTable({
     userId: v.string(),
     accountId: v.string(),

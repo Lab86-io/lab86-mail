@@ -79,11 +79,18 @@ export async function runLlmClassificationSweep(userId: string) {
         const items = pending.map((row) => {
           const verdict = verdictById.get(`${row.accountId}:${row.providerThreadId}`);
           const fromModel = verdict && verdict.model !== 'deterministic' && verdict.model !== 'user_rule';
-          if (!fromModel) return { accountId: row.accountId, providerThreadId: row.providerThreadId };
+          if (!fromModel) {
+            return {
+              accountId: row.accountId,
+              providerThreadId: row.providerThreadId,
+              messageId: row.messageId,
+            };
+          }
           const { id: _id, ...category } = verdict as any;
           return {
             accountId: row.accountId,
             providerThreadId: row.providerThreadId,
+            messageId: row.messageId,
             verdict: { ...category, classifiedAt: Date.now() },
           };
         });

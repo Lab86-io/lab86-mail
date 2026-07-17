@@ -41,22 +41,34 @@ describe('legacy calendar corpus migration', () => {
         ...baseEvent,
         providerEventId: 'existing_event',
       });
+      await ctx.db.insert('calendarEvents', {
+        ...baseEvent,
+        providerEventId: 'canonical_only_event',
+        searchText: undefined,
+        yearMonth: undefined,
+      });
     });
 
+    const backfill = await t.mutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
+      limit: 25,
+    });
+    expect(backfill).toEqual({ scanned: 2, migrated: 2, done: true });
     const result = await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
-    expect(result).toEqual({ deleted: 2, migrated: 2, skipped: 0, done: true });
+    expect(result).toEqual({ deleted: 2, migrated: 1, skipped: 0, done: true });
 
     const state = await t.run(async (ctx) => ({
       canonical: await ctx.db.query('calendarEvents').collect(),
       legacy: await ctx.db.query('calendarEventCorpus').collect(),
     }));
     expect(state.legacy).toHaveLength(0);
-    expect(state.canonical).toHaveLength(2);
+    expect(state.canonical).toHaveLength(3);
     expect(state.canonical.map((row) => row.providerEventId).sort()).toEqual([
+      'canonical_only_event',
       'existing_event',
       'orphaned_event',
     ]);
-    expect(state.canonical.every((row) => row.searchText === 'preserved event')).toBe(true);
+    expect(state.canonical.every((row) => row.searchText?.toLowerCase() === 'preserved event')).toBe(true);
+    expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
     expect(state.canonical.every((row) => row.yearMonth === '2026-07')).toBe(true);
   });
 
