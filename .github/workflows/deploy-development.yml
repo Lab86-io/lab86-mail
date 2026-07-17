@@ -63,6 +63,9 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli@5.0.0
 
+      - name: Prepare Railway deployment identity
+        run: echo "RAILWAY_DEPLOY_MESSAGE=development ${GITHUB_SHA} run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
       - name: Deploy Railway development
         run: >
           railway up
@@ -70,11 +73,9 @@ jobs:
           --environment development
           --service "$RAILWAY_SERVICE_NAME"
           --ci
-          -m "development ${GITHUB_SHA}"
+          -m "$RAILWAY_DEPLOY_MESSAGE"
 
       - name: Wait for Railway development release
-        env:
-          EXPECTED_RAILWAY_MESSAGE: development ${{ github.sha }}
         run: |
           set -euo pipefail
           for attempt in {1..30}; do
@@ -83,7 +84,7 @@ jobs:
               --environment development \
               --service "$RAILWAY_SERVICE_NAME" \
               --limit 20 \
-              --json | jq -c --arg message "$EXPECTED_RAILWAY_MESSAGE" \
+              --json | jq -c --arg message "$RAILWAY_DEPLOY_MESSAGE" \
                 '[.[] | select(.meta.cliMessage == $message)] | first // empty')"
             if [ -n "$deployment" ]; then
               deployment_id="$(jq -r '.id' <<<"$deployment")"
@@ -95,7 +96,7 @@ jobs:
             fi
             sleep 10
           done
-          echo "Timed out waiting for Railway deployment: $EXPECTED_RAILWAY_MESSAGE"
+          echo "Timed out waiting for Railway deployment: $RAILWAY_DEPLOY_MESSAGE"
           exit 1
 
       - name: Smoke test

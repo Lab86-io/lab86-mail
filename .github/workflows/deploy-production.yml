@@ -83,10 +83,8 @@ jobs:
           git tag -a "v${version}" -m "Release v${version} from ${GITHUB_SHA}"
 
       - name: Deploy Convex
-        env:
-          DEPLOY_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          if [[ "$DEPLOY_COMMIT_MESSAGE" == *"[allow convex index cleanup]"* ]]; then
+          if grep -Fq '[allow convex index cleanup]' .release-commits.txt; then
             npx convex deploy --allow-deleting-large-indexes
             npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'
           else
@@ -96,6 +94,9 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli@5.0.0
 
+      - name: Prepare Railway deployment identity
+        run: echo "RAILWAY_DEPLOY_MESSAGE=production v${{ steps.version.outputs.version }} run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
       - name: Deploy Railway production
         run: >
           railway up
@@ -103,11 +104,9 @@ jobs:
           --environment production
           --service "$RAILWAY_SERVICE_NAME"
           --ci
-          -m "production v${{ steps.version.outputs.version }}"
+          -m "$RAILWAY_DEPLOY_MESSAGE"
 
       - name: Wait for Railway production release
-        env:
-          EXPECTED_RAILWAY_MESSAGE: production v${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           for attempt in {1..30}; do
@@ -116,7 +115,7 @@ jobs:
               --environment production \
               --service "$RAILWAY_SERVICE_NAME" \
               --limit 20 \
-              --json | jq -c --arg message "$EXPECTED_RAILWAY_MESSAGE" \
+              --json | jq -c --arg message "$RAILWAY_DEPLOY_MESSAGE" \
                 '[.[] | select(.meta.cliMessage == $message)] | first // empty')"
             if [ -n "$deployment" ]; then
               deployment_id="$(jq -r '.id' <<<"$deployment")"
@@ -128,7 +127,7 @@ jobs:
             fi
             sleep 10
           done
-          echo "Timed out waiting for Railway deployment: $EXPECTED_RAILWAY_MESSAGE"
+          echo "Timed out waiting for Railway deployment: $RAILWAY_DEPLOY_MESSAGE"
           exit 1
 
       - name: Smoke test

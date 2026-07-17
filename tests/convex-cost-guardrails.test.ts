@@ -78,27 +78,38 @@ describe('Convex cost guardrails', () => {
   });
 
   test('large index deletion requires an explicit deployment commit marker', () => {
-    for (const workflowPath of [
-      '.github/workflows/deploy-development.yml',
-      '.github/workflows/deploy-production.yml',
-    ]) {
+    for (const [workflowPath, markerCondition] of [
+      [
+        '.github/workflows/deploy-development.yml',
+        'if [[ "$DEPLOY_COMMIT_MESSAGE" == *"[allow convex index cleanup]"* ]]; then',
+      ],
+      [
+        '.github/workflows/deploy-production.yml',
+        "if grep -Fq '[allow convex index cleanup]' .release-commits.txt; then",
+      ],
+    ] as const) {
       const workflow = read(workflowPath);
+      const convexDeploy = between(workflow, '- name: Deploy Convex', '- name: Install Railway CLI');
+      const railwayFlow = between(
+        workflow,
+        '- name: Prepare Railway deployment identity',
+        '- name: Smoke test',
+      );
+      const railwayReady = between(workflow, '- name: Wait for Railway', '- name: Smoke test');
 
-      expect(workflow).toContain('[allow convex index cleanup]');
-      expect(workflow).toContain('npx convex deploy --allow-deleting-large-indexes');
-      expect(workflow).toContain("npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'");
-      expect(workflow).toContain('else\n            npx convex deploy');
+      expect(convexDeploy).toContain(
+        `${markerCondition}\n            npx convex deploy --allow-deleting-large-indexes\n            npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'\n          else\n            npx convex deploy\n          fi`,
+      );
       expect(workflow).not.toContain('--detach');
-
-      const railwayDeploy = workflow.indexOf('name: Deploy Railway');
-      const railwayReady = workflow.indexOf('name: Wait for Railway');
-      const smoke = workflow.indexOf('name: Smoke test');
-      expect(railwayDeploy).toBeGreaterThanOrEqual(0);
-      expect(railwayReady).toBeGreaterThan(railwayDeploy);
-      expect(smoke).toBeGreaterThan(railwayReady);
-      expect(workflow).toContain('.meta.cliMessage == $message');
-      expect(workflow).toContain('SUCCESS)');
-      expect(workflow).toContain('FAILED|CRASHED|REMOVED)');
+      expect(railwayFlow).toContain('GITHUB_RUN_ID');
+      expect(railwayFlow).toContain('GITHUB_RUN_ATTEMPT');
+      expect(railwayFlow).toContain('-m "$RAILWAY_DEPLOY_MESSAGE"');
+      expect(railwayReady).toContain('for attempt in {1..30}');
+      expect(railwayReady).toContain('--arg message "$RAILWAY_DEPLOY_MESSAGE"');
+      expect(railwayReady).toContain('.meta.cliMessage == $message');
+      expect(railwayReady).toContain('SUCCESS)');
+      expect(railwayReady).toContain('FAILED|CRASHED|REMOVED)');
+      expect(railwayReady).toContain('sleep 10');
     }
   });
 });

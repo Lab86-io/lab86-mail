@@ -91,4 +91,81 @@ describe('legacy calendar corpus migration', () => {
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
     }
   });
+
+  test('never falls back to the same provider event id in another calendar', async () => {
+    const t = convexTest(schema, convexModules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('calendarEvents', {
+        ...baseEvent,
+        providerCalendarId: 'calendar_2',
+        providerEventId: 'shared_event_id',
+        title: 'Other calendar event',
+      });
+      await ctx.db.insert('calendarEventCorpus', {
+        ...baseEvent,
+        providerCalendarId: 'calendar_1',
+        providerEventId: 'shared_event_id',
+        title: 'Migrated calendar event',
+      });
+    });
+
+    await t.mutation(internal.calendarData.purgeLegacyEventCorpusBatch, { limit: 25 });
+    const canonical = await t.run((ctx) => ctx.db.query('calendarEvents').collect());
+    expect(canonical).toHaveLength(2);
+    expect(
+      canonical
+        .map((row) => [row.providerCalendarId, row.title])
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ).toEqual([
+      ['calendar_1', 'Migrated calendar event'],
+      ['calendar_2', 'Other calendar event'],
+    ]);
+  });
+
+  test('upserts a calendar-qualified event without overwriting another calendar', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-upsert-test-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      await t.run((ctx) =>
+        ctx.db.insert('calendarEvents', {
+          ...baseEvent,
+          providerCalendarId: 'calendar_2',
+          providerEventId: 'shared_upsert_id',
+          title: 'Existing calendar event',
+        }),
+      );
+
+      await t.mutation(api.calendarData.upsertEventBatch, {
+        internalSecret: 'calendar-upsert-test-secret',
+        userId: baseEvent.userId,
+        accountId: baseEvent.accountId,
+        grantId: baseEvent.grantId,
+        provider: baseEvent.provider,
+        events: [
+          {
+            providerCalendarId: 'calendar_1',
+            providerEventId: 'shared_upsert_id',
+            title: 'New calendar event',
+            startAt: baseEvent.startAt,
+            endAt: baseEvent.endAt,
+          },
+        ],
+      });
+
+      const canonical = await t.run((ctx) => ctx.db.query('calendarEvents').collect());
+      expect(canonical).toHaveLength(2);
+      expect(
+        canonical
+          .map((row) => [row.providerCalendarId, row.title])
+          .sort(([left], [right]) => left.localeCompare(right)),
+      ).toEqual([
+        ['calendar_1', 'New calendar event'],
+        ['calendar_2', 'Existing calendar event'],
+      ]);
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
 });

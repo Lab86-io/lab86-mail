@@ -133,21 +133,13 @@ export const upsertEventBatch = mutation({
         yearMonth: event.yearMonth || yearMonth(event.startAt),
         updatedAt: ts,
       };
-      let row = await ctx.db
+      const row = await ctx.db
         .query('calendarEvents')
         .withIndex('by_account_calendar_event', (q) =>
           q
             .eq('accountId', args.accountId)
             .eq('providerCalendarId', event.providerCalendarId)
             .eq('providerEventId', event.providerEventId),
-        )
-        .unique();
-      // Rows written before the calendar-qualified identity existed are still
-      // addressable by account+event id. Upgrade them in place.
-      row ??= await ctx.db
-        .query('calendarEvents')
-        .withIndex('by_account_event', (q) =>
-          q.eq('accountId', args.accountId).eq('providerEventId', event.providerEventId),
         )
         .unique();
       if (row) {
@@ -710,7 +702,7 @@ async function findEventByProviderId(
   args: { accountId: string; providerEventId: string; providerCalendarId?: string },
 ) {
   if (args.providerCalendarId) {
-    const row = await ctx.db
+    return ctx.db
       .query('calendarEvents')
       .withIndex('by_account_calendar_event', (q: any) =>
         q
@@ -719,7 +711,6 @@ async function findEventByProviderId(
           .eq('providerEventId', args.providerEventId),
       )
       .unique();
-    if (row) return row;
   }
   return ctx.db
     .query('calendarEvents')
@@ -736,7 +727,7 @@ async function deleteLegacyCorpusEvent(
   ctx: any,
   args: { userId: string; accountId: string; providerEventId: string; providerCalendarId?: string },
 ) {
-  let row = args.providerCalendarId
+  const row = args.providerCalendarId
     ? await ctx.db
         .query('calendarEventCorpus')
         .withIndex('by_account_calendar_event', (q: any) =>
@@ -746,13 +737,12 @@ async function deleteLegacyCorpusEvent(
             .eq('providerEventId', args.providerEventId),
         )
         .unique()
-    : null;
-  row ??= await ctx.db
-    .query('calendarEventCorpus')
-    .withIndex('by_account_event', (q: any) =>
-      q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
-    )
-    .unique();
+    : await ctx.db
+        .query('calendarEventCorpus')
+        .withIndex('by_account_event', (q: any) =>
+          q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
+        )
+        .unique();
   if (row && row.userId === args.userId) await ctx.db.delete(row._id);
 }
 
