@@ -19,10 +19,13 @@ import { areaMailMoveConfirmation, areaMailMoveReason } from '../lib/albatross/a
 import { areaMcpExternalId, mcpAreaLinkIdentity } from '../lib/albatross/area-mcp-identity';
 import {
   AREA_REINDEX_MAX_PAGES,
+  AREA_REINDEX_MAX_SCANNED,
   areaReindexCursorAdvanced,
   areaReindexMatchCounterDelta,
   canonicalLatestMessageId,
+  isCurrentAreaReindexInvocation,
   nextAreaReindexPage,
+  remainingAreaReindexPageSize,
   shouldCoalesceAreaReindex,
 } from '../lib/albatross/area-reindex';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
@@ -1297,7 +1300,6 @@ const AREA_OVERVIEW_LINK_SCAN = 2000;
 const AREA_OVERVIEW_INTENT_SCAN = 500;
 const AREA_OVERVIEW_PROJECT_SCAN = 500;
 const AREA_OVERVIEW_CARD_SCAN = 500;
-const AREA_REINDEX_PAGE_SIZE = 100;
 
 function emptyAreaWorkCounts() {
   return {
@@ -2638,10 +2640,22 @@ export const reindexUserAreaArtifacts = internalMutation({
     let retired = 0;
     let skipped = 0;
     try {
+      // Old deploys may leave untracked or duplicate scheduler entries behind.
+      // Only the invocation that owns the run's expected cursor may do work;
+      // every stale entry becomes a read-only no-op.
+      if (
+        !trackedRun ||
+        !isCurrentAreaReindexInvocation({
+          hasTrackedRun: true,
+          status: trackedRun.status,
+          pages: trackedRun.pages,
+          expectedCursor: trackedRun.cursor,
+          cursor: args.cursor,
+        })
+      ) {
+        return { inserted: 0, matched: 0, retired: 0, skipped: 0, scanned: 0, done: true, stale: true };
+      }
       if (trackedRun) {
-        if (trackedRun.status === 'done' || trackedRun.status === 'error') {
-          return { inserted: 0, matched: 0, retired: 0, skipped: 0, scanned: 0, done: true };
-        }
         // Deploying this guard may leave many jobs that were scheduled by the
         // old code. Only the newest run is allowed to scan; every older queued
         // job becomes a cheap no-op when its scheduler entry eventually fires.
@@ -2671,6 +2685,16 @@ export const reindexUserAreaArtifacts = internalMutation({
         const nextPage = nextAreaReindexPage(trackedRun.pages);
         if (!nextPage.allowed) {
           const error = `Area reindex stopped after ${AREA_REINDEX_MAX_PAGES} pages (safety limit).`;
+          await ctx.db.patch(trackedRun._id, {
+            status: 'error',
+            error,
+            finishedAt: ts,
+            updatedAt: ts,
+          });
+          return { inserted: 0, matched: 0, retired: 0, skipped: 0, scanned: 0, done: false, error };
+        }
+        if (trackedRun.scanned >= AREA_REINDEX_MAX_SCANNED) {
+          const error = `Area reindex stopped after ${AREA_REINDEX_MAX_SCANNED} threads (safety limit).`;
           await ctx.db.patch(trackedRun._id, {
             status: 'error',
             error,
@@ -2718,10 +2742,16 @@ export const reindexUserAreaArtifacts = internalMutation({
       // (#100). It still reaches the model as area-profile context, where a
       // wrong guess costs an abstention instead of a bad link.
 
+      // Reclassification is relevance-first and bounded to the same recent
+      // window the model drains. Newest mail is processed first, so the hard
+      // cap cannot spend its budget walking old archive rows.
+      const cutoff = trackedRun.createdAt - UNCLASSIFIED_WINDOW_MS;
+      const pageSize = remainingAreaReindexPageSize(trackedRun.scanned);
       const page = await ctx.db
         .query('mailCorpusThreads')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .paginate({ cursor: args.cursor ?? null, numItems: AREA_REINDEX_PAGE_SIZE });
+        .withIndex('by_user_lastDate', (q) => q.eq('userId', userId).gte('lastDate', cutoff))
+        .order('desc')
+        .paginate({ cursor: args.cursor ?? null, numItems: pageSize });
 
       for (const row of page.page) {
         scanned += 1;
