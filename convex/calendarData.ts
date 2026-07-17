@@ -259,11 +259,14 @@ export const reconcileWindow = mutation({
     windowStart: v.number(),
     windowEnd: v.number(),
     keepProviderEventIds: v.array(v.string()),
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const keep = new Set(args.keepProviderEventIds);
-    const rows = await ctx.db
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 250), 25), 500);
+    const page = await ctx.db
       .query('calendarEvents')
       .withIndex('by_user_account_calendar_end', (q) =>
         q
@@ -272,9 +275,9 @@ export const reconcileWindow = mutation({
           .eq('providerCalendarId', args.providerCalendarId)
           .gt('endAt', args.windowStart),
       )
-      .collect();
+      .paginate({ cursor: args.cursor ?? null, numItems: limit });
     let pruned = 0;
-    for (const row of rows) {
+    for (const row of page.page) {
       if (row.startAt >= args.windowEnd) continue;
       if (keep.has(row.providerEventId)) continue;
       await ctx.db.delete(row._id);
@@ -286,7 +289,12 @@ export const reconcileWindow = mutation({
       });
       pruned += 1;
     }
-    return { ok: true, pruned };
+    return {
+      ok: true,
+      pruned,
+      done: page.isDone,
+      ...(!page.isDone ? { continueCursor: page.continueCursor } : {}),
+    };
   },
 });
 
@@ -579,22 +587,25 @@ export const countEvents = query({
     const CAP = 1000;
     const text = (args.query || '').trim();
     const useCanonicalSearch = await calendarSearchCutoverReady(ctx);
+    let sourceTruncated = false;
     let rows: any[];
     if (text) {
       const canonical = await ctx.db
         .query('calendarEvents')
         .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
         .take(CAP);
+      sourceTruncated ||= canonical.length >= CAP;
       if (useCanonicalSearch) rows = canonical;
       else {
         const legacy = await ctx.db
           .query('calendarEventCorpus')
           .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
           .take(CAP);
+        sourceTruncated ||= legacy.length >= CAP;
         rows = mergeCalendarSearchRows(canonical, legacy);
       }
     } else if (typeof args.startAt === 'number' && typeof args.endAt === 'number') {
-      const canonical = await queryEventsInWindow(
+      const canonicalPage = await queryEventsInWindowPage(
         ctx,
         args.userId,
         args.startAt,
@@ -602,9 +613,11 @@ export const countEvents = query({
         CAP,
         Boolean(args.includeCancelled),
       );
+      const canonical = canonicalPage.rows;
+      sourceTruncated ||= canonicalPage.sourceTruncated;
       if (useCanonicalSearch) rows = canonical;
       else {
-        const legacy = await queryLegacyEventsInWindow(
+        const legacyPage = await queryLegacyEventsInWindowPage(
           ctx,
           args.userId,
           args.startAt,
@@ -612,6 +625,8 @@ export const countEvents = query({
           CAP,
           Boolean(args.includeCancelled),
         );
+        const legacy = legacyPage.rows;
+        sourceTruncated ||= legacyPage.sourceTruncated;
         rows = mergeCalendarSearchRows(canonical, legacy);
       }
     } else {
@@ -619,19 +634,21 @@ export const countEvents = query({
         .query('calendarEvents')
         .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
         .take(CAP);
+      sourceTruncated ||= canonical.length >= CAP;
       if (useCanonicalSearch) rows = canonical;
       else {
         const legacy = await ctx.db
           .query('calendarEventCorpus')
           .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
           .take(CAP);
+        sourceTruncated ||= legacy.length >= CAP;
         rows = mergeCalendarSearchRows(canonical, legacy);
       }
     }
     const matched = filterCalendarRows(rows, args);
     return {
       count: Math.min(matched.length, CAP),
-      approximate: rows.length >= CAP && matched.length >= CAP,
+      approximate: sourceTruncated || matched.length > CAP,
     };
   },
 });
@@ -1008,12 +1025,23 @@ async function queryEventsInWindow(
   limit?: number,
   includeCancelled = false,
 ) {
+  return (await queryEventsInWindowPage(ctx, userId, startAt, endAt, limit, includeCancelled)).rows;
+}
+
+async function queryEventsInWindowPage(
+  ctx: QueryCtx,
+  userId: string,
+  startAt: number,
+  endAt: number,
+  limit?: number,
+  includeCancelled = false,
+) {
   const cap = Math.min(Math.max(limit ?? 2000, 1), 5000);
   // Events overlapping [startAt, endAt): rows starting inside the window plus
   // rows that started earlier but end inside it. Multi-day spans are bounded
   // (longest realistic events are weeks), so the lookback is 62 days.
   const lookback = 62 * 24 * 60 * 60 * 1000;
-  const rows = await ctx.db
+  const candidates = await ctx.db
     .query('calendarEvents')
     .withIndex('by_user_start', (q) =>
       q
@@ -1022,7 +1050,10 @@ async function queryEventsInWindow(
         .lt('startAt', endAt),
     )
     .take(cap);
-  return rows.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled'));
+  return {
+    rows: candidates.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled')),
+    sourceTruncated: candidates.length >= cap,
+  };
 }
 
 async function queryLegacyEventsInWindow(
@@ -1033,9 +1064,20 @@ async function queryLegacyEventsInWindow(
   limit?: number,
   includeCancelled = false,
 ) {
+  return (await queryLegacyEventsInWindowPage(ctx, userId, startAt, endAt, limit, includeCancelled)).rows;
+}
+
+async function queryLegacyEventsInWindowPage(
+  ctx: QueryCtx,
+  userId: string,
+  startAt: number,
+  endAt: number,
+  limit?: number,
+  includeCancelled = false,
+) {
   const cap = Math.min(Math.max(limit ?? 2000, 1), 5000);
   const lookback = 62 * 24 * 60 * 60 * 1000;
-  const rows = await ctx.db
+  const candidates = await ctx.db
     .query('calendarEventCorpus')
     .withIndex('by_user_start', (q) =>
       q
@@ -1044,7 +1086,10 @@ async function queryLegacyEventsInWindow(
         .lt('startAt', endAt),
     )
     .take(cap);
-  return rows.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled'));
+  return {
+    rows: candidates.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled')),
+    sourceTruncated: candidates.length >= cap,
+  };
 }
 
 async function findEventByProviderId(

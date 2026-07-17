@@ -19,6 +19,12 @@ const providerValidator = v.union(
   v.literal('imap'),
 );
 
+function latestCorpusMessage(a: any, b: any) {
+  if (a.receivedAt !== b.receivedAt) return a.receivedAt > b.receivedAt ? a : b;
+  if (a._creationTime !== b._creationTime) return a._creationTime > b._creationTime ? a : b;
+  return String(a.providerMessageId).localeCompare(String(b.providerMessageId)) >= 0 ? a : b;
+}
+
 const syncStatusValidator = v.union(
   v.literal('idle'),
   v.literal('backfilling'),
@@ -264,7 +270,7 @@ export const upsertCorpusBatch = mutation({
         .take(AGGREGATE_WINDOW);
       if (!stored.length) continue;
       const windowCapped = stored.length >= AGGREGATE_WINDOW;
-      const latest = stored.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a));
+      const latest = stored.reduce(latestCorpusMessage);
       let classifyBody = String(latest.textBody || latest.searchText || '').slice(0, 4000);
       const labels = [...new Set(stored.flatMap((message) => message.labels || []))];
       const patch = {
@@ -292,7 +298,7 @@ export const upsertCorpusBatch = mutation({
             q.eq('accountId', args.accountId).eq('providerThreadId', providerThreadId),
           )
           .collect();
-        const fullLatest = fullThread.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a), latest);
+        const fullLatest = fullThread.reduce(latestCorpusMessage, latest);
         patch.lastDate = fullLatest.receivedAt;
         patch.messageCount = fullThread.length;
         patch.labels = [...new Set(fullThread.flatMap((message) => message.labels || []))];

@@ -15,8 +15,8 @@ function between(source: string, startMarker: string, endMarker: string) {
 describe('Convex cost guardrails', () => {
   test('Smart Category sweeps honor source continuation after orphan repair', () => {
     const source = read('lib/mail/llm-classify.ts');
-    expect(source).toContain('const page = await convexMutation<{ items: any[]; moreRemaining: boolean }>');
-    expect(source).toContain('if (pending.length < SWEEP_BATCH) {');
+    expect(source).toContain('export async function drainPendingSweepPages');
+    expect(source).toContain('if (page.items.length < batchSize) {');
     expect(source).toContain('if (page.moreRemaining) continue;');
   });
 
@@ -66,6 +66,7 @@ describe('Convex cost guardrails', () => {
     expect(search).toContain('calendarSearchCutoverReady(ctx)');
     expect(source).toContain("return state?.status === 'completed' || state?.phase === 'legacy';");
     expect(search).toContain('count: Math.min(matched.length, CAP)');
+    expect(search).toContain('approximate: sourceTruncated || matched.length > CAP');
     expect(source).not.toContain('upsertCorpusEvent(');
     expect(source).not.toContain('deleteCorpusEvent(');
     expect(source).toContain('async function deleteLegacyCorpusEvent(');
@@ -97,7 +98,9 @@ describe('Convex cost guardrails', () => {
     expect(schema).toContain(".index('by_user_account_calendar_end'");
     expect(reconcile).toContain(".withIndex('by_user_account_calendar_end'");
     expect(reconcile).toContain(".gt('endAt', args.windowStart)");
+    expect(reconcile).toContain('.paginate({ cursor: args.cursor ?? null, numItems: limit })');
     expect(reconcile).toContain('if (row.startAt >= args.windowEnd) continue;');
+    expect(reconcile).not.toContain('.collect()');
     expect(reconcile).not.toContain(".withIndex('by_user_account_calendar_start'");
   });
 

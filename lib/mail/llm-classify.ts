@@ -22,6 +22,40 @@ const pendingKicks = new Map<string, ReturnType<typeof setTimeout>>();
 // once the current sweep finishes, so the backlog always drains.
 const rerunRequested = new Set<string>();
 
+export async function drainPendingSweepPages<T>({
+  loadPage,
+  handleItems,
+  batchSize = SWEEP_BATCH,
+  maxBatches = MAX_BATCHES_PER_KICK,
+}: {
+  loadPage: () => Promise<{ items: T[]; moreRemaining: boolean }>;
+  handleItems: (items: T[]) => Promise<number>;
+  batchSize?: number;
+  maxBatches?: number;
+}) {
+  let classified = 0;
+  let moreRemaining = false;
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const page = await loadPage();
+    if (!page.items.length) {
+      if (page.moreRemaining) {
+        if (batch === maxBatches - 1) moreRemaining = true;
+        continue;
+      }
+      break;
+    }
+    if (batch === maxBatches - 1 && (page.moreRemaining || page.items.length === batchSize)) {
+      moreRemaining = true;
+    }
+    classified += await handleItems(page.items);
+    if (page.items.length < batchSize) {
+      if (page.moreRemaining) continue;
+      break;
+    }
+  }
+  return { classified, moreRemaining };
+}
+
 export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEBOUNCE_MS) {
   const uid = userId || getAiRequestContext().userId;
   if (!uid || !isConvexConfigured()) return;
@@ -49,71 +83,57 @@ export async function runLlmClassificationSweep(userId: string) {
     result = await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
       if (!(await hasAiForCurrentUser('classify_threads'))) return { classified: 0 };
       const [rules, labels] = await Promise.all([listSmartRules(), listSmartLabels()]);
-      let classified = 0;
-      let moreRemaining = false;
-      for (let batch = 0; batch < MAX_BATCHES_PER_KICK; batch++) {
-        const page = await convexMutation<{ items: any[]; moreRemaining: boolean }>(
-          (api as any).mailCorpus.listLlmPending,
-          { userId, limit: SWEEP_BATCH },
-        );
-        const pending = page.items;
-        if (!pending.length) {
-          if (page.moreRemaining) {
-            if (batch === MAX_BATCHES_PER_KICK - 1) moreRemaining = true;
-            continue;
-          }
-          break;
-        }
-        // A full final batch under the per-kick cap means rows likely remain.
-        if (batch === MAX_BATCHES_PER_KICK - 1 && (page.moreRemaining || pending.length === SWEEP_BATCH))
-          moreRemaining = true;
-        const verdicts = await classifyThreadsBatched(
-          pending.map((row) => ({
-            id: `${row.accountId}:${row.providerThreadId}`,
-            account: row.accountId,
-            fromAddress: row.fromAddress,
-            subject: row.subject,
-            snippet: row.snippet,
-            labels: row.labels,
-            unread: row.unread,
-            date: row.lastDate,
-            bodyText: row.bodyText,
-          })),
-          { rules, customLabels: labels, force: true, speed: 'nano' },
-        );
-        const verdictById = new Map(verdicts.map((v) => [v.id, v]));
-        // Every listed row gets closed out — rows whose verdict didn't come
-        // back keep their deterministic classification (one attempt, no loop).
-        const items = pending.map((row) => {
-          const verdict = verdictById.get(`${row.accountId}:${row.providerThreadId}`);
-          const fromModel = verdict && verdict.model !== 'deterministic' && verdict.model !== 'user_rule';
-          if (!fromModel) {
+      const swept = await drainPendingSweepPages<any>({
+        loadPage: () =>
+          convexMutation<{ items: any[]; moreRemaining: boolean }>((api as any).mailCorpus.listLlmPending, {
+            userId,
+            limit: SWEEP_BATCH,
+          }),
+        handleItems: async (pending) => {
+          const verdicts = await classifyThreadsBatched(
+            pending.map((row) => ({
+              id: `${row.accountId}:${row.providerThreadId}`,
+              account: row.accountId,
+              fromAddress: row.fromAddress,
+              subject: row.subject,
+              snippet: row.snippet,
+              labels: row.labels,
+              unread: row.unread,
+              date: row.lastDate,
+              bodyText: row.bodyText,
+            })),
+            { rules, customLabels: labels, force: true, speed: 'nano' },
+          );
+          const verdictById = new Map(verdicts.map((v) => [v.id, v]));
+          // Every listed row gets closed out — rows whose verdict didn't come
+          // back keep their deterministic classification (one attempt, no loop).
+          const items = pending.map((row) => {
+            const verdict = verdictById.get(`${row.accountId}:${row.providerThreadId}`);
+            const fromModel = verdict && verdict.model !== 'deterministic' && verdict.model !== 'user_rule';
+            if (!fromModel) {
+              return {
+                accountId: row.accountId,
+                providerThreadId: row.providerThreadId,
+                messageId: row.messageId,
+              };
+            }
+            const { id: _id, ...category } = verdict as any;
             return {
               accountId: row.accountId,
               providerThreadId: row.providerThreadId,
               messageId: row.messageId,
+              verdict: { ...category, classifiedAt: Date.now() },
             };
-          }
-          const { id: _id, ...category } = verdict as any;
-          return {
-            accountId: row.accountId,
-            providerThreadId: row.providerThreadId,
-            messageId: row.messageId,
-            verdict: { ...category, classifiedAt: Date.now() },
-          };
-        });
-        const batchResult = await convexMutation<{ stored: number }>(
-          (api as any).mailCorpus.storeLlmVerdicts,
-          { userId, items },
-        );
-        classified += batchResult.stored;
-        if (pending.length < SWEEP_BATCH) {
-          if (page.moreRemaining) continue;
-          break;
-        }
-      }
-      if (classified) console.log(`[llm-classify] stored ${classified} verdicts for ${userId}`);
-      return { classified, moreRemaining };
+          });
+          const batchResult = await convexMutation<{ stored: number }>(
+            (api as any).mailCorpus.storeLlmVerdicts,
+            { userId, items },
+          );
+          return batchResult.stored;
+        },
+      });
+      if (swept.classified) console.log(`[llm-classify] stored ${swept.classified} verdicts for ${userId}`);
+      return swept;
     });
     return result;
   } finally {
