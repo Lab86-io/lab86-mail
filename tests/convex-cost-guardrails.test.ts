@@ -97,6 +97,11 @@ describe('Convex cost guardrails', () => {
     ] as const) {
       const workflow = read(workflowPath);
       const convexDeploy = between(workflow, '- name: Deploy Convex', '- name: Install Railway CLI');
+      const railwayInstall = between(
+        workflow,
+        '- name: Install Railway CLI',
+        '- name: Prepare Railway deployment identity',
+      );
       const railwayFlow = between(
         workflow,
         '- name: Prepare Railway deployment identity',
@@ -107,7 +112,7 @@ describe('Convex cost guardrails', () => {
       expect(convexDeploy).toContain(
         `${markerCondition}\n            npx convex deploy --allow-deleting-large-indexes\n            npx convex run calendarData:purgeLegacyEventCorpusBatch '{}'\n          else\n            npx convex deploy\n          fi`,
       );
-      expect(workflow).toContain('npm install -g @railway/cli@5.26.2');
+      expect(railwayInstall).toContain('run: npm install -g @railway/cli@5.26.2');
       expect(workflow).not.toContain('--detach');
       expect(railwayFlow).toContain('GITHUB_RUN_ID');
       expect(railwayFlow).toContain('GITHUB_RUN_ATTEMPT');
