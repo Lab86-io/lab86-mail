@@ -289,6 +289,50 @@ describe('legacy calendar corpus migration', () => {
     }
   });
 
+  test('calendar cleanup preserves other calendars and other users', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'calendar-scope-test-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      await t.run(async (ctx) => {
+        await ctx.db.insert('calendarEventCorpus', {
+          ...baseEvent,
+          providerEventId: 'removed_scope_event',
+        });
+        await ctx.db.insert('calendarEventCorpus', {
+          ...baseEvent,
+          providerCalendarId: 'calendar_2',
+          providerEventId: 'other_calendar_event',
+        });
+        await ctx.db.insert('calendarEventCorpus', {
+          ...baseEvent,
+          userId: 'other_user',
+          providerEventId: 'other_user_event',
+        });
+      });
+
+      await t.mutation(api.calendarData.removeCalendar, {
+        internalSecret: 'calendar-scope-test-secret',
+        userId: baseEvent.userId,
+        accountId: baseEvent.accountId,
+        providerCalendarId: baseEvent.providerCalendarId,
+      });
+
+      const legacy = await t.run((ctx) => ctx.db.query('calendarEventCorpus').collect());
+      expect(
+        legacy
+          .map((row) => [row.userId, row.providerCalendarId, row.providerEventId])
+          .sort(([left], [right]) => left.localeCompare(right)),
+      ).toEqual([
+        ['calendar_user', 'calendar_2', 'other_calendar_event'],
+        ['other_user', 'calendar_1', 'other_user_event'],
+      ]);
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
   test('skips corrupt cross-user collisions without stalling later rows', async () => {
     const t = convexTest(schema, convexModules);
     await t.run(async (ctx) => {
