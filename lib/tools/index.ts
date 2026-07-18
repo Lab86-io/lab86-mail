@@ -35,6 +35,7 @@ import {
   areaDiscoverContext,
   areaDomainActivity,
   areaFactSetStatus,
+  areaHome,
   areaList,
   areaUpdateIdentity,
 } from './areas';
@@ -297,6 +298,7 @@ const allTools: AnyTool[] = [
   albatrossPreviewUndoUnresolved,
   salvageContext,
   areaList,
+  areaHome,
   areaCreate,
   areaDiscoverContext,
   areaUpdateIdentity,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { generateAgentReport } from '../mail/agent-report';
+import { injectReportAreaBrief } from '../mail/report-area-brief';
 import type { DailyReport } from '../shared/types';
 import {
   dailyReportThreadKey,
@@ -100,9 +101,17 @@ export const getLatestDailyReportTool = defineTool({
   input: z.object({ kind: ReportKindSchema.optional() }).optional(),
   output: z.object({ report: z.any().nullable() }),
   async handler(input) {
-    return { report: await getLatestDailyReport(input?.kind) };
+    return { report: withDisplayAreaBrief(await getLatestDailyReport(input?.kind)) };
   },
 });
+
+function withDisplayAreaBrief(report: DailyReport | null): DailyReport | null {
+  const rawHtml = report?.html;
+  const albatross = report?.sections?.albatross;
+  if (!report || !rawHtml || !albatross) return report;
+  const html = injectReportAreaBrief(rawHtml, albatross);
+  return html === rawHtml ? report : { ...report, html };
+}
 
 export const listDailyReportsTool = defineTool({
   name: 'list_daily_reports',

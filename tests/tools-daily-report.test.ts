@@ -145,6 +145,55 @@ describe('daily report tools', () => {
     expect(JSON.stringify(report.sections)).not.toContain('Outside scope');
   });
 
+  test('get_latest_daily_report injects the Area brief without mutating stored history', async () => {
+    await withToolContext(async () => {
+      const storedHtml =
+        '<!doctype html><html><body><main><section>Body</section><footer class="brief-footer">Made</footer></main></body></html>';
+      await saveDailyReport({
+        _id: 'report_area_brief_display',
+        kind: 'manual',
+        generatedAt: Date.parse('2030-01-01T00:00:00.000Z'),
+        status: 'ready',
+        accounts: ['jakob@example.test'],
+        title: 'Daily Report',
+        narrative: 'Area work is moving.',
+        html: storedHtml,
+        sections: {
+          replyOwed: [],
+          followUpOwed: [],
+          newPeople: [],
+          timeSensitive: [],
+          tracked: [],
+          fyi: [],
+          bulkTail: [],
+          tasks: [],
+          calendar: [],
+          albatross: {
+            includedAreas: [{ areaId: 'area_launch', name: 'Launch', reason: 'Live work' }],
+            askBeforeCentering: [],
+            activeIntents: [],
+            activeProjects: [
+              { id: 'project_1', title: 'Ship area briefs', areaId: 'area_launch', status: 'active' },
+            ],
+            contextReview: [],
+            completions: [],
+          },
+        },
+        stats: {},
+      } as any);
+
+      const first = await runTool(getLatestDailyReportTool.handler, { kind: 'manual' });
+      expect(first.report?.html).toContain('data-lab86-area-brief-host');
+      expect(first.report?.html).toContain('Ship area briefs');
+      const second = await runTool(getLatestDailyReportTool.handler, { kind: 'manual' });
+      expect(second.report.html.match(/data-lab86-area-brief-host/g)?.length).toBe(1);
+
+      const stored = await getLatestDailyReport('manual');
+      expect(stored?.html).toBe(storedHtml);
+      expect(stored?.html).not.toContain('data-lab86-area-brief-host');
+    });
+  });
+
   test('generate_daily_report wait=true persists a terminal edition', async () => {
     const generated = await runTool(generateDailyReportTool.handler, { kind: 'manual', wait: true });
     expect(generated.started).toBeUndefined();

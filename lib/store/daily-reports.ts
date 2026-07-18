@@ -136,6 +136,10 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       tasks,
       calendar,
       mcp,
+      // Area context is durable report content, not a render-only decoration.
+      // Preserve it across read migration so desktop and native can add the
+      // same Area brief without rebuilding context or mutating report history.
+      albatross: sections.albatross,
       noiseSummary: typeof sections.noiseSummary === 'string' ? sections.noiseSummary : undefined,
     },
     stats: {
@@ -149,6 +153,9 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       openTasks,
       completedTasks,
       calendarEvents: stats.calendarEvents ?? calendar.length,
+      albatrossActiveIntents: stats.albatrossActiveIntents,
+      albatrossActiveProjects: stats.albatrossActiveProjects,
+      albatrossQuestions: stats.albatrossQuestions,
     },
     model: raw.model,
     errors: Array.isArray(raw.errors) ? raw.errors : undefined,
