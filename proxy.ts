@@ -101,6 +101,12 @@ export function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1' && isBasicAuthBypassAllowed(req)) return false;
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
+  const [authorizationScheme, bearerToken] = (req.headers.get('authorization') || '').split(/\s+/, 2);
+  // Staging Basic auth protects browsers, while native API calls authenticate
+  // with Clerk bearer tokens that clerkMiddleware validates immediately after.
+  if (pathname.startsWith('/api/') && authorizationScheme?.toLowerCase() === 'bearer' && bearerToken) {
+    return false;
+  }
   if (pathname === '/api/clerk/webhook') return false;
   // Convex validates Clerk JWTs by fetching the issuer's OIDC discovery
   // document server-to-server — it can never present staging basic auth.

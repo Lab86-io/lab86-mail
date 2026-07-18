@@ -310,6 +310,25 @@ export const areaArtifactSetStatus = defineTool({
   },
 });
 
+export const areaHome = defineTool({
+  name: 'area_home',
+  description:
+    "Load one area's living brief, facts, linked mail, events, tasks, plans, projects, places, and counts. Read-only. Requires the signed-in user and a stable area id from area_list.",
+  category: 'memory',
+  mutating: false,
+  input: z.object({
+    areaId: z.string().min(1).describe('Stable area id from area_list'),
+  }),
+  output: z.object({ home: z.any() }),
+  async handler(args, ctx) {
+    const home = await deps.convexQuery<any>(areasApi().areaHome, {
+      userId: requireUserId(ctx.userId),
+      areaId: args.areaId,
+    });
+    return { home };
+  },
+});
+
 export const areaDomainActivity = defineTool({
   name: 'area_domain_activity',
   description:
