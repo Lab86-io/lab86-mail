@@ -319,9 +319,9 @@ export const areaHome = defineTool({
   input: z.object({
     areaId: z.string().min(1).describe('Stable area id from area_list'),
   }),
-  output: z.object({ home: z.any() }),
+  output: z.object({ home: z.unknown() }),
   async handler(args, ctx) {
-    const home = await deps.convexQuery<any>(areasApi().areaHome, {
+    const home = await deps.convexQuery<unknown>(areasApi().areaHome, {
       userId: requireUserId(ctx.userId),
       areaId: args.areaId,
     });
