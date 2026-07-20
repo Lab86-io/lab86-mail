@@ -12,7 +12,7 @@ packages:
     path: Packages/MobileAPI
   SwiftSoup:
     url: https://github.com/scinfu/SwiftSoup
-    from: 2.7.0
+    exactVersion: 2.7.0
   # Branch requirement: its HighlightSwift dependency is branch-pinned, which
   # SPM rejects from stable-version consumers.
   SwiftStreamingMarkdown:
