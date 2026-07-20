@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { generateAgentReport } from '../mail/agent-report';
+import { injectReportAreaBrief } from '../mail/report-area-brief';
 import type { DailyReport } from '../shared/types';
 import {
   dailyReportThreadKey,
@@ -100,9 +101,22 @@ export const getLatestDailyReportTool = defineTool({
   input: z.object({ kind: ReportKindSchema.optional() }).optional(),
   output: z.object({ report: z.any().nullable() }),
   async handler(input) {
-    return { report: await getLatestDailyReport(input?.kind) };
+    return { report: withDisplayAreaBrief(await getLatestDailyReport(input?.kind)) };
   },
 });
+
+// The stored artifact HTML is the raw edition; desktop injects the area brief at
+// render time (components/report/DailyReport.tsx → injectReportAreaBrief). Return
+// the same display artifact so native and desktop render identically. This clones
+// before injecting (never mutates stored history) and is idempotent — a report
+// whose html already carries the brief marker is returned untouched.
+function withDisplayAreaBrief(report: DailyReport | null): DailyReport | null {
+  const rawHtml = report?.html;
+  const albatross = report?.sections?.albatross;
+  if (!report || !rawHtml || !albatross) return report;
+  const html = injectReportAreaBrief(rawHtml, albatross);
+  return html === rawHtml ? report : { ...report, html };
+}
 
 export const listDailyReportsTool = defineTool({
   name: 'list_daily_reports',

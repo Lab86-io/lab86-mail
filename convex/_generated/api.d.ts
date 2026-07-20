@@ -28,6 +28,7 @@ import type * as liveMail from "../liveMail.js";
 import type * as mailCorpus from "../mailCorpus.js";
 import type * as mcp from "../mcp.js";
 import type * as mcpSync from "../mcpSync.js";
+import type * as mobile from "../mobile.js";
 import type * as operations from "../operations.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as smart from "../smart.js";
@@ -62,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   mailCorpus: typeof mailCorpus;
   mcp: typeof mcp;
   mcpSync: typeof mcpSync;
+  mobile: typeof mobile;
   operations: typeof operations;
   rateLimits: typeof rateLimits;
   smart: typeof smart;

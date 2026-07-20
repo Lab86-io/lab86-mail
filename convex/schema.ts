@@ -331,6 +331,9 @@ export default defineSchema({
     primaryDomain: v.optional(v.string()),
     faviconUrl: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
+    // Preserve the source storage reference used by existing generated area
+    // images even when callers consume the resolved imageUrl.
+    imageStorageId: v.optional(v.id('_storage')),
     // Every area gets its own task board at creation; archiving the area never
     // deletes the board, and unarchiving reuses it (no duplicates).
     boardId: v.optional(v.id('boards')),
@@ -515,6 +518,11 @@ export default defineSchema({
     status: v.union(v.literal('generating'), v.literal('ready'), v.literal('error')),
     lede: v.string(),
     summary: v.string(),
+    // Older generated area briefs stored their complete artifact here. Keep
+    // the field readable while the current brief pipeline moves forward with
+    // structured prose; dropping it from the validator blocks every deploy
+    // as long as a preserved brief still exists.
+    artifactHtml: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
     basedOnRevision: v.string(),
     generatedAt: v.optional(v.number()),
@@ -701,6 +709,10 @@ export default defineSchema({
     ),
     kind: v.optional(v.string()),
     areaId: v.optional(v.string()),
+    // True while the area was defaulted (Personal catch-all) rather than chosen
+    // by the user or the capture splitter. The area-classify cron re-homes
+    // flagged intents with one fast-model pass, then clears the flag.
+    areaAutoAssigned: v.optional(v.boolean()),
     // Work-v2 additions. Legacy areaId/status remain readable during the
     // additive migration; these fields become the user-facing Work contract.
     captureId: v.optional(v.id('albatrossCaptures')),
@@ -1196,6 +1208,111 @@ export default defineSchema({
     .index('by_user_source_calendar_event', ['userId', 'sourceCalendarEventId'])
     .index('by_user_due', ['userId', 'dueAt']),
 
+  // Versioned mobile mutations are durable before execution. The user/key
+  // index makes retries atomic, while the payload hash prevents one key from
+  // being reused for a different effect.
+  mobileCommands: defineTable({
+    userId: v.string(),
+    idempotencyKey: v.string(),
+    payloadHash: v.string(),
+    domain: v.union(
+      v.literal('accounts'),
+      v.literal('mail'),
+      v.literal('calendar'),
+      v.literal('tasks'),
+      v.literal('today'),
+      v.literal('work'),
+      v.literal('assistant'),
+      v.literal('activity'),
+    ),
+    kind: v.string(),
+    payload: v.any(),
+    baseRevision: v.optional(v.number()),
+    clientCreatedAt: v.string(),
+    status: v.union(
+      v.literal('queued'),
+      v.literal('applied'),
+      v.literal('needsApproval'),
+      v.literal('conflicted'),
+      v.literal('failed'),
+    ),
+    entityRevision: v.optional(v.number()),
+    operationId: v.optional(v.string()),
+    approvalId: v.optional(v.string()),
+    undoExpiresAt: v.optional(v.number()),
+    undoneAt: v.optional(v.number()),
+    claimToken: v.optional(v.string()),
+    claimedAt: v.optional(v.number()),
+    attemptCount: v.optional(v.number()),
+    errorCode: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    errorRetryable: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_idempotency', ['userId', 'idempotencyKey'])
+    .index('by_user_created', ['userId', 'createdAt']),
+
+  mobileSyncHeads: defineTable({
+    userId: v.string(),
+    domain: v.union(
+      v.literal('accounts'),
+      v.literal('mail'),
+      v.literal('calendar'),
+      v.literal('tasks'),
+      v.literal('today'),
+      v.literal('work'),
+      v.literal('assistant'),
+      v.literal('activity'),
+    ),
+    revision: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_domain', ['userId', 'domain']),
+
+  mobileSyncChanges: defineTable({
+    userId: v.string(),
+    domain: v.union(
+      v.literal('accounts'),
+      v.literal('mail'),
+      v.literal('calendar'),
+      v.literal('tasks'),
+      v.literal('today'),
+      v.literal('work'),
+      v.literal('assistant'),
+      v.literal('activity'),
+    ),
+    revision: v.number(),
+    entityKind: v.string(),
+    entityId: v.string(),
+    payload: v.any(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_domain_revision', ['userId', 'domain', 'revision']),
+
+  mobileSyncTombstones: defineTable({
+    userId: v.string(),
+    domain: v.union(
+      v.literal('accounts'),
+      v.literal('mail'),
+      v.literal('calendar'),
+      v.literal('tasks'),
+      v.literal('today'),
+      v.literal('work'),
+      v.literal('assistant'),
+      v.literal('activity'),
+    ),
+    revision: v.number(),
+    entityKind: v.string(),
+    entityId: v.string(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_domain_revision', ['userId', 'domain', 'revision']),
+
   // Every mutating action the AI (or a user clicking an AI suggestion) applies
   // to mail/calendar/tasks. `inverse` is a declarative undo descriptor executed
   // by lib/ai/operations.ts; rows without one are not undoable. `batchId`
@@ -1259,6 +1376,8 @@ export default defineSchema({
       v.literal('work_question'),
       v.literal('approval'),
       v.literal('completion_suggestion'),
+      v.literal('event_suggestion'),
+      v.literal('mail_message'),
       v.literal('brief_ready'),
       v.literal('agent_error'),
     ),
@@ -1271,6 +1390,8 @@ export default defineSchema({
         v.literal('project'),
         v.literal('area'),
         v.literal('approval'),
+        v.literal('suggestion'),
+        v.literal('thread'),
       ),
     ),
     entityId: v.optional(v.string()),
@@ -1302,6 +1423,9 @@ export default defineSchema({
     eveningCheckinLocalTime: v.string(),
     inAppEnabled: v.boolean(),
     webPushEnabled: v.boolean(),
+    nativePushEnabled: v.optional(v.boolean()),
+    newMailPushEnabled: v.optional(v.boolean()),
+    eventSuggestionPushEnabled: v.optional(v.boolean()),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
     createdAt: v.number(),
@@ -1323,10 +1447,35 @@ export default defineSchema({
     .index('by_user_status', ['userId', 'status'])
     .index('by_endpoint', ['endpoint']),
 
+  // Native push tokens are scoped to this app install, not to a mail account.
+  // Keeping the stable device id alongside the rotating APNs token lets a new
+  // token replace the old one atomically without leaving a live stale target.
+  mobilePushDevices: defineTable({
+    userId: v.string(),
+    platform: v.literal('ios'),
+    token: v.string(),
+    deviceId: v.string(),
+    environment: v.union(v.literal('development'), v.literal('production')),
+    appVersion: v.optional(v.string()),
+    status: v.union(v.literal('active'), v.literal('revoked'), v.literal('expired')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastDeliveredAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_user_device', ['userId', 'platform', 'deviceId'])
+    .index('by_token', ['token']),
+
   notificationDeliveries: defineTable({
     userId: v.string(),
     notificationId: v.id('albatrossNotifications'),
-    channel: v.union(v.literal('in_app'), v.literal('web_push'), v.literal('email')),
+    channel: v.union(
+      v.literal('in_app'),
+      v.literal('web_push'),
+      v.literal('native_push'),
+      v.literal('email'),
+    ),
     status: v.union(v.literal('queued'), v.literal('sent'), v.literal('failed'), v.literal('suppressed')),
     attemptCount: v.number(),
     providerId: v.optional(v.string()),
@@ -1425,7 +1574,13 @@ export default defineSchema({
   mcpConnections: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     serverUrl: v.string(),
     authKind: v.union(v.literal('token'), v.literal('oauth')),
     status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
@@ -1449,6 +1604,9 @@ export default defineSchema({
     server: v.string(),
     accessTokenEncrypted: v.optional(v.string()),
     refreshTokenEncrypted: v.optional(v.string()),
+    // Dynamic OAuth MCP registrations persist the encrypted client metadata
+    // beside their rotating access and refresh tokens.
+    oauthClientInformationEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
@@ -1461,7 +1619,13 @@ export default defineSchema({
   mcpItems: defineTable({
     userId: v.string(),
     connectionId: v.string(),
-    server: v.union(v.literal('github'), v.literal('bitbucket'), v.literal('jira'), v.literal('slack')),
+    server: v.union(
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('jira'),
+      v.literal('slack'),
+      v.literal('granola'),
+    ),
     externalId: v.string(),
     kind: v.string(),
     title: v.string(),
@@ -1469,6 +1633,9 @@ export default defineSchema({
     url: v.optional(v.string()),
     state: v.optional(v.string()),
     author: v.optional(v.string()),
+    organization: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    sha: v.optional(v.string()),
     assignedToUser: v.optional(v.boolean()),
     updatedAtSource: v.optional(v.number()),
     raw: v.optional(v.any()),
@@ -1489,6 +1656,8 @@ export default defineSchema({
     userId: v.string(),
     connectionId: v.string(),
     server: v.string(),
+    accountEmail: v.optional(v.string()),
+    workspaceName: v.optional(v.string()),
     status: v.union(v.literal('idle'), v.literal('syncing'), v.literal('ready'), v.literal('error')),
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),

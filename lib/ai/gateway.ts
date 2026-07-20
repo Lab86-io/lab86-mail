@@ -36,6 +36,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_place: 2000,
   albatross_local: 300,
   albatross_classify: 2000,
+  mail_event_suggestion: 600,
   agent: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;

@@ -1403,8 +1403,70 @@ export const unclassifiedThreads = query({
   },
 });
 
+function participantEmail(entry: any): string | null {
+  const email = typeof entry?.email === 'string' ? entry.email.trim().toLowerCase() : '';
+  return email.includes('@') ? email : null;
+}
+
+// Recent + upcoming calendar events no area has claimed yet — the calendar
+// half of the classifier's work queue. artifactId is the calendarEvents doc
+// id, matching resolveEventLink's primary lookup.
+export const unclassifiedCalendarEvents = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(args.limit ?? 50, 1), 50);
+    const cutoff = now() - UNCLASSIFIED_WINDOW_MS;
+    const rows = await ctx.db
+      .query('calendarEvents')
+      .withIndex('by_user_start', (q) => q.eq('userId', args.userId).gte('startAt', cutoff))
+      .order('desc')
+      .take(UNCLASSIFIED_SCAN);
+    const out: Array<{
+      eventId: string;
+      accountId: string;
+      title: string;
+      organizerEmail: string | null;
+      participantEmails: string[];
+      startAt: number;
+      location: string | null;
+    }> = [];
+    for (const row of rows) {
+      if (out.length >= limit) break;
+      // Cancelled rows and expanded recurring instances stay out of the queue —
+      // classifying every instance of a series would spam Personal fallbacks.
+      if (row.status === 'cancelled' || row.masterEventId) continue;
+      const artifactId = String(row._id);
+      const existing = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_artifact', (q) =>
+          q.eq('userId', args.userId).eq('artifactKind', 'calendarEvent').eq('artifactId', artifactId),
+        )
+        .first();
+      if (existing) continue;
+      out.push({
+        eventId: artifactId,
+        accountId: row.accountId,
+        title: row.title,
+        organizerEmail: participantEmail(row.organizer),
+        participantEmails: (Array.isArray(row.participants) ? row.participants : [])
+          .map(participantEmail)
+          .filter((email): email is string => Boolean(email))
+          .slice(0, 12),
+        startAt: row.startAt,
+        location: row.location ?? null,
+      });
+    }
+    return out;
+  },
+});
+
 // Batch write for classifier verdicts. Dedupe on by_user_artifact + areaId:
-// an existing link for the same (thread, area) is left untouched — the
+// an existing link for the same (artifact, area) is left untouched — the
 // classifier never downgrades or churns prior decisions.
 export const recordAreaLinks = mutation({
   args: {
@@ -1413,9 +1475,12 @@ export const recordAreaLinks = mutation({
     links: v.array(
       v.object({
         areaId: v.id('areas'),
-        artifactKind: v.optional(v.literal('mailThread')),
+        artifactKind: v.optional(v.union(v.literal('mailThread'), v.literal('calendarEvent'))),
         artifactId: v.string(),
         accountId: v.optional(v.string()),
+        // Personal catch-all fallbacks arrive as 'secondary' (mirrors the
+        // reindex backfill); real matches keep the default 'supporting'.
+        role: v.optional(v.union(v.literal('secondary'), v.literal('supporting'))),
         status: v.union(v.literal('candidate'), v.literal('verified')),
         confidence: v.optional(v.number()),
         reason: v.optional(v.string()),
@@ -1440,13 +1505,14 @@ export const recordAreaLinks = mutation({
         skipped += 1;
         continue;
       }
+      const artifactKind = link.artifactKind ?? 'mailThread';
       const { artifactId, accountId } = normalizedArtifactIdentity(link);
       const refs = normalizedRefs(link);
       assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
       const existing = await ctx.db
         .query('areaArtifactLinks')
         .withIndex('by_user_artifact', (q) =>
-          q.eq('userId', userId).eq('artifactKind', 'mailThread').eq('artifactId', artifactId),
+          q.eq('userId', userId).eq('artifactKind', artifactKind).eq('artifactId', artifactId),
         )
         .collect();
       if (existing.some((row) => row.areaId === link.areaId)) {
@@ -1456,10 +1522,10 @@ export const recordAreaLinks = mutation({
       await ctx.db.insert('areaArtifactLinks', {
         userId,
         areaId: link.areaId,
-        artifactKind: 'mailThread',
+        artifactKind,
         artifactId,
         accountId,
-        role: 'supporting',
+        role: link.role ?? 'supporting',
         status: link.status,
         confidence: link.confidence,
         reason: link.reason ? normalizeText(link.reason).slice(0, 700) : undefined,

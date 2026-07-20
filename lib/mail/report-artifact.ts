@@ -110,7 +110,7 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
 .footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
 .footer-sep{color:var(--brief-muted)}
-	@media (max-width:640px){.masthead{padding:2.5rem}.masthead h1{font-size:clamp(3.35rem,20vw,6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.task{grid-template-columns:minmax(0,1fr) auto}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
+	@media (max-width:640px){.hero{height:300px;min-height:240px}.masthead{padding:1.5rem}.masthead h1{font-size:clamp(2.8rem,15vw,4.6rem)}.spine{display:none}.need,.event{grid-template-columns:1fr}.task{grid-template-columns:minmax(0,1fr) auto}.actions{justify-content:start}.caption,main{padding-left:1rem;padding-right:1rem}}
 </style>
 </head>
 <body>

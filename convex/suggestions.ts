@@ -64,6 +64,21 @@ export const get = query({
   },
 });
 
+export const getByDedupe = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    dedupeKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return await ctx.db
+      .query('suggestions')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', args.dedupeKey))
+      .first();
+  },
+});
+
 export const resolve = mutation({
   args: {
     internalSecret: v.optional(v.string()),

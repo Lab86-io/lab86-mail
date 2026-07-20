@@ -1,0 +1,9 @@
+{
+  "commandID": "server-command-fixture-1",
+  "status": "failed",
+  "recoverableError": {
+    "code": "PROVIDER_UNAVAILABLE",
+    "message": "The provider is temporarily unavailable.",
+    "retryable": true
+  }
+}

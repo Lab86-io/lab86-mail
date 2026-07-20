@@ -14,6 +14,12 @@ function req(host: string) {
   return new Request('https://example.test/inbox', { headers: { host } });
 }
 
+function bearerReq(host: string, token = 'clerk-session-token') {
+  return new Request('https://example.test/api/mobile/activity', {
+    headers: { host, authorization: `Bearer ${token}` },
+  });
+}
+
 function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
   for (const key of ENV_KEYS) {
     const value = values[key];
@@ -80,5 +86,15 @@ describe('proxy basic-auth bypass guard', () => {
   test('keeps public health checks outside basic auth', () => {
     setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
     expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), '/api/healthz')).toBe(false);
+  });
+
+  test('lets native Clerk bearer API requests reach Clerk validation', () => {
+    setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
+
+    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io'), '/api/mobile/activity')).toBe(false);
+    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io'), '/api/tools/list_accounts')).toBe(false);
+    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io'), '/inbox')).toBe(true);
+    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io', ''), '/api/mobile/activity')).toBe(true);
+    expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), '/api/mobile/activity')).toBe(true);
   });
 });

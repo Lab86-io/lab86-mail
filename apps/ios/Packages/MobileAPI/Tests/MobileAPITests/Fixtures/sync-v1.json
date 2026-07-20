@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "domain": "tasks",
+      "entityKind": "task",
+      "entityID": "card-1",
+      "revision": 2,
+      "operation": "upsert",
+      "payload": {
+        "cardID": "card-1",
+        "completed": true
+      }
+    }
+  ],
+  "deletedIDs": [],
+  "cursor": "2",
+  "serverRevision": 2,
+  "hasMore": false
+}

@@ -4,12 +4,14 @@ import { requireNylas } from '@/lib/nylas/client';
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
+import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 import { detectMailSuggestions } from './suggestion-detectors';
 
 const mailCorpusApi = (api as any).mailCorpus;
 const accountsApi = (api as any).accounts;
+const notificationsApi = (api as any).albatrossNotifications;
 
 export interface CorpusSyncResult {
   ok: true;
@@ -289,7 +291,7 @@ export async function runCorpusBackfill({
     void import('./llm-classify')
       .then(({ kickLlmClassification }) => kickLlmClassification(userId))
       .catch(() => undefined);
-    detectMailSuggestions(row, messages);
+    await detectMailSuggestions(row, messages);
     result = {
       ok: true,
       accountId: row.accountId,
@@ -500,7 +502,6 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
     throw err;
   }
   const messages = [corpusMessageFromNylas(row, raw.data || payload)];
-  detectMailSuggestions(row, messages);
   await upsertCorpus(row, {
     messages,
     threads: corpusThreadsFromMessages(messages),
@@ -511,6 +512,30 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
     },
     incremental: true,
   });
+  const suggestions = await detectMailSuggestions(row, messages);
+  if (
+    suggestions.created === 0 &&
+    /message.*created|created.*message/i.test(metadata.type) &&
+    messages[0] &&
+    messages[0].receivedAt >= Date.now() - 15 * 60_000
+  ) {
+    const message = messages[0];
+    const queued = await convexMutation<{ notificationId: string; created: boolean }>(
+      notificationsApi.queueMailNotification,
+      {
+        userId: row.userId,
+        accountId: row.accountId,
+        threadId: message.providerThreadId,
+        messageId: message.providerMessageId,
+        sender: message.from,
+        subject: message.subject,
+        snippet: message.snippet,
+      },
+    );
+    if (queued.created) {
+      await dispatchNativeNotification(row.userId, queued.notificationId).catch(() => undefined);
+    }
+  }
 }
 
 async function getConnectedAccount(userId: string, accountId: string) {

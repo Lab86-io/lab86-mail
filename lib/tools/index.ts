@@ -29,7 +29,9 @@ import {
   areaCreate,
   areaDomainActivity,
   areaFactSetStatus,
+  areaHome,
   areaList,
+  workHome,
 } from './areas';
 import { listAuditEntries, logAction } from './audit-tools';
 import {
@@ -284,6 +286,8 @@ const allTools: AnyTool[] = [
   albatrossPreviewUndoUnresolved,
   salvageContext,
   areaList,
+  areaHome,
+  workHome,
   areaCreate,
   areaArchive,
   areaAddFact,

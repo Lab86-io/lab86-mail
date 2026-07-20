@@ -1,15 +1,16 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
-import { classifyThreads } from '@/lib/albatross/area-classifier';
+import { runAreaClassification } from '@/lib/albatross/area-classifier';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // Called by the Convex area-classify cron (convex/albatross.ts classifyTick)
-// for one user. The classifier runs bounded work — indexed reads plus at most
-// one nano-LLM call — so the route awaits it and reports the counts.
+// for one user. The classifier runs bounded work — indexed reads plus a few
+// capped fast-model calls across mail threads, calendar events, and freshly
+// captured intents — so the route awaits it and reports the counts.
 export async function POST(req: NextRequest) {
   if (!isInternalCronRequest(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
@@ -25,7 +26,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
   }
   try {
-    const counts = await runWithAiRequestContext({ userId, agent: 'ai' }, () => classifyThreads({ userId }));
+    const counts = await runWithAiRequestContext({ userId, agent: 'ai' }, () =>
+      runAreaClassification({ userId }),
+    );
     return NextResponse.json({ ok: true, userId, ...counts }, { status: 200 });
   } catch (err: any) {
     console.error('[cron/area-classify] classification failed', userId, err);

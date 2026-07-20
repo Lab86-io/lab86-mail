@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (suggestion.kind === 'event') {
-      const { accountId, messageId, attachmentId } = suggestion.payload || {};
+      const { accountId, messageId, attachmentId, event } = suggestion.payload || {};
       const account = await convexQuery<any>(accountsApi.getConnectedAccount, {
         userId: user.userId,
         accountId,
@@ -54,28 +54,58 @@ export async function POST(req: NextRequest) {
       if (!account || account.status !== 'connected') {
         return NextResponse.json({ ok: false, error: 'Source account is not connected.' }, { status: 409 });
       }
-      const stream = await requireNylas().attachments.download({
-        identifier: account.grantId,
-        attachmentId,
-        queryParams: { messageId } as any,
-      });
-      const ics = await new Response(stream as any).text();
-      const [event] = parseIcsEvents(ics);
-      if (!event) {
+      let eventInput: {
+        title: string;
+        startAt: number;
+        endAt: number;
+        allDay: boolean;
+        description?: string;
+        location?: string;
+      } | null = null;
+      if (attachmentId && messageId) {
+        const stream = await requireNylas().attachments.download({
+          identifier: account.grantId,
+          attachmentId,
+          queryParams: { messageId } as any,
+        });
+        const ics = await new Response(stream as any).text();
+        const [parsed] = parseIcsEvents(ics);
+        if (parsed) eventInput = parsed;
+      } else if (event) {
+        const startAt = Number(event.startAt);
+        const endAt = Number(event.endAt);
+        if (
+          String(event.title || '').trim() &&
+          Number.isFinite(startAt) &&
+          Number.isFinite(endAt) &&
+          endAt > startAt &&
+          endAt - startAt <= 31 * 86_400_000
+        ) {
+          eventInput = {
+            title: String(event.title).trim().slice(0, 300),
+            startAt,
+            endAt,
+            allDay: event.allDay === true,
+            description: `Created from email by Albatross. ${String(event.reason || '').trim()}`.trim(),
+            location: String(event.location || '').trim() || undefined,
+          };
+        }
+      }
+      if (!eventInput) {
         return NextResponse.json(
-          { ok: false, error: 'Could not read an event from the attachment.' },
+          { ok: false, error: 'Could not read a safe event from this email.' },
           { status: 422 },
         );
       }
       const created = await createCalendarEvent({
         userId: user.userId,
         accountId,
-        title: event.title,
-        startAt: event.startAt,
-        endAt: event.endAt,
-        allDay: event.allDay,
-        description: event.description,
-        location: event.location,
+        title: eventInput.title,
+        startAt: eventInput.startAt,
+        endAt: eventInput.endAt,
+        allDay: eventInput.allDay,
+        description: eventInput.description,
+        location: eventInput.location,
         notifyParticipants: false,
       });
       await convexMutation(suggestionsApi.resolve, {
@@ -83,7 +113,7 @@ export async function POST(req: NextRequest) {
         suggestionId,
         status: 'accepted',
       });
-      return NextResponse.json({ ok: true, eventId: created.eventId, title: event.title });
+      return NextResponse.json({ ok: true, eventId: created.eventId, title: eventInput.title });
     }
 
     return NextResponse.json({ ok: false, error: `Unsupported kind: ${suggestion.kind}` }, { status: 400 });

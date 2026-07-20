@@ -25,6 +25,9 @@ export async function generateAreaLivingBrief(input: {
   userEmail?: string | null;
   userName?: string | null;
   areaId: string;
+  // Skip the unchanged-revision short-circuit — the morning cron regenerates
+  // every brief so each day opens on freshly written context.
+  force?: boolean;
 }) {
   const home = await convexQuery<any>((api as any).albatross.areaHome, {
     userId: input.userId,
@@ -66,7 +69,7 @@ export async function generateAreaLivingBrief(input: {
     })),
   };
   const revision = createHash('sha256').update(JSON.stringify(context)).digest('hex').slice(0, 24);
-  if (home.livingBrief?.status === 'ready' && home.livingBrief.basedOnRevision === revision) {
+  if (!input.force && home.livingBrief?.status === 'ready' && home.livingBrief.basedOnRevision === revision) {
     return home.livingBrief;
   }
   await convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {

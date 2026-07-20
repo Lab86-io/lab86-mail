@@ -496,16 +496,13 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
           needsYou={needsYou.length}
           indexStatus={indexStatus}
         />
-        {/* One capture line seeds an area-bound plan without leaving the brief. */}
-        <CaptureBar areaId={home.area._id} areaName={home.area.name} />
-
         {briefEmpty ? (
           <>
             <div className="mt-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
               <p className="text-[13px] font-medium">Nothing here yet.</p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
                 The classifier runs every 30 minutes and files this area&apos;s mail, events, and tasks as it
-                learns your context. Capture a plan above, or add facts in Settings to sharpen it.
+                learns your context. Add facts in Settings to sharpen it.
               </p>
             </div>
             <ContextSection home={home} count={sectionCount('context')} />
@@ -660,75 +657,6 @@ function OverflowRow({ overflow, noun, action }: { overflow: number; noun: strin
         {overflow} more {noun}
       </span>
       {action}
-    </div>
-  );
-}
-
-// The area-scoped capture bar. It is a capture input, not a chatbot: on submit
-// it creates a real albatross intent (source=chat, areaId) and hands off to the
-// existing Plans surface — no fake conversational chrome.
-function CaptureBar({ areaId, areaName }: { areaId: string; areaName: string }) {
-  const setPendingOpenWorkId = useClientStore((s) => s.setPendingOpenWorkId);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    const trimmed = text.trim();
-    if (!trimmed || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/albatross/capture', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          rawText: trimmed,
-          source: 'chat',
-          areaId,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Capture failed.');
-      const workIds = Array.isArray(body.workIds) ? body.workIds.map(String) : [];
-      setText('');
-      if (workIds[0]) setPendingOpenWorkId(workIds[0]);
-      for (const workId of workIds) {
-        void fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-        }).catch(() => undefined);
-      }
-    } catch {
-      setError("Couldn't capture that — it's still here, try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="px-3 pb-1 pt-1">
-      <div className="flex items-end gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 focus-within:border-[var(--color-border-strong)]">
-        <textarea
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          rows={1}
-          placeholder={`Plan something in ${areaName}…`}
-          className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-[13px] leading-snug outline-none placeholder:text-[var(--color-text-faint)]"
-        />
-        <Button type="button" size="sm" disabled={busy || !text.trim()} onClick={() => void submit()}>
-          {busy ? 'Capturing…' : 'Capture'}
-        </Button>
-      </div>
-      {error ? <p className="mt-1 px-1 text-[11.5px] text-[var(--color-danger)]">{error}</p> : null}
     </div>
   );
 }

@@ -1,0 +1,6 @@
+// Copy this file to Local.xcconfig. The destination is ignored by git.
+LAB86_API_BASE_URL = https:/$()/mail.lab86.io
+CLERK_PUBLISHABLE_KEY = pk_live_or_test_value
+CONVEX_DEPLOYMENT_URL = https:/$()/your-deployment.convex.cloud
+CLERK_FRONTEND_API_HOST = your-instance.clerk.accounts.dev
+

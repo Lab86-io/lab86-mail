@@ -3,6 +3,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
+import { ensurePersonalArea } from './albatrossIntents';
 import { now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -105,6 +106,9 @@ export const finishCapture = mutation({
       if (!rawText) continue;
       if (item.primaryAreaId) await requireArea(ctx, item.primaryAreaId, userId);
       for (const related of item.relatedAreaIds || []) await requireArea(ctx, related, userId);
+      // The splitter punting on an area is not an area-less Work item: it lands
+      // in Personal, flagged so the area-classify cron gets one re-home pass.
+      const primaryAreaId = item.primaryAreaId ?? (await ensurePersonalArea(ctx, userId));
       const workId = await ctx.db.insert('albatrossIntents', {
         userId,
         rawText,
@@ -112,9 +116,10 @@ export const finishCapture = mutation({
         source: capture.source,
         title: bounded(item.title, 180),
         status: 'captured',
-        areaId: item.primaryAreaId ? String(item.primaryAreaId) : undefined,
+        areaId: String(primaryAreaId),
+        areaAutoAssigned: item.primaryAreaId ? undefined : true,
         captureId: args.captureId,
-        primaryAreaId: item.primaryAreaId,
+        primaryAreaId,
         workState: 'active',
         agentState: 'researching',
         lastAgentRunAt: ts,
@@ -317,9 +322,9 @@ export const livePendingQuestions = query({
 });
 
 export const areaWork = query({
-  args: { areaId: v.id('areas'), includeDone: v.optional(v.boolean()) },
+  args: { ...callerArgs, areaId: v.id('areas'), includeDone: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, {});
+    const userId = await resolveUserId(ctx, args);
     await requireArea(ctx, args.areaId, userId);
     const [primaryRows, areaLinks] = await Promise.all([
       ctx.db
@@ -349,9 +354,9 @@ export const areaWork = query({
 });
 
 export const workDetail = query({
-  args: { workId: v.id('albatrossIntents') },
+  args: { ...callerArgs, workId: v.id('albatrossIntents') },
   handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, {});
+    const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
     const [plan, project, questions, areaLinks, applications] = await Promise.all([
       work.latestPlanId ? ctx.db.get(work.latestPlanId) : null,
