@@ -24,8 +24,24 @@ interface NativeDeliveryContext {
   } | null;
 }
 
-export async function dispatchNativeNotification(userId: string, notificationId: string) {
-  const context = await convexQuery<NativeDeliveryContext | null>(
+interface NativeDeliveryDependencies {
+  query: typeof convexQuery;
+  mutate: typeof convexMutation;
+  send: typeof sendAPNsPush;
+}
+
+const defaultDependencies: NativeDeliveryDependencies = {
+  query: convexQuery,
+  mutate: convexMutation,
+  send: sendAPNsPush,
+};
+
+export async function dispatchNativeNotification(
+  userId: string,
+  notificationId: string,
+  dependencies: NativeDeliveryDependencies = defaultDependencies,
+) {
+  const context = await dependencies.query<NativeDeliveryContext | null>(
     (api as any).albatrossNotifications.nativeDeliveryContext,
     { userId, notificationId },
   );
@@ -51,16 +67,16 @@ export async function dispatchNativeNotification(userId: string, notificationId:
   const errors: string[] = [];
   for (const device of context.mobileDevices) {
     try {
-      const result = await sendAPNsPush(envelope, device);
+      const result = await dependencies.send(envelope, device);
       sent += 1;
       if (result.providerId) providerIds.push(result.providerId);
-      await convexMutation((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
+      await dependencies.mutate((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
         token: device.token,
         status: 'delivered',
       });
     } catch (error) {
       if (error instanceof APNsDeliveryError && error.invalidToken) {
-        await convexMutation((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
+        await dependencies.mutate((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
           token: device.token,
           status: 'expired',
         });
@@ -68,7 +84,7 @@ export async function dispatchNativeNotification(userId: string, notificationId:
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
-  await convexMutation((api as any).albatrossNotifications.recordDelivery, {
+  await dependencies.mutate((api as any).albatrossNotifications.recordDelivery, {
     userId,
     notificationId,
     channel: 'native_push',

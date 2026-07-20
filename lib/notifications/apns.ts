@@ -55,6 +55,12 @@ export class APNsDeliveryError extends Error {
 const MAX_TOKEN_AGE_SECONDS = 50 * 60;
 let cachedProviderToken: { identity: string; issuedAt: number; token: string } | undefined;
 
+let connectImpl: typeof connect = connect;
+
+export function __setAPNsConnectForTest(override?: typeof connect) {
+  connectImpl = override ?? connect;
+}
+
 export function apnsHost(environment: MobilePushEnvironment) {
   return environment === 'development' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com';
 }
@@ -145,7 +151,7 @@ export async function sendAPNsPush(envelope: NotificationEnvelope, device: APNsD
   if (!isAPNsDeviceToken(device.token)) throw new Error('Invalid APNs device token.');
   const config = configuration();
   const host = apnsHost(device.environment);
-  const client = connect(`https://${host}`);
+  const client = connectImpl(`https://${host}`);
   let responseHeaders: IncomingHttpHeaders = {};
   try {
     const request = client.request({

@@ -11,6 +11,10 @@ cd "$CI_PRIMARY_REPOSITORY_PATH/apps/ios"
 
 brew install xcodegen
 
+# Package macros (Equatable via SwiftStreamingMarkdown) need fingerprint
+# validation skipped in non-interactive builds.
+defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+
 cat > Config/Local.xcconfig <<EOF
 LAB86_API_BASE_URL = ${LAB86_API_BASE_URL:?missing LAB86_API_BASE_URL}
 CLERK_PUBLISHABLE_KEY = ${CLERK_PUBLISHABLE_KEY:?missing CLERK_PUBLISHABLE_KEY}
