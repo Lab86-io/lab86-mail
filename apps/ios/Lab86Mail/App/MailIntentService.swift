@@ -61,7 +61,6 @@ struct MailEntityReference: Codable, Hashable, Sendable {
     }
 }
 
-#if compiler(>=6.4)
 actor MailIntentService {
     static let shared = MailIntentService()
 
@@ -387,4 +386,3 @@ actor MailIntentService {
         return account
     }
 }
-#endif
