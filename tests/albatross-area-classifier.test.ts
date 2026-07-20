@@ -2,629 +2,508 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import {
   __setAreaClassifierDepsForTest,
   type AreaFactLite,
-  type ClassifiableEvent,
-  type ClassifiableIntent,
+  areaModelVerdictSchema,
+  boundedProfilesForThread,
   type ClassifiableThread,
-  classifyCalendarEvents,
-  classifyIntents,
   classifyThreads,
   extractEmail,
+  groundedAssignments,
   LLM_BATCH_CAP,
-  matchEventToFacts,
+  MODEL_CONCURRENCY,
+  MODEL_PROFILE_CHAR_BUDGET,
+  MODEL_PROMPT_CHAR_BUDGET,
   matchThreadToFacts,
-  parseClassifierOutput,
-  parseIdVerdicts,
   runAreaClassification,
 } from '../lib/albatross/area-classifier';
+import { AREA_CLASSIFIER_VERSION, areaFactIdentity } from '../lib/albatross/area-home';
 
-const USER = 'user_classifier_test';
-const PERSONAL_AREA = 'area_personal';
+const USER = 'user_area_routing_test';
 
 const apiMock = {
   albatross: {
-    ensurePersonal: 'albatross.ensurePersonal',
     listAreas: 'albatross.listAreas',
     listUserAreaFacts: 'albatross.listUserAreaFacts',
     unclassifiedThreads: 'albatross.unclassifiedThreads',
-    unclassifiedCalendarEvents: 'albatross.unclassifiedCalendarEvents',
-    recordAreaLinks: 'albatross.recordAreaLinks',
-  },
-  albatrossIntents: {
-    listAutoAssigned: 'albatrossIntents.listAutoAssigned',
-    applyAreaVerdicts: 'albatrossIntents.applyAreaVerdicts',
+    recordAreaVerdicts: 'albatross.recordAreaVerdicts',
   },
 };
 
 function fact(overrides: Partial<AreaFactLite> = {}): AreaFactLite {
   return {
-    _id: 'fact_1',
-    areaId: 'area_work',
+    _id: 'fact_cardhunt_domain',
+    areaId: 'area_cardhunt',
     kind: 'domain',
-    value: 'cardhunt.com',
+    value: 'cardhunt.ai',
     status: 'verified',
-    verifiedAt: 1_700_000_000_000,
-    updatedAt: 1_700_000_000_000,
+    verifiedAt: 1_780_000_000_000,
+    confirmationRefs: [
+      {
+        kind: 'userConfirmation',
+        id: 'confirm_cardhunt',
+        confirmedAt: 1_780_000_000_000,
+        confirmedBy: USER,
+      },
+    ],
     ...overrides,
   };
 }
 
 function thread(overrides: Partial<ClassifiableThread> = {}): ClassifiableThread {
   return {
-    providerThreadId: 'thread_1',
-    accountId: 'acct_1',
-    subject: 'Sprint review notes',
-    fromAddress: 'Alice <alice@cardhunt.com>',
-    lastDate: 1_750_000_000_000,
-    snippet: 'notes',
+    providerThreadId: 'thread_banjo',
+    accountId: 'account_1',
+    messageId: 'message_banjo',
+    subject: 'Last call',
+    fromAddress: 'Jack from BanjoSkills <jack@banjoskills.com>',
+    toAddress: 'Jakob <jakob@example.com>',
+    snippet: 'The banjo course closes tonight.',
+    bodyText: 'Hey Jakob, enrollment for The Clawhammer Journey closes tonight. Keep practicing banjo.',
+    lastDate: 1_784_155_560_000,
     ...overrides,
   };
 }
 
-function event(overrides: Partial<ClassifiableEvent> = {}): ClassifiableEvent {
-  return {
-    eventId: 'event_1',
-    accountId: 'acct_1',
-    title: 'Sprint planning',
-    organizerEmail: 'alice@cardhunt.com',
-    participantEmails: ['bob@elsewhere.io'],
-    startAt: 1_750_000_000_000,
-    location: null,
-    ...overrides,
-  };
-}
-
-function intent(overrides: Partial<ClassifiableIntent> = {}): ClassifiableIntent {
-  return {
-    intentId: 'intent_1',
-    title: 'Prep sprint demo',
-    rawText: 'Put the demo deck together before the cardhunt sprint review',
-    source: 'text',
-    ...overrides,
-  };
-}
-
-describe('extractEmail', () => {
-  test('extracts from an angled display-name header', () => {
-    expect(extractEmail('Alice Smith <Alice@CardHunt.com>')).toBe('alice@cardhunt.com');
-  });
-
-  test('accepts a bare address and strips mailto:', () => {
+describe('identity routing', () => {
+  test('extracts normalized addresses', () => {
+    expect(extractEmail('Alice <Alice@CardHunt.ai>')).toBe('alice@cardhunt.ai');
     expect(extractEmail('mailto:bob@example.com')).toBe('bob@example.com');
+    expect(extractEmail('No address')).toBeNull();
   });
 
-  test('returns null when there is no address', () => {
-    expect(extractEmail('No Reply')).toBeNull();
-    expect(extractEmail('')).toBeNull();
+  test('routes only verified exact identities', () => {
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [fact()]),
+    ).toMatchObject({ areaId: 'area_cardhunt', matchType: 'domain', status: 'verified' });
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ status: 'candidate' }),
+      ]),
+    ).toBeNull();
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ confirmationRefs: [] }),
+      ]),
+    ).toBeNull();
+  });
+
+  test('never treats a shared consumer domain as Area identity', () => {
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'someone@gmail.com' }), [fact({ value: 'gmail.com' })]),
+    ).toBeNull();
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'boss@gmail.com' }), [
+        fact({ kind: 'email', value: 'boss@gmail.com' }),
+      ]),
+    ).toMatchObject({ matchType: 'email' });
+  });
+
+  test('never turns a domain-shaped non-identity fact into a deterministic route', () => {
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ kind: 'note', value: 'cardhunt.ai' }),
+      ]),
+    ).toBeNull();
+  });
+
+  test('abstains on equally strong conflicting identities', () => {
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'a@shared-company.test' }), [
+        fact({ _id: 'f1', areaId: 'area_a', value: 'shared-company.test' }),
+        fact({ _id: 'f2', areaId: 'area_b', value: 'shared-company.test' }),
+      ]),
+    ).toBeNull();
+  });
+
+  test('normalizes mailto/email and leading-at domain facts', () => {
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ kind: 'email', value: 'mailto:andrew@cardhunt.ai' }),
+      ]),
+    ).toMatchObject({ matchType: 'email' });
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ value: '@cardhunt.ai' }),
+      ]),
+    ).toMatchObject({ matchType: 'domain' });
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ value: 'https://www.cardhunt.ai/about' }),
+      ]),
+    ).toMatchObject({ matchType: 'domain', matchValue: 'cardhunt.ai' });
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }), [
+        fact({ kind: 'domain', value: 'andrew@cardhunt.ai' }),
+      ]),
+    ).toBeNull();
+    expect(areaFactIdentity('email', 'user@')).toBeNull();
+    expect(areaFactIdentity('email', 'user@@example.com')).toBeNull();
+  });
+
+  test('an exact email identity outranks a conflicting domain identity', () => {
+    expect(
+      matchThreadToFacts(thread({ fromAddress: 'andrew@cardhunt.ai' }), [
+        fact({ _id: 'domain', areaId: 'area_domain', value: 'cardhunt.ai' }),
+        fact({ _id: 'email', areaId: 'area_email', kind: 'email', value: 'andrew@cardhunt.ai' }),
+      ]),
+    ).toMatchObject({ areaId: 'area_email', matchType: 'email' });
   });
 });
 
-describe('matchThreadToFacts', () => {
-  test('verified domain fact matches the sender domain', () => {
-    const match = matchThreadToFacts(thread(), [fact()]);
-    expect(match).toMatchObject({
-      areaId: 'area_work',
-      status: 'verified',
-      matchType: 'domain',
-      reason: 'verified domain cardhunt.com',
-    });
+describe('classifier prompt budget', () => {
+  test('bounds serialized profiles and prioritizes explicit message evidence', () => {
+    const profiles = Array.from({ length: 100 }, (_, index) => ({
+      id: `area_${index}`,
+      name: index === 99 ? 'BanjoSkills' : `Unrelated ${index}`,
+      kind: 'work',
+      description: 'x'.repeat(500),
+      primaryDomain: undefined,
+      facts: Array.from({ length: 4 }, (__, factIndex) => ({
+        id: `fact_${index}_${factIndex}`,
+        kind: 'project',
+        value: 'y'.repeat(160),
+        status: 'candidate' as const,
+      })),
+    }));
+    const bounded = boundedProfilesForThread(profiles, thread());
+    expect(JSON.stringify(bounded).length).toBeLessThanOrEqual(MODEL_PROFILE_CHAR_BUDGET);
+    expect(bounded[0].id).toBe('area_99');
+    expect(bounded.length).toBeLessThan(profiles.length);
   });
 
-  test('candidate fact produces a candidate match', () => {
-    const match = matchThreadToFacts(thread(), [fact({ status: 'candidate' })]);
-    expect(match?.status).toBe('candidate');
-    expect(match?.reason).toBe('candidate domain cardhunt.com');
-  });
-
-  test('exact email fact matches and outranks a domain fact at equal trust', () => {
-    const match = matchThreadToFacts(thread(), [
-      fact({ _id: 'fact_domain', areaId: 'area_a' }),
-      fact({ _id: 'fact_email', areaId: 'area_b', kind: 'email', value: 'alice@cardhunt.com' }),
-    ]);
-    expect(match?.areaId).toBe('area_b');
-    expect(match?.matchType).toBe('email');
-  });
-
-  test('verified fact outranks a candidate email fact', () => {
-    const match = matchThreadToFacts(thread(), [
-      fact({
-        _id: 'fact_email',
-        areaId: 'area_b',
-        kind: 'email',
-        value: 'alice@cardhunt.com',
-        status: 'candidate',
-      }),
-      fact({ _id: 'fact_domain', areaId: 'area_a', status: 'verified' }),
-    ]);
-    expect(match?.areaId).toBe('area_a');
-    expect(match?.status).toBe('verified');
-  });
-
-  test('normalizes leading @ and case in fact values', () => {
-    const match = matchThreadToFacts(thread(), [fact({ value: '@CardHunt.com' })]);
-    expect(match?.matchType).toBe('domain');
-  });
-
-  test('ignores rejected and superseded facts', () => {
-    expect(matchThreadToFacts(thread(), [fact({ status: 'rejected' })])).toBeNull();
-    expect(matchThreadToFacts(thread(), [fact({ status: 'superseded' })])).toBeNull();
-  });
-
-  test('ignores facts whose values are not email/domain shaped', () => {
-    expect(matchThreadToFacts(thread(), [fact({ kind: 'note', value: 'my day job' })])).toBeNull();
-    expect(matchThreadToFacts(thread(), [fact({ value: 'cardhunt' })])).toBeNull();
-  });
-
-  test('does not match a different domain or subdomain', () => {
-    expect(matchThreadToFacts(thread({ fromAddress: 'x@othersite.com' }), [fact()])).toBeNull();
-    expect(matchThreadToFacts(thread({ fromAddress: 'x@mail.cardhunt.com' }), [fact()])).toBeNull();
-  });
-
-  test('returns null when the sender has no parseable address', () => {
-    expect(matchThreadToFacts(thread({ fromAddress: 'System Notification' }), [fact()])).toBeNull();
+  test('keeps a thread-relevant fact even when it appears beyond the first ten', () => {
+    const profiles = [
+      {
+        id: 'area_1',
+        name: 'Work',
+        kind: 'work',
+        description: undefined,
+        primaryDomain: undefined,
+        facts: Array.from({ length: 12 }, (_, index) => ({
+          id: index === 11 ? 'fact_relevant' : `fact_${index}`,
+          kind: 'project',
+          value: index === 11 ? 'Clawhammer Journey' : `unrelated project ${index}`,
+          status: 'candidate' as const,
+        })),
+      },
+    ];
+    const [bounded] = boundedProfilesForThread(profiles, thread());
+    expect(bounded.facts).toHaveLength(10);
+    expect(bounded.facts.map((item) => item.id)).toContain('fact_relevant');
   });
 });
 
-describe('matchEventToFacts', () => {
-  test('organizer address matches like a mail sender, including domain facts', () => {
-    const match = matchEventToFacts(event(), [fact()]);
-    expect(match).toMatchObject({
-      areaId: 'area_work',
-      status: 'verified',
-      matchType: 'domain',
-      reason: 'organizer verified domain cardhunt.com',
+describe('classification backlog batching', () => {
+  const result = (overrides: Partial<Awaited<ReturnType<typeof classifyThreads>>> = {}) => ({
+    deterministic: 0,
+    modelAssigned: 0,
+    noArea: 0,
+    failed: 0,
+    processed: 0,
+    ...overrides,
+  });
+
+  test('continues after a full batch and aggregates until a short batch', async () => {
+    const batches = [
+      result({ processed: LLM_BATCH_CAP, noArea: LLM_BATCH_CAP }),
+      result({ processed: 3, modelAssigned: 3 }),
+    ];
+    let calls = 0;
+    const totals = await runAreaClassification({
+      userId: USER,
+      classify: async () => batches[calls++],
     });
+    expect(calls).toBe(2);
+    expect(totals).toEqual(result({ processed: LLM_BATCH_CAP + 3, noArea: LLM_BATCH_CAP, modelAssigned: 3 }));
   });
 
-  test('attendee addresses match exact email facts only, never domain facts', () => {
-    const emailFact = fact({ _id: 'fact_email', kind: 'email', value: 'bob@elsewhere.io' });
-    const byEmail = matchEventToFacts(event({ organizerEmail: null }), [emailFact]);
-    expect(byEmail).toMatchObject({ areaId: 'area_work', matchType: 'email' });
-    expect(byEmail?.reason).toBe('verified attendee bob@elsewhere.io');
-
-    const domainFact = fact({ _id: 'fact_domain', value: 'elsewhere.io' });
-    expect(matchEventToFacts(event({ organizerEmail: null }), [domainFact])).toBeNull();
+  test('stops immediately when a full batch reports a provider failure', async () => {
+    let calls = 0;
+    const totals = await runAreaClassification({
+      userId: USER,
+      classify: async () => {
+        calls += 1;
+        return result({ processed: LLM_BATCH_CAP, failed: 1, noArea: LLM_BATCH_CAP - 1 });
+      },
+    });
+    expect(calls).toBe(1);
+    expect(totals.failed).toBe(1);
   });
+});
 
-  test('a verified attendee fact outranks a candidate one', () => {
-    const match = matchEventToFacts(
-      event({ organizerEmail: null, participantEmails: ['a@x.io', 'b@y.io'] }),
-      [
-        fact({ _id: 'f_cand', areaId: 'area_a', kind: 'email', value: 'a@x.io', status: 'candidate' }),
-        fact({ _id: 'f_ver', areaId: 'area_b', kind: 'email', value: 'b@y.io', status: 'verified' }),
+describe('grounded structured output', () => {
+  const activeAreaIds = new Set(['area_cardhunt']);
+  const factsById = new Map([['fact_cardhunt_domain', fact()]]);
+
+  test('accepts an active Area only when its evidence occurs in the email', () => {
+    const verdict = areaModelVerdictSchema.parse({
+      assignments: [
+        {
+          areaId: 'area_cardhunt',
+          evidence: ['The Clawhammer Journey'],
+          factIds: ['fact_cardhunt_domain'],
+          reason: 'Explicit course context.',
+        },
       ],
-    );
-    expect(match?.areaId).toBe('area_b');
+    });
+    expect(groundedAssignments({ verdict, thread: thread(), activeAreaIds, factsById })).toHaveLength(1);
   });
 
-  test('returns null with no organizer and no matching attendees', () => {
-    expect(matchEventToFacts(event({ organizerEmail: null, participantEmails: [] }), [fact()])).toBeNull();
+  test('rejects whitespace-only grounding evidence at schema validation', () => {
+    expect(() =>
+      areaModelVerdictSchema.parse({
+        assignments: [{ areaId: 'area_cardhunt', evidence: ['   '], factIds: [], reason: 'Blank evidence.' }],
+      }),
+    ).toThrow();
+  });
+
+  test('drops hallucinated/unknown assignments and dedupes Areas while rejecting cross-Area fact ids', () => {
+    const crossAreaFact = fact({ _id: 'fact_other', areaId: 'area_other' });
+    const allFacts = new Map([...factsById, ['fact_other', crossAreaFact]]);
+    const verdict = areaModelVerdictSchema.parse({
+      assignments: [
+        {
+          areaId: 'area_cardhunt',
+          evidence: ['A CardHunt production incident'],
+          factIds: [],
+          reason: 'Not actually present.',
+        },
+        {
+          areaId: 'area_unknown',
+          evidence: ['banjo'],
+          factIds: [],
+          reason: 'Unknown area.',
+        },
+        {
+          areaId: 'area_cardhunt',
+          evidence: ['banjo'],
+          factIds: ['fact_cardhunt_domain', 'fact_other'],
+          reason: 'First grounded assignment.',
+        },
+        {
+          areaId: 'area_cardhunt',
+          evidence: ['Clawhammer Journey'],
+          factIds: [],
+          reason: 'Duplicate assignment.',
+        },
+      ],
+    });
+    expect(groundedAssignments({ verdict, thread: thread(), activeAreaIds, factsById: allFacts })).toEqual([
+      {
+        areaId: 'area_cardhunt',
+        evidence: ['banjo'],
+        factIds: ['fact_cardhunt_domain'],
+        reason: 'First grounded assignment.',
+      },
+    ]);
   });
 });
 
-describe('parseClassifierOutput / parseIdVerdicts', () => {
-  const verdicts = [
-    { threadId: 't1', areaName: 'Work', confidence: 'high' },
-    { threadId: 't2', areaName: null, confidence: 'low' },
-  ];
-
-  test('parses a clean JSON array', () => {
-    const parsed = parseClassifierOutput(JSON.stringify(verdicts));
-    expect(parsed).toHaveLength(2);
-    expect(parsed[0]).toMatchObject({ threadId: 't1', areaName: 'Work', confidence: 'high' });
-  });
-
-  test('strips markdown fences and surrounding prose', () => {
-    const raw = `Sure, here you go:\n\`\`\`json\n${JSON.stringify(verdicts)}\n\`\`\`\nDone.`;
-    expect(parseClassifierOutput(raw)).toHaveLength(2);
-  });
-
-  test('drops malformed entries but keeps valid ones', () => {
-    const raw = JSON.stringify([...verdicts, { areaName: 'Work' }, { threadId: '' }, 42]);
-    expect(parseClassifierOutput(raw)).toHaveLength(2);
-  });
-
-  test('coerces unknown confidence values to low instead of dropping', () => {
-    const parsed = parseClassifierOutput(JSON.stringify([{ threadId: 't1', confidence: 'certain' }]));
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].confidence).toBe('low');
-  });
-
-  test('returns empty for non-array JSON, garbage, and empty input', () => {
-    expect(parseClassifierOutput(JSON.stringify({ threadId: 't1' }))).toEqual([]);
-    expect(parseClassifierOutput('the model refused to answer')).toEqual([]);
-    expect(parseClassifierOutput('')).toEqual([]);
-    expect(parseClassifierOutput('[{"threadId": broken')).toEqual([]);
-  });
-
-  test('parseIdVerdicts keys off the requested id field', () => {
-    const raw = JSON.stringify([{ eventId: 'e1', areaName: 'Work', confidence: 'high' }]);
-    expect(parseIdVerdicts(raw, 'eventId')).toEqual([{ id: 'e1', areaName: 'Work', confidence: 'high' }]);
-    expect(parseIdVerdicts(raw, 'intentId')).toEqual([]);
-  });
-});
-
-describe('classifier orchestration', () => {
-  let queryFixtures: Record<string, any>;
+describe('sparse classifier orchestration', () => {
+  let fixtures: Record<string, any>;
   let mutationCalls: Array<{ fn: string; args: any }>;
-  let llmCalls: any[];
-  let llmResponse: string | (() => string);
+  let modelCalls: any[];
+  let modelResult: any;
 
-  function linkCalls() {
-    return mutationCalls.filter((call) => call.fn === apiMock.albatross.recordAreaLinks);
-  }
-
-  function verdictCalls() {
-    return mutationCalls.filter((call) => call.fn === apiMock.albatrossIntents.applyAreaVerdicts);
-  }
-
-  function setDeps() {
+  beforeEach(() => {
+    fixtures = {
+      [apiMock.albatross.listAreas]: [
+        {
+          _id: 'area_cardhunt',
+          name: 'CardHunt',
+          kind: 'job',
+          description: 'Software engineering contract role at CardHunt.',
+        },
+      ],
+      'facts:verified': [fact()],
+      'facts:candidate': [],
+      [apiMock.albatross.unclassifiedThreads]: [],
+    };
+    mutationCalls = [];
+    modelCalls = [];
+    modelResult = { assignments: [] };
     __setAreaClassifierDepsForTest({
       api: apiMock as any,
       convexQuery: (async (fn: any, args: any) => {
-        if (fn === apiMock.albatross.listUserAreaFacts) {
-          return queryFixtures[`facts:${args.status}`] ?? [];
-        }
-        return queryFixtures[fn] ?? [];
+        if (fn === apiMock.albatross.listUserAreaFacts) return fixtures[`facts:${args.status}`] || [];
+        return fixtures[fn] || [];
       }) as any,
       convexMutation: (async (fn: any, args: any) => {
         mutationCalls.push({ fn, args });
-        if (fn === apiMock.albatross.ensurePersonal) return { areaId: PERSONAL_AREA };
-        if (fn === apiMock.albatrossIntents.applyAreaVerdicts) {
-          return { assigned: 0, kept: 0, skipped: 0 };
-        }
-        return { inserted: args.links?.length ?? 0, skipped: 0 };
+        return { classified: args.verdicts?.length || 0 };
       }) as any,
-      generateTextForCurrentUser: (async (options: any) => {
-        llmCalls.push(options);
-        return { text: typeof llmResponse === 'function' ? llmResponse() : llmResponse } as any;
+      generateObjectForCurrentUser: (async (options: any) => {
+        modelCalls.push(options);
+        if (modelResult instanceof Error) throw modelResult;
+        if (typeof modelResult === 'function') return await modelResult(options);
+        return { object: modelResult };
       }) as any,
     });
-  }
+  });
 
-  beforeEach(() => {
-    queryFixtures = {
-      [apiMock.albatross.listAreas]: [
-        { _id: 'area_work', name: 'Cardhunt job', kind: 'job', description: 'Day job' },
-        { _id: 'area_home', name: 'Household', kind: 'home' },
-        { _id: PERSONAL_AREA, name: 'Personal', kind: 'personal' },
+  afterAll(() => __setAreaClassifierDepsForTest());
+
+  test('verified exact identity is authoritative and bypasses Area-model judgment', async () => {
+    fixtures[apiMock.albatross.unclassifiedThreads] = [
+      thread({ fromAddress: 'Andrew <andrew@cardhunt.ai>' }),
+    ];
+    const result = await classifyThreads({ userId: USER });
+    expect(result).toMatchObject({ deterministic: 1, modelAssigned: 0, noArea: 0, failed: 0 });
+    expect(modelCalls).toHaveLength(0);
+    expect(mutationCalls[0].args.classifierVersion).toBe(AREA_CLASSIFIER_VERSION);
+    expect(mutationCalls[0].args.verdicts[0].links[0]).toMatchObject({
+      areaId: 'area_cardhunt',
+      status: 'verified',
+    });
+    expect(mutationCalls[0].args.verdicts[0]).toMatchObject({
+      accountId: 'account_1',
+      messageId: 'message_banjo',
+    });
+    expect(mutationCalls[0].args.verdicts[0].links[0].confirmationRefs[0]).toMatchObject({
+      id: 'confirm_cardhunt',
+      confirmedAt: 1_780_000_000_000,
+      confirmedBy: USER,
+      prompt: 'Inherited from a user-verified Area identity fact',
+      sourceRefId: 'fact_cardhunt_domain',
+    });
+  });
+
+  test('BanjoSkills is a successful no-Area verdict and the model sees the substantive body', async () => {
+    fixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
+    const result = await classifyThreads({ userId: USER });
+    expect(result).toMatchObject({ deterministic: 0, modelAssigned: 0, noArea: 1, failed: 0 });
+    expect(modelCalls[0]).toMatchObject({
+      feature: 'albatross_area_route',
+      speed: 'classify',
+      schema: areaModelVerdictSchema,
+    });
+    expect(modelCalls[0].prompt).toContain('Clawhammer Journey');
+    expect(mutationCalls[0].args.verdicts[0].links).toEqual([]);
+  });
+
+  test('caps every email field so an oversized message still produces a bounded prompt', async () => {
+    fixtures[apiMock.albatross.unclassifiedThreads] = [
+      thread({
+        subject: 's'.repeat(20_000),
+        snippet: 'n'.repeat(20_000),
+        bodyText: 'b'.repeat(100_000),
+      }),
+    ];
+    const result = await classifyThreads({ userId: USER });
+    expect(result.noArea).toBe(1);
+    expect(modelCalls[0].prompt.length).toBeLessThanOrEqual(MODEL_PROMPT_CHAR_BUDGET);
+    const payload = JSON.parse(modelCalls[0].prompt);
+    expect(payload.email.subject).toHaveLength(500);
+    expect(payload.email.snippet).toHaveLength(1_000);
+    expect(payload.email.body).toHaveLength(4_000);
+  });
+
+  test('a grounded model assignment becomes a replaceable candidate link', async () => {
+    fixtures[apiMock.albatross.unclassifiedThreads] = [
+      thread({
+        subject: 'CardHunt production deploy',
+        bodyText: 'The CardHunt production deploy is blocked on the API migration.',
+      }),
+    ];
+    modelResult = {
+      assignments: [
+        {
+          areaId: 'area_cardhunt',
+          evidence: ['CardHunt production deploy'],
+          factIds: [],
+          reason: 'Explicitly concerns CardHunt production.',
+        },
       ],
-      'facts:verified': [fact()],
-      'facts:candidate': [
-        fact({ _id: 'fact_home', areaId: 'area_home', value: 'hoa-board.org', status: 'candidate' }),
-      ],
-      [apiMock.albatross.unclassifiedThreads]: [],
-      [apiMock.albatross.unclassifiedCalendarEvents]: [],
-      [apiMock.albatrossIntents.listAutoAssigned]: [],
     };
-    mutationCalls = [];
-    llmCalls = [];
-    llmResponse = '[]';
-    setDeps();
+    const result = await classifyThreads({ userId: USER });
+    expect(result.modelAssigned).toBe(1);
+    expect(mutationCalls[0].args.verdicts[0].links[0]).toMatchObject({
+      areaId: 'area_cardhunt',
+      status: 'candidate',
+      confirmationRefs: [],
+    });
   });
 
-  afterAll(() => {
-    __setAreaClassifierDepsForTest();
+  test('ungrounded model evidence is treated as no Area', async () => {
+    fixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
+    modelResult = {
+      assignments: [
+        {
+          areaId: 'area_cardhunt',
+          evidence: ['CardHunt outage'],
+          factIds: [],
+          reason: 'Hallucinated overlap.',
+        },
+      ],
+    };
+    const result = await classifyThreads({ userId: USER });
+    expect(result.noArea).toBe(1);
+    expect(mutationCalls[0].args.verdicts[0].links).toEqual([]);
   });
 
-  describe('classifyThreads', () => {
-    test('verified domain fact yields a verified link with an inherited confirmation ref', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 1, llm: 0, personal: 0, skipped: 0 });
-      expect(llmCalls).toHaveLength(0);
-      expect(linkCalls()).toHaveLength(1);
-      const link = linkCalls()[0].args.links[0];
-      expect(link).toMatchObject({
-        areaId: 'area_work',
-        artifactKind: 'mailThread',
-        artifactId: 'thread_1',
-        accountId: 'acct_1',
-        status: 'verified',
-        reason: 'verified domain cardhunt.com',
-      });
-      expect(link.confirmationRefs).toHaveLength(1);
-      expect(link.confirmationRefs[0]).toMatchObject({
-        kind: 'userConfirmation',
-        sourceRefId: 'fact_1',
-      });
-      expect(Number.isFinite(link.confirmationRefs[0].confirmedAt)).toBe(true);
-    });
+  test('model failures stay pending by omitting a persisted verdict', async () => {
+    fixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
+    modelResult = new Error('provider unavailable');
+    const result = await classifyThreads({ userId: USER });
+    expect(result.failed).toBe(1);
+    expect(mutationCalls).toHaveLength(0);
+  });
 
-    test('candidate fact match yields a candidate link without confirmation refs', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [
-        thread({ providerThreadId: 'thread_hoa', fromAddress: 'board@hoa-board.org' }),
-      ];
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 1, llm: 0, personal: 0, skipped: 0 });
-      const link = linkCalls()[0].args.links[0];
-      expect(link).toMatchObject({ areaId: 'area_home', status: 'candidate' });
-      expect(link.confirmationRefs).toBeUndefined();
-    });
+  test('zero active Areas settles pending threads without spending a model call', async () => {
+    fixtures[apiMock.albatross.listAreas] = [];
+    fixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
+    const result = await classifyThreads({ userId: USER });
+    expect(result.noArea).toBe(1);
+    expect(modelCalls).toHaveLength(0);
+    expect(mutationCalls[0].args.verdicts[0].links).toEqual([]);
+  });
 
-    test('unmatched threads go to the llm phase; high confidence becomes a candidate link, never verified', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [
-        thread({ providerThreadId: 'thread_llm', fromAddress: 'news@unknown.io', subject: 'Team offsite' }),
-      ];
-      llmResponse = JSON.stringify([
-        { threadId: 'thread_llm', areaName: 'Cardhunt job', confidence: 'high' },
-      ]);
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 1, personal: 0, skipped: 0 });
-      expect(llmCalls).toHaveLength(1);
-      expect(llmCalls[0].feature).toBe('albatross_classify');
-      expect(llmCalls[0].speed).toBe('fast');
-      expect(llmCalls[0].prompt).toContain('thread_llm');
-      expect(llmCalls[0].prompt).toContain('Cardhunt job');
-      const link = linkCalls()[0].args.links[0];
-      expect(link.status).toBe('candidate');
-      expect(link.confirmationRefs).toBeUndefined();
-      expect(link.areaId).toBe('area_work');
-    });
-
-    test('medium/low confidence and null areas fall back to Personal instead of limbo', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [
-        thread({ providerThreadId: 't_medium', fromAddress: 'a@x.io' }),
-        thread({ providerThreadId: 't_null', fromAddress: 'b@y.io' }),
-        thread({ providerThreadId: 't_unknown_area', fromAddress: 'c@z.io' }),
-      ];
-      llmResponse = JSON.stringify([
-        { threadId: 't_medium', areaName: 'Cardhunt job', confidence: 'medium' },
-        { threadId: 't_null', areaName: null, confidence: 'high' },
-        { threadId: 't_unknown_area', areaName: 'Not An Area', confidence: 'high' },
-      ]);
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 0, personal: 3, skipped: 0 });
-      const links = linkCalls()[0].args.links;
-      expect(links).toHaveLength(3);
-      for (const link of links) {
-        expect(link).toMatchObject({
-          areaId: PERSONAL_AREA,
-          role: 'secondary',
-          status: 'candidate',
-        });
-        expect(link.confidence).toBeLessThan(0.5);
-      }
-    });
-
-    test('hallucinated thread ids are ignored and unanswered threads stay unlinked for retry', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [
-        thread({ providerThreadId: 't_real', fromAddress: 'a@x.io' }),
-      ];
-      llmResponse = JSON.stringify([
-        { threadId: 't_invented', areaName: 'Cardhunt job', confidence: 'high' },
-      ]);
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 0, personal: 0, skipped: 1 });
-      expect(linkCalls()).toHaveLength(0);
-    });
-
-    test('malformed llm JSON skips the batch without throwing and still writes deterministic links', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [
-        thread(),
-        thread({ providerThreadId: 't_mystery', fromAddress: 'a@x.io' }),
-      ];
-      llmResponse = 'I cannot produce JSON today.';
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 1, llm: 0, personal: 0, skipped: 1 });
-      expect(linkCalls()).toHaveLength(1);
-      expect(linkCalls()[0].args.links).toHaveLength(1);
-    });
-
-    test('an llm phase throw is contained: batch skipped, deterministic links still written', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [
-        thread(),
-        thread({ providerThreadId: 't_boom', fromAddress: 'a@x.io' }),
-      ];
-      llmResponse = () => {
-        throw new Error('provider outage');
+  test('bounds concurrent model calls and preserves message association across mixed outcomes', async () => {
+    fixtures[apiMock.albatross.unclassifiedThreads] = Array.from({ length: MODEL_CONCURRENCY + 2 }, (_, i) =>
+      thread({
+        providerThreadId: `thread_${i}`,
+        messageId: `message_${i}`,
+        subject: `CardHunt evidence ${i}`,
+        bodyText: `CardHunt evidence ${i}`,
+      }),
+    );
+    let inFlight = 0;
+    let peak = 0;
+    modelResult = async (options: any) => {
+      const payload = JSON.parse(options.prompt);
+      const messageId = String(payload.email.messageId);
+      const index = Number(messageId.split('_')[1]);
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, (MODEL_CONCURRENCY + 2 - index) * 2));
+      inFlight -= 1;
+      if (index === 2) throw new Error('one provider failure');
+      return {
+        object: {
+          assignments: [
+            {
+              areaId: 'area_cardhunt',
+              evidence: [`CardHunt evidence ${index}`],
+              factIds: [],
+              reason: `message ${index}`,
+            },
+          ],
+        },
       };
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 1, llm: 0, personal: 0, skipped: 1 });
-      expect(linkCalls()).toHaveLength(1);
-    });
+    };
 
-    test('with no areas beyond Personal, everything files to Personal without a model call', async () => {
-      queryFixtures[apiMock.albatross.listAreas] = [];
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [thread(), thread({ providerThreadId: 't2' })];
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 0, personal: 2, skipped: 0 });
-      expect(llmCalls).toHaveLength(0);
-      const links = linkCalls()[0].args.links;
-      expect(links.map((link: any) => link.areaId)).toEqual([PERSONAL_AREA, PERSONAL_AREA]);
+    const result = await classifyThreads({ userId: USER });
+    expect(peak).toBe(MODEL_CONCURRENCY);
+    expect(result).toMatchObject({
+      processed: MODEL_CONCURRENCY + 2,
+      modelAssigned: MODEL_CONCURRENCY + 1,
+      failed: 1,
     });
-
-    test('no threads means no link writes at all', async () => {
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 0, personal: 0, skipped: 0 });
-      expect(llmCalls).toHaveLength(0);
-      expect(linkCalls()).toHaveLength(0);
-    });
-
-    test('facts on inactive areas never match', async () => {
-      queryFixtures[apiMock.albatross.listAreas] = [{ _id: 'area_home', name: 'Household', kind: 'home' }];
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
-      llmResponse = '[]';
-      const result = await classifyThreads({ userId: USER });
-      // The verified cardhunt fact belongs to area_work, which is not active.
-      expect(result.deterministic).toBe(0);
-      expect(result.skipped).toBe(1);
-    });
-
-    test('llm batch is capped per call: overflow stays queued for a later round or tick', async () => {
-      const many = Array.from({ length: LLM_BATCH_CAP + 5 }, (_, index) =>
-        thread({ providerThreadId: `t_bulk_${index}`, fromAddress: `sender${index}@nowhere.io` }),
-      );
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = many;
-      llmResponse = '[]';
-      const result = await classifyThreads({ userId: USER });
-      // The whole capped batch went unanswered, so the run stops after one
-      // call; the 5 overflow threads are untouched and retry next tick.
-      expect(result.skipped).toBe(LLM_BATCH_CAP);
-      expect(llmCalls).toHaveLength(1);
-      expect(llmCalls[0].prompt).toContain(`t_bulk_${LLM_BATCH_CAP - 1}`);
-      expect(llmCalls[0].prompt).not.toContain(`t_bulk_${LLM_BATCH_CAP}`);
-    });
-
-    test('overflow past the llm cap is classified in a follow-up round of the same run', async () => {
-      const many = Array.from({ length: LLM_BATCH_CAP + 5 }, (_, index) =>
-        thread({ providerThreadId: `t_bulk_${index}`, fromAddress: `sender${index}@nowhere.io` }),
-      );
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = many;
-      llmResponse = () => {
-        // Answer for whatever the latest prompt asked about: everything to Personal.
-        const prompt: string = llmCalls[llmCalls.length - 1].prompt;
-        const ids = [...prompt.matchAll(/threadId=(\S+)/g)].map((match) => match[1]);
-        return JSON.stringify(ids.map((threadId) => ({ threadId, areaName: null, confidence: 'low' })));
-      };
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 0, personal: many.length, skipped: 0 });
-      expect(llmCalls).toHaveLength(2);
-    });
-
-    test('duplicate verdicts for one thread only produce one link', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [
-        thread({ providerThreadId: 't_dup', fromAddress: 'a@x.io' }),
-      ];
-      llmResponse = JSON.stringify([
-        { threadId: 't_dup', areaName: 'Cardhunt job', confidence: 'high' },
-        { threadId: 't_dup', areaName: 'Household', confidence: 'high' },
-      ]);
-      const result = await classifyThreads({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 1, personal: 0, skipped: 0 });
-      expect(linkCalls()[0].args.links).toHaveLength(1);
-      expect(linkCalls()[0].args.links[0].areaId).toBe('area_work');
-    });
-  });
-
-  describe('classifyCalendarEvents', () => {
-    test('organizer fact match yields a deterministic calendarEvent link', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedCalendarEvents] = [event()];
-      const result = await classifyCalendarEvents({ userId: USER });
-      expect(result).toEqual({ deterministic: 1, llm: 0, personal: 0, skipped: 0 });
-      const link = linkCalls()[0].args.links[0];
-      expect(link).toMatchObject({
-        areaId: 'area_work',
-        artifactKind: 'calendarEvent',
-        artifactId: 'event_1',
-        accountId: 'acct_1',
-        status: 'verified',
-      });
-    });
-
-    test('unmatched events get one fast-model verdict; unsure events file to Personal', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedCalendarEvents] = [
-        event({ eventId: 'e_llm', organizerEmail: 'coach@fitness.io', title: 'HOA monthly meeting' }),
-        event({ eventId: 'e_unsure', organizerEmail: 'noreply@random.io', title: 'Untitled block' }),
-      ];
-      llmResponse = JSON.stringify([
-        { eventId: 'e_llm', areaName: 'Household', confidence: 'high' },
-        { eventId: 'e_unsure', areaName: null, confidence: 'low' },
-      ]);
-      const result = await classifyCalendarEvents({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 1, personal: 1, skipped: 0 });
-      expect(llmCalls).toHaveLength(1);
-      expect(llmCalls[0].speed).toBe('fast');
-      expect(llmCalls[0].prompt).toContain('e_llm');
-      const links = linkCalls()[0].args.links;
-      expect(links.find((link: any) => link.artifactId === 'e_llm')).toMatchObject({
-        areaId: 'area_home',
-        artifactKind: 'calendarEvent',
-        status: 'candidate',
-      });
-      expect(links.find((link: any) => link.artifactId === 'e_unsure')).toMatchObject({
-        areaId: PERSONAL_AREA,
-        role: 'secondary',
-      });
-    });
-
-    test('no events means no work at all', async () => {
-      const result = await classifyCalendarEvents({ userId: USER });
-      expect(result).toEqual({ deterministic: 0, llm: 0, personal: 0, skipped: 0 });
-      expect(llmCalls).toHaveLength(0);
-      expect(linkCalls()).toHaveLength(0);
-    });
-  });
-
-  describe('classifyIntents', () => {
-    test('a confident verdict re-homes the intent; unsure intents settle in Personal', async () => {
-      queryFixtures[apiMock.albatrossIntents.listAutoAssigned] = [
-        intent(),
-        intent({ intentId: 'intent_vague', title: null, rawText: 'do the thing' }),
-      ];
-      llmResponse = JSON.stringify([
-        { intentId: 'intent_1', areaName: 'Cardhunt job', confidence: 'high' },
-        { intentId: 'intent_vague', areaName: null, confidence: 'low' },
-      ]);
-      const result = await classifyIntents({ userId: USER });
-      expect(result).toEqual({ assigned: 1, keptPersonal: 1, skipped: 0 });
-      expect(verdictCalls()).toHaveLength(1);
-      const verdicts = verdictCalls()[0].args.verdicts;
-      expect(verdicts).toContainEqual({
-        intentId: 'intent_1',
-        areaId: 'area_work',
-        reason: 'llm high-confidence match to Cardhunt job',
-      });
-      expect(verdicts).toContainEqual({ intentId: 'intent_vague' });
-    });
-
-    test('a confident Personal verdict just settles the flag without a move', async () => {
-      queryFixtures[apiMock.albatrossIntents.listAutoAssigned] = [intent()];
-      llmResponse = JSON.stringify([{ intentId: 'intent_1', areaName: 'Personal', confidence: 'high' }]);
-      const result = await classifyIntents({ userId: USER });
-      expect(result).toEqual({ assigned: 0, keptPersonal: 1, skipped: 0 });
-      expect(verdictCalls()[0].args.verdicts).toEqual([{ intentId: 'intent_1' }]);
-    });
-
-    test('with no areas beyond Personal, flags settle without a model call', async () => {
-      queryFixtures[apiMock.albatross.listAreas] = [];
-      queryFixtures[apiMock.albatrossIntents.listAutoAssigned] = [intent()];
-      const result = await classifyIntents({ userId: USER });
-      expect(result).toEqual({ assigned: 0, keptPersonal: 1, skipped: 0 });
-      expect(llmCalls).toHaveLength(0);
-      expect(verdictCalls()[0].args.verdicts).toEqual([{ intentId: 'intent_1' }]);
-    });
-
-    test('an llm failure leaves flags untouched so intents retry next tick', async () => {
-      queryFixtures[apiMock.albatrossIntents.listAutoAssigned] = [intent()];
-      llmResponse = () => {
-        throw new Error('provider outage');
-      };
-      const result = await classifyIntents({ userId: USER });
-      expect(result).toEqual({ assigned: 0, keptPersonal: 0, skipped: 1 });
-      expect(verdictCalls()).toHaveLength(0);
-    });
-
-    test('no flagged intents means no area reads at all', async () => {
-      const result = await classifyIntents({ userId: USER });
-      expect(result).toEqual({ assigned: 0, keptPersonal: 0, skipped: 0 });
-      expect(llmCalls).toHaveLength(0);
-      expect(mutationCalls).toHaveLength(0);
-    });
-  });
-
-  describe('runAreaClassification', () => {
-    test('runs all three passes and isolates a failing one', async () => {
-      queryFixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
-      queryFixtures[apiMock.albatross.unclassifiedCalendarEvents] = [event()];
-      // Intent listing explodes; mail + calendar must still complete.
-      __setAreaClassifierDepsForTest({
-        api: apiMock as any,
-        convexQuery: (async (fn: any, args: any) => {
-          if (fn === apiMock.albatrossIntents.listAutoAssigned) throw new Error('convex down');
-          if (fn === apiMock.albatross.listUserAreaFacts) return queryFixtures[`facts:${args.status}`] ?? [];
-          return queryFixtures[fn] ?? [];
-        }) as any,
-        convexMutation: (async (fn: any, args: any) => {
-          mutationCalls.push({ fn, args });
-          if (fn === apiMock.albatross.ensurePersonal) return { areaId: PERSONAL_AREA };
-          return { inserted: args.links?.length ?? 0, skipped: 0 };
-        }) as any,
-        generateTextForCurrentUser: (async () => ({ text: '[]' }) as any) as any,
-      });
-      const run = await runAreaClassification({ userId: USER });
-      expect(run.threads).toEqual({ deterministic: 1, llm: 0, personal: 0, skipped: 0 });
-      expect(run.events).toEqual({ deterministic: 1, llm: 0, personal: 0, skipped: 0 });
-      expect(run.intents).toEqual({ error: 'convex down' });
-    });
+    const persisted = mutationCalls[0].args.verdicts;
+    expect(persisted).toHaveLength(MODEL_CONCURRENCY + 1);
+    for (const verdict of persisted) {
+      const index = Number(verdict.messageId.split('_')[1]);
+      expect(verdict.links[0].reason).toBe(`message ${index}`);
+    }
+    expect(persisted.some((verdict: any) => verdict.messageId === 'message_2')).toBe(false);
   });
 });

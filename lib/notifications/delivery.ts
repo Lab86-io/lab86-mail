@@ -2,6 +2,32 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import webpush from 'web-push';
 import { hostedPublicUrl } from '@/lib/hosted/env';
 
+interface NotificationDeliveryDependencies {
+  fetch: typeof fetch;
+  hostedPublicUrl: typeof hostedPublicUrl;
+  sendNotification: typeof webpush.sendNotification;
+  setVapidDetails: typeof webpush.setVapidDetails;
+}
+
+const defaultNotificationDeliveryDependencies: NotificationDeliveryDependencies = {
+  fetch,
+  hostedPublicUrl,
+  sendNotification: webpush.sendNotification.bind(webpush),
+  setVapidDetails: webpush.setVapidDetails.bind(webpush),
+};
+
+let notificationDeliveryDependencies = defaultNotificationDeliveryDependencies;
+
+export function setNotificationDeliveryDependenciesForTest(
+  overrides: Partial<NotificationDeliveryDependencies>,
+) {
+  const previous = notificationDeliveryDependencies;
+  notificationDeliveryDependencies = { ...previous, ...overrides };
+  return () => {
+    notificationDeliveryDependencies = previous;
+  };
+}
+
 export interface NotificationEnvelope {
   id: string;
   userId: string;
@@ -59,7 +85,7 @@ export function notificationOpenUrl(envelope: NotificationEnvelope) {
     expiresAt: String(expiresAt),
     sig,
   });
-  return `${hostedPublicUrl()}/api/notifications/open?${params.toString()}`;
+  return `${notificationDeliveryDependencies.hostedPublicUrl()}/api/notifications/open?${params.toString()}`;
 }
 
 const PUSH_SERVICE_HOSTS = new Set([
@@ -97,11 +123,13 @@ export function isAllowedPushEndpoint(endpoint: string) {
 }
 
 function configureWebPush() {
-  const subject = process.env.VAPID_SUBJECT || `mailto:notifications@${new URL(hostedPublicUrl()).hostname}`;
+  const subject =
+    process.env.VAPID_SUBJECT ||
+    `mailto:notifications@${new URL(notificationDeliveryDependencies.hostedPublicUrl()).hostname}`;
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '';
   const privateKey = process.env.VAPID_PRIVATE_KEY || '';
   if (!publicKey || !privateKey) throw new Error('Web push is not configured.');
-  webpush.setVapidDetails(subject, publicKey, privateKey);
+  notificationDeliveryDependencies.setVapidDetails(subject, publicKey, privateKey);
 }
 
 export async function sendWebPush(
@@ -109,7 +137,7 @@ export async function sendWebPush(
   subscription: { endpoint: string; p256dh: string; auth: string },
 ) {
   configureWebPush();
-  return await webpush.sendNotification(
+  return await notificationDeliveryDependencies.sendNotification(
     {
       endpoint: subscription.endpoint,
       keys: { p256dh: subscription.p256dh, auth: subscription.auth },
@@ -136,7 +164,7 @@ export async function sendCheckinEmail(input: {
     .trim()
     .split(/\s+/)[0];
   const openUrl = notificationOpenUrl(input.envelope);
-  const response = await fetch('https://api.resend.com/emails', {
+  const response = await notificationDeliveryDependencies.fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({

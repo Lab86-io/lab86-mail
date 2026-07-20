@@ -527,7 +527,7 @@ function BoardView({
                 <KanbanBoard
                   id={column.id}
                   key={column.id}
-                  className="h-full w-[300px] shrink-0 divide-y-0 rounded-xl border-[var(--color-border)] bg-[var(--color-bg-subtle)]/45 shadow-none"
+                  className="relative isolate h-full w-[300px] shrink-0 divide-y-0 rounded-xl border-[var(--color-border)] bg-[var(--color-bg-subtle)] shadow-none"
                 >
                   <KanbanHeader className="flex items-center px-3 pb-1.5 pt-3">
                     {canEdit ? (
@@ -584,7 +584,7 @@ function BoardView({
                           {...item}
                           onCardClick={() => setOpenCardId(item.id)}
                           className={cn(
-                            'group rounded-xl border p-3.5 shadow-[var(--shadow-soft)] transition-[transform,box-shadow,border-color] duration-150 hover:-translate-y-px hover:border-[var(--task-border,var(--color-border-strong))] hover:shadow-md',
+                            'group rounded-xl border bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)] transition-[transform,box-shadow,border-color] duration-150 hover:-translate-y-px hover:border-[var(--task-border,var(--color-border-strong))] hover:shadow-md',
                             done && 'opacity-75',
                           )}
                           style={taskSurfaceStyle(card)}

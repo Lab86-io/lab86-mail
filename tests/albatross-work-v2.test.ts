@@ -15,6 +15,10 @@ import {
 } from '@/lib/albatross/work-v2';
 import {
   isAllowedPushEndpoint,
+  notificationOpenUrl,
+  sendCheckinEmail,
+  sendWebPush,
+  setNotificationDeliveryDependenciesForTest,
   signNotificationLink,
   verifyNotificationLink,
 } from '@/lib/notifications/delivery';
@@ -209,6 +213,87 @@ describe('Albatross notification links', () => {
       else process.env.LAB86_NOTIFICATION_LINK_SECRET = previousNotification;
       if (previousConvex === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousConvex;
+    }
+  });
+
+  test('delivers signed push and email check-ins through configured providers', async () => {
+    const previous = {
+      LAB86_NOTIFICATION_LINK_SECRET: process.env.LAB86_NOTIFICATION_LINK_SECRET,
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+      VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+      RESEND_API_KEY: process.env.RESEND_API_KEY,
+      LAB86_NOTIFICATION_FROM: process.env.LAB86_NOTIFICATION_FROM,
+    };
+    process.env.LAB86_NOTIFICATION_LINK_SECRET = 'delivery-test-secret';
+    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY = 'public-key';
+    process.env.VAPID_PRIVATE_KEY = 'private-key';
+    process.env.VAPID_SUBJECT = 'mailto:push@example.test';
+    process.env.RESEND_API_KEY = 'resend-key';
+    process.env.LAB86_NOTIFICATION_FROM = 'Albatross <checkin@example.test>';
+    const vapidCalls: any[] = [];
+    const pushCalls: any[] = [];
+    const emailCalls: any[] = [];
+    const restore = setNotificationDeliveryDependenciesForTest({
+      hostedPublicUrl: () => 'https://mail.example.test',
+      setVapidDetails: ((...args: any[]) => vapidCalls.push(args)) as any,
+      sendNotification: (async (...args: any[]) => {
+        pushCalls.push(args);
+        return { statusCode: 201 } as any;
+      }) as any,
+      fetch: (async (...args: any[]) => {
+        emailCalls.push(args);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'email_1' }),
+        } as Response;
+      }) as any,
+    });
+    const envelope = {
+      id: 'notice_1',
+      userId: 'user_1',
+      title: 'Evening check-in',
+      body: 'Tell Albatross what actually changed today.',
+      deepLink: '/?checkin=one',
+    };
+    try {
+      const openUrl = new URL(notificationOpenUrl(envelope));
+      expect(openUrl.origin).toBe('https://mail.example.test');
+      expect(openUrl.searchParams.get('redirect')).toBe('/?checkin=one');
+      expect(openUrl.searchParams.get('sig')).toMatch(/^[a-f\d]{64}$/);
+
+      await expect(
+        sendWebPush(envelope, {
+          endpoint: 'https://fcm.googleapis.com/fcm/send/test',
+          p256dh: 'p256dh',
+          auth: 'auth',
+        }),
+      ).resolves.toMatchObject({ statusCode: 201 });
+      expect(vapidCalls[0]).toEqual(['mailto:push@example.test', 'public-key', 'private-key']);
+      expect(JSON.parse(pushCalls[0][1])).toMatchObject({ notificationId: 'notice_1' });
+
+      delete process.env.VAPID_SUBJECT;
+      await sendWebPush(envelope, {
+        endpoint: 'https://fcm.googleapis.com/fcm/send/fallback-subject',
+        p256dh: 'p256dh',
+        auth: 'auth',
+      });
+      expect(vapidCalls[1]).toEqual(['mailto:notifications@mail.example.test', 'public-key', 'private-key']);
+
+      await expect(
+        sendCheckinEmail({ envelope, to: 'owner@example.test', userName: '<Owner> Example' }),
+      ).resolves.toBe('email_1');
+      const emailBody = JSON.parse(emailCalls[0][1].body);
+      expect(emailBody.to).toEqual(['owner@example.test']);
+      expect(emailBody.html).toContain('&lt;Owner&gt;');
+      expect(emailBody.html).toContain('https://mail.example.test/api/notifications/open');
+    } finally {
+      restore();
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 });

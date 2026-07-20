@@ -1,8 +1,8 @@
 import { v } from 'convex/values';
-import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import {
+  classificationFreshnessPatch,
   classifyCorpusThread,
   computeCategoryUnreadCounts,
   latestThreadBody,
@@ -17,6 +17,12 @@ const providerValidator = v.union(
   v.literal('icloud'),
   v.literal('imap'),
 );
+
+function latestCorpusMessage(a: any, b: any) {
+  if (a.receivedAt !== b.receivedAt) return a.receivedAt > b.receivedAt ? a : b;
+  if (a._creationTime !== b._creationTime) return a._creationTime > b._creationTime ? a : b;
+  return String(a.providerMessageId).localeCompare(String(b.providerMessageId)) >= 0 ? a : b;
+}
 
 const syncStatusValidator = v.union(
   v.literal('idle'),
@@ -263,7 +269,7 @@ export const upsertCorpusBatch = mutation({
         .take(AGGREGATE_WINDOW);
       if (!stored.length) continue;
       const windowCapped = stored.length >= AGGREGATE_WINDOW;
-      const latest = stored.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a));
+      const latest = stored.reduce(latestCorpusMessage);
       let classifyBody = String(latest.textBody || latest.searchText || '').slice(0, 4000);
       const labels = [...new Set(stored.flatMap((message) => message.labels || []))];
       const patch = {
@@ -272,6 +278,7 @@ export const upsertCorpusBatch = mutation({
         grantId: args.grantId,
         provider: args.provider,
         providerThreadId,
+        latestMessageId: latest.providerMessageId,
         subject: latest.subject || '(no subject)',
         fromAddress: latest.from || '',
         lastDate: latest.receivedAt,
@@ -290,13 +297,14 @@ export const upsertCorpusBatch = mutation({
             q.eq('accountId', args.accountId).eq('providerThreadId', providerThreadId),
           )
           .collect();
-        const fullLatest = fullThread.reduce((a, b) => (b.receivedAt > a.receivedAt ? b : a), latest);
+        const fullLatest = fullThread.reduce(latestCorpusMessage, latest);
         patch.lastDate = fullLatest.receivedAt;
         patch.messageCount = fullThread.length;
         patch.labels = [...new Set(fullThread.flatMap((message) => message.labels || []))];
         patch.unread = fullThread.some((message) => Boolean(message.unread));
         patch.starred = fullThread.some((message) => Boolean(message.starred)) || undefined;
         patch.subject = fullLatest.subject || patch.subject;
+        patch.latestMessageId = fullLatest.providerMessageId;
         patch.fromAddress = fullLatest.from || patch.fromAddress;
         patch.snippet = fullLatest.snippet || patch.snippet;
         patch.yearMonth = yearMonth(fullLatest.receivedAt);
@@ -318,14 +326,22 @@ export const upsertCorpusBatch = mutation({
         patch.starred = Boolean(existing.starred) || patch.starred || undefined;
         patch.labels = [...new Set([...(existing.labels || []), ...patch.labels])];
       }
-      // Classify against the merged row so an existing stored LLM verdict
-      // (llmCategory) keeps precedence — patch alone omits it, and a webhook
-      // or backfill recompute would otherwise clobber it with the
-      // deterministic result.
-      const classifyRow = existing ? { ...existing, ...patch } : patch;
+      // A verdict belongs to one concrete latest message. Preserve it for
+      // idempotent re-syncs, but clear it when a new message becomes latest so
+      // both Smart Categories and sparse Area routing reconsider the thread.
+      const freshnessPatch = classificationFreshnessPatch(existing?.latestMessageId, patch.latestMessageId);
+      const classifyRow = existing
+        ? { ...existing, ...patch, ...freshnessPatch }
+        : { ...patch, ...freshnessPatch };
       const classified = smartContext ? classifyCorpusThread(classifyRow, smartContext, classifyBody) : {};
-      if (existing) await ctx.db.patch(existing._id, { ...patch, ...classified });
-      else await ctx.db.insert('mailCorpusThreads', { ...patch, ...classified, createdAt: ts });
+      if (existing) await ctx.db.patch(existing._id, { ...patch, ...freshnessPatch, ...classified });
+      else
+        await ctx.db.insert('mailCorpusThreads', {
+          ...patch,
+          ...freshnessPatch,
+          ...classified,
+          createdAt: ts,
+        });
     }
 
     // Backfill batches pass an explicit corpusReady boolean and own the
@@ -364,12 +380,12 @@ export const upsertCorpusBatch = mutation({
       });
     }
 
-    if (threadIds.size && (args.corpusReady === true || args.corpusReady === undefined)) {
-      await ctx.scheduler.runAfter(10_000, internal.albatross.queueUserAreaReindex, {
-        userId: args.userId,
-        reason: args.corpusReady === true ? 'Mailbox backfill complete' : 'Mailbox update',
-      });
-    }
+    // Every imported or changed thread is classified through its own freshness
+    // flags above and drained by the ingest kick. Never turn a backfill batch
+    // into a full-mailbox Area reindex: for a large corpus that changes O(batch)
+    // work into O(mailbox), while producing the same routing result. Full
+    // reindexes remain reserved for Area topology/identity changes and explicit
+    // repair operations, where untouched historical threads really can change.
 
     return { ok: true, threads: args.threads.length, messages: args.messages.length };
   },
@@ -770,7 +786,7 @@ export const categoryCountsInternal = query({
 // LLM-once classification queue. Rows the write-time deterministic pass
 // flagged uncertain, newest first, with the body excerpt the model needs —
 // the Next server runs the sweep (it owns the AI gateway and billing).
-export const listLlmPending = query({
+export const listLlmPending = mutation({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
@@ -779,24 +795,66 @@ export const listLlmPending = query({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 40), 1), 60);
-    const rows = await ctx.db
+    const maxScanned = Math.max(limit * 5, 120);
+    const pending: any[] = [];
+    const orphanIds: any[] = [];
+    const sourceRows = await ctx.db
       .query('mailCorpusThreads')
       .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
       .order('desc')
-      .take(limit);
-    return await Promise.all(
-      rows.map(async (row) => ({
+      .take(maxScanned + 1);
+    let processedRows = 0;
+    for (const row of sourceRows.slice(0, maxScanned)) {
+      processedRows += 1;
+      const latest = await ctx.db
+        .query('mailCorpusMessages')
+        .withIndex('by_user_account_thread_received', (q) =>
+          q
+            .eq('userId', row.userId)
+            .eq('accountId', row.accountId)
+            .eq('providerThreadId', row.providerThreadId),
+        )
+        .order('desc')
+        .first();
+      const messageId = latest?.providerMessageId;
+      if (!messageId) {
+        // A legacy aggregate with no message row cannot be grounded. Close it
+        // out until a future sync supplies a concrete message identity, which
+        // will reopen both classifiers through classificationFreshnessPatch.
+        orphanIds.push(row._id);
+        continue;
+      }
+      if (row.latestMessageId !== messageId) {
+        await ctx.db.patch(row._id, {
+          latestMessageId: messageId,
+          ...classificationFreshnessPatch(row.latestMessageId, messageId),
+          llmPending: true,
+          updatedAt: now(),
+        });
+      }
+      pending.push({
         accountId: row.accountId,
         providerThreadId: row.providerThreadId,
-        subject: row.subject,
-        fromAddress: row.fromAddress,
-        snippet: row.snippet,
-        labels: row.labels || [],
-        unread: Boolean(row.unread),
-        lastDate: row.lastDate,
-        bodyText: (await latestThreadBody(ctx, row)) || '',
-      })),
-    );
+        messageId,
+        subject: latest.subject,
+        fromAddress: latest.from,
+        snippet: latest.snippet,
+        labels: latest.labels || [],
+        unread: Boolean(latest.unread),
+        lastDate: latest.receivedAt,
+        bodyText: String(latest.textBody || latest.searchText || '').slice(0, 4000),
+      });
+      if (pending.length >= limit) {
+        break;
+      }
+    }
+    for (const id of orphanIds) {
+      await ctx.db.patch(id, { llmPending: undefined, updatedAt: now() });
+    }
+    return {
+      items: pending,
+      moreRemaining: processedRows < sourceRows.length || sourceRows.length > maxScanned,
+    };
   },
 });
 
@@ -812,6 +870,7 @@ export const storeLlmVerdicts = mutation({
       v.object({
         accountId: v.string(),
         providerThreadId: v.string(),
+        messageId: v.string(),
         verdict: v.optional(v.any()),
       }),
     ),
@@ -831,16 +890,21 @@ export const storeLlmVerdicts = mutation({
             .eq('providerThreadId', item.providerThreadId),
         )
         .unique();
-      if (!row) continue;
+      if (!row || !item.messageId || row.latestMessageId !== item.messageId) continue;
       const llmCategory = item.verdict ?? undefined;
       const merged = classifyCorpusThread(
-        { ...row, llmCategory: llmCategory ?? row.llmCategory },
+        {
+          ...row,
+          llmCategory,
+          llmClassifiedMessageId: item.messageId,
+        },
         context,
         await latestThreadBody(ctx, row),
       );
       await ctx.db.patch(row._id, {
-        ...(llmCategory ? { llmCategory } : {}),
+        llmCategory,
         llmClassifiedAt: ts,
+        llmClassifiedMessageId: item.messageId,
         ...merged,
         llmPending: undefined,
       });

@@ -32,6 +32,12 @@ const apiMock = {
   albatross: {
     getArea: 'albatross.getArea',
   },
+  albatrossRoutines: {
+    create: 'albatrossRoutines.create',
+    listForProject: 'albatrossRoutines.listForProject',
+    setConsent: 'albatrossRoutines.setConsent',
+    runNow: 'albatrossRoutines.runNow',
+  },
   operations: {
     record: 'operations.record',
   },
@@ -54,6 +60,7 @@ async function convexMutationMock(fn: string, args: any) {
   if (fn === apiMock.albatrossWork.createSprint) return `sprint_${sequence}`;
   if (fn === apiMock.albatrossWork.enqueueApproval) return `approval_${sequence}`;
   if (fn === apiMock.albatrossWork.recordPlanApplication) return `application_${sequence}`;
+  if (fn === apiMock.albatrossRoutines.create) return `routine_${sequence}`;
   if (fn === apiMock.albatrossWork.claimApproval) {
     approvalOrder.push('claimApproval');
     approvalFixture = { ...approvalFixture, status: 'claiming' };
@@ -157,6 +164,53 @@ afterAll(() => {
 });
 
 describe('Albatross tools', () => {
+  test('creates a timezone-aware routine without silently enabling notifications', async () => {
+    const result = await runTool(albatross.albatrossCreateRoutine.handler, {
+      projectId: 'project_health',
+      areaId: 'area_personal',
+      title: 'Evening food reflection',
+      purpose: 'Build enough evidence to estimate calories without pretending observation is certainty.',
+      kind: 'checkin',
+      cadence: 'daily',
+      localTime: '20:30',
+      activation: 'active',
+      questionTemplate: {
+        prompt: 'What did you eat today?',
+        responseKind: 'text',
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'active',
+      notification: 'asks_once_after_first_checkin',
+    });
+    expect(mutationCalls[0]).toMatchObject({
+      fn: apiMock.albatrossRoutines.create,
+      args: {
+        projectId: 'project_health',
+        timezone: 'America/New_York',
+        consent: 'enabled',
+        notification: { enabled: false, channel: 'in_app' },
+      },
+    });
+  });
+
+  test('does not promise a notification-consent question for task-only routines', async () => {
+    const result = await runTool(albatross.albatrossCreateRoutine.handler, {
+      projectId: 'project_home',
+      title: 'Tidy one room',
+      kind: 'task',
+      cadence: 'weekdays',
+      localTime: '18:00',
+      activation: 'active',
+      taskTemplate: { title: 'Tidy one room for 15 minutes' },
+    });
+
+    expect(result.notification).toBe('not_requested_for_task_only');
+    expect(mutationCalls[0]?.args.notification.enabled).toBe(false);
+  });
+
   test('apply_intent_plan creates project/task/draft artifacts, queues approvals, links artifacts, and records the application', async () => {
     const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
       intentId: 'intent_tax',

@@ -66,6 +66,28 @@ export interface EventInputRow {
   providerUpdatedAt?: number;
 }
 
+type ReconcileMutation = (fn: any, args: Record<string, unknown>) => Promise<any>;
+
+export async function reconcileCalendarWindowBatched(
+  args: Record<string, unknown>,
+  mutate: ReconcileMutation = convexMutation,
+) {
+  let cursor: string | undefined;
+  let pruned = 0;
+  for (let batch = 0; batch < 1_000; batch += 1) {
+    const result = await mutate(calendarApi.reconcileWindow, {
+      ...args,
+      ...(cursor ? { cursor } : {}),
+      limit: 500,
+    });
+    pruned += Number(result?.pruned) || 0;
+    if (result?.done) return { ok: true, pruned };
+    if (!result?.continueCursor) throw new Error('Calendar reconciliation lost its continuation cursor.');
+    cursor = result.continueCursor;
+  }
+  throw new Error('Calendar reconciliation exceeded 1,000 bounded batches.');
+}
+
 export async function syncCalendarAccount({
   userId,
   accountId,
@@ -145,7 +167,7 @@ export async function syncCalendarAccount({
           events: events.slice(i, i + MUTATION_BATCH),
         });
       }
-      await convexMutation(calendarApi.reconcileWindow, {
+      await reconcileCalendarWindowBatched({
         userId,
         accountId,
         grantId: row.grantId,
@@ -349,7 +371,7 @@ export async function backfillCalendarHistoryChunk({
           events: events.slice(i, i + MUTATION_BATCH),
         });
       }
-      await convexMutation(calendarApi.reconcileWindow, {
+      await reconcileCalendarWindowBatched({
         userId,
         accountId,
         grantId: row.grantId,

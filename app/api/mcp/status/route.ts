@@ -18,6 +18,7 @@ export async function GET() {
       label: s.label,
       tokenLabel: s.tokenLabel,
       tokenHelp: s.tokenHelp,
+      connectMode: s.connectMode,
     })),
   });
 }

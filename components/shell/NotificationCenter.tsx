@@ -29,7 +29,7 @@ interface CenterData {
   notifications: NotificationRow[];
 }
 
-export function NotificationCenter() {
+export function NotificationCenter({ className }: { className?: string } = {}) {
   const { isAuthenticated } = useConvexAuth();
   const center = useQuery(api.albatrossNotifications.liveCenter, isAuthenticated ? { limit: 50 } : 'skip') as
     | CenterData
@@ -45,6 +45,8 @@ export function NotificationCenter() {
     | Array<{
         question: { _id: string; prompt: string; reason?: string };
         work: null | { _id: string; title?: string; rawText: string };
+        project: null | { _id: string; title: string; areaId?: string };
+        routine: null | { _id: string; title: string; areaId?: string };
       }>
     | undefined;
   const approvals = useQuery(api.albatrossWork.listApprovals, isAuthenticated ? { limit: 20 } : 'skip') as
@@ -54,6 +56,7 @@ export function NotificationCenter() {
   const openCheckin = useMutation(api.albatrossNotifications.openCheckin);
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  const setSelectedAreaId = useClientStore((state) => state.setSelectedAreaId);
   const [open, setOpen] = useState(false);
   const [checkinOpen, setCheckinOpen] = useState(false);
 
@@ -86,11 +89,14 @@ export function NotificationCenter() {
           <button
             type="button"
             aria-label={attentionCount ? `${attentionCount} items need attention` : 'Notifications'}
-            className="relative grid size-8 shrink-0 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+            className={cn(
+              'relative grid size-7 shrink-0 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:size-8',
+              className,
+            )}
           >
             <Bell className="size-4" />
             {attentionCount ? (
-              <span className="absolute right-0 top-0 min-w-4 rounded-full bg-[var(--color-danger)] px-1 text-center text-[9px] font-semibold leading-4 text-white">
+              <span className="absolute -right-1 -top-1 min-w-4 rounded-full border-2 border-[var(--color-bg-elevated)] bg-[var(--color-danger)] px-1 text-center text-[9px] font-semibold leading-3 text-white">
                 {Math.min(attentionCount, 99)}
               </span>
             ) : null}
@@ -123,11 +129,11 @@ export function NotificationCenter() {
                 key={row.question._id}
                 type="button"
                 onClick={() => {
-                  if (row.work) {
-                    setSelectedWorkId(String(row.work._id));
-                    setPrimaryView('areas');
-                    setOpen(false);
-                  }
+                  setSelectedWorkId(row.work ? String(row.work._id) : null);
+                  const areaId = row.routine?.areaId || row.project?.areaId;
+                  setSelectedAreaId(areaId ? String(areaId) : null);
+                  setPrimaryView('areas');
+                  setOpen(false);
                 }}
                 className="flex w-full gap-2 border-b border-[var(--color-border)]/60 bg-[var(--color-warning-soft)]/45 px-3.5 py-3 text-left hover:bg-[var(--color-warning-soft)]"
               >
@@ -135,7 +141,11 @@ export function NotificationCenter() {
                 <span>
                   <span className="block text-[12.5px] font-medium">{row.question.prompt}</span>
                   <span className="mt-0.5 block text-[11.5px] text-[var(--color-text-muted)]">
-                    {row.work?.title || row.work?.rawText || 'Work needs an answer'}
+                    {row.work?.title ||
+                      row.work?.rawText ||
+                      row.project?.title ||
+                      row.routine?.title ||
+                      'Albatross needs an answer'}
                   </span>
                 </span>
               </button>

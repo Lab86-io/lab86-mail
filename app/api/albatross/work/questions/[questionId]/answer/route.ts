@@ -21,20 +21,28 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
     const body = await req.json();
     const answer = String(body.answer || '').trim();
     if (!answer) return Response.json({ ok: false, error: 'answer required' }, { status: 400 });
-    const workId = await convexMutation<string>((api as any).albatrossWorkV2.answerQuestion, {
+    const answered = await convexMutation<{
+      workId?: string;
+      projectId?: string;
+      routineId?: string;
+      shouldAdvance: boolean;
+    }>((api as any).albatrossWorkV2.answerQuestion, {
       userId: user.userId,
       questionId,
       answer,
       answeredOptionId: typeof body.answeredOptionId === 'string' ? body.answeredOptionId : undefined,
     });
-    const result = await advanceWork({
-      userId: user.userId,
-      userEmail: user.email,
-      userName: user.name,
-      workId,
-      timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
-    });
-    return Response.json({ ok: true, ...result });
+    if (answered.shouldAdvance && answered.workId) {
+      const result = await advanceWork({
+        userId: user.userId,
+        userEmail: user.email,
+        userName: user.name,
+        workId: answered.workId,
+        timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+      });
+      return Response.json({ ok: true, ...answered, ...result });
+    }
+    return Response.json({ ok: true, status: 'answered', ...answered });
   } catch (error) {
     if (error instanceof RateLimitError) return rateLimitResponse(error);
     const status = error instanceof AuthRequiredError ? 401 : 500;

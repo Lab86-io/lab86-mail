@@ -33,6 +33,11 @@ crons.interval('plan reconcile', { minutes: 5 }, internal.albatrossIntents.planR
 // safe across deploys, retries, and daylight-saving transitions.
 crons.interval('albatross notifications', { minutes: 15 }, internal.albatrossNotifications.tick, {});
 
+// Project-scoped routines materialize durable tasks, questions, and in-app
+// notifications. Stable local-date run keys make this safe across retries,
+// deploys, and DST transitions.
+crons.interval('albatross routines', { minutes: 5 }, internal.albatrossRoutines.tick, {});
+
 // Additive Work-v2 migration is idempotent and paginates through legacy
 // intents. Re-igniting it twice daily also catches rows written by an older
 // client during the compatibility window.
@@ -44,5 +49,16 @@ crons.interval('albatross Work v2 migration', { hours: 12 }, internal.albatrossW
 // so brief/search items stay current. Cast: the generated `internal` type only
 // gains `mcpSync` after codegen on deploy.
 crons.interval('mcp sync', { minutes: 20 }, (internal as any).mcpSync.tick, {});
+
+// Disconnect normally schedules its own bounded cleanup chain. This sweep is
+// the recovery path if a deploy interrupts that chain between batches.
+crons.interval(
+  'mcp disconnect cleanup',
+  { minutes: 30 },
+  (internal as any).mcp.sweepDisconnectedConnections,
+  {},
+);
+
+crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
 export default crons;

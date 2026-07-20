@@ -8,7 +8,165 @@ export interface AreaHomeCountsLike {
   facts: { verified: number; candidate: number };
 }
 
-export const PERSONAL_AREA_EXTERNAL_ID = 'system:personal';
+// Retired (#100). Areas are an opt-in, sparse overlay: mail belongs to zero or
+// more active Areas, and zero is a successful verdict — so there is no system
+// catch-all any more. This id survives only so the cleanup pass can recognise
+// and retire rows the old auto-created "Personal" area left behind. Nothing
+// creates, protects, or routes to it. A user may create an ordinary Area named
+// "Personal" like any other; it will not carry this externalId.
+export const LEGACY_PERSONAL_AREA_EXTERNAL_ID = 'system:personal';
+
+// Bump to make every thread eligible for re-routing. Automatic Area decisions
+// carry the version that produced them, so a bump lets newer verdicts supersede
+// older candidate links without touching anything the user confirmed.
+//   1 — pre-#100: subject/snippet batch prompt, Personal catch-all fallback.
+//   2 — #100: per-message body-grounded structured verdicts, sparse, no fallback.
+export const AREA_CLASSIFIER_VERSION = 2;
+
+// Consumer mailbox domains are shared by millions of unrelated senders, so an
+// exact-domain fact over one of them is not identity evidence and must never
+// route. (An exact *email* fact on such a domain still may — it identifies one
+// person.) Kept deliberately small and explicit rather than heuristic.
+const SHARED_CONSUMER_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'ymail.com',
+  'hotmail.com',
+  'outlook.com',
+  'live.com',
+  'msn.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'pm.me',
+  'gmx.com',
+  'mail.com',
+  'zoho.com',
+  'yandex.com',
+  'fastmail.com',
+  'hey.com',
+  'qq.com',
+  '163.com',
+  'naver.com',
+]);
+
+export function isSharedConsumerDomain(value?: string | null): boolean {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@/, '');
+  return SHARED_CONSUMER_DOMAINS.has(normalized);
+}
+
+export interface AreaLinkLike {
+  areaId?: string | null;
+  status?: string | null;
+  reason?: string | null;
+  classifierVersion?: number | null;
+  sourceRefs?: Array<{ kind?: string | null; id?: string | null }> | null;
+  confirmationRefs?: Array<{ kind?: string | null; prompt?: string | null }> | null;
+}
+
+function hasAutomaticAreaSignature(link: AreaLinkLike): boolean {
+  const reason = String(link.reason || '').toLowerCase();
+  if (reason.includes('fallback to personal')) return true;
+  if (/^llm\b/.test(reason)) return true;
+  if (/^(verified|candidate)\s+(email|domain)\b/.test(reason)) return true;
+  return (link.sourceRefs || []).some(
+    (ref) =>
+      ref?.kind === 'areaContext' ||
+      ref?.kind === 'areaFact' ||
+      ref?.kind === 'area' ||
+      (ref?.kind === 'system' && ref?.id === 'area-reindex'),
+  );
+}
+
+/**
+ * The user stands behind this link: they verified it, they rejected it, or they
+ * confirmed it directly. Authoritative in both directions — a `verified` link is
+ * never rewritten by a classifier, and a `rejected` link is a tombstone that
+ * stops the classifier re-proposing the same area forever.
+ */
+export function isUserAuthoritativeLink(link: AreaLinkLike): boolean {
+  if (link.status === 'rejected') return true;
+  const directConfirmation = (link.confirmationRefs || []).some(
+    (ref) =>
+      ref?.kind === 'userConfirmation' &&
+      !String(ref.prompt || '')
+        .toLowerCase()
+        .includes('inherited from a user-verified area identity fact'),
+  );
+  if (directConfirmation) return true;
+  // Versioned links are classifier output. Their remaining confirmation refs
+  // are inherited from an identity fact; that confirms the fact, not this
+  // derived thread assignment.
+  if (typeof link.classifierVersion === 'number') return false;
+  if (hasAutomaticAreaSignature(link)) return false;
+  return link.status === 'verified';
+}
+
+/**
+ * This link was produced by a classifier or a backfill, not by a person.
+ *
+ * Links written since #100 carry `classifierVersion`, which settles it. Older
+ * rows predate that field, so they're recognised by the signatures the previous
+ * pipeline left behind (its reason strings and sourceRef kinds). Anything that
+ * matches neither is treated as user-authored and left alone — when in doubt,
+ * don't touch the user's data.
+ */
+export function isAutomaticAreaLink(link: AreaLinkLike): boolean {
+  if (link.status === 'rejected') return false;
+  if (isUserAuthoritativeLink(link)) return false;
+  if (typeof link.classifierVersion === 'number') return true;
+  return hasAutomaticAreaSignature(link);
+}
+
+export function isDeterministicAutomaticAreaLink(link: AreaLinkLike): boolean {
+  if (!isAutomaticAreaLink(link)) return false;
+  const reason = String(link.reason || '').toLowerCase();
+  return (
+    /^verified\s+(email|domain)\b/.test(reason) &&
+    (link.sourceRefs || []).some((ref) => ref?.kind === 'areaFact' || ref?.kind === 'area')
+  );
+}
+
+export function shouldRetireDeterministicAreaLink(
+  link: AreaLinkLike,
+  match?: { areaId: string; factId: string } | null,
+): boolean {
+  if (!isDeterministicAutomaticAreaLink(link)) return false;
+  if (!match || String(link.areaId || '') !== match.areaId) return true;
+  return !(link.sourceRefs || []).some((ref) => ref?.kind === 'areaFact' && ref.id === match.factId);
+}
+
+/**
+ * An automatic decision no newer than the incoming classifier. A verdict for a
+ * newer message may replace a same-version decision; a version bump also
+ * supersedes older decisions. User-authoritative links never qualify.
+ */
+export function isSupersedableAreaLink(link: AreaLinkLike, currentVersion: number): boolean {
+  return isAutomaticAreaLink(link) && (link.classifierVersion ?? 0) <= currentVersion;
+}
+
+/**
+ * Weak evidence that should never have routed: the system Personal catch-all,
+ * and `areaContext` sourceRefs (general/candidate context rather than a
+ * confirmed identity fact). Retired on reindex, but only while still an
+ * unconfirmed automatic candidate — a Personal link the user confirmed is a
+ * decision they made and survives.
+ */
+export function isWeakAutomaticAreaLink(link: AreaLinkLike): boolean {
+  if (isUserAuthoritativeLink(link)) return false;
+  const reason = String(link.reason || '').toLowerCase();
+  if (reason.includes('fallback to personal')) return true;
+  return (link.sourceRefs || []).some(
+    (ref) => ref?.kind === 'areaContext' || (ref?.kind === 'system' && ref?.id === 'area-reindex'),
+  );
+}
 
 export interface AreaFactLikeForBranding {
   kind?: string | null;
@@ -27,6 +185,16 @@ export interface AreaBranding {
   primaryDomain: string | null;
   faviconUrl: string | null;
   imageUrl: string | null;
+}
+
+export function areaInitials(name?: string | null) {
+  const words = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return 'A';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0] || ''}${words.at(-1)?.[0] || ''}`.toUpperCase();
 }
 
 export type AreaHomeSectionId = 'mail' | 'events' | 'tasks' | 'context';
@@ -78,6 +246,39 @@ export function normalizeAreaDomain(value?: string | null): string | null {
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(text)) return null;
   if (text.length > 253 || text.split('.').some((part) => !part || part.length > 63)) return null;
   return text;
+}
+
+export function areaFactIdentity(
+  kind: string,
+  value: string,
+): { kind: 'email' | 'domain'; value: string } | null {
+  const declaredKind = String(kind || '')
+    .trim()
+    .toLowerCase();
+  if (declaredKind !== 'email' && declaredKind !== 'domain') return null;
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^mailto:/, '')
+    .replace(/^@/, '');
+  if (!normalized || /\s/.test(normalized)) return null;
+  if (declaredKind === 'email') {
+    const parts = normalized.split('@');
+    if (parts.length !== 2 || !parts[0] || !isStrictAreaHostname(parts[1])) return null;
+    return { kind: 'email', value: normalized };
+  }
+  if (normalized.includes('@')) return null;
+  const domain = normalizeAreaDomain(normalized);
+  return domain ? { kind: 'domain', value: domain } : null;
+}
+
+function isStrictAreaHostname(value: string): boolean {
+  if (value.length > 253 || !/^[a-z0-9.-]+$/.test(value)) return false;
+  const labels = value.split('.');
+  if (labels.length < 2) return false;
+  return labels.every(
+    (label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+  );
 }
 
 export function faviconUrlForDomain(domain?: string | null, size = 64): string | null {
@@ -144,10 +345,11 @@ export interface AreaSelectionResolution {
 
 export interface AreaIndexRunLike {
   status?: string | null;
+  reason?: string | null;
   scanned?: number | null;
   inserted?: number | null;
   matched?: number | null;
-  personal?: number | null;
+  retired?: number | null;
   updatedAt?: number | null;
 }
 
@@ -169,6 +371,11 @@ export interface AreaIndexStatusSummary {
   tone: 'active' | 'done' | 'warning' | 'quiet';
 }
 
+/** Every Area is opt-in user data; there is no protected system default. */
+export function areaCanArchive(_area?: { externalId?: string | null } | null): boolean {
+  return true;
+}
+
 function areaTextTokens(value?: string | null): string[] {
   return String(value || '')
     .toLowerCase()
@@ -183,7 +390,6 @@ export function suggestIntentArea(
   const options = [...(areas ?? [])].filter((area) => area._id && area.name);
   if (!options.length) return null;
   const normalizedText = String(text || '').toLowerCase();
-  const nonPersonal = options.filter((area) => area.externalId !== PERSONAL_AREA_EXTERNAL_ID);
   if (!normalizedText.trim()) return null;
 
   let best: { area: IntentAreaOption; score: number; reason: string } | null = null;
@@ -200,7 +406,6 @@ export function suggestIntentArea(
     for (const token of areaTextTokens(area.description).slice(0, 10)) {
       if (normalizedText.includes(token)) score += 1;
     }
-    if (area.externalId === PERSONAL_AREA_EXTERNAL_ID) score -= 2;
     if (!best || score > best.score) {
       best = { area, score, reason: domain && normalizedText.includes(domain) ? domain : area.name };
     }
@@ -212,12 +417,10 @@ export function suggestIntentArea(
   if (best && best.score >= 4) {
     return { areaId: best.area._id, confidence: 'medium', reason: best.reason };
   }
-  if (options.length === 1) {
-    return { areaId: options[0]._id, confidence: 'medium', reason: 'Only active area' };
-  }
-  if (nonPersonal.length === 0 && options.length === 1) {
-    return { areaId: options[0]._id, confidence: 'medium', reason: 'Personal area' };
-  }
+  // No grounded match means no suggestion. Having exactly one Area is not
+  // evidence that this text belongs to it — the old "Only active area" fallback
+  // was a coin flip dressed as a suggestion. The chooser handles it from here,
+  // and "no Area" stays a valid answer.
   return null;
 }
 
@@ -229,15 +432,9 @@ export function resolveAreaSelection(
   if (areas === undefined) return { areaId: selectedAreaId, state: 'loading' };
   const exact = areas.find((area) => area._id === selectedAreaId);
   if (exact) return { areaId: exact._id, state: 'ready' };
-  if (selectedAreaId === PERSONAL_AREA_EXTERNAL_ID || selectedAreaId === 'personal') {
-    const personal = areas.find(
-      (area) =>
-        area.externalId === PERSONAL_AREA_EXTERNAL_ID ||
-        area.kind === 'personal' ||
-        area.name?.toLowerCase() === 'personal',
-    );
-    if (personal) return { areaId: personal._id, state: 'replaced' };
-  }
+  // A stale pointer — including one at the retired system Personal area — falls
+  // through to the chooser. Resolving it onto whatever area happens to be named
+  // "Personal" would silently put the user somewhere they never picked (#100).
   return { areaId: null, state: 'missing' };
 }
 
@@ -246,22 +443,20 @@ export function areaIndexStatusSummary(status?: AreaIndexStatusLike | null): Are
   const run = status.latestRun ?? null;
   const mail = status.mail ?? null;
   const scanned = Math.max(0, Math.floor(Number(run?.scanned ?? 0)));
-  const inserted = Math.max(0, Math.floor(Number(run?.inserted ?? 0)));
   const matched = Math.max(0, Math.floor(Number(run?.matched ?? 0)));
-  const personal = Math.max(0, Math.floor(Number(run?.personal ?? 0)));
   const mailboxTotal = Math.max(0, Math.floor(Number(mail?.total ?? 0)));
   const mailboxIndexing = Math.max(0, Math.floor(Number(mail?.indexing ?? 0)));
   const mailboxErrored = Math.max(0, Math.floor(Number(mail?.errored ?? 0)));
   const messagesSynced = Math.max(0, Math.floor(Number(mail?.messagesSynced ?? 0)));
 
-  if (run?.status === 'queued') return { label: 'Area filing queued', tone: 'active' };
+  if (run?.status === 'queued') return { label: 'Area check queued', tone: 'active' };
   if (run?.status === 'running') {
     return {
-      label: scanned ? `Filing areas · ${scanned.toLocaleString()} scanned` : 'Filing areas now',
+      label: scanned ? `Checking areas · ${scanned.toLocaleString()} scanned` : 'Checking areas now',
       tone: 'active',
     };
   }
-  if (run?.status === 'error') return { label: 'Area filing needs retry', tone: 'warning' };
+  if (run?.status === 'error') return { label: 'Area check needs retry', tone: 'warning' };
   if (mailboxErrored > 0) {
     return {
       label: mailboxErrored === 1 ? '1 mailbox sync error' : `${mailboxErrored} mailbox sync errors`,
@@ -278,13 +473,13 @@ export function areaIndexStatusSummary(status?: AreaIndexStatusLike | null): Are
     };
   }
   if (run?.status === 'done') {
-    const filed = inserted || matched + personal;
+    // Report what was examined and what matched — never imply coverage. Most
+    // mail matches no Area, and that is the expected outcome, so "N scanned ·
+    // M linked" is the honest shape. "filed" is gone with the catch-all (#100).
     return {
-      label: filed
-        ? `Area filing done · ${filed.toLocaleString()} filed`
-        : scanned
-          ? `Area filing done · ${scanned.toLocaleString()} scanned`
-          : 'Area filing done',
+      label: scanned
+        ? `Areas checked · ${scanned.toLocaleString()} scanned · ${matched.toLocaleString()} linked`
+        : 'Areas checked',
       tone: 'done',
     };
   }
@@ -292,10 +487,21 @@ export function areaIndexStatusSummary(status?: AreaIndexStatusLike | null): Are
   return { label: 'Waiting for mailbox index', tone: 'quiet' };
 }
 
+export function areaIndexStatusTitle(status?: AreaIndexStatusLike | null): string | null {
+  const summary = areaIndexStatusSummary(status);
+  if (!summary) return null;
+  const run = status?.latestRun;
+  if (!run) return summary.label;
+  if (run.status === 'done' && summary.tone !== 'done') return summary.label;
+  const scanned = Math.max(0, Math.floor(Number(run.scanned ?? 0)));
+  const matched = Math.max(0, Math.floor(Number(run.matched ?? 0)));
+  return `${run.reason || 'Area check'} · ${run.status} · ${scanned.toLocaleString()} scanned, ${matched.toLocaleString()} linked`;
+}
+
 // Fixed editorial order: the operational artifacts first (mail is the highest
 // churn), the slow-moving context last. Sections always render — an empty
 // section shows its own quiet empty state rather than vanishing, so the user
-// learns what the classifier files here.
+// learns what can be linked here.
 export function areaHomeSections(counts: AreaHomeCountsLike): AreaHomeSection[] {
   return [
     { id: 'mail', label: 'Mail', count: counts.mail },
@@ -305,10 +511,11 @@ export function areaHomeSections(counts: AreaHomeCountsLike): AreaHomeSection[] 
   ];
 }
 
-// True when the classifier has filed nothing at all — the page swaps the three
-// artifact sections for one whole-page explanation (context still renders).
-export function areaHasNoLinks(counts: AreaHomeCountsLike): boolean {
-  return counts.mail + counts.events + counts.tasks === 0;
+// True when nothing has been linked at all — including connected or
+// manual artifacts that do not render as mail/events/tasks. The page only uses
+// its whole-Area empty explanation when every link kind is genuinely absent.
+export function areaHasNoLinks(counts: AreaHomeCountsLike, otherLinks = 0): boolean {
+  return counts.mail + counts.events + counts.tasks + Math.max(0, otherLinks) === 0;
 }
 
 // The Areas chooser is now a work-entry surface, not a directory. This score
@@ -550,21 +757,31 @@ export function areaPulse(input: AreaPulseInput): AreaPulseSegment[] {
 export function areaBriefHeadline(input: {
   areaName: string;
   needsYou: number;
+  needsYouBounded?: boolean;
   upcoming: number;
   plans: number;
   projects: number;
   mail: number;
   tasks: number;
   candidateFacts: number;
+  // True when any supporting evidence count fed in (mail/tasks/upcoming) is a
+  // bounded preview rather than an exact total. The "filed signals" branch then
+  // avoids an exact claim it can't stand behind.
+  evidenceBounded?: boolean;
+  upcomingBounded?: boolean;
 }): string {
   if (input.needsYou > 0)
-    return `${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
+    return `${input.needsYouBounded ? 'at least ' : ''}${input.needsYou} ${input.needsYou === 1 ? 'item needs' : 'items need'} you before ${input.areaName} can move cleanly.`;
   if (input.upcoming > 0 && input.plans > 0)
-    return `${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
+    return `${input.upcomingBounded ? 'at least ' : ''}${input.upcoming} upcoming ${input.upcoming === 1 ? 'event' : 'events'} and ${input.plans} active ${input.plans === 1 ? 'plan' : 'plans'} are shaping ${input.areaName} today.`;
   if (input.plans > 0)
     return `${input.plans} active ${input.plans === 1 ? 'plan is' : 'plans are'} in motion for ${input.areaName}.`;
-  if (input.mail + input.tasks + input.upcoming > 0)
-    return `${input.areaName} has ${input.mail + input.tasks + input.upcoming} filed ${input.mail + input.tasks + input.upcoming === 1 ? 'signal' : 'signals'} to review.`;
+  const signals = input.mail + input.tasks + input.upcoming;
+  if (signals > 0) {
+    if (input.evidenceBounded)
+      return `${input.areaName} has at least ${signals} filed ${signals === 1 ? 'signal' : 'signals'} to review.`;
+    return `${input.areaName} has ${signals} filed ${signals === 1 ? 'signal' : 'signals'} to review.`;
+  }
   if (input.candidateFacts > 0)
     return `${input.areaName} is waiting on ${input.candidateFacts} context ${input.candidateFacts === 1 ? 'confirmation' : 'confirmations'}.`;
   return `${input.areaName} is quiet right now.`;
@@ -589,7 +806,7 @@ export function splitBriefRows<T>(rows: readonly T[] | null | undefined, limit: 
   };
 }
 
-export type NeedsYouKind = 'plan_answers' | 'overdue_task' | 'suggested_context';
+export type NeedsYouKind = 'work_input' | 'plan_answers' | 'overdue_task' | 'suggested_context';
 
 export interface NeedsYouRow {
   id: string;
@@ -597,6 +814,7 @@ export interface NeedsYouRow {
   title: string;
   detail: string | null;
   intentId?: string;
+  workId?: string;
 }
 
 // The "needs you" queue: the few things in this area actually waiting on the
@@ -610,7 +828,6 @@ export function areaNeedsYouRows(
     candidateFacts?: Array<{ _id: string; kind: string; value: string }> | null;
   },
   now = Date.now(),
-  cap = 6,
 ): NeedsYouRow[] {
   const rows: NeedsYouRow[] = [];
   for (const plan of input.plans ?? []) {
@@ -642,7 +859,7 @@ export function areaNeedsYouRows(
       detail: `Suggested ${fact.kind}`,
     });
   }
-  return rows.slice(0, cap);
+  return rows;
 }
 
 export const AREA_PLACE_CAP = 8;
@@ -710,4 +927,282 @@ export function extractAreaPlaces(
     }
   }
   return out.slice(0, cap);
+}
+
+// ---------------------------------------------------------------------------
+// Living brief presentation. The Convex read model (areaHome) returns the whole
+// brief doc — status, lede, summary, generatedAt, error — so the page can be
+// honest about generating/error/absent, not just render a perfect brief. These
+// pure resolvers turn that doc into exactly what the lead should say, carrying
+// the last-known text through transient generating/error states so the thesis
+// never blinks out or fabricates progress.
+// ---------------------------------------------------------------------------
+
+export interface LivingBriefLike {
+  status?: 'generating' | 'ready' | 'error' | string | null;
+  lede?: string | null;
+  summary?: string | null;
+  generatedAt?: number | null;
+  error?: string | null;
+}
+
+export type AreaBriefMode = 'ready' | 'generating' | 'error' | 'absent';
+
+export interface AreaBriefState {
+  mode: AreaBriefMode;
+  // The editorial lead. Always present and never fabricated: for ready it is
+  // the generated lede; otherwise it is the last-known lede if we have one,
+  // else the deterministic headline the caller passes in.
+  lede: string;
+  // The supporting paragraph. Null when we have nothing real to show.
+  summary: string | null;
+  // A short, honest status note under the lead for non-ready modes. Null for
+  // ready (freshness is shown separately) and when there is nothing to say.
+  note: string | null;
+  // True when lede/summary are carried over from a previous edition while the
+  // current one is generating or errored — the UI dims them and shows `note`.
+  stale: boolean;
+  // Whether the primary affordance should offer to generate vs refresh.
+  canGenerate: boolean;
+  generatedAt: number | null;
+}
+
+function cleanBriefText(value?: string | null): string {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// The single source of truth for what the brief lead renders. `headline` is the
+// deterministic fallback (areaBriefHeadline) used only when there is no real
+// generated text to show.
+export function areaBriefState(brief: LivingBriefLike | null | undefined, headline: string): AreaBriefState {
+  const lede = cleanBriefText(brief?.lede);
+  const summary = cleanBriefText(brief?.summary);
+  const hasText = lede.length > 0;
+  const status = brief?.status ?? null;
+  // A valid generatedAt marks a *published* prior edition. The backend's very
+  // first generating/error record has no generatedAt and can carry placeholder
+  // text — so text alone must not be mistaken for a real last brief to carry
+  // over. Only a published edition is dimmed as stale with "showing the last
+  // brief"; a first-ever run shows the deterministic headline instead.
+  const rawGeneratedAt = brief?.generatedAt;
+  const generatedDate = typeof rawGeneratedAt === 'number' ? new Date(rawGeneratedAt) : null;
+  const generatedAt =
+    typeof rawGeneratedAt === 'number' &&
+    Number.isFinite(rawGeneratedAt) &&
+    rawGeneratedAt > 0 &&
+    generatedDate !== null &&
+    Number.isFinite(generatedDate.getTime())
+      ? rawGeneratedAt
+      : null;
+  const hasPriorEdition = generatedAt !== null && hasText;
+
+  if (status === 'ready' && hasText) {
+    return {
+      mode: 'ready',
+      lede,
+      summary: summary || null,
+      note: null,
+      stale: false,
+      canGenerate: false,
+      generatedAt,
+    };
+  }
+  if (status === 'generating') {
+    return {
+      mode: 'generating',
+      lede: hasPriorEdition ? lede : headline,
+      summary: hasPriorEdition ? summary || null : null,
+      note: hasPriorEdition ? 'Updating the brief…' : 'Writing the brief…',
+      stale: hasPriorEdition,
+      canGenerate: false,
+      generatedAt,
+    };
+  }
+  if (status === 'error') {
+    return {
+      mode: 'error',
+      lede: hasPriorEdition ? lede : headline,
+      summary: hasPriorEdition ? summary || null : null,
+      note: hasPriorEdition
+        ? 'Couldn’t refresh — showing the last brief.'
+        : 'Live work and evidence are below.',
+      stale: hasPriorEdition,
+      // A first-ever error has no published brief to show, so still offer to
+      // generate one; a failed *refresh* keeps the prior edition and Refresh.
+      canGenerate: !hasPriorEdition,
+      generatedAt,
+    };
+  }
+  // No brief doc yet, or a ready doc that somehow has no text: fall back to the
+  // deterministic headline and offer to generate one. Never invent a summary.
+  return {
+    mode: 'absent',
+    lede: hasText ? lede : headline,
+    summary: hasText ? summary || null : null,
+    note: null,
+    stale: false,
+    canGenerate: true,
+    generatedAt,
+  };
+}
+
+// A quiet, honest freshness string for a ready brief: "just now", "12m ago",
+// "3h ago", else the calendar date. Null when there is no timestamp.
+export function areaFreshness(
+  generatedAt?: number | null,
+  now = Date.now(),
+  locale = 'en-US',
+): string | null {
+  if (typeof generatedAt !== 'number' || !Number.isFinite(generatedAt) || generatedAt <= 0) return null;
+  const generatedDate = new Date(generatedAt);
+  if (!Number.isFinite(generatedDate.getTime())) return null;
+  const deltaMs = now - generatedAt;
+  if (deltaMs < 0) return 'just now';
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(generatedDate);
+}
+
+// Work items whose agent is explicitly waiting on the user's answer. These fold
+// into the single "Needs you" queue so there is one authoritative action region
+// rather than a duplicate needs group inside Work.
+export function workNeedsYouRows(
+  rows?: Array<{
+    _id: string;
+    title?: string | null;
+    rawText?: string | null;
+    agentState?: string | null;
+  }> | null,
+): NeedsYouRow[] {
+  const out: NeedsYouRow[] = [];
+  for (const row of rows ?? []) {
+    if (row?.agentState !== 'needs_input') continue;
+    const title = cleanBriefText(row.title) || cleanBriefText(row.rawText) || 'Untitled work';
+    out.push({
+      id: `work:${row._id}`,
+      kind: 'work_input',
+      title,
+      detail: 'Answer to continue this work',
+      workId: String(row._id),
+    });
+  }
+  return out;
+}
+
+// The single "Needs you" queue is assembled from two sources that can name the
+// same thing: workNeedsYouRows (the agent is waiting → work_input) and
+// areaNeedsYouRows (a plan needs answers → plan_answers). Because a Work item
+// and its plan share one intent id, the same intent can surface as both. Merge
+// by that shared identity, keeping the directly actionable work_input row and
+// dropping the duplicate plan_answers. Rows with no shared identity — overdue
+// tasks and suggested context — are always preserved. First-seen order is kept
+// (pass workNeedsYouRows first so work_input wins the shared slot). Presentation
+// may collapse this complete queue, but the data helper never silently drops an
+// actionable item.
+export function mergeNeedsYouRows(
+  workRows: readonly NeedsYouRow[] | null | undefined,
+  areaRows: readonly NeedsYouRow[] | null | undefined,
+): NeedsYouRow[] {
+  const sharedIntentKey = (row: NeedsYouRow): string | null => {
+    if (row.kind === 'work_input') return row.workId ? `intent:${row.workId}` : null;
+    if (row.kind === 'plan_answers') return row.intentId ? `intent:${row.intentId}` : null;
+    return null;
+  };
+  const seen = new Set<string>();
+  const out: NeedsYouRow[] = [];
+  for (const row of [...(workRows ?? []), ...(areaRows ?? [])]) {
+    const key = sharedIntentKey(row);
+    if (key !== null) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+export interface ProjectProgress {
+  completed: number;
+  total: number;
+  percent: number;
+  hasBar: boolean;
+}
+
+// Divide-by-zero-safe completion for a Project/Epic progress bar. Only produces
+// a bar when there is a real task total; percent is clamped to 0–100.
+export function projectProgress(completed?: number | null, total?: number | null): ProjectProgress {
+  const totalN = Math.max(0, Math.floor(Number(total ?? 0)));
+  const completedN = Math.min(totalN, Math.max(0, Math.floor(Number(completed ?? 0))));
+  const percent = totalN > 0 ? Math.round((completedN / totalN) * 100) : 0;
+  return { completed: completedN, total: totalN, percent, hasBar: totalN > 0 };
+}
+
+export type ProjectStateTone = 'active' | 'paused' | 'neutral';
+
+// The state chip for a Project/Epic row. Real status only — no inferred health.
+export function projectStateMeta(status?: string | null): { label: string; tone: ProjectStateTone } {
+  switch (status) {
+    case 'active':
+      return { label: 'Active', tone: 'active' };
+    case 'paused':
+      return { label: 'Paused', tone: 'paused' };
+    case 'done':
+      return { label: 'Done', tone: 'neutral' };
+    case 'archived':
+      return { label: 'Archived', tone: 'neutral' };
+    default:
+      return { label: status ? status.replaceAll('_', ' ') : 'Project', tone: 'neutral' };
+  }
+}
+
+// A bounded preview count: `shown` is how many rows the read model returned;
+// `hasMore` is true when the area owns more than were shown (the total is not
+// known here, only that it exceeds the preview). Facts remain exact totals.
+export interface EvidencePreview {
+  shown: number;
+  hasMore: boolean;
+}
+
+export interface EvidenceCountsLike {
+  mail: EvidencePreview;
+  events: EvidencePreview;
+  tasks: EvidencePreview;
+  facts: { verified: number; candidate: number };
+}
+
+// The one-line rollup above the supporting Evidence band: only non-zero facets,
+// in a fixed order, so a noisy mailbox is summarized rather than dumped. Mail,
+// events, and tasks are bounded previews — when more exist than were shown, the
+// label reads "30+ threads" (honest about the cap) rather than a false exact
+// total. Facts are exact. Empty array when the area has no evidence yet (the
+// band then hides).
+export function evidenceRollup(counts: EvidenceCountsLike): AreaPulseSegment[] {
+  const segments: AreaPulseSegment[] = [];
+  const pushPreview = (id: string, preview: EvidencePreview, one: string, many: string) => {
+    const n = Math.max(0, Math.floor(Number(preview?.shown ?? 0)));
+    if (n <= 0) return;
+    const noun = n === 1 && !preview.hasMore ? one : many;
+    segments.push({ id, label: preview.hasMore ? `${n}+ ${noun}` : `${n} ${noun}` });
+  };
+  const pushExact = (id: string, n: number, one: string, many: string) => {
+    if (n > 0) segments.push({ id, label: `${n} ${n === 1 ? one : many}` });
+  };
+  pushPreview('mail', counts.mail, 'thread', 'threads');
+  pushPreview('events', counts.events, 'event', 'events');
+  pushPreview('tasks', counts.tasks, 'task', 'tasks');
+  pushExact('verified', counts.facts.verified, 'verified fact', 'verified facts');
+  pushExact('candidate', counts.facts.candidate, 'context ask', 'context asks');
+  return segments;
+}
+
+// Places are supporting evidence too, even when an Area has no linked
+// mail/events/tasks/context yet. Keep this gate pure so the only-places state
+// cannot disappear behind the artifact rollup condition again.
+export function shouldShowEvidenceBand(evidenceSegments: number, places: number): boolean {
+  return evidenceSegments > 0 || places > 0;
 }

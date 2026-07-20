@@ -43,6 +43,7 @@ import { ChamaacDock, ChamaacDockTile } from '@/components/ui/chamaac-dock';
 import { Input } from '@/components/ui/input';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import {
   intentInitials,
   RAIL_COLLAPSED_PX,
@@ -1551,6 +1552,7 @@ function PlanReveal({
   const [applied, setApplied] = useState<ApplyResponse | null>(null);
   const [projectMode, setProjectMode] = useState<'auto' | 'project' | 'task_only'>('auto');
   const artifactFrameRef = useRef<HTMLIFrameElement>(null);
+  const [artifactReady, setArtifactReady] = useState(false);
 
   // Same theme contract as the Daily Brief: the artifact is --brief-* token
   // HTML; the host mirrors the app's resolved fonts and colors into it on
@@ -1597,6 +1599,8 @@ function PlanReveal({
     () => (plan.artifactHtml ? injectPlanArtifactRuntime(plan.artifactHtml) : undefined),
     [plan.artifactHtml],
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new artifact must restart its own readiness handshake.
+  useEffect(() => setArtifactReady(false), [plan.artifactHtml]);
 
   const postStepState = useCallback(
     (states?: PlanStepState[]) => {
@@ -1621,6 +1625,10 @@ function PlanReveal({
       // Only trust messages from our own iframe document, and only the
       // allowlisted toggle_step shape (parseToggleStepMessage rejects the rest).
       if (!frame || event.source !== frame.contentWindow) return;
+      if (isBriefArtifactReadyMessage(event.data)) {
+        setArtifactReady(true);
+        return;
+      }
       const message = parseToggleStepMessage(event.data);
       if (!message) return;
       const ack = (ok: boolean, error?: string) =>
@@ -1690,10 +1698,11 @@ function PlanReveal({
           ref={artifactFrameRef}
           key={plan._id}
           initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          animate={{ opacity: artifactReady ? 1 : 0 }}
           transition={{ duration: reduced ? 0.15 : 0.3 }}
           title="Plan"
           srcDoc={artifactDoc}
+          aria-busy={!artifactReady}
           sandbox="allow-scripts allow-popups"
           onLoad={() => {
             postTheme();

@@ -256,9 +256,9 @@ const USER_BULK_TABLES = [
   ...ACCOUNT_BULK_TABLES,
   'areaFacts',
   'areaReindexRuns',
-  'mobileCommands',
-  'mobileSyncChanges',
-  'mobileSyncTombstones',
+  'albatrossRoutines',
+  'albatrossRoutineRuns',
+  'albatrossEvidence',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -435,13 +435,12 @@ export const deleteUserCascade = mutation({
       'albatrossNotifications',
       'albatrossNotificationPreferences',
       'webPushSubscriptions',
-      'mobilePushDevices',
-      'mobileSyncHeads',
       'notificationDeliveries',
       'albatrossDailyCheckins',
       'areas',
       'mcpConnections',
       'mcpCredentials',
+      'mcpOAuthStates',
       'mcpItems',
       'mcpSyncStates',
       'mcpTaskLinks',

@@ -2,11 +2,7 @@
 
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  useConvexAuth,
-  useMutation as useConvexMutation,
-  useQuery_experimental as useConvexQuery,
-} from 'convex/react';
+import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
@@ -323,11 +319,6 @@ export function Rail({
   // areas behave like first-class inboxes instead of hiding behind one door.
   // Auth-gated: a first-paint query before the Clerk token lands would error.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
-  const ensurePersonal = useConvexMutation(api.albatross.ensurePersonal);
-  useEffect(() => {
-    if (!albatrossEnabled || !convexAuthed) return;
-    void ensurePersonal({}).catch(() => undefined);
-  }, [albatrossEnabled, convexAuthed, ensurePersonal]);
   const areasResult = useConvexQuery({
     query: (api as any).albatross.listAreasOverview,
     args: albatrossEnabled && convexAuthed ? { status: 'active' } : 'skip',
@@ -399,7 +390,6 @@ export function Rail({
           <span className="max-w-40 whitespace-nowrap font-display text-[16px] font-semibold tracking-tight text-[var(--color-text)] opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
             <span className="text-[var(--color-accent)]">Lab86</span> Mail
           </span>
-          {albatrossEnabled ? <NotificationCenter /> : null}
           <SidebarTrigger
             title="Toggle navigation rail"
             className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
@@ -757,7 +747,12 @@ export function Rail({
             setAccountFilter={setAccountFilter}
             indexingCount={indexingAccounts.length}
           />
-          <div className="ml-auto group-data-[collapsible=icon]:ml-0">
+          {albatrossEnabled ? (
+            <div className="ml-auto group-data-[collapsible=icon]:ml-0">
+              <NotificationCenter />
+            </div>
+          ) : null}
+          <div className={albatrossEnabled ? undefined : 'ml-auto group-data-[collapsible=icon]:ml-0'}>
             <ThemePanel className="group-data-[collapsible=icon]:size-8" />
           </div>
         </div>

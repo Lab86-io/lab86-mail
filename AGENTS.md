@@ -2,10 +2,8 @@
 
 ## Albatross UI Work
 
-Codex owns Albatross UI research, design, implementation, integration, and final review directly. Do not delegate UI authorship to Claude or require an Opus implementation pass.
+Any change that designs or materially changes UI for the Albatross feature must follow the Albatross development contract in `docs/albatross-development-contract.md`.
 
-Before materially changing an Albatross UI, use current Apple guidance and Mobbin to research the complete journey and relevant states. Record the queries, screens or flows examined, links, adopted patterns, rejected patterns, state matrix, and rendered-review findings in `docs/mobile/research/<slice>.md`.
-
-Keep native Apple navigation and controls, synthesize Mobbin patterns rather than copying screens, preserve Albatross product semantics, and validate material UI changes with rendered iPhone evidence.
+Codex may implement Albatross UI directly. Preserve the existing design system and app density, inspect the surrounding product flow before editing, and use Mobbin plus browser-based product research before materially changing an Albatross UI surface. Keep the resulting research notes in the PR.
 
 Tests must not regress. Add or update focused tests for every behavioral, state, data, routing, or contract change.

@@ -1,12 +1,10 @@
 import { v } from 'convex/values';
-import { PERSONAL_AREA_EXTERNAL_ID } from '../lib/albatross/area-home';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { normalizeSourceRefs, normalizeText } from './albatrossModel';
 import { recordCompletionEvent } from './albatrossWork';
-import { insertBoardWithColumns } from './boards';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -118,47 +116,13 @@ async function requirePlan(ctx: QueryCtx | MutationCtx, planId: Id<'albatrossInt
   return plan;
 }
 
-export async function ensurePersonalArea(ctx: MutationCtx, userId: string): Promise<Id<'areas'>> {
-  const ts = now();
-  const existing = await ctx.db
-    .query('areas')
-    .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', PERSONAL_AREA_EXTERNAL_ID))
-    .unique();
-  if (existing) {
-    if (existing.status !== 'active') {
-      await ctx.db.patch(existing._id, { status: 'active', archivedAt: undefined, updatedAt: ts });
-    }
-    if (existing.boardId) {
-      const board = await ctx.db.get(existing.boardId);
-      if (board) return existing._id;
-    }
-    const boardId = await insertBoardWithColumns(ctx, userId, existing.name);
-    await ctx.db.patch(existing._id, { boardId, updatedAt: ts });
-    return existing._id;
-  }
-
-  const areaId = await ctx.db.insert('areas', {
-    userId,
-    externalId: PERSONAL_AREA_EXTERNAL_ID,
-    name: 'Personal',
-    kind: 'personal',
-    status: 'active',
-    description: 'Personal mail, obligations, and catch-all context.',
-    createdAt: ts,
-    updatedAt: ts,
-  });
-  const boardId = await insertBoardWithColumns(ctx, userId, 'Personal');
-  await ctx.db.patch(areaId, { boardId, updatedAt: ts });
-  return areaId;
-}
-
 async function normalizeIntentAreaId(
   ctx: MutationCtx,
   userId: string,
   areaId: string | undefined,
 ): Promise<string | undefined> {
   const raw = bounded(areaId, 160);
-  if (!raw) return String(await ensurePersonalArea(ctx, userId));
+  if (!raw) return undefined;
   const docId = ctx.db.normalizeId('areas', raw);
   if (!docId) throw new Error('Area not found.');
   const area = await ctx.db.get(docId);
@@ -190,9 +154,7 @@ export const createIntent = mutation({
         if (!existing.areaId) {
           await ctx.db.patch(existing._id, {
             areaId: await normalizeIntentAreaId(ctx, userId, args.areaId),
-            // A defaulted (Personal) area is provisional: the area-classify
-            // cron gets one fast-model pass to re-home it.
-            areaAutoAssigned: bounded(args.areaId, 160) ? false : true,
+            areaAutoAssigned: undefined,
             updatedAt: now(),
           });
         }
@@ -210,7 +172,7 @@ export const createIntent = mutation({
       title: bounded(args.title, 180),
       status: 'captured',
       areaId,
-      areaAutoAssigned: bounded(args.areaId, 160) ? undefined : true,
+      areaAutoAssigned: undefined,
       createdAt: ts,
       updatedAt: ts,
     });
@@ -311,15 +273,15 @@ export const listAutoAssigned = query({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
-    // Flags are set at capture and cleared on the next tick, so flagged rows
-    // are always among the most recently updated — a bounded scan suffices.
+    // Indexed on the flag itself: a flagged intent kept for retry (model
+    // outage) can never fall out of a recency window and strand.
     const rows = await ctx.db
       .query('albatrossIntents')
-      .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
+      .withIndex('by_user_autoassigned', (q) => q.eq('userId', args.userId).eq('areaAutoAssigned', true))
       .order('desc')
-      .take(200);
+      .take(limit + 50);
     return rows
-      .filter((row) => row.areaAutoAssigned === true && row.status !== 'archived')
+      .filter((row) => row.status !== 'archived')
       .slice(0, limit)
       .map((row) => ({
         intentId: String(row._id),

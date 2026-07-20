@@ -21,7 +21,7 @@ async function authedAccountIds(userId?: string | null): Promise<string[]> {
 export const corpusSearch = defineTool({
   name: 'corpus_search',
   description:
-    'Search across ALL connected accounts at once — mail plus any linked tools (GitHub/Bitbucket/Atlassian/Jira/Slack) the user enabled for search. Each item carries a "source" of "mail" or "mcp". Prefer this over per-account search_threads when the user has not named a specific mailbox.',
+    'Search across ALL connected accounts at once — mail plus any linked tools (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) the user enabled for search. Each item carries a "source" of "mail" or "mcp". Prefer this over per-account search_threads when the user has not named a specific mailbox.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -30,7 +30,7 @@ export const corpusSearch = defineTool({
     includeConnectedTools: z
       .boolean()
       .default(true)
-      .describe('Also search linked GitHub/Bitbucket/Atlassian/Jira/Slack items (default: true).'),
+      .describe('Also search linked GitHub/Granola/Bitbucket/Atlassian/Jira/Slack items (default: true).'),
     max: z.number().int().min(1).max(50).default(20),
   }),
   output: z.object({ items: z.array(z.any()), accountsSearched: z.array(z.string()) }),

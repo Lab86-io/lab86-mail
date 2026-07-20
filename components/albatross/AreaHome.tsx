@@ -1,55 +1,102 @@
 'use client';
 
-// The area home page: everything one area of life currently touches — its
-// mail, events, tasks, and verified context — sorted by the 30-minute
-// classifier. Areas are becoming the primary sort of the app, so this surface
-// reads like an operational inbox view, not a dashboard of cards.
+// Area home is an Area Brief: an editorial, continuously-updated lead on one
+// area of life, followed by the operational work it owns, then supporting
+// evidence. The brief (generated lede/summary) is the page's thesis — not a
+// card among controls. It answers, in order: what matters now, what needs you,
+// what is moving, which Project/Epic owns the multi-week work, and what evidence
+// supports that understanding. Artifacts (mail/events/tasks/context) are
+// evidence, deliberately capped so a noisy mailbox can't become the center of
+// gravity.
 //
-// Research (Albatross contract - research before code, Opus 2026-07-09; full
-// notes in docs/albatross-area-brief-research.md):
-// - Mobbin/Jira project summary (7dc713a9-dd2e-4a47-8145-2386cb0194e8): an area
-//   home opens with a greeting + a quiet pulse of what moved, then meaning-first
-//   sections (status, recent activity) — not a wall of source rows.
-// - Mobbin/ClickUp Home (7823aa2f-ea79-4f53-98ef-8d0d75a83c4e): My Work / Agenda
-//   / Assigned — the home groups by what it means to you, each group dense rows.
-// - Mobbin/Asana Home (2bb60927): "My Priorities" leads, with an inline capture
-//   row ("Click here to add a task…") right in the brief.
-// - Mobbin/Notion Home (8d3114c7): one calm prompt bar heads the space; capture
-//   and ask share a single line, no chatbot chrome.
-// - Mobbin/Linear project overview (9c8e3907): plan-as-document — quiet property
-//   badges, outcome text, progress; density from typography, not boxes.
-// Plans, projects, and places are now components of the area, not separate pages.
+// Research (Albatross contract — research before code, Opus 2026-07-11; full
+// notes in docs/albatross-area-brief-v2-research.md):
+// - Mobbin/Asana project overview (0f8c5ba7, 140afee3, 91b6ac7f): a generated
+//   AI summary is the page thesis and coexists with a live state pill + a
+//   freshness signal; the absent state offers "Generate summary", never faked.
+// - Mobbin/Linear project Updates (ed6163fd): latest update + progress lead the
+//   main column; properties/milestones sit in a compact rail. Density from type.
+// - Mobbin/Contra project (1968548c, 4785e339): one "Next step" callout with a
+//   single action leads; the activity timeline is a quieter supporting band.
+// - Mobbin/ClickUp+Asana grouped lists (8b2419a3, 8935ad31): work grouped by
+//   momentum with per-group counts.
+// - Mobbin/Obvious+Linear (0ff79563, 37054da5): one calm capture line, not a
+//   heavy form. Browser: Linear project-overview + agent-updates docs, Notion
+//   projects guide (summary-coexists-with-live-work, progressive disclosure).
+// Plans have no standalone destination; projects/places are area components.
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
-import { AlertCircle, ArrowRight, CalendarDays, Inbox, RefreshCw, Sparkles } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import {
+  Archive,
+  ArrowRight,
+  CheckSquare,
+  ChevronDown,
+  FolderInput,
+  Inbox,
+  LayoutTemplate,
+  MessageSquareText,
+  MoreHorizontal,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { InboxThreadRow, inboxDateGroupLabel, type ThreadRow } from '@/components/inbox/Inbox';
+import { OptionList } from '@/components/tool-ui/option-list';
+import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { injectAreaArtifactRuntime, parseAreaArtifactMessage } from '@/lib/albatross/area-artifact-runtime';
 import {
+  type AreaBriefState,
   type AreaOverviewCountsLike,
   type AreaPlaceRow,
   type AreaPlanRow,
   type AreaProjectRow,
   areaBriefHeadline,
+  areaBriefState,
+  areaFreshness,
   areaHasNoLinks,
   areaHomeSections,
   areaIndexStatusSummary,
+  areaIndexStatusTitle,
+  areaInitials,
   areaNeedsYouRows,
   areaOverviewBadges,
   areaOverviewPriority,
   areaOverviewStatus,
-  areaPulse,
+  evidenceRollup,
   formatEventTime,
+  mergeNeedsYouRows,
   type NeedsYouRow,
+  projectProgress,
+  projectStateMeta,
   resolveAreaSelection,
+  shouldShowEvidenceBand,
   splitBriefRows,
   taskRowMeta,
+  workNeedsYouRows,
 } from '@/lib/albatross/area-home';
+import { areaMailRowKey, filterAreaMailRows, selectedVisibleAreaMailRows } from '@/lib/albatross/area-mail';
+import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
+import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { categoricalColor, formatDate, shortFrom } from '@/lib/shared/format';
+import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
+import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
 interface AreaMailRow {
@@ -60,6 +107,10 @@ interface AreaMailRow {
   lastDate: number;
   snippet: string;
   unread: boolean;
+  labels: string[];
+  starred: boolean;
+  messageCount: number;
+  smartCategory: unknown | null;
   linkStatus: string;
   confidence: number | null;
   reason: string | null;
@@ -109,7 +160,10 @@ interface AreaHomeData {
     status: 'generating' | 'ready' | 'error';
     lede: string;
     summary: string;
+    artifactHtml?: string;
+    basedOnRevision?: string;
     generatedAt?: number;
+    error?: string;
   };
   facts: { verified: AreaFactRow[]; candidate: AreaFactRow[] };
   mail: AreaMailRow[];
@@ -120,13 +174,56 @@ interface AreaHomeData {
   places: AreaPlaceRow[];
   counts: {
     facts: { verified: number; candidate: number };
-    mail: number;
-    events: number;
-    tasks: number;
+    // Mail/events/tasks are bounded previews, not exact totals: `shown` is how
+    // many rows came back, `hasMore` whether the area owns more than the cap.
+    evidence: {
+      mail: { shown: number; hasMore: boolean };
+      events: { shown: number; hasMore: boolean };
+      tasks: { shown: number; hasMore: boolean };
+    };
+    links: {
+      mailThread: { shown: number; bounded: boolean };
+      calendarEvent: { shown: number; bounded: boolean };
+      task: { shown: number; bounded: boolean };
+      other: { shown: number; bounded: boolean };
+    };
+    needsYouBounded: boolean;
     plans: number;
     projects: number;
     places: number;
   };
+}
+
+interface AreaPulseData {
+  areaId: string;
+  projects: Array<{
+    project: {
+      _id: string;
+      title: string;
+      outcome?: string;
+      status: string;
+      updatedAt: number;
+    };
+    routines: Array<{
+      _id: string;
+      title: string;
+      status: string;
+      consent: string;
+      cadence: string;
+      localTime: string;
+      nextRunAt: number;
+    }>;
+    pendingQuestions: Array<{
+      _id: string;
+      prompt: string;
+      reason?: string;
+      responseKind?: string;
+      options?: Array<{ id: string; label: string; description?: string }>;
+    }>;
+    taskCount: number;
+    completedTaskCount: number;
+    todayTasks: Array<{ _id: string; title: string; dueAt?: number }>;
+  }>;
 }
 
 interface AreaWorkRow {
@@ -149,7 +246,7 @@ interface AreaIndexStatusData {
     scanned: number;
     inserted: number;
     matched: number;
-    personal: number;
+    retired: number;
     skipped: number;
     error: string | null;
     startedAt: number | null;
@@ -202,16 +299,27 @@ const emptyOverviewCounts: AreaOverviewCountsLike = {
   suggestedLinks: 0,
 };
 
+// Evidence caps are deliberately low: supporting rows must summarize, never
+// become the page's center of gravity (a 17-thread mailbox can't dominate).
 const BRIEF_LIMITS = {
   plans: 4,
-  mail: 6,
-  events: 4,
+  mail: 4,
+  events: 3,
   projects: 4,
   places: 4,
-  tasks: 5,
+  tasks: 4,
   candidateFacts: 4,
-  verifiedFacts: 5,
+  verifiedFacts: 4,
 };
+
+function useMinuteNow() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return now;
+}
 
 export function AreaHome() {
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
@@ -299,7 +407,7 @@ function AreaChooser() {
               {totals && totals.needsYou > 0
                 ? `${totals.needsYou} ${totals.needsYou === 1 ? 'item needs' : 'items need'} you across your areas.`
                 : totals && totals.plans + totals.events + totals.tasks > 0
-                  ? `${totals.plans} active ${totals.plans === 1 ? 'plan' : 'plans'} · ${totals.events} ${totals.events === 1 ? 'event' : 'events'} · ${totals.tasks} ${totals.tasks === 1 ? 'task' : 'tasks'} filed by area.`
+                  ? `${totals.plans} active ${totals.plans === 1 ? 'plan' : 'plans'} · ${totals.events} ${totals.events === 1 ? 'event' : 'events'} · ${totals.tasks} ${totals.tasks === 1 ? 'task' : 'tasks'} linked to areas.`
                   : 'Your areas are quiet right now.'}
             </p>
           </div>
@@ -371,13 +479,27 @@ function OverviewBadge({ label, tone }: { label: string; tone: 'attention' | 'ac
   return <span className={cn('rounded border px-1.5 py-0.5 text-[10.5px]', toneClass)}>{label}</span>;
 }
 
+// Thin wrapper so "Try again" can force a fresh mount of the querying content
+// (re-running the Convex read) without smuggling a bogus arg into the validated
+// areaHome query.
 function AreaHomeBody({ areaId }: { areaId: string }) {
+  const [retryKey, setRetryKey] = useState(0);
+  return <AreaHomeContent key={retryKey} areaId={areaId} onRetry={() => setRetryKey((n) => n + 1)} />;
+}
+
+function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => void }) {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const setChatScope = useClientStore((s) => s.setChatScope);
+  const now = useMinuteNow();
+  const [artifactRefreshing, setArtifactRefreshing] = useState(false);
+  const [artifactRefreshError, setArtifactRefreshError] = useState<string | null>(null);
+  const [showStructuredFallback, setShowStructuredFallback] = useState(false);
+  const [areaView, setAreaView] = useState<'brief' | 'inbox'>('brief');
+  const requestedInitialArtifact = useRef(false);
   // Error-tolerant read: the persisted area id can outlive the area (deleted
-  // in Settings) — that must degrade to the chooser, not a crashed surface.
+  // in Settings) — that must degrade honestly, not crash the surface.
   const result = useConvexQuery({
     query: (api as any).albatross.areaHome,
     args: isAuthenticated ? { areaId: areaId as Id<'areas'> } : 'skip',
@@ -389,68 +511,205 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
     api.albatrossWorkV2.areaWork,
     isAuthenticated ? { areaId: areaId as Id<'areas'>, includeDone: true } : 'skip',
   ) as AreaWorkRow[] | undefined;
+  const pulse = useQuery(
+    api.albatrossRoutines.areaPulse,
+    isAuthenticated ? { areaId: areaId as Id<'areas'> } : 'skip',
+  ) as AreaPulseData | undefined;
+
+  const loadedHome = result.status === 'success' ? (result.data as AreaHomeData) : null;
+  const refreshArtifact = useCallback(async () => {
+    if (artifactRefreshing) return;
+    setArtifactRefreshing(true);
+    setArtifactRefreshError(null);
+    try {
+      const response = await fetch(`/api/albatross/area/${encodeURIComponent(areaId)}/brief`, {
+        method: 'POST',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Area artifact refresh failed.');
+    } catch (error) {
+      setArtifactRefreshError(error instanceof Error ? error.message : 'Area artifact refresh failed.');
+    } finally {
+      setArtifactRefreshing(false);
+    }
+  }, [areaId, artifactRefreshing]);
+
+  // Existing Area brief records predate full HTML artifacts. Compose the first
+  // document on open once, while leaving the explicit refresh control as the
+  // force-new-edition path thereafter.
+  useEffect(() => {
+    if (
+      !loadedHome ||
+      loadedHome.livingBrief?.artifactHtml ||
+      loadedHome.livingBrief?.status === 'generating'
+    )
+      return;
+    if (requestedInitialArtifact.current) return;
+    requestedInitialArtifact.current = true;
+    void refreshArtifact();
+  }, [loadedHome, refreshArtifact]);
+
+  useEffect(() => {
+    if (
+      showStructuredFallback &&
+      loadedHome?.livingBrief?.status === 'ready' &&
+      loadedHome.livingBrief.artifactHtml
+    ) {
+      setShowStructuredFallback(false);
+    }
+  }, [loadedHome, showStructuredFallback]);
 
   if (result.status === 'error') {
+    // Truthful: the query failed to load. We do not know the area was archived,
+    // so we never claim it — retry remounts and re-runs, "All areas" escapes.
     return (
-      <div className="flex h-full items-center justify-center p-8">
-        <div className="max-w-sm text-center">
-          <p className="text-[13.5px] font-medium">This area is unavailable.</p>
-          <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
-            It may have been archived or removed in Settings.
-          </p>
-          <Button
+      <div className="flex h-full flex-col">
+        <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            className="mt-4"
             onClick={() => setSelectedAreaId(null)}
+            className="text-[12px] text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:underline"
           >
-            Show all areas
-          </Button>
+            Areas
+          </button>
+        </header>
+        <div className="flex flex-1 items-center justify-center p-8">
+          <div className="max-w-sm text-center">
+            <p className="text-[13.5px] font-medium">This area couldn’t be loaded.</p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+              Something went wrong fetching it. Your data is safe — try again, or go back to all areas.
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                Try again
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedAreaId(null)}>
+                All areas
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
   if (result.status === 'pending') {
-    return <p className="px-4 py-6 text-[12.5px] text-[var(--color-text-muted)]">Loading area…</p>;
+    return <AreaHomeSkeleton />;
   }
 
   const home = result.data as AreaHomeData;
-  const sections = areaHomeSections(home.counts);
-  const sectionCount = (id: string) => sections.find((section) => section.id === id)?.count ?? 0;
-  const noLinks = areaHasNoLinks(home.counts);
 
-  const now = Date.now();
+  if (areaView === 'inbox') {
+    return <AreaInbox home={home} onAllAreas={() => setSelectedAreaId(null)} onViewChange={setAreaView} />;
+  }
+
+  // The generated document is the selected Area screen. React only supplies
+  // the sandbox, theme/action bridge, and small floating host controls. The
+  // structured renderer below is retained solely as an explicit recovery view.
+  if (home.livingBrief?.artifactHtml && !showStructuredFallback) {
+    return (
+      <AreaArtifactCanvas
+        home={home}
+        html={home.livingBrief.artifactHtml}
+        status={home.livingBrief.status}
+        generatedAt={home.livingBrief.generatedAt}
+        refreshError={artifactRefreshError || home.livingBrief.error || null}
+        refreshing={artifactRefreshing}
+        onRefresh={() => void refreshArtifact()}
+        onDiscuss={() => {
+          setChatScope({ kind: 'area', areaId: home.area._id });
+          setAiBarOpen(true);
+        }}
+        onAllAreas={() => setSelectedAreaId(null)}
+        onViewChange={setAreaView}
+        onStructuredFallback={() => setShowStructuredFallback(true)}
+        pulse={pulse}
+      />
+    );
+  }
+
+  if (!showStructuredFallback) {
+    const failed = home.livingBrief?.status === 'error' || Boolean(artifactRefreshError);
+    return (
+      <AreaArtifactUnavailable
+        area={home.area}
+        failed={failed}
+        refreshing={artifactRefreshing || home.livingBrief?.status === 'generating'}
+        error={artifactRefreshError || home.livingBrief?.error || null}
+        onRefresh={() => void refreshArtifact()}
+        onAllAreas={() => setSelectedAreaId(null)}
+        onViewChange={setAreaView}
+        onStructuredFallback={() => setShowStructuredFallback(true)}
+      />
+    );
+  }
+  // The backend returns bounded evidence previews (shown/hasMore), not exact
+  // mail/events/tasks totals. Derive the flat display-count shape the section
+  // and no-links helpers expect from those previews' `shown` counts.
+  const displayCounts = {
+    mail: home.counts.evidence.mail.shown,
+    events: home.counts.evidence.events.shown,
+    tasks: home.counts.evidence.tasks.shown,
+    facts: home.counts.facts,
+  };
+  const sections = areaHomeSections(displayCounts);
+  const sectionCount = (id: string) => sections.find((section) => section.id === id)?.count ?? 0;
+  const noLinks = areaHasNoLinks(displayCounts, home.counts.links.other.shown);
+  const evidenceBounded =
+    home.counts.evidence.mail.hasMore ||
+    home.counts.evidence.events.hasMore ||
+    home.counts.evidence.tasks.hasMore;
+
   const upcoming = home.events.filter((event) => event.endAt >= now);
-  const needsYou = areaNeedsYouRows(
-    { plans: home.plans, tasks: home.tasks, candidateFacts: home.facts.candidate },
-    now,
+  // One authoritative "Needs you" queue: Work waiting on an answer leads, then
+  // plans awaiting answers, overdue tasks, and suggested context to confirm.
+  // A Work item and its plan share an intent id, so the same intent can arrive
+  // from both sources — merge by identity, keeping the actionable work_input row.
+  const needsYou = mergeNeedsYouRows(
+    workNeedsYouRows(workRows),
+    areaNeedsYouRows({ plans: home.plans, tasks: home.tasks, candidateFacts: home.facts.candidate }, now),
   );
-  const pulse = areaPulse({
-    needsYou: needsYou.length,
-    plans: home.counts.plans,
-    projects: home.counts.projects,
-    places: home.counts.places,
-    upcoming: upcoming.length,
-  });
+  const needsYouBounded = home.counts.needsYouBounded || (workRows?.length ?? 0) >= 100;
   const headline = areaBriefHeadline({
     areaName: home.area.name,
     needsYou: needsYou.length,
+    needsYouBounded,
     upcoming: upcoming.length,
     plans: home.counts.plans,
     projects: home.counts.projects,
-    mail: home.counts.mail,
-    tasks: home.counts.tasks,
+    mail: displayCounts.mail,
+    tasks: displayCounts.tasks,
     candidateFacts: home.counts.facts.candidate,
+    evidenceBounded,
+    upcomingBounded: home.counts.evidence.events.hasMore,
   });
+  const brief = areaBriefState(home.livingBrief, headline);
+  const evidence = evidenceRollup({
+    mail: home.counts.evidence.mail,
+    events: home.counts.evidence.events,
+    tasks: home.counts.evidence.tasks,
+    facts: home.counts.facts,
+  });
+  // Work loads from an independent query. `undefined` is still loading; only a
+  // resolved array tells us whether the area truly has no work.
+  const workLoaded = workRows !== undefined;
+  const hasWork = (workRows?.length ?? 0) > 0;
   // The brief is empty only when the area has nothing the classifier or the
   // user has put here yet — then we explain rather than render empty sections.
+  // Gate on the Work query resolving so the empty-Area panel never flashes while
+  // Work is still loading and could yet fill the page.
   const briefEmpty =
+    workLoaded &&
+    !hasWork &&
     noLinks &&
     home.counts.plans === 0 &&
     home.counts.projects === 0 &&
     home.counts.places === 0 &&
     home.counts.facts.verified + home.counts.facts.candidate === 0;
+
+  const discuss = () => {
+    setChatScope({ kind: 'area', areaId: home.area._id });
+    setAiBarOpen(true);
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -468,61 +727,47 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
         <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
           {home.area.kind}
         </Badge>
-        <span className="hidden text-[11px] tabular-nums text-[var(--color-text-faint)] sm:inline">
-          {home.counts.facts.verified} verified · {home.counts.facts.candidate} suggested
-        </span>
         <AreaIndexStatusPill status={indexStatus} />
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          onClick={() => {
-            setChatScope({ kind: 'area', areaId: home.area._id });
-            setAiBarOpen(true);
-          }}
-        >
-          Discuss
-        </Button>
-        <RefreshBriefButton areaId={home.area._id} />
+        <AreaViewSwitcher value={areaView} onChange={setAreaView} />
+        <span className="ml-auto" />
+        <RefreshBriefButton areaId={home.area._id} canGenerate={brief.canGenerate} />
         <ManageLink />
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-10">
-        <BriefLead
-          home={home}
-          headline={headline}
-          pulse={pulse}
-          upcoming={upcoming.length}
-          needsYou={needsYou.length}
-          indexStatus={indexStatus}
-        />
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-12">
+        <BriefLead home={home} brief={brief} indexStatus={indexStatus} now={now} onDiscuss={discuss} />
         {briefEmpty ? (
           <>
-            <div className="mt-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
-              <p className="text-[13px] font-medium">Nothing here yet.</p>
+            <div className="mx-3 mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
+              <p className="text-[13px] font-medium">Nothing filed here yet.</p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                The classifier runs every 30 minutes and files this area&apos;s mail, events, and tasks as it
-                learns your context. Add facts in Settings to sharpen it.
+                Mail is linked here only when it specifically matches this area. Capture a plan above, or add
+                verified identities in Settings to sharpen the match.
               </p>
             </div>
             <ContextSection home={home} count={sectionCount('context')} />
           </>
         ) : (
           <>
-            <NeedsYouSection rows={needsYou} />
+            <NeedsYouSection rows={needsYou} bounded={needsYouBounded} />
             <ProjectsSection projects={home.projects} count={home.counts.projects} />
-            <WorkSections rows={workRows || []} />
-            <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">
-              <div className="min-w-0">
-                <EventsSection events={home.events} count={home.counts.events} />
-                <MailSection mail={home.mail} count={sectionCount('mail')} />
-                <TasksSection tasks={home.tasks} count={sectionCount('tasks')} />
-              </div>
-              <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-0 min-[1180px]:self-start">
-                <PlacesSection places={home.places} count={home.counts.places} />
-                <ContextSection home={home} count={sectionCount('context')} />
-              </aside>
-            </div>
+            <WorkSections rows={workRows} />
+            {shouldShowEvidenceBand(evidence.length, home.counts.places) ? (
+              <>
+                <EvidenceHeader segments={evidence} />
+                <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">
+                  <div className="min-w-0">
+                    <EventsSection events={home.events} count={sectionCount('events')} />
+                    <MailSection mail={home.mail} count={sectionCount('mail')} />
+                    <TasksSection tasks={home.tasks} count={sectionCount('tasks')} now={now} />
+                  </div>
+                  <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-0 min-[1180px]:self-start">
+                    <PlacesSection places={home.places} count={home.counts.places} />
+                    <ContextSection home={home} count={sectionCount('context')} />
+                  </aside>
+                </div>
+              </>
+            ) : null}
           </>
         )}
       </div>
@@ -530,122 +775,1059 @@ function AreaHomeBody({ areaId }: { areaId: string }) {
   );
 }
 
-function BriefLead({
+function AreaViewSwitcher({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: 'brief' | 'inbox';
+  onChange: (view: 'brief' | 'inbox') => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Area view"
+      className={cn(
+        'inline-flex items-center rounded-full bg-[var(--color-bg-muted)] p-0.5',
+        compact && 'bg-transparent p-0',
+      )}
+    >
+      {[
+        { id: 'brief' as const, label: 'Brief', icon: LayoutTemplate },
+        { id: 'inbox' as const, label: 'Inbox', icon: Inbox },
+      ].map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={value === item.id}
+            onClick={() => onChange(item.id)}
+            className={cn(
+              'inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors',
+              value === item.id &&
+                'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]',
+              compact && 'h-6 px-2 text-[10.5px]',
+            )}
+          >
+            <Icon className="size-3" aria-hidden />
+            {item.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AreaInbox({
   home,
-  headline,
-  pulse,
-  upcoming,
-  needsYou,
-  indexStatus,
+  onAllAreas,
+  onViewChange,
 }: {
   home: AreaHomeData;
-  headline: string;
-  pulse: ReturnType<typeof areaPulse>;
-  upcoming: number;
-  needsYou: number;
-  indexStatus?: AreaIndexStatusData;
+  onAllAreas: () => void;
+  onViewChange: (view: 'brief' | 'inbox') => void;
 }) {
-  const indexSummary = areaIndexStatusSummary(indexStatus);
+  const { isAuthenticated } = useConvexAuth();
+  const areas = useQuery(api.albatross.listAreasOverview, isAuthenticated ? { status: 'active' } : 'skip') as
+    | AreaOverviewRow[]
+    | undefined;
+  const moveThreads = useMutation((api as any).albatross.moveMailThreadsToArea);
+  const [search, setSearch] = useState('');
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [lastSelectionKey, setLastSelectionKey] = useState<string | null>(null);
+  const pendingKeysRef = useRef(new Set<string>());
+  const [pendingKeys, setPendingKeys] = useState<string[]>([]);
+  const [hiddenKeys, setHiddenKeys] = useState<string[]>([]);
+  const setSelectedThread = useClientStore((state) => state.setSelectedThread);
+  const setThreadAccount = useClientStore((state) => state.setThreadAccount);
+  const selectedThreadId = useClientStore((state) => state.selectedThreadId);
+  const threadAccount = useClientStore((state) => state.threadAccount);
+  const destinations = (areas || []).filter((area) => area._id !== home.area._id);
+  const rowByKey = useMemo(() => new Map(home.mail.map((row) => [areaMailRowKey(row), row])), [home.mail]);
+  const visibleRows = useMemo(
+    () =>
+      filterAreaMailRows(
+        home.mail.filter((row) => !hiddenKeys.includes(areaMailRowKey(row))),
+        { query: search },
+      ),
+    [hiddenKeys, home.mail, search],
+  );
+  const visibleKeys = useMemo(() => visibleRows.map(areaMailRowKey), [visibleRows]);
+  const visibleKeySet = useMemo(() => new Set(visibleKeys), [visibleKeys]);
+  const selectedVisibleKeys = selectedKeys.filter((key) => visibleKeySet.has(key));
+  const selectedRows = selectedVisibleAreaMailRows(visibleRows, selectedVisibleKeys);
+  const selectionHasPending = selectedVisibleKeys.some((key) => pendingKeys.includes(key));
+  const unread = home.mail.filter((row) => row.unread).length;
+  const mailboxCount = new Set(home.mail.map((row) => row.accountId)).size;
+
+  useEffect(() => {
+    setSelectedKeys((current) => current.filter((key) => rowByKey.has(key)));
+  }, [rowByKey]);
+
+  const toggleSelected = useCallback((key: string) => {
+    setSelectedKeys((current) =>
+      current.includes(key) ? current.filter((candidate) => candidate !== key) : [...current, key],
+    );
+    setLastSelectionKey(key);
+  }, []);
+
+  const selectRangeTo = useCallback(
+    (key: string) => {
+      const anchor = lastSelectionKey && visibleKeys.includes(lastSelectionKey) ? lastSelectionKey : key;
+      const start = visibleKeys.indexOf(anchor);
+      const end = visibleKeys.indexOf(key);
+      if (start < 0 || end < 0) {
+        toggleSelected(key);
+        return;
+      }
+      const from = Math.min(start, end);
+      const to = Math.max(start, end);
+      setSelectedKeys((current) => [...new Set([...current, ...visibleKeys.slice(from, to + 1)])]);
+      setLastSelectionKey(key);
+    },
+    [lastSelectionKey, toggleSelected, visibleKeys],
+  );
+
+  const beginPending = useCallback((keys: string[]) => {
+    if (keys.some((key) => pendingKeysRef.current.has(key))) return false;
+    for (const key of keys) pendingKeysRef.current.add(key);
+    setPendingKeys([...pendingKeysRef.current]);
+    return true;
+  }, []);
+
+  const endPending = useCallback((keys: string[]) => {
+    for (const key of keys) pendingKeysRef.current.delete(key);
+    setPendingKeys([...pendingKeysRef.current]);
+  }, []);
+
+  const moveRows = useCallback(
+    async (rows: AreaMailRow[], destination: AreaOverviewRow) => {
+      if (!rows.length) return;
+      const keys = rows.map(areaMailRowKey);
+      if (!beginPending(keys)) return;
+      try {
+        const result = await moveThreads({
+          sourceAreaId: home.area._id as Id<'areas'>,
+          destinationAreaId: destination._id as Id<'areas'>,
+          threads: rows.map((row) => ({ accountId: row.accountId, threadId: row.providerThreadId })),
+        });
+        if (!result.moved) throw new Error('Those threads were no longer filed in this Area.');
+        setSelectedKeys((current) => current.filter((key) => !keys.includes(key)));
+        toast.success(
+          `${result.moved} ${result.moved === 1 ? 'thread' : 'threads'} moved to ${destination.name}`,
+        );
+        if (result.skipped) toast.info(`${result.skipped} already moved or unavailable`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not move mail to that Area.');
+      } finally {
+        endPending(keys);
+      }
+    },
+    [beginPending, endPending, home.area._id, moveThreads],
+  );
+
+  const mutateMail = useCallback(
+    async (keys: string[], action: 'archive_thread' | 'trash_thread') => {
+      const operations = keys.flatMap((key) => {
+        const row = rowByKey.get(key);
+        return row ? [{ key, row }] : [];
+      });
+      if (!operations.length) return;
+      const operationKeys = operations.map(({ key }) => key);
+      if (!beginPending(operationKeys)) return;
+      try {
+        const results = await Promise.allSettled(
+          operations.map(({ row }) =>
+            callTool(action, { account: row.accountId, threadId: row.providerThreadId }),
+          ),
+        );
+        const succeeded = operations.flatMap((operation, index) =>
+          results[index]?.status === 'fulfilled' ? [operation.key] : [],
+        );
+        const failed = results.length - succeeded.length;
+        setHiddenKeys((current) => [...new Set([...current, ...succeeded])]);
+        setSelectedKeys((current) => current.filter((key) => !succeeded.includes(key)));
+        if (succeeded.length) {
+          toast.success(`${action === 'archive_thread' ? 'Archived' : 'Trashed'} ${succeeded.length}`);
+        }
+        if (failed) toast.error(`Could not update ${failed} ${failed === 1 ? 'thread' : 'threads'}.`);
+      } finally {
+        endPending(operationKeys);
+      }
+    },
+    [beginPending, endPending, rowByKey],
+  );
+
   return (
-    <section className="px-3 pb-2 pt-4">
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
-        <div className="flex flex-col gap-2 min-[760px]:flex-row min-[760px]:items-start min-[760px]:justify-between">
-          <div className="flex min-w-0 gap-3">
-            <AreaMark area={home.area} size="lg" />
-            <div className="min-w-0">
-              <p className="text-[14px] font-medium leading-snug text-[var(--color-text)]">
-                {home.livingBrief?.status === 'ready' ? home.livingBrief.lede : headline}
-              </p>
-              {home.livingBrief?.status === 'ready' && home.livingBrief.summary ? (
-                <p className="mt-1.5 max-w-2xl text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-                  {home.livingBrief.summary}
+    <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
+      <header className="flex min-h-13 items-center gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-2.5">
+        <button
+          type="button"
+          onClick={onAllAreas}
+          className="text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+        >
+          Areas
+        </button>
+        <span className="text-[var(--color-text-faint)]">/</span>
+        <AreaMark area={home.area} />
+        <h2 className="min-w-0 truncate text-[14px] font-semibold">{home.area.name}</h2>
+        <AreaViewSwitcher value="inbox" onChange={onViewChange} />
+        <a
+          href="/settings?tab=areas"
+          className="ml-auto text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          Manage
+        </a>
+      </header>
+      <section className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg)] p-2 sm:p-3">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+          <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+                <InputGroupAddon>
+                  <Search className="size-4 text-[var(--color-text-faint)]" aria-hidden />
+                </InputGroupAddon>
+                <InputGroupInput
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={`Search mail in ${home.area.name}`}
+                  aria-label={`Search mail in ${home.area.name}`}
+                  className="text-[13px]"
+                />
+                {search ? (
+                  <InputGroupAddon align="inline-end">
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="grid size-6 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)]"
+                      aria-label="Clear Area mail search"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </InputGroupAddon>
+                ) : null}
+              </InputGroup>
+              <div className="shrink-0 text-right">
+                <p className="text-[11px] font-medium tabular-nums text-[var(--color-text)]">
+                  {home.mail.length} mail{unread ? ` · ${unread} unread` : ''}
                 </p>
-              ) : null}
-              {home.area.description ? (
-                <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
-                  {home.area.description}
-                </p>
-              ) : null}
-              {home.area.primaryDomain ? (
-                <p className="mt-1 truncate text-[11.5px] text-[var(--color-text-faint)]">
-                  {home.area.primaryDomain}
-                </p>
-              ) : null}
-              {indexSummary ? (
-                <p className="mt-1 truncate text-[11.5px] text-[var(--color-text-faint)]">
-                  {indexSummary.label}
-                </p>
-              ) : null}
+                <p className="text-[9.5px] text-[var(--color-text-faint)]">Filed by Area evidence</p>
+              </div>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-1.5">
-            <BriefProperty
-              icon={<AlertCircle className="size-3" aria-hidden />}
-              label="Needs"
-              value={needsYou}
-              active={needsYou > 0}
-            />
-            <BriefProperty
-              icon={<CalendarDays className="size-3" aria-hidden />}
-              label="Upcoming"
-              value={upcoming}
-              active={upcoming > 0}
-            />
-            <BriefProperty
-              icon={<Inbox className="size-3" aria-hidden />}
-              label="Plans"
-              value={home.counts.plans}
-              active={home.counts.plans > 0}
-            />
-            <BriefProperty
-              icon={<Sparkles className="size-3" aria-hidden />}
-              label="Context"
-              value={home.counts.facts.candidate}
-              active={home.counts.facts.candidate > 0}
-            />
+
+          {selectedVisibleKeys.length ? (
+            <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-3 py-2 text-[12px]">
+              <span className="font-semibold text-[var(--color-text)]">
+                {selectedVisibleKeys.length} selected
+              </span>
+              {selectedVisibleKeys.length < visibleKeys.length ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedKeys((current) => [...new Set([...current, ...visibleKeys])])}
+                  className="ml-2 flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                >
+                  <CheckSquare className="size-3" />
+                  Select visible
+                </button>
+              ) : null}
+              <AreaMoveMenu
+                areas={destinations}
+                disabled={!selectedRows.length || selectionHasPending}
+                onMove={(area) => void moveRows(selectedRows, area)}
+                trigger={
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-lg bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] shadow-[var(--shadow-control)] hover:bg-[var(--color-accent-hover)]"
+                  >
+                    <FolderInput className="size-3" />
+                    Move to Area
+                  </button>
+                }
+              />
+              <button
+                type="button"
+                disabled={selectionHasPending}
+                onClick={() => void mutateMail(selectedVisibleKeys, 'archive_thread')}
+                className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-45"
+              >
+                <Archive className="size-3" />
+                Archive
+              </button>
+              <button
+                type="button"
+                disabled={selectionHasPending}
+                onClick={() => void mutateMail(selectedVisibleKeys, 'trash_thread')}
+                className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-45"
+              >
+                <Trash2 className="size-3" />
+                Trash
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedKeys([])}
+                className="ml-auto grid size-5 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text)]"
+                title="Clear selection"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ) : null}
+
+          <div className="scrollable flex min-h-0 flex-1 flex-col">
+            {visibleRows.length ? (
+              <div>
+                {visibleRows.map((row, index) => {
+                  const key = areaMailRowKey(row);
+                  const previous = index ? visibleRows[index - 1] : null;
+                  const group = inboxDateGroupLabel(row.lastDate);
+                  const previousGroup = previous ? inboxDateGroupLabel(previous.lastDate) : null;
+                  const inboxRow: ThreadRow = {
+                    _id: row.providerThreadId,
+                    account: row.accountId,
+                    from: row.fromAddress,
+                    fromAddress: row.fromAddress,
+                    subject: row.subject,
+                    snippet: row.snippet,
+                    lastDate: row.lastDate,
+                    unread: row.unread,
+                    starred: row.starred,
+                    labels: row.labels,
+                    messageCount: row.messageCount,
+                    smartCategory: row.smartCategory,
+                  };
+                  return (
+                    <Fragment key={key}>
+                      {group !== previousGroup ? (
+                        <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
+                          <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+                            {group}
+                          </span>
+                          <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+                        </div>
+                      ) : null}
+                      <InboxThreadRow
+                        item={inboxRow}
+                        rowId={key}
+                        rowAccount={row.accountId}
+                        senderEmail={emailFromHeader(row.fromAddress) || ''}
+                        providerPhotoUrl={null}
+                        showAccount={mailboxCount > 1}
+                        activeCategory={null}
+                        selected={selectedKeys.includes(key)}
+                        active={selectedThreadId === row.providerThreadId && threadAccount === row.accountId}
+                        selecting={selectedVisibleKeys.length > 0}
+                        actionsDisabled={pendingKeys.includes(key)}
+                        onSelectRange={selectRangeTo}
+                        onToggleSelect={toggleSelected}
+                        onOpen={(accountId, threadId) => {
+                          setThreadAccount(accountId);
+                          setSelectedThread(threadId);
+                        }}
+                        onPrefetch={() => undefined}
+                        onApplyLabels={() => undefined}
+                        onArchive={(rowKey) => void mutateMail([rowKey], 'archive_thread')}
+                        onTrash={(rowKey) => void mutateMail([rowKey], 'trash_thread')}
+                        onCorrect={() => undefined}
+                        onUndoLast={() => undefined}
+                        customLabels={[]}
+                        actionMenu={
+                          <AreaMoveMenu
+                            areas={destinations}
+                            disabled={pendingKeys.includes(key)}
+                            onMove={(area) => void moveRows([row], area)}
+                          />
+                        }
+                      />
+                    </Fragment>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid min-h-64 flex-1 place-items-center px-6 py-12 text-center">
+                <div>
+                  <Inbox className="mx-auto size-5 text-[var(--color-text-faint)]" aria-hidden />
+                  <p className="mt-3 text-[12.5px] font-medium">
+                    {search
+                      ? `No mail in ${home.area.name} matches that search.`
+                      : `No mail in ${home.area.name}.`}
+                  </p>
+                  <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+                    Moving a thread here teaches Albatross how this Area should be filed next time.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-        {pulse.length ? (
-          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-[var(--color-text-muted)]">
-            {pulse.map((segment, index) => (
-              <span key={segment.id} className="flex items-center gap-2">
-                {index > 0 ? <span className="text-[var(--color-text-faint)]">·</span> : null}
-                <span className={cn(segment.id === 'needsYou' && 'font-medium text-[var(--color-text)]')}>
-                  {segment.label}
-                </span>
-              </span>
-            ))}
+      </section>
+    </div>
+  );
+}
+
+function AreaMoveMenu({
+  areas,
+  disabled,
+  onMove,
+  trigger,
+}: {
+  areas: AreaOverviewRow[];
+  disabled?: boolean;
+  onMove: (area: AreaOverviewRow) => void;
+  trigger?: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        asChild
+        disabled={disabled}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+        }}
+      >
+        {trigger || (
+          <button
+            type="button"
+            className="grid size-6 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-45"
+            title="Move to another Area"
+          >
+            <MoreHorizontal className="size-3.5" />
+            <span className="sr-only">Move to another Area</span>
+          </button>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="max-h-80 w-64 overflow-y-auto"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <DropdownMenuLabel>Move to Area</DropdownMenuLabel>
+        <p className="px-2 pb-2 text-[10.5px] leading-relaxed text-[var(--color-text-faint)]">
+          This corrects the filing and strengthens future Area matches.
+        </p>
+        <DropdownMenuSeparator />
+        {areas.length ? (
+          areas.map((area) => (
+            <DropdownMenuItem key={area._id} onSelect={() => onMove(area)} className="gap-2.5">
+              <AreaMark area={area} />
+              <span className="min-w-0 flex-1 truncate">{area.name}</span>
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled>No other active Areas</DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function LivingProjectPulse({ pulse, areaName }: { pulse?: AreaPulseData; areaName: string }) {
+  const [open, setOpen] = useState(false);
+  const projects = pulse?.projects || [];
+  if (!projects.length) return null;
+  const questions = projects.flatMap((row) => row.pendingQuestions);
+  const routines = projects.reduce((count, row) => count + row.routines.length, 0);
+  const steps = projects.slice(0, 5).map((row) => ({
+    id: row.project._id,
+    label: row.project.title,
+    description: `${row.completedTaskCount}/${row.taskCount} tasks · ${row.routines.length} ${row.routines.length === 1 ? 'routine' : 'routines'}`,
+    status: (row.taskCount > 0 && row.completedTaskCount >= row.taskCount
+      ? 'completed'
+      : row.project.status === 'active'
+        ? 'in-progress'
+        : 'pending') as 'pending' | 'in-progress' | 'completed',
+  }));
+  return (
+    <div className="pointer-events-none absolute bottom-3 left-3 z-10">
+      <div className="pointer-events-auto w-[min(390px,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left"
+          aria-expanded={open}
+        >
+          <span className="size-2 rounded-full bg-[var(--color-accent)]" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10px] text-[var(--color-text-faint)]">Live project pulse</span>
+            <span className="block truncate text-[12px] font-medium">
+              {projects.length} {projects.length === 1 ? 'project' : 'projects'} · {routines}{' '}
+              {routines === 1 ? 'routine' : 'routines'}
+              {questions.length ? ` · ${questions.length} question${questions.length === 1 ? '' : 's'}` : ''}
+            </span>
+          </span>
+          <ChevronDown className={cn('size-3.5 transition-transform', open && 'rotate-180')} aria-hidden />
+        </button>
+        {open ? (
+          <div className="max-h-[min(65vh,600px)] space-y-3 overflow-y-auto border-t border-[var(--color-border)] p-3">
+            <ProgressTracker
+              id={`area-pulse-${pulse?.areaId || areaName}`}
+              steps={steps}
+              className="!min-w-0 !max-w-none [&>div]:!gap-2 [&>div]:!p-3"
+            />
+            {questions[0] ? <PulseQuestion key={questions[0]._id} question={questions[0]} /> : null}
+            <p className="px-1 text-[10px] leading-relaxed text-[var(--color-text-faint)]">
+              Live state from projects, tasks, routines, and your answers. Observed activity never marks a
+              project done by itself.
+            </p>
           </div>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PulseQuestion({
+  question,
+}: {
+  question: AreaPulseData['projects'][number]['pendingQuestions'][number];
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [answer, setAnswer] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const options = question.options?.length
+    ? question.options
+    : question.responseKind === 'boolean'
+      ? [
+          { id: 'yes', label: 'Yes' },
+          { id: 'no', label: 'No' },
+        ]
+      : [];
+  const submit = async () => {
+    const option = options.find((row) => row.id === selected);
+    const value = answer.trim() || option?.label || '';
+    if (!value || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/albatross/work/questions/${encodeURIComponent(question._id)}/answer`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            answer: value,
+            answeredOptionId: selected || undefined,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          }),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Could not save that answer.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save that answer.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <p className="text-[12.5px] font-medium leading-snug">{question.prompt}</p>
+      {question.reason ? (
+        <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--color-text-muted)]">{question.reason}</p>
+      ) : null}
+      {options.length ? (
+        <OptionList
+          id={`pulse-question-${question._id}`}
+          options={options}
+          selectionMode="single"
+          value={selected}
+          onChange={(value) => setSelected(typeof value === 'string' ? value : null)}
+          density="compact"
+          hideActions
+          className="mt-2 !min-w-0 !max-w-none"
+        />
+      ) : null}
+      <div className="mt-2 flex gap-2">
+        <input
+          value={answer}
+          onChange={(event) => setAnswer(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void submit();
+          }}
+          placeholder={options.length ? 'Or answer in your own words' : 'Answer in your own words'}
+          className="h-8 min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-[11.5px] outline-none focus:border-[var(--color-accent)]"
+        />
+        <Button size="sm" className="h-8" disabled={busy || (!answer.trim() && !selected)} onClick={submit}>
+          {busy ? 'Saving…' : 'Answer'}
+        </Button>
+      </div>
+      {error ? <p className="mt-2 text-[10.5px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
+function AreaArtifactCanvas({
+  home,
+  html,
+  status,
+  generatedAt,
+  refreshError,
+  refreshing,
+  onRefresh,
+  onDiscuss,
+  onAllAreas,
+  onViewChange,
+  onStructuredFallback,
+  pulse,
+}: {
+  home: AreaHomeData;
+  html: string;
+  status: 'generating' | 'ready' | 'error';
+  generatedAt?: number;
+  refreshError: string | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onDiscuss: () => void;
+  onAllAreas: () => void;
+  onViewChange: (view: 'brief' | 'inbox') => void;
+  onStructuredFallback: () => void;
+  pulse?: AreaPulseData;
+}) {
+  const area = home.area;
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [artifactReady, setArtifactReady] = useState(false);
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const setPendingOpenWorkId = useClientStore((s) => s.setPendingOpenWorkId);
+  const setChatScope = useClientStore((s) => s.setChatScope);
+  const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
+  const appFont = useClientStore((s) => s.appFont);
+  const accentHue = useClientStore((s) => s.accentHue);
+  const accentChroma = useClientStore((s) => s.accentChroma);
+  const accent2Hue = useClientStore((s) => s.accent2Hue);
+  const accent2Chroma = useClientStore((s) => s.accent2Chroma);
+  const bgHue = useClientStore((s) => s.bgHue);
+  const surfaceTint = useClientStore((s) => s.surfaceTint);
+  const srcDoc = useMemo(() => injectAreaArtifactRuntime(html), [html]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new artifact must restart its own readiness handshake.
+  useEffect(() => setArtifactReady(false), [html]);
+  const areaId = area._id;
+  const allowedWorkIds = useMemo(
+    () =>
+      new Set([
+        ...home.plans.map((row) => String(row.intentId)),
+        ...home.projects.map((row) => String(row.sourceIntentId || '')).filter(Boolean),
+      ]),
+    [home.plans, home.projects],
+  );
+  const allowedThreadKeys = useMemo(
+    () => new Set(home.mail.map((row) => `${row.accountId}:${row.providerThreadId}`)),
+    [home.mail],
+  );
+  const allowedEventKeys = useMemo(
+    () => new Set(home.events.map((row) => `${row.accountId}:${row.providerEventId}`)),
+    [home.events],
+  );
+  const allowedQuestionIds = useMemo(
+    () =>
+      new Set(
+        (pulse?.projects || []).flatMap((row) =>
+          row.pendingQuestions.map((question) => String(question._id)),
+        ),
+      ),
+    [pulse],
+  );
+
+  const postTheme = useCallback(() => {
+    postBriefTheme(frameRef.current?.contentWindow, appFont);
+  }, [appFont]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolved CSS is read by postBriefTheme; customization slices intentionally retrigger it.
+  useEffect(() => {
+    postTheme();
+  }, [postTheme, accentHue, accentChroma, accent2Hue, accent2Chroma, bgHue, surfaceTint, srcDoc]);
+
+  useEffect(() => {
+    const onMessage = async (event: MessageEvent) => {
+      const frame = frameRef.current;
+      if (!frame || event.source !== frame.contentWindow) return;
+      if (isBriefArtifactReadyMessage(event.data)) {
+        setArtifactReady(true);
+        return;
+      }
+      const message = parseAreaArtifactMessage(event.data, areaId);
+      if (!message) return;
+      const ack = (ok: boolean, error?: string) =>
+        frame.contentWindow?.postMessage(
+          { source: 'lab86-host', action: message.action, ok, error, payload: message.payload },
+          '*',
+        );
+      try {
+        switch (message.action) {
+          case 'open_work':
+            if (!allowedWorkIds.has(message.payload.workId)) return ack(false, 'unknown work');
+            setSelectedWorkId(message.payload.workId);
+            return ack(true);
+          case 'open_thread':
+            if (!allowedThreadKeys.has(`${message.payload.accountId}:${message.payload.threadId}`))
+              return ack(false, 'unknown thread');
+            setThreadAccount(message.payload.accountId);
+            setSelectedThread(message.payload.threadId);
+            return ack(true);
+          case 'open_event':
+            if (!allowedEventKeys.has(`${message.payload.accountId}:${message.payload.eventId}`))
+              return ack(false, 'unknown event');
+            setPrimaryView('calendar');
+            return ack(true);
+          case 'open_tasks':
+            setPrimaryView('tasks');
+            return ack(true);
+          case 'discuss_area':
+            setChatScope({ kind: 'area', areaId });
+            setAiBarOpen(true);
+            return ack(true);
+          case 'capture_intent': {
+            // The HTML is model-authored from untrusted evidence. A script
+            // injection cannot silently create Work: the top-level host owns
+            // this explicit confirmation and the mutation.
+            if (!window.confirm(`Capture “${message.payload.text}” in ${area.name}?`)) {
+              return ack(false, 'cancelled');
+            }
+            const response = await fetch('/api/albatross/capture', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                rawText: message.payload.text,
+                source: 'chat',
+                areaId,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              }),
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'Capture failed.');
+            const workIds = Array.isArray(body.workIds) ? body.workIds.map(String) : [];
+            if (workIds[0]) setPendingOpenWorkId(workIds[0]);
+            for (const workId of workIds) {
+              void fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+              }).catch(() => undefined);
+            }
+            return ack(true);
+          }
+          case 'answer_question': {
+            if (!allowedQuestionIds.has(message.payload.questionId)) return ack(false, 'unknown question');
+            // Generated HTML can suggest an answer control, but only the
+            // host-owned UI may authorize persisting a user answer.
+            if (!window.confirm(`Submit “${message.payload.text}” as this answer?`)) {
+              return ack(false, 'cancelled');
+            }
+            const response = await fetch(
+              `/api/albatross/work/questions/${encodeURIComponent(message.payload.questionId)}/answer`,
+              {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  answer: message.payload.text,
+                  answeredOptionId: message.payload.answeredOptionId,
+                  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                }),
+              },
+            );
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'Answer failed.');
+            return ack(true);
+          }
+        }
+      } catch (error) {
+        return ack(false, error instanceof Error ? error.message : 'Action failed.');
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [
+    area.name,
+    areaId,
+    allowedEventKeys,
+    allowedQuestionIds,
+    allowedThreadKeys,
+    allowedWorkIds,
+    setAiBarOpen,
+    setChatScope,
+    setPendingOpenWorkId,
+    setPrimaryView,
+    setSelectedThread,
+    setSelectedWorkId,
+    setThreadAccount,
+  ]);
+
+  const updating = refreshing || status === 'generating';
+  const editionLabel =
+    status === 'error'
+      ? 'Last good edition'
+      : updating
+        ? 'Composing a new edition…'
+        : generatedAt
+          ? `Updated ${areaFreshness(generatedAt, Date.now())}`
+          : 'Area artifact';
+
+  return (
+    <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)]" data-area-artifact-canvas>
+      <iframe
+        ref={frameRef}
+        title={`Area brief for ${area.name}`}
+        srcDoc={srcDoc}
+        onLoad={postTheme}
+        sandbox="allow-scripts"
+        aria-busy={!artifactReady}
+        className={cn(
+          'h-full w-full border-0 bg-[var(--color-bg)] transition-opacity duration-300',
+          artifactReady ? 'opacity-100' : 'opacity-0',
+        )}
+      />
+
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3">
+        <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 pr-2 shadow-sm backdrop-blur-md">
+          <button
+            type="button"
+            onClick={onAllAreas}
+            className="rounded-full px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+          >
+            Areas
+          </button>
+          <span className="text-[var(--color-text-faint)]">/</span>
+          <AreaMark area={area} />
+          <span className="max-w-48 truncate text-[12px] font-medium">{area.name}</span>
+          <span className="mx-0.5 h-4 w-px bg-[var(--color-border)]" aria-hidden />
+          <AreaViewSwitcher value="brief" onChange={onViewChange} compact />
+        </div>
+
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
+          <span
+            className={cn(
+              'hidden max-w-44 truncate px-2 text-[10.5px] sm:block',
+              status === 'error' || refreshError
+                ? 'text-[var(--color-danger)]'
+                : 'text-[var(--color-text-faint)]',
+            )}
+            aria-live="polite"
+          >
+            {refreshError ? `Error: ${refreshError}` : editionLabel}
+          </span>
+          <button
+            type="button"
+            onClick={onDiscuss}
+            className="rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+          >
+            Discuss
+          </button>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={updating}
+            className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+            title="Compose a fresh Area edition"
+          >
+            <RefreshCw className={cn('size-3', updating && 'motion-safe:animate-spin')} aria-hidden />
+            <span className="hidden md:inline">Refresh</span>
+          </button>
+          <a
+            href="/settings?tab=areas"
+            className="rounded-full px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+          >
+            Manage
+          </a>
+          {status === 'error' ? (
+            <button
+              type="button"
+              onClick={onStructuredFallback}
+              className="sr-only focus:not-sr-only focus:rounded-full focus:px-2.5 focus:py-1 focus:text-[11.5px]"
+            >
+              Open structured fallback
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <LivingProjectPulse pulse={pulse} areaName={area.name} />
+    </div>
+  );
+}
+
+function AreaArtifactUnavailable({
+  area,
+  failed,
+  refreshing,
+  error,
+  onRefresh,
+  onAllAreas,
+  onViewChange,
+  onStructuredFallback,
+}: {
+  area: AreaIdentityLike;
+  failed: boolean;
+  refreshing: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onAllAreas: () => void;
+  onViewChange: (view: 'brief' | 'inbox') => void;
+  onStructuredFallback: () => void;
+}) {
+  return (
+    <div className="relative flex h-full min-h-[420px] overflow-hidden bg-[var(--color-bg)]">
+      <div className="pointer-events-none absolute inset-0 opacity-45 [background-image:radial-gradient(var(--color-border)_0.7px,transparent_0.7px)] [background-size:13px_13px] [mask-image:linear-gradient(to_bottom,black,transparent_80%)]" />
+      <button
+        type="button"
+        onClick={onAllAreas}
+        className="absolute left-4 top-4 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 px-3 py-1.5 text-[11.5px] text-[var(--color-text-muted)] shadow-sm backdrop-blur hover:text-[var(--color-text)]"
+      >
+        Areas
+      </button>
+      <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-sm">
+        <AreaViewSwitcher value="brief" onChange={onViewChange} compact />
+      </div>
+      <div className="relative m-auto max-w-lg px-8 text-center">
+        <AreaMark area={area} size="lg" />
+        <p className="mt-5 font-display text-[clamp(24px,4vw,42px)] italic leading-tight tracking-[-0.025em]">
+          {failed ? `The ${area.name} edition needs another pass.` : `Composing ${area.name}.`}
+        </p>
+        <p className="mx-auto mt-3 max-w-md text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+          {failed
+            ? 'The full HTML artifact was not available. Your scoped Work and evidence are unchanged.'
+            : 'Albatross is shaping this Area’s Work, Projects, calendar, tasks, and evidence into one living document.'}
+        </p>
+        {error ? <p className="mt-2 text-[11px] text-[var(--color-danger)]">{error}</p> : null}
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+          <Button type="button" size="sm" onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw className={cn('size-3.5', refreshing && 'motion-safe:animate-spin')} aria-hidden />
+            {refreshing ? 'Composing…' : failed ? 'Try again' : 'Compose artifact'}
+          </Button>
+          {failed ? (
+            <Button type="button" size="sm" variant="outline" onClick={onStructuredFallback}>
+              Open structured fallback
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The living brief is the page's thesis: an editorial serif lead using the
+// cached AI lede/summary when ready, and an honest generating/error/absent
+// state otherwise (never fabricated progress). Discuss is contextual here,
+// attached to the brief rather than competing in the header.
+function BriefLead({
+  home,
+  brief,
+  indexStatus,
+  now,
+  onDiscuss,
+}: {
+  home: AreaHomeData;
+  brief: AreaBriefState;
+  indexStatus?: AreaIndexStatusData;
+  now: number;
+  onDiscuss: () => void;
+}) {
+  const indexSummary = areaIndexStatusSummary(indexStatus);
+  const freshness = brief.mode === 'ready' ? areaFreshness(brief.generatedAt, now) : null;
+  return (
+    <section className="px-3 pb-1 pt-5">
+      <div className="flex min-w-0 items-start gap-3.5">
+        <AreaMark area={home.area} size="lg" />
+        <div className="min-w-0 flex-1">
+          {/* Edition line: what kind of brief this is + its freshness/state. */}
+          <div className="flex items-center gap-2">
+            <span className="font-display text-[11px] italic leading-none text-[var(--color-text-muted)]">
+              Area brief
+            </span>
+            {brief.mode === 'generating' ? (
+              <span className="inline-flex items-center gap-1 text-[10.5px] text-[var(--color-accent)]">
+                <RefreshCw className="size-2.5 motion-safe:animate-spin" aria-hidden />
+                Updating
+              </span>
+            ) : brief.mode === 'error' ? (
+              <span className="text-[10.5px] text-[var(--color-danger)]">Needs refresh</span>
+            ) : freshness ? (
+              <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
+                Updated {freshness}
+              </span>
+            ) : null}
+            <span className="h-px flex-1 self-center bg-[var(--color-border)]/60" />
+          </div>
+          <p
+            className={cn(
+              'mt-2 font-display text-[19px] leading-[1.28] tracking-[-0.01em] text-[var(--color-text)] min-[760px]:text-[21px]',
+              brief.stale && 'opacity-60 transition-opacity',
+            )}
+          >
+            {brief.lede}
+          </p>
+          {brief.summary ? (
+            <p
+              className={cn(
+                'mt-2 max-w-2xl text-[13px] leading-relaxed text-[var(--color-text-muted)]',
+                brief.stale && 'opacity-60 transition-opacity',
+              )}
+            >
+              {brief.summary}
+            </p>
+          ) : null}
+          {brief.note ? (
+            <p className="mt-1.5 text-[11.5px] text-[var(--color-text-faint)]">{brief.note}</p>
+          ) : null}
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              type="button"
+              onClick={onDiscuss}
+              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline"
+            >
+              <MessageSquareText className="size-3.5" aria-hidden />
+              Ask about this area
+            </button>
+            {home.area.primaryDomain ? (
+              <span className="truncate text-[11.5px] text-[var(--color-text-faint)]">
+                {home.area.primaryDomain}
+              </span>
+            ) : null}
+            {indexSummary ? (
+              <span className="truncate text-[11.5px] text-[var(--color-text-faint)]">
+                {indexSummary.label}
+              </span>
+            ) : null}
+          </div>
+        </div>
       </div>
     </section>
   );
 }
 
-function BriefProperty({
-  icon,
-  label,
-  value,
-  active,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number;
-  active: boolean;
-}) {
+// The header that opens the quieter supporting-evidence band, so mail/events/
+// tasks/context read as source material beneath the brief and work, not as
+// peers of them. The rollup summarizes volume in one line.
+function EvidenceHeader({ segments }: { segments: ReturnType<typeof evidenceRollup> }) {
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10.5px]',
-        active
-          ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-          : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
-      )}
-    >
-      {icon}
-      <span>{label}</span>
-      <span className="font-medium tabular-nums text-[var(--color-text)]">{value}</span>
-    </span>
+    <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-7">
+      <span className="font-display text-[13px] italic leading-none text-[var(--color-text)]">Evidence</span>
+      <span className="text-[11px] leading-none text-[var(--color-text-faint)]">
+        {segments.map((s) => s.label).join(' · ')}
+      </span>
+      <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+    </div>
+  );
+}
+
+function AreaHomeSkeleton() {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
+        <span className="h-4 w-4 rounded-sm bg-[var(--color-bg-muted)] motion-safe:animate-pulse" />
+        <span className="h-4 w-28 rounded bg-[var(--color-bg-muted)] motion-safe:animate-pulse" />
+      </div>
+      <div className="space-y-3 px-6 pt-6">
+        <span className="block h-3 w-24 rounded bg-[var(--color-bg-muted)] motion-safe:animate-pulse" />
+        <span className="block h-5 w-3/4 rounded bg-[var(--color-bg-muted)] motion-safe:animate-pulse" />
+        <span className="block h-4 w-1/2 rounded bg-[var(--color-bg-muted)] motion-safe:animate-pulse" />
+      </div>
+    </div>
   );
 }
 
@@ -661,20 +1843,33 @@ function OverflowRow({ overflow, noun, action }: { overflow: number; noun: strin
   );
 }
 
-// The "needs you" queue: the few things in this area actually waiting on the
-// user. Each row carries an honest affordance — plan answers open the plan,
-// context suggestions point at Settings. Overdue tasks stay informational
-// (they are already shown, with their date, in the Tasks section).
-function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
+// The primary action queue: the few things in this area actually waiting on the
+// user. When non-empty it leads the brief in a lightly-emphasized panel so it
+// reads as "do this" rather than one row group among many. Each row carries an
+// honest affordance — Work/plans open their surface, context points at Settings,
+// overdue tasks stay informational (they also appear, dated, under Tasks).
+function NeedsYouSection({ rows, bounded }: { rows: NeedsYouRow[]; bounded: boolean }) {
   const setPendingOpenIntentId = useClientStore((s) => s.setPendingOpenIntentId);
-  if (rows.length === 0) return null;
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
+  const [expanded, setExpanded] = useState(false);
+  if (rows.length === 0 && !bounded) return null;
+  const collapsed = splitBriefRows(rows, 6);
+  const visibleRows = expanded ? rows : collapsed.visible;
   return (
-    <section>
-      <SectionHeader label="Needs you" count={rows.length} />
-      {rows.map((row) => (
+    <section className="mx-3 mt-3 overflow-hidden rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)]/45">
+      <div className="flex items-baseline gap-2.5 px-3 pb-1.5 pt-2.5">
+        <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text)]">
+          Needs you
+        </span>
+        <span className="text-[11px] tabular-nums leading-none text-[var(--color-text-faint)]">
+          {rows.length > 0 ? `${rows.length}${bounded ? '+' : ''}` : 'More'}
+        </span>
+        <span className="h-px flex-1 self-center bg-[var(--color-warning)]/25" />
+      </div>
+      {visibleRows.map((row) => (
         <div
           key={row.id}
-          className="flex items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 last:border-b-0"
+          className="flex items-center gap-2.5 border-t border-[var(--color-warning)]/15 px-3 py-2"
         >
           <span
             className="size-1.5 shrink-0 rounded-full"
@@ -689,7 +1884,11 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
               <span className="truncate text-[11.5px] text-[var(--color-text-muted)]">{row.detail}</span>
             ) : null}
           </div>
-          {row.kind === 'plan_answers' && row.intentId ? (
+          {row.kind === 'work_input' && row.workId ? (
+            <Button type="button" variant="outline" size="xs" onClick={() => setSelectedWorkId(row.workId!)}>
+              Answer
+            </Button>
+          ) : row.kind === 'plan_answers' && row.intentId ? (
             <Button
               type="button"
               variant="outline"
@@ -708,20 +1907,51 @@ function NeedsYouSection({ rows }: { rows: NeedsYouRow[] }) {
           ) : null}
         </div>
       ))}
+      {collapsed.overflow > 0 ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="w-full border-t border-[var(--color-warning)]/15 px-3 py-2 text-left text-[11.5px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          {expanded ? 'Show fewer' : `Show ${collapsed.overflow} more from this brief`}
+        </button>
+      ) : null}
+      {bounded ? (
+        <div className="flex items-center gap-2 border-t border-[var(--color-warning)]/15 px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+          <span className="min-w-0 flex-1">This is a bounded preview; more may be waiting.</span>
+          <ViewLink view="intents">Open work</ViewLink>
+          <ViewLink view="tasks">Open tasks</ViewLink>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function WorkSections({ rows }: { rows: AreaWorkRow[] }) {
+// Work: the smaller outcomes Albatross is moving through, grouped by momentum.
+// Items awaiting the user's answer are NOT duplicated here — they lead the page
+// in the single "Needs you" queue. This keeps Work about what is in motion.
+function WorkSections({ rows }: { rows: AreaWorkRow[] | undefined }) {
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  // Work is an independent query. While it loads (undefined), hold a quiet
+  // placeholder rather than flashing "Nothing in motion" — the empty state is
+  // only honest once the query has resolved to an empty array.
+  if (rows === undefined) {
+    return (
+      <section>
+        <SectionHeader label="Work" count={0} />
+        <p className="px-3 py-3 text-[12px] text-[var(--color-text-faint)]">Loading work…</p>
+      </section>
+    );
+  }
   const active = rows.filter(
     (row) =>
       !['waiting', 'blocked', 'done', 'archived'].includes(row.workState || 'active') &&
       row.agentState !== 'needs_input',
   );
-  const waiting = rows.filter((row) => ['waiting', 'blocked'].includes(row.workState || ''));
+  const waiting = rows.filter(
+    (row) => ['waiting', 'blocked'].includes(row.workState || '') && row.agentState !== 'needs_input',
+  );
   const done = rows.filter((row) => row.workState === 'done').slice(0, 6);
-  const needs = rows.filter((row) => row.agentState === 'needs_input');
 
   const renderGroup = (label: string, group: AreaWorkRow[], quiet = false) => {
     if (!group.length) return null;
@@ -774,12 +2004,13 @@ function WorkSections({ rows }: { rows: AreaWorkRow[] }) {
     );
   };
 
-  if (!rows.length) {
+  if (!active.length && !waiting.length && !done.length) {
     return (
       <section>
         <SectionHeader label="Work" count={0} />
         <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">
-          Nothing active here yet. Unload something above and Albatross will start working it through.
+          Nothing in motion here yet. Get something out of your head above and Albatross will start working it
+          through.
         </p>
       </section>
     );
@@ -787,74 +2018,91 @@ function WorkSections({ rows }: { rows: AreaWorkRow[] }) {
 
   return (
     <>
-      {renderGroup('Needs you', needs)}
-      {renderGroup('Active Work', active)}
+      {renderGroup('Active work', active)}
       {renderGroup('Waiting / blocked', waiting, true)}
       {renderGroup('Recently done', done, true)}
     </>
   );
 }
 
-// Projects the area owns. A project born from a plan links back to that plan
-// (honest: the source intent exists); a standalone project stays informational
-// rather than pointing at a surface it has no page on.
+// Projects / Epics: the durable multi-week structures the area owns. Rendered
+// heavier than Work rows — bordered cards with a real completion bar (from task
+// counts only), active sprint, and a state chip — so the multi-week work is
+// visibly a different primitive. A project born from Work links back to it;
+// a standalone project stays informational rather than faking a destination.
 function ProjectsSection({ projects, count }: { projects: AreaProjectRow[]; count: number }) {
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const rows = splitBriefRows(projects, BRIEF_LIMITS.projects);
   if (count === 0) return null;
   return (
     <section>
-      <SectionHeader label="Projects" count={count} />
-      {rows.visible.map((project) => (
-        <div
-          key={project.projectId}
-          className="flex items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 last:border-b-0"
-        >
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate font-display text-[13px] font-medium">{project.title}</span>
-              {project.status === 'paused' ? (
-                <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
-                  Paused
-                </Badge>
-              ) : null}
-            </div>
-            {project.outcome ? (
-              <span className="truncate text-[11.5px] text-[var(--color-text-muted)]">{project.outcome}</span>
-            ) : null}
-            {typeof project.taskCount === 'number' ? (
-              <div className="mt-1.5 flex items-center gap-2">
-                <div className="h-1 min-w-20 flex-1 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
-                  <div
-                    className="h-full rounded-full bg-[var(--color-accent)]"
-                    style={{
-                      width: `${project.taskCount ? ((project.completedTaskCount || 0) / project.taskCount) * 100 : 0}%`,
-                    }}
-                  />
-                </div>
-                <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
-                  {project.completedTaskCount || 0}/{project.taskCount}
+      <SectionHeader label="Projects & Epics" count={count} />
+      <div className="grid grid-cols-1 gap-2 px-3 py-1 min-[880px]:grid-cols-2">
+        {rows.visible.map((project) => {
+          const progress = projectProgress(project.completedTaskCount, project.taskCount);
+          const state = projectStateMeta(project.status);
+          return (
+            <div
+              key={project.projectId}
+              className="flex flex-col gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-3"
+            >
+              <div className="flex items-start gap-2">
+                <span className="min-w-0 flex-1 truncate font-display text-[14px] font-medium leading-snug">
+                  {project.title}
+                </span>
+                <span
+                  className={cn(
+                    'shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-none',
+                    state.tone === 'active'
+                      ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                      : state.tone === 'paused'
+                        ? 'border-[var(--color-warning)]/35 bg-[var(--color-warning-soft)] text-[var(--color-warning)]'
+                        : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
+                  )}
+                >
+                  {state.label}
                 </span>
               </div>
-            ) : null}
-            {project.activeSprint ? (
-              <span className="mt-1 truncate text-[10.5px] text-[var(--color-text-faint)]">
-                Current sprint · {project.activeSprint.title}
-              </span>
-            ) : null}
-          </div>
-          {project.sourceIntentId ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => setSelectedWorkId(project.sourceIntentId!)}
-            >
-              Open Work
-            </Button>
-          ) : null}
-        </div>
-      ))}
+              {project.outcome ? (
+                <span className="line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                  {project.outcome}
+                </span>
+              ) : null}
+              {progress.hasBar ? (
+                <div className="mt-0.5 flex items-center gap-2">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
+                    <div
+                      className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 motion-reduce:transition-none"
+                      style={{ width: `${progress.percent}%` }}
+                    />
+                  </div>
+                  <span className="shrink-0 text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
+                    {progress.completed}/{progress.total}
+                  </span>
+                </div>
+              ) : null}
+              <div className="mt-0.5 flex items-center gap-2">
+                {project.activeSprint ? (
+                  <span className="min-w-0 flex-1 truncate text-[10.5px] text-[var(--color-text-faint)]">
+                    Current sprint · {project.activeSprint.title}
+                  </span>
+                ) : (
+                  <span className="min-w-0 flex-1" />
+                )}
+                {project.sourceIntentId ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWorkId(project.sourceIntentId!)}
+                    className="shrink-0 text-[11px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline"
+                  >
+                    Open work
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
       <OverflowRow overflow={rows.overflow} noun="projects" />
     </section>
   );
@@ -1022,7 +2270,7 @@ function EventsSection({ events, count }: { events: AreaEventRow[]; count: numbe
   );
 }
 
-function TasksSection({ tasks, count }: { tasks: AreaTaskRow[]; count: number }) {
+function TasksSection({ tasks, count, now }: { tasks: AreaTaskRow[]; count: number; now: number }) {
   const rows = splitBriefRows(tasks, BRIEF_LIMITS.tasks);
   return (
     <section>
@@ -1035,7 +2283,7 @@ function TasksSection({ tasks, count }: { tasks: AreaTaskRow[]; count: number })
         <SectionEmpty />
       ) : (
         rows.visible.map((task) => {
-          const meta = taskRowMeta(task);
+          const meta = taskRowMeta(task, now);
           const done = meta.state === 'done';
           return (
             <div
@@ -1236,11 +2484,7 @@ function ViewLink({
 }
 
 function SectionEmpty() {
-  return (
-    <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">
-      Nothing classified here yet — the classifier runs every 30 minutes.
-    </p>
-  );
+  return <p className="px-3 py-3 text-[12px] text-[var(--color-text-muted)]">Nothing in this section yet.</p>;
 }
 
 // The quiet per-row provenance tag for AI-suggested (unverified) links.
@@ -1256,7 +2500,6 @@ function AreaMark({ area, size = 'sm' }: { area: AreaIdentityLike; size?: 'sm' |
   const [failed, setFailed] = useState(false);
   const src = !failed ? area.imageUrl || area.faviconUrl || null : null;
   const box = size === 'lg' ? 'size-10 rounded-lg' : 'size-4 rounded-sm';
-  const dot = size === 'lg' ? 'size-5 rounded-md' : 'size-2 rounded-full';
   return (
     <span
       className={cn(
@@ -1276,27 +2519,69 @@ function AreaMark({ area, size = 'sm' }: { area: AreaIdentityLike; size?: 'sm' |
           onError={() => setFailed(true)}
         />
       ) : (
-        <span className={dot} style={{ backgroundColor: categoricalColor(area._id) }} />
+        <span
+          className={cn(
+            'grid size-full place-items-center font-semibold text-white',
+            size === 'lg' ? 'text-[12px] tracking-[-0.02em]' : 'text-[6px] leading-none',
+          )}
+          style={{ backgroundColor: categoricalColor(area._id) }}
+        >
+          {areaInitials(area.name)}
+        </span>
       )}
     </span>
   );
 }
 
-function RefreshBriefButton({ areaId }: { areaId: string }) {
-  const reindex = useMutation(api.albatross.reindexMyAreas);
+// The one honest brief affordance. It hits POST /api/albatross/area/[id]/brief,
+// which both regenerates the living brief and refiles the area — so "Generate"
+// / "Refresh" does exactly what it says. The reactive areaHome query then shows
+// the generating → ready/error transition on its own; we only reflect the
+// in-flight request here.
+function RefreshBriefButton({ areaId, canGenerate }: { areaId: string; canGenerate: boolean }) {
   const [busy, setBusy] = useState(false);
-  const [queued, setQueued] = useState(false);
+  // Whether the *request itself* failed to reach/complete. This is separate from
+  // the brief's reactive server-side error state (generating → error), which the
+  // BriefLead already shows: this only tells the user their click didn't land, so
+  // retrying is worthwhile. No toast — the label carries it.
+  const [requestFailed, setRequestFailed] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
   const run = async () => {
     if (busy) return;
     setBusy(true);
+    setRequestFailed(false);
+    setServerError(null);
     try {
-      await reindex({ areaId: areaId as Id<'areas'> });
-      setQueued(true);
-      window.setTimeout(() => setQueued(false), 2800);
+      const response = await fetch(`/api/albatross/area/${encodeURIComponent(areaId)}/brief`, {
+        method: 'POST',
+      });
+      // A non-OK response landed successfully; keep it distinct from a network
+      // delivery failure and surface the route's controlled message.
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        setServerError(payload?.error || 'Brief refresh was not accepted.');
+      }
+    } catch {
+      // Network error — the request never completed.
+      setRequestFailed(true);
     } finally {
       setBusy(false);
     }
   };
+  const label = busy
+    ? 'Working…'
+    : requestFailed || serverError
+      ? 'Retry'
+      : canGenerate
+        ? 'Generate brief'
+        : 'Refresh brief';
+  const title = requestFailed
+    ? 'That request didn’t go through — try again'
+    : serverError
+      ? `${serverError} Try again.`
+      : canGenerate
+        ? 'Generate this area brief'
+        : 'Refresh this area brief';
   return (
     <Button
       type="button"
@@ -1304,11 +2589,14 @@ function RefreshBriefButton({ areaId }: { areaId: string }) {
       size="xs"
       disabled={busy}
       onClick={() => void run()}
-      title="Refresh this area brief"
-      className="ml-auto inline-flex gap-1.5 text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+      title={title}
+      className={cn(
+        'inline-flex gap-1.5 text-[11.5px] hover:text-[var(--color-text)]',
+        requestFailed ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-muted)]',
+      )}
     >
-      <RefreshCw className={cn('size-3', busy && 'animate-spin')} aria-hidden />
-      {queued ? 'Queued' : 'Refresh brief'}
+      <RefreshCw className={cn('size-3', busy && 'motion-safe:animate-spin')} aria-hidden />
+      {label}
     </Button>
   );
 }
@@ -1324,10 +2612,7 @@ function AreaIndexStatusPill({ status }: { status?: AreaIndexStatusData }) {
         : summary.tone === 'done'
           ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600'
           : 'border-[var(--color-border)] text-[var(--color-text-muted)]';
-  const latestRun = status?.latestRun;
-  const title = latestRun
-    ? `${latestRun.reason || 'Area filing'} · ${latestRun.status} · ${latestRun.scanned.toLocaleString()} scanned, ${latestRun.inserted.toLocaleString()} filed`
-    : summary.label;
+  const title = areaIndexStatusTitle(status) || summary.label;
   return (
     <span
       title={title}

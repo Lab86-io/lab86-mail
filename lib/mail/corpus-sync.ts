@@ -4,14 +4,39 @@ import { requireNylas } from '@/lib/nylas/client';
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
-import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 import { detectMailSuggestions } from './suggestion-detectors';
 
 const mailCorpusApi = (api as any).mailCorpus;
 const accountsApi = (api as any).accounts;
-const notificationsApi = (api as any).albatrossNotifications;
+
+const defaultClassifierLoaders = {
+  smart: () => import('./llm-classify'),
+  areas: () => import('../albatross/area-classifier'),
+};
+
+let classifierLoaders = defaultClassifierLoaders;
+
+export function __setMailClassifierLoadersForTest(overrides: Partial<typeof defaultClassifierLoaders> = {}) {
+  classifierLoaders = { ...defaultClassifierLoaders, ...overrides };
+}
+
+export async function kickMailClassifiers(userId: string) {
+  // Dynamic imports keep the sync/provider modules out of the AI gateway's
+  // static dependency graph. Dispatch independently: one unavailable chunk
+  // must not suppress the other queue. Both classifiers debounce per user.
+  await Promise.all([
+    classifierLoaders
+      .smart()
+      .then((smart) => smart.kickLlmClassification(userId))
+      .catch((error) => console.warn('[mail-corpus] Smart classifier kick failed', error)),
+    classifierLoaders
+      .areas()
+      .then((areas) => areas.kickAreaClassification(userId))
+      .catch((error) => console.warn('[mail-corpus] Area classifier kick failed', error)),
+  ]);
+}
 
 export interface CorpusSyncResult {
   ok: true;
@@ -109,12 +134,7 @@ export async function backfillMailCorpusAccount({
         lastBatchMessages: messages.length,
       },
     });
-    // New rows may be flagged llmPending; drain them once the batch lands.
-    // Dynamic import: llm-classify pulls in the AI tool layer, which loops
-    // back into this module at static-import time.
-    void import('./llm-classify')
-      .then(({ kickLlmClassification }) => kickLlmClassification(userId))
-      .catch(() => undefined);
+    void kickMailClassifiers(userId);
     return {
       ok: true,
       accountId: row.accountId,
@@ -288,10 +308,8 @@ export async function runCorpusBackfill({
         lastBatchMessages: messages.length,
       },
     });
-    void import('./llm-classify')
-      .then(({ kickLlmClassification }) => kickLlmClassification(userId))
-      .catch(() => undefined);
-    await detectMailSuggestions(row, messages);
+    void kickMailClassifiers(userId);
+    detectMailSuggestions(row, messages);
     result = {
       ok: true,
       accountId: row.accountId,
@@ -450,9 +468,7 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
       progress: { stage: 'webhook', type: metadata.type, eventId: metadata.eventId },
       lastIncrementalSyncAt: Date.now(),
     });
-    void import('./llm-classify')
-      .then(({ kickLlmClassification }) => kickLlmClassification(row.userId))
-      .catch(() => undefined);
+    void kickMailClassifiers(row.userId);
     return { ok: true, duplicate: false, eventId: metadata.eventId };
   } catch (err: any) {
     await markWebhookProcessed(metadata, 'error', err?.message || 'webhook processing failed');
@@ -502,6 +518,7 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
     throw err;
   }
   const messages = [corpusMessageFromNylas(row, raw.data || payload)];
+  detectMailSuggestions(row, messages);
   await upsertCorpus(row, {
     messages,
     threads: corpusThreadsFromMessages(messages),
@@ -512,30 +529,6 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
     },
     incremental: true,
   });
-  const suggestions = await detectMailSuggestions(row, messages);
-  if (
-    suggestions.created === 0 &&
-    /message.*created|created.*message/i.test(metadata.type) &&
-    messages[0] &&
-    messages[0].receivedAt >= Date.now() - 15 * 60_000
-  ) {
-    const message = messages[0];
-    const queued = await convexMutation<{ notificationId: string; created: boolean }>(
-      notificationsApi.queueMailNotification,
-      {
-        userId: row.userId,
-        accountId: row.accountId,
-        threadId: message.providerThreadId,
-        messageId: message.providerMessageId,
-        sender: message.from,
-        subject: message.subject,
-        snippet: message.snippet,
-      },
-    );
-    if (queued.created) {
-      await dispatchNativeNotification(row.userId, queued.notificationId).catch(() => undefined);
-    }
-  }
 }
 
 async function getConnectedAccount(userId: string, accountId: string) {

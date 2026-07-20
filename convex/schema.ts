@@ -212,12 +212,24 @@ export default defineSchema({
     smartPrimary: v.optional(v.string()),
     smartCustomKeys: v.optional(v.array(v.string())),
     classifiedAt: v.optional(v.number()),
-    // LLM-once classification: threads the deterministic pass isn't sure about
-    // get exactly one model verdict (nano tier), persisted here forever.
-    // llmPending flags rows awaiting that verdict; user rules always override.
+    // Every latest message gets one lightweight Smart Category model verdict.
+    // A changed latestMessageId clears the old verdict and reopens llmPending;
+    // user rules still win when the stored verdict is merged.
+    latestMessageId: v.optional(v.string()),
     llmCategory: v.optional(v.any()),
     llmClassifiedAt: v.optional(v.number()),
+    llmClassifiedMessageId: v.optional(v.string()),
     llmPending: v.optional(v.boolean()),
+    // Area routing watermark. Areas are a SPARSE overlay: most threads belong to
+    // zero areas, so "has no areaArtifactLinks row" cannot mean "not yet
+    // classified" — a zero-area verdict is a real, successful answer. This
+    // records which classifier version last ruled on the thread, which is what
+    // makes routing both idempotent (don't re-ask) and reclassifiable (a bumped
+    // AREA_CLASSIFIER_VERSION makes every thread eligible again).
+    areaClassifierVersion: v.optional(v.number()),
+    areaClassifiedAt: v.optional(v.number()),
+    areaClassifiedMessageId: v.optional(v.string()),
+    areaRoutingPending: v.optional(v.boolean()),
     yearMonth: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -236,6 +248,8 @@ export default defineSchema({
     .index('by_user_primary_unread', ['userId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_account_primary_unread', ['userId', 'accountId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_llm_pending', ['userId', 'llmPending', 'lastDate'])
+    .index('by_user_area_version', ['userId', 'areaClassifierVersion', 'lastDate'])
+    .index('by_user_area_pending', ['userId', 'areaRoutingPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.
     .index('by_smart_primary', ['smartPrimary']),
 
@@ -268,10 +282,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_grant', ['grantId'])
-    .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_user_account_thread_received', ['userId', 'accountId', 'providerThreadId', 'receivedAt'])
     .index('by_account_message', ['accountId', 'providerMessageId'])
@@ -397,6 +408,11 @@ export default defineSchema({
     reason: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
     confirmationRefs: v.array(albatrossConfirmationRef),
+    // Which automatic classifier version produced this link. Absent on links the
+    // user authored by hand. Only ever set on automatic decisions, and only
+    // those are eligible to be superseded by a newer version — verified /
+    // user-confirmed links are authoritative and are never rewritten.
+    classifierVersion: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -404,6 +420,7 @@ export default defineSchema({
     .index('by_area', ['areaId'])
     .index('by_user_area', ['userId', 'areaId'])
     .index('by_user_area_status', ['userId', 'areaId', 'status'])
+    .index('by_user_area_kind_status_updatedAt', ['userId', 'areaId', 'artifactKind', 'status', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_artifact', ['userId', 'artifactKind', 'artifactId'])
     .index('by_user_account_artifact', ['userId', 'accountId', 'artifactKind', 'artifactId'])
@@ -418,8 +435,20 @@ export default defineSchema({
     scanned: v.number(),
     inserted: v.number(),
     matched: v.number(),
-    personal: v.number(),
+    // Legacy: the count of threads swept into the system Personal area by the
+    // old catch-all backfill. Retired with that fallback (#100) and optional so
+    // historical run rows still validate; nothing writes it any more.
+    personal: v.optional(v.number()),
+    // Links retired by the cleanup pass: system Personal fallbacks and weak
+    // areaContext-sourced candidates, minus anything the user confirmed.
+    retired: v.optional(v.number()),
     skipped: v.number(),
+    // Full-corpus work is intentionally coalesced. `pages` gives every run a
+    // hard safety budget; changes that arrive while it is running request one
+    // follow-up instead of spawning overlapping scans.
+    pages: v.optional(v.number()),
+    rerunRequestedAt: v.optional(v.number()),
+    coalescedInto: v.optional(v.string()),
     error: v.optional(v.string()),
     startedAt: v.optional(v.number()),
     finishedAt: v.optional(v.number()),
@@ -427,8 +456,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
-    .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_area_updatedAt', ['userId', 'areaId', 'updatedAt']),
 
   albatrossProjects: defineTable({
@@ -477,9 +506,31 @@ export default defineSchema({
   // Work detail, notification center, and optional browser PiP.
   albatrossWorkQuestions: defineTable({
     userId: v.string(),
-    workId: v.id('albatrossIntents'),
+    // Work remains optional for project/routine questions. This table predates
+    // generic questions, but is intentionally evolved in place so one ask can
+    // render in chat, a living brief, Work, and notifications without copies.
+    workId: v.optional(v.id('albatrossIntents')),
+    projectId: v.optional(v.id('albatrossProjects')),
+    routineId: v.optional(v.id('albatrossRoutines')),
+    dedupeKey: v.optional(v.string()),
     legacyQuestionId: v.optional(v.string()),
-    kind: v.union(v.literal('clarification'), v.literal('completion'), v.literal('correction')),
+    kind: v.union(
+      v.literal('clarification'),
+      v.literal('completion'),
+      v.literal('correction'),
+      v.literal('checkin'),
+      v.literal('consent'),
+      v.literal('reflection'),
+    ),
+    responseKind: v.optional(
+      v.union(
+        v.literal('text'),
+        v.literal('single_select'),
+        v.literal('multi_select'),
+        v.literal('number'),
+        v.literal('boolean'),
+      ),
+    ),
     prompt: v.string(),
     reason: v.optional(v.string()),
     options: v.optional(
@@ -500,18 +551,180 @@ export default defineSchema({
     answer: v.optional(v.string()),
     answeredOptionId: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
+    metadata: v.optional(v.any()),
     createdAt: v.number(),
     answeredAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_work', ['workId'])
+    .index('by_project', ['projectId'])
+    .index('by_routine', ['routineId'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_work_status', ['userId', 'workId', 'status']),
 
-  // Cached editorial prose for a living Area brief. Operational sections are
-  // always queried live; this record can regenerate in the background without
-  // freezing questions, Work, tasks, or Project progress in an HTML snapshot.
+  // A Routine is an explicitly consented recurring behavior attached to a
+  // durable Project/Epic. The scheduler materializes durable runs; a retry can
+  // never duplicate a task, question, or notification because runKey is stable
+  // in the user's local timezone.
+  albatrossRoutines: defineTable({
+    userId: v.string(),
+    projectId: v.id('albatrossProjects'),
+    areaId: v.optional(v.id('areas')),
+    title: v.string(),
+    purpose: v.optional(v.string()),
+    kind: v.union(
+      v.literal('task'),
+      v.literal('checkin'),
+      v.literal('task_and_checkin'),
+      v.literal('review'),
+    ),
+    status: v.union(v.literal('proposed'), v.literal('active'), v.literal('paused'), v.literal('archived')),
+    consent: v.union(v.literal('proposed'), v.literal('enabled'), v.literal('declined')),
+    cadence: v.union(v.literal('daily'), v.literal('weekly'), v.literal('weekdays'), v.literal('custom')),
+    daysOfWeek: v.optional(v.array(v.number())),
+    localTime: v.string(),
+    timezone: v.string(),
+    quietHoursStart: v.optional(v.string()),
+    quietHoursEnd: v.optional(v.string()),
+    taskTemplate: v.optional(
+      v.object({
+        title: v.string(),
+        description: v.optional(v.string()),
+        priority: v.optional(v.union(v.literal('low'), v.literal('medium'), v.literal('high'))),
+      }),
+    ),
+    questionTemplate: v.optional(
+      v.object({
+        prompt: v.string(),
+        reason: v.optional(v.string()),
+        responseKind: v.optional(
+          v.union(
+            v.literal('text'),
+            v.literal('single_select'),
+            v.literal('multi_select'),
+            v.literal('number'),
+            v.literal('boolean'),
+          ),
+        ),
+        options: v.optional(
+          v.array(v.object({ id: v.string(), label: v.string(), description: v.optional(v.string()) })),
+        ),
+      }),
+    ),
+    notification: v.object({
+      enabled: v.boolean(),
+      channel: v.union(
+        v.literal('in_app'),
+        v.literal('web_push'),
+        v.literal('email'),
+        v.literal('preferred'),
+      ),
+    }),
+    nextRunAt: v.number(),
+    lastRunAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_project', ['projectId'])
+    .index('by_area', ['areaId'])
+    .index('by_user_status', ['userId', 'status'])
+    .index('by_status_nextRunAt', ['status', 'nextRunAt'])
+    .index('by_user_project_status', ['userId', 'projectId', 'status']),
+
+  albatrossRoutineRuns: defineTable({
+    userId: v.string(),
+    routineId: v.id('albatrossRoutines'),
+    projectId: v.id('albatrossProjects'),
+    areaId: v.optional(v.id('areas')),
+    runKey: v.string(),
+    localDate: v.string(),
+    scheduledFor: v.number(),
+    status: v.union(
+      v.literal('queued'),
+      v.literal('running'),
+      v.literal('completed'),
+      v.literal('skipped'),
+      v.literal('error'),
+    ),
+    taskCardId: v.optional(v.id('cards')),
+    questionId: v.optional(v.id('albatrossWorkQuestions')),
+    notificationId: v.optional(v.id('albatrossNotifications')),
+    error: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_routine', ['routineId'])
+    .index('by_project', ['projectId'])
+    .index('by_routine_runKey', ['routineId', 'runKey'])
+    .index('by_user_status_scheduled', ['userId', 'status', 'scheduledFor']),
+
+  // Source-normalized evidence is the substrate for the personal index. The
+  // target is optional: unassigned evidence remains searchable until the user
+  // or classifier links it to an Area, Project, Work item, or Routine.
+  albatrossEvidence: defineTable({
+    userId: v.string(),
+    targetKind: v.optional(
+      v.union(v.literal('area'), v.literal('project'), v.literal('work'), v.literal('routine')),
+    ),
+    targetId: v.optional(v.string()),
+    sourceKind: v.union(
+      v.literal('mail_thread'),
+      v.literal('calendar_event'),
+      v.literal('task'),
+      v.literal('chat'),
+      v.literal('question_answer'),
+      v.literal('area_fact'),
+      v.literal('github_issue'),
+      v.literal('github_pull_request'),
+      v.literal('github_project'),
+      v.literal('github_project_item'),
+      v.literal('github_commit'),
+      v.literal('mcp_item'),
+      v.literal('manual'),
+    ),
+    sourceId: v.string(),
+    connectionId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    title: v.string(),
+    summary: v.optional(v.string()),
+    url: v.optional(v.string()),
+    occurredAt: v.number(),
+    weight: v.number(),
+    confidence: v.number(),
+    trust: v.union(
+      v.literal('observed'),
+      v.literal('inferred'),
+      v.literal('confirmed'),
+      v.literal('rejected'),
+    ),
+    dedupeKey: v.string(),
+    searchText: v.string(),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_occurredAt', ['userId', 'occurredAt'])
+    .index('by_user_target', ['userId', 'targetKind', 'targetId'])
+    .index('by_user_source', ['userId', 'sourceKind', 'sourceId'])
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
+    .index('by_user_connection', ['userId', 'connectionId'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'sourceKind', 'targetKind', 'targetId'],
+    }),
+
+  // Cached AI-composed Area document. The full selected-Area canvas is rendered
+  // from artifactHtml in an opaque sandbox; the smaller prose fields remain as
+  // an honest deterministic fallback while the first artifact is composing or
+  // when generation is unavailable. Regeneration preserves the last good HTML.
   albatrossAreaBriefs: defineTable({
     userId: v.string(),
     areaId: v.id('areas'),
@@ -778,6 +991,7 @@ export default defineSchema({
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
+    .index('by_user_autoassigned', ['userId', 'areaAutoAssigned'])
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
@@ -1008,7 +1222,12 @@ export default defineSchema({
     .index('by_account_calendar_event', ['accountId', 'providerCalendarId', 'providerEventId'])
     .index('by_account_master', ['accountId', 'masterEventId'])
     .index('by_user_account_calendar_start', ['userId', 'accountId', 'providerCalendarId', 'startAt'])
-    .index('by_grant', ['grantId']),
+    .index('by_user_account_calendar_end', ['userId', 'accountId', 'providerCalendarId', 'endAt'])
+    .index('by_grant', ['grantId'])
+    .searchIndex('by_search_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
+    }),
 
   calendarEventCorpus: defineTable({
     userId: v.string(),
@@ -1052,6 +1271,21 @@ export default defineSchema({
       searchField: 'searchText',
       filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
     }),
+
+  dataMigrations: defineTable({
+    name: v.string(),
+    status: v.optional(v.union(v.literal('running'), v.literal('completed'))),
+    phase: v.optional(v.union(v.literal('canonical'), v.literal('legacy'))),
+    cursor: v.optional(v.string()),
+    canonicalScanned: v.optional(v.number()),
+    canonicalMigrated: v.optional(v.number()),
+    legacyDeleted: v.optional(v.number()),
+    legacyMigrated: v.optional(v.number()),
+    legacySkipped: v.optional(v.number()),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    result: v.optional(v.any()),
+  }).index('by_name', ['name']),
 
   calendarSyncStates: defineTable({
     userId: v.string(),
@@ -1202,8 +1436,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_board', ['boardId'])
+    .index('by_board_updatedAt', ['boardId', 'updatedAt'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
+    .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_source_thread', ['userId', 'sourceThreadId'])
     .index('by_user_source_calendar_event', ['userId', 'sourceCalendarEventId'])
     .index('by_user_due', ['userId', 'dueAt']),
@@ -1376,6 +1612,9 @@ export default defineSchema({
       v.literal('work_question'),
       v.literal('approval'),
       v.literal('completion_suggestion'),
+      // Retained for notifications written by the earlier mail/event notifier.
+      // Current writers do not create these values, but deployed rows must
+      // remain readable while they age out of the notification center.
       v.literal('event_suggestion'),
       v.literal('mail_message'),
       v.literal('brief_ready'),
@@ -1596,6 +1835,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_status', ['status'])
     .index('by_server', ['server']),
 
   mcpCredentials: defineTable({
@@ -1608,6 +1848,7 @@ export default defineSchema({
     // beside their rotating access and refresh tokens.
     oauthClientInformationEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    oauthClientInformationEncrypted: v.optional(v.string()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
     createdAt: v.number(),
@@ -1615,6 +1856,18 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId']),
+
+  mcpOAuthStates: defineTable({
+    userId: v.string(),
+    state: v.string(),
+    server: v.string(),
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
 
   mcpItems: defineTable({
     userId: v.string(),
@@ -1644,12 +1897,14 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_user_connection_updated', ['userId', 'connectionId', 'updatedAtSource'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_user_updated', ['userId', 'updatedAtSource'])
     .searchIndex('by_search_text', {
       searchField: 'searchText',
-      filterFields: ['userId', 'server', 'connectionId', 'state'],
+      filterFields: ['userId', 'server', 'connectionId', 'kind', 'state', 'repository', 'organization'],
     }),
 
   mcpSyncStates: defineTable({
@@ -1662,6 +1917,8 @@ export default defineSchema({
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),
     itemCount: v.optional(v.number()),
+    accountEmail: v.optional(v.string()),
+    workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1684,6 +1941,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_card', ['cardId']),
 });
