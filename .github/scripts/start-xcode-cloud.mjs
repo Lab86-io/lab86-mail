@@ -1,4 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
+import { appendFileSync } from "node:fs";
 
 const requiredEnvironment = [
   "ASC_ISSUER_ID",
@@ -77,3 +78,10 @@ const buildRun = JSON.parse(responseBody).data;
 console.log(
   `Started Xcode Cloud build #${buildRun.attributes.number} (${buildRun.id}) on staging.`,
 );
+
+if (process.env.GITHUB_OUTPUT) {
+  appendFileSync(
+    process.env.GITHUB_OUTPUT,
+    `build_run_id=${buildRun.id}\nbuild_number=${buildRun.attributes.number}\n`,
+  );
+}
