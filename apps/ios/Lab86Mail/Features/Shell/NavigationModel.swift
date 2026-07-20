@@ -132,6 +132,10 @@ final class NavigationModel {
     var sheet: SheetDestination?
     var pendingCapture: String?
     var pendingMailSearch: String?
+    // Chrome-free surfaces (the area brief hides its navigation bar) raise
+    // this to ask the compact shell to reveal the source list; the shell
+    // consumes and resets it.
+    var requestsSourceList = false
     // Raw MailCategoryScope value chosen from the sidebar's smart filters.
     var pendingMailCategory: String?
     var pendingCompose: ComposePrefill?

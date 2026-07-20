@@ -20,6 +20,7 @@ struct AreaDetailView: View {
     }
 
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let route: AreaRoute
 
     @State private var detail: AreaDetail?
@@ -61,26 +62,11 @@ struct AreaDetailView: View {
         }
         .navigationTitle(detail?.identity.name ?? route.name ?? "Area")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button("Reload") {
-                        Task { await load(initial: false) }
-                    }
-                    Button(briefQueued ? "Brief refresh queued…" : "Refresh brief") {
-                        Task { await refreshBrief() }
-                    }
-                    .disabled(briefQueued)
-                    Button("Set picture") {
-                        imageURLDraft = detail?.identity.imageURL ?? ""
-                        showsImagePrompt = true
-                    }
-                } label: {
-                    Label("Area actions", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoading)
-            }
-        }
+        // The area is a full-screen document: no navigation bar at all. The
+        // shell's source list and the area's own controls float as glass over
+        // the page; pushed destinations keep their normal bars.
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .top) { floatingControls }
         .alert("Area picture", isPresented: $showsImagePrompt) {
             TextField("Image address (https://…)", text: $imageURLDraft)
                 .textInputAutocapitalization(.never)
@@ -121,24 +107,80 @@ struct AreaDetailView: View {
                 inboxSurface(detail)
             }
         }
-        // The switcher lives in the bar itself; with the bar background hidden
-        // on the brief, the controls float as glass over the document.
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Area view", selection: $surface) {
-                    ForEach(AreaSurface.allCases) { choice in
-                        Text(choice.title).tag(choice)
-                    }
+        .background(environment.theme.paperColor)
+    }
+
+    // Frosted controls floating over the document: source list on the left
+    // (compact widths only — regular widths keep the visible sidebar), the
+    // Brief|Inbox switch and the area menu on the right.
+    private var floatingControls: some View {
+        HStack(spacing: 10) {
+            if horizontalSizeClass == .compact {
+                Button {
+                    environment.navigation.requestsSourceList = true
+                } label: {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Circle())
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 170)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel("Open navigation")
+            }
+            Spacer(minLength: 0)
+            if detail != nil {
+                HStack(spacing: 2) {
+                    surfacePill(.brief)
+                    surfacePill(.inbox)
+                }
+                .padding(3)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                Menu {
+                    Button("Reload") {
+                        Task { await load(initial: false) }
+                    }
+                    Button(briefQueued ? "Brief refresh queued…" : "Refresh brief") {
+                        Task { await refreshBrief() }
+                    }
+                    .disabled(briefQueued)
+                    Button("Set picture") {
+                        imageURLDraft = detail?.identity.imageURL ?? ""
+                        showsImagePrompt = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Circle())
+                }
+                .glassEffect(.regular.interactive(), in: .circle)
+                .disabled(isLoading)
+                .accessibilityLabel("Area actions")
             }
         }
-        .toolbarBackgroundVisibility(
-            surface == .brief ? .hidden : .automatic,
-            for: .navigationBar
-        )
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+    }
+
+    private func surfacePill(_ choice: AreaSurface) -> some View {
+        let selected = surface == choice
+        return Button {
+            withAnimation(.snappy(duration: 0.2)) { surface = choice }
+        } label: {
+            Text(choice.title)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     // The area's mail as a first-class inbox list — same rows the brief's Mail
@@ -173,6 +215,9 @@ struct AreaDetailView: View {
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        // Clearance for the floating controls the hidden bar used to provide.
+        .contentMargins(.top, 52, for: .scrollContent)
         .refreshable { await load(initial: false) }
     }
 
@@ -212,6 +257,9 @@ struct AreaDetailView: View {
             }
             .padding(.bottom, 32)
         }
+        // With a masthead picture the document owns the whole screen and the
+        // art slides under the status bar; text-first briefs stay below it.
+        .ignoresSafeArea(edges: detail.identity.imageURL != nil ? .top : [])
         .refreshable { await load(initial: false) }
     }
 
@@ -555,7 +603,7 @@ private struct AreaBriefLead: View {
                 .clipped()
                 .overlay(alignment: .bottom) {
                     LinearGradient(
-                        colors: [.clear, Color(uiColor: .systemBackground).opacity(0.85)],
+                        colors: [.clear, environment.theme.paperColor.opacity(0.85)],
                         startPoint: .center,
                         endPoint: .bottom
                     )
@@ -608,7 +656,9 @@ private struct AreaBriefLead: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.top, 20)
+        // Text-first briefs clear the floating glass controls; a masthead
+        // picture slides beneath them instead.
+        .padding(.top, detail.identity.imageURL == nil ? 60 : 20)
         .padding(.bottom, 24)
         .accessibilityElement(children: .contain)
     }
@@ -701,19 +751,24 @@ private struct AreaBriefArtifact: View {
 }
 
 private struct AreaMailRowView: View {
+    @Environment(AppEnvironment.self) private var environment
     let row: AreaDetail.MailRow
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(row.unread ? Color.accentColor : .clear)
+                .fill(row.unread ? environment.theme.accentColor : .clear)
                 .frame(width: 7, height: 7)
-                .padding(.top, 6)
+                .padding(.top, 12)
                 .accessibilityHidden(true)
+            InitialsAvatar(name: row.sender, size: 32)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text(row.sender)
-                        .fontWeight(row.unread ? .semibold : .regular)
+                        .font(environment.theme.displayType.displayFont(
+                            size: 15,
+                            weight: row.unread ? .semibold : .regular
+                        ))
                         .lineLimit(1)
                     if row.linkStatus == "candidate" { SuggestedTag() }
                     Spacer(minLength: 4)
@@ -774,24 +829,6 @@ private struct AreaDetailMonogram: View {
     let seed: String
 
     var body: some View {
-        Circle()
-            .fill(color.gradient)
-            .frame(width: 36, height: 36)
-            .overlay(
-                Text(initials)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-            )
-            .accessibilityHidden(true)
-    }
-
-    private var initials: String {
-        let words = name.split(separator: " ").prefix(2)
-        let letters = words.compactMap { $0.first }.map(String.init).joined()
-        return letters.isEmpty ? "•" : letters.uppercased()
-    }
-
-    private var color: Color {
-        AreaMonogramPalette.color(for: seed)
+        InitialsAvatar(name: name, seed: seed, size: 36)
     }
 }

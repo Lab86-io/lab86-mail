@@ -1,6 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// Compose as authoring a document, not filling a form: identity header,
+// hairline recipient rows, the subject as the page's display-face headline,
+// and a borderless body. The send contract is unchanged.
 struct ComposeView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
@@ -23,77 +26,62 @@ struct ComposeView: View {
     @State private var isImporting = false
     @State private var sendsLater = false
     @State private var sendLaterDate = Date.now.addingTimeInterval(60 * 60)
+    @FocusState private var focusedField: Field?
+
+    private enum Field: Hashable {
+        case to, cc, bcc, subject, body
+    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Picker("From", selection: $accountID) {
-                        ForEach(environment.store.accounts) { account in
-                            Text(account.email).tag(account.id)
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    fromRow
+                    hairline
+                    recipientRows
+                    subjectField
+                    hairline
+                    bodyEditor
+                    if !attachments.isEmpty {
+                        attachmentRows
                     }
-                    TextField("To", text: $to)
-                        .textContentType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                    if showsCopyFields {
-                        TextField("Cc", text: $cc)
-                            .textContentType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.emailAddress)
-                        TextField("Bcc", text: $bcc)
-                            .textContentType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.emailAddress)
-                    } else {
-                        Button("Add Cc or Bcc") { showsCopyFields = true }
-                    }
-                    TextField("Subject", text: $subject)
-                }
-                Section("Message") {
-                    TextEditor(text: $bodyText).frame(minHeight: 240)
-                }
-                Section("Attachments") {
-                    ForEach(attachments) { attachment in
-                        HStack {
-                            Image(systemName: "paperclip")
-                            VStack(alignment: .leading) {
-                                Text(attachment.filename).lineLimit(1)
-                                Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Remove", systemImage: "xmark.circle.fill") {
-                                attachments.removeAll { $0.id == attachment.id }
-                            }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                        }
-                    }
-                    Button("Add Attachment", systemImage: "paperclip") { isImporting = true }
-                }
-                Section("Delivery") {
-                    Toggle("Send Later", isOn: $sendsLater)
-                    if sendsLater {
-                        DatePicker(
-                            "Send",
-                            selection: $sendLaterDate,
-                            in: Date.now.addingTimeInterval(2 * 60)...,
-                            displayedComponents: [.date, .hourAndMinute]
-                        )
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 10)
                     }
                 }
-                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+                .padding(.bottom, 24)
             }
+            .background(environment.theme.paperColor)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) { utilityStrip }
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(sendsLater ? "Schedule" : "Send") { Task { await send() } }
-                        .disabled(!canSend || isSending)
+                    Button {
+                        Task { await send() }
+                    } label: {
+                        if isSending {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    Circle().fill(
+                                        canSend ? environment.theme.accentColor : Color.secondary.opacity(0.4)
+                                    )
+                                )
+                        }
+                    }
+                    .disabled(!canSend || isSending)
+                    .accessibilityLabel(sendsLater ? "Schedule" : "Send")
                 }
             }
             .onAppear {
@@ -121,6 +109,9 @@ struct ComposeView: View {
                         ?? environment.store.accounts.first?.id
                         ?? ""
                 }
+                if focusedField == nil {
+                    focusedField = mode == "new" && to.isEmpty ? .to : .body
+                }
             }
             .fileImporter(
                 isPresented: $isImporting,
@@ -129,6 +120,203 @@ struct ComposeView: View {
                 onCompletion: importFiles
             )
         }
+    }
+
+    private var hairline: some View {
+        Divider()
+            .overlay(environment.theme.hairlineColor)
+            .padding(.leading, 20)
+    }
+
+    // Which account is sending, always visible — this is a multi-account app.
+    private var fromRow: some View {
+        Menu {
+            ForEach(environment.store.accounts) { account in
+                Button {
+                    accountID = account.id
+                } label: {
+                    if account.id == accountID {
+                        Label(account.email, systemImage: "checkmark")
+                    } else {
+                        Text(account.email)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                InitialsAvatar(name: selectedAccountLabel, seed: accountID, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("From")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(selectedAccountLabel)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .contentShape(.rect)
+        }
+        .accessibilityLabel("From \(selectedAccountLabel)")
+    }
+
+    private var selectedAccountLabel: String {
+        environment.store.accounts.first(where: { $0.id == accountID })?.email ?? "Choose account"
+    }
+
+    @ViewBuilder private var recipientRows: some View {
+        HStack(spacing: 8) {
+            Text("To")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            TextField("", text: $to)
+                .textContentType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.emailAddress)
+                .focused($focusedField, equals: .to)
+            if !showsCopyFields {
+                Button("Cc, Bcc") {
+                    showsCopyFields = true
+                    focusedField = .cc
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        hairline
+        if showsCopyFields {
+            HStack(spacing: 8) {
+                Text("Cc")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("", text: $cc)
+                    .textContentType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.emailAddress)
+                    .focused($focusedField, equals: .cc)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            hairline
+            HStack(spacing: 8) {
+                Text("Bcc")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("", text: $bcc)
+                    .textContentType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.emailAddress)
+                    .focused($focusedField, equals: .bcc)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            hairline
+        }
+    }
+
+    // The subject is the page headline, set in the display face.
+    private var subjectField: some View {
+        TextField("Subject", text: $subject, axis: .vertical)
+            .font(environment.theme.displayType.displayFont(size: 24))
+            .lineLimit(1...3)
+            .focused($focusedField, equals: .subject)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+    }
+
+    private var bodyEditor: some View {
+        TextField("Write your message…", text: $bodyText, axis: .vertical)
+            .font(.body)
+            .lineLimit(10...)
+            .focused($focusedField, equals: .body)
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            .accessibilityLabel("Message body")
+    }
+
+    private var attachmentRows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            hairline
+            ForEach(attachments) { attachment in
+                HStack(spacing: 10) {
+                    Image(systemName: "paperclip")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(attachment.filename)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Remove", systemImage: "xmark.circle.fill") {
+                        attachments.removeAll { $0.id == attachment.id }
+                    }
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.tertiary)
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                hairline
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    // The floating utility capsule: attach and delivery, detached from the
+    // keyboard edge — a tool palette, not a system bar.
+    private var utilityStrip: some View {
+        HStack(spacing: 4) {
+            Button("Attach") { isImporting = true }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            Spacer(minLength: 0)
+            Menu {
+                Button("Send now") { sendsLater = false }
+                Button("In 1 hour") {
+                    sendsLater = true
+                    sendLaterDate = .now.addingTimeInterval(60 * 60)
+                }
+                Button("Tomorrow at 9:00") {
+                    sendsLater = true
+                    let calendar = Calendar.autoupdatingCurrent
+                    let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) ?? .now
+                    sendLaterDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+                }
+            } label: {
+                Text(deliveryLabel)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(sendsLater ? environment.theme.accentColor : .secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel("Delivery: \(deliveryLabel)")
+        }
+        .padding(6)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private var deliveryLabel: String {
+        guard sendsLater else { return "Send now" }
+        return "Sends \(sendLaterDate.formatted(date: .abbreviated, time: .shortened))"
     }
 
     private var navigationTitle: String {

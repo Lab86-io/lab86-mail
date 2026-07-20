@@ -47,65 +47,24 @@ struct MailView: View {
                         ? "Try another account or category, or pull to refresh."
                         : "Try a different search.")
                 )
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
-                ForEach(filteredThreads) { thread in
-                    Button {
-                        navigation.threadRoute = ThreadRoute(accountID: thread.accountID, threadID: thread.id)
-                    } label: {
-                        MailThreadRow(thread: thread)
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        if thread.unread {
-                            Button("Read", systemImage: "envelope.open") {
-                                Task { await environment.store.markRead(thread) }
-                            }
-                            .tint(.blue)
-                        } else {
-                            Button("Unread", systemImage: "envelope.badge") {
-                                Task { await environment.store.markUnread(thread) }
-                            }
-                            .tint(.blue)
+                ForEach(groupedThreads) { group in
+                    Section {
+                        ForEach(group.threads) { thread in
+                            threadRow(thread, navigation: navigation)
                         }
-                        Button(thread.starred ? "Unstar" : "Star", systemImage: thread.starred ? "star.slash" : "star") {
-                            Task { await environment.store.setStarred(!thread.starred, thread: thread) }
-                        }
-                        .tint(.yellow)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("Trash", systemImage: "trash", role: .destructive) {
-                            Task { await environment.store.trash(thread) }
-                        }
-                        Button("Archive", systemImage: "archivebox") {
-                            Task { await environment.store.archive(thread) }
-                        }
-                        .tint(.orange)
-                        Button("Snooze", systemImage: "clock") {
-                            Task { await environment.store.snooze(thread, until: Self.tomorrowMorning) }
-                        }
-                        .tint(.indigo)
-                    }
-                    .contextMenu {
-                        Button(thread.unread ? "Mark Read" : "Mark Unread", systemImage: thread.unread ? "envelope.open" : "envelope.badge") {
-                            Task {
-                                if thread.unread { await environment.store.markRead(thread) }
-                                else { await environment.store.markUnread(thread) }
-                            }
-                        }
-                        Button(thread.starred ? "Unstar" : "Star", systemImage: thread.starred ? "star.slash" : "star") {
-                            Task { await environment.store.setStarred(!thread.starred, thread: thread) }
-                        }
-                        Button("Archive", systemImage: "archivebox") {
-                            Task { await environment.store.archive(thread) }
-                        }
-                        snoozeMenu(thread)
-                        Button("Move to Trash", systemImage: "trash", role: .destructive) {
-                            Task { await environment.store.trash(thread) }
-                        }
+                    } header: {
+                        MailDateline(label: group.label)
                     }
                 }
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(environment.theme.paperColor)
+        .safeAreaInset(edge: .top, spacing: 0) { categoryPills }
         .navigationTitle("Mail")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -120,16 +79,6 @@ struct MailView: View {
                                 selected: accountScope == account.id
                             ) {
                                 accountScope = account.id
-                            }
-                        }
-                    }
-                    Section("Category") {
-                        ForEach(MailCategoryScope.allCases) { category in
-                            scopeButton(
-                                title: category.title,
-                                selected: categoryScope == category
-                            ) {
-                                categoryScope = category
                             }
                         }
                     }
@@ -198,6 +147,136 @@ struct MailView: View {
         .shellToolbar(includesCompose: true)
     }
 
+    private func threadRow(_ thread: MailThreadSummary, navigation: NavigationModel) -> some View {
+        Button {
+            navigation.threadRoute = ThreadRoute(accountID: thread.accountID, threadID: thread.id)
+        } label: {
+            MailThreadRow(thread: thread)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(Color.clear)
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            if thread.unread {
+                Button("Read", systemImage: "envelope.open") {
+                    Task { await environment.store.markRead(thread) }
+                }
+                .tint(.blue)
+            } else {
+                Button("Unread", systemImage: "envelope.badge") {
+                    Task { await environment.store.markUnread(thread) }
+                }
+                .tint(.blue)
+            }
+            Button(thread.starred ? "Unstar" : "Star", systemImage: thread.starred ? "star.slash" : "star") {
+                Task { await environment.store.setStarred(!thread.starred, thread: thread) }
+            }
+            .tint(.yellow)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button("Trash", systemImage: "trash", role: .destructive) {
+                Task { await environment.store.trash(thread) }
+            }
+            Button("Archive", systemImage: "archivebox") {
+                Task { await environment.store.archive(thread) }
+            }
+            .tint(.orange)
+            Button("Snooze", systemImage: "clock") {
+                Task { await environment.store.snooze(thread, until: Self.tomorrowMorning) }
+            }
+            .tint(.indigo)
+        }
+        .contextMenu {
+            Button(thread.unread ? "Mark Read" : "Mark Unread", systemImage: thread.unread ? "envelope.open" : "envelope.badge") {
+                Task {
+                    if thread.unread { await environment.store.markRead(thread) }
+                    else { await environment.store.markUnread(thread) }
+                }
+            }
+            Button(thread.starred ? "Unstar" : "Star", systemImage: thread.starred ? "star.slash" : "star") {
+                Task { await environment.store.setStarred(!thread.starred, thread: thread) }
+            }
+            Button("Archive", systemImage: "archivebox") {
+                Task { await environment.store.archive(thread) }
+            }
+            snoozeMenu(thread)
+            Button("Move to Trash", systemImage: "trash", role: .destructive) {
+                Task { await environment.store.trash(thread) }
+            }
+        }
+    }
+
+    // Smart categories as a scrolling row of text pills — the desktop rail's
+    // category list, surfaced where the thumb is. Selection carries the fill.
+    private var categoryPills: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(MailCategoryScope.allCases) { category in
+                    let selected = categoryScope == category
+                    Button {
+                        categoryScope = category
+                    } label: {
+                        Text(category.title)
+                            .font(.subheadline.weight(selected ? .semibold : .regular))
+                            .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
+                            )
+                            .overlay {
+                                if !selected {
+                                    Capsule().strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
+                                }
+                            }
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .background(environment.theme.paperColor.opacity(0.01))
+    }
+
+    private struct ThreadGroup: Identifiable {
+        // Positional identity: the store sorts newest-first, but a label can
+        // legitimately recur (search results, snoozed returns) and must not
+        // collide.
+        let id: Int
+        let label: String
+        var threads: [MailThreadSummary]
+    }
+
+    private var groupedThreads: [ThreadGroup] {
+        var groups: [ThreadGroup] = []
+        for thread in filteredThreads {
+            let label = Self.datelineLabel(for: thread.date)
+            if let last = groups.indices.last, groups[last].label == label {
+                groups[last].threads.append(thread)
+            } else {
+                groups.append(ThreadGroup(id: groups.count, label: label, threads: [thread]))
+            }
+        }
+        return groups
+    }
+
+    // Editorial date buckets, matching the desktop inbox datelines: Today,
+    // Yesterday, weekday names inside the current week, then month names.
+    static func datelineLabel(for date: Date, now: Date = .now) -> String {
+        let calendar = Calendar.autoupdatingCurrent
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
+            return date.formatted(.dateTime.weekday(.wide))
+        }
+        if calendar.isDate(date, equalTo: now, toGranularity: .year) {
+            return date.formatted(.dateTime.month(.wide))
+        }
+        return date.formatted(.dateTime.month(.wide).year())
+    }
+
     private var filteredThreads: [MailThreadSummary] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let candidates: [MailThreadSummary]
@@ -221,12 +300,11 @@ struct MailView: View {
     }
 
     private var scopeTitle: String {
-        let account = accountScope == "all"
+        accountScope == "all"
             ? "All Accounts"
             : environment.store.accounts.first(where: { $0.id == accountScope })?.displayName
                 ?? environment.store.accounts.first(where: { $0.id == accountScope })?.email
                 ?? "Account"
-        return categoryScope == .all ? account : "\(account) · \(categoryScope.title)"
     }
 
     private func scopeButton(
@@ -270,20 +348,50 @@ enum MailCategoryScope: String, CaseIterable, Identifiable {
     }
 }
 
+// The dateline: display-italic day buckets over a hairline — the desktop
+// inbox's serif date headers.
+private struct MailDateline: View {
+    @Environment(AppEnvironment.self) private var environment
+    let label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(environment.theme.displayType.displayItalicFont(size: 15))
+                .foregroundStyle(.secondary)
+            Divider()
+        }
+        .padding(.top, 6)
+        .textCase(nil)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+// Desktop row grammar: [unread gutter][avatar][sender/subject/snippet][meta].
+// The unread dot lives in a stable gutter so scanning is one vertical
+// eye-track; the sender carries the display face.
 private struct MailThreadRow: View {
+    @Environment(AppEnvironment.self) private var environment
     let thread: MailThreadSummary
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(thread.unread ? Color.accentColor : .clear)
+                .fill(thread.unread ? environment.theme.accentColor : .clear)
                 .frame(width: 7, height: 7)
-                .padding(.top, 7)
+                .padding(.top, 16)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
+            InitialsAvatar(name: thread.sender, size: 40)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline) {
                     Text(thread.sender)
-                        .fontWeight(thread.unread ? .semibold : .regular)
+                        .font(environment.theme.displayType.displayFont(
+                            size: 16,
+                            weight: thread.unread ? .semibold : .regular
+                        ))
+                        .foregroundStyle(thread.unread ? .primary : Color.primary.opacity(0.85))
                         .lineLimit(1)
                     Spacer()
                     Text(thread.date, format: thread.date.isToday ? .dateTime.hour().minute() : .dateTime.month().day())
@@ -292,11 +400,11 @@ private struct MailThreadRow: View {
                 }
                 HStack(spacing: 5) {
                     Text(thread.subject)
-                        .fontWeight(thread.unread ? .semibold : .regular)
+                        .font(.subheadline.weight(thread.unread ? .medium : .regular))
                         .lineLimit(1)
                     if thread.starred {
                         Image(systemName: "star.fill")
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.yellow)
                             .accessibilityLabel("Starred")
                     }
@@ -307,6 +415,7 @@ private struct MailThreadRow: View {
                     .lineLimit(2)
             }
         }
+        .padding(.vertical, 6)
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityValue(thread.unread ? "Unread" : "Read")

@@ -399,6 +399,47 @@ struct Lab86MailTests {
     }
 
     @Test
+    func senderInitialsHandleNamesQuotedNamesAndBareAddresses() {
+        #expect(SenderInitials.make(from: "Ari Example") == "AE")
+        #expect(SenderInitials.make(from: "\"Ari Example\"") == "AE")
+        #expect(SenderInitials.make(from: "Ari") == "A")
+        // A bare address takes its mailbox letter, skipping leading punctuation.
+        #expect(SenderInitials.make(from: "ari@example.com") == "A")
+        #expect(SenderInitials.make(from: "\"_ari\"@example.com") == "A")
+        // Never empty, never a symbol.
+        #expect(SenderInitials.make(from: "") == "•")
+        #expect(SenderInitials.make(from: "— —") == "•")
+    }
+
+    @Test
+    func inboxDatelinesBucketTodayYesterdayWeekdayAndMonth() throws {
+        let calendar = Calendar.autoupdatingCurrent
+        // Anchor mid-week so "yesterday" and "earlier this week" are distinct
+        // buckets regardless of the machine's locale week start.
+        var anchor = calendar.date(from: DateComponents(year: 2026, month: 7, day: 15, hour: 12))
+        anchor = anchor.flatMap { calendar.date(bySettingHour: 12, minute: 0, second: 0, of: $0) }
+        let now = try #require(anchor)
+
+        #expect(MailView.datelineLabel(for: now, now: now) == "Today")
+        let yesterday = try #require(calendar.date(byAdding: .day, value: -1, to: now))
+        #expect(MailView.datelineLabel(for: yesterday, now: now) == "Yesterday")
+        // Two days back stays inside the same week: a weekday name, not a date.
+        let sameWeek = try #require(calendar.date(byAdding: .day, value: -2, to: now))
+        if calendar.isDate(sameWeek, equalTo: now, toGranularity: .weekOfYear) {
+            #expect(MailView.datelineLabel(for: sameWeek, now: now)
+                == sameWeek.formatted(.dateTime.weekday(.wide)))
+        }
+        // Same year, earlier month: the month name alone.
+        let earlierMonth = try #require(calendar.date(byAdding: .month, value: -2, to: now))
+        #expect(MailView.datelineLabel(for: earlierMonth, now: now)
+            == earlierMonth.formatted(.dateTime.month(.wide)))
+        // A previous year keeps the year for orientation.
+        let lastYear = try #require(calendar.date(byAdding: .year, value: -1, to: now))
+        #expect(MailView.datelineLabel(for: lastYear, now: now)
+            == lastYear.formatted(.dateTime.month(.wide).year()))
+    }
+
+    @Test
     func emailLinkPolicyAllowsOnlyExplicitExternalSchemes() throws {
         #expect(EmailLinkPolicy.canOpen(try #require(URL(string: "https://example.com"))))
         #expect(EmailLinkPolicy.canOpen(try #require(URL(string: "mailto:ari@example.com"))))

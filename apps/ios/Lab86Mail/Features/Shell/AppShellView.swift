@@ -141,6 +141,12 @@ struct AppShellView: View {
             .animation(reduceMotion ? nil : .snappy(duration: 0.32, extraBounce: 0.04), value: showsSourceList)
         }
         .ignoresSafeArea()
+        .onChange(of: environment.navigation.requestsSourceList) { _, requested in
+            guard requested else { return }
+            environment.navigation.requestsSourceList = false
+            showsSourceList = true
+            UIAccessibility.post(notification: .screenChanged, argument: "Navigation")
+        }
     }
 
     private var pageShape: ConcentricRectangle {

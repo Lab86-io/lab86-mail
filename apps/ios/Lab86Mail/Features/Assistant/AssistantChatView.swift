@@ -2,9 +2,10 @@ import SwiftStreamingMarkdown
 import SwiftUI
 
 // A full-page conversation with Albatross, patterned after ChatGPT and Claude:
-// user turns in quiet trailing bubbles, assistant turns as plain document text,
-// and a single rounded composer pinned to the bottom.
+// user turns in quiet raised bubbles, assistant turns as plain document text,
+// and a single floating glass composer detached from the bottom edge.
 struct AssistantChatView: View {
+    @Environment(AppEnvironment.self) private var environment
     @Bindable var model: AssistantChatModel
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
@@ -17,6 +18,7 @@ struct AssistantChatView: View {
                 openingState
             }
         }
+        .background(environment.theme.paperColor)
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .navigationTitle("Albatross")
         .navigationBarTitleDisplayMode(.inline)
@@ -52,10 +54,7 @@ struct AssistantChatView: View {
                 Text(message.text)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(
-                        Color(uiColor: .secondarySystemBackground),
-                        in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    )
+                    .surfaceCard(cornerRadius: 20)
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
@@ -92,19 +91,50 @@ struct AssistantChatView: View {
         .accessibilityElement(children: .combine)
     }
 
+    // Zero state: a display-face greeting and a quiet vertical list of
+    // suggested asks — plain text rows, no chips, no decoration.
     private var openingState: some View {
-        VStack(spacing: 8) {
-            Text("What can Albatross take on?")
-                .font(.title2.weight(.semibold))
-                .multilineTextAlignment(.center)
-            Text("Ask about your mail, calendar, tasks, and areas — or hand something off.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        VStack(alignment: .leading, spacing: 32) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What can Albatross take on?")
+                    .font(environment.theme.displayType.displayFont(size: 27))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Ask about your mail, calendar, tasks, and areas — or hand something off.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Suggested")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 6)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(Self.suggestions, id: \.self) { suggestion in
+                    Button {
+                        model.send(suggestion)
+                    } label: {
+                        Text(suggestion)
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().overlay(environment.theme.hairlineColor)
+                }
+            }
         }
-        .padding(.horizontal, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
+
+    private static let suggestions = [
+        "What needs my reply today?",
+        "Walk me through my afternoon",
+        "What changed in my areas overnight?",
+        "Draft a reply to my newest thread",
+    ]
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -129,23 +159,23 @@ struct AssistantChatView: View {
                 Button(action: sendDraft) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color(uiColor: .systemBackground))
+                        .foregroundStyle(.white)
                         .frame(width: 34, height: 34)
-                        .background(Circle().fill(canSend ? Color.accentColor : Color.secondary.opacity(0.4)))
+                        .background(
+                            Circle().fill(
+                                canSend ? environment.theme.accentColor : Color.secondary.opacity(0.4)
+                            )
+                        )
                 }
                 .disabled(!canSend)
                 .accessibilityLabel("Send")
             }
         }
         .padding(4)
-        .background(
-            Color(uiColor: .secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 26, style: .continuous)
-        )
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 26))
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
-        .background(Color(uiColor: .systemBackground))
     }
 
     private var canSend: Bool {
@@ -156,12 +186,5 @@ struct AssistantChatView: View {
         guard canSend, !model.isStreaming else { return }
         model.send(draft)
         draft = ""
-    }
-
-    private static func rendered(_ text: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(text)
     }
 }

@@ -141,30 +141,13 @@ private struct AreaListRow: View {
 }
 
 // A quiet monogram identity mark — avoids loading arbitrary remote favicon URLs
-// on device while still giving each area a stable colour.
+// on device while still giving each area a stable colour drawn from the live
+// accent family, the same derivation as every other identity mark.
 struct AreaMonogram: View {
     let area: AreaSummary
 
     var body: some View {
-        Circle()
-            .fill(color.gradient)
-            .frame(width: 30, height: 30)
-            .overlay(
-                Text(initials)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-            )
-            .accessibilityHidden(true)
-    }
-
-    private var initials: String {
-        let words = area.name.split(separator: " ").prefix(2)
-        let letters = words.compactMap { $0.first }.map(String.init).joined()
-        return letters.isEmpty ? "•" : letters.uppercased()
-    }
-
-    private var color: Color {
-        AreaMonogramPalette.color(for: area.id)
+        InitialsAvatar(name: area.name, seed: area.id, size: 30)
     }
 }
 

@@ -21,23 +21,25 @@ struct ThreadView: View {
         Group {
             if let detail {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(detail.messages) { message in
-                        MessageView(
-                            message: message,
-                            accountID: route.accountID,
-                            expandedMessageID: $expandedMessageID
-                        )
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        threadHeader(detail)
+                        if let modelSummary {
+                            summaryCard(modelSummary)
+                        }
+                        ForEach(detail.messages) { message in
+                            MessageView(
+                                message: message,
+                                accountID: route.accountID,
+                                expandedMessageID: $expandedMessageID
+                            )
+                        }
                     }
-                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
                 }
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    // The on-device summary floats over the thread as a glass
-                    // element rather than consuming document space.
-                    if let modelSummary {
-                        summaryCard(modelSummary)
-                    }
-                }
+                .background(environment.theme.paperColor)
+                .safeAreaInset(edge: .bottom, spacing: 0) { replyCapsule }
             } else if isLoading {
                 ProgressView("Opening thread…")
             } else {
@@ -48,7 +50,7 @@ struct ThreadView: View {
                 )
             }
         }
-        .navigationTitle(detail?.subject ?? summary?.subject ?? "Email")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -69,11 +71,47 @@ struct ThreadView: View {
         }
     }
 
+    // The subject as the document's own headline — the thread reads as a page,
+    // not a bar title.
+    private func threadHeader(_ detail: MailThreadDetail) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(detail.subject.isEmpty ? "No subject" : detail.subject)
+                .font(environment.theme.displayType.displayFont(size: 23))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            Text(metaLine(detail))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private func metaLine(_ detail: MailThreadDetail) -> String {
+        let count = detail.messages.count
+        var parts = ["\(count) message\(count == 1 ? "" : "s")"]
+        if let sender = detail.messages.last?.sender, !sender.isEmpty {
+            parts.append(sender)
+        }
+        if let date = detail.messages.last?.date {
+            parts.append(date.formatted(date: .abbreviated, time: .shortened))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // Machine text is quarantined from real messages: accent-washed card with
+    // a left accent rail and a display-italic label — never mistakable for a
+    // human message.
     private func summaryCard(_ answer: ModelAnswer) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Summary")
-                    .font(.footnote.weight(.semibold))
+                    .font(environment.theme.displayType.displayItalicFont(size: 15))
+                    .foregroundStyle(environment.theme.accentColor)
                 Spacer()
                 Text(answer.source.rawValue)
                     .font(.caption2)
@@ -96,18 +134,72 @@ struct ThreadView: View {
                 .textSelection(.enabled)
         }
         .padding(14)
+        .padding(.leading, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-        .padding(.horizontal, 12)
+        .background(
+            environment.theme.accentSoftColor,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16)
+                .fill(environment.theme.accentColor)
+                .frame(width: 3)
+        }
+        .padding(.bottom, 2)
+    }
+
+    // The thread's named actions in one floating glass dock where the thumb
+    // is; rarer verbs stay in the toolbar menu.
+    private var replyCapsule: some View {
+        HStack(spacing: 4) {
+            Button {
+                openComposer(mode: "reply")
+            } label: {
+                Text("Reply")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(environment.theme.accentColor))
+            }
+            .buttonStyle(.plain)
+            Button("Reply all") { openComposer(mode: "reply", replyAll: true) }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            Button("Forward") { openComposer(mode: "forward") }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            if let summary {
+                Spacer(minLength: 0)
+                Button("Archive") {
+                    Task {
+                        await environment.store.archive(summary)
+                        environment.navigation.threadRoute = nil
+                    }
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+            }
+        }
+        .padding(6)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .padding(.horizontal, 14)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        .disabled(detail == nil)
     }
 
     private var actionsMenu: some View {
         Menu {
-            Button("Reply", systemImage: "arrowshape.turn.up.left") { openComposer(mode: "reply") }
-            Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { openComposer(mode: "reply", replyAll: true) }
-            Button("Forward", systemImage: "arrowshape.turn.up.right") { openComposer(mode: "forward") }
             Button("Add to Calendar", systemImage: "calendar.badge.plus") { showsEventReview = true }
             if let summary {
                 Divider()
@@ -119,12 +211,6 @@ struct ThreadView: View {
                 }
                 Button(summary.starred ? "Unstar" : "Star", systemImage: summary.starred ? "star.slash" : "star") {
                     Task { await environment.store.setStarred(!summary.starred, thread: summary) }
-                }
-                Button("Archive", systemImage: "archivebox") {
-                    Task {
-                        await environment.store.archive(summary)
-                        environment.navigation.threadRoute = nil
-                    }
                 }
                 Button("Move to Trash", systemImage: "trash", role: .destructive) {
                     Task {
@@ -224,6 +310,8 @@ struct ThreadView: View {
     }
 }
 
+// Each message is a one-elevation-step card: identity header, collapsed
+// snippet or full body — the desktop MessageCard article.
 private struct MessageView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
@@ -243,9 +331,12 @@ private struct MessageView: View {
                     expandedMessageID = isExpanded ? nil : message.id
                 }
             } label: {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center, spacing: 10) {
+                    InitialsAvatar(name: message.sender, size: 30)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(message.sender).font(.headline)
+                        Text(message.sender)
+                            .font(environment.theme.displayType.displayFont(size: 15))
+                            .lineLimit(1)
                         if !message.recipients.isEmpty {
                             Text("to \(message.recipients)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -258,13 +349,16 @@ private struct MessageView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
 
             if isExpanded {
+                Divider()
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 4)
                 if let html = message.htmlBody {
                     // Rich body and normal remote images render immediately; the
                     // sanitizer strips tracking beacons and sets no-referrer.
@@ -273,14 +367,14 @@ private struct MessageView: View {
                         allowRemoteContent: true,
                         onOpenURL: openLink
                     )
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 16)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 14)
                 } else {
                     Text(message.body)
                         .textSelection(.enabled)
                         .font(.body)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 14)
                 }
                 if !message.attachments.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -316,8 +410,8 @@ private struct MessageView: View {
                                 .foregroundStyle(.red)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 2) {
@@ -326,11 +420,11 @@ private struct MessageView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 14)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
             }
-            Divider()
         }
+        .surfaceCard(cornerRadius: 16)
         .quickLookPreview($attachmentPreviewURL)
         .onChange(of: attachmentPreviewURL) { previous, current in
             if current == nil, let previous {
