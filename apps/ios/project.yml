@@ -4,8 +4,8 @@ options:
   bundleIdPrefix: io.lab86
   createIntermediateGroups: true
   deploymentTarget:
-    iOS: "27.0"
-  xcodeVersion: "27.0"
+    iOS: "26.0"
+  xcodeVersion: "26.0"
 
 packages:
   MobileAPI:
@@ -37,7 +37,7 @@ packages:
 settings:
   base:
     DEVELOPMENT_TEAM: 5JZV7V6Y4Z
-    IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
     TARGETED_DEVICE_FAMILY: "1,2"

@@ -30,9 +30,7 @@ final class BackgroundRefreshCoordinator {
     func schedule() {
         let request = BGAppRefreshTaskRequest(identifier: Self.refreshIdentifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        Task.detached {
-            try? await BGTaskScheduler.shared.submitTaskRequest(request)
-        }
+        try? BGTaskScheduler.shared.submit(request)
     }
 
     func runRemoteNotification(completion: @escaping (UIBackgroundFetchResult) -> Void) async {
