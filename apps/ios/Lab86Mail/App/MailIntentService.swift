@@ -1,4 +1,3 @@
-#if compiler(>=6.4)
 import AppIntents
 import Foundation
 
@@ -62,6 +61,7 @@ struct MailEntityReference: Codable, Hashable, Sendable {
     }
 }
 
+#if compiler(>=6.4)
 actor MailIntentService {
     static let shared = MailIntentService()
 
