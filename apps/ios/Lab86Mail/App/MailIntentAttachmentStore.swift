@@ -1,3 +1,4 @@
+#if compiler(>=6.4)
 import AppIntents
 import Foundation
 import UniformTypeIdentifiers
@@ -78,3 +79,4 @@ actor MailIntentAttachmentStore {
         return directory.appending(path: "\(key).json")
     }
 }
+#endif

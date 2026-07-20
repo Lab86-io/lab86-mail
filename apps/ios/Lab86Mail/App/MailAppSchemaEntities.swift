@@ -1,3 +1,4 @@
+#if compiler(>=6.4)
 import AppIntents
 import Foundation
 
@@ -271,3 +272,4 @@ extension String {
         return value.isEmpty ? nil : value
     }
 }
+#endif
