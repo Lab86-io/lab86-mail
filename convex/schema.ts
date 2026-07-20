@@ -1848,7 +1848,6 @@ export default defineSchema({
     // beside their rotating access and refresh tokens.
     oauthClientInformationEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
-    oauthClientInformationEncrypted: v.optional(v.string()),
     fingerprint: v.optional(v.string()),
     masked: v.optional(v.string()),
     createdAt: v.number(),
@@ -1917,8 +1916,6 @@ export default defineSchema({
     lastSyncedAt: v.optional(v.number()),
     lastCursor: v.optional(v.string()),
     itemCount: v.optional(v.number()),
-    accountEmail: v.optional(v.string()),
-    workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),

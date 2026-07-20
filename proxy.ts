@@ -105,11 +105,7 @@ export function shouldRequireBasicAuth(req: Request, pathname: string) {
   // Native clients authenticate API requests with a Clerk session token. Do
   // not challenge those requests for staging's browser-only Basic credential;
   // clerkMiddleware still validates the bearer token immediately afterwards.
-  if (
-    pathname.startsWith('/api/') &&
-    authorizationScheme?.toLowerCase() === 'bearer' &&
-    Boolean(bearerToken)
-  ) {
+  if (pathname.startsWith('/api/') && authorizationScheme?.toLowerCase() === 'bearer' && bearerToken) {
     return false;
   }
   if (pathname === '/api/clerk/webhook') return false;

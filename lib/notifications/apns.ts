@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from 'node:crypto';
-import { connect, constants, type ClientHttp2Stream, type IncomingHttpHeaders } from 'node:http2';
+import { type ClientHttp2Stream, connect, constants, type IncomingHttpHeaders } from 'node:http2';
 import type { NotificationEnvelope } from './delivery';
 import { isAPNsDeviceToken, type MobilePushEnvironment } from './mobile-device';
 

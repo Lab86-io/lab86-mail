@@ -433,6 +433,9 @@ describe('area_artifact_set_status', () => {
       reason: 'That meeting was for CardHunt',
     });
     expect(mutationCalls[0].args.confirmationRefs).toBeUndefined();
+  });
+});
+
 describe('area_home', () => {
   test('loads one area by id for the signed-in user and returns the combined home', async () => {
     const result: any = await runTool(areaHome.handler, { areaId: 'area_1' });

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { APNsDeliveryError, apnsHost, buildAPNsPayload } from '../lib/notifications/apns';
 import { mayContainCalendarEvent, parseInlineEventCandidate } from '../lib/mail/suggestion-detectors';
+import { APNsDeliveryError, apnsHost, buildAPNsPayload } from '../lib/notifications/apns';
 import {
   isAPNsDeviceToken,
   parseMobileDeviceRegistration,

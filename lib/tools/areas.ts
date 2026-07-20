@@ -311,6 +311,9 @@ export const areaArtifactSetStatus = defineTool({
         : {}),
     });
     return { ok: true, status: args.status };
+  },
+});
+
 export const areaHome = defineTool({
   name: 'area_home',
   description:
@@ -344,7 +347,7 @@ export const areaHome = defineTool({
 export const workHome = defineTool({
   name: 'work_home',
   description:
-    "Load one durable Work item, its generated plan brief, project, pending questions, Area links, and latest application receipt. Read-only. Requires the signed-in user and a stable Work id returned by area_home. A missing Work item errors instead of returning invented content.",
+    'Load one durable Work item, its generated plan brief, project, pending questions, Area links, and latest application receipt. Read-only. Requires the signed-in user and a stable Work id returned by area_home. A missing Work item errors instead of returning invented content.',
   category: 'memory',
   mutating: false,
   input: z.object({

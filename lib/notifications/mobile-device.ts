@@ -51,6 +51,7 @@ export function parseMobileDeviceRegistration(input: unknown): MobileDeviceRegis
     throw new MobileDeviceInputError('A valid APNs environment is required.');
   }
   const appVersion = String(record.appVersion || '').trim();
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
   if (appVersion.length > 64 || /[\u0000-\u001f\u007f]/.test(appVersion)) {
     throw new MobileDeviceInputError('The app version is invalid.');
   }
