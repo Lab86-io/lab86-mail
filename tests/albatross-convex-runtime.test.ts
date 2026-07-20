@@ -1955,8 +1955,15 @@ describe('area reindex runtime', () => {
       const t = convexTest(schema, convexModules);
       const userId = 'reindex_guard_user';
       const ts = Date.now();
+      // Pin the finished run's clock well before the queued pair: queuedRun()
+      // stamps Date.now() at call time, and a millisecond tick would otherwise
+      // make this done run the newest-by-updatedAt and steal the coalesce
+      // target from newerRunId.
       const doneRunId = await t.run((ctx) =>
-        ctx.db.insert('areaReindexRuns', queuedRun(userId, { status: 'done' }) as any),
+        ctx.db.insert(
+          'areaReindexRuns',
+          queuedRun(userId, { status: 'done', createdAt: ts - 60_000, updatedAt: ts - 60_000 }) as any,
+        ),
       );
       expect(
         await t.mutation(internal.albatross.reindexUserAreaArtifacts, { userId, runId: doneRunId }),
