@@ -13,6 +13,9 @@ brew install xcodegen
 # Package macros (Equatable via SwiftStreamingMarkdown) need fingerprint
 # validation skipped in non-interactive builds.
 defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+# Swift OpenAPI Generator is a package build-tool plugin and requires its
+# separate trust switch when Xcode Cloud cannot present an approval prompt.
+defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES
 
 # Xcode Cloud's editor may retain Markdown backticks pasted around a value.
 # Remove those wrappers so either the existing values or no values work.
