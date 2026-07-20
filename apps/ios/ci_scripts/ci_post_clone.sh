@@ -15,10 +15,19 @@ brew install xcodegen
 # validation skipped in non-interactive builds.
 defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
 
+# Xcode Cloud accepts ordinary URL values, but xcconfig treats // as the start
+# of a comment. Escape the scheme separator only when writing Local.xcconfig.
+xcconfig_url() {
+  printf '%s' "$1" | sed 's#://#:/\$()/#'
+}
+
+api_base_url="$(xcconfig_url "${LAB86_API_BASE_URL:?missing LAB86_API_BASE_URL}")"
+convex_deployment_url="$(xcconfig_url "${CONVEX_DEPLOYMENT_URL:?missing CONVEX_DEPLOYMENT_URL}")"
+
 cat > Config/Local.xcconfig <<EOF
-LAB86_API_BASE_URL = ${LAB86_API_BASE_URL:?missing LAB86_API_BASE_URL}
+LAB86_API_BASE_URL = ${api_base_url}
 CLERK_PUBLISHABLE_KEY = ${CLERK_PUBLISHABLE_KEY:?missing CLERK_PUBLISHABLE_KEY}
-CONVEX_DEPLOYMENT_URL = ${CONVEX_DEPLOYMENT_URL:?missing CONVEX_DEPLOYMENT_URL}
+CONVEX_DEPLOYMENT_URL = ${convex_deployment_url}
 CLERK_FRONTEND_API_HOST = ${CLERK_FRONTEND_API_HOST:?missing CLERK_FRONTEND_API_HOST}
 EOF
 
