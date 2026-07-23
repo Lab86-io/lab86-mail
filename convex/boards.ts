@@ -852,24 +852,21 @@ export const getPublicBoard = query({
 // Cards spawned from a given email thread — the provenance chip in the
 // thread reader (mail → tasks direction).
 export const liveCardsForThread = query({
-  args: { threadId: v.string() },
+  args: { ...callerArgs, threadId: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity?.subject) throw new Error('Not authenticated');
+    const userId = await resolveUserId(ctx, args);
     // An empty/missing thread id must not match anything — otherwise the
     // all-cards fallback below would surface unrelated cards on every email.
     if (!args.threadId) return [];
     const indexed = await ctx.db
       .query('cards')
-      .withIndex('by_user_source_thread', (q) =>
-        q.eq('userId', identity.subject).eq('sourceThreadId', args.threadId),
-      )
+      .withIndex('by_user_source_thread', (q) => q.eq('userId', userId).eq('sourceThreadId', args.threadId))
       .take(50);
     const rows = indexed.length
       ? indexed
       : await ctx.db
           .query('cards')
-          .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+          .withIndex('by_user', (q) => q.eq('userId', userId))
           .take(1000);
     return rows
       .filter((card) => card.sourceThreadId === args.threadId || card.source?.threadId === args.threadId)
@@ -880,17 +877,16 @@ export const liveCardsForThread = query({
 // Cards spawned from a given calendar event — the provenance chip in the
 // event viewer (calendar → tasks direction).
 export const liveCardsForCalendarEvent = query({
-  args: { eventId: v.string(), masterEventId: v.optional(v.string()) },
+  args: { ...callerArgs, eventId: v.string(), masterEventId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity?.subject) throw new Error('Not authenticated');
+    const userId = await resolveUserId(ctx, args);
     const wanted = new Set([args.eventId, args.masterEventId].filter(Boolean) as string[]);
     const byEvent = await Promise.all(
       [...wanted].map((eventId) =>
         ctx.db
           .query('cards')
           .withIndex('by_user_source_calendar_event', (q) =>
-            q.eq('userId', identity.subject).eq('sourceCalendarEventId', eventId),
+            q.eq('userId', userId).eq('sourceCalendarEventId', eventId),
           )
           .take(50),
       ),
@@ -900,7 +896,7 @@ export const liveCardsForCalendarEvent = query({
       ? indexed
       : await ctx.db
           .query('cards')
-          .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+          .withIndex('by_user', (q) => q.eq('userId', userId))
           .take(1000);
     const seen = new Set<string>();
     return rows
@@ -1069,6 +1065,7 @@ async function cardStatePayload(ctx: QueryCtx | MutationCtx, card: any) {
   return {
     cardId: card._id,
     ...snapshotCard(card),
+    attachments: await resolveAttachments(ctx, card.attachments),
     boardTitle: board?.title ?? null,
     columnName: column?.name ?? null,
     completed: Boolean(card.completedAt),

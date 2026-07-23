@@ -1,0 +1,128 @@
+name: Lab86Mail
+
+options:
+  bundleIdPrefix: io.lab86
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "27.0"
+  xcodeVersion: "27.0"
+
+packages:
+  MobileAPI:
+    path: Packages/MobileAPI
+  SwiftSoup:
+    url: https://github.com/scinfu/SwiftSoup
+    # Upstream 2.13.6 plus the reviewed Swift 6.4 optimizer workaround for
+    # swiftlang/swift#90408. Pin the commit exactly until the next release.
+    revision: 8d6ad267714cac3ae747cefdd21f7a6665006e1f
+  SwiftStreamingMarkdown:
+    url: https://github.com/microsoft/SwiftStreamingMarkdown
+    # v0.6.0 still declares a branch-pinned HighlightSwift dependency, which
+    # SwiftPM rejects when the root uses a stable version. Pin the reviewed
+    # v0.6.0-era revision exactly so builds are reproducible.
+    revision: a4187829013c4588556d82dbf1ab65ed768a0262
+  HorizonCalendar:
+    url: https://github.com/airbnb/HorizonCalendar
+    from: 2.0.0
+  Kingfisher:
+    url: https://github.com/onevcat/Kingfisher
+    from: 8.1.0
+  Clerk:
+    url: https://github.com/clerk/clerk-ios
+    from: 1.3.2
+  ClerkConvex:
+    url: https://github.com/clerk/clerk-convex-swift
+    exactVersion: 0.1.0
+  Convex:
+    url: https://github.com/get-convex/convex-swift
+    from: 0.8.1
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: 5JZV7V6Y4Z
+    IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+targets:
+  Lab86Mail:
+    type: application
+    platform: iOS
+    sources:
+      - path: Lab86Mail
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail
+        PRODUCT_NAME: Albatross
+        PRODUCT_MODULE_NAME: Lab86Mail
+        INFOPLIST_FILE: Lab86Mail/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Lab86Mail/Resources/Lab86Mail.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_USER_SCRIPT_SANDBOXING: true
+        GENERATE_INFOPLIST_FILE: false
+        SUPPORTS_MACCATALYST: false
+    postBuildScripts:
+      - name: Verify embedded release configuration
+        script: '"$SRCROOT/ci_scripts/verify_built_configuration.sh"'
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(SRCROOT)/ci_scripts/verify_built_configuration.sh
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+    dependencies:
+      - package: MobileAPI
+        product: MobileAPI
+      - package: SwiftSoup
+        product: SwiftSoup
+      - package: SwiftStreamingMarkdown
+        product: SwiftStreamingMarkdown
+      - package: HorizonCalendar
+        product: HorizonCalendar
+      - package: Kingfisher
+        product: Kingfisher
+      - package: Clerk
+        product: ClerkKit
+      - package: Clerk
+        product: ClerkKitUI
+      - package: ClerkConvex
+        product: ClerkConvex
+      - package: Convex
+        product: ConvexMobile
+    scheme:
+      testTargets:
+        - Lab86MailTests
+        - Lab86MailUITests
+      gatherCoverageData: true
+
+  Lab86MailTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Lab86MailTests
+    dependencies:
+      - target: Lab86Mail
+      - package: MobileAPI
+        product: MobileAPI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.tests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Albatross.app/Albatross
+        BUNDLE_LOADER: $(TEST_HOST)
+
+  Lab86MailUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Lab86MailUITests
+    dependencies:
+      - target: Lab86Mail
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.uitests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: Lab86Mail

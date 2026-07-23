@@ -68,11 +68,13 @@ function notificationPayload(input: {
     | 'work_question'
     | 'approval'
     | 'completion_suggestion'
+    | 'event_suggestion'
+    | 'mail_message'
     | 'brief_ready'
     | 'agent_error';
   title: string;
   body: string;
-  entityKind?: 'checkin' | 'work' | 'project' | 'area' | 'approval';
+  entityKind?: 'checkin' | 'work' | 'project' | 'area' | 'approval' | 'suggestion' | 'thread';
   entityId?: string;
   deepLink: string;
   dedupeKey: string;
@@ -98,6 +100,9 @@ export const getPreferences = query({
         eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
         inAppEnabled: true,
         webPushEnabled: false,
+        nativePushEnabled: true,
+        newMailPushEnabled: true,
+        eventSuggestionPushEnabled: true,
         emailFallbackEnabled: true,
         emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
       }
@@ -112,6 +117,9 @@ export const savePreferences = mutation({
     eveningCheckinLocalTime: v.string(),
     inAppEnabled: v.boolean(),
     webPushEnabled: v.boolean(),
+    nativePushEnabled: v.optional(v.boolean()),
+    newMailPushEnabled: v.optional(v.boolean()),
+    eventSuggestionPushEnabled: v.optional(v.boolean()),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
   },
@@ -131,6 +139,10 @@ export const savePreferences = mutation({
     const doc = {
       userId,
       ...args,
+      nativePushEnabled: args.nativePushEnabled ?? existing?.nativePushEnabled ?? true,
+      newMailPushEnabled: args.newMailPushEnabled ?? existing?.newMailPushEnabled ?? true,
+      eventSuggestionPushEnabled:
+        args.eventSuggestionPushEnabled ?? existing?.eventSuggestionPushEnabled ?? true,
       emailFallbackDelayMinutes: Math.min(Math.max(Math.round(args.emailFallbackDelayMinutes), 15), 1_440),
       updatedAt: ts,
     };
@@ -139,6 +151,80 @@ export const savePreferences = mutation({
       return existing._id;
     }
     return ctx.db.insert('albatrossNotificationPreferences', { ...doc, createdAt: ts });
+  },
+});
+
+export const mobilePreferences = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    return {
+      nativePushEnabled: row?.nativePushEnabled ?? true,
+      newMailPushEnabled: row?.newMailPushEnabled ?? true,
+      eventSuggestionPushEnabled: row?.eventSuggestionPushEnabled ?? true,
+      eveningCheckinEnabled: row?.eveningCheckinEnabled ?? true,
+      eveningCheckinLocalTime: row?.eveningCheckinLocalTime ?? DEFAULT_CHECKIN_TIME,
+      inAppEnabled: row?.inAppEnabled ?? true,
+      emailFallbackEnabled: row?.emailFallbackEnabled ?? true,
+      emailFallbackDelayMinutes: row?.emailFallbackDelayMinutes ?? DEFAULT_EMAIL_DELAY,
+      timezone: row?.timezone ?? DEFAULT_TZ,
+    };
+  },
+});
+
+export const saveMobilePreferences = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    nativePushEnabled: v.boolean(),
+    newMailPushEnabled: v.boolean(),
+    eventSuggestionPushEnabled: v.boolean(),
+    eveningCheckinEnabled: v.boolean(),
+    eveningCheckinLocalTime: v.string(),
+    inAppEnabled: v.boolean(),
+    emailFallbackEnabled: v.boolean(),
+    emailFallbackDelayMinutes: v.number(),
+    timezone: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const existing = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    const ts = now();
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(args.eveningCheckinLocalTime)) {
+      throw new Error('Time must be HH:MM.');
+    }
+    if (args.emailFallbackDelayMinutes < 15 || args.emailFallbackDelayMinutes > 1_440) {
+      throw new Error('Fallback delay must be between 15 and 1440 minutes.');
+    }
+    const mobile = {
+      nativePushEnabled: args.nativePushEnabled,
+      newMailPushEnabled: args.newMailPushEnabled,
+      eventSuggestionPushEnabled: args.eventSuggestionPushEnabled,
+      eveningCheckinEnabled: args.eveningCheckinEnabled,
+      eveningCheckinLocalTime: args.eveningCheckinLocalTime,
+      inAppEnabled: args.inAppEnabled,
+      emailFallbackEnabled: args.emailFallbackEnabled,
+      emailFallbackDelayMinutes: Math.round(args.emailFallbackDelayMinutes),
+      timezone: args.timezone,
+      updatedAt: ts,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, mobile);
+      return existing._id;
+    }
+    return ctx.db.insert('albatrossNotificationPreferences', {
+      userId: args.userId,
+      ...mobile,
+      webPushEnabled: false,
+      createdAt: ts,
+    });
   },
 });
 
@@ -179,6 +265,91 @@ export const revokePushSubscription = mutation({
   },
 });
 
+export const upsertMobileDevice = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    platform: v.literal('ios'),
+    token: v.string(),
+    deviceId: v.string(),
+    environment: v.union(v.literal('development'), v.literal('production')),
+    appVersion: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const device = {
+      userId: args.userId,
+      platform: args.platform,
+      token: args.token,
+      deviceId: args.deviceId,
+      environment: args.environment,
+      appVersion: args.appVersion,
+    };
+    const [byDevice, byToken] = await Promise.all([
+      ctx.db
+        .query('mobilePushDevices')
+        .withIndex('by_user_device', (q) =>
+          q.eq('userId', args.userId).eq('platform', args.platform).eq('deviceId', args.deviceId),
+        )
+        .unique(),
+      ctx.db
+        .query('mobilePushDevices')
+        .withIndex('by_token', (q) => q.eq('token', args.token))
+        .unique(),
+    ]);
+    const ts = now();
+
+    // A token can move between signed-in users on a shared phone. Reuse the
+    // token row and remove this install's obsolete row so the previous user
+    // can never receive the new user's notifications (or vice versa).
+    if (byToken) {
+      if (byDevice && byDevice._id !== byToken._id) await ctx.db.delete(byDevice._id);
+      await ctx.db.patch(byToken._id, {
+        ...device,
+        status: 'active',
+        updatedAt: ts,
+      });
+      return byToken._id;
+    }
+    if (byDevice) {
+      await ctx.db.patch(byDevice._id, {
+        ...device,
+        status: 'active',
+        updatedAt: ts,
+      });
+      return byDevice._id;
+    }
+    return ctx.db.insert('mobilePushDevices', {
+      ...device,
+      status: 'active',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  },
+});
+
+export const revokeMobileDevice = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    token: v.optional(v.string()),
+    deviceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mobilePushDevices')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    const matches = rows.filter(
+      (row) => (args.token && row.token === args.token) || (args.deviceId && row.deviceId === args.deviceId),
+    );
+    const ts = now();
+    for (const row of matches) await ctx.db.patch(row._id, { status: 'revoked', updatedAt: ts });
+    return { revoked: matches.length };
+  },
+});
+
 export const liveCenter = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -193,6 +364,117 @@ export const liveCenter = query({
       unread: rows.filter((row) => row.status === 'queued' || row.status === 'delivered').length,
       notifications: rows,
     };
+  },
+});
+
+export const queueSuggestionNotification = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    suggestionId: v.id('suggestions'),
+    title: v.string(),
+    body: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const suggestion = await ctx.db.get(args.suggestionId);
+    if (!suggestion || suggestion.userId !== args.userId) throw new Error('Suggestion not found.');
+    const dedupeKey = `event-suggestion:${String(args.suggestionId)}`;
+    const existing = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    if (existing) return { notificationId: existing._id, created: false };
+    const ts = now();
+    const query = new URLSearchParams({
+      account: args.accountId,
+      thread: args.threadId,
+      suggestion: String(args.suggestionId),
+    });
+    const notificationId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'event_suggestion',
+        title: args.title.slice(0, 180),
+        body: args.body.slice(0, 1_000),
+        entityKind: 'suggestion',
+        entityId: String(args.suggestionId),
+        deepLink: `/mail/thread?${query.toString()}`,
+        dedupeKey,
+        scheduledFor: ts,
+      }),
+    );
+    await ctx.db.insert('notificationDeliveries', {
+      userId: args.userId,
+      notificationId,
+      channel: 'in_app',
+      status: 'sent',
+      attemptCount: 1,
+      scheduledFor: ts,
+      sentAt: ts,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
+    return { notificationId, created: true };
+  },
+});
+
+export const queueMailNotification = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.string(),
+    sender: v.string(),
+    subject: v.string(),
+    snippet: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const dedupeKey = `mail-message:${args.accountId}:${args.messageId}`;
+    const existing = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    if (existing) return { notificationId: existing._id, created: false };
+    const ts = now();
+    const query = new URLSearchParams({
+      account: args.accountId,
+      thread: args.threadId,
+      message: args.messageId,
+    });
+    const notificationId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'mail_message',
+        title: (args.sender.trim() || 'New email').slice(0, 180),
+        body: (args.subject.trim() || args.snippet.trim() || 'New message').slice(0, 1_000),
+        entityKind: 'thread',
+        entityId: args.threadId,
+        deepLink: `/mail/thread?${query.toString()}`,
+        dedupeKey,
+        scheduledFor: ts,
+      }),
+    );
+    await ctx.db.insert('notificationDeliveries', {
+      userId: args.userId,
+      notificationId,
+      channel: 'in_app',
+      status: 'sent',
+      attemptCount: 1,
+      scheduledFor: ts,
+      sentAt: ts,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
+    return { notificationId, created: true };
   },
 });
 
@@ -322,6 +604,19 @@ export const currentCheckin = query({
   },
 });
 
+export const mobileCurrentCheckin = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('albatrossDailyCheckins')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(2);
+    return rows.find((row) => row.status === 'scheduled' || row.status === 'open') || null;
+  },
+});
+
 export const getCheckin = query({
   args: { ...notificationCallerArgs, checkinId: v.id('albatrossDailyCheckins') },
   handler: async (ctx, args) => {
@@ -359,11 +654,35 @@ export const targets = internalQuery({
         eveningCheckinLocalTime: preference?.eveningCheckinLocalTime || DEFAULT_CHECKIN_TIME,
         inAppEnabled: preference?.inAppEnabled ?? true,
         webPushEnabled: preference?.webPushEnabled ?? false,
+        nativePushEnabled: preference?.nativePushEnabled ?? true,
+        newMailPushEnabled: preference?.newMailPushEnabled ?? true,
+        eventSuggestionPushEnabled: preference?.eventSuggestionPushEnabled ?? true,
         emailFallbackEnabled: preference?.emailFallbackEnabled ?? true,
         emailFallbackDelayMinutes: preference?.emailFallbackDelayMinutes ?? DEFAULT_EMAIL_DELAY,
       });
     }
     return out;
+  },
+});
+
+export const deliveryTimezone = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    if (preference?.timezone) return preference.timezone;
+    const calendars = await ctx.db
+      .query('calendars')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    return (
+      calendars.find((calendar) => calendar.isPrimary && calendar.timezone)?.timezone ||
+      calendars.find((calendar) => calendar.timezone)?.timezone ||
+      DEFAULT_TZ
+    );
   },
 });
 
@@ -510,13 +829,51 @@ export const deliveryContext = query({
       .query('webPushSubscriptions')
       .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
       .collect();
+    const mobileDevices = await ctx.db
+      .query('mobilePushDevices')
+      .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
+      .collect();
     const deliveries = notification
       ? await ctx.db
           .query('notificationDeliveries')
           .withIndex('by_notification', (q) => q.eq('notificationId', notification._id))
           .collect()
       : [];
-    return { checkin, notification, subscriptions, deliveries };
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    return { checkin, notification, subscriptions, mobileDevices, deliveries, preference };
+  },
+});
+
+export const nativeDeliveryContext = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const notification = await ctx.db.get(args.notificationId);
+    if (!notification || notification.userId !== args.userId) return null;
+    const mobileDevices = await ctx.db
+      .query('mobilePushDevices')
+      .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
+      .collect();
+    const deliveries = await ctx.db
+      .query('notificationDeliveries')
+      .withIndex('by_notification', (q) => q.eq('notificationId', args.notificationId))
+      .collect();
+    const nativeDeviceDeliveries = await ctx.db
+      .query('nativePushDeliveries')
+      .withIndex('by_notification', (q) => q.eq('notificationId', args.notificationId))
+      .collect();
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    return { notification, mobileDevices, deliveries, nativeDeviceDeliveries, preference };
   },
 });
 
@@ -538,7 +895,7 @@ export const recordDelivery = mutation({
     internalSecret: v.optional(v.string()),
     userId: v.string(),
     notificationId: v.id('albatrossNotifications'),
-    channel: v.union(v.literal('web_push'), v.literal('email')),
+    channel: v.union(v.literal('web_push'), v.literal('native_push'), v.literal('email')),
     status: v.union(v.literal('sent'), v.literal('failed'), v.literal('suppressed')),
     providerId: v.optional(v.string()),
     error: v.optional(v.string()),
@@ -588,6 +945,81 @@ export const expireSubscription = mutation({
       .withIndex('by_endpoint', (q) => q.eq('endpoint', args.endpoint))
       .unique();
     if (row) await ctx.db.patch(row._id, { status: 'expired', updatedAt: now() });
+  },
+});
+
+export const updateMobileDeviceDelivery = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    token: v.string(),
+    status: v.union(v.literal('delivered'), v.literal('expired')),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('mobilePushDevices')
+      .withIndex('by_token', (q) => q.eq('token', args.token))
+      .unique();
+    if (!row) return;
+    const ts = now();
+    await ctx.db.patch(row._id, {
+      ...(args.status === 'delivered' ? { lastDeliveredAt: ts } : { status: 'expired' as const }),
+      updatedAt: ts,
+    });
+  },
+});
+
+export const recordNativeDeviceDelivery = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+    token: v.string(),
+    status: v.union(v.literal('delivered'), v.literal('expired'), v.literal('failed')),
+    providerId: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const notification = await ctx.db.get(args.notificationId);
+    if (!notification || notification.userId !== args.userId) {
+      throw new Error('Notification not found.');
+    }
+    const device = await ctx.db
+      .query('mobilePushDevices')
+      .withIndex('by_token', (q) => q.eq('token', args.token))
+      .unique();
+    if (!device || device.userId !== args.userId) throw new Error('Mobile device not found.');
+
+    const ts = now();
+    const existing = await ctx.db
+      .query('nativePushDeliveries')
+      .withIndex('by_notification_token', (q) =>
+        q.eq('notificationId', args.notificationId).eq('token', args.token),
+      )
+      .unique();
+    const receipt = {
+      status: args.status,
+      attemptCount: (existing?.attemptCount ?? 0) + 1,
+      providerId: args.providerId,
+      error: args.error?.slice(0, 500),
+      updatedAt: ts,
+    };
+    if (existing) await ctx.db.patch(existing._id, receipt);
+    else {
+      await ctx.db.insert('nativePushDeliveries', {
+        userId: args.userId,
+        notificationId: args.notificationId,
+        token: args.token,
+        ...receipt,
+        createdAt: ts,
+      });
+    }
+    if (args.status === 'delivered') {
+      await ctx.db.patch(device._id, { lastDeliveredAt: ts, updatedAt: ts });
+    } else if (args.status === 'expired') {
+      await ctx.db.patch(device._id, { status: 'expired', updatedAt: ts });
+    }
   },
 });
 

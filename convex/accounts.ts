@@ -17,6 +17,7 @@ export const createOAuthState = mutation({
     state: v.string(),
     provider: v.string(),
     redirectTo: v.optional(v.string()),
+    nativeCallback: v.optional(v.boolean()),
     ttlMs: v.number(),
   },
   handler: async (ctx, args) => {
@@ -27,6 +28,7 @@ export const createOAuthState = mutation({
       userId: args.userId,
       provider: args.provider,
       redirectTo: args.redirectTo,
+      nativeCallback: args.nativeCallback,
       createdAt: ts,
       expiresAt: ts + args.ttlMs,
     });
@@ -259,6 +261,10 @@ const USER_BULK_TABLES = [
   'albatrossRoutines',
   'albatrossRoutineRuns',
   'albatrossEvidence',
+  'mobileCommands',
+  'mobileSyncChanges',
+  'mobileSyncTombstones',
+  'nativePushDeliveries',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -435,6 +441,8 @@ export const deleteUserCascade = mutation({
       'albatrossNotifications',
       'albatrossNotificationPreferences',
       'webPushSubscriptions',
+      'mobilePushDevices',
+      'mobileSyncHeads',
       'notificationDeliveries',
       'albatrossDailyCheckins',
       'areas',

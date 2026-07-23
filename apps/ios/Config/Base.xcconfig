@@ -1,0 +1,16 @@
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+// xcconfig interprets // as a comment, so the empty expansion preserves the
+// URL separator. Local.xcconfig should override this for staging builds.
+// These internal names intentionally differ from the Xcode Cloud input
+// variables. Xcode imports workflow environment variables as build settings;
+// reusing their names here can corrupt recursive Info.plist expansion.
+LAB86_INFO_API_BASE_URL = https:/$()/mail.lab86.io
+LAB86_INFO_CLERK_PUBLISHABLE_KEY =
+LAB86_INFO_CONVEX_DEPLOYMENT_URL =
+LAB86_INFO_CLERK_FRONTEND_API_HOST =
+
+// Keep real environment values out of source control. This include must come
+// after the defaults because xcconfig resolves later assignments last.
+#include? "Local.xcconfig"

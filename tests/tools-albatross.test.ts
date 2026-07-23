@@ -194,6 +194,26 @@ describe('Albatross tools', () => {
         notification: { enabled: false, channel: 'in_app' },
       },
     });
+
+    const consent = await runTool(albatross.albatrossSetRoutineConsent.handler, {
+      routineId: result.routineId,
+      consent: 'enabled',
+      localTime: '21:00',
+      notificationEnabled: true,
+      notificationChannel: 'in_app',
+    });
+    expect(consent.ok).toBeTrue();
+    expect(mutationCalls.at(-1)).toMatchObject({
+      fn: apiMock.albatrossRoutines.setConsent,
+      args: {
+        routineId: result.routineId,
+        consent: 'enabled',
+        localTime: '21:00',
+        timezone: 'America/New_York',
+        notificationEnabled: true,
+        notificationChannel: 'in_app',
+      },
+    });
   });
 
   test('does not promise a notification-consent question for task-only routines', async () => {
@@ -453,6 +473,10 @@ describe('Albatross tools', () => {
       operationBatchId: 'batch_project',
     });
     const projects = await runTool(albatross.albatrossListProjects.handler, { status: 'active' });
+    const updated = await runTool(albatross.albatrossUpdateProject.handler, {
+      projectId: project.projectId,
+      status: 'paused',
+    });
     const pane = await runTool(albatross.albatrossGetProjectPane.handler, { projectId: project.projectId });
     const sprints = await runTool(albatross.albatrossListSprints.handler, {
       projectId: project.projectId,
@@ -461,13 +485,21 @@ describe('Albatross tools', () => {
 
     expect(project.operationId).toBe('operation_1');
     expect(sprint.operationId).toBe('operation_2');
+    expect(updated.operationId).toBe('operation_3');
     expect(projects.projects[0].projectId).toBe('project_live');
     expect(pane.pane.project.projectId).toBe(project.projectId);
     expect(sprints.sprints[0].sprintId).toBe('sprint_live');
     expect(operationCalls.map((call) => call.inverse?.kind)).toEqual([
       'albatross.archive_project',
       'albatross.archive_sprint',
+      'albatross.restore_project_status',
     ]);
+    expect(mutationCalls.find((call) => call.fn === apiMock.albatrossWork.updateProject)?.args).toMatchObject(
+      {
+        projectId: project.projectId,
+        status: 'paused',
+      },
+    );
     await runTool(albatross.albatrossCreateSprint.handler, {
       title: 'Fallback batch sprint',
       status: 'planned',

@@ -37,6 +37,7 @@ import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { confirmDailyReportAction } from '@/lib/daily-report-action-review';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
@@ -577,20 +578,9 @@ function ReportArtifact({
       // with no user click. Gate EVERY mutating action behind a host-rendered
       // confirm() (a sandboxed iframe cannot suppress a top-window dialog).
       // Read-only actions (open_*, draft_reply only seeds the composer) are exempt.
-      const confirmFor: Record<string, string> = {
-        toggle_task: payload.completed
-          ? `Mark “${payload.title || 'this task'}” complete?`
-          : `Reopen “${payload.title || 'this task'}”?`,
-        dismiss_task: `Remove “${payload.title || 'this task'}” from future briefs?`,
-        resolve_thread: `Mark “${payload.subject || 'this thread'}” resolved and remove it from future briefs?`,
-        dismiss_thread: `Remove “${payload.subject || 'this conversation'}” from future briefs?`,
-        create_task: `Add “${payload.title || 'this task'}” to your tasks?`,
-        archive_thread: `Archive “${payload.subject || 'this conversation'}” and remove it from future briefs?`,
-        rsvp_event: `Send a “${payload.status}” RSVP for this event?`,
-        create_event: `Add “${payload.title || 'this event'}” to your calendar?`,
-      };
-      const confirmMsg = data.action ? confirmFor[data.action] : undefined;
-      if (confirmMsg && !window.confirm(confirmMsg)) return ack(false, 'cancelled');
+      if (!confirmDailyReportAction(data.action, payload, window.confirm)) {
+        return ack(false, 'cancelled');
+      }
       try {
         switch (data.action) {
           case 'open_thread':
@@ -1156,8 +1146,16 @@ export function DailyReport() {
 
   const rowHandlers = {
     onOpen: openThread,
-    onResolveThread: (item: DailyReportItem) => resolveThread.mutate(item),
-    onHideThread: (item: DailyReportItem) => hideThread.mutate(item),
+    onResolveThread: (item: DailyReportItem) => {
+      if (confirmDailyReportAction('resolve_thread', { subject: item.subject }, window.confirm)) {
+        resolveThread.mutate(item);
+      }
+    },
+    onHideThread: (item: DailyReportItem) => {
+      if (confirmDailyReportAction('dismiss_thread', { subject: item.subject }, window.confirm)) {
+        hideThread.mutate(item);
+      }
+    },
     resolvingThreadKey: resolveThread.isPending
       ? dailyReportItemThreadKey(resolveThread.variables as DailyReportItem)
       : undefined,
@@ -1465,8 +1463,22 @@ export function DailyReport() {
               delay={170}
               onOpenTasks={() => setPrimaryView('tasks')}
               onOpenCalendar={() => setPrimaryView('calendar')}
-              onCompleteTask={(task) => completeTask.mutate(task)}
-              onDismissTask={(task) => dismissTask.mutate(task)}
+              onCompleteTask={(task) => {
+                if (
+                  confirmDailyReportAction(
+                    'toggle_task',
+                    { title: task.title, completed: true },
+                    window.confirm,
+                  )
+                ) {
+                  completeTask.mutate(task);
+                }
+              }}
+              onDismissTask={(task) => {
+                if (confirmDailyReportAction('dismiss_task', { title: task.title }, window.confirm)) {
+                  dismissTask.mutate(task);
+                }
+              }}
               completingTaskId={completeTask.isPending ? completeTask.variables?.cardId : undefined}
               dismissingTaskId={dismissTask.isPending ? dismissTask.variables?.cardId : undefined}
             />

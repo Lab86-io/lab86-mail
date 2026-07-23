@@ -120,6 +120,67 @@ export const tasksGetBoard = defineTool({
   },
 });
 
+export const tasksForThread = defineTool({
+  name: 'tasks_for_thread',
+  description: 'List task cards that were created from one mail thread.',
+  category: 'tasks',
+  mutating: false,
+  input: z.object({ threadId: z.string().min(1) }),
+  output: z.object({ cards: z.array(z.any()) }),
+  async handler({ threadId }, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const cards = await convexQuery<any[]>(boardsApi.liveCardsForThread, { userId, threadId });
+    return { cards };
+  },
+});
+
+export const tasksForCalendarEvent = defineTool({
+  name: 'tasks_for_calendar_event',
+  description: 'List task cards linked to one calendar event or recurring series.',
+  category: 'tasks',
+  mutating: false,
+  input: z.object({ eventId: z.string().min(1), masterEventId: z.string().optional() }),
+  output: z.object({ cards: z.array(z.any()) }),
+  async handler({ eventId, masterEventId }, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const cards = await convexQuery<any[]>(boardsApi.liveCardsForCalendarEvent, {
+      userId,
+      eventId,
+      masterEventId,
+    });
+    return { cards };
+  },
+});
+
+export const tasksDueCards = defineTool({
+  name: 'tasks_due_cards',
+  description: 'List task cards with due dates in an inclusive start/exclusive end window.',
+  category: 'tasks',
+  mutating: false,
+  input: z.object({ startAt: z.number(), endAt: z.number() }),
+  output: z.object({ cards: z.array(z.any()) }),
+  async handler({ startAt, endAt }, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const cards = await convexQuery<any[]>(boardsApi.listDueCards, { userId, startAt, endAt });
+    return { cards };
+  },
+});
+
+export const tasksGetCard = defineTool({
+  name: 'tasks_get_card',
+  description:
+    'Get one task card with editable metadata, comments, activity, attachments, and source context.',
+  category: 'tasks',
+  mutating: false,
+  input: z.object({ cardId: z.string().min(1) }),
+  output: z.object({ card: z.any() }),
+  async handler({ cardId }, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const card = await convexQuery<any>(boardsApi.getCardState, { userId, cardId });
+    return { card };
+  },
+});
+
 export const tasksCreateBoard = defineTool({
   name: 'tasks_create_board',
   description: 'Create a new Kanban board, optionally with custom column names.',
@@ -253,13 +314,15 @@ export const tasksUpdateCard = defineTool({
 export const tasksMoveCard = defineTool({
   name: 'tasks_move_card',
   description:
-    'Move a card to another column on its board (by column name), appended at the end. If boardId is omitted, the card’s current board is used. Moving to Done marks the card complete; moving out of Done reopens it.',
+    'Move or reorder a card on its board. Use beforeOrder/afterOrder from adjacent cards to preserve a direct-manipulation drop position. If both are omitted, the card is appended.',
   category: 'tasks',
   mutating: true,
   input: z.object({
     cardId: z.string(),
     boardId: z.string().optional(),
     column: z.string().min(1),
+    beforeOrder: z.number().optional(),
+    afterOrder: z.number().optional(),
   }),
   output: z.object({
     ok: z.boolean(),
@@ -275,13 +338,23 @@ export const tasksMoveCard = defineTool({
       args.boardId ?? current.boardId,
       args.column,
     );
-    if (current.columnId === column.columnId) {
+    if (
+      current.columnId === column.columnId &&
+      args.beforeOrder === undefined &&
+      args.afterOrder === undefined
+    ) {
       return { ok: true, operationId: '', noOp: true, card: current };
     }
     const result = await convexMutation<{
       previous: { columnId: string; order: number };
       card: TaskCardState;
-    }>(boardsApi.moveCard, { userId, cardId: args.cardId, columnId: column.columnId });
+    }>(boardsApi.moveCard, {
+      userId,
+      cardId: args.cardId,
+      columnId: column.columnId,
+      beforeOrder: args.beforeOrder,
+      afterOrder: args.afterOrder,
+    });
     const operationId = await recordOperation({
       userId,
       tool: 'tasks_move_card',
@@ -375,6 +448,36 @@ export const tasksRenameColumn = defineTool({
   },
 });
 
+export const tasksReorderColumn = defineTool({
+  name: 'tasks_reorder_column',
+  description: 'Persist the order of a board column after direct manipulation.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string().optional(), column: z.string().min(1), order: z.number() }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const { board, column } = await resolveBoardAndColumn(userId, args.boardId, args.column);
+    await convexMutation(boardsApi.updateColumn, {
+      userId,
+      columnId: column.columnId,
+      order: args.order,
+    });
+    const operationId = await recordOperation({
+      userId,
+      tool: 'tasks_reorder_column',
+      surface: 'tasks',
+      summary: `Reordered column "${column.name}" on "${board.title}"`,
+      target: { kind: 'column', id: column.columnId, boardId: board.boardId },
+      inverse: {
+        kind: 'tasks.reorder_column',
+        payload: { columnId: column.columnId, order: column.order },
+      },
+    });
+    return { ok: true, operationId };
+  },
+});
+
 export const tasksDeleteColumn = defineTool({
   name: 'tasks_delete_column',
   description:
@@ -441,6 +544,58 @@ export const tasksDeleteBoard = defineTool({
       target: { kind: 'board', id: args.boardId },
     });
     return { ok: true, operationId };
+  },
+});
+
+export const tasksSetPublicLink = defineTool({
+  name: 'tasks_set_public_link',
+  description: 'Enable or disable a board’s public read-only link.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string(), enabled: z.boolean() }),
+  output: z.object({ ok: z.boolean(), publicToken: z.string().nullable() }),
+  async handler({ boardId, enabled }, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const token = enabled ? crypto.randomUUID().replaceAll('-', '') : undefined;
+    const result = await convexMutation<{ publicToken: string | null }>(boardsApi.setPublicLink, {
+      userId,
+      boardId,
+      enabled,
+      token,
+    });
+    return { ok: true, publicToken: result.publicToken };
+  },
+});
+
+export const tasksInviteMember = defineTool({
+  name: 'tasks_invite_member',
+  description: 'Invite a member or read-only viewer to a board.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    boardId: z.string(),
+    email: z.string().email(),
+    role: z.enum(['member', 'viewer']),
+  }),
+  output: z.object({ ok: z.boolean(), memberId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const memberId = await convexMutation<string>(boardsApi.inviteMember, { userId, ...args });
+    return { ok: true, memberId };
+  },
+});
+
+export const tasksRemoveMember = defineTool({
+  name: 'tasks_remove_member',
+  description: 'Remove a collaborator from a board.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ boardId: z.string(), memberId: z.string() }),
+  output: z.object({ ok: z.boolean() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    await convexMutation(boardsApi.removeMember, { userId, ...args });
+    return { ok: true };
   },
 });
 
@@ -686,6 +841,14 @@ registerUndoExecutor('tasks.rename_column', async (payload, ctx) => {
     userId: ctx.userId,
     columnId: payload.columnId,
     name: payload.name,
+  });
+});
+
+registerUndoExecutor('tasks.reorder_column', async (payload, ctx) => {
+  await convexMutation(boardsApi.updateColumn, {
+    userId: ctx.userId,
+    columnId: payload.columnId,
+    order: payload.order,
   });
 });
 

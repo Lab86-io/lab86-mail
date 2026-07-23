@@ -8,9 +8,11 @@ import {
   areaDiscoverContext,
   areaDomainActivity,
   areaFactSetStatus,
+  areaHome,
   areaList,
   areaUpdateIdentity,
   TEACH_SYSTEM_PROMPT,
+  workHome,
 } from '../lib/tools/areas';
 import { runTool, TEST_USER } from './tools/harness';
 
@@ -22,11 +24,16 @@ const apiMock = {
     updateArea: 'albatross.updateArea',
     archiveArea: 'albatross.archiveArea',
     setAreaArtifactLinkStatus: 'albatross.setAreaArtifactLinkStatus',
+    areaHome: 'albatross.areaHome',
     addAreaFact: 'albatross.addAreaFact',
     verifyAreaFact: 'albatross.verifyAreaFact',
     rejectAreaFact: 'albatross.rejectAreaFact',
     supersedeAreaFact: 'albatross.supersedeAreaFact',
     domainActivity: 'albatross.domainActivity',
+  },
+  albatrossWorkV2: {
+    areaWork: 'albatrossWorkV2.areaWork',
+    workDetail: 'albatrossWorkV2.workDetail',
   },
 };
 
@@ -66,6 +73,69 @@ beforeEach(() => {
       }
       if (fn === apiMock.albatross.getArea) {
         return { _id: args.areaId, name: 'Cardhunt job', status: 'active', boardId: 'board_new' };
+      }
+      if (fn === apiMock.albatross.areaHome) {
+        return {
+          area: { _id: args.areaId, name: 'Cardhunt job', kind: 'job' },
+          livingBrief: { status: 'ready', lede: 'Two things need you today.', summary: 'Steady.' },
+          facts: { verified: [], candidate: [] },
+          mail: [],
+          events: [],
+          tasks: [],
+          plans: [],
+          projects: [],
+          places: [],
+          counts: {
+            facts: { verified: 2, candidate: 1 },
+            mail: 0,
+            events: 0,
+            tasks: 0,
+            plans: 0,
+            projects: 0,
+            places: 0,
+          },
+        };
+      }
+      if (fn === apiMock.albatrossWorkV2.areaWork) {
+        return [
+          {
+            _id: 'work_1',
+            title: 'Prepare the launch review',
+            rawText: 'Get the launch review ready',
+            status: 'ready',
+            workState: 'active',
+            agentState: 'idle',
+            updatedAt: NOW,
+          },
+        ];
+      }
+      if (fn === apiMock.albatrossWorkV2.workDetail) {
+        return {
+          work: {
+            _id: args.workId,
+            title: 'Prepare the launch review',
+            rawText: 'Get the launch review ready',
+            status: 'ready',
+            workState: 'active',
+            agentState: 'idle',
+            updatedAt: NOW,
+          },
+          plan: {
+            _id: 'plan_1',
+            status: 'ready',
+            outcome: 'A launch review that is ready to send',
+            summary: 'The evidence and next steps are assembled.',
+            artifactHtml: '<main><h1>Launch review</h1></main>',
+            assumptions: [],
+            sourceRefs: [],
+            digitalActions: [],
+            physicalActions: [],
+          },
+          project: null,
+          questions: [],
+          areaLinks: [],
+          application: null,
+        };
       }
       if (fn === apiMock.albatross.domainActivity) {
         return {
@@ -363,6 +433,51 @@ describe('area_artifact_set_status', () => {
       reason: 'That meeting was for CardHunt',
     });
     expect(mutationCalls[0].args.confirmationRefs).toBeUndefined();
+  });
+});
+
+describe('area_home', () => {
+  test('loads one area by id for the signed-in user and returns the combined home', async () => {
+    const result: any = await runTool(areaHome.handler, { areaId: 'area_1' });
+    expect(queryCalls.find((call) => call.fn === apiMock.albatross.areaHome)).toMatchObject({
+      fn: apiMock.albatross.areaHome,
+      args: { userId: TEST_USER.userId, areaId: 'area_1' },
+    });
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.areaWork)).toMatchObject({
+      fn: apiMock.albatrossWorkV2.areaWork,
+      args: { userId: TEST_USER.userId, areaId: 'area_1' },
+    });
+    expect(result.home.area._id).toBe('area_1');
+    expect(result.home.livingBrief.status).toBe('ready');
+    expect(result.home.work[0]._id).toBe('work_1');
+    // The count block the native Area detail leads with is passed through intact.
+    expect(result.home.counts.facts).toEqual({ verified: 2, candidate: 1 });
+  });
+
+  test('is read-only and requires an authenticated user', async () => {
+    expect(areaHome.mutating).toBe(false);
+    await expect(runTool(areaHome.handler, { areaId: 'area_1' }, { userId: null })).rejects.toThrow(
+      'Not authenticated.',
+    );
+  });
+});
+
+describe('work_home', () => {
+  test('loads the durable Work record and its rendered plan brief', async () => {
+    const result: any = await runTool(workHome.handler, { workId: 'work_1' });
+    expect(queryCalls[0]).toMatchObject({
+      fn: apiMock.albatrossWorkV2.workDetail,
+      args: { userId: TEST_USER.userId, workId: 'work_1' },
+    });
+    expect(result.detail.work._id).toBe('work_1');
+    expect(result.detail.plan.artifactHtml).toContain('Launch review');
+    expect(workHome.mutating).toBe(false);
+  });
+
+  test('requires the same authenticated user boundary as the Area', async () => {
+    await expect(runTool(workHome.handler, { workId: 'work_1' }, { userId: null })).rejects.toThrow(
+      'Not authenticated.',
+    );
   });
 });
 

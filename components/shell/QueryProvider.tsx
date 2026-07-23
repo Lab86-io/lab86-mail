@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConvexProvider, ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { useState } from 'react';
+import { PendingSendProvider } from '@/components/compose/PendingSendProvider';
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -38,7 +39,11 @@ export function QueryProvider({
         },
       }),
   );
-  const content = <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const content = (
+    <QueryClientProvider client={client}>
+      <PendingSendProvider>{children}</PendingSendProvider>
+    </QueryClientProvider>
+  );
   if (!convexUrl || !clerkEnabled || !clerkPublishableKey)
     return <ConvexProvider client={convex}>{content}</ConvexProvider>;
   return (

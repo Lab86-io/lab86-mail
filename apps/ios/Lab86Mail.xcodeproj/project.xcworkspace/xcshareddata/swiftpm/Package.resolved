@@ -1,0 +1,236 @@
+{
+  "originHash" : "4d22876bbfb908920433debf12732250eb16e1c3264eb4c5aa78cd3d65575a24",
+  "pins" : [
+    {
+      "identity" : "clerk-convex-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/clerk/clerk-convex-swift",
+      "state" : {
+        "revision" : "5c7e62ee329a00df0f9ed73462c54b069a7286ab",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "clerk-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/clerk/clerk-ios",
+      "state" : {
+        "revision" : "d41365666ac3be138737a57b33b30b6291b5c65b",
+        "version" : "1.3.2"
+      }
+    },
+    {
+      "identity" : "convex-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/get-convex/convex-swift",
+      "state" : {
+        "revision" : "125b71b2f8725931a5b0e8252f0799ef2adad120",
+        "version" : "0.8.1"
+      }
+    },
+    {
+      "identity" : "equatable",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ordo-one/equatable",
+      "state" : {
+        "revision" : "63e597c07e1e0622e6c8f2b33c972525a444c8eb",
+        "version" : "1.0.10"
+      }
+    },
+    {
+      "identity" : "highlightswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/appstefan/highlightswift",
+      "state" : {
+        "revision" : "99c431b38a1444a5fd6a4978307fbbefe3a7af53"
+      }
+    },
+    {
+      "identity" : "horizoncalendar",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/airbnb/HorizonCalendar",
+      "state" : {
+        "revision" : "a360d71a1255f0b24e378f2ee31a7a7d674a49b6",
+        "version" : "2.0.0"
+      }
+    },
+    {
+      "identity" : "iosmath",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/junyan72/iosMath",
+      "state" : {
+        "revision" : "ba9ab7729b151329c54fd895a7c1859981d9484c"
+      }
+    },
+    {
+      "identity" : "kingfisher",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/onevcat/Kingfisher",
+      "state" : {
+        "revision" : "410984bf301f4fa224fe56277b3f8672cc465c79",
+        "version" : "8.11.0"
+      }
+    },
+    {
+      "identity" : "nuke",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kean/Nuke.git",
+      "state" : {
+        "revision" : "63a8fcbd6621340a2410bc3e9575ac97058615f4",
+        "version" : "13.0.6"
+      }
+    },
+    {
+      "identity" : "openapikit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mattpolzin/OpenAPIKit",
+      "state" : {
+        "revision" : "57b6318128e3f901c93f4fbf98d1c1464ec168d3",
+        "version" : "6.2.0"
+      }
+    },
+    {
+      "identity" : "phonenumberkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/PhoneNumberKit/PhoneNumberKit",
+      "state" : {
+        "revision" : "575bda0cd71186372e2ecb1352b91d7853bce048",
+        "version" : "5.0.5"
+      }
+    },
+    {
+      "identity" : "swift-algorithms",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-algorithms",
+      "state" : {
+        "revision" : "87e50f483c54e6efd60e885f7f5aa946cee68023",
+        "version" : "1.2.1"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
+      }
+    },
+    {
+      "identity" : "swift-cmark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-cmark.git",
+      "state" : {
+        "revision" : "924936d0427cb25a61169739a7660230bffa6ea6",
+        "version" : "0.8.0"
+      }
+    },
+    {
+      "identity" : "swift-collections",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-collections",
+      "state" : {
+        "revision" : "a0cb0954ecb21e4e31b0070e6ed5674e8556685a",
+        "version" : "1.6.0"
+      }
+    },
+    {
+      "identity" : "swift-http-types",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-http-types",
+      "state" : {
+        "revision" : "db774a277f60063a32d854f2980299caf06da041",
+        "version" : "1.6.0"
+      }
+    },
+    {
+      "identity" : "swift-markdown",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-markdown.git",
+      "state" : {
+        "revision" : "7d9a5ce307528578dfa777d505496bd5f544ad94",
+        "version" : "0.7.3"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics.git",
+      "state" : {
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
+      }
+    },
+    {
+      "identity" : "swift-openapi-generator",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-openapi-generator",
+      "state" : {
+        "revision" : "af9a2a1f5dcfb00a278d4bb29c6d75080932e99e",
+        "version" : "1.13.0"
+      }
+    },
+    {
+      "identity" : "swift-openapi-runtime",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-openapi-runtime",
+      "state" : {
+        "revision" : "3d3a8457661daf7fb260ceeb9f0e24e5204ba5fb",
+        "version" : "1.12.0"
+      }
+    },
+    {
+      "identity" : "swift-openapi-urlsession",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-openapi-urlsession",
+      "state" : {
+        "revision" : "08796d36c99ad2318929bfa1d1e40f82194b65cc",
+        "version" : "1.3.1"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "f99ae8aa18f0cf0d53481901f88a0991dc3bd4a2",
+        "version" : "601.0.1"
+      }
+    },
+    {
+      "identity" : "swiftsoup",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scinfu/SwiftSoup",
+      "state" : {
+        "revision" : "8d6ad267714cac3ae747cefdd21f7a6665006e1f"
+      }
+    },
+    {
+      "identity" : "swiftstreamingmarkdown",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/microsoft/SwiftStreamingMarkdown",
+      "state" : {
+        "revision" : "a4187829013c4588556d82dbf1ab65ed768a0262"
+      }
+    },
+    {
+      "identity" : "swiftui-shimmer",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/markiv/SwiftUI-Shimmer",
+      "state" : {
+        "revision" : "0226e21f9bf355d40e07e5f5e1c33679d50e167f",
+        "version" : "1.5.1"
+      }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams",
+      "state" : {
+        "revision" : "a27b21e0c81c5bf42049b897a62aaf387e80f279",
+        "version" : "6.2.2"
+      }
+    }
+  ],
+  "version" : 3
+}

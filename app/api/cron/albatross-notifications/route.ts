@@ -5,6 +5,7 @@ import { isInternalCronRequest } from '@/lib/cron-auth';
 import { isStagingRuntime } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { type NotificationEnvelope, sendCheckinEmail, sendWebPush } from '@/lib/notifications/delivery';
+import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -60,6 +61,15 @@ export async function POST(req: NextRequest) {
       .map((delivery: any) => delivery.channel),
   );
   const results: Record<string, unknown> = {};
+
+  if (
+    body.nativePushEnabled !== false &&
+    context.preference?.nativePushEnabled !== false &&
+    !sentChannels.has('native_push') &&
+    context.mobileDevices?.length
+  ) {
+    results.nativePush = await dispatchNativeNotification(userId, String(notification._id));
+  }
 
   if (body.webPushEnabled === true && !sentChannels.has('web_push') && context.subscriptions?.length) {
     let sent = 0;

@@ -27,6 +27,9 @@ data/
 .env
 .env.local
 .env.*.local
+apps/ios/Config/Local.xcconfig
+apps/ios/*.xcodeproj/xcuserdata/
+apps/ios/DerivedData/
 
 # bun
 bun.lockb

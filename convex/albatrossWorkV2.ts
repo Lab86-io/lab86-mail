@@ -85,6 +85,32 @@ export const beginCapture = mutation({
   },
 });
 
+export const updateWorkState = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    state: v.union(v.literal('active'), v.literal('paused'), v.literal('done'), v.literal('archived')),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      workState: args.state,
+      status:
+        args.state === 'done'
+          ? 'done'
+          : args.state === 'archived'
+            ? 'archived'
+            : work.status === 'done' || work.status === 'archived'
+              ? 'ready'
+              : work.status,
+      updatedAt: ts,
+    });
+    return { previousState: work.workState || 'active', state: args.state };
+  },
+});
+
 export const finishCapture = mutation({
   args: {
     ...callerArgs,
@@ -440,9 +466,9 @@ export const answerQuestion = mutation({
 });
 
 export const livePendingQuestions = query({
-  args: { limit: v.optional(v.number()) },
+  args: { ...callerArgs, limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, {});
+    const userId = await resolveUserId(ctx, args);
     const limit = Math.min(Math.max(args.limit ?? 20, 1), 100);
     const questions = await ctx.db
       .query('albatrossWorkQuestions')
@@ -481,9 +507,13 @@ export const livePendingQuestions = query({
 });
 
 export const areaWork = query({
-  args: { areaId: v.id('areas'), includeDone: v.optional(v.boolean()) },
+  args: {
+    ...callerArgs,
+    areaId: v.id('areas'),
+    includeDone: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, {});
+    const userId = await resolveUserId(ctx, args);
     await requireArea(ctx, args.areaId, userId);
     const [primaryRows, areaLinks] = await Promise.all([
       ctx.db
@@ -513,9 +543,12 @@ export const areaWork = query({
 });
 
 export const workDetail = query({
-  args: { workId: v.id('albatrossIntents') },
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+  },
   handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, {});
+    const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
     const [plan, project, questions, areaLinks, applications] = await Promise.all([
       work.latestPlanId ? ctx.db.get(work.latestPlanId) : null,

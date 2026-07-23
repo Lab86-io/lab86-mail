@@ -1,6 +1,8 @@
 // Sanitize internal redirect paths for OAuth flows. Only same-origin paths
 // may round-trip through OAuth state: protocol-relative (//evil.com),
 // absolute URLs, and backslash tricks all fall back to '/'.
+export const NATIVE_NYLAS_CALLBACK = 'lab86-native-callback';
+
 export function sanitizeInternalPath(value: string | null | undefined): string {
   if (!value) return '/';
   if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {

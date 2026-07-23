@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "user": {
+    "id": "user-fixture-1",
+    "email": "owner@example.com",
+    "name": "Owner"
+  },
+  "accounts": [
+    {
+      "id": "account-fixture-1",
+      "email": "owner@example.com",
+      "provider": "google",
+      "status": "connected",
+      "displayName": "Work",
+      "scopes": ["mail.read", "mail.send"],
+      "capabilities": {
+        "mail": true,
+        "calendar": true,
+        "contacts": true,
+        "folders": true,
+        "labels": true,
+        "drafts": true,
+        "scheduledSend": true,
+        "push": true,
+        "search": true
+      },
+      "sync": {
+        "status": "ready",
+        "corpusReady": true,
+        "itemsSynced": 42,
+        "lastSyncedAt": 1784304000000
+      }
+    }
+  ],
+  "featureFlags": {
+    "mobileContractV1": true,
+    "typedCommandOutbox": true
+  },
+  "notificationSettings": {
+    "nativePushEnabled": true,
+    "newMailPushEnabled": true,
+    "eventSuggestionPushEnabled": true,
+    "eveningCheckinEnabled": true
+  },
+  "cursors": {
+    "accounts": "3",
+    "mail": "12",
+    "calendar": "4",
+    "tasks": "9",
+    "today": "2",
+    "work": "7",
+    "assistant": "1",
+    "activity": "5"
+  },
+  "serverTime": "2026-07-17T12:00:00Z"
+}

@@ -109,6 +109,7 @@ export const saveOAuthState = mutation({
     state: v.string(),
     server: serverValidator,
     payloadEncrypted: v.string(),
+    nativeCallback: v.optional(v.boolean()),
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -123,10 +124,37 @@ export const saveOAuthState = mutation({
       state: args.state,
       server: args.server,
       payloadEncrypted: args.payloadEncrypted,
+      nativeCallback: args.nativeCallback,
       expiresAt: args.expiresAt,
       createdAt: now(),
     });
     return { ok: true };
+  },
+});
+
+// Browser callbacks cannot rely on the app's Clerk cookie. The OAuth state is
+// high-entropy, single-use, short-lived, and server-secret-gated, so native
+// sessions consume it directly and recover the owning user from the row.
+export const consumeOAuthStateFromCallback = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    state: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('mcpOAuthStates')
+      .withIndex('by_state', (q) => q.eq('state', args.state))
+      .unique();
+    if (!row) return null;
+    await ctx.db.delete(row._id);
+    if (row.expiresAt < now()) return null;
+    return {
+      userId: row.userId,
+      server: row.server,
+      payloadEncrypted: row.payloadEncrypted,
+      nativeCallback: row.nativeCallback ?? false,
+    };
   },
 });
 

@@ -22,8 +22,11 @@ import {
   type Provider,
   setProviderForByok,
 } from './ai-options';
-
-const STORAGE_KEY = 'lab86-mail-onboarding-dismissed-v1';
+import {
+  ONBOARDING_DISMISSED_STORAGE_KEY,
+  shouldExitWelcome,
+  shouldRedirectToWelcome,
+} from './onboarding-state';
 
 interface NylasAccount {
   accountId: string;
@@ -45,9 +48,9 @@ interface NylasStatus {
   capabilities?: NylasCapability[];
 }
 
-// First-run gate rendered inside the app shell: when the signed-in user has
-// no connected mailboxes (or never finished onboarding), route them to the
-// dedicated /welcome page instead of popping a modal over an empty inbox.
+// First-run gate rendered inside the app shell: route only a settled,
+// genuinely new account to /welcome. Returning and explicitly skipped users
+// must never be interrupted by onboarding.
 export function FirstRunRedirect() {
   const router = useRouter();
   const [dismissed, setDismissed] = useState<boolean | null>(null);
@@ -61,12 +64,20 @@ export function FirstRunRedirect() {
     retry: false,
   });
   useEffect(() => {
-    setDismissed(window.localStorage.getItem(STORAGE_KEY) === '1');
+    setDismissed(window.localStorage.getItem(ONBOARDING_DISMISSED_STORAGE_KEY) === '1');
   }, []);
   useEffect(() => {
-    if (dismissed === null || isLoading || isError) return;
     const hasAccounts = (nylas?.accounts || []).length > 0;
-    if (!hasAccounts || !dismissed) router.replace('/welcome');
+    if (hasAccounts && !isLoading && !isError) {
+      if (dismissed !== true) {
+        window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
+        setDismissed(true);
+      }
+      return;
+    }
+    if (shouldRedirectToWelcome({ dismissed, hasAccounts, isLoading, isError })) {
+      router.replace('/welcome');
+    }
   }, [dismissed, isLoading, isError, nylas, router]);
   return null;
 }
@@ -128,11 +139,18 @@ export function WelcomeFlow() {
   const hasAccounts = accounts.length > 0;
 
   useEffect(() => {
-    setDismissed(window.localStorage.getItem(STORAGE_KEY) === '1');
+    setDismissed(window.localStorage.getItem(ONBOARDING_DISMISSED_STORAGE_KEY) === '1');
   }, []);
 
   useEffect(() => {
-    if (dismissed === true && hasAccounts && !loadingAccounts) router.replace('/');
+    if (dismissed === true) {
+      router.replace('/');
+      return;
+    }
+    if (!shouldExitWelcome({ hasAccounts, isLoading: loadingAccounts })) return;
+    window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
+    setDismissed(true);
+    router.replace('/');
   }, [dismissed, hasAccounts, loadingAccounts, router]);
 
   useEffect(() => {
@@ -173,7 +191,13 @@ export function WelcomeFlow() {
 
   const complete = () => {
     if (!hasAccounts) return;
-    window.localStorage.setItem(STORAGE_KEY, '1');
+    window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
+    setDismissed(true);
+    router.replace('/');
+  };
+
+  const skip = () => {
+    window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
     setDismissed(true);
     router.replace('/');
   };
@@ -188,11 +212,16 @@ export function WelcomeFlow() {
 
   return (
     <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft,0_8px_40px_rgb(0_0_0/0.08))]">
-      <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 pb-5 pt-6">
-        <h1 className="text-[19px] font-semibold tracking-tight">Welcome to Lab86 Mail</h1>
-        <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
-          Two steps: connect a mailbox, pick how AI runs. Everything else is ready.
-        </p>
+      <div className="flex flex-col items-start justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 pb-5 pt-6 sm:flex-row sm:gap-4">
+        <div>
+          <h1 className="text-[19px] font-semibold tracking-tight">Welcome to Lab86 Mail</h1>
+          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+            Two quick steps personalize your workspace. You can skip now and finish anytime in Settings.
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={skip}>
+          Skip for now
+        </Button>
       </div>
 
       <div className="space-y-7 px-6 py-6">

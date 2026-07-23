@@ -1,0 +1,125 @@
+name: Xcode Cloud production trigger
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy Production
+    types:
+      - completed
+  workflow_dispatch:
+
+concurrency:
+  group: xcode-cloud-production-trigger
+  cancel-in-progress: false
+
+jobs:
+  start-xcode-cloud:
+    name: Build production iOS and distribute to TestFlight
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: blacksmith-6vcpu-macos-latest
+    timeout-minutes: 90
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the production commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || 'main' }}
+
+      - name: Verify release automation
+        run: |
+          node --test .github/scripts/app-store-connect.test.mjs
+          node --test .github/scripts/xcode-cloud-artifacts.test.mjs
+          node --test .github/scripts/xcode-cloud-diagnostics.test.mjs
+          node --test .github/scripts/xcode-cloud-workflows.test.mjs
+          bash apps/ios/ci_scripts/ci_post_clone_test.sh
+          apps/ios/ci_scripts/verify_built_configuration_test.sh
+
+      - name: Start production Xcode Cloud build
+        id: start
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          APP_STORE_APP_ID: 6792830834
+          XCODE_CLOUD_WORKFLOW_NAME: Production App Store
+          XCODE_CLOUD_BRANCH_NAME: main
+        run: node .github/scripts/start-xcode-cloud.mjs
+
+      - name: Wait for Xcode Cloud export
+        id: xcode_cloud
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          XCODE_CLOUD_BUILD_RUN_ID: ${{ steps.start.outputs.build_run_id }}
+          XCODE_CLOUD_DIAGNOSTICS_DIR: ${{ runner.temp }}/xcode-cloud-diagnostics
+        run: node .github/scripts/wait-for-xcode-cloud.mjs
+
+      - name: Preserve failed Xcode Cloud diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: xcode-cloud-production-diagnostics-${{ steps.start.outputs.build_number }}
+          path: ${{ runner.temp }}/xcode-cloud-diagnostics
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Download Xcode Cloud App Store export
+        if: steps.xcode_cloud.outputs.artifact_url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.xcode_cloud.outputs.artifact_url }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/xcode-cloud-app-store"
+          curl --fail --location \
+            --connect-timeout 30 \
+            --max-time 1800 \
+            --retry 3 \
+            --retry-all-errors \
+            --retry-delay 2 \
+            "$ARTIFACT_URL" --output "$RUNNER_TEMP/xcode-cloud-app-store.zip"
+          unzip -q "$RUNNER_TEMP/xcode-cloud-app-store.zip" -d "$RUNNER_TEMP/xcode-cloud-app-store"
+
+      - name: Verify signed production IPA
+        if: steps.xcode_cloud.outputs.artifact_url != ''
+        run: .github/scripts/verify-ios-export.sh production "$RUNNER_TEMP/xcode-cloud-app-store"
+
+      - name: Upload production export to App Store Connect
+        if: steps.xcode_cloud.outputs.needs_upload == 'true'
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          private_keys_dir="$RUNNER_TEMP/app-store-connect-private-keys"
+          mkdir -p "$private_keys_dir"
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$private_keys_dir/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$private_keys_dir/AuthKey_${ASC_KEY_ID}.p8"
+
+          ipa_path=$(find "$RUNNER_TEMP/xcode-cloud-app-store" -type f -name '*.ipa' -print -quit)
+          if [ -z "$ipa_path" ]; then
+            echo "The production Xcode Cloud export did not contain an IPA." >&2
+            exit 1
+          fi
+
+          API_PRIVATE_KEYS_DIR="$private_keys_dir" xcrun altool \
+            --upload-app \
+            --type ios \
+            --file "$ipa_path" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --output-format json
+
+      - name: Confirm production TestFlight processing and internal group assignment
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          APP_STORE_APP_ID: 6792830834
+          TESTFLIGHT_GROUP_ID: 4606fec2-432b-4875-93dc-8f4a3982f6e0
+          BUILD_NUMBER: ${{ steps.start.outputs.build_number }}
+        run: node .github/scripts/wait-for-testflight.mjs

@@ -29,6 +29,10 @@ function areasApi() {
   return (deps.api as any).albatross;
 }
 
+function workApi() {
+  return (deps.api as any).albatrossWorkV2;
+}
+
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');
   return userId;
@@ -307,6 +311,55 @@ export const areaArtifactSetStatus = defineTool({
         : {}),
     });
     return { ok: true, status: args.status };
+  },
+});
+
+export const areaHome = defineTool({
+  name: 'area_home',
+  description:
+    "Load one area's home surface: its living brief, verified and candidate context facts, and the mail, events, tasks, plans, projects, and places the classifier has filed under it, plus per-section counts. Read-only. Requires the signed-in user and a stable area id (from area_list). A missing or archived area errors ('Area not found.') rather than returning empty — surface that as unavailable, not as an empty area.",
+  category: 'memory',
+  mutating: false,
+  input: z.object({
+    areaId: z.string().min(1).describe('Stable area id from area_list'),
+  }),
+  output: z.object({ home: z.unknown() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    // AreaHome owns the Area read model; WorkV2 owns durable Work. Aggregate
+    // those two authoritative reads for the mobile Area surface without
+    // copying Work rows into a second table or treating legacy plan summaries
+    // as Work records.
+    const [home, work] = await Promise.all([
+      deps.convexQuery<Record<string, unknown>>(areasApi().areaHome, {
+        userId,
+        areaId: args.areaId,
+      }),
+      deps.convexQuery<unknown[]>(workApi().areaWork, {
+        userId,
+        areaId: args.areaId,
+      }),
+    ]);
+    return { home: { ...home, work } };
+  },
+});
+
+export const workHome = defineTool({
+  name: 'work_home',
+  description:
+    'Load one durable Work item, its generated plan brief, project, pending questions, Area links, and latest application receipt. Read-only. Requires the signed-in user and a stable Work id returned by area_home. A missing Work item errors instead of returning invented content.',
+  category: 'memory',
+  mutating: false,
+  input: z.object({
+    workId: z.string().min(1).describe('Stable Work id from area_home.home.work'),
+  }),
+  output: z.object({ detail: z.unknown() }),
+  async handler(args, ctx) {
+    const detail = await deps.convexQuery<unknown>(workApi().workDetail, {
+      userId: requireUserId(ctx.userId),
+      workId: args.workId,
+    });
+    return { detail };
   },
 });
 
