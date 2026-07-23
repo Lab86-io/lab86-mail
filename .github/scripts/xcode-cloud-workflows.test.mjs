@@ -9,12 +9,33 @@ function workflow(name) {
   return readFileSync(new URL(`../workflows/${name}`, import.meta.url), 'utf8');
 }
 
+test('iOS auth dependency is pinned past the Clerk AuthView startup fix', () => {
+  const project = readFileSync(new URL('../../apps/ios/project.yml', import.meta.url), 'utf8');
+  const resolved = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../apps/ios/Lab86Mail.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const clerk = resolved.pins.find(({ identity }) => identity === 'clerk-ios');
+
+  assert.match(project, /Clerk:\s+url: https:\/\/github\.com\/clerk\/clerk-ios\s+(?:#.*\s+)*from: 1\.3\.3/);
+  assert.equal(clerk?.state.version, '1.3.3');
+  assert.equal(clerk?.state.revision, '38a14dfb7f2e5be689975b0f3d6dfe347c425770');
+});
+
 test('staging preserves diagnostics and signed IPA with immutable upload actions', () => {
   const contents = workflow('xcode-cloud-staging.yml');
 
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, new RegExp(immutableCheckout));
   assert.match(contents, /node --test \.github\/scripts\/app-store-connect\.test\.mjs/);
+  assert.match(contents, /node --test \.github\/scripts\/upload-ios-export\.test\.mjs/);
+  assert.match(contents, /BUILD_NUMBER: \$\{\{ steps\.start\.outputs\.build_number \}\}/);
+  assert.match(contents, /IPA_PATH="\$ipa_path" node \.github\/scripts\/upload-ios-export\.mjs/);
   assert.match(contents, /XCODE_CLOUD_DIAGNOSTICS_DIR: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
   assert.match(contents, /name: Preserve failed Xcode Cloud diagnostics\s+if: failure\(\)/);
   assert.match(contents, /path: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
@@ -35,6 +56,9 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, new RegExp(immutableCheckout));
   assert.match(contents, /node --test \.github\/scripts\/app-store-connect\.test\.mjs/);
+  assert.match(contents, /node --test \.github\/scripts\/upload-ios-export\.test\.mjs/);
+  assert.match(contents, /BUILD_NUMBER: \$\{\{ steps\.start\.outputs\.build_number \}\}/);
+  assert.match(contents, /IPA_PATH="\$ipa_path" node \.github\/scripts\/upload-ios-export\.mjs/);
   assert.match(contents, /XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 304D20E5-2087-4E0D-8A6E-5E6025DEED36/);
   assert.match(contents, /XCODE_CLOUD_DIAGNOSTICS_DIR: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
   assert.match(contents, /name: Preserve failed Xcode Cloud diagnostics\s+if: failure\(\)/);
