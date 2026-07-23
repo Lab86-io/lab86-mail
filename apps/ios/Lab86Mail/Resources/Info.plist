@@ -42,11 +42,11 @@
 		</dict>
 	</array>
 	<key>CLERK_PUBLISHABLE_KEY</key>
-	<string>$(CLERK_PUBLISHABLE_KEY)</string>
+	<string>$(LAB86_INFO_CLERK_PUBLISHABLE_KEY)</string>
 	<key>CONVEX_DEPLOYMENT_URL</key>
-	<string>$(CONVEX_DEPLOYMENT_URL)</string>
+	<string>$(LAB86_INFO_CONVEX_DEPLOYMENT_URL)</string>
 	<key>LAB86_API_BASE_URL</key>
-	<string>$(LAB86_API_BASE_URL)</string>
+	<string>$(LAB86_INFO_API_BASE_URL)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>

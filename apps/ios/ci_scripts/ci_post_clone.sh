@@ -34,11 +34,14 @@ xcconfig_url() {
 build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-staging}")"
 case "$build_channel" in
   staging)
-    api_input="$(normalize_cloud_value "${LAB86_API_BASE_URL:-https://mail-staging.lab86.io}")"
-    convex_input="$(normalize_cloud_value "${CONVEX_DEPLOYMENT_URL:-https://precise-skunk-847.convex.cloud}")"
-    clerk_host="$(normalize_cloud_value "${CLERK_FRONTEND_API_HOST:-together-sawfish-53.clerk.accounts.dev}")"
+    # Staging is a named release environment, not a caller-selectable endpoint.
+    # Keep its public configuration canonical even if stale workflow variables
+    # remain in Xcode Cloud.
+    api_input="https://mail-staging.lab86.io"
+    convex_input="https://precise-skunk-847.convex.cloud"
+    clerk_host="together-sawfish-53.clerk.accounts.dev"
     default_clerk_key="pk_test_$(printf '%s$' "$clerk_host" | base64 | tr -d '\n')"
-    clerk_key="$(normalize_cloud_value "${CLERK_PUBLISHABLE_KEY:-$default_clerk_key}")"
+    clerk_key="$default_clerk_key"
     ;;
   production)
     if [[ -z "${LAB86_API_BASE_URL:-}" || -z "${CONVEX_DEPLOYMENT_URL:-}" \
@@ -73,10 +76,10 @@ api_base_url="$(xcconfig_url "$api_input")"
 convex_deployment_url="$(xcconfig_url "$convex_input")"
 
 cat > Config/Local.xcconfig <<EOF
-LAB86_API_BASE_URL = ${api_base_url}
-CLERK_PUBLISHABLE_KEY = ${clerk_key}
-CONVEX_DEPLOYMENT_URL = ${convex_deployment_url}
-CLERK_FRONTEND_API_HOST = ${clerk_host}
+LAB86_INFO_API_BASE_URL = ${api_base_url}
+LAB86_INFO_CLERK_PUBLISHABLE_KEY = ${clerk_key}
+LAB86_INFO_CONVEX_DEPLOYMENT_URL = ${convex_deployment_url}
+LAB86_INFO_CLERK_FRONTEND_API_HOST = ${clerk_host}
 EOF
 
 xcodegen generate
