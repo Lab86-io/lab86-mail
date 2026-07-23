@@ -80,13 +80,6 @@ const testFlightAction = findTestFlightAction(actions);
 const testFlightSucceeded = testFlightAction?.attributes.completionStatus === 'SUCCEEDED';
 const archiveAction = findArchiveAction(actions);
 if (!archiveAction) {
-  if (testFlightSucceeded) {
-    console.log('Xcode Cloud distributed the build to TestFlight directly.');
-    if (process.env.GITHUB_OUTPUT) {
-      appendFileSync(process.env.GITHUB_OUTPUT, 'needs_upload=false\n');
-    }
-    process.exit(0);
-  }
   throw new Error('Xcode Cloud did not return an archive action.');
 }
 
@@ -94,11 +87,14 @@ const artifacts = await appStoreConnect(`/v1/ciBuildActions/${archiveAction.id}/
 const appStoreExport = findAppStoreExport(artifacts.data);
 
 if (testFlightSucceeded) {
+  if (!appStoreExport) {
+    throw new Error('Xcode Cloud distributed to TestFlight without a reviewable App Store export.');
+  }
   console.log('Xcode Cloud distributed the build to TestFlight directly.');
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `needs_upload=false\n${appStoreExport ? `artifact_url=${appStoreExport.attributes.downloadUrl}\n` : ''}`,
+      `needs_upload=false\nartifact_url=${appStoreExport.attributes.downloadUrl}\n`,
     );
   }
   process.exit(0);
