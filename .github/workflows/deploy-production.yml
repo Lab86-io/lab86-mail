@@ -65,11 +65,12 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
             -H "Accept: application/vnd.github+json" > .release-prs.json || echo '[]' > .release-prs.json
 
-      - name: Bump package version
+      - name: Bump web and iOS version
         id: version
         run: |
           set -euo pipefail
           version="$(node scripts/release-version.mjs --commits .release-commits.txt --prs .release-prs.json)"
+          node scripts/sync-ios-version.mjs "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Commit and tag version locally
@@ -78,7 +79,7 @@ jobs:
           version="${{ steps.version.outputs.version }}"
           git config user.name "lab86-release-bot"
           git config user.email "release-bot@lab86.io"
-          git add package.json
+          git add package.json apps/ios/Config/Base.xcconfig
           git commit -m "Release v${version} [skip release]"
           git tag -a "v${version}" -m "Release v${version} from ${GITHUB_SHA}"
 
