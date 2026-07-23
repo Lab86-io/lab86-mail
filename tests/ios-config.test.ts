@@ -94,6 +94,32 @@ describe('native iOS authentication configuration', () => {
     expect(project).not.toContain('DEVELOPMENT_TEAM: Y52NVQBRL7');
   });
 
+  test('keeps Xcode Cloud package resolution aligned with reproducible root requirements', () => {
+    const resolved = JSON.parse(
+      readFileSync(
+        path.join(
+          process.cwd(),
+          'apps/ios/Lab86Mail.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved',
+        ),
+        'utf8',
+      ),
+    );
+    const pins = new Map(
+      resolved.pins.map((pin: { identity: string; state: Record<string, string> }) => [
+        pin.identity,
+        pin.state,
+      ]),
+    );
+
+    expect(pins.get('swiftsoup')).toEqual({
+      revision: 'ead56133a693d0184d8c2db1a6d6394410cacfd6',
+      version: '2.13.6',
+    });
+    expect(pins.get('swiftstreamingmarkdown')).toEqual({
+      revision: 'a4187829013c4588556d82dbf1ab65ed768a0262',
+    });
+  });
+
   test('keeps Spotlight mail private, routable, and removable at sign-out', () => {
     const indexer = readFileSync(
       path.join(process.cwd(), 'apps/ios/Lab86Mail/Core/Spotlight/MailSpotlightIndexer.swift'),
