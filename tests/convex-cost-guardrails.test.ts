@@ -137,7 +137,8 @@ describe('Convex cost guardrails', () => {
       expect(convexDeploy).toContain("jq -e '.done == true'");
       expect(convexDeploy).toContain('Calendar search migration did not complete');
       expect(railwayInstall).toContain('run: npm install -g @railway/cli@5.26.2');
-      expect(workflow).not.toContain('--detach');
+      expect(railwayFlow).toContain('--detach');
+      expect(railwayFlow).not.toContain('--ci');
       expect(railwayFlow).toContain('GITHUB_RUN_ID');
       expect(railwayFlow).toContain('GITHUB_RUN_ATTEMPT');
       expect(railwayFlow).toContain('-m "$RAILWAY_DEPLOY_MESSAGE"');
