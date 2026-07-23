@@ -622,7 +622,7 @@ private struct ShellToolbarModifier: ViewModifier {
                     .visibilityPriority(.low)
                 }
             }
-            .toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)
+            .cloudCompatibleToolbarMinimizeBehavior()
     }
 
     private var activityButton: some View {
@@ -649,5 +649,18 @@ private struct ShellToolbarModifier: ViewModifier {
 extension View {
     func shellToolbar(includesCompose: Bool = false) -> some View {
         modifier(ShellToolbarModifier(includesCompose: includesCompose))
+    }
+
+    @ViewBuilder
+    fileprivate func cloudCompatibleToolbarMinimizeBehavior() -> some View {
+        // Xcode 27 Beta 4 exposes this API under Swift 6.4, while the current
+        // Xcode Cloud image compiles the same iOS 27 project with an earlier
+        // SwiftUI overlay. Keep the toolbar functional there and adopt the
+        // native minimizing behavior automatically on the newer toolchain.
+        #if compiler(>=6.4)
+        toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)
+        #else
+        self
+        #endif
     }
 }
