@@ -279,8 +279,8 @@ public struct BriefNode: Codable, Hashable, Sendable {
     public static func fallback(title: String, summary: String) -> BriefNode {
         BriefNode(
             kind: "group",
-            title: title,
             surface: "elevated",
+            title: title,
             children: [BriefNode(kind: "text", role: "body", text: summary)]
         )
     }
