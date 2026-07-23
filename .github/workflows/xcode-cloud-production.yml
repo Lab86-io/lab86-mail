@@ -48,6 +48,7 @@ jobs:
           APP_STORE_APP_ID: 6792830834
           XCODE_CLOUD_WORKFLOW_NAME: Production App Store
           XCODE_CLOUD_BRANCH_NAME: main
+          XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 304D20E5-2087-4E0D-8A6E-5E6025DEED36
         run: node .github/scripts/start-xcode-cloud.mjs
 
       - name: Wait for Xcode Cloud export
