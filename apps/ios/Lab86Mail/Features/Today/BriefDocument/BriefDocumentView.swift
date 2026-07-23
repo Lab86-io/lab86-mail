@@ -943,6 +943,8 @@ private struct BriefChecklistView: View {
             Text(node.title ?? "Checklist").font(.title3.weight(.semibold)).fontDesign(.serif)
             ForEach(Array((node.checklistItems ?? []).enumerated()), id: \.offset) { _, item in
                 let checked = item.ref.flatMap { completedRefs[$0.key] } ?? item.checked ?? false
+                let iconName = checked ? "checkmark.circle.fill" : "circle"
+                let iconColor = checked ? Color.accentColor : Color.secondary
                 Button {
                     guard let action = item.action else { return }
                     let updated = BriefDocumentAction(
@@ -954,8 +956,8 @@ private struct BriefChecklistView: View {
                     Task { await onAction(updated, item.ref) }
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: checked ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(checked ? .tint : .secondary)
+                        Image(systemName: iconName)
+                            .foregroundStyle(iconColor)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.label)
                                 .strikethrough(checked)
