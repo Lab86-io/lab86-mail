@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   collectAppStoreConnectPages,
   createBuildRunPayload,
+  createProductionWorkflowPayload,
   hasExplicitBuildTarget,
   selectBranchRefID,
   selectWorkflowID,
@@ -60,6 +61,78 @@ describe('Xcode Cloud build discovery', () => {
         },
       },
     });
+  });
+
+  test('creates a main-only App Store workflow from the proven archive template', () => {
+    const payload = createProductionWorkflowPayload(
+      {
+        data: {
+          attributes: {
+            actions: [
+              {
+                actionType: 'ARCHIVE',
+                buildDistributionAudience: 'INTERNAL_ONLY',
+                destination: 'ANY_IOS_DEVICE',
+                isRequiredToPass: true,
+                name: 'Archive',
+                platform: 'IOS',
+                scheme: 'Lab86Mail',
+              },
+            ],
+            clean: true,
+            containerFilePath: 'apps/ios/Lab86Mail.xcodeproj',
+            description: 'Staging archive',
+            isEnabled: true,
+            name: 'Staging TestFlight',
+          },
+          relationships: {
+            product: { data: { type: 'ciProducts', id: 'product' } },
+            repository: { data: { type: 'scmRepositories', id: 'repository' } },
+            xcodeVersion: { data: { type: 'ciXcodeVersions', id: 'xcode' } },
+            macOsVersion: { data: { type: 'ciMacOsVersions', id: 'macos' } },
+          },
+        },
+      },
+      'Production App Store',
+      'main',
+    );
+
+    expect(payload.data.attributes.name).toBe('Production App Store');
+    expect(payload.data.attributes.actions[0].buildDistributionAudience).toBe('APP_STORE_ELIGIBLE');
+    expect(payload.data.attributes.manualBranchStartCondition).toEqual({
+      source: {
+        isAllMatch: false,
+        patterns: [{ isPrefix: false, pattern: 'main' }],
+      },
+    });
+    expect(payload.data.relationships).toEqual({
+      product: { data: { type: 'ciProducts', id: 'product' } },
+      repository: { data: { type: 'scmRepositories', id: 'repository' } },
+      xcodeVersion: { data: { type: 'ciXcodeVersions', id: 'xcode' } },
+      macOsVersion: { data: { type: 'ciMacOsVersions', id: 'macos' } },
+    });
+  });
+
+  test('refuses to create a production workflow from an incomplete template', () => {
+    expect(() =>
+      createProductionWorkflowPayload(
+        {
+          data: {
+            attributes: {
+              actions: [],
+              clean: true,
+              containerFilePath: 'apps/ios/Lab86Mail.xcodeproj',
+              description: '',
+              isEnabled: true,
+              name: 'No archive',
+            },
+            relationships: {},
+          },
+        },
+        'Production App Store',
+        'main',
+      ),
+    ).toThrow('does not contain an archive action');
   });
 
   test('follows absolute pagination links and returns every discovery result', async () => {

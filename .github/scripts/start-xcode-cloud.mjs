@@ -44,6 +44,80 @@ export function createBuildRunPayload(workflowID, branchRefID) {
   };
 }
 
+function relationshipID(workflow, name, type) {
+  const linked = workflow.data?.relationships?.[name]?.data;
+  if (linked?.id) return linked.id;
+  const included = workflow.included?.find((resource) => resource.type === type);
+  if (included?.id) return included.id;
+  throw new Error(`Xcode Cloud template workflow is missing its ${name} relationship.`);
+}
+
+export function createProductionWorkflowPayload(template, workflowName, branchName) {
+  const attributes = template.data?.attributes ?? {};
+  const requiredAttributes = ['actions', 'clean', 'containerFilePath', 'description', 'isEnabled', 'name'];
+  for (const name of requiredAttributes) {
+    if (attributes[name] === undefined || attributes[name] === null) {
+      throw new Error(`Xcode Cloud template workflow is missing required attribute ${name}.`);
+    }
+  }
+
+  let hasArchive = false;
+  const actions = attributes.actions.map((action) => {
+    if (action.actionType !== 'ARCHIVE') return action;
+    hasArchive = true;
+    return {
+      ...action,
+      buildDistributionAudience: 'APP_STORE_ELIGIBLE',
+    };
+  });
+  if (!hasArchive) {
+    throw new Error('Xcode Cloud template workflow does not contain an archive action.');
+  }
+
+  return {
+    data: {
+      type: 'ciWorkflows',
+      attributes: {
+        actions,
+        clean: attributes.clean,
+        containerFilePath: attributes.containerFilePath,
+        description: 'Production App Store archive created by the release pipeline.',
+        isEnabled: true,
+        name: workflowName,
+        manualBranchStartCondition: {
+          source: {
+            isAllMatch: false,
+            patterns: [{ isPrefix: false, pattern: branchName }],
+          },
+        },
+      },
+      relationships: {
+        product: {
+          data: { type: 'ciProducts', id: relationshipID(template, 'product', 'ciProducts') },
+        },
+        repository: {
+          data: {
+            type: 'scmRepositories',
+            id: relationshipID(template, 'repository', 'scmRepositories'),
+          },
+        },
+        xcodeVersion: {
+          data: {
+            type: 'ciXcodeVersions',
+            id: relationshipID(template, 'xcodeVersion', 'ciXcodeVersions'),
+          },
+        },
+        macOsVersion: {
+          data: {
+            type: 'ciMacOsVersions',
+            id: relationshipID(template, 'macOsVersion', 'ciMacOsVersions'),
+          },
+        },
+      },
+    },
+  };
+}
+
 export function hasExplicitBuildTarget(workflowID, branchRefID) {
   if (Boolean(workflowID) !== Boolean(branchRefID)) {
     throw new Error('XCODE_CLOUD_WORKFLOW_ID and XCODE_CLOUD_BRANCH_REF_ID must be provided together.');
@@ -117,7 +191,32 @@ export async function main() {
       `/v1/ciProducts/${product.data.id}/workflows?limit=200`,
       appStoreConnect,
     );
-    workflowID = selectWorkflowID(workflows, process.env.XCODE_CLOUD_WORKFLOW_NAME);
+    const workflow = workflows.find(
+      ({ attributes }) => attributes.name === process.env.XCODE_CLOUD_WORKFLOW_NAME,
+    );
+    if (workflow) {
+      workflowID = workflow.id;
+    } else {
+      if (!process.env.XCODE_CLOUD_TEMPLATE_WORKFLOW_ID) {
+        workflowID = selectWorkflowID(workflows, process.env.XCODE_CLOUD_WORKFLOW_NAME);
+      }
+      const template = await appStoreConnect(
+        `/v1/ciWorkflows/${process.env.XCODE_CLOUD_TEMPLATE_WORKFLOW_ID}` +
+          '?include=product,repository,xcodeVersion,macOsVersion',
+      );
+      const created = await appStoreConnect('/v1/ciWorkflows', {
+        method: 'POST',
+        body: JSON.stringify(
+          createProductionWorkflowPayload(
+            template,
+            process.env.XCODE_CLOUD_WORKFLOW_NAME,
+            process.env.XCODE_CLOUD_BRANCH_NAME,
+          ),
+        ),
+      });
+      workflowID = created.data.id;
+      console.log(`Created Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}" (${workflowID}).`);
+    }
 
     const repository = await appStoreConnect(`/v1/ciWorkflows/${workflowID}/repository`);
     const references = await collectAppStoreConnectPages(

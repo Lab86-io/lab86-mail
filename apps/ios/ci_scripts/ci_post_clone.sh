@@ -1,8 +1,8 @@
 #!/bin/zsh
 # Xcode Cloud post-clone: the .xcodeproj is generated, not committed, so CI
 # must produce it, and Local.xcconfig (gitignored) must be synthesized for the
-# staging TestFlight build. A separate production workflow must set
-# LAB86_BUILD_CHANNEL=production and every production value explicitly.
+# staging TestFlight build. The production workflow builds only main and the
+# script derives its public production configuration from that immutable branch.
 # Xcode Cloud environment variables may override:
 #   LAB86_API_BASE_URL, CLERK_PUBLISHABLE_KEY, CONVEX_DEPLOYMENT_URL,
 #   CLERK_FRONTEND_API_HOST, LAB86_BUILD_CHANNEL
@@ -31,7 +31,22 @@ xcconfig_url() {
   printf '%s' "$1" | sed 's#://#:/\$()/#'
 }
 
-build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-staging}")"
+build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-}")"
+if [[ -z "$build_channel" ]]; then
+  cloud_branch="$(normalize_cloud_value "${CI_BRANCH:-}")"
+  case "$cloud_branch" in
+    main)
+      build_channel=production
+      ;;
+    staging | "")
+      build_channel=staging
+      ;;
+    *)
+      echo "Xcode Cloud must set LAB86_BUILD_CHANNEL outside main or staging." >&2
+      exit 1
+      ;;
+  esac
+fi
 case "$build_channel" in
   staging)
     # Staging is a named release environment, not a caller-selectable endpoint.
@@ -44,31 +59,31 @@ case "$build_channel" in
     clerk_key="$default_clerk_key"
     ;;
   production)
-    if [[ -z "${LAB86_API_BASE_URL:-}" || -z "${CONVEX_DEPLOYMENT_URL:-}" \
-      || -z "${CLERK_FRONTEND_API_HOST:-}" || -z "${CLERK_PUBLISHABLE_KEY:-}" ]]; then
-      echo "Production Xcode Cloud configuration requires API, Convex, and Clerk values." >&2
-      exit 1
-    fi
-    api_input="$(normalize_cloud_value "$LAB86_API_BASE_URL")"
-    convex_input="$(normalize_cloud_value "$CONVEX_DEPLOYMENT_URL")"
-    clerk_host="$(normalize_cloud_value "$CLERK_FRONTEND_API_HOST")"
-    clerk_key="$(normalize_cloud_value "$CLERK_PUBLISHABLE_KEY")"
-    if [[ "$api_input" != "https://mail.lab86.io" ]]; then
+    api_input="https://mail.lab86.io"
+    convex_input="https://proficient-viper-594.convex.cloud"
+    clerk_host="clerk.mail.lab86.io"
+    clerk_key="pk_live_$(printf '%s$' "$clerk_host" | base64 | tr -d '\n=')"
+
+    [[ -z "${LAB86_API_BASE_URL:-}" \
+      || "$(normalize_cloud_value "$LAB86_API_BASE_URL")" == "$api_input" ]] || {
       echo "Production iOS builds must target https://mail.lab86.io." >&2
       exit 1
-    fi
-    if [[ "$clerk_key" != pk_live_* ]]; then
-      echo "Production iOS builds require a live Clerk publishable key." >&2
-      exit 1
-    fi
-    if [[ "$convex_input" != "https://proficient-viper-594.convex.cloud" ]]; then
+    }
+    [[ -z "${CONVEX_DEPLOYMENT_URL:-}" \
+      || "$(normalize_cloud_value "$CONVEX_DEPLOYMENT_URL")" == "$convex_input" ]] || {
       echo "Production iOS builds require the production Convex deployment." >&2
       exit 1
-    fi
-    if [[ "$clerk_host" != "clerk.mail.lab86.io" ]]; then
+    }
+    [[ -z "${CLERK_FRONTEND_API_HOST:-}" \
+      || "$(normalize_cloud_value "$CLERK_FRONTEND_API_HOST")" == "$clerk_host" ]] || {
       echo "Production iOS builds require the production Clerk frontend host." >&2
       exit 1
-    fi
+    }
+    [[ -z "${CLERK_PUBLISHABLE_KEY:-}" \
+      || "$(normalize_cloud_value "$CLERK_PUBLISHABLE_KEY")" == "$clerk_key" ]] || {
+      echo "Production iOS builds require the canonical live Clerk publishable key." >&2
+      exit 1
+    }
     ;;
   *)
     echo "Unsupported LAB86_BUILD_CHANNEL: ${build_channel}" >&2
