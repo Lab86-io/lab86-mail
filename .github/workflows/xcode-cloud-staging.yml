@@ -46,7 +46,17 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
           XCODE_CLOUD_BUILD_RUN_ID: ${{ steps.start.outputs.build_run_id }}
+          XCODE_CLOUD_DIAGNOSTICS_DIR: ${{ runner.temp }}/xcode-cloud-diagnostics
         run: node .github/scripts/wait-for-xcode-cloud.mjs
+
+      - name: Preserve failed Xcode Cloud diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-cloud-staging-diagnostics-${{ steps.start.outputs.build_number }}
+          path: ${{ runner.temp }}/xcode-cloud-diagnostics
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Download Xcode Cloud App Store export
         if: steps.xcode_cloud.outputs.artifact_url != ''

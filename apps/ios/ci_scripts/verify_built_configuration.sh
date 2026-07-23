@@ -14,7 +14,12 @@ plist_value() {
 api_base_url="$(plist_value LAB86_API_BASE_URL)"
 convex_url="$(plist_value CONVEX_DEPLOYMENT_URL)"
 clerk_key="$(plist_value CLERK_PUBLISHABLE_KEY)"
-build_channel="${LAB86_BUILD_CHANNEL:-staging}"
+# Xcode Cloud's environment editor can retain Markdown backticks and line
+# endings around a pasted value. Normalize the channel exactly as post-clone
+# does so both phases validate the same release environment.
+build_channel="$(printf '%s' "${LAB86_BUILD_CHANNEL:-staging}" | tr -d '`\r\n')"
+
+echo "Verifying release configuration: channel=$build_channel api=$api_base_url convex=$convex_url"
 
 case "$build_channel" in
   staging)
