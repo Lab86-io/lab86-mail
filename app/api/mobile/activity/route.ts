@@ -13,6 +13,7 @@ interface ActivityDependencies {
   currentUser: typeof requireCurrentUser;
   listPendingSuggestions(args: { userId: string; limit: number }): Promise<PendingSuggestions>;
   latestUnansweredCheckin(args: { userId: string }): Promise<LatestUnansweredCheckin>;
+  listPendingQuestions?(args: { userId: string; limit: number }): Promise<unknown[]>;
 }
 
 const activityDependencies: ActivityDependencies = {
@@ -20,17 +21,20 @@ const activityDependencies: ActivityDependencies = {
   listPendingSuggestions: (args) => convexQuery<PendingSuggestions>(api.suggestions.listPending, args),
   latestUnansweredCheckin: (args) =>
     convexQuery<LatestUnansweredCheckin>(api.albatrossNotifications.latestUnansweredCheckin, args),
+  listPendingQuestions: (args) =>
+    convexQuery<unknown[]>((api as any).albatrossWorkV2.livePendingQuestions, args),
 };
 
 export function createActivityPost(deps: ActivityDependencies = activityDependencies) {
   return async function activityPost(_req: NextRequest) {
     try {
       const user = await deps.currentUser();
-      const [suggestions, checkin] = await Promise.all([
+      const [suggestions, checkin, questions] = await Promise.all([
         deps.listPendingSuggestions({ userId: user.userId, limit: 50 }),
         deps.latestUnansweredCheckin({ userId: user.userId }),
+        deps.listPendingQuestions?.({ userId: user.userId, limit: 50 }) ?? Promise.resolve([]),
       ]);
-      return Response.json({ ok: true, suggestions, checkin });
+      return Response.json({ ok: true, suggestions, checkin, questions });
     } catch (error) {
       if (error instanceof AuthRequiredError) {
         return Response.json({ ok: false, error: error.message }, { status: 401 });

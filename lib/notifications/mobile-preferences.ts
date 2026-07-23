@@ -3,6 +3,10 @@ export interface MobileNotificationPreferences {
   newMailPushEnabled: boolean;
   eventSuggestionPushEnabled: boolean;
   eveningCheckinEnabled: boolean;
+  eveningCheckinLocalTime: string;
+  inAppEnabled: boolean;
+  emailFallbackEnabled: boolean;
+  emailFallbackDelayMinutes: number;
   timezone: string;
 }
 
@@ -13,8 +17,22 @@ export function parseMobileNotificationPreferences(value: unknown): MobileNotifi
     'newMailPushEnabled',
     'eventSuggestionPushEnabled',
     'eveningCheckinEnabled',
+    'inAppEnabled',
+    'emailFallbackEnabled',
   ] as const) {
     if (typeof body[key] !== 'boolean') throw new Error(`${key} must be a boolean.`);
+  }
+  const eveningCheckinLocalTime = String(body.eveningCheckinLocalTime || '').trim();
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(eveningCheckinLocalTime)) {
+    throw new Error('eveningCheckinLocalTime must be HH:MM.');
+  }
+  const emailFallbackDelayMinutes = Number(body.emailFallbackDelayMinutes);
+  if (
+    !Number.isFinite(emailFallbackDelayMinutes) ||
+    emailFallbackDelayMinutes < 15 ||
+    emailFallbackDelayMinutes > 1440
+  ) {
+    throw new Error('emailFallbackDelayMinutes must be between 15 and 1440.');
   }
   const timezone = String(body.timezone || '').trim();
   try {
@@ -27,6 +45,10 @@ export function parseMobileNotificationPreferences(value: unknown): MobileNotifi
     newMailPushEnabled: body.newMailPushEnabled as boolean,
     eventSuggestionPushEnabled: body.eventSuggestionPushEnabled as boolean,
     eveningCheckinEnabled: body.eveningCheckinEnabled as boolean,
+    eveningCheckinLocalTime,
+    inAppEnabled: body.inAppEnabled as boolean,
+    emailFallbackEnabled: body.emailFallbackEnabled as boolean,
+    emailFallbackDelayMinutes: Math.round(emailFallbackDelayMinutes),
     timezone,
   };
 }

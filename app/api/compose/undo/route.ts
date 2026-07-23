@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { stopNylasScheduledMessage } from '@/lib/nylas/provider';
-import { cancelPending, parseProviderPendingId, rememberPendingStatus } from '@/lib/send/pending';
+import {
+  cancelPending,
+  getPendingStatus,
+  parseProviderPendingId,
+  rememberPendingStatus,
+} from '@/lib/send/pending';
 import { writeAudit } from '@/lib/store/audit';
 
 export const runtime = 'nodejs';
@@ -23,7 +28,14 @@ export async function POST(req: NextRequest) {
     }
     const providerPending = parseProviderPendingId(pendingId, user.userId);
     let undone = false;
-    if (providerPending) {
+    const current = getPendingStatus(pendingId);
+    if (current.status === 'cancelled') {
+      // Cancellation is idempotent. A second scene or a foreground
+      // reconciliation must receive the same successful outcome.
+      undone = true;
+    } else if (providerPending && Date.now() >= providerPending.fireAt) {
+      undone = false;
+    } else if (providerPending) {
       try {
         const result = await stopNylasScheduledMessage({
           userId: user.userId,
@@ -38,6 +50,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       undone = cancelPending(pendingId);
+      if (!undone && getPendingStatus(pendingId).status === 'cancelled') undone = true;
     }
     await writeAudit({
       tool: 'compose_route:undo',

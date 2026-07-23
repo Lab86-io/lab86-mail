@@ -38,8 +38,12 @@ export async function GET(req: NextRequest) {
       state,
       server: server as McpServerId,
       payloadEncrypted: encryptSecret(JSON.stringify(started.persisted)),
+      nativeCallback: req.nextUrl.searchParams.get('native') === '1',
       expiresAt: Date.now() + 10 * 60_000,
     });
+    if (req.nextUrl.searchParams.get('format') === 'json') {
+      return NextResponse.json({ ok: true, authorizationUrl: started.authorizationUrl });
+    }
     return NextResponse.redirect(started.authorizationUrl);
   } catch (error) {
     const target = new URL('/settings', req.nextUrl.origin);

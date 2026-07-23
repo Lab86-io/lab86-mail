@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
     source?: 'text' | 'voice' | 'chat';
     timezone?: string;
     areaId?: string;
+    reviewedItems?: Array<{ title?: string; rawText?: string }>;
   };
   try {
     body = await req.json();
@@ -40,6 +41,12 @@ export async function POST(req: NextRequest) {
         transcript: body.transcript,
         source: body.source || 'text',
         areaId: body.areaId,
+        reviewedItems: Array.isArray(body.reviewedItems)
+          ? body.reviewedItems.map((item) => ({
+              title: String(item?.title || ''),
+              rawText: String(item?.rawText || ''),
+            }))
+          : undefined,
       },
       user,
     );

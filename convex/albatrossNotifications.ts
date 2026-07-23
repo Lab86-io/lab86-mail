@@ -167,6 +167,11 @@ export const mobilePreferences = query({
       newMailPushEnabled: row?.newMailPushEnabled ?? true,
       eventSuggestionPushEnabled: row?.eventSuggestionPushEnabled ?? true,
       eveningCheckinEnabled: row?.eveningCheckinEnabled ?? true,
+      eveningCheckinLocalTime: row?.eveningCheckinLocalTime ?? DEFAULT_CHECKIN_TIME,
+      inAppEnabled: row?.inAppEnabled ?? true,
+      emailFallbackEnabled: row?.emailFallbackEnabled ?? true,
+      emailFallbackDelayMinutes: row?.emailFallbackDelayMinutes ?? DEFAULT_EMAIL_DELAY,
+      timezone: row?.timezone ?? DEFAULT_TZ,
     };
   },
 });
@@ -179,6 +184,10 @@ export const saveMobilePreferences = mutation({
     newMailPushEnabled: v.boolean(),
     eventSuggestionPushEnabled: v.boolean(),
     eveningCheckinEnabled: v.boolean(),
+    eveningCheckinLocalTime: v.string(),
+    inAppEnabled: v.boolean(),
+    emailFallbackEnabled: v.boolean(),
+    emailFallbackDelayMinutes: v.number(),
     timezone: v.string(),
   },
   handler: async (ctx, args) => {
@@ -188,11 +197,21 @@ export const saveMobilePreferences = mutation({
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .unique();
     const ts = now();
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(args.eveningCheckinLocalTime)) {
+      throw new Error('Time must be HH:MM.');
+    }
+    if (args.emailFallbackDelayMinutes < 15 || args.emailFallbackDelayMinutes > 1_440) {
+      throw new Error('Fallback delay must be between 15 and 1440 minutes.');
+    }
     const mobile = {
       nativePushEnabled: args.nativePushEnabled,
       newMailPushEnabled: args.newMailPushEnabled,
       eventSuggestionPushEnabled: args.eventSuggestionPushEnabled,
       eveningCheckinEnabled: args.eveningCheckinEnabled,
+      eveningCheckinLocalTime: args.eveningCheckinLocalTime,
+      inAppEnabled: args.inAppEnabled,
+      emailFallbackEnabled: args.emailFallbackEnabled,
+      emailFallbackDelayMinutes: Math.round(args.emailFallbackDelayMinutes),
       timezone: args.timezone,
       updatedAt: ts,
     };
@@ -203,11 +222,7 @@ export const saveMobilePreferences = mutation({
     return ctx.db.insert('albatrossNotificationPreferences', {
       userId: args.userId,
       ...mobile,
-      eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
-      inAppEnabled: true,
       webPushEnabled: false,
-      emailFallbackEnabled: true,
-      emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
       createdAt: ts,
     });
   },
