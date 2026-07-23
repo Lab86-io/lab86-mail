@@ -22,10 +22,10 @@ unset LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY CONVEX_DEPLOYMENT_URL \
 run_post_clone
 
 default_key="pk_test_$(printf '%s$' 'together-sawfish-53.clerk.accounts.dev' | base64 | tr -d '\n')"
-expected_default="LAB86_API_BASE_URL = https:/\$()/mail-staging.lab86.io
-CLERK_PUBLISHABLE_KEY = $default_key
-CONVEX_DEPLOYMENT_URL = https:/\$()/precise-skunk-847.convex.cloud
-CLERK_FRONTEND_API_HOST = together-sawfish-53.clerk.accounts.dev"
+expected_default="LAB86_INFO_API_BASE_URL = https:/\$()/mail-staging.lab86.io
+LAB86_INFO_CLERK_PUBLISHABLE_KEY = $default_key
+LAB86_INFO_CONVEX_DEPLOYMENT_URL = https:/\$()/precise-skunk-847.convex.cloud
+LAB86_INFO_CLERK_FRONTEND_API_HOST = together-sawfish-53.clerk.accounts.dev"
 actual="$(< "$test_root/repository/apps/ios/Config/Local.xcconfig")"
 [[ "$actual" == "$expected_default" ]]
 
@@ -35,10 +35,8 @@ export CLERK_FRONTEND_API_HOST='```clerk.example.com```'
 export CLERK_PUBLISHABLE_KEY='```pk_test_example```'
 run_post_clone
 
-expected_override='LAB86_API_BASE_URL = https:/$()/api.example.com
-CLERK_PUBLISHABLE_KEY = pk_test_example
-CONVEX_DEPLOYMENT_URL = https:/$()/convex.example.com
-CLERK_FRONTEND_API_HOST = clerk.example.com'
+# A staging build must ignore stale or malformed Xcode Cloud overrides.
+expected_override="$expected_default"
 actual="$(< "$test_root/repository/apps/ios/Config/Local.xcconfig")"
 [[ "$actual" == "$expected_override" ]]
 
@@ -56,10 +54,10 @@ export CLERK_FRONTEND_API_HOST='clerk.lab86.io'
 export CLERK_PUBLISHABLE_KEY='pk_live_example'
 run_post_clone
 
-expected_production='LAB86_API_BASE_URL = https:/$()/mail.lab86.io
-CLERK_PUBLISHABLE_KEY = pk_live_example
-CONVEX_DEPLOYMENT_URL = https:/$()/production-example.convex.cloud
-CLERK_FRONTEND_API_HOST = clerk.lab86.io'
+expected_production='LAB86_INFO_API_BASE_URL = https:/$()/mail.lab86.io
+LAB86_INFO_CLERK_PUBLISHABLE_KEY = pk_live_example
+LAB86_INFO_CONVEX_DEPLOYMENT_URL = https:/$()/production-example.convex.cloud
+LAB86_INFO_CLERK_FRONTEND_API_HOST = clerk.lab86.io'
 actual="$(< "$test_root/repository/apps/ios/Config/Local.xcconfig")"
 [[ "$actual" == "$expected_production" ]]
 

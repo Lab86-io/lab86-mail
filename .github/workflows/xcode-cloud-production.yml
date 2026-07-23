@@ -51,13 +51,17 @@ jobs:
         run: node .github/scripts/wait-for-xcode-cloud.mjs
 
       - name: Download Xcode Cloud App Store export
-        if: steps.xcode_cloud.outputs.needs_upload == 'true'
+        if: steps.xcode_cloud.outputs.artifact_url != ''
         env:
           ARTIFACT_URL: ${{ steps.xcode_cloud.outputs.artifact_url }}
         run: |
           mkdir -p "$RUNNER_TEMP/xcode-cloud-app-store"
           curl --fail --location "$ARTIFACT_URL" --output "$RUNNER_TEMP/xcode-cloud-app-store.zip"
           unzip -q "$RUNNER_TEMP/xcode-cloud-app-store.zip" -d "$RUNNER_TEMP/xcode-cloud-app-store"
+
+      - name: Verify signed production IPA
+        if: steps.xcode_cloud.outputs.artifact_url != ''
+        run: .github/scripts/verify-ios-export.sh production "$RUNNER_TEMP/xcode-cloud-app-store"
 
       - name: Upload production export to App Store Connect
         if: steps.xcode_cloud.outputs.needs_upload == 'true'

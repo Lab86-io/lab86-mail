@@ -63,6 +63,34 @@ describe('native iOS authentication configuration', () => {
     expect(info).toContain('<string>io.lab86.mail</string>');
   });
 
+  test('isolates signed bundle substitutions from Xcode Cloud input variables', () => {
+    const info = readFileSync(path.join(process.cwd(), 'apps/ios/Lab86Mail/Resources/Info.plist'), 'utf8');
+    const entitlements = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/Resources/Lab86Mail.entitlements'),
+      'utf8',
+    );
+    const baseConfig = readFileSync(path.join(process.cwd(), 'apps/ios/Config/Base.xcconfig'), 'utf8');
+    const postClone = readFileSync(path.join(process.cwd(), 'apps/ios/ci_scripts/ci_post_clone.sh'), 'utf8');
+    const project = readFileSync(path.join(process.cwd(), 'apps/ios/project.yml'), 'utf8');
+    const builtVerifier = readFileSync(
+      path.join(process.cwd(), 'apps/ios/ci_scripts/verify_built_configuration.sh'),
+      'utf8',
+    );
+
+    expect(info).toContain('<string>$(LAB86_INFO_API_BASE_URL)</string>');
+    expect(info).toContain('<string>$(LAB86_INFO_CLERK_PUBLISHABLE_KEY)</string>');
+    expect(info).toContain('<string>$(LAB86_INFO_CONVEX_DEPLOYMENT_URL)</string>');
+    expect(info).not.toContain('<string>$(LAB86_API_BASE_URL)</string>');
+    expect(entitlements).toContain('webcredentials:$(LAB86_INFO_CLERK_FRONTEND_API_HOST)');
+    expect(baseConfig).toContain('LAB86_INFO_API_BASE_URL = https:/$()/mail.lab86.io');
+    expect(postClone).toContain('api_input="https://mail-staging.lab86.io"');
+    expect(postClone).toContain('LAB86_INFO_API_BASE_URL = $' + '{api_base_url}');
+    expect(project).toContain('Verify embedded release configuration');
+    expect(project).toContain('$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)');
+    expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail-staging.lab86.io" ]]');
+    expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail.lab86.io" ]]');
+  });
+
   test('supports every iPad orientation required for adaptive multitasking', () => {
     const info = readFileSync(path.join(process.cwd(), 'apps/ios/Lab86Mail/Resources/Info.plist'), 'utf8');
     expect(info).toContain('<key>UISupportedInterfaceOrientations~ipad</key>');

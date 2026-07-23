@@ -56,6 +56,10 @@ jobs:
           curl --fail --location "$ARTIFACT_URL" --output "$RUNNER_TEMP/xcode-cloud-app-store.zip"
           unzip -q "$RUNNER_TEMP/xcode-cloud-app-store.zip" -d "$RUNNER_TEMP/xcode-cloud-app-store"
 
+      - name: Verify signed staging IPA
+        if: steps.xcode_cloud.outputs.artifact_url != ''
+        run: .github/scripts/verify-ios-export.sh staging "$RUNNER_TEMP/xcode-cloud-app-store"
+
       - name: Preserve signed staging IPA for physical acceptance
         if: steps.xcode_cloud.outputs.artifact_url != ''
         uses: actions/upload-artifact@v4
