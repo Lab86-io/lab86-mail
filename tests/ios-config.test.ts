@@ -94,6 +94,8 @@ describe('native iOS authentication configuration', () => {
     expect(postClone).toContain('api_input="https://mail-staging.lab86.io"');
     expect(postClone).toContain('LAB86_INFO_API_BASE_URL = $' + '{api_base_url}');
     expect(project).toContain('Verify embedded release configuration');
+    expect(project).toContain('basedOnDependencyAnalysis: false');
+    expect(project).toContain('$(SRCROOT)/ci_scripts/verify_built_configuration.sh');
     expect(project).toContain('$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)');
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail-staging.lab86.io" ]]');
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail.lab86.io" ]]');

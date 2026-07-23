@@ -69,7 +69,9 @@ targets:
     postBuildScripts:
       - name: Verify embedded release configuration
         script: '"$SRCROOT/ci_scripts/verify_built_configuration.sh"'
+        basedOnDependencyAnalysis: false
         inputFiles:
+          - $(SRCROOT)/ci_scripts/verify_built_configuration.sh
           - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
     dependencies:
       - package: MobileAPI
