@@ -6,6 +6,16 @@ export function findArchiveAction(actions) {
   return actions.find(({ attributes }) => attributes.actionType === 'ARCHIVE');
 }
 
+export function findFailedAction(actions) {
+  return (
+    actions.find(({ attributes }) => attributes.completionStatus === 'FAILED') ??
+    actions.find(
+      ({ attributes }) =>
+        attributes.executionProgress === 'COMPLETE' && attributes.completionStatus !== 'SUCCEEDED',
+    )
+  );
+}
+
 export function findAppStoreExport(artifacts) {
   return artifacts.find(
     ({ attributes }) =>

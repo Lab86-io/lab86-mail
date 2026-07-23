@@ -1,6 +1,7 @@
 import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { requestAppStoreConnect } from './app-store-connect.mjs';
 
 export function selectWorkflowID(workflows, workflowName) {
   const workflow = workflows.find(({ attributes }) => attributes.name === workflowName);
@@ -44,6 +45,13 @@ export function createBuildRunPayload(workflowID, branchRefID) {
   };
 }
 
+export function hasExplicitBuildTarget(workflowID, branchRefID) {
+  if (Boolean(workflowID) !== Boolean(branchRefID)) {
+    throw new Error('XCODE_CLOUD_WORKFLOW_ID and XCODE_CLOUD_BRANCH_REF_ID must be provided together.');
+  }
+  return Boolean(workflowID && branchRefID);
+}
+
 export async function main() {
   const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY'];
   for (const name of requiredEnvironment) {
@@ -72,21 +80,18 @@ export async function main() {
   }).toString('base64url');
   const token = `${unsignedToken}.${signature}`;
 
-  async function appStoreConnect(path) {
-    const response = await fetch(`https://api.appstoreconnect.apple.com${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+  async function appStoreConnect(path, options = {}) {
+    return requestAppStoreConnect(path, {
+      getToken: () => token,
+      options,
+      maxAttempts: options.method === 'POST' ? 1 : 4,
     });
-    const responseBody = await response.text();
-    if (!response.ok) {
-      throw new Error(`App Store Connect request failed (${response.status}): ${responseBody}`);
-    }
-    return JSON.parse(responseBody);
   }
 
   let workflowID = process.env.XCODE_CLOUD_WORKFLOW_ID;
   let branchRefID = process.env.XCODE_CLOUD_BRANCH_REF_ID;
 
-  if (!workflowID || !branchRefID) {
+  if (!hasExplicitBuildTarget(workflowID, branchRefID)) {
     for (const name of ['APP_STORE_APP_ID', 'XCODE_CLOUD_WORKFLOW_NAME', 'XCODE_CLOUD_BRANCH_NAME']) {
       if (!process.env[name]) {
         throw new Error(
@@ -106,21 +111,12 @@ export async function main() {
     branchRefID = selectBranchRefID(references.data, process.env.XCODE_CLOUD_BRANCH_NAME);
   }
 
-  const response = await fetch('https://api.appstoreconnect.apple.com/v1/ciBuildRuns', {
+  const response = await appStoreConnect('/v1/ciBuildRuns', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
     body: JSON.stringify(createBuildRunPayload(workflowID, branchRefID)),
   });
 
-  const responseBody = await response.text();
-  if (!response.ok) {
-    throw new Error(`App Store Connect rejected the Xcode Cloud build (${response.status}): ${responseBody}`);
-  }
-
-  const buildRun = JSON.parse(responseBody).data;
+  const buildRun = response.data;
   console.log(
     `Started Xcode Cloud build #${buildRun.attributes.number} (${buildRun.id}) on ${
       process.env.XCODE_CLOUD_BRANCH_NAME || 'the configured branch'

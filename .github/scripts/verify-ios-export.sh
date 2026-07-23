@@ -81,10 +81,10 @@ codesign --verify --deep --strict "$app_path"
 entitlements="$inspection_root/entitlements.plist"
 codesign -d --entitlements :- "$app_path" >"$entitlements" 2>/dev/null
 
-team_id="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$entitlements")"
-aps_environment="$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$entitlements")"
+team_id="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$entitlements" 2>/dev/null || true)"
+aps_environment="$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$entitlements" 2>/dev/null || true)"
 get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :get-task-allow' "$entitlements" 2>/dev/null || true)"
-associated_domains="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.associated-domains' "$entitlements")"
+associated_domains="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.associated-domains' "$entitlements" 2>/dev/null || true)"
 
 [[ "$team_id" == "5JZV7V6Y4Z" ]] || {
   echo "Signed IPA has an unexpected team identifier." >&2

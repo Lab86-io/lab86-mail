@@ -1,8 +1,22 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { findLogBundles } from './xcode-cloud-artifacts.mjs';
 
 const DEFAULT_DOWNLOAD_TIMEOUT_MILLISECONDS = 30_000;
+
+function allocateFileName(value, allocatedFileNames) {
+  const baseName = basename(value || 'xcode-cloud.logbundle.zip');
+  const extension = extname(baseName);
+  const stem = extension ? baseName.slice(0, -extension.length) : baseName;
+  let fileName = baseName;
+  let suffix = 2;
+  while (allocatedFileNames.has(fileName)) {
+    fileName = `${stem}-${suffix}${extension}`;
+    suffix += 1;
+  }
+  allocatedFileNames.add(fileName);
+  return fileName;
+}
 
 export async function preserveLogBundles(
   artifacts,
@@ -28,12 +42,14 @@ export async function preserveLogBundles(
   const preserved = [];
   const failed = [];
 
+  const allocatedFileNames = new Set();
+  const fileNames = logBundles.map(({ attributes }) =>
+    allocateFileName(attributes.fileName, allocatedFileNames),
+  );
+
   try {
     makeDirectory(diagnosticsDirectory, { recursive: true });
   } catch (error) {
-    const fileNames = logBundles.map(({ attributes }) =>
-      basename(attributes.fileName || 'xcode-cloud.logbundle.zip'),
-    );
     logger.warn(
       `Could not create Xcode Cloud diagnostics directory: ${
         error instanceof Error ? error.message : String(error)
@@ -42,8 +58,8 @@ export async function preserveLogBundles(
     return { preserved, failed: fileNames };
   }
 
-  for (const { attributes } of logBundles) {
-    const fileName = basename(attributes.fileName || 'xcode-cloud.logbundle.zip');
+  for (const [index, { attributes }] of logBundles.entries()) {
+    const fileName = fileNames[index];
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMilliseconds);
 

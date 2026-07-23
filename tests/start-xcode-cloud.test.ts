@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createBuildRunPayload,
+  hasExplicitBuildTarget,
   selectBranchRefID,
   selectWorkflowID,
 } from '../.github/scripts/start-xcode-cloud.mjs';
@@ -33,6 +34,14 @@ describe('Xcode Cloud build discovery', () => {
       'Xcode Cloud workflow "Production App Store" was not found.',
     );
     expect(() => selectBranchRefID([], 'main')).toThrow('Xcode Cloud branch "main" was not found.');
+    expect(() => hasExplicitBuildTarget('workflow', undefined)).toThrow(
+      'XCODE_CLOUD_WORKFLOW_ID and XCODE_CLOUD_BRANCH_REF_ID must be provided together.',
+    );
+    expect(() => hasExplicitBuildTarget(undefined, 'branch')).toThrow(
+      'XCODE_CLOUD_WORKFLOW_ID and XCODE_CLOUD_BRANCH_REF_ID must be provided together.',
+    );
+    expect(hasExplicitBuildTarget(undefined, undefined)).toBe(false);
+    expect(hasExplicitBuildTarget('workflow', 'branch')).toBe(true);
   });
 
   test('builds the App Store Connect relationship payload from discovered IDs', () => {

@@ -26,12 +26,13 @@ jobs:
       contents: read
     steps:
       - name: Check out the production commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || 'main' }}
 
       - name: Verify release automation
         run: |
+          node --test .github/scripts/app-store-connect.test.mjs
           node --test .github/scripts/xcode-cloud-artifacts.test.mjs
           node --test .github/scripts/xcode-cloud-diagnostics.test.mjs
           node --test .github/scripts/xcode-cloud-workflows.test.mjs

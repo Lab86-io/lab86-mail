@@ -55,6 +55,33 @@ test('writes successful log bundles through the exported preservation API', asyn
   assert.equal(writes[0][1].toString(), 'archive log');
 });
 
+test('preserves duplicate basenames without overwriting either bundle', async () => {
+  const writes = [];
+  const result = await preserveLogBundles(
+    [
+      logBundle('../Archive Logs.zip', 'https://example.com/first'),
+      logBundle('Archive Logs.zip', 'https://example.com/second'),
+    ],
+    {
+      diagnosticsDirectory: '/tmp/diagnostics',
+      fetchImpl: async (url) => response({ contents: url }),
+      makeDirectory() {},
+      writeFile: (path, contents) => writes.push([path, contents.toString()]),
+      logger: { log() {}, warn() {} },
+    },
+  );
+
+  assert.deepEqual(result, {
+    preserved: ['Archive Logs.zip', 'Archive Logs-2.zip'],
+    failed: [],
+  });
+  assert.deepEqual(
+    writes.map(([path]) => path),
+    ['/tmp/diagnostics/Archive Logs.zip', '/tmp/diagnostics/Archive Logs-2.zip'],
+  );
+  assert.notEqual(writes[0][1], writes[1][1]);
+});
+
 test('isolates response, body, fetch, and file-write failures and continues', async () => {
   const warnings = [];
   const written = [];

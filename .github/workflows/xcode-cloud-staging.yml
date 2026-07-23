@@ -7,6 +7,8 @@ on:
     paths:
       - apps/ios/**
       - .github/scripts/start-xcode-cloud.mjs
+      - .github/scripts/app-store-connect.mjs
+      - .github/scripts/app-store-connect.test.mjs
       - .github/scripts/wait-for-xcode-cloud.mjs
       - .github/scripts/xcode-cloud-artifacts.mjs
       - .github/scripts/xcode-cloud-artifacts.test.mjs
@@ -31,10 +33,11 @@ jobs:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Verify release automation
         run: |
+          node --test .github/scripts/app-store-connect.test.mjs
           node --test .github/scripts/xcode-cloud-artifacts.test.mjs
           node --test .github/scripts/xcode-cloud-diagnostics.test.mjs
           node --test .github/scripts/xcode-cloud-workflows.test.mjs

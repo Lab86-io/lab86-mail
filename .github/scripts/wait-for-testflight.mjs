@@ -1,4 +1,5 @@
 import { createPrivateKey, sign } from 'node:crypto';
+import { AppStoreConnectRequestError, requestAppStoreConnect } from './app-store-connect.mjs';
 
 const requiredEnvironment = [
   'ASC_ISSUER_ID',
@@ -37,20 +38,11 @@ function createToken() {
 }
 
 async function appStoreConnect(path, options = {}) {
-  const response = await fetch(`https://api.appstoreconnect.apple.com${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${createToken()}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+  return requestAppStoreConnect(path, {
+    getToken: createToken,
+    options,
+    maxAttempts: options.method === 'POST' ? 1 : 4,
   });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(`App Store Connect request failed (${response.status}): ${JSON.stringify(body)}`);
-  }
-  return body;
 }
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -63,7 +55,15 @@ while (Date.now() < deadline) {
     'filter[version]': process.env.BUILD_NUMBER,
     limit: '10',
   });
-  const response = await appStoreConnect(`/v1/builds?${query}`);
+  let response;
+  try {
+    response = await appStoreConnect(`/v1/builds?${query}`);
+  } catch (error) {
+    if (!(error instanceof AppStoreConnectRequestError) || !error.recoverable) throw error;
+    console.warn(`Transient TestFlight polling failure: ${error.message}`);
+    await sleep(30_000);
+    continue;
+  }
   build = response.data[0];
 
   if (!build) {

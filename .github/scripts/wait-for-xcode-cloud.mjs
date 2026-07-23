@@ -1,6 +1,12 @@
 import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
-import { findAppStoreExport, findArchiveAction, findTestFlightAction } from './xcode-cloud-artifacts.mjs';
+import { AppStoreConnectRequestError, requestAppStoreConnect } from './app-store-connect.mjs';
+import {
+  findAppStoreExport,
+  findArchiveAction,
+  findFailedAction,
+  findTestFlightAction,
+} from './xcode-cloud-artifacts.mjs';
 import { preserveLogBundles } from './xcode-cloud-diagnostics.mjs';
 
 const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY', 'XCODE_CLOUD_BUILD_RUN_ID'];
@@ -34,14 +40,9 @@ function createToken() {
 }
 
 async function appStoreConnect(path) {
-  const response = await fetch(`https://api.appstoreconnect.apple.com${path}`, {
-    headers: { Authorization: `Bearer ${createToken()}` },
+  return requestAppStoreConnect(path, {
+    getToken: createToken,
   });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error(`App Store Connect request failed (${response.status}): ${JSON.stringify(body)}`);
-  }
-  return body;
 }
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -53,10 +54,17 @@ let actions = [];
 let previousStatus = '';
 
 while (Date.now() < deadline) {
-  [run, { data: actions }] = await Promise.all([
-    appStoreConnect(`/v1/ciBuildRuns/${buildRunID}`),
-    appStoreConnect(`/v1/ciBuildRuns/${buildRunID}/actions`),
-  ]);
+  try {
+    [run, { data: actions }] = await Promise.all([
+      appStoreConnect(`/v1/ciBuildRuns/${buildRunID}`),
+      appStoreConnect(`/v1/ciBuildRuns/${buildRunID}/actions`),
+    ]);
+  } catch (error) {
+    if (!(error instanceof AppStoreConnectRequestError) || !error.recoverable) throw error;
+    console.warn(`Transient App Store Connect polling failure: ${error.message}`);
+    await sleep(20_000);
+    continue;
+  }
 
   const actionStatus = actions
     .map(
@@ -82,6 +90,21 @@ const testFlightAction = findTestFlightAction(actions);
 const testFlightSucceeded = testFlightAction?.attributes.completionStatus === 'SUCCEEDED';
 const archiveAction = findArchiveAction(actions);
 if (!archiveAction) {
+  const failedAction = findFailedAction(actions);
+  if (failedAction) {
+    try {
+      const failedArtifacts = await appStoreConnect(`/v1/ciBuildActions/${failedAction.id}/artifacts`);
+      await preserveLogBundles(failedArtifacts.data, {
+        diagnosticsDirectory: process.env.XCODE_CLOUD_DIAGNOSTICS_DIR,
+      });
+    } catch (error) {
+      console.warn(
+        `Could not preserve diagnostics for failed Xcode Cloud action: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
   throw new Error('Xcode Cloud did not return an archive action.');
 }
 

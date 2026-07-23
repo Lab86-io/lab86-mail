@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   findAppStoreExport,
   findArchiveAction,
+  findFailedAction,
   findLogBundles,
   findTestFlightAction,
 } from './xcode-cloud-artifacts.mjs';
@@ -57,6 +58,13 @@ test('selects release artifacts and actions by durable API attributes', () => {
   ];
 
   assert.equal(findArchiveAction(actions)?.id, 'archive');
+  assert.equal(
+    findFailedAction([
+      { id: 'healthy', attributes: { executionProgress: 'COMPLETE', completionStatus: 'SUCCEEDED' } },
+      { id: 'failed', attributes: { executionProgress: 'COMPLETE', completionStatus: 'FAILED' } },
+    ])?.id,
+    'failed',
+  );
   assert.equal(findTestFlightAction(actions)?.id, 'testflight');
   assert.equal(findAppStoreExport(artifacts)?.attributes.downloadUrl, 'https://example.com/app-store');
   assert.deepEqual(
