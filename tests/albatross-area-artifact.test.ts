@@ -215,6 +215,63 @@ describe('Area artifact persistence boundary', () => {
 });
 
 describe('Area artifact composition pipeline', () => {
+  test('publishes progressive native documents and a safe legacy fallback when v2 is enabled', async () => {
+    const writes: any[] = [];
+    const previousFlag = process.env.BRIEF_DOCUMENT_V2;
+    process.env.BRIEF_DOCUMENT_V2 = 'true';
+    const restore = setAreaLivingBriefDependenciesForTest({
+      convexQuery: (async () => ({
+        ...home,
+        area: { ...home.area, name: `Studio & <Lab> "A" 'B'` },
+      })) as any,
+      convexMutation: (async (_ref: unknown, args: any) => {
+        writes.push(args);
+      }) as any,
+      generateTextForCurrentUser: (async (options: any) => {
+        await options.tools.place_region.execute({
+          region: {
+            id: 'lead',
+            summary: 'The next useful move.',
+            tree: {
+              kind: 'hero',
+              children: [{ kind: 'text', role: 'lede', text: 'Ship the native brief.' }],
+            },
+          },
+        });
+        await options.tools.finalize_brief.execute({
+          title: 'Studio brief',
+          summary: 'A native Area brief ready to review.',
+        });
+        return { text: '' };
+      }) as any,
+    });
+    try {
+      const result = await generateAreaLivingBrief({
+        userId: 'user_1',
+        areaId: 'area_1',
+        force: true,
+      });
+
+      expect(result).toMatchObject({
+        status: 'ready',
+        artifactSource: 'document-v2',
+        document: {
+          version: 2,
+          title: 'Studio brief',
+          summary: 'A native Area brief ready to review.',
+        },
+      });
+      expect(writes.map((write) => write.status)).toEqual(['generating', 'generating', 'ready']);
+      expect(writes[1].document.regions[0].id).toBe('lead');
+      expect(writes[2].artifactHtml).toContain('Studio &amp; &lt;Lab&gt; &quot;A&quot; &#39;B&#39;');
+      expect(writes[2].artifactHtml).toContain('Content-Security-Policy');
+    } finally {
+      restore();
+      if (previousFlag === undefined) delete process.env.BRIEF_DOCUMENT_V2;
+      else process.env.BRIEF_DOCUMENT_V2 = previousFlag;
+    }
+  });
+
   test('reuses a matching ready edition without writing or calling the model', async () => {
     const basedOnRevision = areaArtifactRevision(buildAreaArtifactContext(home));
     const livingBrief = {
