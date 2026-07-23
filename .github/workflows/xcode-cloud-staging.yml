@@ -29,6 +29,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Verify release automation
+        run: |
+          node --test .github/scripts/xcode-cloud-artifacts.test.mjs
+          bash apps/ios/ci_scripts/ci_post_clone_test.sh
+          apps/ios/ci_scripts/verify_built_configuration_test.sh
+
       - name: Start staging build
         id: start
         env:

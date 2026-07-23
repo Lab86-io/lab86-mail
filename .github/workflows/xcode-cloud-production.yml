@@ -30,6 +30,12 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || 'main' }}
 
+      - name: Verify release automation
+        run: |
+          node --test .github/scripts/xcode-cloud-artifacts.test.mjs
+          bash apps/ios/ci_scripts/ci_post_clone_test.sh
+          apps/ios/ci_scripts/verify_built_configuration_test.sh
+
       - name: Start production Xcode Cloud build
         id: start
         env:
