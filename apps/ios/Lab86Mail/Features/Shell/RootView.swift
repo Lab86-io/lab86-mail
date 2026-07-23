@@ -8,6 +8,7 @@ struct RootView: View {
     @State private var showsAuthentication = false
     @State private var authenticationRetry = 0
     @State private var onboardingCompletedOwners: Set<String> = []
+    private let onboardingDismissals = OnboardingDismissalStore()
 
     var body: some View {
         Group {
@@ -44,10 +45,11 @@ struct RootView: View {
             signedOutView
         case .ready(let ownerID):
             if ownerID == sessionSnapshot.userID {
-                if onboardingCompletedOwners.contains(ownerID) {
+                if onboardingCompletedOwners.contains(ownerID) || onboardingDismissals.contains(ownerID: ownerID) {
                     AppShellView()
                 } else {
                     MailboxOnboardingView(ownerID: ownerID) {
+                        onboardingDismissals.insert(ownerID: ownerID)
                         onboardingCompletedOwners.insert(ownerID)
                     }
                 }
@@ -91,6 +93,23 @@ struct RootView: View {
             }
             .navigationTitle("Albatross")
         }
+    }
+}
+
+struct OnboardingDismissalStore {
+    private static let keyPrefix = "lab86-mail-onboarding-dismissed-v1."
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func contains(ownerID: String) -> Bool {
+        defaults.bool(forKey: Self.keyPrefix + ownerID)
+    }
+
+    func insert(ownerID: String) {
+        defaults.set(true, forKey: Self.keyPrefix + ownerID)
     }
 }
 

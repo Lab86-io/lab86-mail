@@ -34,6 +34,11 @@ struct MailboxOnboardingView: View {
                 }
             }
             .navigationBarBackButtonHidden()
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Skip for now", action: completion)
+                }
+            }
         }
         .task { await load() }
     }
@@ -114,12 +119,18 @@ struct MailboxOnboardingView: View {
         errorMessage = nil
         defer { isLoading = false }
         _ = await environment.refreshAccounts(ownerID: ownerID)
-        if !environment.accountStore.accounts.isEmpty {
+        if MailboxOnboardingPolicy.hasConnectedMailbox(
+            bootstrapAccountCount: environment.accountStore.accounts.count
+        ) {
             completion()
             return
         }
         do {
             let response = try await environment.backend.get(path: "/api/nylas/status")
+            if MailboxOnboardingPolicy.hasConnectedMailbox(statusResponse: response) {
+                completion()
+                return
+            }
             capabilities = (response["capabilities"]?.arrayValue ?? []).compactMap { row in
                 guard row["visible"]?.boolValue != false,
                       let provider = row["provider"]?.stringValue else { return nil }
@@ -155,5 +166,14 @@ struct MailboxOnboardingView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+enum MailboxOnboardingPolicy {
+    static func hasConnectedMailbox(
+        bootstrapAccountCount: Int = 0,
+        statusResponse: JSONValue? = nil
+    ) -> Bool {
+        bootstrapAccountCount > 0 || !(statusResponse?["accounts"]?.arrayValue ?? []).isEmpty
     }
 }

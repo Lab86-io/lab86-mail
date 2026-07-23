@@ -218,5 +218,27 @@ Six surfaces researched on Mobbin (`platform: ios`, deep mode) for the Albatross
 ## Taste-rule adaptation notes
 
 - Timepage's ALL-CAPS section labels ("TODAY", "SCHEDULE", "WEATHER") violate the no-ALL-CAPS rule — keep its layout, set labels in Fraunces sentence case.
+
+---
+
+## Onboarding interruption correction (2026-07-23)
+
+This follow-up was prompted by a signed-in TestFlight account with an already-connected mailbox being trapped on “Bring your inbox.” The implementation keeps the existing Albatross visual system and changes the product contract: onboarding is optional, resumable, and limited to a genuinely unsettled first run.
+
+### References
+
+- [Notion mobile onboarding flow](https://mobbin.com/flows/2ada33fc-fedc-4d26-a89a-96714e261e81): staged setup with a visible escape path instead of a blocking account gate.
+- [Todoist mobile onboarding flow](https://mobbin.com/flows/9910ff65-57e3-4946-aad3-d032a01f5d71): brief, task-oriented setup steps that preserve a direct route into the product.
+- [Attio web onboarding](https://mobbin.com/screens/a1403ccb-ba33-49e1-8e5a-ef5c4978ae02): setup is framed as workspace personalization, with progress and optional configuration distinct from the core product.
+
+### Applied decisions
+
+- Put a quiet but persistent “Skip for now” action in the native navigation toolbar so it remains available on every onboarding step.
+- Put the same action in the web welcome header, alongside copy that explains setup can be resumed from Settings.
+- Treat a mailbox returned by either the native bootstrap account store or the live Nylas status endpoint as proof that onboarding is already complete.
+- Persist native dismissal per signed-in owner across launches; preserve the existing web dismissal while correcting its boolean redirect condition.
+- Automatically enter the workspace when a live connected account is detected. Loading and backend error states never manufacture a successful onboarding state.
+
+The product-native preview host was unavailable during this pass. The staging welcome route was therefore opened through the configured browser fallback for structural inspection; real interaction acceptance is performed after the staging deployment and signed TestFlight build.
 - Notion/Evernote/Todoist put glyphs before suggestion/chip labels — Albatross renders the same rows and chips text-only.
 - Spark's "+ai" gradient badge and Apple Mail's category star glyph are exactly the sparkle-adjacent marks the style guide bans; the quarantine-tint pattern works without them.

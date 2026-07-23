@@ -22,6 +22,39 @@ struct Lab86MailTests {
         var errorDescription: String? { "The network is offline." }
     }
 
+    @Test
+    func onboardingDismissalPersistsPerSignedInOwner() {
+        let suite = "Lab86MailTests.onboarding.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = OnboardingDismissalStore(defaults: defaults)
+
+        #expect(!store.contains(ownerID: "user-one"))
+        store.insert(ownerID: "user-one")
+        #expect(store.contains(ownerID: "user-one"))
+        #expect(!store.contains(ownerID: "user-two"))
+        #expect(OnboardingDismissalStore(defaults: defaults).contains(ownerID: "user-one"))
+    }
+
+    @Test
+    func onboardingRecognizesBothBootstrapAndLiveMailboxStatus() {
+        #expect(MailboxOnboardingPolicy.hasConnectedMailbox(bootstrapAccountCount: 1))
+        #expect(
+            MailboxOnboardingPolicy.hasConnectedMailbox(
+                statusResponse: .object([
+                    "accounts": .array([
+                        .object(["accountId": .string("account-one")]),
+                    ]),
+                ])
+            )
+        )
+        #expect(
+            !MailboxOnboardingPolicy.hasConnectedMailbox(
+                statusResponse: .object(["accounts": .array([])])
+            )
+        )
+    }
+
     @Test @MainActor
     func sessionStoreRequiresAnActiveSessionAndTokenBeforeOpeningTheApp() async {
         let store = SessionStore()

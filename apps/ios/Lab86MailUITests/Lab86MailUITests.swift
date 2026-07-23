@@ -83,11 +83,16 @@ final class Lab86MailUITests: XCTestCase {
         } else if app.staticTexts["Bring your inbox"].waitForExistence(timeout: 3) {
             XCTAssertTrue(app.buttons["Connect Gmail"].exists)
             XCTAssertTrue(app.buttons["Connect Microsoft"].exists)
+            let skipButton = app.buttons["Skip for now"]
+            XCTAssertTrue(skipButton.exists)
 
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "Mailbox onboarding boundary"
             screenshot.lifetime = .keepAlways
             add(screenshot)
+
+            skipButton.tap()
+            XCTAssertTrue(app.buttons["Open navigation"].waitForExistence(timeout: 5))
         } else {
             XCTAssertTrue(app.navigationBars["Albatross"].waitForExistence(timeout: 10))
         }
