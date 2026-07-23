@@ -8,6 +8,7 @@ on:
       - apps/ios/**
       - .github/scripts/start-xcode-cloud.mjs
       - .github/scripts/wait-for-xcode-cloud.mjs
+      - .github/scripts/xcode-cloud-artifacts.mjs
       - .github/scripts/wait-for-testflight.mjs
       - .github/workflows/xcode-cloud-staging.yml
   workflow_dispatch:
@@ -47,13 +48,22 @@ jobs:
         run: node .github/scripts/wait-for-xcode-cloud.mjs
 
       - name: Download Xcode Cloud App Store export
-        if: steps.xcode_cloud.outputs.needs_upload == 'true'
+        if: steps.xcode_cloud.outputs.artifact_url != ''
         env:
           ARTIFACT_URL: ${{ steps.xcode_cloud.outputs.artifact_url }}
         run: |
           mkdir -p "$RUNNER_TEMP/xcode-cloud-app-store"
           curl --fail --location "$ARTIFACT_URL" --output "$RUNNER_TEMP/xcode-cloud-app-store.zip"
           unzip -q "$RUNNER_TEMP/xcode-cloud-app-store.zip" -d "$RUNNER_TEMP/xcode-cloud-app-store"
+
+      - name: Preserve signed staging IPA for physical acceptance
+        if: steps.xcode_cloud.outputs.artifact_url != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: albatross-staging-${{ steps.start.outputs.build_number }}
+          path: ${{ runner.temp }}/xcode-cloud-app-store/**/*.ipa
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload export to App Store Connect
         if: steps.xcode_cloud.outputs.needs_upload == 'true'

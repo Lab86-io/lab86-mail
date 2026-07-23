@@ -1,5 +1,6 @@
 import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
+import { findAppStoreExport, findArchiveAction, findTestFlightAction } from './xcode-cloud-artifacts.mjs';
 
 const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY', 'XCODE_CLOUD_BUILD_RUN_ID'];
 
@@ -75,27 +76,33 @@ if (!run || run.data.attributes.executionProgress !== 'COMPLETE') {
   throw new Error('Timed out waiting for Xcode Cloud to finish.');
 }
 
-const testFlightAction = actions.find(
-  ({ attributes }) => attributes.name === 'TestFlight Internal Testing - iOS',
-);
-if (testFlightAction?.attributes.completionStatus === 'SUCCEEDED') {
-  console.log('Xcode Cloud distributed the build to TestFlight directly.');
-  if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, 'needs_upload=false\n');
-  }
-  process.exit(0);
-}
-
-const archiveAction = actions.find(({ attributes }) => attributes.actionType === 'ARCHIVE');
+const testFlightAction = findTestFlightAction(actions);
+const testFlightSucceeded = testFlightAction?.attributes.completionStatus === 'SUCCEEDED';
+const archiveAction = findArchiveAction(actions);
 if (!archiveAction) {
+  if (testFlightSucceeded) {
+    console.log('Xcode Cloud distributed the build to TestFlight directly.');
+    if (process.env.GITHUB_OUTPUT) {
+      appendFileSync(process.env.GITHUB_OUTPUT, 'needs_upload=false\n');
+    }
+    process.exit(0);
+  }
   throw new Error('Xcode Cloud did not return an archive action.');
 }
 
 const artifacts = await appStoreConnect(`/v1/ciBuildActions/${archiveAction.id}/artifacts`);
-const appStoreExport = artifacts.data.find(
-  ({ attributes }) =>
-    attributes.fileType === 'ARCHIVE_EXPORT' && attributes.fileName.endsWith(' app-store.zip'),
-);
+const appStoreExport = findAppStoreExport(artifacts.data);
+
+if (testFlightSucceeded) {
+  console.log('Xcode Cloud distributed the build to TestFlight directly.');
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `needs_upload=false\n${appStoreExport ? `artifact_url=${appStoreExport.attributes.downloadUrl}\n` : ''}`,
+    );
+  }
+  process.exit(0);
+}
 
 if (!appStoreExport) {
   const issues = await appStoreConnect(`/v1/ciBuildActions/${archiveAction.id}/issues`);
