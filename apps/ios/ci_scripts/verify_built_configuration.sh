@@ -23,7 +23,9 @@ normalize_cloud_value() {
   printf '%s' "$1" | tr -d '`\r\n'
 }
 
-cloud_branch="$(normalize_cloud_value "${CI_BRANCH:-}")"
+# CI_BRANCH is supplied by Xcode Cloud, not its environment editor. Treat it as
+# an exact authorization boundary rather than repairing a malformed value.
+cloud_branch="${CI_BRANCH:-}"
 requested_build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-}")"
 case "$cloud_branch" in
   main)

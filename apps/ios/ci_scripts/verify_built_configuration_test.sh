@@ -72,6 +72,15 @@ fi
 
 if TARGET_BUILD_DIR="$test_root" \
   INFOPLIST_PATH=Info.plist \
+  CI_BRANCH='```main```' \
+  LAB86_BUILD_CHANNEL=production \
+  "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
+  echo 'A malformed Xcode Cloud branch must not select production.' >&2
+  exit 1
+fi
+
+if TARGET_BUILD_DIR="$test_root" \
+  INFOPLIST_PATH=Info.plist \
   CI_BRANCH=feature \
   LAB86_BUILD_CHANNEL=production \
   "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
