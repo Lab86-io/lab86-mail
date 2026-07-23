@@ -25,7 +25,7 @@ concurrency:
 jobs:
   start-xcode-cloud:
     name: Build in Xcode Cloud and distribute to TestFlight
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-latest
     timeout-minutes: 90
     permissions:
       contents: read

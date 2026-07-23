@@ -11,6 +11,7 @@ function workflow(name) {
 test('staging preserves diagnostics and signed IPA with immutable upload actions', () => {
   const contents = workflow('xcode-cloud-staging.yml');
 
+  assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, /XCODE_CLOUD_DIAGNOSTICS_DIR: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
   assert.match(contents, /name: Preserve failed Xcode Cloud diagnostics\s+if: failure\(\)/);
   assert.match(contents, /path: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
@@ -27,6 +28,7 @@ test('staging preserves diagnostics and signed IPA with immutable upload actions
 test('production preserves diagnostics with an immutable upload action', () => {
   const contents = workflow('xcode-cloud-production.yml');
 
+  assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, /XCODE_CLOUD_DIAGNOSTICS_DIR: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
   assert.match(contents, /name: Preserve failed Xcode Cloud diagnostics\s+if: failure\(\)/);
   assert.match(contents, /path: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
