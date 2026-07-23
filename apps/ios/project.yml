@@ -12,7 +12,9 @@ packages:
     path: Packages/MobileAPI
   SwiftSoup:
     url: https://github.com/scinfu/SwiftSoup
-    exactVersion: 2.13.6
+    # Upstream 2.13.6 plus the reviewed Swift 6.4 optimizer workaround for
+    # swiftlang/swift#90408. Pin the commit exactly until the next release.
+    revision: 8d6ad267714cac3ae747cefdd21f7a6665006e1f
   SwiftStreamingMarkdown:
     url: https://github.com/microsoft/SwiftStreamingMarkdown
     # v0.6.0 still declares a branch-pinned HighlightSwift dependency, which

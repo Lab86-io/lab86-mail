@@ -112,12 +112,18 @@ describe('native iOS authentication configuration', () => {
     );
 
     expect(pins.get('swiftsoup')).toEqual({
-      revision: 'ead56133a693d0184d8c2db1a6d6394410cacfd6',
-      version: '2.13.6',
+      revision: '8d6ad267714cac3ae747cefdd21f7a6665006e1f',
     });
     expect(pins.get('swiftstreamingmarkdown')).toEqual({
       revision: 'a4187829013c4588556d82dbf1ab65ed768a0262',
     });
+  });
+
+  test('pins the upstream SwiftSoup workaround without weakening Release optimization', () => {
+    const project = readFileSync(path.join(process.cwd(), 'apps/ios/project.yml'), 'utf8');
+
+    expect(project).toContain('revision: 8d6ad267714cac3ae747cefdd21f7a6665006e1f');
+    expect(project).not.toContain('SWIFT_OPTIMIZATION_LEVEL: -Onone');
   });
 
   test('keeps Spotlight mail private, routable, and removable at sign-out', () => {

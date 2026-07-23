@@ -46,6 +46,40 @@ final class Lab86MailUITests: XCTestCase {
             chatScreenshot.name = "New chat conversation"
             chatScreenshot.lifetime = .keepAlways
             add(chatScreenshot)
+
+            // Continue across the remaining root and sheet domains using the
+            // same authenticated, server-backed launch. These checks avoid
+            // destructive actions while proving each destination really
+            // renders on the physical-device acceptance path.
+            app.buttons["Open navigation"].tap()
+            XCTAssertTrue(app.buttons["Areas"].firstMatch.waitForExistence(timeout: 3))
+            app.buttons["Areas"].firstMatch.tap()
+            XCTAssertTrue(app.navigationBars["Areas"].waitForExistence(timeout: 5))
+
+            app.buttons["Open navigation"].tap()
+            XCTAssertTrue(app.buttons["All"].firstMatch.waitForExistence(timeout: 3))
+            app.buttons["All"].firstMatch.tap()
+            XCTAssertTrue(app.navigationBars["Mail"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.searchFields["Search this inbox"].exists)
+
+            let activityButton = app.buttons
+                .matching(NSPredicate(format: "label BEGINSWITH %@", "Activity"))
+                .firstMatch
+            XCTAssertTrue(activityButton.waitForExistence(timeout: 3))
+            activityButton.tap()
+            XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
+            app.buttons["Done"].tap()
+
+            app.buttons["Open navigation"].tap()
+            XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 3))
+            app.buttons["Settings"].tap()
+            XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Sending"].exists)
+
+            let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
+            settingsScreenshot.name = "Authenticated settings"
+            settingsScreenshot.lifetime = .keepAlways
+            add(settingsScreenshot)
         } else if app.staticTexts["Bring your inbox"].waitForExistence(timeout: 3) {
             XCTAssertTrue(app.buttons["Connect Gmail"].exists)
             XCTAssertTrue(app.buttons["Connect Microsoft"].exists)
