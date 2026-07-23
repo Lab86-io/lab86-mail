@@ -35,6 +35,7 @@ jobs:
           node --test .github/scripts/app-store-connect.test.mjs
           node --test .github/scripts/xcode-cloud-artifacts.test.mjs
           node --test .github/scripts/xcode-cloud-diagnostics.test.mjs
+          node --test .github/scripts/upload-ios-export.test.mjs
           node --test .github/scripts/xcode-cloud-workflows.test.mjs
           bash apps/ios/ci_scripts/ci_post_clone_test.sh
           apps/ios/ci_scripts/verify_built_configuration_test.sh
@@ -95,25 +96,15 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          BUILD_NUMBER: ${{ steps.start.outputs.build_number }}
         run: |
-          private_keys_dir="$RUNNER_TEMP/app-store-connect-private-keys"
-          mkdir -p "$private_keys_dir"
-          printf '%s\n' "$ASC_PRIVATE_KEY" > "$private_keys_dir/AuthKey_${ASC_KEY_ID}.p8"
-          chmod 600 "$private_keys_dir/AuthKey_${ASC_KEY_ID}.p8"
-
           ipa_path=$(find "$RUNNER_TEMP/xcode-cloud-app-store" -type f -name '*.ipa' -print -quit)
           if [ -z "$ipa_path" ]; then
             echo "The production Xcode Cloud export did not contain an IPA." >&2
             exit 1
           fi
 
-          API_PRIVATE_KEYS_DIR="$private_keys_dir" xcrun altool \
-            --upload-app \
-            --type ios \
-            --file "$ipa_path" \
-            --apiKey "$ASC_KEY_ID" \
-            --apiIssuer "$ASC_ISSUER_ID" \
-            --output-format json
+          IPA_PATH="$ipa_path" node .github/scripts/upload-ios-export.mjs
 
       - name: Confirm production TestFlight processing and internal group assignment
         env:
