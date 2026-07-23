@@ -11,7 +11,6 @@ import {
   PenLine,
   Reply as ReplyIcon,
   Send as SendIcon,
-  Undo2,
   X,
 } from 'lucide-react';
 import { marked } from 'marked';
@@ -21,6 +20,7 @@ import { useDropzone } from 'react-dropzone';
 import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
+import { type DurableComposeDraft, usePendingSend } from '@/components/compose/PendingSendProvider';
 import { Avatar } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -38,9 +38,6 @@ import { attachmentPreviewKind, buildAttachmentPreviewItem } from './attachment-
 // Hard guard: gmail's hard ceiling is 25MB total per send. We refuse slightly
 // under to leave headroom for MIME encoding overhead.
 const MAX_TOTAL_BYTES = 23 * 1024 * 1024;
-const SEND_STATUS_POLL_INTERVAL_MS = 600;
-const SEND_STATUS_CONFIRM_TIMEOUT_MS = 12_000;
-
 interface InlineComposerProps {
   mode: ComposeMode;
   account: string;
@@ -175,9 +172,15 @@ export function InlineComposer({
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
-  const openComposeNew = useClientStore((s) => s.openComposeNew);
-  const openComposeReply = useClientStore((s) => s.openComposeReply);
+  const composeRecoveredFiles = useClientStore((s) => s.composeRecoveredFiles);
+  const setComposeRecoveredFiles = useClientStore((s) => s.setComposeRecoveredFiles);
+  const { registerPendingSend } = usePendingSend();
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [, setDraftSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const draftIdRef = useRef<string | null>(null);
+  const draftSaveChain = useRef(Promise.resolve());
   const [customSendAt, setCustomSendAt] = useState('');
   const customSendAtMin = toDatetimeLocalValue(Date.now() + 60_000);
   const customSendAtMs = useMemo(
@@ -198,37 +201,97 @@ export function InlineComposer({
     staleTime: 60_000,
   });
   const undoSendSeconds = prefsQuery.data?.undoSendSeconds ?? DEFAULT_UNDO_SEND_SECONDS;
+  const draftFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        mode: composerMode,
+        account: fromAccount || account,
+        to,
+        cc,
+        bcc,
+        subject,
+        body,
+        threadId,
+        anchorMessageId,
+        files: files.map((file) => [file.name, file.size, file.lastModified]),
+      }),
+    [account, anchorMessageId, bcc, body, cc, composerMode, files, fromAccount, subject, threadId, to],
+  );
+  const baselineFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        mode,
+        account,
+        to: initialPrefill?.to || '',
+        cc: initialPrefill?.cc || '',
+        bcc: initialPrefill?.bcc || '',
+        subject: initialPrefill?.subject || '',
+        body: initialPrefill?.body || '',
+        threadId,
+        anchorMessageId,
+        files: [],
+      }),
+    [account, anchorMessageId, initialPrefill, mode, threadId],
+  );
+  const isDirty = draftFingerprint !== baselineFingerprint;
+  const hasMeaningfulDraft = Boolean(
+    to.trim() || cc.trim() || bcc.trim() || subject.trim() || body.trim() || files.length,
+  );
+
+  const persistDraft = useCallback(async () => {
+    if (!hasMeaningfulDraft || !(fromAccount || account)) return;
+    setDraftSaveState('saving');
+    const args = {
+      account: fromAccount || account,
+      threadId: threadId || undefined,
+      inReplyToMessageId: anchorMessageId || undefined,
+      to,
+      cc: cc || undefined,
+      bcc: bcc || undefined,
+      subject,
+      body,
+    };
+    try {
+      if (draftIdRef.current) {
+        await callTool('update_draft', {
+          id: draftIdRef.current,
+          patch: { to, cc, bcc, subject, body },
+        });
+      } else {
+        const result = await callTool<{ draft: { _id?: string; id?: string } }>('save_draft', args);
+        const id = result.draft?._id || result.draft?.id;
+        if (id) {
+          draftIdRef.current = id;
+          setDraftId(id);
+        }
+      }
+      setDraftSaveState('saved');
+    } catch {
+      setDraftSaveState('failed');
+      throw new Error('Could not save this draft.');
+    }
+  }, [account, anchorMessageId, bcc, body, cc, fromAccount, hasMeaningfulDraft, subject, threadId, to]);
+
+  useEffect(() => {
+    if (!isDirty || !hasMeaningfulDraft || phase !== 'draft') return;
+    const timer = window.setTimeout(() => {
+      draftSaveChain.current = draftSaveChain.current
+        .catch(() => undefined)
+        .then(() => persistDraft())
+        .catch(() => undefined);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [hasMeaningfulDraft, isDirty, persistDraft, phase]);
 
   // Snapshot of the draft taken at send time so Undo can restore it after
   // the composer has already cleared/closed.
-  const sendSnapshot = useRef<{
-    mode: ComposeMode;
-    account: string;
-    to: string;
-    cc: string;
-    bcc: string;
-    subject: string;
-    body: string;
-    threadId?: string | null;
-    anchorMessageId?: string | null;
-    hadFiles: boolean;
-  } | null>(null);
+  const sendSnapshot = useRef<DurableComposeDraft | null>(null);
 
-  const restoreSnapshot = useCallback(() => {
-    const snap = sendSnapshot.current;
-    if (!snap) return;
-    if (snap.mode !== 'new' && (snap.threadId || snap.anchorMessageId)) {
-      openComposeReply({
-        mode: snap.mode,
-        threadId: snap.threadId || '',
-        messageId: snap.anchorMessageId || '',
-        account: snap.account,
-        prefill: { to: snap.to, cc: snap.cc, bcc: snap.bcc, subject: snap.subject, body: snap.body },
-      });
-    } else {
-      openComposeNew({ to: snap.to, cc: snap.cc, bcc: snap.bcc, subject: snap.subject, body: snap.body });
-    }
-  }, [openComposeNew, openComposeReply]);
+  useEffect(() => {
+    if (!composeRecoveredFiles.length) return;
+    setFiles(composeRecoveredFiles);
+    setComposeRecoveredFiles([]);
+  }, [composeRecoveredFiles, setComposeRecoveredFiles]);
 
   const send = useMutation({
     mutationFn: async ({ sendAt }: { sendAt?: number } = {}) => {
@@ -250,7 +313,8 @@ export function InlineComposer({
         body,
         threadId,
         anchorMessageId,
-        hadFiles: files.length > 0,
+        files: [...files],
+        draftId,
       };
       if (composerNeedsReplyAnchor && !anchorMessageId && !threadId) {
         throw new Error(
@@ -293,10 +357,12 @@ export function InlineComposer({
       return data;
     },
     onMutate: () => setPhase('sending'),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       if (data?.pending) {
         const pending = data.pending as { id: string; fireAt: number; undoSeconds: number };
-        const hadFiles = Boolean(sendSnapshot.current?.hadFiles);
+        const snapshot = sendSnapshot.current;
+        if (!snapshot) throw new Error('The sent draft snapshot is missing.');
+        await registerPendingSend(pending, snapshot);
         setPhase('sent');
         window.setTimeout(() => {
           setPhase('draft');
@@ -311,60 +377,6 @@ export function InlineComposer({
           }
           onSent?.(undefined);
         }, 400);
-
-        const windowMs = Math.max(0, pending.fireAt - Date.now());
-        let undone = false;
-        let toastId: string | number = '';
-        const fireTimer = window.setTimeout(() => {
-          if (undone) return;
-          void waitForPendingSendStatus(pending.id).then((status) => {
-            if (undone) return;
-            toast.dismiss(toastId);
-            if (status === 'sent') {
-              fireSendEffect();
-              toast.success('Sent');
-            } else if (status === 'failed') {
-              toast.error('Send failed after the undo window.');
-            } else {
-              toast('Send is still syncing — refreshing.');
-            }
-            void queryClient.invalidateQueries({ queryKey: ['thread'] });
-            void queryClient.invalidateQueries({ queryKey: ['search'] });
-          });
-        }, windowMs);
-        toastId = toast.custom(
-          () => (
-            <UndoSendToastBody
-              fireAt={pending.fireAt}
-              onUndo={async () => {
-                undone = true;
-                window.clearTimeout(fireTimer);
-                toast.dismiss(toastId);
-                try {
-                  const res = await fetch('/api/compose/undo', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ pendingId: pending.id }),
-                  });
-                  const result = await res.json().catch(() => null);
-                  if (result?.undone) {
-                    restoreSnapshot();
-                    toast(
-                      hadFiles
-                        ? 'Send cancelled — draft restored, re-attach files'
-                        : 'Send cancelled — draft restored',
-                    );
-                  } else {
-                    toast.error('Too late — already sent.');
-                  }
-                } catch {
-                  toast.error('Could not reach the server to cancel.');
-                }
-              }}
-            />
-          ),
-          { duration: windowMs + 1_000 },
-        );
         return;
       }
 
@@ -383,6 +395,9 @@ export function InlineComposer({
           setSubject('');
         }
         toast.success(`Scheduled for ${new Date(scheduled.sendAt).toLocaleString()}`);
+        if (draftIdRef.current) {
+          void callTool('delete_draft', { id: draftIdRef.current }).catch(() => undefined);
+        }
         onSent?.(undefined);
         return;
       }
@@ -405,6 +420,9 @@ export function InlineComposer({
           setSubject('');
         }
         toast.success('Sent');
+        if (draftIdRef.current) {
+          void callTool('delete_draft', { id: draftIdRef.current }).catch(() => undefined);
+        }
         if (sentThreadId) {
           setThreadAccount(sentAccount);
           setSelectedThread(sentThreadId);
@@ -610,7 +628,10 @@ export function InlineComposer({
           {onClose ? (
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => {
+                if (isDirty) setDiscardOpen(true);
+                else onClose();
+              }}
               className="ml-1 grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-faint)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               title="Close"
             >
@@ -793,6 +814,52 @@ export function InlineComposer({
           {previewFile ? <DraftAttachmentPreviewDialog file={previewFile} /> : null}
         </DialogContent>
       </Dialog>
+      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Keep this draft?</DialogTitle>
+            <DialogDescription>
+              Your message has unsent changes. Keep the server draft, discard it, or continue editing.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setDiscardOpen(false)}
+              className="rounded-md border border-[var(--color-control-border)] px-3 py-2 text-[12px]"
+            >
+              Continue editing
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (draftIdRef.current) {
+                  void callTool('delete_draft', { id: draftIdRef.current }).catch(() => undefined);
+                }
+                setDiscardOpen(false);
+                onClose?.();
+              }}
+              className="rounded-md border border-red-500/30 px-3 py-2 text-[12px] text-red-600"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void persistDraft()
+                  .then(() => {
+                    setDiscardOpen(false);
+                    onClose?.();
+                  })
+                  .catch((error) => toast.error(error.message));
+              }}
+              className="rounded-md bg-[var(--color-accent)] px-3 py-2 text-[12px] font-medium text-white"
+            >
+              Keep Draft
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </motion.section>
   );
 }
@@ -821,80 +888,6 @@ function toDatetimeLocalValue(ts: number) {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-async function waitForPendingSendStatus(
-  pendingId: string,
-  timeoutMs = SEND_STATUS_CONFIRM_TIMEOUT_MS,
-): Promise<'sent' | 'failed' | 'cancelled' | 'missing' | 'timeout'> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const params = new URLSearchParams({ pendingId });
-    const res = await fetch(`/api/compose/status?${params.toString()}`, { cache: 'no-store' }).catch(
-      () => null,
-    );
-    const data = res?.ok ? await res.json().catch(() => null) : null;
-    const status = data?.status as string | undefined;
-    if (status === 'sent' || status === 'failed' || status === 'cancelled' || status === 'missing') {
-      return status;
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, SEND_STATUS_POLL_INTERVAL_MS));
-  }
-  return 'timeout';
-}
-
-// Countdown toast shown while a send is held in the undo window.
-function UndoSendToastBody({ fireAt, onUndo }: { fireAt: number; onUndo: () => void }) {
-  const [initialMs] = useState(() => Math.max(1, fireAt - Date.now()));
-  const [remaining, setRemaining] = useState(initialMs);
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setRemaining(Math.max(0, fireAt - Date.now()));
-    }, 250);
-    return () => window.clearInterval(interval);
-  }, [fireAt]);
-  const seconds = Math.ceil(remaining / 1000);
-  return (
-    <div className="pointer-events-auto flex w-[320px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 shadow-lg">
-      <div className="relative grid h-8 w-8 shrink-0 place-items-center">
-        <svg
-          viewBox="0 0 32 32"
-          className="absolute inset-0 -rotate-90"
-          role="presentation"
-          aria-hidden="true"
-        >
-          <circle cx="16" cy="16" r="13" fill="none" stroke="var(--color-border)" strokeWidth="2.5" />
-          <circle
-            cx="16"
-            cy="16"
-            r="13"
-            fill="none"
-            stroke="var(--color-accent)"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeDasharray={2 * Math.PI * 13}
-            strokeDashoffset={(1 - remaining / initialMs) * 2 * Math.PI * 13}
-            className="transition-[stroke-dashoffset] duration-200 ease-linear"
-          />
-        </svg>
-        <span className="text-[11px] font-semibold tabular-nums text-[var(--color-text)]">{seconds}</span>
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-[12.5px] font-medium text-[var(--color-text)]">Sending…</div>
-        <div className="truncate text-[11px] text-[var(--color-text-muted)]">
-          Goes out in {seconds}s — change your mind?
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onUndo}
-        className="flex shrink-0 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-muted)]"
-      >
-        <Undo2 className="h-3.5 w-3.5" />
-        Undo
-      </button>
-    </div>
-  );
 }
 
 function RecipientField({

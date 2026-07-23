@@ -10,6 +10,7 @@
 // - NN/g wizard guidelines (nngroup.com/articles/wizards): setup must be re-enterable; the
 //   surface stays usable without it.
 
+import { useQuery as useHTTPQuery } from '@tanstack/react-query';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { Check, Link2, ShieldCheck, X } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -24,6 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -40,17 +42,36 @@ export function AreasLive({ openSetup }: { openSetup?: boolean }) {
   // Skip until the Clerk token has reached the Convex client — first-paint
   // queries otherwise run unauthenticated and throw server-side.
   const { isAuthenticated } = useConvexAuth();
-  const areas = useQuery(api.albatross.listAreas, isAuthenticated ? { status: 'active' } : 'skip') as
+  const liveAreas = useQuery(api.albatross.listAreas, isAuthenticated ? { status: 'active' } : 'skip') as
     | AreaLike[]
     | undefined;
+  const fallbackAreas = useHTTPQuery({
+    queryKey: ['areas', 'active', 'http-fallback'],
+    queryFn: () => callTool<{ areas: AreaLike[] }>('area_list', { status: 'active' }),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+  // Live Convex remains authoritative. The authenticated tool path supplies a
+  // last-good HTTP/cache result when Convex auth or subscriptions are delayed.
+  const areas = liveAreas ?? fallbackAreas.data?.areas;
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const [selectedId, setSelectedId] = useState<Id<'areas'> | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
 
   // Deep link (/?setup=areas): open the wizard as soon as the surface mounts.
   useEffect(() => {
     if (openSetup) setWizardOpen(true);
   }, [openSetup]);
+
+  useEffect(() => {
+    if (areas) {
+      setLoadTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setLoadTimedOut(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [areas]);
 
   const selected = areas?.find((area) => area._id === selectedId) ?? areas?.[0] ?? null;
 
@@ -73,7 +94,28 @@ export function AreasLive({ openSetup }: { openSetup?: boolean }) {
         </div>
       </div>
 
-      {areas === undefined ? (
+      {areas === undefined && loadTimedOut ? (
+        <div className="grid flex-1 place-items-center px-6 text-center">
+          <div className="max-w-sm">
+            <h3 className="text-[14px] font-semibold">Areas could not refresh</h3>
+            <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+              Convex authentication did not finish and no saved HTTP result is available.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => {
+                setLoadTimedOut(false);
+                void fallbackAreas.refetch();
+              }}
+            >
+              Try Again
+            </Button>
+          </div>
+        </div>
+      ) : areas === undefined ? (
         <div className="px-4 py-8 text-[12.5px] text-[var(--color-text-muted)]">Loading areas…</div>
       ) : areas.length === 0 ? (
         <EmptyHero onStart={() => setWizardOpen(true)} />

@@ -1,5 +1,6 @@
 'use client';
 
+import { useQuery as useHTTPQuery } from '@tanstack/react-query';
 import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   CalendarClock,
@@ -167,7 +168,14 @@ export function TasksSurface() {
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
 
   const boardsQuery = useConvexQuery({ query: boardsApi.listMyBoards, args: {} });
-  const boards: any[] = boardsQuery.status === 'success' ? boardsQuery.data || [] : [];
+  const fallbackBoards = useHTTPQuery({
+    queryKey: ['tasks', 'boards', 'http-fallback'],
+    queryFn: () => callTool<{ boards: any[] }>('tasks_list_boards', {}),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+  const liveBoards: any[] | undefined = boardsQuery.status === 'success' ? boardsQuery.data || [] : undefined;
+  const boards: any[] = liveBoards ?? fallbackBoards.data?.boards ?? [];
 
   const ensureDefault = useConvexMutation(boardsApi.ensureDefaultBoard);
   const claimInvites = useConvexMutation(boardsApi.claimInvites);
@@ -286,7 +294,19 @@ export function TasksSurface() {
         ) : activeBoardId ? (
           <BoardView key={activeBoardId} boardId={activeBoardId} openCardRequest={openCardRequest} />
         ) : (
-          <EmptyState loading={boardsQuery.status !== 'success'} />
+          <EmptyState
+            loading={liveBoards === undefined && fallbackBoards.isPending}
+            error={
+              liveBoards === undefined && fallbackBoards.isError
+                ? fallbackBoards.error instanceof Error
+                  ? fallbackBoards.error.message
+                  : 'The authenticated task session did not finish.'
+                : undefined
+            }
+            onRetry={() => {
+              void fallbackBoards.refetch();
+            }}
+          />
         )}
         <NameDialog
           open={newBoardOpen}
@@ -324,7 +344,7 @@ export function TasksSurface() {
   );
 }
 
-function EmptyState({ loading }: { loading: boolean }) {
+function EmptyState({ loading, error, onRetry }: { loading: boolean; error?: string; onRetry: () => void }) {
   return (
     <div className="grid flex-1 place-items-center px-6">
       <div className="flex max-w-sm flex-col items-center gap-3 text-center">
@@ -332,8 +352,20 @@ function EmptyState({ loading }: { loading: boolean }) {
           <SquareKanban size={22} strokeWidth={1.75} />
         </span>
         <p className="font-display text-[16px] font-semibold text-[var(--color-text)]">
-          {loading ? 'Loading your boards…' : 'Setting up your first board…'}
+          {loading
+            ? 'Loading your boards…'
+            : error
+              ? 'Tasks could not authenticate'
+              : 'Setting up your first board…'}
         </p>
+        {error ? (
+          <>
+            <p className="text-[12.5px] text-[var(--color-text-muted)]">{error}</p>
+            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+              Try Again
+            </Button>
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -348,7 +380,14 @@ function BoardView({
 }) {
   const headerSlot = useContext(BoardHeaderActionsSlot);
   const boardQuery = useConvexQuery({ query: boardsApi.getBoard, args: { boardId } });
-  const board: BoardPayload | null = boardQuery.status === 'success' ? boardQuery.data : null;
+  const fallbackBoard = useHTTPQuery({
+    queryKey: ['tasks', 'board', boardId, 'http-fallback'],
+    queryFn: () => callTool<{ board: BoardPayload }>('tasks_get_board', { boardId }),
+    staleTime: 2 * 60_000,
+    retry: 1,
+  });
+  const liveBoard: BoardPayload | undefined = boardQuery.status === 'success' ? boardQuery.data : undefined;
+  const board: BoardPayload | null = liveBoard ?? fallbackBoard.data?.board ?? null;
 
   const moveCard = useConvexMutation(boardsApi.moveCard);
   const createCard = useConvexMutation(boardsApi.createCard);
@@ -444,8 +483,22 @@ function BoardView({
 
   if (!board) {
     return (
-      <div className="grid flex-1 place-items-center text-[13px] text-[var(--color-text-muted)]">
-        Loading board…
+      <div className="grid flex-1 place-items-center px-6 text-center text-[13px] text-[var(--color-text-muted)]">
+        {fallbackBoard.isError ? (
+          <div className="max-w-sm space-y-3">
+            <p className="font-medium text-[var(--color-text)]">This board could not authenticate</p>
+            <p>
+              {fallbackBoard.error instanceof Error
+                ? fallbackBoard.error.message
+                : 'No provider-backed board data is available.'}
+            </p>
+            <Button type="button" variant="outline" size="sm" onClick={() => fallbackBoard.refetch()}>
+              Try Again
+            </Button>
+          </div>
+        ) : (
+          'Loading board…'
+        )}
       </div>
     );
   }
