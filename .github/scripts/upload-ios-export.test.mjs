@@ -15,20 +15,17 @@ const baseEnvironment = {
 test('accepts an exact duplicate when Xcode Cloud already uploaded the same build', () => {
   const output = [
     'ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE',
-    "The bundle version must be higher than the previously uploaded version: ‘40’.",
+    'The bundle version must be higher than the previously uploaded version: ‘40’.',
     'previousBundleVersion : 40',
   ].join('\n');
 
-  assert.equal(
-    classifyUploadResult({ status: 1, output, buildNumber: '40' }),
-    'already-uploaded',
-  );
+  assert.equal(classifyUploadResult({ status: 1, output, buildNumber: '40' }), 'already-uploaded');
 });
 
 test('rejects a duplicate response for a different build number', () => {
   const output = [
     'ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE',
-    "The bundle version must be higher than the previously uploaded version: ‘39’.",
+    'The bundle version must be higher than the previously uploaded version: ‘39’.',
     'previousBundleVersion : 39',
   ].join('\n');
 
@@ -83,10 +80,7 @@ test('an exact duplicate still continues and cleans up the private key', () => {
     run: () => ({
       status: 1,
       stdout: '',
-      stderr: [
-        'ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE',
-        'previousBundleVersion : 40',
-      ].join('\n'),
+      stderr: ['ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE', 'previousBundleVersion : 40'].join('\n'),
     }),
     stdout: { write: (value) => messages.push(value) },
     stderr: { write: (value) => messages.push(value) },
