@@ -79,7 +79,7 @@ esac
 
 codesign --verify --deep --strict "$app_path"
 entitlements="$inspection_root/entitlements.plist"
-codesign -d --entitlements "$entitlements" "$app_path" >/dev/null 2>&1
+codesign -d --entitlements :- "$app_path" >"$entitlements" 2>/dev/null
 
 team_id="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$entitlements")"
 aps_environment="$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$entitlements")"
