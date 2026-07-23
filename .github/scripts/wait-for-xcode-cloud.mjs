@@ -1,12 +1,7 @@
 import { createPrivateKey, sign } from 'node:crypto';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import {
-  findAppStoreExport,
-  findArchiveAction,
-  findLogBundles,
-  findTestFlightAction,
-} from './xcode-cloud-artifacts.mjs';
+import { appendFileSync } from 'node:fs';
+import { findAppStoreExport, findArchiveAction, findTestFlightAction } from './xcode-cloud-artifacts.mjs';
+import { preserveLogBundles } from './xcode-cloud-diagnostics.mjs';
 
 const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY', 'XCODE_CLOUD_BUILD_RUN_ID'];
 
@@ -50,39 +45,6 @@ async function appStoreConnect(path) {
 }
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function preserveLogBundles(artifacts) {
-  const diagnosticsDirectory = process.env.XCODE_CLOUD_DIAGNOSTICS_DIR;
-  if (!diagnosticsDirectory) return;
-
-  const logBundles = findLogBundles(artifacts);
-  if (logBundles.length === 0) {
-    console.warn('Xcode Cloud returned no downloadable log bundle for the failed archive.');
-    return;
-  }
-
-  mkdirSync(diagnosticsDirectory, { recursive: true });
-  for (const { attributes } of logBundles) {
-    try {
-      const response = await fetch(attributes.downloadUrl);
-      if (!response.ok) {
-        console.warn(
-          `Could not download Xcode Cloud log bundle ${attributes.fileName} (${response.status}).`,
-        );
-        continue;
-      }
-      const fileName = basename(attributes.fileName || 'xcode-cloud.logbundle.zip');
-      writeFileSync(join(diagnosticsDirectory, fileName), Buffer.from(await response.arrayBuffer()));
-      console.log(`Preserved Xcode Cloud diagnostic log bundle: ${fileName}`);
-    } catch (error) {
-      console.warn(
-        `Could not preserve Xcode Cloud log bundle ${attributes.fileName}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-}
 
 const buildRunID = process.env.XCODE_CLOUD_BUILD_RUN_ID;
 const deadline = Date.now() + 45 * 60 * 1000;
@@ -141,7 +103,9 @@ if (testFlightSucceeded) {
 }
 
 if (!appStoreExport) {
-  await preserveLogBundles(artifacts.data);
+  await preserveLogBundles(artifacts.data, {
+    diagnosticsDirectory: process.env.XCODE_CLOUD_DIAGNOSTICS_DIR,
+  });
   const issues = await appStoreConnect(`/v1/ciBuildActions/${archiveAction.id}/issues`);
   const messages = issues.data.map(({ attributes }) => attributes.message);
   throw new Error(`Xcode Cloud did not produce an App Store export. ${messages.join('; ')}`);

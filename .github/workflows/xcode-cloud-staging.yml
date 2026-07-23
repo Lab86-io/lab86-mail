@@ -9,6 +9,10 @@ on:
       - .github/scripts/start-xcode-cloud.mjs
       - .github/scripts/wait-for-xcode-cloud.mjs
       - .github/scripts/xcode-cloud-artifacts.mjs
+      - .github/scripts/xcode-cloud-artifacts.test.mjs
+      - .github/scripts/xcode-cloud-diagnostics.mjs
+      - .github/scripts/xcode-cloud-diagnostics.test.mjs
+      - .github/scripts/xcode-cloud-workflows.test.mjs
       - .github/scripts/verify-ios-export.sh
       - .github/scripts/wait-for-testflight.mjs
       - .github/workflows/xcode-cloud-staging.yml
@@ -32,6 +36,8 @@ jobs:
       - name: Verify release automation
         run: |
           node --test .github/scripts/xcode-cloud-artifacts.test.mjs
+          node --test .github/scripts/xcode-cloud-diagnostics.test.mjs
+          node --test .github/scripts/xcode-cloud-workflows.test.mjs
           bash apps/ios/ci_scripts/ci_post_clone_test.sh
           apps/ios/ci_scripts/verify_built_configuration_test.sh
 
@@ -57,7 +63,7 @@ jobs:
 
       - name: Preserve failed Xcode Cloud diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: xcode-cloud-staging-diagnostics-${{ steps.start.outputs.build_number }}
           path: ${{ runner.temp }}/xcode-cloud-diagnostics
@@ -79,7 +85,7 @@ jobs:
 
       - name: Preserve signed staging IPA for physical acceptance
         if: steps.xcode_cloud.outputs.artifact_url != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: albatross-staging-${{ steps.start.outputs.build_number }}
           path: ${{ runner.temp }}/xcode-cloud-app-store/**/*.ipa

@@ -33,6 +33,8 @@ jobs:
       - name: Verify release automation
         run: |
           node --test .github/scripts/xcode-cloud-artifacts.test.mjs
+          node --test .github/scripts/xcode-cloud-diagnostics.test.mjs
+          node --test .github/scripts/xcode-cloud-workflows.test.mjs
           bash apps/ios/ci_scripts/ci_post_clone_test.sh
           apps/ios/ci_scripts/verify_built_configuration_test.sh
 
@@ -59,7 +61,7 @@ jobs:
 
       - name: Preserve failed Xcode Cloud diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: xcode-cloud-production-diagnostics-${{ steps.start.outputs.build_number }}
           path: ${{ runner.temp }}/xcode-cloud-diagnostics
