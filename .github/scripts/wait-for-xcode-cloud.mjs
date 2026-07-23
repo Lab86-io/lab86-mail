@@ -63,14 +63,24 @@ async function preserveLogBundles(artifacts) {
 
   mkdirSync(diagnosticsDirectory, { recursive: true });
   for (const { attributes } of logBundles) {
-    const response = await fetch(attributes.downloadUrl);
-    if (!response.ok) {
-      console.warn(`Could not download Xcode Cloud log bundle ${attributes.fileName} (${response.status}).`);
-      continue;
+    try {
+      const response = await fetch(attributes.downloadUrl);
+      if (!response.ok) {
+        console.warn(
+          `Could not download Xcode Cloud log bundle ${attributes.fileName} (${response.status}).`,
+        );
+        continue;
+      }
+      const fileName = basename(attributes.fileName || 'xcode-cloud.logbundle.zip');
+      writeFileSync(join(diagnosticsDirectory, fileName), Buffer.from(await response.arrayBuffer()));
+      console.log(`Preserved Xcode Cloud diagnostic log bundle: ${fileName}`);
+    } catch (error) {
+      console.warn(
+        `Could not preserve Xcode Cloud log bundle ${attributes.fileName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
-    const fileName = basename(attributes.fileName || 'xcode-cloud.logbundle.zip');
-    writeFileSync(join(diagnosticsDirectory, fileName), Buffer.from(await response.arrayBuffer()));
-    console.log(`Preserved Xcode Cloud diagnostic log bundle: ${fileName}`);
   }
 }
 
