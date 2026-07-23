@@ -2,6 +2,7 @@ import AppIntents
 import Foundation
 import MobileAPI
 import Testing
+import UIKit
 import UniformTypeIdentifiers
 @testable import Lab86Mail
 
@@ -20,6 +21,22 @@ struct Lab86MailTests {
         case offline
 
         var errorDescription: String? { "The network is offline." }
+    }
+
+    @Test
+    func adaptiveThemeColorResolvesOnSwiftUIBackgroundRenderer() async {
+        let lightAndDarkDiffer = await Task.detached {
+            let dynamicColor = ThemeStore.adaptiveUIColor(hue: 156, chroma: 0.09)
+            let lightColor = dynamicColor.resolvedColor(
+                with: UITraitCollection(userInterfaceStyle: .light)
+            )
+            let darkColor = dynamicColor.resolvedColor(
+                with: UITraitCollection(userInterfaceStyle: .dark)
+            )
+            return !lightColor.isEqual(darkColor)
+        }.value
+
+        #expect(lightAndDarkDiffer)
     }
 
     @Test

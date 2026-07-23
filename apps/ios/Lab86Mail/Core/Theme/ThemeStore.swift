@@ -144,12 +144,20 @@ final class ThemeStore {
             : Color(Self.oklch(l: 0.45, c: accentChroma, h: accentHue))
     }
 
-    private static func adaptiveColor(hue: Double, chroma: Double) -> Color {
-        Color(UIColor { traits in
+    private nonisolated static func adaptiveColor(hue: Double, chroma: Double) -> Color {
+        Color(adaptiveUIColor(hue: hue, chroma: chroma))
+    }
+
+    // UIKit resolves dynamic provider colors from SwiftUI's render thread, not
+    // necessarily the main actor. Keep the provider and its pure color math
+    // explicitly nonisolated so strict-concurrency executor checks do not trap
+    // while a view is being rendered.
+    nonisolated static func adaptiveUIColor(hue: Double, chroma: Double) -> UIColor {
+        UIColor { traits in
             traits.userInterfaceStyle == .dark
                 ? oklch(l: 0.73, c: chroma * 0.78, h: hue)
                 : oklch(l: 0.45, c: chroma, h: hue)
-        })
+        }
     }
 
     private func persist() {
@@ -225,7 +233,7 @@ final class ThemeStore {
 
     // MARK: - OKLCH → sRGB
 
-    static func oklch(l: Double, c: Double, h: Double) -> UIColor {
+    nonisolated static func oklch(l: Double, c: Double, h: Double) -> UIColor {
         let hRad = h * .pi / 180
         let labA = c * cos(hRad)
         let labB = c * sin(hRad)
