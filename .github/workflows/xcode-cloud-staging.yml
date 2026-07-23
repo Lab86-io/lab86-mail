@@ -118,8 +118,7 @@ jobs:
             --apiIssuer "$ASC_ISSUER_ID" \
             --output-format json
 
-      - name: Confirm TestFlight processing
-        if: steps.xcode_cloud.outputs.needs_upload == 'true'
+      - name: Confirm TestFlight processing and internal group assignment
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
