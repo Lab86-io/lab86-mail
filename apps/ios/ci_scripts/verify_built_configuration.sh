@@ -41,7 +41,7 @@ case "$build_channel" in
       echo "Refusing to archive a production app with an invalid API base URL." >&2
       exit 1
     }
-    [[ "$convex_url" == https://*.convex.cloud && "$convex_url" != *precise-skunk-847* ]] || {
+    [[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]] || {
       echo "Refusing to archive a production app without production Convex." >&2
       exit 1
     }

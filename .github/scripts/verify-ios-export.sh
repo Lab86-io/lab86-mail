@@ -13,11 +13,19 @@ if [[ ! -d "$export_root" ]]; then
   exit 66
 fi
 
-ipa_path="$(find "$export_root" -type f -name '*.ipa' -print -quit)"
-if [[ -z "$ipa_path" ]]; then
+ipa_paths=()
+while IFS= read -r -d '' candidate; do
+  ipa_paths+=("$candidate")
+done < <(find "$export_root" -type f -name '*.ipa' -print0)
+if (( ${#ipa_paths[@]} == 0 )); then
   echo "The Xcode Cloud export did not contain an IPA." >&2
   exit 1
 fi
+if (( ${#ipa_paths[@]} != 1 )); then
+  echo "The Xcode Cloud export contained multiple IPA files." >&2
+  exit 1
+fi
+ipa_path="${ipa_paths[0]}"
 
 inspection_root="$(mktemp -d)"
 trap 'rm -rf "$inspection_root"' EXIT
@@ -65,7 +73,7 @@ case "$channel" in
       echo "Production IPA contains an invalid API base URL." >&2
       exit 1
     }
-    [[ "$convex_url" == https://*.convex.cloud && "$convex_url" != *precise-skunk-847* ]] || {
+    [[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]] || {
       echo "Production IPA does not contain a production Convex deployment." >&2
       exit 1
     }
@@ -73,7 +81,7 @@ case "$channel" in
       echo "Production IPA does not contain a live Clerk publishable key." >&2
       exit 1
     }
-    expected_clerk_host=""
+    expected_clerk_host="clerk.mail.lab86.io"
     ;;
 esac
 
@@ -98,12 +106,8 @@ associated_domains="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.ass
   echo "Signed IPA unexpectedly allows debugger attachment." >&2
   exit 1
 }
-if [[ -n "$expected_clerk_host" && "$associated_domains" != *"webcredentials:$expected_clerk_host"* ]]; then
-  echo "Staging IPA has an unexpected Clerk associated domain." >&2
-  exit 1
-fi
-if [[ "$channel" == "production" && "$associated_domains" == *"together-sawfish-53.clerk.accounts.dev"* ]]; then
-  echo "Production IPA contains the staging Clerk associated domain." >&2
+if [[ "$associated_domains" != *"webcredentials:$expected_clerk_host"* ]]; then
+  echo "Signed IPA has an unexpected Clerk associated domain." >&2
   exit 1
 fi
 

@@ -1,6 +1,9 @@
-import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
-import { AppStoreConnectRequestError, requestAppStoreConnect } from './app-store-connect.mjs';
+import {
+  AppStoreConnectRequestError,
+  createAppStoreConnectToken,
+  requestAppStoreConnect,
+} from './app-store-connect.mjs';
 import {
   findAppStoreExport,
   findArchiveAction,
@@ -17,26 +20,12 @@ for (const name of requiredEnvironment) {
   }
 }
 
-const encodeJSON = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
-
-const privateKey = process.env.ASC_PRIVATE_KEY.replaceAll('\\n', '\n').trim();
-
 function createToken() {
-  const now = Math.floor(Date.now() / 1000);
-  const unsignedToken = [
-    encodeJSON({ alg: 'ES256', kid: process.env.ASC_KEY_ID, typ: 'JWT' }),
-    encodeJSON({
-      iss: process.env.ASC_ISSUER_ID,
-      iat: now - 10,
-      exp: now + 600,
-      aud: 'appstoreconnect-v1',
-    }),
-  ].join('.');
-  const signature = sign('sha256', Buffer.from(unsignedToken), {
-    key: createPrivateKey(`${privateKey}\n`),
-    dsaEncoding: 'ieee-p1363',
-  }).toString('base64url');
-  return `${unsignedToken}.${signature}`;
+  return createAppStoreConnectToken({
+    issuerID: process.env.ASC_ISSUER_ID,
+    keyID: process.env.ASC_KEY_ID,
+    privateKey: process.env.ASC_PRIVATE_KEY,
+  });
 }
 
 async function appStoreConnect(path) {

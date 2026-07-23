@@ -99,7 +99,10 @@ describe('native iOS authentication configuration', () => {
     expect(project).toContain('$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)');
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail-staging.lab86.io" ]]');
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail.lab86.io" ]]');
+    expect(builtVerifier).toContain('[[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]]');
     expect(exportVerifier).toContain('codesign -d --entitlements :- "$app_path"');
+    expect(exportVerifier).toContain('expected_clerk_host="clerk.mail.lab86.io"');
+    expect(exportVerifier).toContain('[[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]]');
     expect(cloudWaiter).toContain(
       'Xcode Cloud distributed to TestFlight without a reviewable App Store export.',
     );

@@ -21,6 +21,7 @@ test('staging preserves diagnostics and signed IPA with immutable upload actions
   assert.match(contents, /if-no-files-found: ignore/);
   assert.match(contents, /retention-days: 1/);
   assert.match(contents, /name: Preserve signed staging IPA for physical acceptance/);
+  assert.match(contents, /curl --fail --location \\\s+--connect-timeout 30 \\\s+--max-time 1800/);
   assert.match(
     contents,
     /name: Confirm TestFlight processing and internal group assignment\s+env:\s+ASC_ISSUER_ID:/,
@@ -39,9 +40,17 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /path: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
   assert.match(contents, /if-no-files-found: ignore/);
   assert.match(contents, /retention-days: 1/);
+  assert.match(contents, /curl --fail --location \\\s+--connect-timeout 30 \\\s+--max-time 1800/);
   assert.match(
     contents,
     /name: Confirm production TestFlight processing and internal group assignment\s+env:\s+ASC_ISSUER_ID:/,
   );
   assert.equal(contents.split(immutableUploadArtifact).length - 1, 1);
+});
+
+test('TestFlight polling selects the newest matching upload deterministically', () => {
+  const contents = readFileSync(new URL('./wait-for-testflight.mjs', import.meta.url), 'utf8');
+
+  assert.match(contents, /sort: '-uploadedDate'/);
+  assert.match(contents, /build = response\.data\[0\]/);
 });

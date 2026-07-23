@@ -45,17 +45,17 @@ fi
 write_plist \
   "$test_root/Info.plist" \
   'https://mail.lab86.io' \
-  'https://production-example.convex.cloud' \
+  'https://proficient-viper-594.convex.cloud' \
   'pk_live_example'
 run_verifier production
 
 write_plist \
   "$test_root/Info.plist" \
   'https://mail.lab86.io' \
-  'https://precise-skunk-847.convex.cloud' \
+  'https://unrelated-production.convex.cloud' \
   'pk_live_example'
 if run_verifier production 2>/dev/null; then
-  echo 'Production verification must reject the staging Convex deployment.' >&2
+  echo 'Production verification must reject an unrelated Convex deployment.' >&2
   exit 1
 fi
 

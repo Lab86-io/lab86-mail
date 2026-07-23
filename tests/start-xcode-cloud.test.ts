@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  collectAppStoreConnectPages,
   createBuildRunPayload,
   hasExplicitBuildTarget,
   selectBranchRefID,
@@ -59,5 +60,57 @@ describe('Xcode Cloud build discovery', () => {
         },
       },
     });
+  });
+
+  test('follows absolute pagination links and returns every discovery result', async () => {
+    const requests: string[] = [];
+    const pages = new Map([
+      [
+        '/v1/ciProducts/product/workflows?limit=200',
+        {
+          data: [{ id: 'first', attributes: { name: 'Staging TestFlight' } }],
+          links: {
+            next: 'https://api.appstoreconnect.apple.com/v1/ciProducts/product/workflows?limit=200&cursor=next',
+          },
+        },
+      ],
+      [
+        '/v1/ciProducts/product/workflows?limit=200&cursor=next',
+        {
+          data: [{ id: 'second', attributes: { name: 'Production App Store' } }],
+          links: { next: null },
+        },
+      ],
+    ]);
+
+    const results = await collectAppStoreConnectPages(
+      '/v1/ciProducts/product/workflows?limit=200',
+      async (path: string) => {
+        requests.push(path);
+        return pages.get(path);
+      },
+    );
+
+    expect(requests).toEqual([
+      '/v1/ciProducts/product/workflows?limit=200',
+      '/v1/ciProducts/product/workflows?limit=200&cursor=next',
+    ]);
+    expect(results.map(({ id }) => id)).toEqual(['first', 'second']);
+  });
+
+  test('rejects pagination cycles and unexpected origins', async () => {
+    await expect(
+      collectAppStoreConnectPages('/v1/workflows', async () => ({
+        data: [],
+        links: { next: '/v1/workflows' },
+      })),
+    ).rejects.toThrow('App Store Connect pagination repeated a page');
+
+    await expect(
+      collectAppStoreConnectPages('/v1/workflows', async () => ({
+        data: [],
+        links: { next: 'https://example.com/v1/workflows' },
+      })),
+    ).rejects.toThrow('App Store Connect pagination returned an unexpected origin');
   });
 });

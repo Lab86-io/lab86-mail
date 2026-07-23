@@ -49,16 +49,28 @@ if run_post_clone 2>/dev/null; then
 fi
 
 export LAB86_API_BASE_URL='https://mail.lab86.io'
-export CONVEX_DEPLOYMENT_URL='https://production-example.convex.cloud'
-export CLERK_FRONTEND_API_HOST='clerk.lab86.io'
+export CONVEX_DEPLOYMENT_URL='https://proficient-viper-594.convex.cloud'
+export CLERK_FRONTEND_API_HOST='clerk.mail.lab86.io'
 export CLERK_PUBLISHABLE_KEY='pk_live_example'
 run_post_clone
 
 expected_production='LAB86_INFO_API_BASE_URL = https:/$()/mail.lab86.io
 LAB86_INFO_CLERK_PUBLISHABLE_KEY = pk_live_example
-LAB86_INFO_CONVEX_DEPLOYMENT_URL = https:/$()/production-example.convex.cloud
-LAB86_INFO_CLERK_FRONTEND_API_HOST = clerk.lab86.io'
+LAB86_INFO_CONVEX_DEPLOYMENT_URL = https:/$()/proficient-viper-594.convex.cloud
+LAB86_INFO_CLERK_FRONTEND_API_HOST = clerk.mail.lab86.io'
 actual="$(< "$test_root/repository/apps/ios/Config/Local.xcconfig")"
 [[ "$actual" == "$expected_production" ]]
+
+export CONVEX_DEPLOYMENT_URL='https://unrelated-production.convex.cloud'
+if run_post_clone 2>/dev/null; then
+  echo 'Production configuration must reject an unrelated Convex deployment.' >&2
+  exit 1
+fi
+export CONVEX_DEPLOYMENT_URL='https://proficient-viper-594.convex.cloud'
+export CLERK_FRONTEND_API_HOST='unrelated.clerk.accounts.dev'
+if run_post_clone 2>/dev/null; then
+  echo 'Production configuration must reject an unrelated Clerk frontend host.' >&2
+  exit 1
+fi
 
 printf 'ci_post_clone configuration tests passed\n'

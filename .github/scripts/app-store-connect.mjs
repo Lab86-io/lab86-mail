@@ -1,3 +1,5 @@
+import { createPrivateKey, sign } from 'node:crypto';
+
 const DEFAULT_TIMEOUT_MILLISECONDS = 30_000;
 const DEFAULT_MAX_ATTEMPTS = 4;
 const DEFAULT_RETRY_DELAY_MILLISECONDS = 1_000;
@@ -10,6 +12,30 @@ export class AppStoreConnectRequestError extends Error {
     this.recoverable = recoverable;
     this.status = status;
   }
+}
+
+export function createAppStoreConnectToken({
+  issuerID,
+  keyID,
+  privateKey,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+}) {
+  const encodeJSON = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const unsignedToken = [
+    encodeJSON({ alg: 'ES256', kid: keyID, typ: 'JWT' }),
+    encodeJSON({
+      iss: issuerID,
+      iat: nowSeconds - 10,
+      exp: nowSeconds + 600,
+      aud: 'appstoreconnect-v1',
+    }),
+  ].join('.');
+  const normalizedPrivateKey = privateKey.replaceAll('\\n', '\n').trim();
+  const signature = sign('sha256', Buffer.from(unsignedToken), {
+    key: createPrivateKey(`${normalizedPrivateKey}\n`),
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  return `${unsignedToken}.${signature}`;
 }
 
 export function retryAfterMilliseconds(value, now = Date.now()) {
@@ -27,6 +53,16 @@ function isTransientStatus(status) {
   return status === 429 || status >= 500;
 }
 
+function backoffDelay(attempt, retryDelayMilliseconds) {
+  return Math.min(retryDelayMilliseconds * 2 ** (attempt - 1), MAX_RETRY_DELAY_MILLISECONDS);
+}
+
+function throwIfCallerAborted(signal) {
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error('App Store Connect request was cancelled.');
+  }
+}
+
 function requestSignal(callerSignal, timeoutMilliseconds) {
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -34,7 +70,11 @@ function requestSignal(callerSignal, timeoutMilliseconds) {
     timeoutMilliseconds,
   );
   const abortFromCaller = () => controller.abort(callerSignal.reason);
-  callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  }
   return {
     signal: controller.signal,
     dispose() {
@@ -61,9 +101,7 @@ export async function requestAppStoreConnect(
   }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    if (options.signal?.aborted) {
-      throw options.signal.reason ?? new Error('App Store Connect request was cancelled.');
-    }
+    throwIfCallerAborted(options.signal);
     const token = getToken();
     const { signal, dispose } = requestSignal(options.signal, timeoutMilliseconds);
     let response;
@@ -79,8 +117,9 @@ export async function requestAppStoreConnect(
       });
     } catch (error) {
       dispose();
+      throwIfCallerAborted(options.signal);
       if (attempt < maxAttempts) {
-        await sleep(Math.min(retryDelayMilliseconds * 2 ** (attempt - 1), MAX_RETRY_DELAY_MILLISECONDS));
+        await sleep(backoffDelay(attempt, retryDelayMilliseconds));
         continue;
       }
       throw new AppStoreConnectRequestError(
@@ -94,8 +133,9 @@ export async function requestAppStoreConnect(
       text = await response.text();
     } catch (error) {
       dispose();
+      throwIfCallerAborted(options.signal);
       if (attempt < maxAttempts) {
-        await sleep(Math.min(retryDelayMilliseconds * 2 ** (attempt - 1), MAX_RETRY_DELAY_MILLISECONDS));
+        await sleep(backoffDelay(attempt, retryDelayMilliseconds));
         continue;
       }
       throw new AppStoreConnectRequestError('App Store Connect response body could not be read.', {
@@ -105,6 +145,7 @@ export async function requestAppStoreConnect(
       });
     }
     dispose();
+    throwIfCallerAborted(options.signal);
 
     let body = {};
     if (text) {
@@ -126,9 +167,7 @@ export async function requestAppStoreConnect(
     const recoverable = isTransientStatus(response.status);
     if (recoverable && attempt < maxAttempts) {
       const retryAfter = retryAfterMilliseconds(response.headers?.get?.('retry-after'));
-      await sleep(
-        retryAfter ?? Math.min(retryDelayMilliseconds * 2 ** (attempt - 1), MAX_RETRY_DELAY_MILLISECONDS),
-      );
+      await sleep(retryAfter ?? backoffDelay(attempt, retryDelayMilliseconds));
       continue;
     }
 

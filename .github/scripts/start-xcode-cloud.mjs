@@ -1,7 +1,6 @@
-import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { requestAppStoreConnect } from './app-store-connect.mjs';
+import { createAppStoreConnectToken, requestAppStoreConnect } from './app-store-connect.mjs';
 
 export function selectWorkflowID(workflows, workflowName) {
   const workflow = workflows.find(({ attributes }) => attributes.name === workflowName);
@@ -52,6 +51,32 @@ export function hasExplicitBuildTarget(workflowID, branchRefID) {
   return Boolean(workflowID && branchRefID);
 }
 
+function appStoreConnectPath(url) {
+  const parsed = new URL(url, 'https://api.appstoreconnect.apple.com');
+  if (parsed.origin !== 'https://api.appstoreconnect.apple.com') {
+    throw new Error(`App Store Connect pagination returned an unexpected origin: ${parsed.origin}`);
+  }
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+export async function collectAppStoreConnectPages(initialPath, appStoreConnect) {
+  const data = [];
+  const seen = new Set();
+  let path = appStoreConnectPath(initialPath);
+
+  while (path) {
+    if (seen.has(path)) {
+      throw new Error(`App Store Connect pagination repeated a page: ${path}`);
+    }
+    seen.add(path);
+    const response = await appStoreConnect(path);
+    data.push(...(response.data ?? []));
+    path = response.links?.next ? appStoreConnectPath(response.links.next) : '';
+  }
+
+  return data;
+}
+
 export async function main() {
   const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY'];
   for (const name of requiredEnvironment) {
@@ -60,29 +85,16 @@ export async function main() {
     }
   }
 
-  const encodeJSON = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
-
-  const now = Math.floor(Date.now() / 1000);
-  const unsignedToken = [
-    encodeJSON({ alg: 'ES256', kid: process.env.ASC_KEY_ID, typ: 'JWT' }),
-    encodeJSON({
-      iss: process.env.ASC_ISSUER_ID,
-      iat: now - 10,
-      exp: now + 600,
-      aud: 'appstoreconnect-v1',
-    }),
-  ].join('.');
-
-  const privateKey = process.env.ASC_PRIVATE_KEY.replaceAll('\\n', '\n').trim();
-  const signature = sign('sha256', Buffer.from(unsignedToken), {
-    key: createPrivateKey(`${privateKey}\n`),
-    dsaEncoding: 'ieee-p1363',
-  }).toString('base64url');
-  const token = `${unsignedToken}.${signature}`;
+  const getToken = () =>
+    createAppStoreConnectToken({
+      issuerID: process.env.ASC_ISSUER_ID,
+      keyID: process.env.ASC_KEY_ID,
+      privateKey: process.env.ASC_PRIVATE_KEY,
+    });
 
   async function appStoreConnect(path, options = {}) {
     return requestAppStoreConnect(path, {
-      getToken: () => token,
+      getToken,
       options,
       maxAttempts: options.method === 'POST' ? 1 : 4,
     });
@@ -101,14 +113,18 @@ export async function main() {
     }
 
     const product = await appStoreConnect(`/v1/apps/${process.env.APP_STORE_APP_ID}/ciProduct`);
-    const workflows = await appStoreConnect(`/v1/ciProducts/${product.data.id}/workflows?limit=200`);
-    workflowID = selectWorkflowID(workflows.data, process.env.XCODE_CLOUD_WORKFLOW_NAME);
+    const workflows = await collectAppStoreConnectPages(
+      `/v1/ciProducts/${product.data.id}/workflows?limit=200`,
+      appStoreConnect,
+    );
+    workflowID = selectWorkflowID(workflows, process.env.XCODE_CLOUD_WORKFLOW_NAME);
 
     const repository = await appStoreConnect(`/v1/ciWorkflows/${workflowID}/repository`);
-    const references = await appStoreConnect(
+    const references = await collectAppStoreConnectPages(
       `/v1/scmRepositories/${repository.data.id}/gitReferences?limit=200`,
+      appStoreConnect,
     );
-    branchRefID = selectBranchRefID(references.data, process.env.XCODE_CLOUD_BRANCH_NAME);
+    branchRefID = selectBranchRefID(references, process.env.XCODE_CLOUD_BRANCH_NAME);
   }
 
   const response = await appStoreConnect('/v1/ciBuildRuns', {

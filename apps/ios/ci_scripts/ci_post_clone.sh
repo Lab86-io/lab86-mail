@@ -61,8 +61,12 @@ case "$build_channel" in
       echo "Production iOS builds require a live Clerk publishable key." >&2
       exit 1
     fi
-    if [[ "$convex_input" != https://*.convex.cloud || "$convex_input" == *precise-skunk-847* ]]; then
+    if [[ "$convex_input" != "https://proficient-viper-594.convex.cloud" ]]; then
       echo "Production iOS builds require the production Convex deployment." >&2
+      exit 1
+    fi
+    if [[ "$clerk_host" != "clerk.mail.lab86.io" ]]; then
+      echo "Production iOS builds require the production Clerk frontend host." >&2
       exit 1
     fi
     ;;
