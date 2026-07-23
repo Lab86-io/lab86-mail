@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // Full card detail as a sheet — the phone counterpart of the desktop
 // CardPanel. View-first: everything reads immediately and edits in place;
@@ -6,8 +7,10 @@ import SwiftUI
 struct TaskDetailView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
 
     let task: TaskSummary
+    @State private var loadedTask: TaskSummary
 
     @State private var title: String
     @State private var details: String
@@ -18,11 +21,21 @@ struct TaskDetailView: View {
     @State private var column: String
     @State private var commentDraft = ""
     @State private var commentPosted = false
+    @State private var labelText: String
+    @State private var assigneeText: String
+    @State private var hasWeight: Bool
+    @State private var weight: Int
+    @State private var linkName = ""
+    @State private var linkURL = ""
+    @State private var showsFileImporter = false
+    @State private var isAttaching = false
     @State private var isSaving = false
     @State private var showsDeleteConfirmation = false
+    @State private var showsDiscardConfirmation = false
 
     init(task: TaskSummary) {
         self.task = task
+        _loadedTask = State(initialValue: task)
         _title = State(initialValue: task.title)
         _details = State(initialValue: task.details ?? "")
         _priority = State(initialValue: task.priority ?? "")
@@ -32,6 +45,10 @@ struct TaskDetailView: View {
         ) ?? .now)
         _completed = State(initialValue: task.completed)
         _column = State(initialValue: task.column)
+        _labelText = State(initialValue: task.labels.joined(separator: ", "))
+        _assigneeText = State(initialValue: task.assignees.joined(separator: ", "))
+        _hasWeight = State(initialValue: task.weight != nil)
+        _weight = State(initialValue: task.weight ?? 1)
     }
 
     var body: some View {
@@ -68,23 +85,15 @@ struct TaskDetailView: View {
                     }
                 }
 
-                if !task.labels.isEmpty {
-                    Section("Labels") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(task.labels, id: \.self) { label in
-                                    Text(label)
-                                        .font(.caption.weight(.medium))
-                                        .padding(.horizontal, 9)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            environment.theme.accent2Color.opacity(0.14),
-                                            in: Capsule()
-                                        )
-                                }
-                            }
-                        }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                Section("Collaboration") {
+                    TextField("Labels, comma separated", text: $labelText)
+                        .textInputAutocapitalization(.never)
+                    TextField("Assignee emails, comma separated", text: $assigneeText)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                    Toggle("Effort estimate", isOn: $hasWeight.animation())
+                    if hasWeight {
+                        Stepper("Weight: \(weight)", value: $weight, in: 0...100)
                     }
                 }
 
@@ -104,6 +113,79 @@ struct TaskDetailView: View {
                     }
                 }
 
+                if !loadedTask.comments.isEmpty {
+                    Section("Comments") {
+                        ForEach(loadedTask.comments) { comment in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(comment.author)
+                                        .font(.caption.weight(.semibold))
+                                    Spacer()
+                                    if let createdAt = comment.createdAt {
+                                        Text(createdAt, style: .relative)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Text(comment.body)
+                            }
+                        }
+                    }
+                }
+
+                if !loadedTask.activity.isEmpty {
+                    Section("Activity") {
+                        ForEach(loadedTask.activity.reversed()) { entry in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(entry.kind.replacingOccurrences(of: "_", with: " ").capitalized)
+                                if let detail = entry.detail {
+                                    Text(detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("Attachments & links") {
+                    ForEach(loadedTask.attachments) { attachment in
+                        attachmentRow(attachment)
+                    }
+                    TextField("Link name (optional)", text: $linkName)
+                    TextField("https://…", text: $linkURL)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                    Button("Attach Link", systemImage: "link") {
+                        Task {
+                            isAttaching = true
+                            if await environment.store.attachLink(
+                                to: loadedTask,
+                                name: optionalLinkName,
+                                url: linkURL
+                            ) {
+                                linkName = ""
+                                linkURL = ""
+                                await reload()
+                            }
+                            isAttaching = false
+                        }
+                    }
+                    .disabled(isAttaching || linkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Attach File", systemImage: "doc.badge.plus") {
+                        showsFileImporter = true
+                    }
+                    .disabled(isAttaching)
+                }
+
+                if let source = loadedTask.source {
+                    Section("Source") {
+                        Button(source.title ?? "Open source", systemImage: source.kind == "email" ? "envelope" : "calendar") {
+                            openSource(source)
+                        }
+                    }
+                }
+
                 Section {
                     Button("Delete card", role: .destructive) {
                         showsDeleteConfirmation = true
@@ -114,7 +196,13 @@ struct TaskDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        if isDirty {
+                            showsDiscardConfirmation = true
+                        } else {
+                            dismiss()
+                        }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Saving…" : "Save") {
@@ -135,6 +223,54 @@ struct TaskDetailView: View {
                     }
                 }
             }
+            .confirmationDialog(
+                "Discard unsaved card changes?",
+                isPresented: $showsDiscardConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Discard Changes", role: .destructive) { dismiss() }
+                Button("Keep Editing", role: .cancel) {}
+            }
+            .interactiveDismissDisabled(isDirty)
+            .task { await reload() }
+            .fileImporter(
+                isPresented: $showsFileImporter,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: false
+            ) { result in
+                guard case .success(let urls) = result, let url = urls.first else { return }
+                Task { await attachFile(url) }
+            }
+        }
+    }
+
+    private func formattedFileSize(_ size: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    private var optionalLinkName: String? {
+        let value = linkName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    @ViewBuilder
+    private func attachmentRow(_ attachment: TaskAttachmentSummary) -> some View {
+        if let url = attachment.url {
+            Link(destination: url) {
+                HStack(spacing: 10) {
+                    Image(systemName: "paperclip")
+                    VStack(alignment: .leading) {
+                        Text(attachment.name)
+                        if let size = attachment.size {
+                            Text(formattedFileSize(size))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        } else {
+            Label(attachment.name, systemImage: "paperclip")
         }
     }
 
@@ -147,7 +283,10 @@ struct TaskDetailView: View {
             details: details.trimmingCharacters(in: .whitespacesAndNewlines),
             priority: priority.isEmpty ? nil : priority,
             due: hasDue ? due : nil,
-            completed: completed
+            completed: completed,
+            labels: csvValues(labelText),
+            assignees: csvValues(assigneeText),
+            weight: .some(hasWeight ? weight : nil)
         )
         if saved, column != task.column {
             await environment.store.moveTask(task, to: column)
@@ -161,6 +300,80 @@ struct TaskDetailView: View {
         if await environment.store.addTaskComment(task, body: body) {
             commentDraft = ""
             commentPosted = true
+            await reload()
+        }
+    }
+
+    private var isDirty: Bool {
+        title != loadedTask.title
+            || details != (loadedTask.details ?? "")
+            || priority != (loadedTask.priority ?? "")
+            || hasDue != (loadedTask.due != nil)
+            || (hasDue && due != loadedTask.due)
+            || completed != loadedTask.completed
+            || column != loadedTask.column
+            || csvValues(labelText) != loadedTask.labels
+            || csvValues(assigneeText) != loadedTask.assignees
+            || (hasWeight ? weight : nil) != loadedTask.weight
+    }
+
+    private func csvValues(_ value: String) -> [String] {
+        value.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func reload() async {
+        loadedTask = await environment.store.loadTask(loadedTask)
+        title = loadedTask.title
+        details = loadedTask.details ?? ""
+        priority = loadedTask.priority ?? ""
+        hasDue = loadedTask.due != nil
+        if let loadedDue = loadedTask.due { due = loadedDue }
+        completed = loadedTask.completed
+        column = loadedTask.column
+        labelText = loadedTask.labels.joined(separator: ", ")
+        assigneeText = loadedTask.assignees.joined(separator: ", ")
+        hasWeight = loadedTask.weight != nil
+        weight = loadedTask.weight ?? 1
+    }
+
+    private func attachFile(_ url: URL) async {
+        isAttaching = true
+        defer { isAttaching = false }
+        let secured = url.startAccessingSecurityScopedResource()
+        defer { if secured { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let values = try url.resourceValues(forKeys: [.nameKey, .contentTypeKey])
+            let attachment = ComposeAttachment(
+                filename: values.name ?? url.lastPathComponent,
+                contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream",
+                data: try Data(contentsOf: url, options: [.mappedIfSafe])
+            )
+            if await environment.store.attachFile(to: loadedTask, attachment: attachment) {
+                await reload()
+            }
+        } catch {
+            environment.store.taskError = error.localizedDescription
+        }
+    }
+
+    private func openSource(_ source: TaskSourceSummary) {
+        if source.kind == "email", let accountID = source.accountID, let threadID = source.threadID {
+            dismiss()
+            environment.navigation.openThread(accountID: accountID, threadID: threadID)
+        } else if source.kind == "calendar",
+                  let accountID = source.accountID,
+                  let eventID = source.eventID {
+            dismiss()
+            environment.navigation.openEvent(
+                accountID: accountID,
+                eventID: eventID,
+                calendarID: source.calendarID,
+                preview: nil
+            )
+        } else if let url = source.url {
+            openURL(url)
         }
     }
 }

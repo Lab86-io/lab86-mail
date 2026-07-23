@@ -46,6 +46,14 @@ final class Lab86MailUITests: XCTestCase {
             chatScreenshot.name = "New chat conversation"
             chatScreenshot.lifetime = .keepAlways
             add(chatScreenshot)
+        } else if app.staticTexts["Bring your inbox"].waitForExistence(timeout: 3) {
+            XCTAssertTrue(app.buttons["Connect Gmail"].exists)
+            XCTAssertTrue(app.buttons["Connect Microsoft"].exists)
+
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Mailbox onboarding boundary"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
         } else {
             XCTAssertTrue(app.navigationBars["Albatross"].waitForExistence(timeout: 10))
         }

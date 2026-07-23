@@ -7,6 +7,7 @@ import SwiftUI
 struct HorizonMonthView: View {
     @Environment(AppEnvironment.self) private var environment
     let events: [CalendarEventSummary]
+    let tasks: [TaskSummary]
     let selectedDay: Date
     let onSelectDay: (Date) -> Void
 
@@ -39,7 +40,8 @@ struct HorizonMonthView: View {
     @ViewBuilder private func dayCell(for day: DayComponents) -> some View {
         let date = calendar.date(from: day.components).map { calendar.startOfDay(for: $0) }
         let isToday = date.map { calendar.isDateInToday($0) } ?? false
-        let count = date.map(eventCount(on:)) ?? 0
+        let eventCount = date.map(eventCount(on:)) ?? 0
+        let taskCount = date.map(taskCount(on:)) ?? 0
         VStack(spacing: 3) {
             Text("\(day.day)")
                 .font(.callout.weight(isToday ? .bold : .regular))
@@ -51,10 +53,15 @@ struct HorizonMonthView: View {
                     }
                 }
             HStack(spacing: 2) {
-                ForEach(0..<min(count, 3), id: \.self) { _ in
+                ForEach(0..<min(eventCount, 2), id: \.self) { _ in
                     Circle()
                         .fill(environment.theme.accent2Color)
                         .frame(width: 4, height: 4)
+                }
+                if taskCount > 0 {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(environment.theme.accentColor)
+                        .frame(width: 6, height: 4)
                 }
             }
             .frame(height: 5)
@@ -62,7 +69,9 @@ struct HorizonMonthView: View {
         .frame(maxWidth: .infinity)
         .contentShape(.rect)
         .accessibilityLabel(
-            date.map { "\($0.formatted(date: .long, time: .omitted)), \(count) event\(count == 1 ? "" : "s")" }
+            date.map {
+                "\($0.formatted(date: .long, time: .omitted)), \(eventCount) event\(eventCount == 1 ? "" : "s"), \(taskCount) task\(taskCount == 1 ? "" : "s")"
+            }
                 ?? "\(day.day)"
         )
     }
@@ -70,5 +79,12 @@ struct HorizonMonthView: View {
     private func eventCount(on day: Date) -> Int {
         guard let end = calendar.date(byAdding: .day, value: 1, to: day) else { return 0 }
         return events.count { $0.start < end && $0.end > day }
+    }
+
+    private func taskCount(on day: Date) -> Int {
+        tasks.count { task in
+            guard let due = task.due else { return false }
+            return calendar.isDate(due, inSameDayAs: day)
+        }
     }
 }

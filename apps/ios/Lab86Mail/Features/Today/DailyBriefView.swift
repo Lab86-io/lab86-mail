@@ -95,6 +95,20 @@ struct BriefActionPayload: Hashable, Sendable {
     var areaID: String?
     var calendarID: String?
     var view: String?
+    var cardID: String?
+    var title: String?
+    var subject: String?
+    var body: String?
+    var status: String?
+    var trackedThreadID: String?
+    var completed: Bool?
+    var receivedAt: Double?
+    var dueAt: Double?
+    var startAt: Double?
+    var endAt: Double?
+    var allDay: Bool?
+    var location: String?
+    var description: String?
 
     init(
         account: String? = nil,
@@ -102,7 +116,21 @@ struct BriefActionPayload: Hashable, Sendable {
         eventID: String? = nil,
         areaID: String? = nil,
         calendarID: String? = nil,
-        view: String? = nil
+        view: String? = nil,
+        cardID: String? = nil,
+        title: String? = nil,
+        subject: String? = nil,
+        body: String? = nil,
+        status: String? = nil,
+        trackedThreadID: String? = nil,
+        completed: Bool? = nil,
+        receivedAt: Double? = nil,
+        dueAt: Double? = nil,
+        startAt: Double? = nil,
+        endAt: Double? = nil,
+        allDay: Bool? = nil,
+        location: String? = nil,
+        description: String? = nil
     ) {
         self.account = account
         self.threadID = threadID
@@ -110,6 +138,20 @@ struct BriefActionPayload: Hashable, Sendable {
         self.areaID = areaID
         self.calendarID = calendarID
         self.view = view
+        self.cardID = cardID
+        self.title = title
+        self.subject = subject
+        self.body = body
+        self.status = status
+        self.trackedThreadID = trackedThreadID
+        self.completed = completed
+        self.receivedAt = receivedAt
+        self.dueAt = dueAt
+        self.startAt = startAt
+        self.endAt = endAt
+        self.allDay = allDay
+        self.location = location
+        self.description = description
     }
 
     init(rawMessageBody: Any?) {
@@ -126,6 +168,251 @@ struct BriefActionPayload: Hashable, Sendable {
         areaID = string("areaId", "area")
         calendarID = string("calendarId", "calendar")
         view = string("view")
+        cardID = string("cardId", "card")
+        title = string("title")
+        subject = string("subject")
+        body = string("body")
+        status = string("status")
+        trackedThreadID = string("trackedThreadId")
+        func number(_ key: String) -> Double? {
+            if let value = dict[key] as? NSNumber { return value.doubleValue }
+            if let value = dict[key] as? Double { return value }
+            return nil
+        }
+        func boolean(_ key: String) -> Bool? {
+            if let value = dict[key] as? NSNumber { return value.boolValue }
+            return dict[key] as? Bool
+        }
+        completed = boolean("completed")
+        allDay = boolean("allDay")
+        receivedAt = number("receivedAt")
+        dueAt = number("dueAt")
+        startAt = number("startAt")
+        endAt = number("endAt")
+        location = string("location")
+        description = string("description")
+    }
+}
+
+struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
+    let action: String
+    let payload: BriefActionPayload
+    let source: String
+    let id = UUID()
+
+    var title: String {
+        switch action {
+        case "toggle_task":
+            return payload.completed == true
+                ? "Complete “\(payload.title ?? "this task")”?"
+                : "Reopen “\(payload.title ?? "this task")”?"
+        case "dismiss_task": return "Remove “\(payload.title ?? "this task")” from future briefs?"
+        case "resolve_thread": return "Resolve “\(payload.subject ?? "this thread")”?"
+        case "dismiss_thread": return "Remove “\(payload.subject ?? "this conversation")” from future briefs?"
+        case "archive_thread": return "Archive “\(payload.subject ?? "this conversation")”?"
+        case "rsvp_event": return "Send a “\(payload.status ?? "response")” RSVP?"
+        case "create_task": return "Add “\(payload.title ?? "this task")”?"
+        case "create_event": return "Add “\(payload.title ?? "this event")” to your calendar?"
+        default: return "Review \(action.replacingOccurrences(of: "_", with: " "))"
+        }
+    }
+
+    var destructive: Bool {
+        ["dismiss_task", "resolve_thread", "dismiss_thread", "archive_thread"].contains(action)
+    }
+
+    var supported: Bool {
+        [
+            "toggle_task", "dismiss_task", "resolve_thread", "dismiss_thread",
+            "archive_thread", "rsvp_event", "create_task", "create_event",
+        ].contains(action)
+    }
+}
+
+struct ArtifactActionReviewSheet: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dismiss) private var dismiss
+    let request: ArtifactReviewRequest
+    let onApplied: () async -> Void
+    @State private var isApplying = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Source") {
+                    Label(request.source, systemImage: "doc.text")
+                }
+                Section("Proposed action") {
+                    Text(request.title)
+                        .font(.headline)
+                    LabeledContent("Action", value: request.action.replacingOccurrences(of: "_", with: " ").capitalized)
+                    if let account = request.payload.account {
+                        LabeledContent("Account", value: account)
+                    }
+                    if let status = request.payload.status {
+                        LabeledContent("Response", value: status.capitalized)
+                    }
+                    if !request.supported {
+                        Text("This edition requested an action the native client cannot validate. Nothing has changed.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let errorMessage {
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Review Action")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(request.destructive ? "Confirm" : "Apply") {
+                        Task { await apply() }
+                    }
+                    .tint(request.destructive ? .red : .accentColor)
+                    .disabled(isApplying || !request.supported)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func apply() async {
+        isApplying = true
+        defer { isApplying = false }
+        do {
+            try await perform()
+            await onApplied()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func perform() async throws {
+        let payload = request.payload
+        switch request.action {
+        case "toggle_task":
+            guard let cardID = payload.cardID, let completed = payload.completed else {
+                throw BackendError.server(status: 400, message: "The report omitted the task state.")
+            }
+            _ = try await environment.tools.invoke(
+                "tasks_update_card",
+                arguments: ["cardId": .string(cardID), "completed": .bool(completed)]
+            )
+            if completed {
+                _ = try? await environment.tools.invoke(
+                    "dismiss_daily_report_task",
+                    arguments: [
+                        "cardId": .string(cardID),
+                        "title": payload.title.map(JSONValue.string) ?? .null,
+                    ]
+                )
+            }
+        case "dismiss_task":
+            guard let cardID = payload.cardID else {
+                throw BackendError.server(status: 400, message: "The report omitted the task identifier.")
+            }
+            _ = try await environment.tools.invoke(
+                "dismiss_daily_report_task",
+                arguments: [
+                    "cardId": .string(cardID),
+                    "title": payload.title.map(JSONValue.string) ?? .null,
+                ]
+            )
+        case "resolve_thread", "dismiss_thread":
+            try await dismissThread(resolved: request.action == "resolve_thread")
+            if request.action == "resolve_thread", let trackedID = payload.trackedThreadID {
+                _ = try await environment.tools.invoke(
+                    "resolve_tracked_thread",
+                    arguments: ["id": .string(trackedID)]
+                )
+            }
+        case "archive_thread":
+            guard let account = payload.account, let threadID = payload.threadID else {
+                throw BackendError.server(status: 400, message: "The report omitted the mail identity.")
+            }
+            _ = try await environment.tools.invoke(
+                "archive_thread",
+                arguments: ["account": .string(account), "threadId": .string(threadID)]
+            )
+            try await dismissThread(resolved: false)
+        case "rsvp_event":
+            guard let account = payload.account,
+                  let eventID = payload.eventID,
+                  let calendarID = payload.calendarID,
+                  let status = payload.status,
+                  ["yes", "no", "maybe"].contains(status) else {
+                throw BackendError.server(status: 400, message: "The report omitted valid RSVP context.")
+            }
+            _ = try await environment.tools.invoke(
+                "calendar_rsvp_event",
+                arguments: [
+                    "account": .string(account),
+                    "calendarId": .string(calendarID),
+                    "eventId": .string(eventID),
+                    "status": .string(status),
+                ]
+            )
+        case "create_task":
+            guard let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty else {
+                throw BackendError.server(status: 400, message: "The report omitted the task title.")
+            }
+            var arguments: [String: JSONValue] = ["title": .string(title)]
+            if let dueAt = payload.dueAt {
+                arguments["dueIso"] = .string(Self.date(dueAt).formatted(.iso8601))
+            }
+            _ = try await environment.tools.invoke("tasks_create_card", arguments: arguments)
+        case "create_event":
+            guard let account = payload.account,
+                  let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty,
+                  let startAt = payload.startAt,
+                  let endAt = payload.endAt else {
+                throw BackendError.server(status: 400, message: "The report omitted required event details.")
+            }
+            var arguments: [String: JSONValue] = [
+                "account": .string(account),
+                "title": .string(title),
+                "startIso": .string(Self.date(startAt).formatted(.iso8601)),
+                "endIso": .string(Self.date(endAt).formatted(.iso8601)),
+                "allDay": .bool(payload.allDay ?? false),
+                "attendees": .array([]),
+            ]
+            if let calendarID = payload.calendarID { arguments["calendarId"] = .string(calendarID) }
+            if let location = payload.location { arguments["location"] = .string(location) }
+            if let description = payload.description { arguments["description"] = .string(description) }
+            _ = try await environment.tools.invoke("calendar_create_event", arguments: arguments)
+        default:
+            throw BackendError.server(status: 400, message: "Unsupported report action.")
+        }
+    }
+
+    private func dismissThread(resolved: Bool) async throws {
+        guard let account = request.payload.account, let threadID = request.payload.threadID else {
+            throw BackendError.server(status: 400, message: "The report omitted the mail identity.")
+        }
+        _ = try await environment.tools.invoke(
+            "dismiss_daily_report_thread",
+            arguments: [
+                "account": .string(account),
+                "threadId": .string(threadID),
+                "subject": request.payload.subject.map(JSONValue.string) ?? .null,
+                "receivedAt": request.payload.receivedAt.map(JSONValue.number) ?? .null,
+                "action": .string(resolved ? "resolved" : "dismissed"),
+            ]
+        )
+    }
+
+    private static func date(_ timestamp: Double) -> Date {
+        Date(timeIntervalSince1970: timestamp > 10_000_000_000 ? timestamp / 1_000 : timestamp)
     }
 }
 

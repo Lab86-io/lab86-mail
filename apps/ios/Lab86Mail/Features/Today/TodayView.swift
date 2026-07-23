@@ -2,6 +2,8 @@ import SwiftUI
 
 struct TodayView: View {
     @Environment(AppEnvironment.self) private var environment
+    @State private var showsHistory = false
+    @State private var artifactReview: ArtifactReviewRequest?
 
     private var store: ProductStore { environment.store }
 
@@ -14,6 +16,29 @@ struct TodayView: View {
             }
         }
         .navigationTitle(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Task {
+                        await store.loadDailyReportHistory()
+                        showsHistory = true
+                    }
+                } label: {
+                    Label("Report history", systemImage: "clock.arrow.circlepath")
+                }
+            }
+        }
+        .sheet(isPresented: $showsHistory) {
+            DailyReportHistorySheet(reports: store.dailyReportHistory) { report in
+                await store.selectDailyReport(id: report.id)
+                showsHistory = false
+            }
+        }
+        .sheet(item: $artifactReview) { request in
+            ArtifactActionReviewSheet(request: request) {
+                await store.refreshToday()
+            }
+        }
         .shellToolbar()
     }
 
@@ -209,11 +234,69 @@ struct TodayView: View {
             }
         case "open_view":
             if let view = payload.view { environment.navigation.openPrimaryView(view) }
+        case "draft_reply":
+            if let account = payload.account, let threadID = payload.threadID {
+                environment.navigation.pendingCompose = ComposePrefill(
+                    recipient: "",
+                    cc: "",
+                    bcc: "",
+                    subject: payload.subject ?? "",
+                    body: payload.body ?? "",
+                    mode: "reply",
+                    accountID: account,
+                    threadID: threadID,
+                    messageID: nil,
+                    replyAll: false,
+                    attachmentsKey: nil,
+                    draftID: nil
+                )
+                environment.navigation.sheet = .compose
+            }
         default:
             // Protected/mutating artifact actions (dismiss_task, toggle_task,
             // resolve_thread, dismiss_thread, …) are never executed from the
             // untrusted artifact. They route to the existing review surface.
-            environment.navigation.sheet = .activity
+            artifactReview = ArtifactReviewRequest(
+                action: action,
+                payload: payload,
+                source: store.dailyReport?.title ?? "Daily Report"
+            )
+        }
+    }
+}
+
+private struct DailyReportHistorySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let reports: [DailyReportModel]
+    let onSelect: (DailyReportModel) async -> Void
+
+    var body: some View {
+        NavigationStack {
+            List(reports, id: \.id) { report in
+                Button {
+                    Task { await onSelect(report) }
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(report.title)
+                            .foregroundStyle(.primary)
+                        Text(report.generatedAt.formatted(date: .complete, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .overlay {
+                if reports.isEmpty {
+                    ContentUnavailableView("No saved reports", systemImage: "doc.text.magnifyingglass")
+                }
+            }
+            .navigationTitle("Daily Report History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
         }
     }
 }
