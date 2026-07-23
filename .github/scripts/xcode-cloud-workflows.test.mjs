@@ -17,6 +17,10 @@ test('staging preserves diagnostics and signed IPA with immutable upload actions
   assert.match(contents, /if-no-files-found: ignore/);
   assert.match(contents, /retention-days: 1/);
   assert.match(contents, /name: Preserve signed staging IPA for physical acceptance/);
+  assert.match(
+    contents,
+    /name: Confirm TestFlight processing and internal group assignment\s+env:\s+ASC_ISSUER_ID:/,
+  );
   assert.equal(contents.split(immutableUploadArtifact).length - 1, 2);
 });
 
@@ -28,5 +32,9 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /path: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
   assert.match(contents, /if-no-files-found: ignore/);
   assert.match(contents, /retention-days: 1/);
+  assert.match(
+    contents,
+    /name: Confirm production TestFlight processing and internal group assignment\s+env:\s+ASC_ISSUER_ID:/,
+  );
   assert.equal(contents.split(immutableUploadArtifact).length - 1, 1);
 });
