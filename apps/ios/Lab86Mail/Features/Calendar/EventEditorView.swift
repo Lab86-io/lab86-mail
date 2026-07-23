@@ -3,6 +3,21 @@ import SwiftUI
 // One form for both creating an event and editing an existing one — the
 // phone counterpart of the desktop calendar's create/edit dialogs.
 struct EventEditorView: View {
+    enum EventRepeat: String, CaseIterable, Identifiable {
+        case never, daily, weekly, monthly, yearly
+        var id: Self { self }
+        var title: String { rawValue.capitalized }
+        var rule: [String]? {
+            switch self {
+            case .never: nil
+            case .daily: ["RRULE:FREQ=DAILY"]
+            case .weekly: ["RRULE:FREQ=WEEKLY"]
+            case .monthly: ["RRULE:FREQ=MONTHLY"]
+            case .yearly: ["RRULE:FREQ=YEARLY"]
+            }
+        }
+    }
+
     enum Mode {
         case create
         case edit(accountID: String, calendarID: String, eventID: String)
@@ -18,8 +33,16 @@ struct EventEditorView: View {
     @State private var start: Date
     @State private var end: Date
     @State private var location: String
+    @State private var calendarID: String
+    @State private var eventRepeat: EventRepeat
+    @State private var attendeeText: String
+    @State private var notes: String
     @State private var isSaving = false
     @State private var saveError: String?
+    @State private var showsDiscardConfirmation = false
+    @State private var showsInviteConfirmation = false
+    @State private var baseline = ""
+    @State private var didSeed = false
 
     init(
         mode: Mode,
@@ -27,7 +50,11 @@ struct EventEditorView: View {
         allDay: Bool = false,
         start: Date = Self.defaultStart,
         end: Date? = nil,
-        location: String = ""
+        location: String = "",
+        calendarID: String = "",
+        recurrence: [String] = [],
+        attendees: [String] = [],
+        notes: String = ""
     ) {
         self.mode = mode
         _title = State(initialValue: title)
@@ -35,6 +62,10 @@ struct EventEditorView: View {
         _start = State(initialValue: start)
         _end = State(initialValue: end ?? start.addingTimeInterval(3_600))
         _location = State(initialValue: location)
+        _calendarID = State(initialValue: calendarID)
+        _eventRepeat = State(initialValue: Self.repeatPreset(recurrence))
+        _attendeeText = State(initialValue: attendees.joined(separator: ", "))
+        _notes = State(initialValue: notes)
     }
 
     static var defaultStart: Date {
@@ -75,14 +106,39 @@ struct EventEditorView: View {
                     )
                 }
 
-                if isCreate, environment.store.accounts.count > 1 {
-                    Section("Calendar account") {
+                Section("Calendar") {
+                    if isCreate, environment.store.accounts.count > 1 {
                         Picker("Account", selection: $accountID) {
                             ForEach(environment.store.accounts) { account in
                                 Text(account.displayName ?? account.email).tag(account.id)
                             }
                         }
                     }
+                    Picker("Calendar", selection: $calendarID) {
+                        Text("Primary calendar").tag("")
+                        ForEach(availableCalendars) { calendar in
+                            Text(calendar.name).tag(calendar.calendarID)
+                        }
+                    }
+                    Picker("Repeat", selection: $eventRepeat) {
+                        ForEach(EventRepeat.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                }
+
+                Section("People") {
+                    TextField("Invitee email addresses", text: $attendeeText, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                    Text("Invitations are sent only after you confirm Save.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Notes") {
+                    TextEditor(text: $notes)
+                        .frame(minHeight: 90)
                 }
 
                 if let saveError {
@@ -95,10 +151,18 @@ struct EventEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        if isDirty { showsDiscardConfirmation = true } else { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isSaving ? "Saving…" : "Save") { Task { await save() } }
+                    Button(isSaving ? "Saving…" : "Save") {
+                        if attendeeEmails.isEmpty {
+                            Task { await save() }
+                        } else {
+                            showsInviteConfirmation = true
+                        }
+                    }
                         .disabled(isSaving || title.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -108,9 +172,77 @@ struct EventEditorView: View {
             }
             .onAppear {
                 if accountID.isEmpty { accountID = environment.store.accounts.first?.id ?? "" }
+                Task {
+                    await environment.store.refreshCalendarChoices()
+                    await MainActor.run {
+                        if calendarID.isEmpty {
+                            calendarID = availableCalendars.first(where: \.isPrimary)?.calendarID ?? ""
+                        }
+                        baseline = fingerprint
+                        didSeed = true
+                    }
+                }
+            }
+            .onChange(of: accountID) {
+                if !availableCalendars.contains(where: { $0.calendarID == calendarID }) {
+                    calendarID = availableCalendars.first(where: \.isPrimary)?.calendarID
+                        ?? availableCalendars.first?.calendarID
+                        ?? ""
+                }
+            }
+            .interactiveDismissDisabled(isDirty)
+            .confirmationDialog(
+                "Discard event changes?",
+                isPresented: $showsDiscardConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Discard Changes", role: .destructive) { dismiss() }
+                Button("Keep Editing", role: .cancel) {}
+            }
+            .confirmationDialog(
+                "Send invitations?",
+                isPresented: $showsInviteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Save and Invite \(attendeeEmails.count) People") {
+                    Task { await save() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The connected calendar provider will email these attendees.")
             }
         }
     }
+
+    private var availableCalendars: [CalendarChoice] {
+        environment.store.calendarChoices.filter {
+            $0.accountID == accountID && !$0.isReadOnly
+        }
+    }
+
+    private var attendeeEmails: [String] {
+        attendeeText
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0.isWhitespace })
+            .map(String.init)
+            .filter { $0.contains("@") }
+    }
+
+    private var fingerprint: String {
+        [
+            accountID,
+            calendarID,
+            title,
+            String(allDay),
+            String(start.timeIntervalSince1970),
+            String(end.timeIntervalSince1970),
+            location,
+            eventRepeat.rawValue,
+            attendeeText,
+            notes,
+        ].joined(separator: "\u{1F}")
+    }
+
+    private var isDirty: Bool { didSeed && fingerprint != baseline }
 
     private func save() async {
         isSaving = true
@@ -124,12 +256,15 @@ struct EventEditorView: View {
                 }
                 try await environment.store.createEvent(
                     accountID: accountID,
+                    calendarID: calendarID.isEmpty ? nil : calendarID,
                     title: title.trimmingCharacters(in: .whitespaces),
                     start: start,
                     end: max(end, start),
                     allDay: allDay,
                     location: location.trimmingCharacters(in: .whitespaces),
-                    description: nil
+                    description: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+                    attendeeEmails: attendeeEmails,
+                    recurrence: eventRepeat.rule
                 )
             case .edit(let accountID, let calendarID, let eventID):
                 try await environment.store.updateEvent(
@@ -139,12 +274,25 @@ struct EventEditorView: View {
                     title: title.trimmingCharacters(in: .whitespaces),
                     start: start,
                     end: max(end, start),
-                    location: location.trimmingCharacters(in: .whitespaces)
+                    allDay: allDay,
+                    location: location.trimmingCharacters(in: .whitespaces),
+                    description: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+                    attendeeEmails: attendeeEmails,
+                    recurrence: eventRepeat.rule ?? []
                 )
             }
             dismiss()
         } catch {
             saveError = (error as? BackendError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    private static func repeatPreset(_ recurrence: [String]) -> EventRepeat {
+        let joined = recurrence.joined(separator: " ").uppercased()
+        if joined.contains("FREQ=DAILY") { return .daily }
+        if joined.contains("FREQ=WEEKLY") { return .weekly }
+        if joined.contains("FREQ=MONTHLY") { return .monthly }
+        if joined.contains("FREQ=YEARLY") { return .yearly }
+        return .never
     }
 }

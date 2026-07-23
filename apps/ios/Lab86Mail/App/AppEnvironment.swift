@@ -17,10 +17,12 @@ final class AppEnvironment {
     let theme = ThemeStore()
     let notifications: NotificationCoordinator
     let modelRouter: ModelRouter
+    let webAuthentication: WebAuthenticationCoordinator
     let convex: ConvexClientWithAuth<String>?
     let mobileContainer: ModelContainer
     let commandOutbox: CommandOutbox
     let syncCoordinator = SyncCoordinator()
+    let pendingSends: PendingSendCoordinator
     let mobileClient: MobileV1Client?
     let outboxProcessor: CommandOutboxProcessor?
     let accountStore: AccountStore
@@ -51,6 +53,8 @@ final class AppEnvironment {
         }
         self.backend = backend
         self.tools = tools
+        webAuthentication = WebAuthenticationCoordinator(backend: backend)
+        pendingSends = PendingSendCoordinator(backend: backend, tools: tools)
         self.mobileContainer = mobileContainer
         let commandOutbox = CommandOutbox(modelContainer: mobileContainer)
         self.commandOutbox = commandOutbox
@@ -84,8 +88,12 @@ final class AppEnvironment {
         modelRouter = ModelRouter(tools: tools)
     }
 
-    func startAssistantChat() {
-        assistantChat = AssistantChatModel(backend: backend, baseURL: configuration.apiBaseURL)
+    func startAssistantChat(scope: AssistantChatScope = .global) {
+        assistantChat = AssistantChatModel(
+            backend: backend,
+            baseURL: configuration.apiBaseURL,
+            scope: scope
+        )
         navigation.selectPrimary(.chat)
     }
 

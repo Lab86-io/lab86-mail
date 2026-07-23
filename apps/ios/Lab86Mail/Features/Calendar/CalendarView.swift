@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // A phone-native calendar in the shape of the best mobile references
 // (Outlook/Cron/Google Calendar): a paged week strip up top, a swipeable
@@ -9,6 +10,7 @@ struct CalendarView: View {
     @State private var showsNewEvent = false
     @State private var selectedDay: Date = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var weekPage: Date = CalendarView.weekStart(for: .now)
+    @State private var openTask: TaskSummary?
     @AppStorage("calendarViewMode") private var viewMode = "day"
 
     private static let dayWindow = -28...56
@@ -63,6 +65,9 @@ struct CalendarView: View {
                 start: defaultNewEventStart
             )
         }
+        .sheet(item: $openTask) {
+            TaskDetailView(task: $0)
+        }
         .shellToolbar()
     }
 
@@ -85,7 +90,12 @@ struct CalendarView: View {
                         day: day,
                         events: timedEvents(on: day),
                         allDayEvents: allDayEvents(on: day),
-                        onOpen: { environment.navigation.openEvent($0) }
+                        tasks: dueTasks(on: day),
+                        onOpen: { environment.navigation.openEvent($0) },
+                        onOpenTask: { openTask = $0 },
+                        onReschedule: { event, start, end in
+                            Task { await store.rescheduleEvent(event, start: start, end: end) }
+                        }
                     )
                     .tag(day)
                 }
@@ -117,7 +127,9 @@ struct CalendarView: View {
     private func dayCell(_ day: Date) -> some View {
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
         let isToday = calendar.isDateInToday(day)
-        let hasEvents = !timedEvents(on: day).isEmpty || !allDayEvents(on: day).isEmpty
+        let hasEvents = !timedEvents(on: day).isEmpty
+            || !allDayEvents(on: day).isEmpty
+            || !dueTasks(on: day).isEmpty
         return Button {
             select(day: day)
         } label: {
@@ -172,8 +184,10 @@ struct CalendarView: View {
                 WeekTimelineView(
                     weekStart: weekStart,
                     events: store.events,
+                    tasks: store.dueCalendarTasks,
                     selectedDay: selectedDay,
                     onOpen: { environment.navigation.openEvent($0) },
+                    onOpenTask: { openTask = $0 },
                     onSelectDay: { day in
                         select(day: day)
                         viewMode = "day"
@@ -191,6 +205,7 @@ struct CalendarView: View {
     private var monthBody: some View {
         HorizonMonthView(
             events: store.events,
+            tasks: store.dueCalendarTasks,
             selectedDay: selectedDay,
             onSelectDay: { day in
                 select(day: day)
@@ -249,7 +264,7 @@ struct CalendarView: View {
     // MARK: - Agenda mode
 
     @ViewBuilder private var agendaBody: some View {
-        if store.events.isEmpty {
+        if store.events.isEmpty, store.dueCalendarTasks.isEmpty {
             emptyOrErrorState
         } else {
             List {
@@ -260,11 +275,27 @@ struct CalendarView: View {
                         }
                     }
                 }
-                ForEach(groupedDates, id: \.0) { day, events in
+                ForEach(groupedDates, id: \.0) { day, events, tasks in
                     Section(sectionTitle(day)) {
                         ForEach(events) { event in
                             Button { environment.navigation.openEvent(event) } label: {
                                 EventRow(event: event)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        ForEach(tasks) { task in
+                            Button { openTask = task } label: {
+                                HStack {
+                                    Image(systemName: task.completed ? "checkmark.circle.fill" : "checklist")
+                                        .foregroundStyle(environment.theme.accentColor)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(task.title)
+                                            .foregroundStyle(.primary)
+                                        Text("Task due \(task.due?.formatted(date: .omitted, time: .shortened) ?? "")")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                             .buttonStyle(.plain)
                         }
@@ -386,11 +417,26 @@ struct CalendarView: View {
         return store.events.filter { $0.allDay && $0.start < end && $0.end > start }
     }
 
-    private var groupedDates: [(Date, [CalendarEventSummary])] {
-        let groups = Dictionary(grouping: store.events) { calendar.startOfDay(for: $0.start) }
-        return groups
-            .map { ($0.key, $0.value.sorted { $0.start < $1.start }) }
-            .sorted { $0.0 < $1.0 }
+    private func dueTasks(on day: Date) -> [TaskSummary] {
+        store.dueCalendarTasks.filter { task in
+            guard let due = task.due else { return false }
+            return calendar.isDate(due, inSameDayAs: day)
+        }
+    }
+
+    private var groupedDates: [(Date, [CalendarEventSummary], [TaskSummary])] {
+        let eventGroups = Dictionary(grouping: store.events) { calendar.startOfDay(for: $0.start) }
+        let taskGroups = Dictionary(grouping: store.dueCalendarTasks) {
+            calendar.startOfDay(for: $0.due ?? .distantFuture)
+        }
+        let days = Set(eventGroups.keys).union(taskGroups.keys)
+        return days.sorted().map {
+            (
+                $0,
+                (eventGroups[$0] ?? []).sorted { $0.start < $1.start },
+                (taskGroups[$0] ?? []).sorted { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) }
+            )
+        }
     }
 
     private func sectionTitle(_ day: Date) -> String {
@@ -413,9 +459,13 @@ private struct DayTimelineView: View {
     let day: Date
     let events: [CalendarEventSummary]
     let allDayEvents: [CalendarEventSummary]
+    let tasks: [TaskSummary]
     let onOpen: (CalendarEventSummary) -> Void
+    let onOpenTask: (TaskSummary) -> Void
+    let onReschedule: (CalendarEventSummary, Date, Date) -> Void
 
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private static let hourHeight: CGFloat = 58
     private static let gutter: CGFloat = 54
@@ -424,7 +474,7 @@ private struct DayTimelineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !allDayEvents.isEmpty {
+            if !allDayEvents.isEmpty || !tasks.isEmpty {
                 allDayLane
                 Divider()
             }
@@ -458,6 +508,24 @@ private struct DayTimelineView: View {
                             .foregroundStyle(.primary)
                     }
                     .buttonStyle(.plain)
+                }
+                ForEach(tasks) { task in
+                    Button {
+                        onOpenTask(task)
+                    } label: {
+                        Label(task.title, systemImage: task.completed ? "checkmark.circle.fill" : "checklist")
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                environment.theme.accentColor.opacity(0.14),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens task, not calendar event")
                 }
             }
             .padding(.horizontal, 16)
@@ -533,9 +601,52 @@ private struct DayTimelineView: View {
             }
             .frame(width: width, height: frame.height, alignment: .topLeading)
             .background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                Capsule()
+                    .fill(accent.opacity(0.8))
+                    .frame(width: 22, height: 4)
+                    .padding(4)
+                    .opacity(horizontalSizeClass == .regular ? 1 : 0)
+                    .gesture(
+                        DragGesture(minimumDistance: 4)
+                            .onEnded { value in
+                                let minutes = Int(value.translation.height / Self.hourHeight * 60)
+                                    .roundedToMultiple(15)
+                                guard minutes != 0 else { return }
+                                let end = max(
+                                    event.start.addingTimeInterval(15 * 60),
+                                    event.end.addingTimeInterval(TimeInterval(minutes * 60))
+                                )
+                                onReschedule(event, event.start, end)
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                UIAccessibility.post(
+                                    notification: .announcement,
+                                    argument: "Ends at \(end.formatted(date: .omitted, time: .shortened))"
+                                )
+                            },
+                        isEnabled: horizontalSizeClass == .regular
+                    )
+                    .accessibilityLabel("Resize event")
+            }
             .clipped()
         }
         .buttonStyle(.plain)
+        .gesture(
+            DragGesture(minimumDistance: 8)
+                .onEnded { value in
+                    let minutes = Int(value.translation.height / Self.hourHeight * 60).roundedToMultiple(15)
+                    guard minutes != 0 else { return }
+                    let start = event.start.addingTimeInterval(TimeInterval(minutes * 60))
+                    let end = event.end.addingTimeInterval(TimeInterval(minutes * 60))
+                    onReschedule(event, start, end)
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    UIAccessibility.post(
+                        notification: .announcement,
+                        argument: "Moved to \(start.formatted(date: .omitted, time: .shortened))"
+                    )
+                },
+            isEnabled: horizontalSizeClass == .regular
+        )
         .offset(
             x: Self.gutter + (laneWidth / CGFloat(positioned.laneCount)) * CGFloat(positioned.lane),
             y: frame.y
@@ -641,13 +752,22 @@ private struct DayTimelineView: View {
     }
 }
 
+private extension Int {
+    func roundedToMultiple(_ multiple: Int) -> Int {
+        guard multiple > 0 else { return self }
+        return Int((Double(self) / Double(multiple)).rounded()) * multiple
+    }
+}
+
 // MARK: - Week timeline (7 columns over one hour axis)
 
 private struct WeekTimelineView: View {
     let weekStart: Date
     let events: [CalendarEventSummary]
+    let tasks: [TaskSummary]
     let selectedDay: Date
     let onOpen: (CalendarEventSummary) -> Void
+    let onOpenTask: (TaskSummary) -> Void
     let onSelectDay: (Date) -> Void
 
     @Environment(AppEnvironment.self) private var environment
@@ -687,6 +807,15 @@ private struct WeekTimelineView: View {
                         Text(day.formatted(.dateTime.day()))
                             .font(.footnote.weight(calendar.isDateInToday(day) ? .bold : .regular))
                             .foregroundStyle(calendar.isDateInToday(day) ? environment.theme.accentColor : .primary)
+                        if let task = tasks.first(where: {
+                            guard let due = $0.due else { return false }
+                            return calendar.isDate(due, inSameDayAs: day)
+                        }) {
+                            Image(systemName: "checklist")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(environment.theme.accentColor)
+                                .accessibilityLabel("Due task \(task.title)")
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)

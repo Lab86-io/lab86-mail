@@ -90,6 +90,11 @@ struct WorkRoute: Identifiable, Hashable, Sendable {
     func hash(into hasher: inout Hasher) { hasher.combine(workID) }
 }
 
+struct ProjectRoute: Identifiable, Hashable, Sendable {
+    let project: ProjectSummary
+    var id: String { project.id }
+}
+
 struct ComposePrefill: Hashable, Sendable {
     let recipient: String
     let cc: String
@@ -129,6 +134,7 @@ final class NavigationModel {
     var eventRoute: EventRoute?
     var areaRoute: AreaRoute?
     var workRoute: WorkRoute?
+    var projectRoute: ProjectRoute?
     var sheet: SheetDestination?
     var pendingCapture: String?
     var pendingMailSearch: String?
@@ -141,7 +147,7 @@ final class NavigationModel {
     var pendingCompose: ComposePrefill?
 
     var hasNestedDestination: Bool {
-        threadRoute != nil || eventRoute != nil || workRoute != nil
+        threadRoute != nil || eventRoute != nil || workRoute != nil || projectRoute != nil
     }
 
     func selectPrimary(_ destination: PrimaryTab) {
@@ -150,6 +156,7 @@ final class NavigationModel {
         threadRoute = nil
         eventRoute = nil
         workRoute = nil
+        projectRoute = nil
     }
 
     // When opened from an Area, mail remains inside that Area's back stack.
@@ -161,6 +168,7 @@ final class NavigationModel {
             areaRoute = nil
             eventRoute = nil
             workRoute = nil
+            projectRoute = nil
         }
         threadRoute = ThreadRoute(accountID: accountID, threadID: threadID)
     }
@@ -188,6 +196,7 @@ final class NavigationModel {
             areaRoute = nil
             threadRoute = nil
             workRoute = nil
+            projectRoute = nil
         }
         eventRoute = EventRoute(
             accountID: accountID,
@@ -203,6 +212,7 @@ final class NavigationModel {
         threadRoute = nil
         eventRoute = nil
         workRoute = nil
+        projectRoute = nil
         areaRoute = AreaRoute(areaID: id, name: name)
     }
 
@@ -211,7 +221,17 @@ final class NavigationModel {
         selectedTab = .work
         threadRoute = nil
         eventRoute = nil
+        projectRoute = nil
         workRoute = WorkRoute(workID: id, title: title)
+    }
+
+    func openProject(_ project: ProjectSummary) {
+        selectedTab = .tasks
+        threadRoute = nil
+        eventRoute = nil
+        workRoute = nil
+        areaRoute = nil
+        projectRoute = ProjectRoute(project: project)
     }
 
     func openPrimaryView(_ raw: String) {

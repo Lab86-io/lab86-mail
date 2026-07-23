@@ -2,6 +2,33 @@ import Combine
 import ConvexMobile
 import Foundation
 import Observation
+import SwiftUI
+
+struct AreaRefreshState: Equatable, Sendable {
+    enum Phase: String, Sendable {
+        case queued
+        case running
+        case done
+        case error
+    }
+
+    let phase: Phase
+    let progress: String?
+    let error: String?
+}
+
+private struct AreaIndexStatusPayload: Decodable, Sendable {
+    struct Run: Decodable, Sendable {
+        let runId: String
+        let areaId: String?
+        let status: String
+        let scanned: Double?
+        let matched: Double?
+        let error: String?
+    }
+
+    let latestRun: Run?
+}
 
 @MainActor
 @Observable
@@ -22,6 +49,7 @@ final class ProductStore {
     private var liveMailTask: Task<Void, Never>?
     private var mailStateOverrides: [String: MailStateOverride] = [:]
     private var suppressedMailThreads: Set<String> = []
+    private var areaBriefMonitoringTasks: [String: Task<Void, Never>] = [:]
 
     var accounts: [AccountSummary] = []
     var threads: [MailThreadSummary] = []
@@ -29,21 +57,29 @@ final class ProductStore {
     var completedMailSearchQuery: String?
     var isSearchingMail = false
     var events: [CalendarEventSummary] = []
+    var calendarChoices: [CalendarChoice] = []
+    var dueCalendarTasks: [TaskSummary] = []
     var tasks: [TaskSummary] = []
     // Ordered column names of the active board, for grouping and move targets.
     var taskColumns: [String] = []
     // All of the user's boards (owned + shared) and the one the Tasks surface
     // is currently showing; nil = the default Personal board.
     var taskBoards: [TaskBoardSummary] = []
-    var activeBoardID: String?
+    var activeBoardID: String? = UserDefaults.standard.string(forKey: "albatross.tasks.active-board")
+    var taskColumnRows: [TaskColumnSummary] = []
+    var taskBoardMembers: [TaskBoardMember] = []
+    var taskBoardRole = "viewer"
+    var taskPublicToken: String?
     var projects: [ProjectSummary] = []
     var areas: [AreaSummary] = []
     var approvals: [ApprovalSummary] = []
+    var pendingQuestions: [PendingWorkQuestionSummary] = []
     var suggestions: [SuggestionSummary] = []
     var checkin: CheckinSummary?
     // Typed edition owns html/status/progress/sections; `dailyBrief` stays only
     // as the legacy migration/fallback string.
     var dailyReport: DailyReportModel?
+    var dailyReportHistory: [DailyReportModel] = []
     var dailyBrief: String?
     var isLoading = false
     var errorMessage: String?
@@ -54,6 +90,9 @@ final class ProductStore {
     var isSyncingCalendar = false
     var calendarDidLoad = false
     var briefError: String?
+    var taskError: String?
+    var isLoadingTasks = false
+    var tasksDidLoad = false
     // Work is its own data owner too: a failed `area_list` keeps the last-good
     // (cached) areas readable, records the message only in `workError`, and never
     // blanks Mail or raises the app-wide alert. `workDidLoad` distinguishes a
@@ -62,6 +101,8 @@ final class ProductStore {
     var isLoadingWork = false
     var workDidLoad = false
     var lastRefresh: Date?
+    var undoNotice: UndoableOperationNotice?
+    var areaRefreshStates: [String: AreaRefreshState] = [:]
     // Immediate/offline read cache of opened area homes, keyed by area id. Never
     // a substitute for the authoritative server read — only what was last seen.
     private(set) var areaDetails: [String: AreaDetail] = [:]
@@ -181,6 +222,8 @@ final class ProductStore {
         await refreshCalendar()
 
         do {
+            isLoadingTasks = true
+            defer { isLoadingTasks = false }
             var boardArguments: [String: JSONValue] = [:]
             if let activeBoardID { boardArguments["boardId"] = .string(activeBoardID) }
             let result = try await tools.invoke("tasks_get_board", arguments: boardArguments)
@@ -194,13 +237,22 @@ final class ProductStore {
                 }
             }
             taskColumns = orderedColumns
+            taskColumnRows = (board?["columns"]?.arrayValue ?? []).compactMap(TaskColumnSummary.init)
+            taskBoardMembers = (board?["members"]?.arrayValue ?? []).compactMap(TaskBoardMember.init)
+            taskBoardRole = board?["role"]?.stringValue ?? "viewer"
+            taskPublicToken = Self.nonBlank(board?["publicToken"]?.stringValue)
             tasks = (board?["cards"]?.arrayValue ?? []).compactMap { card in
                 TaskSummary(json: card, column: columnNames[card["columnId"]?.stringValue ?? ""] ?? "Tasks")
             }.sorted {
-                if $0.completed != $1.completed { return !$0.completed }
-                return ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture)
+                if $0.column != $1.column { return $0.column < $1.column }
+                return $0.order < $1.order
             }
-        } catch { record(error) }
+            tasksDidLoad = true
+            taskError = nil
+        } catch {
+            taskError = error.localizedDescription
+            record(error)
+        }
 
         do {
             let result = try await tools.invoke(
@@ -214,6 +266,7 @@ final class ProductStore {
             let result = try await backend.post(path: "/api/mobile/activity", body: .object([:]))
             suggestions = (result["suggestions"]?.arrayValue ?? []).compactMap(SuggestionSummary.init)
             checkin = result["checkin"].flatMap(CheckinSummary.init)
+            pendingQuestions = (result["questions"]?.arrayValue ?? []).compactMap(PendingWorkQuestionSummary.init)
         } catch { record(error) }
 
         await refreshBrief()
@@ -256,6 +309,20 @@ final class ProductStore {
             let rows = result["events"]?.arrayValue ?? []
             let decoded = rows.compactMap(CalendarEventSummary.init).sorted { $0.start < $1.start }
             events = decoded
+            do {
+                let dueResult = try await tools.invoke(
+                    "tasks_due_cards",
+                    arguments: [
+                        "startAt": .number(start.timeIntervalSince1970 * 1_000),
+                        "endAt": .number(end.timeIntervalSince1970 * 1_000),
+                    ]
+                )
+                dueCalendarTasks = (dueResult["cards"]?.arrayValue ?? []).compactMap { value in
+                    TaskSummary(json: value)
+                }
+            } catch {
+                taskError = error.localizedDescription
+            }
             calendarDidLoad = true
             if let syncFailure {
                 calendarError = syncFailure
@@ -288,6 +355,30 @@ final class ProductStore {
             dailyReport = report
             dailyBrief = report?.legacyText ?? Self.briefText(from: result["report"])
             await persistCache()
+        } catch {
+            briefError = error.localizedDescription
+        }
+    }
+
+    func loadDailyReportHistory() async {
+        do {
+            let result = try await tools.invoke(
+                "list_daily_reports",
+                arguments: ["limit": .number(30)]
+            )
+            dailyReportHistory = (result["reports"]?.arrayValue ?? []).compactMap(DailyReportModel.init)
+        } catch {
+            briefError = error.localizedDescription
+        }
+    }
+
+    func selectDailyReport(id: String) async {
+        do {
+            let result = try await tools.invoke("get_daily_report", arguments: ["id": .string(id)])
+            guard let report = DailyReportModel(json: result["report"]) else {
+                throw BackendError.invalidResponse
+            }
+            dailyReport = report
         } catch {
             briefError = error.localizedDescription
         }
@@ -347,6 +438,19 @@ final class ProductStore {
         }
     }
 
+    func autofillTask(rough: String) async -> TaskDraftSuggestion? {
+        do {
+            let result = try await backend.post(
+                path: "/api/tasks/autofill",
+                body: .object(["rough": .string(rough)])
+            )
+            return TaskDraftSuggestion(json: result["draft"])
+        } catch {
+            taskError = error.localizedDescription
+            return nil
+        }
+    }
+
     func moveTask(_ task: TaskSummary, to column: String) async {
         guard column != task.column else { return }
         if let index = tasks.firstIndex(where: { $0.id == task.id }) {
@@ -373,7 +477,10 @@ final class ProductStore {
         details: String,
         priority: String?,
         due: Date?,
-        completed: Bool
+        completed: Bool,
+        labels: [String]? = nil,
+        assignees: [String]? = nil,
+        weight: Int?? = nil
     ) async -> Bool {
         var arguments: [String: JSONValue] = [
             "cardId": .string(task.id),
@@ -383,6 +490,11 @@ final class ProductStore {
             "dueIso": due.map { .string($0.formatted(.iso8601)) } ?? .null,
         ]
         if let priority { arguments["priority"] = .string(priority) }
+        if let labels { arguments["labels"] = .array(labels.map(JSONValue.string)) }
+        if let assignees { arguments["assignees"] = .array(assignees.map(JSONValue.string)) }
+        if let weight {
+            arguments["weight"] = weight.map { .number(Double($0)) } ?? .null
+        }
         do {
             _ = try await tools.invoke("tasks_update_card", arguments: arguments)
             await refreshTasks()
@@ -440,23 +552,399 @@ final class ProductStore {
 
     func switchBoard(to boardID: String?) async {
         activeBoardID = boardID
+        if let boardID {
+            UserDefaults.standard.set(boardID, forKey: "albatross.tasks.active-board")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "albatross.tasks.active-board")
+        }
         await refreshTasks()
     }
 
+    func createBoard(title: String) async -> Bool {
+        do {
+            let result = try await tools.invoke(
+                "tasks_create_board",
+                arguments: ["title": .string(title.trimmingCharacters(in: .whitespacesAndNewlines))]
+            )
+            await refreshBoardsAndProjects()
+            if let boardID = result["boardId"]?.stringValue {
+                await switchBoard(to: boardID)
+            }
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func renameActiveBoard(title: String) async -> Bool {
+        guard let activeBoardID else { return false }
+        do {
+            _ = try await tools.invoke(
+                "tasks_rename_board",
+                arguments: [
+                    "boardId": .string(activeBoardID),
+                    "title": .string(title.trimmingCharacters(in: .whitespacesAndNewlines)),
+                ]
+            )
+            await refreshBoardsAndProjects()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteActiveBoard() async -> Bool {
+        guard let activeBoardID else { return false }
+        do {
+            _ = try await tools.invoke("tasks_delete_board", arguments: ["boardId": .string(activeBoardID)])
+            await switchBoard(to: nil)
+            await refreshBoardsAndProjects()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func createColumn(name: String) async -> Bool {
+        var arguments: [String: JSONValue] = [
+            "name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines))
+        ]
+        if let activeBoardID { arguments["boardId"] = .string(activeBoardID) }
+        do {
+            _ = try await tools.invoke("tasks_create_column", arguments: arguments)
+            await refreshTasks()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func renameColumn(_ column: TaskColumnSummary, name: String) async -> Bool {
+        var arguments: [String: JSONValue] = [
+            "column": .string(column.name),
+            "name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)),
+        ]
+        if let activeBoardID { arguments["boardId"] = .string(activeBoardID) }
+        do {
+            _ = try await tools.invoke("tasks_rename_column", arguments: arguments)
+            await refreshTasks()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteColumn(_ column: TaskColumnSummary) async -> Bool {
+        var arguments: [String: JSONValue] = ["column": .string(column.name)]
+        if let activeBoardID { arguments["boardId"] = .string(activeBoardID) }
+        do {
+            _ = try await tools.invoke("tasks_delete_column", arguments: arguments)
+            await refreshTasks()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func reorderColumns(from offsets: IndexSet, to destination: Int) async {
+        var reordered = taskColumnRows
+        reordered.move(fromOffsets: offsets, toOffset: destination)
+        taskColumnRows = reordered.enumerated().map { index, column in
+            TaskColumnSummary(id: column.id, name: column.name, order: Double((index + 1) * 1_000))
+        }
+        taskColumns = taskColumnRows.map(\.name)
+        do {
+            for column in taskColumnRows {
+                var arguments: [String: JSONValue] = [
+                    "column": .string(column.name),
+                    "order": .number(column.order),
+                ]
+                if let activeBoardID { arguments["boardId"] = .string(activeBoardID) }
+                _ = try await tools.invoke("tasks_reorder_column", arguments: arguments)
+            }
+            await refreshTasks()
+        } catch {
+            taskError = error.localizedDescription
+            await refreshTasks()
+        }
+    }
+
+    func reorderTasks(in column: String, from offsets: IndexSet, to destination: Int) async {
+        var ordered = tasks.filter { $0.column == column }.sorted { $0.order < $1.order }
+        let movedIDs = offsets.compactMap { ordered.indices.contains($0) ? ordered[$0].id : nil }
+        ordered.move(fromOffsets: offsets, toOffset: destination)
+        guard let movedID = movedIDs.first, let index = ordered.firstIndex(where: { $0.id == movedID }) else { return }
+        let before = index > 0 ? ordered[index - 1].order : nil
+        let after = index + 1 < ordered.count ? ordered[index + 1].order : nil
+        guard let task = ordered.first(where: { $0.id == movedID }) else { return }
+        var arguments: [String: JSONValue] = ["cardId": .string(task.id), "column": .string(column)]
+        if let before { arguments["beforeOrder"] = .number(before) }
+        if let after { arguments["afterOrder"] = .number(after) }
+        do {
+            _ = try await tools.invoke("tasks_move_card", arguments: arguments)
+            await refreshTasks()
+        } catch {
+            taskError = error.localizedDescription
+            await refreshTasks()
+        }
+    }
+
+    func reorderTask(id: String, to column: String, before destinationID: String?) async {
+        guard let task = tasks.first(where: { $0.id == id }) else { return }
+        let destinationCards = tasks
+            .filter { $0.column == column && $0.id != id }
+            .sorted { $0.order < $1.order }
+        let destinationIndex = destinationID
+            .flatMap { destinationID in destinationCards.firstIndex { $0.id == destinationID } }
+            ?? destinationCards.endIndex
+        let beforeOrder = destinationIndex > destinationCards.startIndex
+            ? destinationCards[destinationIndex - 1].order
+            : nil
+        let afterOrder = destinationIndex < destinationCards.endIndex
+            ? destinationCards[destinationIndex].order
+            : nil
+
+        var arguments: [String: JSONValue] = [
+            "cardId": .string(task.id),
+            "column": .string(column),
+        ]
+        if let beforeOrder { arguments["beforeOrder"] = .number(beforeOrder) }
+        if let afterOrder { arguments["afterOrder"] = .number(afterOrder) }
+
+        let optimisticOrder: Double
+        if let beforeOrder, let afterOrder {
+            optimisticOrder = (beforeOrder + afterOrder) / 2
+        } else if let beforeOrder {
+            optimisticOrder = beforeOrder + 1_000
+        } else if let afterOrder {
+            optimisticOrder = afterOrder / 2
+        } else {
+            optimisticOrder = 1_000
+        }
+        if let index = tasks.firstIndex(where: { $0.id == id }) {
+            tasks[index] = task.with(
+                column: column,
+                completed: column.lowercased() == "done",
+                order: optimisticOrder
+            )
+        }
+
+        do {
+            _ = try await tools.invoke("tasks_move_card", arguments: arguments)
+            await refreshTasks()
+        } catch {
+            taskError = error.localizedDescription
+            await refreshTasks()
+        }
+    }
+
+    func loadTask(_ task: TaskSummary) async -> TaskSummary {
+        do {
+            let result = try await tools.invoke("tasks_get_card", arguments: ["cardId": .string(task.id)])
+            return result["card"].flatMap { TaskSummary(json: $0, column: task.column) } ?? task
+        } catch {
+            taskError = error.localizedDescription
+            return task
+        }
+    }
+
+    func tasksForThread(_ threadID: String) async -> [TaskSummary] {
+        do {
+            let result = try await tools.invoke(
+                "tasks_for_thread",
+                arguments: ["threadId": .string(threadID)]
+            )
+            return (result["cards"]?.arrayValue ?? []).compactMap { value in
+                TaskSummary(json: value)
+            }
+        } catch {
+            taskError = error.localizedDescription
+            return []
+        }
+    }
+
+    func tasksForCalendarEvent(eventID: String, masterEventID: String?) async -> [TaskSummary] {
+        var arguments: [String: JSONValue] = ["eventId": .string(eventID)]
+        if let masterEventID { arguments["masterEventId"] = .string(masterEventID) }
+        do {
+            let result = try await tools.invoke("tasks_for_calendar_event", arguments: arguments)
+            return (result["cards"]?.arrayValue ?? []).compactMap { value in
+                TaskSummary(json: value)
+            }
+        } catch {
+            taskError = error.localizedDescription
+            return []
+        }
+    }
+
+    func attachLink(to task: TaskSummary, name: String?, url: String) async -> Bool {
+        var arguments: [String: JSONValue] = ["cardId": .string(task.id), "url": .string(url)]
+        if let name, !name.isEmpty { arguments["name"] = .string(name) }
+        do {
+            _ = try await tools.invoke("tasks_attach_link", arguments: arguments)
+            await refreshTasks()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func attachFile(to task: TaskSummary, attachment: ComposeAttachment) async -> Bool {
+        do {
+            let result = try await backend.postMultipart(
+                path: "/api/agent/uploads",
+                fields: [:],
+                files: [
+                    MultipartFile(
+                        fieldName: "files",
+                        filename: attachment.filename,
+                        contentType: attachment.contentType,
+                        data: attachment.data
+                    )
+                ]
+            )
+            guard let uploadID = result["uploads"]?.arrayValue?.first?["uploadId"]?.stringValue else {
+                throw BackendError.invalidResponse
+            }
+            _ = try await tools.invoke(
+                "tasks_attach_file",
+                arguments: [
+                    "cardId": .string(task.id),
+                    "name": .string(attachment.filename),
+                    "chatUploadId": .string(uploadID),
+                ]
+            )
+            await refreshTasks()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func setBoardPublicLink(enabled: Bool) async -> Bool {
+        guard let activeBoardID else { return false }
+        do {
+            let result = try await tools.invoke(
+                "tasks_set_public_link",
+                arguments: ["boardId": .string(activeBoardID), "enabled": .bool(enabled)]
+            )
+            taskPublicToken = Self.nonBlank(result["publicToken"]?.stringValue)
+            await refreshBoardsAndProjects()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func inviteBoardMember(email: String, role: String) async -> Bool {
+        guard let activeBoardID else { return false }
+        do {
+            _ = try await tools.invoke(
+                "tasks_invite_member",
+                arguments: [
+                    "boardId": .string(activeBoardID),
+                    "email": .string(email),
+                    "role": .string(role),
+                ]
+            )
+            await refreshTasks()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func removeBoardMember(_ member: TaskBoardMember) async -> Bool {
+        guard let activeBoardID else { return false }
+        do {
+            _ = try await tools.invoke(
+                "tasks_remove_member",
+                arguments: ["boardId": .string(activeBoardID), "memberId": .string(member.id)]
+            )
+            await refreshTasks()
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func projectTasks(projectID: String) async -> [TaskSummary] {
+        do {
+            let result = try await tools.invoke(
+                "albatross_get_project_pane",
+                arguments: ["projectId": .string(projectID)]
+            )
+            return (result["pane"]?["tasks"]?.arrayValue ?? []).compactMap { row in
+                guard let card = row["card"] else { return nil }
+                return TaskSummary(json: card, column: card["columnName"]?.stringValue ?? "Tasks")
+            }
+        } catch {
+            taskError = error.localizedDescription
+            return []
+        }
+    }
+
+    func updateProject(_ project: ProjectSummary, status: String) async -> Bool {
+        do {
+            let result = try await tools.invoke(
+                "albatross_update_project",
+                arguments: ["projectId": .string(project.id), "status": .string(status)]
+            )
+            captureUndoNotice(result, summary: "Changed project to \(status)")
+            let list = try await tools.invoke(
+                "albatross_list_projects",
+                arguments: ["limit": .number(100)]
+            )
+            projects = (list["projects"]?.arrayValue ?? []).compactMap(ProjectSummary.init)
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
     func refreshBoardsAndProjects() async {
-        if let result = try? await tools.invoke("tasks_list_boards") {
+        isLoadingTasks = true
+        defer { isLoadingTasks = false }
+        do {
+            let result = try await tools.invoke("tasks_list_boards")
             taskBoards = (result["boards"]?.arrayValue ?? []).compactMap(TaskBoardSummary.init)
+            if activeBoardID == nil || !taskBoards.contains(where: { $0.id == activeBoardID }) {
+                activeBoardID = taskBoards.first(where: \.isDefault)?.id ?? taskBoards.first?.id
+                if let activeBoardID {
+                    UserDefaults.standard.set(activeBoardID, forKey: "albatross.tasks.active-board")
+                }
+            }
+        } catch {
+            taskError = error.localizedDescription
         }
-        if let result = try? await tools.invoke(
-            "albatross_list_projects",
-            arguments: ["status": .string("active"), "limit": .number(100)]
-        ) {
+        do {
+            let result = try await tools.invoke(
+                "albatross_list_projects",
+                arguments: ["status": .string("active"), "limit": .number(100)]
+            )
             projects = (result["projects"]?.arrayValue ?? []).compactMap(ProjectSummary.init)
+        } catch {
+            taskError = error.localizedDescription
         }
+        await refreshTasks()
     }
 
     // Board-only reload — cheaper than refreshToday after a card mutation.
     private func refreshTasks() async {
+        isLoadingTasks = true
+        defer { isLoadingTasks = false }
         do {
             var arguments: [String: JSONValue] = [:]
             if let activeBoardID { arguments["boardId"] = .string(activeBoardID) }
@@ -471,15 +959,22 @@ final class ProductStore {
                 }
             }
             taskColumns = orderedColumns
+            taskColumnRows = (board?["columns"]?.arrayValue ?? []).compactMap(TaskColumnSummary.init)
+            taskBoardMembers = (board?["members"]?.arrayValue ?? []).compactMap(TaskBoardMember.init)
+            taskBoardRole = board?["role"]?.stringValue ?? "viewer"
+            taskPublicToken = Self.nonBlank(board?["publicToken"]?.stringValue)
             tasks = (board?["cards"]?.arrayValue ?? []).compactMap { card in
                 TaskSummary(json: card, column: columnNames[card["columnId"]?.stringValue ?? ""] ?? "Tasks")
             }.sorted {
-                if $0.completed != $1.completed { return !$0.completed }
-                return ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture)
+                if $0.column != $1.column { return $0.column < $1.column }
+                return $0.order < $1.order
             }
+            tasksDidLoad = true
+            taskError = nil
             await persistCache()
         } catch {
             // A failed reload keeps the optimistic state; the next refreshToday settles it.
+            taskError = error.localizedDescription
         }
     }
 
@@ -497,6 +992,54 @@ final class ProductStore {
             // on the Work surface. A Work failure must never blank Mail or raise
             // the app-wide `errorMessage`.
             workError = error.localizedDescription
+        }
+    }
+
+    func answerWorkQuestion(_ question: WorkDetail.Question, answer: String, optionID: String?) async -> Bool {
+        var body: [String: JSONValue] = [
+            "answer": .string(answer),
+            "timezone": .string(TimeZone.current.identifier),
+        ]
+        if let optionID { body["answeredOptionId"] = .string(optionID) }
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/work/questions/\(question.id)/answer",
+                body: .object(body)
+            )
+            await refreshWork()
+            return true
+        } catch {
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    func advanceWork(_ workID: String) async -> Bool {
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/work/\(workID)/advance",
+                body: .object(["timezone": .string(TimeZone.current.identifier)])
+            )
+            await refreshWork()
+            return true
+        } catch {
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    func updateWorkState(_ workID: String, state: String) async -> Bool {
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/work/\(workID)/state",
+                body: .object(["state": .string(state)])
+            )
+            workDetails.removeValue(forKey: workID)
+            await refreshWork()
+            return true
+        } catch {
+            workError = error.localizedDescription
+            return false
         }
     }
 
@@ -605,6 +1148,72 @@ final class ProductStore {
             suppressedMailThreads.remove(mailKey(thread))
             restoreThread(removed)
             recordMail(error)
+        }
+    }
+
+    func restore(_ thread: MailThreadSummary) async {
+        do {
+            _ = try await tools.invoke(
+                "restore_from_trash",
+                arguments: ["account": .string(thread.accountID), "threadId": .string(thread.id)]
+            )
+            if !threads.contains(where: { mailKey($0) == mailKey(thread) }) {
+                threads.insert(thread, at: 0)
+            }
+            suppressedMailThreads.remove(mailKey(thread))
+            await persistCache()
+        } catch {
+            recordMail(error)
+        }
+    }
+
+    func bulkArchive(_ selected: [MailThreadSummary]) async {
+        for thread in selected { await archive(thread) }
+    }
+
+    func bulkTrash(_ selected: [MailThreadSummary]) async {
+        for thread in selected { await trash(thread) }
+    }
+
+    func bulkTriage(_ selected: [MailThreadSummary]) async -> [BulkTriageVerdict] {
+        guard !selected.isEmpty else { return [] }
+        do {
+            let items = selected.prefix(40).map { thread in
+                JSONValue.object([
+                    "id": .string(mailKey(thread)),
+                    "from": .string(thread.sender),
+                    "subject": .string(thread.subject),
+                    "snippet": .string(thread.snippet),
+                ])
+            }
+            let result = try await tools.invoke(
+                "bulk_triage",
+                arguments: ["items": .array(Array(items))]
+            )
+            return (result["verdicts"]?.arrayValue ?? []).compactMap(BulkTriageVerdict.init)
+        } catch {
+            recordMail(error)
+            return []
+        }
+    }
+
+    func correctCategory(_ thread: MailThreadSummary, category: String) async -> Bool {
+        do {
+            _ = try await tools.invoke(
+                "apply_smart_correction",
+                arguments: [
+                    "account": .string(thread.accountID),
+                    "threadId": .string(thread.id),
+                    "action": .string("move_to"),
+                    "scope": .string("sender"),
+                    "category": .string(category),
+                ]
+            )
+            await refreshMail()
+            return true
+        } catch {
+            recordMail(error)
+            return false
         }
     }
 
@@ -776,8 +1385,9 @@ final class ProductStore {
         subject: String,
         body: String,
         attachments: [ComposeAttachment],
-        sendAt: Date? = nil
-    ) async throws {
+        sendAt: Date? = nil,
+        undoSeconds: Int = 0
+    ) async throws -> ComposeSubmission {
         var fields = [
             "mode": mode,
             "account": accountID,
@@ -790,16 +1400,129 @@ final class ProductStore {
         if let threadID { fields["threadId"] = threadID }
         if let messageID { fields["messageId"] = messageID }
         if let sendAt { fields["sendAt"] = String(Int(sendAt.timeIntervalSince1970 * 1_000)) }
-        _ = try await backend.postMultipart(
+        if sendAt == nil, undoSeconds > 0 {
+            fields["undoSeconds"] = String(min(max(undoSeconds, 0), 300))
+        }
+        let result = try await backend.postMultipart(
             path: "/api/compose",
             fields: fields,
             files: attachments.map(\.multipart)
         )
+        if let pending = result["pending"],
+           let id = pending["id"]?.stringValue,
+           let fireAt = pending["fireAt"]?.doubleValue {
+            return .pending(
+                PendingSendReceipt(
+                    id: id,
+                    fireAt: Date(timeIntervalSince1970: fireAt / 1_000),
+                    undoSeconds: Int(pending["undoSeconds"]?.doubleValue ?? Double(undoSeconds)),
+                    accountID: pending["account"]?.stringValue ?? accountID,
+                    threadID: pending["threadId"]?.stringValue
+                )
+            )
+        }
+        if let scheduled = result["scheduled"],
+           let scheduledAt = scheduled["sendAt"]?.doubleValue {
+            return .scheduled(sendAt: Date(timeIntervalSince1970: scheduledAt / 1_000))
+        }
+        let sent = result["sent"]
         await refreshMail()
+        return .sent(
+            accountID: sent?["account"]?.stringValue ?? accountID,
+            threadID: sent?["threadId"]?.stringValue ?? threadID,
+            messageID: sent?["messageId"]?.stringValue
+        )
+    }
+
+    func saveDraft(
+        id: String?,
+        accountID: String,
+        threadID: String?,
+        messageID: String?,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        scheduledFor: Date?
+    ) async throws -> String {
+        if let id {
+            var patch: [String: JSONValue] = [
+                "to": .string(to),
+                "cc": .string(cc),
+                "bcc": .string(bcc),
+                "subject": .string(subject),
+                "body": .string(body),
+            ]
+            if let scheduledFor {
+                patch["scheduledFor"] = .number(scheduledFor.timeIntervalSince1970 * 1_000)
+            }
+            _ = try await tools.invoke(
+                "update_draft",
+                arguments: ["id": .string(id), "patch": .object(patch)]
+            )
+            return id
+        }
+
+        var arguments: [String: JSONValue] = [
+            "account": .string(accountID),
+            "to": .string(to),
+            "cc": .string(cc),
+            "bcc": .string(bcc),
+            "subject": .string(subject),
+            "body": .string(body),
+        ]
+        if let threadID { arguments["threadId"] = .string(threadID) }
+        if let messageID { arguments["inReplyToMessageId"] = .string(messageID) }
+        if let scheduledFor {
+            arguments["scheduledFor"] = .number(scheduledFor.timeIntervalSince1970 * 1_000)
+        }
+        let result = try await tools.invoke("save_draft", arguments: arguments)
+        guard let savedID = result["draft"]?["_id"]?.stringValue
+            ?? result["draft"]?["id"]?.stringValue else {
+            throw BackendError.invalidResponse
+        }
+        return savedID
     }
 
     func deleteDraft(id: String) async throws {
         _ = try await tools.invoke("delete_draft", arguments: ["id": .string(id)])
+    }
+
+    func draftCompose(
+        accountID: String,
+        threadID: String?,
+        to: String,
+        subject: String,
+        currentBody: String
+    ) async throws -> String {
+        if let threadID, !threadID.isEmpty {
+            let result = try await tools.invoke(
+                "draft_reply",
+                arguments: [
+                    "account": .string(accountID),
+                    "threadId": .string(threadID),
+                    "instructions": currentBody.isEmpty ? .string("Draft a concise response.") : .string(currentBody),
+                ]
+            )
+            guard let draft = result["draft"]?.stringValue, !draft.isEmpty else {
+                throw BackendError.invalidResponse
+            }
+            return draft
+        }
+        let result = try await backend.post(
+            path: "/api/compose/draft",
+            body: .object([
+                "account": .string(accountID),
+                "to": .string(to),
+                "subject": .string(subject),
+                "instructions": .string(currentBody),
+            ])
+        )
+        guard let draft = result["draft"]?.stringValue, !draft.isEmpty else {
+            throw BackendError.invalidResponse
+        }
+        return draft
     }
 
     private func latestMessageID(accountID: String, threadID: String) async throws -> String {
@@ -830,18 +1553,22 @@ final class ProductStore {
         if let sourceThread {
             arguments["description"] = .string("Created from Lab86 Mail thread \(sourceThread.threadID)")
         }
-        _ = try await tools.invoke("calendar_create_event", arguments: arguments)
+        let result = try await tools.invoke("calendar_create_event", arguments: arguments)
+        captureUndoNotice(result, summary: "Created “\(title)”")
         await refreshToday()
     }
 
     func createEvent(
         accountID: String,
+        calendarID: String?,
         title: String,
         start: Date,
         end: Date,
         allDay: Bool,
         location: String?,
-        description: String?
+        description: String?,
+        attendeeEmails: [String] = [],
+        recurrence: [String]? = nil
     ) async throws {
         let iso = ISO8601DateFormatter()
         var arguments: [String: JSONValue] = [
@@ -850,12 +1577,17 @@ final class ProductStore {
             "startIso": .string(iso.string(from: start)),
             "endIso": .string(iso.string(from: end)),
             "allDay": .bool(allDay),
-            "attendees": .array([]),
+            "attendees": .array(
+                attendeeEmails.map { .object(["email": .string($0)]) }
+            ),
             "busy": .bool(true),
         ]
+        if let calendarID, !calendarID.isEmpty { arguments["calendarId"] = .string(calendarID) }
         if let location, !location.isEmpty { arguments["location"] = .string(location) }
         if let description, !description.isEmpty { arguments["description"] = .string(description) }
-        _ = try await tools.invoke("calendar_create_event", arguments: arguments)
+        if let recurrence { arguments["recurrence"] = .array(recurrence.map(JSONValue.string)) }
+        let result = try await tools.invoke("calendar_create_event", arguments: arguments)
+        captureUndoNotice(result, summary: "Created “\(title)”")
         await refreshCalendar(sync: false)
     }
 
@@ -866,7 +1598,11 @@ final class ProductStore {
         title: String?,
         start: Date?,
         end: Date?,
-        location: String?
+        allDay: Bool?,
+        location: String?,
+        description: String?,
+        attendeeEmails: [String]?,
+        recurrence: [String]?
     ) async throws {
         let iso = ISO8601DateFormatter()
         var arguments: [String: JSONValue] = [
@@ -877,22 +1613,92 @@ final class ProductStore {
         if let title { arguments["title"] = .string(title) }
         if let start { arguments["startIso"] = .string(iso.string(from: start)) }
         if let end { arguments["endIso"] = .string(iso.string(from: end)) }
+        if let allDay { arguments["allDay"] = .bool(allDay) }
         if let location { arguments["location"] = .string(location) }
-        _ = try await tools.invoke("calendar_update_event", arguments: arguments)
+        if let description { arguments["description"] = .string(description) }
+        if let attendeeEmails {
+            arguments["attendees"] = .array(
+                attendeeEmails.map { .object(["email": .string($0)]) }
+            )
+        }
+        if let recurrence { arguments["recurrence"] = .array(recurrence.map(JSONValue.string)) }
+        let result = try await tools.invoke("calendar_update_event", arguments: arguments)
+        captureUndoNotice(result, summary: "Updated calendar event")
         await refreshCalendar(sync: false)
     }
 
-    func deleteEvent(accountID: String, calendarID: String, eventID: String) async throws {
-        _ = try await tools.invoke(
+    func rescheduleEvent(_ event: CalendarEventSummary, start: Date, end: Date) async {
+        guard let calendarID = event.calendarID else {
+            calendarError = "This event cannot be moved until its calendar finishes syncing."
+            return
+        }
+        do {
+            try await updateEvent(
+                accountID: event.accountID,
+                calendarID: calendarID,
+                eventID: event.id,
+                title: nil,
+                start: start,
+                end: end,
+                allDay: event.allDay,
+                location: nil,
+                description: nil,
+                attendeeEmails: nil,
+                recurrence: nil
+            )
+        } catch {
+            calendarError = error.localizedDescription
+        }
+    }
+
+    func deleteEvent(
+        accountID: String,
+        calendarID: String,
+        eventID: String,
+        deleteSeries: Bool = false
+    ) async throws {
+        let result = try await tools.invoke(
             "calendar_delete_event",
             arguments: [
                 "account": .string(accountID),
                 "calendarId": .string(calendarID),
                 "eventId": .string(eventID),
+                "deleteSeries": .bool(deleteSeries),
             ]
         )
+        captureUndoNotice(result, summary: "Deleted calendar event")
         events.removeAll { $0.id == eventID && $0.accountID == accountID }
         await refreshCalendar(sync: false)
+    }
+
+    func refreshCalendarChoices() async {
+        do {
+            let result = try await tools.invoke("calendar_list_calendars")
+            calendarChoices = (result["calendars"]?.arrayValue ?? []).compactMap(CalendarChoice.init)
+        } catch {
+            calendarError = error.localizedDescription
+        }
+    }
+
+    func undoLatestOperation() async {
+        guard let notice = undoNotice else { return }
+        do {
+            _ = try await tools.invoke(
+                "undo_operation",
+                arguments: ["operationId": .string(notice.id)]
+            )
+            undoNotice = nil
+            await refreshToday()
+            await refreshWork()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func captureUndoNotice(_ result: JSONValue, summary: String) {
+        if let operationID = result["operationId"]?.stringValue, !operationID.isEmpty {
+            undoNotice = UndoableOperationNotice(id: operationID, summary: summary)
+        }
     }
 
     func rsvpEvent(accountID: String, calendarID: String, eventID: String, status: String) async throws {
@@ -929,9 +1735,8 @@ final class ProductStore {
         }
     }
 
-    // Queue a living-brief regeneration for one area — the same Convex mutation
-    // the desktop Refresh button uses. Regeneration is asynchronous server-side;
-    // callers re-read area_home after a beat.
+    // Queue a living-brief regeneration and follow the authoritative Convex
+    // job row. There is no fixed delay or optimistic "finished" state.
     func queueAreaBriefRefresh(areaID: String) async -> Bool {
         guard let convex else {
             errorMessage = "Live connection unavailable — try again shortly."
@@ -941,9 +1746,53 @@ final class ProductStore {
         // Sendable annotation just hasn't caught up in the SDK.
         nonisolated(unsafe) let client = convex
         do {
+            areaRefreshStates[areaID] = AreaRefreshState(
+                phase: .queued,
+                progress: "Queued",
+                error: nil
+            )
             try await client.mutation("albatross:reindexMyAreas", with: ["areaId": areaID])
+            areaBriefMonitoringTasks[areaID]?.cancel()
+            areaBriefMonitoringTasks[areaID] = Task { [weak self] in
+                do {
+                    let updates = client.subscribe(
+                        to: "albatross:areaIndexStatus",
+                        with: [:],
+                        yielding: AreaIndexStatusPayload.self
+                    ).values
+                    for try await payload in updates {
+                        guard !Task.isCancelled else { return }
+                        guard let run = payload.latestRun, run.areaId == areaID else { continue }
+                        let phase = AreaRefreshState.Phase(rawValue: run.status) ?? .running
+                        let count = Int(run.scanned ?? run.matched ?? 0)
+                        self?.areaRefreshStates[areaID] = AreaRefreshState(
+                            phase: phase,
+                            progress: phase == .running ? "Refreshing · \(count.formatted()) checked" : phase.rawValue.capitalized,
+                            error: run.error
+                        )
+                        if phase == .done {
+                            _ = try? await self?.loadAreaDetail(areaID)
+                            return
+                        }
+                        if phase == .error { return }
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self?.areaRefreshStates[areaID] = AreaRefreshState(
+                        phase: .error,
+                        progress: nil,
+                        error: error.localizedDescription
+                    )
+                }
+            }
             return true
         } catch {
+            areaRefreshStates[areaID] = AreaRefreshState(
+                phase: .error,
+                progress: nil,
+                error: error.localizedDescription
+            )
             errorMessage = error.localizedDescription
             return false
         }
@@ -970,6 +1819,128 @@ final class ProductStore {
         }
     }
 
+    func uploadAreaImage(areaID: String, attachment: ComposeAttachment) async -> Bool {
+        guard let convex else {
+            errorMessage = "Live connection unavailable — try again shortly."
+            return false
+        }
+        do {
+            let uploaded = try await backend.postMultipart(
+                path: "/api/agent/uploads",
+                fields: [:],
+                files: [
+                    MultipartFile(
+                        fieldName: "files",
+                        filename: attachment.filename,
+                        contentType: attachment.contentType,
+                        data: attachment.data
+                    ),
+                ]
+            )
+            guard let uploadID = uploaded["uploads"]?.arrayValue?.first?["uploadId"]?.stringValue else {
+                throw BackendError.invalidResponse
+            }
+            nonisolated(unsafe) let client = convex
+            try await client.mutation(
+                "albatross:setAreaImage",
+                with: ["areaId": areaID, "uploadId": uploadID]
+            )
+            _ = try? await loadAreaDetail(areaID)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func updateArea(
+        areaID: String,
+        name: String,
+        kind: String,
+        primaryDomain: String,
+        imageURL: String
+    ) async -> Bool {
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/areas",
+                body: .object([
+                    "action": .string("update_area"),
+                    "areaId": .string(areaID),
+                    "name": .string(name),
+                    "kind": .string(kind),
+                    "primaryDomain": .string(primaryDomain),
+                    "imageUrl": .string(imageURL),
+                ])
+            )
+            _ = try? await loadAreaDetail(areaID)
+            await refreshWork()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func archiveArea(areaID: String) async -> Bool {
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/areas",
+                body: .object([
+                    "action": .string("archive_area"),
+                    "areaId": .string(areaID),
+                ])
+            )
+            areaDetails.removeValue(forKey: areaID)
+            await refreshWork()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func mutateAreaMail(
+        _ rows: [AreaDetail.MailRow],
+        action: String,
+        category: String? = nil
+    ) async -> Bool {
+        do {
+            for row in rows {
+                let toolName: String
+                var arguments: [String: JSONValue] = [
+                    "account": .string(row.accountID),
+                    "threadId": .string(row.threadID),
+                ]
+                switch action {
+                case "archive":
+                    toolName = "archive_thread"
+                case "trash":
+                    toolName = "trash_thread"
+                case "remove_area":
+                    guard let linkID = row.linkID else {
+                        throw BackendError.invalidResponse
+                    }
+                    toolName = "area_artifact_set_status"
+                    arguments = [
+                        "linkId": .string(linkID),
+                        "status": .string("rejected"),
+                        "reason": .string("Removed from the Area by the user on iOS."),
+                    ]
+                default:
+                    toolName = "apply_smart_correction"
+                    arguments["action"] = .string("move_to")
+                    arguments["scope"] = .string("thread")
+                    arguments["category"] = .string(category ?? "main")
+                }
+                _ = try await tools.invoke(toolName, arguments: arguments)
+            }
+            return true
+        } catch {
+            recordMail(error)
+            return false
+        }
+    }
+
     // Verify or retire a candidate fact from an Area's Context section.
     func setAreaFactStatus(areaID: String, factID: String, status: String) async {
         do {
@@ -983,14 +1954,42 @@ final class ProductStore {
         }
     }
 
-    func capture(_ text: String) async throws {
+    func analyzeCapture(_ text: String) async throws -> [CaptureSuggestion] {
+        let response = try await backend.post(
+            path: "/api/albatross/capture/analyze",
+            body: .object(["rawText": .string(text)])
+        )
+        guard response["ok"]?.boolValue == true else {
+            throw BackendError.server(
+                status: 500,
+                message: response["error"]?.stringValue ?? "Capture analysis failed."
+            )
+        }
+        return (response["work"]?.arrayValue ?? []).compactMap(CaptureSuggestion.init)
+    }
+
+    func capture(
+        _ text: String,
+        reviewedItems: [CaptureSuggestion]? = nil,
+        transcript: String? = nil,
+        location: (latitude: Double, longitude: Double)? = nil
+    ) async throws -> String? {
+        var body: [String: JSONValue] = [
+            "rawText": .string(text),
+            "source": .string(transcript == nil ? "text" : "voice"),
+            "timezone": .string(TimeZone.current.identifier),
+        ]
+        if let transcript { body["transcript"] = .string(transcript) }
+        if let reviewedItems {
+            body["reviewedItems"] = .array(
+                reviewedItems.map {
+                    .object(["title": .string($0.title), "rawText": .string($0.rawText)])
+                }
+            )
+        }
         let response = try await backend.post(
             path: "/api/albatross/capture",
-            body: .object([
-                "rawText": .string(text),
-                "source": .string("text"),
-                "timezone": .string(TimeZone.current.identifier),
-            ])
+            body: .object(body)
         )
         guard response["ok"]?.boolValue == true else {
             throw BackendError.server(status: 500, message: response["error"]?.stringValue ?? "Capture failed.")
@@ -999,15 +1998,31 @@ final class ProductStore {
         // advance (the same call the desktop workbench makes). Kick each
         // captured Work forward so a phone capture doesn't sit unplanned.
         let workIDs = (response["workIds"]?.arrayValue ?? []).compactMap(\.stringValue)
+        var planningFailures = 0
         for workID in workIDs {
-            Task { [backend] in
-                _ = try? await backend.post(
+            var advanceBody: [String: JSONValue] = [
+                "timezone": .string(TimeZone.current.identifier),
+            ]
+            if let location {
+                advanceBody["geo"] = .object([
+                    "latitude": .number(location.latitude),
+                    "longitude": .number(location.longitude),
+                ])
+            }
+            do {
+                _ = try await backend.post(
                     path: "/api/albatross/work/\(workID)/advance",
-                    body: .object([:])
+                    body: .object(advanceBody)
                 )
+            } catch {
+                planningFailures += 1
             }
         }
         await refreshWork()
+        if planningFailures > 0 {
+            return "Work was saved, but planning could not start for \(planningFailures) item\(planningFailures == 1 ? "" : "s"). Open Work and try Continue."
+        }
+        return nil
     }
 
     func approve(_ approval: ApprovalSummary) async {
@@ -1077,6 +2092,9 @@ final class ProductStore {
     func clearForSignOut() async {
         liveMailTask?.cancel()
         liveMailTask = nil
+        for task in areaBriefMonitoringTasks.values { task.cancel() }
+        areaBriefMonitoringTasks = [:]
+        areaRefreshStates = [:]
         if let cacheOwner {
             await spotlight.remove(owner: cacheOwner)
             try? await cache.remove(owner: cacheOwner)
@@ -1107,9 +2125,13 @@ final class ProductStore {
         workError = nil
         isLoadingWork = false
         workDidLoad = false
+        tasksDidLoad = false
+        taskError = nil
+        isLoadingTasks = false
         mailStateOverrides = [:]
         suppressedMailThreads = []
         lastRefresh = nil
+        undoNotice = nil
     }
 
     private func record(_ error: Error) {
@@ -1126,6 +2148,12 @@ final class ProductStore {
             return
         }
         if mailErrorMessage == nil { mailErrorMessage = error.localizedDescription }
+    }
+
+    private static func nonBlank(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func startLiveMail() {
@@ -1270,6 +2298,7 @@ final class ProductStore {
         // so Work shows the list (not a loading/empty state) before the first
         // server refresh completes.
         if !areas.isEmpty { workDidLoad = true }
+        if !tasks.isEmpty { tasksDidLoad = true }
         lastRefresh = snapshot.savedAt
         await syncMailIndex()
     }

@@ -5,6 +5,7 @@ import SwiftUI
 // same /api/ai/settings contract the web uses.
 struct AISettingsView: View {
     @Environment(AppEnvironment.self) private var environment
+    var onboardingCompletion: (() -> Void)?
 
     private struct ModelOption: Identifiable, Equatable {
         let id: String
@@ -15,11 +16,13 @@ struct AISettingsView: View {
     @State private var isLoaded = false
     @State private var loadError: String?
     @State private var mode = "lab86"
+    @State private var provider = "openrouter"
     @State private var model = ""
     @State private var fastModel = ""
     @State private var primaryOptions: [ModelOption] = []
     @State private var fastOptions: [ModelOption] = []
     @State private var maskedKey: String?
+    @State private var savedKeyProvider: String?
     @State private var apiKeyInput = ""
     @State private var planLabel: String?
     @State private var usageLabel: String?
@@ -61,29 +64,48 @@ struct AISettingsView: View {
                     Text("Intelligence source")
                 } footer: {
                     Text(mode == "byok"
-                        ? "Bring your own OpenRouter key (starts with sk-or-). Usage bills to your OpenRouter account."
+                        ? "Your key is encrypted and held by the server. Usage bills to the provider you choose."
                         : "Hosted models with usage included in your plan.")
                 }
 
                 if mode == "byok" {
-                    Section("OpenRouter key") {
+                    Section("Provider key") {
+                        Picker("Provider", selection: $provider) {
+                            Text("OpenRouter").tag("openrouter")
+                            Text("OpenAI").tag("openai")
+                            Text("Anthropic").tag("anthropic")
+                        }
                         if let maskedKey {
-                            LabeledContent("Saved key", value: maskedKey)
+                            LabeledContent(
+                                "\(savedKeyProvider?.capitalized ?? "Provider") key",
+                                value: maskedKey
+                            )
                             Button("Remove key", role: .destructive) {
                                 Task { await deleteKey() }
                             }
                         }
-                        SecureField(maskedKey == nil ? "sk-or-…" : "Replace key", text: $apiKeyInput)
+                        SecureField(maskedKey == nil ? keyPlaceholder : "Replace key", text: $apiKeyInput)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                     }
                 }
 
-                Section("Models") {
-                    modelPicker("Normal", selection: $model, options: primaryOptions)
-                    modelPicker("Fast", selection: $fastModel, options: fastOptions)
-                    if let detail = primaryOptions.first(where: { $0.id == model })?.detail, !detail.isEmpty {
-                        Text(detail).font(.footnote).foregroundStyle(.secondary)
+                if mode == "lab86" || provider == "openrouter" {
+                    Section("Models") {
+                        modelPicker("Normal", selection: $model, options: primaryOptions)
+                        modelPicker("Fast", selection: $fastModel, options: fastOptions)
+                        if let detail = primaryOptions.first(where: { $0.id == model })?.detail, !detail.isEmpty {
+                            Text(detail).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    Section {
+                        LabeledContent("Normal", value: "Provider default")
+                        LabeledContent("Fast", value: "Provider default")
+                    } header: {
+                        Text("Models")
+                    } footer: {
+                        Text("Albatross selects the supported direct-provider models; no model identifier is stored locally.")
                     }
                 }
 
@@ -128,9 +150,11 @@ struct AISettingsView: View {
             let result = try await environment.backend.get(path: "/api/ai/settings")
             let settings = result["settings"]
             mode = settings?["mode"]?.stringValue ?? "lab86"
+            provider = settings?["provider"]?.stringValue ?? result["key"]?["provider"]?.stringValue ?? "openrouter"
             model = settings?["model"]?.stringValue ?? ""
             fastModel = settings?["fastModel"]?.stringValue ?? ""
             maskedKey = result["key"]?["masked"]?.stringValue
+            savedKeyProvider = result["key"]?["provider"]?.stringValue
             primaryOptions = Self.options(result["modelOptions"]?["openrouter"]?["primary"])
             fastOptions = Self.options(result["modelOptions"]?["openrouter"]?["fast"])
             if model.isEmpty, let first = primaryOptions.first { model = first.id }
@@ -155,11 +179,13 @@ struct AISettingsView: View {
         defer { isSaving = false }
         var body: [String: JSONValue] = [
             "mode": .string(mode),
-            "provider": .string("openrouter"),
-            "model": .string(model),
-            "fastModel": .string(fastModel),
+            "provider": .string(mode == "lab86" ? "openrouter" : provider),
             "enabled": .bool(true),
         ]
+        if mode == "lab86" || provider == "openrouter" {
+            body["model"] = .string(model)
+            body["fastModel"] = .string(fastModel)
+        }
         let trimmedKey = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedKey.isEmpty { body["apiKey"] = .string(trimmedKey) }
         do {
@@ -167,6 +193,7 @@ struct AISettingsView: View {
             apiKeyInput = ""
             saveMessage = "Saved."
             await load()
+            onboardingCompletion?()
         } catch {
             saveError = (error as? BackendError)?.errorDescription ?? error.localizedDescription
         }
@@ -175,13 +202,21 @@ struct AISettingsView: View {
     private func deleteKey() async {
         do {
             _ = try await environment.backend.delete(
-                path: "/api/ai/settings?provider=openrouter",
+                path: "/api/ai/settings?provider=\(savedKeyProvider ?? provider)",
                 body: .object([:])
             )
             maskedKey = nil
             await load()
         } catch {
             saveError = (error as? BackendError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private var keyPlaceholder: String {
+        switch provider {
+        case "openai": "sk-…"
+        case "anthropic": "sk-ant-…"
+        default: "sk-or-…"
         }
     }
 

@@ -49,6 +49,12 @@
 	<string>$(LAB86_API_BASE_URL)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Albatross records only when you tap Record, so it can transcribe a Work capture.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Albatross transcribes voice captures into editable text you review before saving.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Albatross attaches your approximate location only when you explicitly choose Add Location for a capture.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

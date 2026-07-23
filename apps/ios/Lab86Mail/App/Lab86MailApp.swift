@@ -31,10 +31,16 @@ struct Lab86MailApp: App {
                 }
             }
         }
+        .commands {
+            AlbatrossCommands(environment: environment)
+        }
     }
 
     private var configuredRoot: some View {
         RootView()
+            .overlay {
+                GrainOverlay(amount: environment.theme.grain)
+            }
             .tint(environment.theme.accentColor)
             .preferredColorScheme(environment.theme.appearance.colorScheme)
             .environment(environment)

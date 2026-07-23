@@ -1,5 +1,6 @@
 import SwiftStreamingMarkdown
 import SwiftUI
+import UniformTypeIdentifiers
 
 // A full-page conversation with Albatross, patterned after ChatGPT and Claude:
 // user turns in quiet raised bubbles, assistant turns as plain document text,
@@ -8,6 +9,10 @@ struct AssistantChatView: View {
     @Environment(AppEnvironment.self) private var environment
     @Bindable var model: AssistantChatModel
     @State private var draft = ""
+    @State private var pendingFiles: [ComposeAttachment] = []
+    @State private var showsFileImporter = false
+    @State private var showsHistory = false
+    @State private var history: [AssistantChatSessionSummary] = []
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -22,8 +27,34 @@ struct AssistantChatView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .navigationTitle("Albatross")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Task {
+                        history = await model.history()
+                        showsHistory = true
+                    }
+                } label: {
+                    Label("Chat history", systemImage: "clock.arrow.circlepath")
+                }
+            }
+        }
         .onAppear {
             if !model.hasStarted { composerFocused = true }
+        }
+        .sheet(isPresented: $showsHistory) {
+            AssistantHistorySheet(sessions: history) { session in
+                await model.restore(sessionID: session.id)
+                showsHistory = false
+            }
+        }
+        .fileImporter(
+            isPresented: $showsFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            importFiles(urls)
         }
     }
 
@@ -34,9 +65,21 @@ struct AssistantChatView: View {
                     messageRow(message)
                 }
                 if let error = model.errorMessage {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                        HStack {
+                            if model.canRetry {
+                                Button("Retry", action: model.retryLastTurn)
+                                    .buttonStyle(.bordered)
+                            }
+                            if model.canContinue {
+                                Button("Continue", action: model.continueResponse)
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -69,6 +112,10 @@ struct AssistantChatView: View {
                         }
                     case .card(_, let card):
                         AssistantToolCardView(card: card)
+                    case .approval(let approval):
+                        AssistantApprovalCard(approval: approval) { approved in
+                            model.answerApproval(approval.id, approved: approved)
+                        }
                     }
                 }
                 if let activity = message.toolActivity {
@@ -104,6 +151,15 @@ struct AssistantChatView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if model.scope.kind != .global {
+                Label(
+                    "\(model.scope.kind == .work ? "Work" : "Area"): \(model.scope.label ?? "Current context")",
+                    systemImage: "scope"
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+
             VStack(alignment: .leading, spacing: 0) {
                 Text("Suggested")
                     .font(.caption)
@@ -137,8 +193,35 @@ struct AssistantChatView: View {
     ]
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message Albatross", text: $draft, axis: .vertical)
+        VStack(spacing: 4) {
+            if !pendingFiles.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(pendingFiles) { file in
+                            Button {
+                                pendingFiles.removeAll { $0.id == file.id }
+                            } label: {
+                                Label(file.filename, systemImage: "xmark.circle.fill")
+                                    .font(.caption)
+                                    .lineLimit(1)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                Button {
+                    showsFileImporter = true
+                } label: {
+                    Image(systemName: "paperclip")
+                        .frame(width: 34, height: 34)
+                }
+                .disabled(model.isStreaming || model.isUploading || pendingFiles.count >= 5)
+                .accessibilityLabel("Attach files")
+
+                TextField("Message Albatross", text: $draft, axis: .vertical)
                 .lineLimit(1...6)
                 .focused($composerFocused)
                 .padding(.leading, 16)
@@ -146,8 +229,8 @@ struct AssistantChatView: View {
                 .padding(.vertical, 10)
                 .onSubmit(sendDraft)
 
-            if model.isStreaming {
-                Button(action: model.stop) {
+                if model.isStreaming {
+                    Button(action: model.stop) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color(uiColor: .systemBackground))
@@ -155,8 +238,8 @@ struct AssistantChatView: View {
                         .background(Circle().fill(Color.primary))
                 }
                 .accessibilityLabel("Stop responding")
-            } else {
-                Button(action: sendDraft) {
+                } else {
+                    Button(action: sendDraft) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
@@ -167,8 +250,9 @@ struct AssistantChatView: View {
                             )
                         )
                 }
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
+                    .disabled(!canSend)
+                    .accessibilityLabel(model.isUploading ? "Uploading" : "Send")
+                }
             }
         }
         .padding(4)
@@ -179,12 +263,112 @@ struct AssistantChatView: View {
     }
 
     private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingFiles.isEmpty)
+            && !model.isUploading
     }
 
     private func sendDraft() {
         guard canSend, !model.isStreaming else { return }
-        model.send(draft)
+        model.send(draft, attachments: pendingFiles)
         draft = ""
+        pendingFiles = []
+    }
+
+    private func importFiles(_ urls: [URL]) {
+        let available = max(0, 5 - pendingFiles.count)
+        for url in urls.prefix(available) {
+            let secured = url.startAccessingSecurityScopedResource()
+            defer { if secured { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { continue }
+            let total = pendingFiles.reduce(0) { $0 + $1.data.count } + data.count
+            guard total <= 25 * 1_024 * 1_024 else { continue }
+            let values = try? url.resourceValues(forKeys: [.contentTypeKey, .nameKey])
+            pendingFiles.append(
+                ComposeAttachment(
+                    filename: values?.name ?? url.lastPathComponent,
+                    contentType: values?.contentType?.preferredMIMEType ?? "application/octet-stream",
+                    data: data
+                )
+            )
+        }
+    }
+}
+
+private struct AssistantApprovalCard: View {
+    let approval: AssistantInlineApproval
+    let onDecision: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                approval.title,
+                systemImage: approval.destructive ? "exclamationmark.shield" : "checkmark.shield"
+            )
+            .font(.headline)
+            if let description = approval.description {
+                Text(description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(approval.metadata) { row in
+                LabeledContent(row.label, value: row.value)
+                    .font(.caption)
+            }
+            if let decision = approval.decision {
+                Label(decision ? "Approved" : "Rejected", systemImage: decision ? "checkmark.circle" : "xmark.circle")
+                    .foregroundStyle(decision ? .green : .secondary)
+            } else {
+                HStack {
+                    Button(approval.denyLabel) { onDecision(false) }
+                        .buttonStyle(.bordered)
+                    Button(approval.confirmLabel) { onDecision(true) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(approval.destructive ? .red : .accentColor)
+                }
+            }
+        }
+        .padding(14)
+        .background(.thinMaterial, in: .rect(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct AssistantHistorySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let sessions: [AssistantChatSessionSummary]
+    let onSelect: (AssistantChatSessionSummary) async -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if sessions.isEmpty {
+                    ContentUnavailableView(
+                        "No conversations yet",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text("Finished conversations in this scope appear here.")
+                    )
+                }
+                ForEach(sessions) { session in
+                    Button {
+                        Task { await onSelect(session) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(session.title)
+                                .foregroundStyle(.primary)
+                            Text(session.updatedAt, style: .relative)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
     }
 }

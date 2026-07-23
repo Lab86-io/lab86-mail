@@ -79,6 +79,10 @@ actor BackendClient {
         try await request(method: "PUT", path: path, body: body)
     }
 
+    func patch(path: String, body: JSONValue) async throws -> JSONValue {
+        try await request(method: "PATCH", path: path, body: body)
+    }
+
     func download(path: String) async throws -> DownloadedFile {
         guard let baseURL, let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw BackendError.configuration

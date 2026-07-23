@@ -12,12 +12,13 @@ packages:
     path: Packages/MobileAPI
   SwiftSoup:
     url: https://github.com/scinfu/SwiftSoup
-    exactVersion: 2.7.0
-  # Branch requirement: its HighlightSwift dependency is branch-pinned, which
-  # SPM rejects from stable-version consumers.
+    exactVersion: 2.13.6
   SwiftStreamingMarkdown:
     url: https://github.com/microsoft/SwiftStreamingMarkdown
-    branch: main
+    # v0.6.0 still declares a branch-pinned HighlightSwift dependency, which
+    # SwiftPM rejects when the root uses a stable version. Pin the reviewed
+    # v0.6.0-era revision exactly so builds are reproducible.
+    revision: a4187829013c4588556d82dbf1ab65ed768a0262
   HorizonCalendar:
     url: https://github.com/airbnb/HorizonCalendar
     from: 2.0.0

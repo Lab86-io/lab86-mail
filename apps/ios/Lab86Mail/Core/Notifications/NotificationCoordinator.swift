@@ -21,6 +21,11 @@ struct MobileNotificationPreferences: Equatable, Sendable {
     var newMailPushEnabled = true
     var eventSuggestionPushEnabled = true
     var eveningCheckinEnabled = true
+    var eveningCheckinLocalTime = "19:00"
+    var timezone = TimeZone.current.identifier
+    var inAppEnabled = true
+    var emailFallbackEnabled = true
+    var emailFallbackDelayMinutes = 90
 }
 
 @MainActor
@@ -67,7 +72,12 @@ final class NotificationCoordinator {
                 nativePushEnabled: value["nativePushEnabled"]?.boolValue ?? true,
                 newMailPushEnabled: value["newMailPushEnabled"]?.boolValue ?? true,
                 eventSuggestionPushEnabled: value["eventSuggestionPushEnabled"]?.boolValue ?? true,
-                eveningCheckinEnabled: value["eveningCheckinEnabled"]?.boolValue ?? true
+                eveningCheckinEnabled: value["eveningCheckinEnabled"]?.boolValue ?? true,
+                eveningCheckinLocalTime: value["eveningCheckinLocalTime"]?.stringValue ?? "19:00",
+                timezone: value["timezone"]?.stringValue ?? TimeZone.current.identifier,
+                inAppEnabled: value["inAppEnabled"]?.boolValue ?? true,
+                emailFallbackEnabled: value["emailFallbackEnabled"]?.boolValue ?? true,
+                emailFallbackDelayMinutes: Int(value["emailFallbackDelayMinutes"]?.doubleValue ?? 90)
             )
             preferencesError = nil
         } catch {
@@ -86,7 +96,11 @@ final class NotificationCoordinator {
                     "newMailPushEnabled": .bool(value.newMailPushEnabled),
                     "eventSuggestionPushEnabled": .bool(value.eventSuggestionPushEnabled),
                     "eveningCheckinEnabled": .bool(value.eveningCheckinEnabled),
-                    "timezone": .string(TimeZone.current.identifier),
+                    "eveningCheckinLocalTime": .string(value.eveningCheckinLocalTime),
+                    "timezone": .string(value.timezone),
+                    "inAppEnabled": .bool(value.inAppEnabled),
+                    "emailFallbackEnabled": .bool(value.emailFallbackEnabled),
+                    "emailFallbackDelayMinutes": .number(Double(value.emailFallbackDelayMinutes)),
                 ])
             )
             preferencesError = nil

@@ -100,6 +100,9 @@ final class ThemeStore {
     var accent2Chroma: Double { didSet { persist() } }
     var appearance: AppearanceChoice { didSet { persist() } }
     var displayType: DisplayTypeChoice { didSet { persist() } }
+    var backgroundWash: Double { didSet { persist() } }
+    var railWash: Double { didSet { persist() } }
+    var grain: Double { didSet { persist() } }
 
     private let defaults: UserDefaults
 
@@ -112,6 +115,9 @@ final class ThemeStore {
         accent2Chroma = stored["accent2Chroma"] as? Double ?? 0.11
         appearance = AppearanceChoice(rawValue: stored["appearance"] as? String ?? "") ?? .system
         displayType = DisplayTypeChoice(rawValue: stored["displayType"] as? String ?? "") ?? .serif
+        backgroundWash = stored["backgroundWash"] as? Double ?? 0.35
+        railWash = stored["railWash"] as? Double ?? 0.5
+        grain = stored["grain"] as? Double ?? 0
     }
 
     var selectedPreset: PalettePreset? {
@@ -155,6 +161,9 @@ final class ThemeStore {
                 "accent2Chroma": accent2Chroma,
                 "appearance": appearance.rawValue,
                 "displayType": displayType.rawValue,
+                "backgroundWash": backgroundWash,
+                "railWash": railWash,
+                "grain": grain,
             ],
             forKey: Self.defaultsKey
         )

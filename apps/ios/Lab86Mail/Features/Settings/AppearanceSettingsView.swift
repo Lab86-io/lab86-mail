@@ -65,6 +65,22 @@ struct AppearanceSettingsView: View {
             } footer: {
                 Text("Hue turns the color wheel; intensity moves from near-neutral to saturated.")
             }
+
+            Section {
+                LabeledContent("Background wash") {
+                    Slider(value: $theme.backgroundWash, in: 0...1)
+                }
+                LabeledContent("Navigation wash") {
+                    Slider(value: $theme.railWash, in: 0...1)
+                }
+                LabeledContent("Paper grain") {
+                    Slider(value: $theme.grain, in: 0...1)
+                }
+            } header: {
+                Text("Surfaces")
+            } footer: {
+                Text("Grain automatically disappears when Reduce Transparency is enabled.")
+            }
         }
         .navigationTitle("Appearance")
         .navigationBarTitleDisplayMode(.inline)

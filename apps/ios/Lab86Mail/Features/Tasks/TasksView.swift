@@ -12,10 +12,14 @@ struct TasksView: View {
         var id: String { column }
     }
 
-    @State private var dropTargetColumn: String?
     @State private var showsProjects = false
+    @State private var showsBoardManagement = false
+    @State private var showsColumnManagement = false
+    @State private var showsBoardSharing = false
     @State private var openTask: TaskSummary?
     @State private var newCard: NewCardContext?
+    @State private var pendingDeleteTask: TaskSummary?
+    @AppStorage("albatross.tasks.view-mode") private var viewMode = "board"
 
     private var store: ProductStore { environment.store }
 
@@ -25,12 +29,26 @@ struct TasksView: View {
 
     var body: some View {
         Group {
-            if columns.isEmpty {
+            if !store.tasksDidLoad, store.isLoadingTasks, store.tasks.isEmpty {
+                ProgressView("Loading tasks…")
+            } else if !store.tasksDidLoad, let taskError = store.taskError, store.tasks.isEmpty {
+                ContentUnavailableView {
+                    Label("Tasks unavailable", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(taskError)
+                } actions: {
+                    Button("Try Again") {
+                        Task { await store.refreshBoardsAndProjects() }
+                    }
+                }
+            } else if columns.isEmpty {
                 ContentUnavailableView(
                     "Nothing on the board",
                     systemImage: "checkmark.circle",
                     description: Text("Hand something to Albatross from the sidebar, or pull to refresh.")
                 )
+            } else if viewMode == "list" {
+                taskList
             } else {
                 board
             }
@@ -57,20 +75,57 @@ struct TasksView: View {
                         }
                     }
                     Divider()
+                    Picker("View", selection: $viewMode) {
+                        Label("Board", systemImage: "rectangle.split.3x1").tag("board")
+                        Label("List", systemImage: "list.bullet").tag("list")
+                    }
+                    Divider()
                     Button("Projects") { showsProjects = true }
+                    Button("Manage Boards") { showsBoardManagement = true }
+                    Button("Manage Columns") { showsColumnManagement = true }
+                        .disabled(store.activeBoardID == nil || store.taskBoardRole == "viewer")
+                    Button("Share Board") { showsBoardSharing = true }
+                        .disabled(store.activeBoardID == nil || store.taskBoardRole != "owner")
                 } label: {
                     Label("Boards", systemImage: "square.stack")
                 }
             }
+            .visibilityPriority(.low)
         }
         .sheet(isPresented: $showsProjects) {
             ProjectsSheet()
+        }
+        .sheet(isPresented: $showsBoardManagement) {
+            BoardManagementSheet()
+        }
+        .sheet(isPresented: $showsColumnManagement) {
+            ColumnManagementSheet()
+        }
+        .sheet(isPresented: $showsBoardSharing) {
+            BoardSharingSheet()
         }
         .sheet(item: $openTask) { task in
             TaskDetailView(task: task)
         }
         .sheet(item: $newCard) { context in
             NewTaskSheet(column: context.column)
+        }
+        .confirmationDialog(
+            "Delete this card?",
+            isPresented: Binding(
+                get: { pendingDeleteTask != nil },
+                set: { if !$0 { pendingDeleteTask = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDeleteTask
+        ) { task in
+            Button("Delete “\(task.title)”", role: .destructive) {
+                pendingDeleteTask = nil
+                Task { await store.deleteTask(task) }
+            }
+            Button("Cancel", role: .cancel) { pendingDeleteTask = nil }
+        } message: { task in
+            Text("This removes the card from \(task.column).")
         }
         .task { await store.refreshBoardsAndProjects() }
         .shellToolbar()
@@ -91,13 +146,70 @@ struct TasksView: View {
             .padding(.vertical, 12)
         }
         .scrollTargetBehavior(.viewAligned)
+        .reorderContainer(
+            for: TaskSummary.self,
+            in: String.self,
+            isEnabled: store.taskBoardRole != "viewer"
+        ) { difference in
+            guard let taskID = difference.sources.first else { return }
+            let destinationID: String? = switch difference.destination.position {
+            case .before(let id): id
+            case .end: nil
+            }
+            Task {
+                await store.reorderTask(
+                    id: taskID,
+                    to: difference.destination.collectionID,
+                    before: destinationID
+                )
+            }
+        }
+    }
+
+    private var taskList: some View {
+        List {
+            ForEach(columns, id: \.self) { column in
+                Section(column) {
+                    ForEach(cards(in: column)) { task in
+                        HStack(spacing: 10) {
+                            Button {
+                                Task { await store.setTaskCompleted(task, completed: !task.completed) }
+                            } label: {
+                                Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
+                            }
+                            .buttonStyle(.plain)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(task.title)
+                                    .strikethrough(task.completed)
+                                    .foregroundStyle(task.completed ? .secondary : .primary)
+                                if let due = task.due {
+                                    Text(dueLabel(due))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .contentShape(.rect)
+                        .onTapGesture { openTask = task }
+                        .swipeActions(edge: .trailing) {
+                            Button("Delete", role: .destructive) {
+                                pendingDeleteTask = task
+                            }
+                        }
+                    }
+                    .onMove { offsets, destination in
+                        Task { await store.reorderTasks(in: column, from: offsets, to: destination) }
+                    }
+                }
+            }
+        }
+        .refreshable { await store.refreshBoardsAndProjects() }
     }
 
     // MARK: - Column
 
     private func columnView(_ column: String) -> some View {
         let cards = cards(in: column)
-        let isDropTarget = dropTargetColumn == column
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text(column)
@@ -129,6 +241,7 @@ struct TasksView: View {
                     ForEach(cards) { task in
                         card(task)
                     }
+                    .reorderable(collectionID: column)
                     if cards.isEmpty {
                         Button {
                             newCard = NewCardContext(column: column)
@@ -149,6 +262,7 @@ struct TasksView: View {
                 .padding(.bottom, 12)
             }
             .refreshable { await store.refreshToday() }
+            .swipeActionsContainer()
         }
         .background(
             Color(uiColor: .secondarySystemGroupedBackground).opacity(0.6),
@@ -157,20 +271,9 @@ struct TasksView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
-                    isDropTarget ? environment.theme.accentColor : Color.primary.opacity(0.06),
-                    lineWidth: isDropTarget ? 2 : 1
+                    Color.primary.opacity(0.06),
+                    lineWidth: 1
                 )
-        }
-        .dropDestination(for: String.self) { ids, _ in
-            dropTargetColumn = nil
-            let moved = ids.compactMap { id in store.tasks.first { $0.id == id } }
-            guard !moved.isEmpty else { return false }
-            Task {
-                for task in moved { await store.moveTask(task, to: column) }
-            }
-            return true
-        } isTargeted: { targeted in
-            dropTargetColumn = targeted ? column : (dropTargetColumn == column ? nil : dropTargetColumn)
         }
     }
 
@@ -236,7 +339,23 @@ struct TasksView: View {
         .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
         .contentShape(.rect)
         .onTapGesture { openTask = task }
-        .draggable(task.id)
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button(task.completed ? "Reopen" : "Complete") {
+                Task { await store.setTaskCompleted(task, completed: !task.completed) }
+            }
+            .tint(environment.theme.accentColor)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if let destination = nextColumn(after: task.column) {
+                Button("Move to \(destination)") {
+                    Task { await store.moveTask(task, to: destination) }
+                }
+                .tint(.indigo)
+            }
+            Button("Delete", role: .destructive) {
+                pendingDeleteTask = task
+            }
+        }
         .contextMenu {
             Menu("Move to") {
                 ForEach(columns, id: \.self) { column in
@@ -256,7 +375,7 @@ struct TasksView: View {
             }
             Divider()
             Button("Delete", role: .destructive) {
-                Task { await store.deleteTask(task) }
+                pendingDeleteTask = task
             }
         }
     }
@@ -272,10 +391,12 @@ struct TasksView: View {
     private func cards(in column: String) -> [TaskSummary] {
         store.tasks
             .filter { $0.column == column }
-            .sorted {
-                if $0.completed != $1.completed { return !$0.completed }
-                return ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture)
-            }
+            .sorted { $0.order < $1.order }
+    }
+
+    private func nextColumn(after column: String) -> String? {
+        guard let index = columns.firstIndex(of: column), index + 1 < columns.count else { return nil }
+        return columns[index + 1]
     }
 
     private func dueDate(_ daysAhead: Int) -> Date {
@@ -307,6 +428,7 @@ struct NewTaskSheet: View {
     ) ?? .now
     @State private var targetColumn: String
     @State private var isSaving = false
+    @State private var isAutofilling = false
     @FocusState private var titleFocused: Bool
 
     init(column: String) {
@@ -321,6 +443,13 @@ struct NewTaskSheet: View {
                     TextField("What needs doing?", text: $title, axis: .vertical)
                         .lineLimit(1...3)
                         .focused($titleFocused)
+                    Button(isAutofilling ? "Autofilling…" : "Autofill with Albatross", systemImage: "sparkles") {
+                        Task { await autofill() }
+                    }
+                    .disabled(
+                        isAutofilling
+                            || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
                 }
                 Section("Notes") {
                     TextEditor(text: $details)
@@ -374,6 +503,20 @@ struct NewTaskSheet: View {
         )
         dismiss()
     }
+
+    private func autofill() async {
+        isAutofilling = true
+        defer { isAutofilling = false }
+        let rough = [title, details].filter { !$0.isEmpty }.joined(separator: "\n")
+        guard let draft = await environment.store.autofillTask(rough: rough) else { return }
+        title = draft.title
+        details = draft.details
+        priority = draft.priority ?? ""
+        if let suggestedDue = draft.due {
+            hasDue = true
+            due = suggestedDue
+        }
+    }
 }
 
 // Albatross projects across areas — tap through to the owning area.
@@ -393,10 +536,8 @@ struct ProjectsSheet: View {
                 } else {
                     ForEach(environment.store.projects) { project in
                         Button {
-                            if let areaID = project.areaID {
-                                environment.navigation.openArea(id: areaID, name: nil)
-                                dismiss()
-                            }
+                            environment.navigation.openProject(project)
+                            dismiss()
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -407,11 +548,9 @@ struct ProjectsSheet: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                if project.areaID != nil {
-                                    Image(systemName: "chevron.forward")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                }
+                                Image(systemName: "chevron.forward")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
                             }
                         }
                         .buttonStyle(.plain)
@@ -423,6 +562,436 @@ struct ProjectsSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct ProjectDetailView: View {
+    @Environment(AppEnvironment.self) private var environment
+    let project: ProjectSummary
+    @State private var linkedTasks: [TaskSummary] = []
+    @State private var openTask: TaskSummary?
+    @State private var status: String
+    @State private var isWorking = false
+    @State private var showsArchiveConfirmation = false
+
+    init(project: ProjectSummary) {
+        self.project = project
+        _status = State(initialValue: project.status)
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(project.title)
+                        .font(environment.theme.displayType.displayFont(size: 28))
+                    Text(status.capitalized)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 6)
+            }
+
+            Section("Tasks") {
+                if linkedTasks.isEmpty {
+                    Text("No linked tasks yet.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(linkedTasks) { task in
+                    Button {
+                        openTask = task
+                    } label: {
+                        HStack {
+                            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(task.completed ? .secondary : environment.theme.accentColor)
+                            VStack(alignment: .leading) {
+                                Text(task.title)
+                                    .foregroundStyle(.primary)
+                                Text(task.column)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let areaID = project.areaID {
+                Section("Context") {
+                    Button("Open Area", systemImage: "square.stack.3d.up") {
+                        environment.navigation.openArea(id: areaID, name: nil)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Project")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    environment.navigation.projectRoute = nil
+                } label: {
+                    Label("Back to Tasks", systemImage: "chevron.backward")
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    if status == "active" {
+                        Button("Pause", systemImage: "pause") {
+                            Task { await changeStatus("paused") }
+                        }
+                    } else {
+                        Button("Resume", systemImage: "play") {
+                            Task { await changeStatus("active") }
+                        }
+                    }
+                    if status != "done" {
+                        Button("Mark Done", systemImage: "checkmark.circle") {
+                            Task { await changeStatus("done") }
+                        }
+                    }
+                    Divider()
+                    Button("Archive", systemImage: "archivebox", role: .destructive) {
+                        showsArchiveConfirmation = true
+                    }
+                } label: {
+                    Label("Project actions", systemImage: "ellipsis.circle")
+                }
+                .disabled(isWorking)
+            }
+        }
+        .task {
+            linkedTasks = await environment.store.projectTasks(projectID: project.id)
+        }
+        .sheet(item: $openTask) { TaskDetailView(task: $0) }
+        .confirmationDialog(
+            "Archive this project?",
+            isPresented: $showsArchiveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Archive Project", role: .destructive) {
+                Task {
+                    await changeStatus("archived")
+                    environment.navigation.projectRoute = nil
+                }
+            }
+        } message: {
+            Text("Its task cards remain available on their boards.")
+        }
+    }
+
+    private func changeStatus(_ newStatus: String) async {
+        isWorking = true
+        defer { isWorking = false }
+        if await environment.store.updateProject(project, status: newStatus) {
+            status = newStatus
+        }
+    }
+}
+
+private struct BoardManagementSheet: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dismiss) private var dismiss
+    @State private var newBoardTitle = ""
+    @State private var renameTitle = ""
+    @State private var isWorking = false
+    @State private var showsDeleteConfirmation = false
+
+    private var selectedBoard: TaskBoardSummary? {
+        environment.store.taskBoards.first { $0.id == environment.store.activeBoardID }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Current board") {
+                    Picker(
+                        "Board",
+                        selection: Binding(
+                            get: { environment.store.activeBoardID ?? "" },
+                            set: { boardID in
+                                Task {
+                                    await environment.store.switchBoard(to: boardID)
+                                    renameTitle = selectedBoard?.title ?? ""
+                                }
+                            }
+                        )
+                    ) {
+                        ForEach(environment.store.taskBoards) { board in
+                            Text(board.title).tag(board.id)
+                        }
+                    }
+                    TextField("Board name", text: $renameTitle)
+                    Button("Rename") {
+                        Task {
+                            isWorking = true
+                            _ = await environment.store.renameActiveBoard(title: renameTitle)
+                            isWorking = false
+                        }
+                    }
+                    .disabled(
+                        isWorking
+                            || selectedBoard?.owned != true
+                            || renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+                }
+
+                Section("New board") {
+                    TextField("Board name", text: $newBoardTitle)
+                    Button("Create Board") {
+                        Task {
+                            isWorking = true
+                            if await environment.store.createBoard(title: newBoardTitle) {
+                                newBoardTitle = ""
+                                renameTitle = selectedBoard?.title ?? ""
+                            }
+                            isWorking = false
+                        }
+                    }
+                    .disabled(isWorking || newBoardTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if selectedBoard?.owned == true {
+                    Section {
+                        Button("Delete Board", role: .destructive) {
+                            showsDeleteConfirmation = true
+                        }
+                        .disabled(isWorking)
+                    } footer: {
+                        Text("Deleting a board permanently removes its columns, cards, and share access.")
+                    }
+                }
+            }
+            .navigationTitle("Boards")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .onAppear { renameTitle = selectedBoard?.title ?? "" }
+            .onChange(of: environment.store.activeBoardID) {
+                renameTitle = selectedBoard?.title ?? ""
+            }
+            .confirmationDialog(
+                "Delete “\(selectedBoard?.title ?? "this board")”?",
+                isPresented: $showsDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Board and Cards", role: .destructive) {
+                    Task {
+                        isWorking = true
+                        _ = await environment.store.deleteActiveBoard()
+                        renameTitle = selectedBoard?.title ?? ""
+                        isWorking = false
+                    }
+                }
+            } message: {
+                Text("This action cannot be undone.")
+            }
+        }
+    }
+}
+
+private struct ColumnManagementSheet: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dismiss) private var dismiss
+    @State private var newColumnName = ""
+    @State private var renameColumn: TaskColumnSummary?
+    @State private var renameText = ""
+    @State private var deleteColumn: TaskColumnSummary?
+    @State private var isWorking = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    ForEach(environment.store.taskColumnRows) { column in
+                        HStack {
+                            Text(column.name)
+                            Spacer()
+                            Menu {
+                                Button("Rename", systemImage: "pencil") {
+                                    renameColumn = column
+                                    renameText = column.name
+                                }
+                                Button("Delete", systemImage: "trash", role: .destructive) {
+                                    deleteColumn = column
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                            }
+                        }
+                    }
+                    .onMove { offsets, destination in
+                        Task {
+                            await environment.store.reorderColumns(from: offsets, to: destination)
+                        }
+                    }
+                } header: {
+                    Text("Workflow")
+                } footer: {
+                    Text("Drag columns into the order used by board and list views.")
+                }
+
+                Section("Add column") {
+                    TextField("Column name", text: $newColumnName)
+                    Button("Add Column") {
+                        Task {
+                            isWorking = true
+                            if await environment.store.createColumn(name: newColumnName) {
+                                newColumnName = ""
+                            }
+                            isWorking = false
+                        }
+                    }
+                    .disabled(isWorking || newColumnName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("Columns")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .alert("Rename column", isPresented: Binding(
+                get: { renameColumn != nil },
+                set: { if !$0 { renameColumn = nil } }
+            )) {
+                TextField("Column name", text: $renameText)
+                Button("Cancel", role: .cancel) { renameColumn = nil }
+                Button("Rename") {
+                    guard let column = renameColumn else { return }
+                    renameColumn = nil
+                    Task { _ = await environment.store.renameColumn(column, name: renameText) }
+                }
+            }
+            .confirmationDialog(
+                "Delete “\(deleteColumn?.name ?? "this column")”?",
+                isPresented: Binding(
+                    get: { deleteColumn != nil },
+                    set: { if !$0 { deleteColumn = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Column and Cards", role: .destructive) {
+                    guard let column = deleteColumn else { return }
+                    deleteColumn = nil
+                    Task { _ = await environment.store.deleteColumn(column) }
+                }
+            } message: {
+                Text("Every card in this column will be permanently deleted.")
+            }
+        }
+    }
+}
+
+private struct BoardSharingSheet: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var role = "member"
+    @State private var publicLinkEnabled = false
+    @State private var pendingRemove: TaskBoardMember?
+    @State private var isWorking = false
+
+    private var publicURL: URL? {
+        guard let token = environment.store.taskPublicToken,
+              let baseURL = environment.configuration.apiBaseURL else { return nil }
+        return URL(string: "/b/\(token)", relativeTo: baseURL)?.absoluteURL
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Invite") {
+                    TextField("Email address", text: $email)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                    Picker("Access", selection: $role) {
+                        Text("Can edit").tag("member")
+                        Text("View only").tag("viewer")
+                    }
+                    Button("Send Invite") {
+                        Task {
+                            isWorking = true
+                            if await environment.store.inviteBoardMember(email: email, role: role) {
+                                email = ""
+                            }
+                            isWorking = false
+                        }
+                    }
+                    .disabled(isWorking || !email.contains("@"))
+                }
+
+                Section("People") {
+                    if environment.store.taskBoardMembers.isEmpty {
+                        Text("Only you have access.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(environment.store.taskBoardMembers) { member in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(member.email)
+                                Text("\(member.role == "member" ? "Can edit" : "View only") · \(member.status)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Remove", role: .destructive) { pendingRemove = member }
+                                .font(.caption)
+                        }
+                    }
+                }
+
+                Section {
+                    Toggle("Public read-only link", isOn: Binding(
+                        get: { publicLinkEnabled },
+                        set: { enabled in
+                            publicLinkEnabled = enabled
+                            Task {
+                                if !(await environment.store.setBoardPublicLink(enabled: enabled)) {
+                                    publicLinkEnabled.toggle()
+                                }
+                            }
+                        }
+                    ))
+                    if let publicURL {
+                        ShareLink(item: publicURL) {
+                            Label("Share Public Link", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                } footer: {
+                    Text("Anyone with the public link can view this board. They cannot edit cards.")
+                }
+            }
+            .navigationTitle("Share Board")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .onAppear {
+                publicLinkEnabled = environment.store.taskPublicToken != nil
+            }
+            .confirmationDialog(
+                "Remove access for \(pendingRemove?.email ?? "this person")?",
+                isPresented: Binding(
+                    get: { pendingRemove != nil },
+                    set: { if !$0 { pendingRemove = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Access", role: .destructive) {
+                    guard let member = pendingRemove else { return }
+                    pendingRemove = nil
+                    Task { _ = await environment.store.removeBoardMember(member) }
                 }
             }
         }

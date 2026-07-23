@@ -28,9 +28,11 @@ struct AreaDetailView: View {
     @State private var loadError: String?
     @State private var isUnavailable = false
     @State private var surface: AreaSurface = .brief
-    @State private var briefQueued = false
     @State private var showsImagePrompt = false
     @State private var imageURLDraft = ""
+    @State private var showsManagement = false
+    @State private var inboxSelection: Set<String> = []
+    @State private var inboxEditMode: EditMode = .inactive
 
     var body: some View {
         @Bindable var navigation = environment.navigation
@@ -84,16 +86,24 @@ struct AreaDetailView: View {
             Text("Shown as this area’s brief masthead here and its icon on desktop. Paste an image address; leave empty to remove.")
         }
         .task(id: route.id) { await load(initial: true) }
+        .onChange(of: environment.store.areaRefreshStates[route.areaID]?.phase) { _, phase in
+            if phase == .done { Task { await load(initial: false) } }
+        }
+        .sheet(isPresented: $showsManagement) {
+            if let detail {
+                AreaManagementView(detail: detail) {
+                    showsManagement = false
+                    Task { await load(initial: false) }
+                } onArchive: {
+                    showsManagement = false
+                    environment.navigation.areaRoute = nil
+                }
+            }
+        }
     }
 
-    // Queue the living-brief regeneration (same mutation as desktop), then
-    // re-read the area home once the worker has had a chance to write.
     private func refreshBrief() async {
-        guard await environment.store.queueAreaBriefRefresh(areaID: route.areaID) else { return }
-        briefQueued = true
-        try? await Task.sleep(for: .seconds(12))
-        await load(initial: false)
-        briefQueued = false
+        _ = await environment.store.queueAreaBriefRefresh(areaID: route.areaID)
     }
 
     // MARK: - Loaded
@@ -140,13 +150,31 @@ struct AreaDetailView: View {
                     Button("Reload") {
                         Task { await load(initial: false) }
                     }
-                    Button(briefQueued ? "Brief refresh queued…" : "Refresh brief") {
+                    Button(refreshLabel, systemImage: "arrow.clockwise") {
                         Task { await refreshBrief() }
                     }
-                    .disabled(briefQueued)
+                    .disabled(isRefreshingBrief)
                     Button("Set picture") {
                         imageURLDraft = detail?.identity.imageURL ?? ""
                         showsImagePrompt = true
+                    }
+                    Button("Teach Albatross", systemImage: "bubble.left.and.text.bubble.right") {
+                        environment.startAssistantChat(
+                            scope: AssistantChatScope(
+                                kind: .area,
+                                contextID: route.areaID,
+                                label: detail?.identity.name ?? route.name
+                            )
+                        )
+                    }
+                    Button("Manage Area", systemImage: "slider.horizontal.3") {
+                        showsManagement = true
+                    }
+                    if surface == .inbox {
+                        Button(inboxEditMode.isEditing ? "Done selecting" : "Select conversations") {
+                            inboxEditMode = inboxEditMode.isEditing ? .inactive : .active
+                            if !inboxEditMode.isEditing { inboxSelection.removeAll() }
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -162,6 +190,17 @@ struct AreaDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.top, 4)
+    }
+
+    private var isRefreshingBrief: Bool {
+        guard let phase = environment.store.areaRefreshStates[route.areaID]?.phase else {
+            return false
+        }
+        return phase == .queued || phase == .running
+    }
+
+    private var refreshLabel: String {
+        environment.store.areaRefreshStates[route.areaID]?.progress ?? "Refresh brief"
     }
 
     private func surfacePill(_ choice: AreaSurface) -> some View {
@@ -186,7 +225,7 @@ struct AreaDetailView: View {
     // The area's mail as a first-class inbox list — same rows the brief's Mail
     // section samples, but as the whole surface.
     private func inboxSurface(_ detail: AreaDetail) -> some View {
-        List {
+        List(selection: $inboxSelection) {
             if detail.mail.isEmpty {
                 ContentUnavailableView(
                     "No mail filed here yet",
@@ -195,16 +234,39 @@ struct AreaDetailView: View {
                 )
             } else {
                 ForEach(detail.mail) { row in
-                    Button {
-                        environment.navigation.openThread(
-                            accountID: row.accountID,
-                            threadID: row.threadID,
-                            preservingCurrentRoot: true
-                        )
-                    } label: {
+                    if inboxEditMode.isEditing {
                         AreaMailRowView(row: row)
+                            .tag(row.id)
+                    } else {
+                        Button {
+                            environment.navigation.openThread(
+                                accountID: row.accountID,
+                                threadID: row.threadID,
+                                preservingCurrentRoot: true
+                            )
+                        } label: {
+                            AreaMailRowView(row: row)
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button("Archive") {
+                                Task { await performInboxAction("archive", rows: [row]) }
+                            }
+                            .tint(.blue)
+                            Button("Trash", role: .destructive) {
+                                Task { await performInboxAction("trash", rows: [row]) }
+                            }
+                        }
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            Button("Remove from Area") {
+                                Task { await performInboxAction("remove_area", rows: [row]) }
+                            }
+                            .tint(.orange)
+                        }
+                        .contextMenu {
+                            inboxMoveMenu(rows: [row])
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
                 if detail.counts.mail > detail.mail.count {
                     Text("Showing the \(detail.mail.count) most relevant of \(detail.counts.mail) conversations.")
@@ -215,10 +277,64 @@ struct AreaDetailView: View {
             }
         }
         .listStyle(.plain)
+        .environment(\.editMode, $inboxEditMode)
         .scrollContentBackground(.hidden)
         // Clearance for the floating controls the hidden bar used to provide.
         .contentMargins(.top, 52, for: .scrollContent)
         .refreshable { await load(initial: false) }
+        .safeAreaInset(edge: .bottom) {
+            if inboxEditMode.isEditing, !inboxSelection.isEmpty {
+                inboxBulkToolbar(detail)
+            }
+        }
+    }
+
+    private func inboxBulkToolbar(_ detail: AreaDetail) -> some View {
+        let rows = detail.mail.filter { inboxSelection.contains($0.id) }
+        return HStack {
+            Button("Archive", systemImage: "archivebox") {
+                Task { await performInboxAction("archive", rows: rows) }
+            }
+            Spacer()
+            Menu {
+                inboxMoveMenu(rows: rows)
+            } label: {
+                Label("Move", systemImage: "folder")
+            }
+            Spacer()
+            Button("Trash", systemImage: "trash", role: .destructive) {
+                Task { await performInboxAction("trash", rows: rows) }
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial)
+    }
+
+    @ViewBuilder
+    private func inboxMoveMenu(rows: [AreaDetail.MailRow]) -> some View {
+        Button("Remove from Area", systemImage: "rectangle.portrait.and.arrow.right") {
+            Task { await performInboxAction("remove_area", rows: rows) }
+        }
+        Menu("Correct smart category") {
+            ForEach(["main", "action", "noise"], id: \.self) { category in
+                Button(category.capitalized) {
+                    Task { await performInboxAction("category", rows: rows, category: category) }
+                }
+            }
+        }
+    }
+
+    private func performInboxAction(
+        _ action: String,
+        rows: [AreaDetail.MailRow],
+        category: String? = nil
+    ) async {
+        guard !rows.isEmpty else { return }
+        if await environment.store.mutateAreaMail(rows, action: action, category: category) {
+            inboxSelection.removeAll()
+            inboxEditMode = .inactive
+            await load(initial: false)
+        }
     }
 
     private func briefSurface(_ detail: AreaDetail) -> some View {

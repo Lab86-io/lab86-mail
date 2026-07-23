@@ -5,6 +5,12 @@ import SwiftUI
 // (Calendar-tab events). Rows opened from an Area (no calendar id) show the
 // summary they carry rather than an empty screen.
 struct EventDetailView: View {
+    private enum RecurrenceScope: String, Identifiable {
+        case occurrence
+        case series
+        var id: Self { self }
+    }
+
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
@@ -15,8 +21,11 @@ struct EventDetailView: View {
     @State private var loadError: String?
     @State private var showsEditor = false
     @State private var showsDeleteConfirmation = false
+    @State private var editScope: RecurrenceScope = .occurrence
     @State private var isActing = false
     @State private var actionError: String?
+    @State private var linkedTasks: [TaskSummary] = []
+    @State private var openTask: TaskSummary?
 
     private var summary: CalendarEventSummary? {
         route.preview ?? environment.store.events.first {
@@ -144,6 +153,18 @@ struct EventDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            if !linkedTasks.isEmpty {
+                Section("Related tasks") {
+                    ForEach(linkedTasks) { task in
+                        Button {
+                            openTask = task
+                        } label: {
+                            Label(task.title, systemImage: task.completed ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                }
+            }
         }
         .navigationTitle(resolvedTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -151,8 +172,23 @@ struct EventDetailView: View {
             if resolvedCalendarID != nil {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        Button("Edit event") { showsEditor = true }
-                        Button("Delete event", role: .destructive) { showsDeleteConfirmation = true }
+                        if isRecurring {
+                            Button("Edit this occurrence") {
+                                editScope = .occurrence
+                                showsEditor = true
+                            }
+                            Button("Edit entire series") {
+                                editScope = .series
+                                showsEditor = true
+                            }
+                            Divider()
+                            Button("Delete occurrence or series", role: .destructive) {
+                                showsDeleteConfirmation = true
+                            }
+                        } else {
+                            Button("Edit event") { showsEditor = true }
+                            Button("Delete event", role: .destructive) { showsDeleteConfirmation = true }
+                        }
                     } label: {
                         Label("Event actions", systemImage: "ellipsis.circle")
                     }
@@ -163,12 +199,20 @@ struct EventDetailView: View {
         .sheet(isPresented: $showsEditor) {
             if let calendarID = resolvedCalendarID {
                 EventEditorView(
-                    mode: .edit(accountID: route.accountID, calendarID: calendarID, eventID: route.eventID),
+                    mode: .edit(
+                        accountID: route.accountID,
+                        calendarID: calendarID,
+                        eventID: editScope == .series ? (detail?.masterEventID ?? route.eventID) : route.eventID
+                    ),
                     title: resolvedTitle,
                     allDay: resolvedAllDay,
                     start: resolvedStart ?? .now,
                     end: resolvedEnd,
-                    location: resolvedLocation ?? ""
+                    location: resolvedLocation ?? "",
+                    calendarID: calendarID,
+                    recurrence: detail?.recurrence ?? [],
+                    attendees: detail?.attendees.compactMap(\.email) ?? [],
+                    notes: detail?.description ?? ""
                 )
                 .onDisappear { Task { await load() } }
             }
@@ -178,16 +222,36 @@ struct EventDetailView: View {
             isPresented: $showsDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete event", role: .destructive) { Task { await deleteEvent() } }
+            if isRecurring {
+                Button("Delete This Occurrence", role: .destructive) {
+                    Task { await deleteEvent(scope: .occurrence) }
+                }
+                Button("Delete Entire Series", role: .destructive) {
+                    Task { await deleteEvent(scope: .series) }
+                }
+            } else {
+                Button("Delete Event", role: .destructive) {
+                    Task { await deleteEvent(scope: .occurrence) }
+                }
+            }
         } message: {
-            Text("Guests are not emailed a cancellation.")
+            Text(
+                isRecurring
+                    ? "Choose whether this affects only this occurrence or the full recurring series. Guests are not emailed."
+                    : "Guests are not emailed a cancellation."
+            )
         }
         .task(id: route.id) { await load() }
+        .sheet(item: $openTask) { TaskDetailView(task: $0) }
     }
 
     private var resolvedCalendarID: String? {
         let id = route.calendarID ?? summary?.calendarID
         return (id?.isEmpty == false) ? id : nil
+    }
+
+    private var isRecurring: Bool {
+        detail?.masterEventID != nil || detail?.recurrence.isEmpty == false
     }
 
     private func rsvpButton(_ title: String, status: String) -> some View {
@@ -215,7 +279,7 @@ struct EventDetailView: View {
         }
     }
 
-    private func deleteEvent() async {
+    private func deleteEvent(scope: RecurrenceScope) async {
         guard let calendarID = resolvedCalendarID else { return }
         isActing = true
         defer { isActing = false }
@@ -223,7 +287,8 @@ struct EventDetailView: View {
             try await environment.store.deleteEvent(
                 accountID: route.accountID,
                 calendarID: calendarID,
-                eventID: route.eventID
+                eventID: scope == .series ? (detail?.masterEventID ?? route.eventID) : route.eventID,
+                deleteSeries: scope == .series
             )
             dismiss()
         } catch {
@@ -266,6 +331,10 @@ struct EventDetailView: View {
     }
 
     private func load() async {
+        linkedTasks = await environment.store.tasksForCalendarEvent(
+            eventID: route.eventID,
+            masterEventID: detail?.masterEventID
+        )
         let calendarID = route.calendarID ?? summary?.calendarID
         guard let calendarID, !calendarID.isEmpty else {
             // Summary-only detail — nothing richer to fetch without a calendar id.
@@ -278,6 +347,10 @@ struct EventDetailView: View {
                 accountID: route.accountID,
                 eventID: route.eventID,
                 calendarID: calendarID
+            )
+            linkedTasks = await environment.store.tasksForCalendarEvent(
+                eventID: route.eventID,
+                masterEventID: detail?.masterEventID
             )
         } catch {
             loadError = error.localizedDescription

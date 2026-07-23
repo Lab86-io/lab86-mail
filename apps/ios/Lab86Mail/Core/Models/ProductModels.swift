@@ -28,6 +28,8 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
     var unread: Bool
     var starred: Bool
     let category: String?
+    let categoryReason: String?
+    let categoryConfidence: Double?
 
     init(
         id: String,
@@ -38,7 +40,9 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         date: Date,
         unread: Bool,
         starred: Bool,
-        category: String? = nil
+        category: String? = nil,
+        categoryReason: String? = nil,
+        categoryConfidence: Double? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -49,6 +53,8 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         self.unread = unread
         self.starred = starred
         self.category = category
+        self.categoryReason = categoryReason
+        self.categoryConfidence = categoryConfidence
     }
 
     init?(json: JSONValue, accountID fallbackAccountID: String? = nil) {
@@ -71,6 +77,8 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         unread = json["unread"]?.boolValue ?? false
         starred = json["starred"]?.boolValue ?? false
         category = json["smartCategory"]?["primary"]?.stringValue
+        categoryReason = json["smartCategory"]?["reason"]?.stringValue?.nilIfBlank
+        categoryConfidence = json["smartCategory"]?["confidence"]?.doubleValue
     }
 
     private static func date(from value: Double?) -> Date {
@@ -185,6 +193,26 @@ struct MailThreadDetail: Sendable {
     }
 }
 
+struct BulkTriageVerdict: Identifiable, Hashable, Sendable {
+    let id: String
+    let priority: Int
+    let action: String
+    let reason: String
+
+    init?(json: JSONValue) {
+        guard let id = json["id"]?.stringValue else { return nil }
+        self.id = id
+        priority = Int(json["priority"]?.doubleValue ?? 2)
+        action = json["action"]?.stringValue ?? "read"
+        reason = json["reason"]?.stringValue ?? ""
+    }
+}
+
+struct UndoableOperationNotice: Identifiable, Hashable, Sendable {
+    let id: String
+    let summary: String
+}
+
 struct LiveMailThreadsPayload: Decodable, Sendable {
     let items: [LiveMailThreadPayload]
 }
@@ -241,13 +269,17 @@ struct LiveMailThreadPayload: Decodable, Sendable {
             date: Date(timeIntervalSince1970: timestamp),
             unread: unread,
             starred: starred ?? false,
-            category: smartCategory?.primary
+            category: smartCategory?.primary,
+            categoryReason: smartCategory?.reason,
+            categoryConfidence: smartCategory?.confidence
         )
     }
 }
 
 struct LiveMailCategoryPayload: Decodable, Sendable {
     let primary: String
+    let reason: String?
+    let confidence: Double?
 }
 
 struct LiveMailThreadDetailPayload: Decodable, Sendable {
@@ -462,6 +494,8 @@ struct CalendarEventDetail: Sendable {
     let conferenceLabel: String?
     let attendees: [Attendee]
     let htmlLink: URL?
+    let masterEventID: String?
+    let recurrence: [String]
 
     init(json: JSONValue) {
         title = json["title"]?.stringValue?.nilIfBlank ?? "Untitled event"
@@ -474,6 +508,8 @@ struct CalendarEventDetail: Sendable {
         accountID = json["accountId"]?.stringValue?.nilIfBlank ?? json["account"]?.stringValue?.nilIfBlank
         organizerLabel = MailThreadSummary.addressString(json["organizer"])
         htmlLink = json["htmlLink"]?.stringValue.flatMap(URL.init(string:))
+        masterEventID = json["masterEventId"]?.stringValue?.nilIfBlank
+        recurrence = (json["recurrence"]?.arrayValue ?? []).compactMap(\.stringValue)
 
         let conference = json["conferencing"]
         let rawConferenceURL = conference?["url"]?.stringValue
@@ -500,14 +536,180 @@ struct CalendarEventDetail: Sendable {
     }
 }
 
+struct CalendarChoice: Identifiable, Hashable, Sendable {
+    let accountID: String
+    let calendarID: String
+    let name: String
+    let isPrimary: Bool
+    let isReadOnly: Bool
+    let hexColor: String?
+
+    var id: String { "\(accountID):\(calendarID)" }
+
+    init?(json: JSONValue) {
+        guard let accountID = json["accountId"]?.stringValue,
+              let calendarID = json["calendarId"]?.stringValue else { return nil }
+        self.accountID = accountID
+        self.calendarID = calendarID
+        name = json["name"]?.stringValue?.nilIfBlank ?? "Calendar"
+        isPrimary = json["isPrimary"]?.boolValue ?? false
+        isReadOnly = json["readOnly"]?.boolValue ?? false
+        hexColor = json["hexColor"]?.stringValue?.nilIfBlank
+    }
+}
+
 struct TaskBoardSummary: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String
+    let owned: Bool
+    let hasPublicLink: Bool
+    let isDefault: Bool
 
     init?(json: JSONValue) {
         guard let id = json["boardId"]?.stringValue ?? json["_id"]?.stringValue else { return nil }
         self.id = id
         title = json["title"]?.stringValue?.nilIfBlank ?? "Board"
+        owned = json["owned"]?.boolValue ?? false
+        hasPublicLink = json["hasPublicLink"]?.boolValue ?? false
+        isDefault = json["isDefault"]?.boolValue ?? false
+    }
+}
+
+struct TaskColumnSummary: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let order: Double
+
+    init(id: String, name: String, order: Double) {
+        self.id = id
+        self.name = name
+        self.order = order
+    }
+
+    init?(json: JSONValue) {
+        guard let id = json["columnId"]?.stringValue, let name = json["name"]?.stringValue else { return nil }
+        self.id = id
+        self.name = name
+        order = json["order"]?.doubleValue ?? 0
+    }
+}
+
+struct TaskBoardMember: Identifiable, Hashable, Sendable {
+    let id: String
+    let email: String
+    let role: String
+    let status: String
+
+    init?(json: JSONValue) {
+        guard let id = json["memberId"]?.stringValue, let email = json["email"]?.stringValue else { return nil }
+        self.id = id
+        self.email = email
+        role = json["role"]?.stringValue ?? "viewer"
+        status = json["status"]?.stringValue ?? "invited"
+    }
+}
+
+struct TaskAttachmentSummary: Identifiable, Hashable, Codable, Sendable {
+    let name: String
+    let url: URL?
+    let contentType: String?
+    let size: Int?
+
+    var id: String { "\(name):\(url?.absoluteString ?? "")" }
+
+    init(json: JSONValue) {
+        name = json["name"]?.stringValue?.nilIfBlank ?? "Attachment"
+        url = json["url"]?.stringValue.flatMap(URL.init(string:))
+        contentType = json["contentType"]?.stringValue?.nilIfBlank
+        size = json["size"]?.doubleValue.map(Int.init)
+    }
+}
+
+struct TaskCommentSummary: Identifiable, Hashable, Codable, Sendable {
+    let id: String
+    let author: String
+    let body: String
+    let createdAt: Date?
+
+    init?(json: JSONValue) {
+        guard let id = json["id"]?.stringValue, let body = json["body"]?.stringValue else { return nil }
+        self.id = id
+        author = json["authorEmail"]?.stringValue?.nilIfBlank ?? "Collaborator"
+        self.body = body
+        createdAt = CalendarDateParser.date(json["createdAt"])
+    }
+}
+
+struct TaskActivitySummary: Identifiable, Hashable, Codable, Sendable {
+    let id: String
+    let kind: String
+    let detail: String?
+    let actor: String?
+    let createdAt: Date?
+
+    init?(json: JSONValue) {
+        kind = json["kind"]?.stringValue ?? json["action"]?.stringValue ?? "updated"
+        detail = json["detail"]?.stringValue?.nilIfBlank
+        actor = json["actorEmail"]?.stringValue?.nilIfBlank ?? json["authorEmail"]?.stringValue?.nilIfBlank
+        createdAt = CalendarDateParser.date(json["createdAt"])
+        id = json["id"]?.stringValue
+            ?? "\(kind):\(createdAt?.timeIntervalSince1970 ?? 0):\(detail ?? "")"
+    }
+}
+
+struct TaskSourceSummary: Hashable, Codable, Sendable {
+    let kind: String
+    let accountID: String?
+    let threadID: String?
+    let calendarID: String?
+    let eventID: String?
+    let url: URL?
+    let title: String?
+
+    init?(json: JSONValue?) {
+        guard let json, let kind = json["kind"]?.stringValue else { return nil }
+        self.kind = kind
+        accountID = json["accountId"]?.stringValue?.nilIfBlank
+        threadID = json["threadId"]?.stringValue?.nilIfBlank
+        calendarID = json["calendarId"]?.stringValue?.nilIfBlank
+        eventID = json["eventId"]?.stringValue?.nilIfBlank
+        url = json["url"]?.stringValue.flatMap(URL.init(string:))
+        title = json["title"]?.stringValue?.nilIfBlank
+    }
+}
+
+struct TaskDraftSuggestion: Sendable {
+    let title: String
+    let details: String
+    let priority: String?
+    let due: Date?
+
+    init?(json: JSONValue?) {
+        guard let json, let title = json["title"]?.stringValue?.nilIfBlank else { return nil }
+        self.title = title
+        details = json["description"]?.stringValue ?? ""
+        priority = json["priority"]?.stringValue?.nilIfBlank
+        due = CalendarDateParser.date(json["dueIso"])
+    }
+}
+
+struct CaptureSuggestion: Identifiable, Hashable, Sendable {
+    let id: UUID
+    var title: String
+    var rawText: String
+
+    init(id: UUID = UUID(), title: String, rawText: String) {
+        self.id = id
+        self.title = title
+        self.rawText = rawText
+    }
+
+    init?(json: JSONValue) {
+        guard let title = json["title"]?.stringValue?.nilIfBlank,
+              let rawText = json["rawText"]?.stringValue?.nilIfBlank else { return nil }
+        id = UUID()
+        self.title = title
+        self.rawText = rawText
     }
 }
 
@@ -537,6 +739,13 @@ struct TaskSummary: Identifiable, Hashable, Codable, Sendable {
     let details: String?
     let priority: String?
     let labels: [String]
+    let order: Double
+    let weight: Int?
+    let assignees: [String]
+    let attachments: [TaskAttachmentSummary]
+    let comments: [TaskCommentSummary]
+    let activity: [TaskActivitySummary]
+    let source: TaskSourceSummary?
 
     init(
         id: String,
@@ -546,7 +755,14 @@ struct TaskSummary: Identifiable, Hashable, Codable, Sendable {
         completed: Bool,
         details: String? = nil,
         priority: String? = nil,
-        labels: [String] = []
+        labels: [String] = [],
+        order: Double = 0,
+        weight: Int? = nil,
+        assignees: [String] = [],
+        attachments: [TaskAttachmentSummary] = [],
+        comments: [TaskCommentSummary] = [],
+        activity: [TaskActivitySummary] = [],
+        source: TaskSourceSummary? = nil
     ) {
         self.id = id
         self.title = title
@@ -556,6 +772,13 @@ struct TaskSummary: Identifiable, Hashable, Codable, Sendable {
         self.details = details
         self.priority = priority
         self.labels = labels
+        self.order = order
+        self.weight = weight
+        self.assignees = assignees
+        self.attachments = attachments
+        self.comments = comments
+        self.activity = activity
+        self.source = source
     }
 
     init?(json: JSONValue, column: String = "Tasks") {
@@ -574,11 +797,23 @@ struct TaskSummary: Identifiable, Hashable, Codable, Sendable {
         details = json["description"]?.stringValue?.nilIfBlank
         priority = json["priority"]?.stringValue?.nilIfBlank
         labels = (json["labels"]?.arrayValue ?? []).compactMap(\.stringValue)
+        order = json["order"]?.doubleValue ?? 0
+        weight = json["weight"]?.doubleValue.map(Int.init)
+        assignees = (json["assignees"]?.arrayValue ?? []).compactMap(\.stringValue)
+        attachments = (json["attachments"]?.arrayValue ?? []).map(TaskAttachmentSummary.init)
+        comments = (json["comments"]?.arrayValue ?? []).compactMap(TaskCommentSummary.init)
+        activity = (json["activity"]?.arrayValue ?? []).compactMap(TaskActivitySummary.init)
+        source = TaskSourceSummary(json: json["source"])
     }
 
     // Copy with selective changes — optimistic updates must not drop the
     // fields they don't touch.
-    func with(column: String? = nil, due: Date?? = nil, completed: Bool? = nil) -> TaskSummary {
+    func with(
+        column: String? = nil,
+        due: Date?? = nil,
+        completed: Bool? = nil,
+        order: Double? = nil
+    ) -> TaskSummary {
         TaskSummary(
             id: id,
             title: title,
@@ -587,7 +822,14 @@ struct TaskSummary: Identifiable, Hashable, Codable, Sendable {
             completed: completed ?? self.completed,
             details: details,
             priority: priority,
-            labels: labels
+            labels: labels,
+            order: order ?? self.order,
+            weight: weight,
+            assignees: assignees,
+            attachments: attachments,
+            comments: comments,
+            activity: activity,
+            source: source
         )
     }
 }
@@ -811,6 +1053,7 @@ struct AreaDetail: Hashable, Codable, Sendable {
     }
 
     struct MailRow: Identifiable, Hashable, Codable, Sendable {
+        let linkID: String?
         let accountID: String
         let threadID: String
         let subject: String
@@ -965,6 +1208,7 @@ struct AreaDetail: Hashable, Codable, Sendable {
                 return nil
             }
             return MailRow(
+                linkID: row["linkId"]?.stringValue,
                 accountID: row["accountId"]?.stringValue ?? "",
                 threadID: threadID,
                 subject: EmailTextNormalizer.header(row["subject"]?.stringValue).nilIfBlank ?? "(No subject)",
@@ -1281,6 +1525,38 @@ struct ApprovalSummary: Identifiable, Hashable, Codable, Sendable {
             ?? json["description"]?.stringValue
             ?? "Albatross needs your approval before continuing."
         status = json["status"]?.stringValue ?? "pending"
+    }
+}
+
+struct PendingWorkQuestionSummary: Identifiable, Hashable, Sendable {
+    let question: WorkDetail.Question
+    let workID: String?
+    let workTitle: String
+    var id: String { question.id }
+
+    init?(json: JSONValue) {
+        let row = json["question"]
+        guard let id = row?["_id"]?.stringValue ?? row?["id"]?.stringValue,
+              let prompt = row?["prompt"]?.stringValue?.nilIfBlank else { return nil }
+        question = WorkDetail.Question(
+            id: id,
+            status: row?["status"]?.stringValue ?? "pending",
+            prompt: prompt,
+            reason: row?["reason"]?.stringValue?.nilIfBlank,
+            options: (row?["options"]?.arrayValue ?? []).compactMap { option in
+                guard let optionID = option["id"]?.stringValue,
+                      let label = option["label"]?.stringValue?.nilIfBlank else { return nil }
+                return WorkDetail.Question.Option(
+                    id: optionID,
+                    label: label,
+                    detail: option["description"]?.stringValue?.nilIfBlank
+                )
+            }
+        )
+        workID = json["work"]?["_id"]?.stringValue
+        workTitle = json["work"]?["title"]?.stringValue?.nilIfBlank
+            ?? json["project"]?["title"]?.stringValue?.nilIfBlank
+            ?? "Albatross"
     }
 }
 

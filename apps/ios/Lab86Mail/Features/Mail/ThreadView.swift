@@ -16,6 +16,8 @@ struct ThreadView: View {
     @State private var isSummarizing = false
     @State private var showsEventReview = false
     @State private var expandedMessageID: String?
+    @State private var linkedTasks: [TaskSummary] = []
+    @State private var openTask: TaskSummary?
 
     var body: some View {
         Group {
@@ -25,6 +27,30 @@ struct ThreadView: View {
                         threadHeader(detail)
                         if let modelSummary {
                             summaryCard(modelSummary)
+                        }
+                        if !linkedTasks.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Linked tasks")
+                                    .font(.headline)
+                                ForEach(linkedTasks) { task in
+                                    Button {
+                                        openTask = task
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
+                                            Text(task.title)
+                                                .foregroundStyle(.primary)
+                                            Spacer()
+                                            Image(systemName: "chevron.forward")
+                                                .font(.caption)
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                        .padding(12)
+                                        .background(.thinMaterial, in: .rect(cornerRadius: 12))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         }
                         ForEach(detail.messages) { message in
                             MessageView(
@@ -43,11 +69,13 @@ struct ThreadView: View {
             } else if isLoading {
                 ProgressView("Opening thread…")
             } else {
-                ContentUnavailableView(
-                    "Couldn’t open this email",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(errorMessage ?? "Try again.")
-                )
+                ContentUnavailableView {
+                    Label("Couldn’t open this email", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(errorMessage ?? "Try again.")
+                } actions: {
+                    Button("Try Again") { Task { await load() } }
+                }
             }
         }
         .navigationTitle("")
@@ -69,6 +97,7 @@ struct ThreadView: View {
         .sheet(isPresented: $showsEventReview) {
             CommitmentReviewView(route: route, suggestedTitle: detail?.subject ?? summary?.subject ?? "New event")
         }
+        .sheet(item: $openTask) { TaskDetailView(task: $0) }
     }
 
     // The subject as the document's own headline — the thread reads as a page,
@@ -231,6 +260,7 @@ struct ThreadView: View {
             detail = try await environment.store.loadThread(route)
             if expandedMessageID == nil { expandedMessageID = detail?.messages.last?.id }
             if let summary, summary.unread { await environment.store.markRead(summary) }
+            linkedTasks = await environment.store.tasksForThread(route.threadID)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -354,6 +384,30 @@ private struct MessageView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                Button("Show Emails With Them", systemImage: "magnifyingglass") {
+                    environment.navigation.threadRoute = nil
+                    environment.navigation.selectPrimary(.mail)
+                    environment.navigation.pendingMailSearch = contactAddress
+                }
+                Button("New Email", systemImage: "square.and.pencil") {
+                    environment.navigation.pendingCompose = ComposePrefill(
+                        recipient: contactAddress,
+                        cc: "",
+                        bcc: "",
+                        subject: "",
+                        body: "",
+                        mode: "new",
+                        accountID: accountID,
+                        threadID: nil,
+                        messageID: nil,
+                        replyAll: false,
+                        attachmentsKey: nil,
+                        draftID: nil
+                    )
+                    environment.navigation.sheet = .compose
+                }
+            }
 
             if isExpanded {
                 Divider()
@@ -444,6 +498,14 @@ private struct MessageView: View {
         } else {
             openURL(url)
         }
+    }
+
+    private var contactAddress: String {
+        let raw = message.sender
+        if let start = raw.lastIndex(of: "<"), let end = raw.lastIndex(of: ">"), start < end {
+            return String(raw[raw.index(after: start)..<end])
+        }
+        return raw
     }
 
     private func openAttachment(_ attachment: MailAttachment) async {

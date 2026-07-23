@@ -17,6 +17,41 @@ struct AppShellView: View {
                 compactWidthShell
             }
         }
+        .overlay(alignment: .bottom) {
+            if !environment.pendingSends.records.isEmpty || environment.store.undoNotice != nil {
+                VStack(spacing: 8) {
+                    ForEach(environment.pendingSends.records) { record in
+                        PendingSendToast(record: record)
+                    }
+                    if let notice = environment.store.undoNotice {
+                        HStack(spacing: 12) {
+                            Image(systemName: "arrow.uturn.backward.circle")
+                                .foregroundStyle(environment.theme.accentColor)
+                            Text(notice.summary)
+                                .font(.subheadline)
+                                .lineLimit(2)
+                            Spacer()
+                            Button("Undo") {
+                                Task { await environment.store.undoLatestOperation() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(environment.theme.accentColor)
+                            Button("Dismiss") {
+                                environment.store.undoNotice = nil
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                        }
+                        .padding(12)
+                        .background(.regularMaterial, in: .rect(cornerRadius: 18))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, max(windowSafeAreaInsets.bottom, 12))
+                .frame(maxWidth: 520)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .task {
             BackgroundRefreshCoordinator.shared.install {
                 let ownerID = environment.sessionStore.ownerID
@@ -38,12 +73,16 @@ struct AppShellView: View {
             await environment.notifications.refreshAuthorizationStatus()
             environment.navigation.consumeAppIntentRequests()
             await consumeMailNotificationAction()
+            await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
             BackgroundRefreshCoordinator.shared.schedule()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             environment.navigation.consumeAppIntentRequests()
             BackgroundRefreshCoordinator.shared.schedule()
-            Task { await consumeMailNotificationAction() }
+            Task {
+                await consumeMailNotificationAction()
+                await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lab86MailNotificationAction)) { _ in
             Task { await consumeMailNotificationAction() }
@@ -71,6 +110,17 @@ struct AppShellView: View {
         } message: {
             Text(environment.store.errorMessage ?? "Try again.")
         }
+        .alert(
+            "Pending message",
+            isPresented: Binding(
+                get: { environment.pendingSends.errorMessage != nil },
+                set: { if !$0 { environment.pendingSends.errorMessage = nil } }
+            )
+        ) {
+            Button("OK") { environment.pendingSends.errorMessage = nil }
+        } message: {
+            Text(environment.pendingSends.errorMessage ?? "Albatross will check again.")
+        }
     }
 
     private var regularWidthShell: some View {
@@ -94,7 +144,7 @@ struct AppShellView: View {
             let revealProgress = revealWidth > 0 ? pageOffset / revealWidth : 0
 
             ZStack(alignment: .leading) {
-                Color(uiColor: .secondarySystemBackground)
+                environment.theme.railColor
 
                 SourceList(onSelect: dismissSourceList)
                     .padding(.top, windowSafeAreaInsets.top)
@@ -242,7 +292,11 @@ struct AppShellView: View {
         case .today:
             TodayView()
         case .tasks:
-            TasksView()
+            if let route = environment.navigation.projectRoute {
+                ProjectDetailView(project: route.project)
+            } else {
+                TasksView()
+            }
         case .calendar:
             CalendarView()
         case .work:
@@ -279,6 +333,56 @@ struct AppShellView: View {
             accountID: accountID,
             threadID: threadID
         )
+    }
+}
+
+private struct PendingSendToast: View {
+    @Environment(AppEnvironment.self) private var environment
+    let record: PendingSendRecord
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 12) {
+                Image(systemName: "paperplane")
+                    .foregroundStyle(environment.theme.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sending in \(remainingSeconds(at: context.date))s")
+                        .font(.subheadline.weight(.semibold))
+                    Text(record.snapshot.subject.isEmpty ? "Message held by the server" : record.snapshot.subject)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button("Undo Send") {
+                    Task {
+                        guard let prefill = await environment.pendingSends.undo(record) else { return }
+                        environment.navigation.pendingCompose = prefill
+                        environment.navigation.sheet = .compose
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(environment.theme.accentColor)
+                .disabled(remainingSeconds(at: context.date) <= 0)
+            }
+            .padding(12)
+            .background(.regularMaterial, in: .rect(cornerRadius: 18))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.primary.opacity(0.1))
+            }
+        }
+        .task(id: record.id) {
+            let delay = max(0, record.fireAt.timeIntervalSinceNow)
+            try? await Task.sleep(for: .seconds(delay + 0.5))
+            await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+            await environment.store.refreshMail()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func remainingSeconds(at date: Date) -> Int {
+        max(0, Int(ceil(record.fireAt.timeIntervalSince(date))))
     }
 }
 
@@ -394,7 +498,7 @@ private struct SourceList: View {
             .buttonStyle(.plain)
             .accessibilityHint("Opens account and app settings")
         }
-        .background(Color(uiColor: .secondarySystemBackground))
+        .background(environment.theme.railColor)
         .refreshable { await environment.store.refreshWork() }
     }
 
@@ -491,35 +595,54 @@ private struct SourceList: View {
 
 private struct ShellToolbarModifier: ViewModifier {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let includesCompose: Bool
 
     func body(content: Content) -> some View {
-        content.toolbar {
-            if includesCompose {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        environment.navigation.sheet = .compose
-                    } label: {
-                        Label("Compose", systemImage: "square.and.pencil")
+        content
+            .toolbar {
+                if includesCompose {
+                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                        Button {
+                            environment.navigation.sheet = .compose
+                        } label: {
+                            Label("Compose", systemImage: "square.and.pencil")
+                        }
                     }
+                    .visibilityPriority(.high)
+                }
+                if horizontalSizeClass == .regular {
+                    ToolbarOverflowMenu {
+                        activityButton
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        activityButton
+                    }
+                    .visibilityPriority(.low)
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    environment.navigation.sheet = .activity
-                } label: {
-                    Label(
-                        "Activity",
-                        systemImage: environment.store.approvals.isEmpty && environment.store.suggestions.isEmpty
-                            ? "bell" : "bell.badge"
-                    )
-                }
-                .accessibilityLabel(
-                    environment.store.approvals.isEmpty && environment.store.suggestions.isEmpty
-                        ? "Activity" : "Activity, decisions waiting"
-                )
-            }
+            .toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)
+    }
+
+    private var activityButton: some View {
+        Button {
+            environment.navigation.sheet = .activity
+        } label: {
+            Label(
+                "Activity",
+                systemImage: environment.store.approvals.isEmpty
+                    && environment.store.suggestions.isEmpty
+                    && environment.store.pendingQuestions.isEmpty
+                    ? "bell" : "bell.badge"
+            )
         }
+        .accessibilityLabel(
+            environment.store.approvals.isEmpty
+                && environment.store.suggestions.isEmpty
+                && environment.store.pendingQuestions.isEmpty
+                ? "Activity" : "Activity, decisions waiting"
+        )
     }
 }
 

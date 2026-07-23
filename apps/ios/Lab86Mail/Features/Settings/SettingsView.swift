@@ -1,6 +1,5 @@
 import ClerkKit
 import SwiftUI
-import UserNotifications
 
 struct SettingsView: View {
     @Environment(AppEnvironment.self) private var environment
@@ -11,6 +10,7 @@ struct SettingsView: View {
     @State private var signOutError: String?
     @State private var undoSendSeconds: Int?
     @State private var sendingError: String?
+    @State private var showsAccountDeletion = false
 
     private static let undoSendChoices: [(seconds: Int, label: String)] = [
         (0, "Instant (off)"),
@@ -28,59 +28,29 @@ struct SettingsView: View {
             Form {
                 Section("Account") {
                     LabeledContent("Albatross", value: "Signed in")
-                    ForEach(environment.store.accounts) { account in
-                        LabeledContent(account.displayName ?? account.email, value: account.provider.capitalized)
-                    }
+                    NavigationLink("Mailboxes") { MailboxesSettingsView() }
+                    NavigationLink("Connections") { ConnectionsSettingsView() }
                     Button("Sign out", role: .destructive) {
                         Task { await signOut() }
                     }
                     .disabled(isSigningOut)
+                    Button("Delete account and data", role: .destructive) {
+                        showsAccountDeletion = true
+                    }
                     if let signOutError {
                         Text(signOutError).font(.footnote).foregroundStyle(.red)
                     }
                 }
 
                 Section("Notifications") {
-                    LabeledContent("Permission", value: notificationLabel)
-                    if environment.notifications.authorizationStatus != .authorized {
-                        Button("Enable notifications") {
-                            Task { await environment.notifications.requestAuthorization() }
-                        }
-                    }
-                    if let date = environment.notifications.lastRegisteredAt {
-                        LabeledContent("Registered", value: date.formatted(.relative(presentation: .named)))
-                    }
-                    if let error = environment.notifications.registrationError {
-                        Text(error).font(.footnote).foregroundStyle(.red)
-                    }
-                }
-
-                Section {
-                    Toggle(
-                        "Allow Albatross notifications",
-                        isOn: preferenceBinding(\.nativePushEnabled)
-                    )
-                    Toggle("New mail", isOn: preferenceBinding(\.newMailPushEnabled))
-                        .disabled(!environment.notifications.preferences.nativePushEnabled)
-                    Toggle(
-                        "Calendar suggestions from mail",
-                        isOn: preferenceBinding(\.eventSuggestionPushEnabled)
-                    )
-                    .disabled(!environment.notifications.preferences.nativePushEnabled)
-                    Toggle("Evening check-in", isOn: preferenceBinding(\.eveningCheckinEnabled))
-                        .disabled(!environment.notifications.preferences.nativePushEnabled)
-                    if let error = environment.notifications.preferencesError {
-                        Text(error).font(.footnote).foregroundStyle(.red)
-                    }
-                } header: {
-                    Text("Proactive notifications")
-                } footer: {
-                    Text("These settings follow your Albatross account across devices. iOS Focus and notification settings still take precedence.")
+                    NavigationLink("Delivery and schedule") { NotificationSettingsView() }
                 }
 
                 Section("Personalization") {
                     NavigationLink("Appearance") { AppearanceSettingsView() }
                     NavigationLink("AI") { AISettingsView() }
+                    NavigationLink("Smart Labels") { SmartLabelsSettingsView() }
+                    NavigationLink("Keyboard Shortcuts") { ShortcutReferenceView() }
                 }
 
                 Section {
@@ -132,27 +102,13 @@ struct SettingsView: View {
                 modelStatus = await environment.modelRouter.availabilityLabel()
                 await loadUndoSend()
             }
-        }
-    }
-
-    private var notificationLabel: String {
-        switch environment.notifications.authorizationStatus {
-        case .authorized, .provisional, .ephemeral: "Enabled"
-        case .denied: "Disabled in Settings"
-        case .notDetermined: "Not requested"
-        @unknown default: "Unknown"
-        }
-    }
-
-    private func preferenceBinding(_ keyPath: WritableKeyPath<MobileNotificationPreferences, Bool>) -> Binding<Bool> {
-        Binding(
-            get: { environment.notifications.preferences[keyPath: keyPath] },
-            set: { newValue in
-                var next = environment.notifications.preferences
-                next[keyPath: keyPath] = newValue
-                Task { await environment.notifications.savePreferences(next) }
+            .sheet(isPresented: $showsAccountDeletion) {
+                AccountDeletionView {
+                    showsAccountDeletion = false
+                    dismiss()
+                }
             }
-        )
+        }
     }
 
     private func loadUndoSend() async {
@@ -188,8 +144,10 @@ struct SettingsView: View {
                 clearProductState: {
                     environment.sessionStore.clear()
                     await environment.store.clearForSignOut()
+                    await environment.pendingSends.clear(ownerID: ownerID)
                     environment.accountStore.clear()
                     if let ownerID {
+                        clearActivityLocalState(ownerID: ownerID)
                         try? await environment.commandOutbox.purge(ownerID: ownerID)
                         await environment.syncCoordinator.cancel(ownerID: ownerID)
                     }
@@ -211,4 +169,82 @@ struct SettingsView: View {
             signOutError = error.localizedDescription
         }
     }
+}
+
+private struct AccountDeletionView: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(Clerk.self) private var clerk
+    @Environment(\.dismiss) private var dismiss
+    let completion: () -> Void
+
+    @State private var confirmation = ""
+    @State private var isDeleting = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("This permanently removes your Albatross account, connected-provider grants, indexed mail, calendars, tasks, Areas, Work, and settings.")
+                        .foregroundStyle(.secondary)
+                    TextField("Type DELETE", text: $confirmation)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Permanent account deletion")
+                } footer: {
+                    Text("This is different from signing out and cannot be undone.")
+                }
+                Section {
+                    Button("Delete account and all data", role: .destructive) {
+                        Task { await deleteAccount() }
+                    }
+                    .disabled(confirmation != "DELETE" || isDeleting)
+                    if isDeleting { ProgressView("Deleting account…") }
+                    if let errorMessage {
+                        Text(errorMessage).font(.footnote).foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Delete Account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(isDeleting)
+                }
+            }
+        }
+        .interactiveDismissDisabled(isDeleting)
+    }
+
+    private func deleteAccount() async {
+        guard confirmation == "DELETE" else { return }
+        isDeleting = true
+        errorMessage = nil
+        do {
+            _ = try await environment.backend.delete(path: "/api/account", body: .object([:]))
+            let ownerID = environment.sessionStore.ownerID
+            try? await environment.notifications.revoke()
+            environment.notifications.unregisterLocally()
+            environment.sessionStore.clear()
+            await environment.store.clearForSignOut()
+            await environment.pendingSends.clear(ownerID: ownerID)
+            environment.accountStore.clear()
+            if let ownerID {
+                clearActivityLocalState(ownerID: ownerID)
+                try? await environment.commandOutbox.purge(ownerID: ownerID)
+                await environment.syncCoordinator.cancel(ownerID: ownerID)
+            }
+            try? await clerk.auth.signOut()
+            completion()
+        } catch {
+            errorMessage = error.localizedDescription
+            isDeleting = false
+        }
+    }
+}
+
+private func clearActivityLocalState(ownerID: String) {
+    UserDefaults.standard.removeObject(forKey: "albatross.activity.\(ownerID).archived")
+    UserDefaults.standard.removeObject(forKey: "albatross.activity.\(ownerID).read")
 }

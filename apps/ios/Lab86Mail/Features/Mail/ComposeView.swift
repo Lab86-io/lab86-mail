@@ -1,3 +1,4 @@
+import SwiftStreamingMarkdown
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -26,6 +27,14 @@ struct ComposeView: View {
     @State private var isImporting = false
     @State private var sendsLater = false
     @State private var sendLaterDate = Date.now.addingTimeInterval(60 * 60)
+    @State private var undoSendSeconds = 10
+    @State private var showsCustomSchedule = false
+    @State private var previewsMarkdown = false
+    @State private var showsDiscardConfirmation = false
+    @State private var didSeedDraft = false
+    @State private var baselineFingerprint = ""
+    @State private var isSavingDraft = false
+    @State private var isDraftingWithAlbatross = false
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable {
@@ -61,7 +70,15 @@ struct ComposeView: View {
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        if isDirty {
+                            showsDiscardConfirmation = true
+                        } else {
+                            dismiss()
+                        }
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
                         Task { await send() }
@@ -112,6 +129,75 @@ struct ComposeView: View {
                 if focusedField == nil {
                     focusedField = mode == "new" && to.isEmpty ? .to : .body
                 }
+                Task {
+                    await loadSendingPreferences()
+                    await MainActor.run {
+                        baselineFingerprint = draftFingerprint
+                        didSeedDraft = true
+                    }
+                }
+            }
+            .task(id: draftFingerprint) {
+                guard didSeedDraft, hasMeaningfulDraft, isDirty, !isSending else { return }
+                do {
+                    try await Task.sleep(for: .milliseconds(850))
+                    try Task.checkCancellation()
+                    await persistDraft()
+                } catch is CancellationError {
+                    // A newer edit owns the next debounced save.
+                } catch {
+                    errorMessage = "Couldn’t save this draft yet. Your text remains here."
+                }
+            }
+            .interactiveDismissDisabled(isDirty)
+            .confirmationDialog(
+                "Keep this draft?",
+                isPresented: $showsDiscardConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Keep Draft") {
+                    Task {
+                        await persistDraft()
+                        if errorMessage == nil { dismiss() }
+                    }
+                }
+                Button("Discard Draft", role: .destructive) {
+                    Task {
+                        if let draftID { try? await environment.store.deleteDraft(id: draftID) }
+                        if let attachmentsKey {
+                            try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentsKey)
+                        }
+                        dismiss()
+                    }
+                }
+                Button("Continue Editing", role: .cancel) {}
+            } message: {
+                Text("Albatross can keep the message as a draft, including its local attachment copies.")
+            }
+            .sheet(isPresented: $showsCustomSchedule) {
+                NavigationStack {
+                    Form {
+                        DatePicker(
+                            "Send",
+                            selection: $sendLaterDate,
+                            in: Date.now.addingTimeInterval(60)...Date.now.addingTimeInterval(30 * 24 * 60 * 60),
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                    }
+                    .navigationTitle("Custom Send Time")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { showsCustomSchedule = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                sendsLater = true
+                                showsCustomSchedule = false
+                            }
+                        }
+                    }
+                }
+                .presentationDetents([.medium])
             }
             .fileImporter(
                 isPresented: $isImporting,
@@ -233,14 +319,32 @@ struct ComposeView: View {
             .padding(.vertical, 14)
     }
 
-    private var bodyEditor: some View {
-        TextField("Write your message…", text: $bodyText, axis: .vertical)
-            .font(.body)
-            .lineLimit(10...)
-            .focused($focusedField, equals: .body)
+    @ViewBuilder private var bodyEditor: some View {
+        if previewsMarkdown {
+            Group {
+                if bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ContentUnavailableView(
+                        "Nothing to Preview",
+                        systemImage: "doc.richtext",
+                        description: Text("Switch to Write and add message text.")
+                    )
+                } else {
+                    MarkdownView(text: bodyText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
             .padding(.horizontal, 20)
-            .padding(.top, 10)
-            .accessibilityLabel("Message body")
+            .padding(.vertical, 14)
+            .accessibilityLabel("Message preview")
+        } else {
+            TextField("Write your message…", text: $bodyText, axis: .vertical)
+                .font(.body)
+                .lineLimit(10...)
+                .focused($focusedField, equals: .body)
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+                .accessibilityLabel("Message body")
+        }
     }
 
     private var attachmentRows: some View {
@@ -284,6 +388,30 @@ struct ComposeView: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
+            Button {
+                previewsMarkdown.toggle()
+            } label: {
+                Label(previewsMarkdown ? "Write" : "Preview", systemImage: previewsMarkdown ? "pencil" : "eye")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .accessibilityLabel(previewsMarkdown ? "Write message" : "Preview formatting")
+            Button {
+                Task { await draftWithAlbatross() }
+            } label: {
+                if isDraftingWithAlbatross {
+                    ProgressView()
+                } else {
+                    Image(systemName: "sparkles")
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .disabled(isDraftingWithAlbatross)
+            .accessibilityLabel("Draft with Albatross")
             Spacer(minLength: 0)
             Menu {
                 Button("Send now") { sendsLater = false }
@@ -296,6 +424,9 @@ struct ComposeView: View {
                     let calendar = Calendar.autoupdatingCurrent
                     let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) ?? .now
                     sendLaterDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+                }
+                Button("Custom date and time…") {
+                    showsCustomSchedule = true
                 }
             } label: {
                 Text(deliveryLabel)
@@ -333,11 +464,44 @@ struct ComposeView: View {
             && (mode != "new" || !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
+    private var hasMeaningfulDraft: Bool {
+        !to.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !cc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !bcc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.isEmpty
+    }
+
+    private var isDirty: Bool {
+        didSeedDraft && draftFingerprint != baselineFingerprint
+    }
+
+    private var draftFingerprint: String {
+        [
+            accountID,
+            to,
+            cc,
+            bcc,
+            subject,
+            bodyText,
+            sendsLater ? String(Int(sendLaterDate.timeIntervalSince1970)) : "",
+            attachments.map { "\($0.filename):\($0.data.count)" }.joined(separator: "|"),
+        ].joined(separator: "\u{1F}")
+    }
+
     private func send() async {
         isSending = true
         defer { isSending = false }
         do {
-            try await environment.store.sendCompose(
+            let attachmentKey = attachmentsKey ?? (attachments.isEmpty ? nil : "compose-\(UUID().uuidString)")
+            if let attachmentKey {
+                try await MailIntentAttachmentStore.shared.saveComposeAttachments(
+                    attachments,
+                    draftID: attachmentKey
+                )
+            }
+            let submission = try await environment.store.sendCompose(
                 mode: mode == "reply" && replyAll ? "reply_all" : mode,
                 accountID: accountID,
                 threadID: sourceThreadID,
@@ -348,12 +512,94 @@ struct ComposeView: View {
                 subject: subject,
                 body: bodyText,
                 attachments: attachments,
-                sendAt: sendsLater ? sendLaterDate : nil
+                sendAt: sendsLater ? sendLaterDate : nil,
+                undoSeconds: sendsLater ? 0 : undoSendSeconds
             )
-            if let draftID { try? await environment.store.deleteDraft(id: draftID) }
-            if let attachmentsKey { try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentsKey) }
+            switch submission {
+            case .pending(let receipt):
+                guard let ownerID = environment.sessionStore.ownerID else {
+                    throw BackendError.unauthorized
+                }
+                let snapshot = ComposeDraftSnapshot(
+                    recipient: to,
+                    cc: cc,
+                    bcc: bcc,
+                    subject: subject,
+                    body: bodyText,
+                    mode: mode,
+                    accountID: accountID,
+                    threadID: sourceThreadID,
+                    messageID: sourceMessageID,
+                    replyAll: replyAll,
+                    attachmentsKey: attachmentKey,
+                    draftID: draftID
+                )
+                environment.pendingSends.register(receipt: receipt, ownerID: ownerID, snapshot: snapshot)
+            case .scheduled, .sent:
+                if let draftID { try? await environment.store.deleteDraft(id: draftID) }
+                if let attachmentKey {
+                    try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentKey)
+                }
+            }
             dismiss()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func loadSendingPreferences() async {
+        do {
+            let result = try await environment.backend.get(path: "/api/prefs")
+            undoSendSeconds = Int(result["prefs"]?["undoSendSeconds"]?.doubleValue ?? 10)
+        } catch {
+            // The shared default remains safe while offline; Settings and the
+            // server still own the durable preference.
+            undoSendSeconds = 10
+        }
+    }
+
+    private func persistDraft() async {
+        guard hasMeaningfulDraft, !accountID.isEmpty else { return }
+        isSavingDraft = true
+        defer { isSavingDraft = false }
+        do {
+            let key = attachmentsKey ?? (attachments.isEmpty ? nil : "draft-\(UUID().uuidString)")
+            if let key {
+                try await MailIntentAttachmentStore.shared.saveComposeAttachments(attachments, draftID: key)
+                attachmentsKey = key
+            }
+            draftID = try await environment.store.saveDraft(
+                id: draftID,
+                accountID: accountID,
+                threadID: sourceThreadID,
+                messageID: sourceMessageID,
+                to: to,
+                cc: cc,
+                bcc: bcc,
+                subject: subject,
+                body: bodyText,
+                scheduledFor: sendsLater ? sendLaterDate : nil
+            )
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func draftWithAlbatross() async {
+        isDraftingWithAlbatross = true
+        defer { isDraftingWithAlbatross = false }
+        do {
+            bodyText = try await environment.store.draftCompose(
+                accountID: accountID,
+                threadID: sourceThreadID,
+                to: to,
+                subject: subject,
+                currentBody: bodyText
+            )
+            previewsMarkdown = false
+            focusedField = .body
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func loadAttachments(key: String) async {

@@ -7,6 +7,7 @@ struct RootView: View {
     @Environment(Clerk.self) private var clerk
     @State private var showsAuthentication = false
     @State private var authenticationRetry = 0
+    @State private var onboardingCompletedOwners: Set<String> = []
 
     var body: some View {
         Group {
@@ -43,7 +44,13 @@ struct RootView: View {
             signedOutView
         case .ready(let ownerID):
             if ownerID == sessionSnapshot.userID {
-                AppShellView()
+                if onboardingCompletedOwners.contains(ownerID) {
+                    AppShellView()
+                } else {
+                    MailboxOnboardingView(ownerID: ownerID) {
+                        onboardingCompletedOwners.insert(ownerID)
+                    }
+                }
             } else {
                 ProgressView("Finishing sign in…")
             }

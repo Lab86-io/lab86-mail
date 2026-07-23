@@ -233,6 +233,35 @@ struct Lab86MailTests {
         #expect(value["result"]?["threads"]?.arrayValue?.first?["subject"]?.stringValue == "Dinner")
     }
 
+    @Test @MainActor
+    func chatApprovalResumesThePausedToolCallWithARealToolResult() {
+        let input: JSONValue = .object([
+            "title": .string("Send the reviewed reply"),
+            "intent": .string("destructive"),
+        ])
+        let approval = AssistantInlineApproval(
+            id: "approval-1",
+            toolCallID: "call-1",
+            toolName: "ask_approval",
+            input: input,
+            usesApprovalResponse: false,
+            title: "Send the reviewed reply",
+            description: nil,
+            metadata: [],
+            confirmLabel: "Send it",
+            denyLabel: "Cancel",
+            destructive: true,
+            decision: true
+        )
+
+        let part = AssistantChatModel.approvalPartJSON(approval)
+        #expect(part["type"]?.stringValue == "dynamic-tool")
+        #expect(part["toolCallId"]?.stringValue == "call-1")
+        #expect(part["state"]?.stringValue == "output-available")
+        #expect(part["output"]?["decision"]?.stringValue == "approved")
+        #expect(part["input"]?["title"]?.stringValue == "Send the reviewed reply")
+    }
+
     @Test
     func mapsToolThreadWithoutAssumingProviderShape() throws {
         let data = Data(#"{"providerThreadId":"thread-1","accountId":"account-1","subject":"Project update","from":[{"name":"Ari","email":"ari@example.com"}],"lastDate":1752600000000,"unread":true}"#.utf8)
@@ -303,6 +332,39 @@ struct Lab86MailTests {
         #expect(!document.localizedCaseInsensitiveContains("onload="))
         #expect(!document.localizedCaseInsensitiveContains("http-equiv=\"refresh\""))
         #expect(document.contains("<p>Hello</p>"))
+    }
+
+    @Test
+    func malformedAndDeepProviderHTMLRemainsBoundedAndSanitized() {
+        let depth = 4_000
+        let raw = String(repeating: "<div data-note='unterminated", count: depth)
+            + "<a href='javascript:steal()' onclick='steal()'>Open</a><p>Readable tail"
+            + String(repeating: "</div>", count: depth)
+        let document = EmailHTMLDocument.make(from: raw)
+
+        #expect(document.contains("Readable tail"))
+        #expect(!document.localizedCaseInsensitiveContains("javascript:"))
+        #expect(!document.localizedCaseInsensitiveContains("onclick="))
+        #expect(document.count < raw.count * 4)
+    }
+
+    @Test
+    func artifactLikeHTMLCannotSubmitFormsOrEmbedActiveContent() {
+        let document = EmailHTMLDocument.make(
+            from: """
+            <article><h1>Daily report</h1><form action="https://bad.example">
+            <input name="approval"><button formaction="javascript:steal()">Approve</button>
+            </form><iframe srcdoc="<script>steal()</script>"></iframe><p>Safe summary</p></article>
+            """
+        )
+
+        #expect(document.contains("Daily report"))
+        #expect(document.contains("Safe summary"))
+        #expect(!document.localizedCaseInsensitiveContains("<form"))
+        #expect(!document.localizedCaseInsensitiveContains("<input"))
+        #expect(!document.localizedCaseInsensitiveContains("<button"))
+        #expect(!document.localizedCaseInsensitiveContains("<iframe"))
+        #expect(!document.localizedCaseInsensitiveContains("srcdoc"))
     }
 
     @Test
@@ -443,7 +505,9 @@ struct Lab86MailTests {
     func emailLinkPolicyAllowsOnlyExplicitExternalSchemes() throws {
         #expect(EmailLinkPolicy.canOpen(try #require(URL(string: "https://example.com"))))
         #expect(EmailLinkPolicy.canOpen(try #require(URL(string: "mailto:ari@example.com"))))
+        #expect(EmailLinkPolicy.canOpen(try #require(URL(string: "tel:+15555550123"))))
         #expect(!EmailLinkPolicy.canOpen(try #require(URL(string: "javascript:alert(1)"))))
+        #expect(!EmailLinkPolicy.canOpen(try #require(URL(string: "data:text/html,bad"))))
         #expect(!EmailLinkPolicy.canOpen(try #require(URL(string: "file:///private/message"))))
     }
 
@@ -1142,6 +1206,70 @@ struct Lab86MailTests {
         #expect(restored.first?.data == Data("attachment body".utf8))
         try await store.remove(draftID: "draft-1")
         #expect(try await store.load(draftID: "draft-1").isEmpty)
+    }
+
+    @Test
+    func composeAttachmentsRoundTripForUndoSendRestoration() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let store = MailIntentAttachmentStore(directory: directory)
+        let attachments = [
+            ComposeAttachment(
+                filename: "plan.md",
+                contentType: "text/markdown",
+                data: Data("# Plan".utf8)
+            ),
+            ComposeAttachment(
+                filename: "evidence.bin",
+                contentType: "application/octet-stream",
+                data: Data([0, 1, 2, 255])
+            ),
+        ]
+
+        try await store.saveComposeAttachments(attachments, draftID: "pending-send-1")
+        let restored = try await store.loadComposeAttachments(draftID: "pending-send-1")
+
+        #expect(restored.map(\.filename) == ["plan.md", "evidence.bin"])
+        #expect(restored.map(\.contentType) == ["text/markdown", "application/octet-stream"])
+        #expect(restored.map(\.data) == attachments.map(\.data))
+    }
+
+    @Test @MainActor
+    func pendingSendStateSurvivesNavigationAndProcessRecreation() {
+        let suite = "PendingSendTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let backend = BackendClient(baseURL: nil)
+        let tools = ToolClient(backend: backend)
+        let snapshot = ComposeDraftSnapshot(
+            recipient: "reader@example.com",
+            cc: "copy@example.com",
+            bcc: "",
+            subject: "Durable draft",
+            body: "Exact body",
+            mode: "new",
+            accountID: "account-1",
+            threadID: nil,
+            messageID: nil,
+            replyAll: false,
+            attachmentsKey: "attachment-key",
+            draftID: "draft-1"
+        )
+        let receipt = PendingSendReceipt(
+            id: "user-1:nylas-schedule:receipt",
+            fireAt: Date.now.addingTimeInterval(30),
+            undoSeconds: 30,
+            accountID: "account-1",
+            threadID: nil
+        )
+
+        let first = PendingSendCoordinator(backend: backend, tools: tools, defaults: defaults)
+        first.register(receipt: receipt, ownerID: "user-1", snapshot: snapshot)
+        let restored = PendingSendCoordinator(backend: backend, tools: tools, defaults: defaults)
+
+        #expect(restored.records.count == 1)
+        #expect(restored.records.first?.snapshot.composePrefill.recipient == "reader@example.com")
+        #expect(restored.records.first?.snapshot.attachmentsKey == "attachment-key")
+        #expect(restored.records.first?.fireAt == receipt.fireAt)
     }
 
     @Test
