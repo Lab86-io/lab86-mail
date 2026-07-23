@@ -76,6 +76,14 @@ describe('native iOS authentication configuration', () => {
       path.join(process.cwd(), 'apps/ios/ci_scripts/verify_built_configuration.sh'),
       'utf8',
     );
+    const exportVerifier = readFileSync(
+      path.join(process.cwd(), '.github/scripts/verify-ios-export.sh'),
+      'utf8',
+    );
+    const cloudWaiter = readFileSync(
+      path.join(process.cwd(), '.github/scripts/wait-for-xcode-cloud.mjs'),
+      'utf8',
+    );
 
     expect(info).toContain('<string>$(LAB86_INFO_API_BASE_URL)</string>');
     expect(info).toContain('<string>$(LAB86_INFO_CLERK_PUBLISHABLE_KEY)</string>');
@@ -89,6 +97,10 @@ describe('native iOS authentication configuration', () => {
     expect(project).toContain('$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)');
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail-staging.lab86.io" ]]');
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail.lab86.io" ]]');
+    expect(exportVerifier).toContain('codesign -d --entitlements :- "$app_path"');
+    expect(cloudWaiter).toContain(
+      'Xcode Cloud distributed to TestFlight without a reviewable App Store export.',
+    );
   });
 
   test('supports every iPad orientation required for adaptive multitasking', () => {
