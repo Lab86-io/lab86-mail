@@ -12,3 +12,7 @@ export function findAppStoreExport(artifacts) {
       attributes.fileType === 'ARCHIVE_EXPORT' && attributes.fileName.endsWith(' app-store.zip'),
   );
 }
+
+export function findLogBundles(artifacts) {
+  return artifacts.filter(({ attributes }) => attributes.fileType === 'LOG_BUNDLE' && attributes.downloadUrl);
+}

@@ -1,6 +1,7 @@
 import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { findAppStoreExport, findArchiveAction, findTestFlightAction } from './xcode-cloud-artifacts.mjs';
+import { preserveLogBundles } from './xcode-cloud-diagnostics.mjs';
 
 const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY', 'XCODE_CLOUD_BUILD_RUN_ID'];
 
@@ -44,6 +45,7 @@ async function appStoreConnect(path) {
 }
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
 const buildRunID = process.env.XCODE_CLOUD_BUILD_RUN_ID;
 const deadline = Date.now() + 45 * 60 * 1000;
 let run;
@@ -101,6 +103,9 @@ if (testFlightSucceeded) {
 }
 
 if (!appStoreExport) {
+  await preserveLogBundles(artifacts.data, {
+    diagnosticsDirectory: process.env.XCODE_CLOUD_DIAGNOSTICS_DIR,
+  });
   const issues = await appStoreConnect(`/v1/ciBuildActions/${archiveAction.id}/issues`);
   const messages = issues.data.map(({ attributes }) => attributes.message);
   throw new Error(`Xcode Cloud did not produce an App Store export. ${messages.join('; ')}`);
