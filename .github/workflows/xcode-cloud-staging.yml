@@ -9,6 +9,7 @@ on:
       - .github/scripts/start-xcode-cloud.mjs
       - .github/scripts/wait-for-xcode-cloud.mjs
       - .github/scripts/xcode-cloud-artifacts.mjs
+      - .github/scripts/verify-ios-export.sh
       - .github/scripts/wait-for-testflight.mjs
       - .github/workflows/xcode-cloud-staging.yml
   workflow_dispatch:
