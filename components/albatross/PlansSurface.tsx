@@ -37,6 +37,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
+import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { OptionList } from '@/components/tool-ui/option-list';
 import { ActionButtons } from '@/components/tool-ui/shared/action-buttons';
 import { ChamaacDock, ChamaacDockTile } from '@/components/ui/chamaac-dock';
@@ -62,6 +63,7 @@ import {
   toggleStepDecision,
 } from '@/lib/albatross/plan-artifact-runtime';
 import { useClientStore } from '@/lib/client-state';
+import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
@@ -120,6 +122,8 @@ export interface PlanLike {
   assumptions?: string[];
   sourceRefs?: { kind: string; id: string; label?: string; url?: string }[];
   artifactHtml?: string;
+  document?: BriefDocumentV2;
+  artifactSource?: string;
   mapQuery?: string;
 }
 
@@ -179,7 +183,7 @@ export function planRevealSequence(plan: PlanLike | null | undefined): RevealIte
   if (plan.physicalActions?.length) items.push({ key: 'physical', kind: 'physical' });
   if (plan.assumptions?.length) items.push({ key: 'assumptions', kind: 'assumptions' });
   if (plan.sourceRefs?.length) items.push({ key: 'sources', kind: 'sources' });
-  if (plan.artifactHtml) items.push({ key: 'artifact', kind: 'artifact' });
+  if (plan.document || plan.artifactHtml) items.push({ key: 'artifact', kind: 'artifact' });
   return items;
 }
 
@@ -213,7 +217,7 @@ export function planStageMode(
   intent: IntentLike | null | undefined,
   plan: PlanLike | null | undefined,
 ): 'artifact' | 'cascade' {
-  if (!intent || !plan?.artifactHtml) return 'cascade';
+  if (!intent || (!plan?.document && !plan?.artifactHtml)) return 'cascade';
   if (intent.status === 'needs_answers') return 'cascade';
   const status = plan.status;
   return status === 'ready' || status === 'applied' ? 'artifact' : 'cascade';
@@ -1691,6 +1695,24 @@ function PlanReveal({
   // Artifact mode: the model-composed document IS the plan view. It fills the
   // pane (same sandboxed treatment as the Daily Brief); only the action row
   // and applied/approval summaries render natively above it.
+  if (artifactMode && plan.document && plan.artifactSource === 'document-v2') {
+    return (
+      <div className="relative min-h-0 flex-1">
+        <BriefCanvas value={plan.document} />
+        <div className="absolute right-4 top-3 z-20 flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 px-3 py-1.5 shadow-[var(--shadow-pop)] backdrop-blur-sm">
+          {isApplied ? (
+            <span className="text-[12px] font-medium text-[var(--color-success,#16a34a)]">Applied</span>
+          ) : (
+            <PrimaryButton reduced={reduced} disabled={Boolean(disabledReason) || applying} onClick={apply}>
+              {applying ? 'Applying…' : 'Apply plan'}
+            </PrimaryButton>
+          )}
+          <QuietButton onClick={() => onSetStatus?.('done')}>Done</QuietButton>
+        </div>
+      </div>
+    );
+  }
+
   if (artifactMode && plan.artifactHtml) {
     return (
       <div className="relative min-h-0 flex-1">

@@ -593,6 +593,28 @@ struct Lab86MailTests {
     }
 
     @Test
+    func dailyReportPrefersTheNativeV2DocumentWhileRetainingLegacyHTML() throws {
+        let value = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(#"""
+            {"_id":"report-v2","kind":"morning","generatedAt":1752600000000,"status":"ready",
+             "title":"The Friday Brief","narrative":"A live brief.","html":"<main>Legacy fallback</main>",
+             "artifactStatus":"ready","artifactSource":"document-v2",
+             "document":{"version":2,"title":"Friday","summary":"One clear priority.","generatedAt":1752600000000,
+               "regions":[{"id":"lead","summary":"Prepare for the review.",
+                 "tree":{"kind":"hero","surface":"glass","children":[{"kind":"text","role":"lede","text":"Prepare well."}]}}]},
+             "sections":{},"stats":{}}
+            """#.utf8)
+        )
+        let report = try #require(DailyReportModel(json: value))
+
+        #expect(report.hasArtifact)
+        #expect(report.artifactSource == "document-v2")
+        #expect(report.document?.regions.first?.tree.kind == "hero")
+        #expect(report.html == "<main>Legacy fallback</main>")
+    }
+
+    @Test
     func dailyReportSurvivesCacheRoundTripAndOldSnapshotsStillDecode() throws {
         let value = try JSONDecoder().decode(
             JSONValue.self,

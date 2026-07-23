@@ -9,6 +9,8 @@ import {
   dismissDailyReportThread,
   listDismissedDailyReportTasks,
   listDismissedDailyReportThreads,
+  restoreDailyReportTask,
+  restoreDailyReportThread,
 } from '../store/daily-report-dismissals';
 import {
   getDailyReport as getDailyReportStore,
@@ -208,5 +210,34 @@ export const listDailyReportThreadDismissalsTool = defineTool({
       threadKeys: dismissals.map((dismissal) => dailyReportThreadKey(dismissal.account, dismissal.threadId)),
       dismissals,
     };
+  },
+});
+
+export const restoreDailyReportTaskTool = defineTool({
+  name: 'restore_daily_report_task',
+  description: 'Undo removal of a task from future Daily Brief task sections.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ cardId: z.string().min(1) }),
+  output: z.object({ ok: z.boolean() }),
+  async handler({ cardId }) {
+    await restoreDailyReportTask(cardId);
+    return { ok: true };
+  },
+});
+
+export const restoreDailyReportThreadTool = defineTool({
+  name: 'restore_daily_report_thread',
+  description: 'Undo removal or resolution of a conversation from Daily Brief sections.',
+  category: 'mail',
+  mutating: true,
+  input: z.object({
+    account: z.string().min(1),
+    threadId: z.string().min(1),
+  }),
+  output: z.object({ ok: z.boolean() }),
+  async handler(args) {
+    await restoreDailyReportThread(args);
+    return { ok: true };
   },
 });

@@ -492,6 +492,16 @@ describe('planStageMode', () => {
   test('artifact fills the stage for ready and applied plans', () => {
     expect(planStageMode({ status: 'ready' }, artifactPlan)).toBe('artifact');
     expect(planStageMode({ status: 'applied' }, { ...artifactPlan, status: 'applied' })).toBe('artifact');
+    expect(
+      planStageMode(
+        { status: 'ready' },
+        {
+          status: 'ready',
+          document: { version: 2, title: 'Plan', summary: 'Summary', generatedAt: 1, regions: [] },
+          artifactSource: 'document-v2',
+        },
+      ),
+    ).toBe('artifact');
   });
 
   test('cascade when there is no artifact, questions are open, or the plan is superseded', () => {

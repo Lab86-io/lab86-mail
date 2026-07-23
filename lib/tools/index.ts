@@ -84,6 +84,8 @@ import {
   listDailyReportsTool,
   listDailyReportTaskDismissalsTool,
   listDailyReportThreadDismissalsTool,
+  restoreDailyReportTaskTool,
+  restoreDailyReportThreadTool,
 } from './daily-report';
 import { DISPLAY_TOOLS } from './display';
 import {
@@ -243,6 +245,8 @@ const allTools: AnyTool[] = [
   listDailyReportTaskDismissalsTool,
   dismissDailyReportThreadTool,
   listDailyReportThreadDismissalsTool,
+  restoreDailyReportTaskTool,
+  restoreDailyReportThreadTool,
   listSmartLabels,
   createSmartLabel,
   previewSmartLabel,

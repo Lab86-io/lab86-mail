@@ -1,9 +1,18 @@
 import { randomUUID } from 'node:crypto';
+import { stepCountIs, tool } from 'ai';
+import { z } from 'zod';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
+import { briefDocumentV2Enabled } from '../brief/feature';
 import { listNylasAccounts } from '../nylas/provider';
 import { type BriefComposition, compositionFromReport } from '../shared/brief-composition';
+import {
+  type BriefDocumentV2,
+  type BriefRegion,
+  parseBriefDocument,
+  repairBriefDocument,
+} from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { emailFromHeader } from '../shared/format';
 import {
@@ -20,6 +29,7 @@ import {
 import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
 import { type BriefWeather, briefWeather, type FetchLike } from '../weather/open-meteo';
+import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from './brief-document-prompt';
 import { briefServiceFromProvider, briefServicesFromIds } from './brief-services';
 import { resolveBriefTimezone } from './brief-timezone';
 import { getDailyArt } from './daily-art';
@@ -502,6 +512,47 @@ async function runAgentReport(input: {
     artifactSource: 'deterministic',
   }).catch(() => undefined);
 
+  if (briefDocumentV2Enabled()) {
+    try {
+      const document = await composeDocumentV2(week, input.userId, async (partial) => {
+        await saveDailyReport({
+          ...week,
+          composition: nativeWeekComposition,
+          document: partial,
+          html: nativeWeekHtml,
+          artifactStatus: 'composing',
+          artifactSource: 'document-v2',
+          model: describeProvider().primary || week.model,
+        });
+      });
+      const nativeDocumentReport: DailyReport = {
+        ...week,
+        composition: nativeWeekComposition,
+        document,
+        html: nativeWeekHtml,
+        artifactStatus: 'ready',
+        artifactSource: 'document-v2',
+        model: describeProvider().primary || week.model,
+      };
+      await saveDailyReport(nativeDocumentReport);
+      return nativeDocumentReport;
+    } catch (err) {
+      console.error('[agent-report] document v2 composition failed:', err);
+      const fallback = withArtifactError(
+        {
+          ...week,
+          composition: nativeWeekComposition,
+          html: nativeWeekHtml,
+          artifactStatus: 'rendered',
+          artifactSource: 'deterministic',
+        },
+        artifactError('document_v2', err),
+      );
+      await saveDailyReport(fallback);
+      return fallback;
+    }
+  }
+
   let phase1: DailyReport;
   try {
     const html = await composeArtifactHtml(week, input.userId);
@@ -596,6 +647,88 @@ async function runAgentReport(input: {
 }
 
 // ---- Artifact composition --------------------------------------------------
+
+export async function composeDocumentV2(
+  report: DailyReport,
+  userId?: string | null,
+  onRegion?: (document: BriefDocumentV2) => Promise<void>,
+  generate: typeof generateTextForCurrentUser = generateTextForCurrentUser,
+): Promise<BriefDocumentV2> {
+  const extras = await withDeadline(
+    gatherBriefExtras(report, userId),
+    EXTRAS_DEADLINE_MS,
+    'Brief context gathering',
+  );
+  const regions: BriefRegion[] = [];
+  const finalized: { title?: string; summary?: string } = {};
+  const generatedAt = report.generatedAt || Date.now();
+
+  await withDeadline(
+    generate({
+      feature: 'daily_report_artifact',
+      speed: 'primary',
+      userId,
+      system: BRIEF_DOCUMENT_V2_SYSTEM_PROMPT,
+      prompt: buildDataPrompt(report, extras),
+      tools: {
+        place_region: tool({
+          description: 'Validate, repair, and place one Daily Brief region in reading order.',
+          inputSchema: z.object({ region: z.record(z.string(), z.unknown()) }),
+          execute: async ({ region }) => {
+            const candidate = parseBriefDocument({
+              version: 2,
+              title: finalized.title || report.title || 'Daily Brief',
+              summary: finalized.summary || report.narrative || 'Your composed Daily Brief.',
+              generatedAt,
+              regions: [...regions, region],
+            });
+            const placed = candidate.regions[candidate.regions.length - 1];
+            if (!placed) throw new Error('The region could not be repaired.');
+            const existingIndex = regions.findIndex((entry) => entry.id === placed.id);
+            if (existingIndex >= 0) regions[existingIndex] = placed;
+            else if (regions.length < 12) regions.push(placed);
+            const partial = parseBriefDocument({
+              version: 2,
+              title: finalized.title || report.title || 'Daily Brief',
+              summary: finalized.summary || report.narrative || placed.summary,
+              generatedAt,
+              regions,
+            });
+            if (onRegion) await onRegion(partial);
+            return { ok: true, id: placed.id, placed: regions.length };
+          },
+        }),
+        finalize_brief: tool({
+          description:
+            'Set the document title and accessible plain-text summary after all regions are placed.',
+          inputSchema: z.object({
+            title: z.string().trim().min(1).max(160),
+            summary: z.string().trim().min(1).max(1_200),
+          }),
+          execute: async (value) => {
+            finalized.title = value.title;
+            finalized.summary = value.summary;
+            return { ok: true, regions: regions.length };
+          },
+        }),
+      },
+      stopWhen: stepCountIs(14),
+    }),
+    ARTIFACT_LLM_DEADLINE_MS,
+    'Brief document generation',
+  );
+
+  if (!regions.length) throw new Error('AI did not place any brief regions.');
+  return parseBriefDocument(
+    repairBriefDocument({
+      version: 2,
+      title: finalized.title || report.title || 'Daily Brief',
+      summary: finalized.summary || report.narrative || regions.map((region) => region.summary).join(' '),
+      generatedAt,
+      regions,
+    }),
+  );
+}
 
 async function composeArtifactHtml(report: DailyReport, userId?: string | null): Promise<string> {
   // Deadlines route hangs into the callers' week_artifact/month_artifact catch

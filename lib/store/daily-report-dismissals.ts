@@ -1,4 +1,4 @@
-import { kvList, kvUpsert } from './kv';
+import { kvDelete, kvList, kvUpsert } from './kv';
 
 const KIND = 'dailyReportTaskDismissal';
 const REF = 'task';
@@ -40,6 +40,12 @@ export async function listDismissedDailyReportTaskIds() {
   return new Set((await listDismissedDailyReportTasks()).map((row) => row.cardId).filter(Boolean));
 }
 
+export async function restoreDailyReportTask(cardId: string) {
+  const normalized = cardId.trim();
+  if (!normalized) throw new Error('cardId is required.');
+  await kvDelete(KIND, normalized);
+}
+
 export async function listDismissedDailyReportTasks() {
   return kvList<DailyReportTaskDismissal>(KIND, { ref: REF, limit: 1000 });
 }
@@ -69,4 +75,12 @@ export async function dismissDailyReportThread(input: {
 
 export async function listDismissedDailyReportThreads() {
   return kvList<DailyReportThreadDismissal>(THREAD_KIND, { ref: THREAD_REF, limit: 1000 });
+}
+
+export async function restoreDailyReportThread(input: { account: string; threadId: string }) {
+  const account = input.account.trim();
+  const threadId = input.threadId.trim();
+  if (!account) throw new Error('account is required.');
+  if (!threadId) throw new Error('threadId is required.');
+  await kvDelete(THREAD_KIND, dailyReportThreadKey(account, threadId));
 }

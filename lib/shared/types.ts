@@ -1,5 +1,6 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import type { BriefComposition } from './brief-composition';
+import type { BriefDocumentV2 } from './brief-document';
 
 export type AccountEmail = string;
 export type AccountProvider = 'google' | 'microsoft' | 'icloud' | 'imap';
@@ -425,6 +426,7 @@ export interface DailyReportMcpItem {
 
 export const DAILY_REPORT_ARTIFACT_ERROR_STAGES = [
   'ai_availability',
+  'document_v2',
   'week_artifact',
   'month_artifact',
   'month_enrichment',
@@ -459,13 +461,16 @@ export interface DailyReport {
   // Validated editorial plan used by deterministic brief renderers. The model
   // may author this JSON, but the app owns the rendering.
   composition?: BriefComposition;
+  // Native cross-platform composition document. Stored beside legacy HTML
+  // during rollout so older web/iOS clients retain a deterministic fallback.
+  document?: BriefDocumentV2;
   // Generation phase for the artifact: 'composing' while the agent writes the
   // first (week) HTML, 'enriching' while the broader month pass runs in the
   // background over an already-rendered edition, 'rendered' once final.
-  artifactStatus?: 'composing' | 'enriching' | 'rendered';
+  artifactStatus?: 'composing' | 'enriching' | 'rendered' | 'ready';
   // Whether the artifact came from the model or the deterministic structured
   // fallback.
-  artifactSource?: 'ai' | 'deterministic';
+  artifactSource?: 'ai' | 'deterministic' | 'document-v2';
   // Failures from the artifact generation pipeline. These are intentionally
   // separate from source-gathering `errors` so the UI can explain exactly why
   // the full AI artifact is unavailable.

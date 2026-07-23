@@ -4,6 +4,7 @@ import { useConvexAuth, useQuery } from 'convex/react';
 import { ArrowLeft, CheckCircle2, CircleAlert, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WorkDetailArtifactFrame } from '@/components/albatross/WorkDetailArtifactFrame';
+import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
@@ -11,6 +12,7 @@ import type { Id } from '@/convex/_generated/dataModel';
 import { injectPlanArtifactRuntime } from '@/lib/albatross/plan-artifact-runtime';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +43,8 @@ interface WorkDetailData {
     summary?: string;
     status: string;
     artifactHtml?: string;
+    document?: BriefDocumentV2;
+    artifactSource?: string;
     assumptions?: string[];
     sourceRefs?: Array<{ kind: string; id: string; label?: string; url?: string }>;
     digitalActions?: Array<{ actionKey?: string; key?: string; kind: string; title: string }>;
@@ -317,7 +321,16 @@ export function WorkDetail({ workId }: { workId: string }) {
             </section>
           ) : null}
 
-          {artifact ? (
+          {plan?.document && plan.artifactSource === 'document-v2' ? (
+            <section className="py-5">
+              <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                Brief
+              </h2>
+              <div className="h-[min(72vh,780px)] overflow-hidden rounded-xl border border-[var(--color-border)]">
+                <BriefCanvas value={plan.document} />
+              </div>
+            </section>
+          ) : artifact ? (
             <section className="py-5">
               <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                 Brief

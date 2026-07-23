@@ -12,6 +12,8 @@ import {
   listDailyReportsTool,
   listDailyReportTaskDismissalsTool,
   listDailyReportThreadDismissalsTool,
+  restoreDailyReportTaskTool,
+  restoreDailyReportThreadTool,
 } from '../lib/tools/daily-report';
 import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
@@ -70,6 +72,21 @@ describe('daily report tools', () => {
 
     const threadDismissals = await runTool(listDailyReportThreadDismissalsTool.handler, {});
     expect(threadDismissals.threadKeys.some((key: string) => key.includes('thread_dismiss'))).toBe(true);
+
+    await runTool(restoreDailyReportTaskTool.handler, { cardId: 'task_card_1' });
+    await runTool(restoreDailyReportThreadTool.handler, {
+      account: 'jakob@example.test',
+      threadId: 'thread_dismiss',
+    });
+
+    expect((await runTool(listDailyReportTaskDismissalsTool.handler, {})).cardIds).not.toContain(
+      'task_card_1',
+    );
+    expect(
+      (await runTool(listDailyReportThreadDismissalsTool.handler, {})).threadKeys.some((key: string) =>
+        key.includes('thread_dismiss'),
+      ),
+    ).toBe(false);
   });
 
   test('generate_daily_report starts in the background by default', async () => {

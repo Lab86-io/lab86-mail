@@ -44,6 +44,7 @@ import {
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { InboxThreadRow, inboxDateGroupLabel, type ThreadRow } from '@/components/inbox/Inbox';
+import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { OptionList } from '@/components/tool-ui/option-list';
 import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
 import { Avatar } from '@/components/ui/avatar';
@@ -95,6 +96,7 @@ import { areaMailRowKey, filterAreaMailRows, selectedVisibleAreaMailRows } from 
 import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
@@ -161,6 +163,8 @@ interface AreaHomeData {
     lede: string;
     summary: string;
     artifactHtml?: string;
+    document?: BriefDocumentV2;
+    artifactSource?: string;
     basedOnRevision?: string;
     generatedAt?: number;
     error?: string;
@@ -605,6 +609,67 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   // The generated document is the selected Area screen. React only supplies
   // the sandbox, theme/action bridge, and small floating host controls. The
   // structured renderer below is retained solely as an explicit recovery view.
+  if (
+    home.livingBrief?.document &&
+    home.livingBrief.artifactSource === 'document-v2' &&
+    !showStructuredFallback
+  ) {
+    return (
+      <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)]">
+        <BriefCanvas
+          value={home.livingBrief.document}
+          composing={home.livingBrief.status === 'generating' || artifactRefreshing}
+        />
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3">
+          <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 pr-2 shadow-sm backdrop-blur-md">
+            <button
+              type="button"
+              onClick={() => setSelectedAreaId(null)}
+              className="rounded-full px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]"
+            >
+              Areas
+            </button>
+            <span className="text-[var(--color-text-faint)]">/</span>
+            <AreaMark area={home.area} />
+            <span className="max-w-48 truncate text-[12px] font-medium">{home.area.name}</span>
+            <span className="mx-0.5 h-4 w-px bg-[var(--color-border)]" aria-hidden />
+            <AreaViewSwitcher value="brief" onChange={setAreaView} compact />
+          </div>
+          <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
+            <button
+              type="button"
+              onClick={() => {
+                setChatScope({ kind: 'area', areaId: home.area._id });
+                setAiBarOpen(true);
+              }}
+              className="rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)]"
+            >
+              Discuss
+            </button>
+            <button
+              type="button"
+              onClick={() => void refreshArtifact()}
+              disabled={artifactRefreshing || home.livingBrief.status === 'generating'}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
+            >
+              <RefreshCw
+                className={cn('size-3', artifactRefreshing && 'motion-safe:animate-spin')}
+                aria-hidden
+              />
+              <span className="hidden md:inline">Refresh</span>
+            </button>
+            <a
+              href="/settings?tab=areas"
+              className="rounded-full px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)]"
+            >
+              Manage
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (home.livingBrief?.artifactHtml && !showStructuredFallback) {
     return (
       <AreaArtifactCanvas
