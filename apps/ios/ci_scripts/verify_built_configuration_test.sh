@@ -21,7 +21,17 @@ run_verifier() {
   local channel="$1"
   TARGET_BUILD_DIR="$test_root" \
     INFOPLIST_PATH=Info.plist \
+    CI_BRANCH='' \
     LAB86_BUILD_CHANNEL="$channel" \
+    "$script_dir/verify_built_configuration.sh"
+}
+
+run_branch_verifier() {
+  local branch="$1"
+  env -u LAB86_BUILD_CHANNEL \
+    TARGET_BUILD_DIR="$test_root" \
+    INFOPLIST_PATH=Info.plist \
+    CI_BRANCH="$branch" \
     "$script_dir/verify_built_configuration.sh"
 }
 
@@ -31,6 +41,7 @@ write_plist \
   'https://precise-skunk-847.convex.cloud' \
   'pk_test_example'
 run_verifier $'```staging```\r\n'
+run_branch_verifier staging
 
 write_plist \
   "$test_root/Info.plist" \
@@ -48,6 +59,34 @@ write_plist \
   'https://proficient-viper-594.convex.cloud' \
   'pk_live_example'
 run_verifier production
+run_branch_verifier main
+
+if TARGET_BUILD_DIR="$test_root" \
+  INFOPLIST_PATH=Info.plist \
+  CI_BRANCH=main \
+  LAB86_BUILD_CHANNEL=staging \
+  "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
+  echo 'Branch verification must reject a mismatched explicit channel.' >&2
+  exit 1
+fi
+
+if TARGET_BUILD_DIR="$test_root" \
+  INFOPLIST_PATH=Info.plist \
+  CI_BRANCH='```main```' \
+  LAB86_BUILD_CHANNEL=production \
+  "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
+  echo 'A malformed Xcode Cloud branch must not select production.' >&2
+  exit 1
+fi
+
+if TARGET_BUILD_DIR="$test_root" \
+  INFOPLIST_PATH=Info.plist \
+  CI_BRANCH=feature \
+  LAB86_BUILD_CHANNEL=production \
+  "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
+  echo 'Branch verification must reject an unknown Xcode Cloud branch.' >&2
+  exit 1
+fi
 
 write_plist \
   "$test_root/Info.plist" \

@@ -82,6 +82,12 @@ fi
 
 unset LAB86_BUILD_CHANNEL LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY \
   CONVEX_DEPLOYMENT_URL CLERK_FRONTEND_API_HOST
+export CI_BRANCH='```main```'
+if run_post_clone 2>/dev/null; then
+  echo 'A malformed Xcode Cloud branch must not select production.' >&2
+  exit 1
+fi
+
 export CI_BRANCH=feature/not-a-release
 export LAB86_BUILD_CHANNEL=production
 if run_post_clone 2>/dev/null; then
