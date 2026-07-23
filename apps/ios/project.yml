@@ -29,7 +29,9 @@ packages:
     from: 8.1.0
   Clerk:
     url: https://github.com/clerk/clerk-ios
-    from: 1.3.2
+    # 1.3.3 fixes the AuthView startup race and automatic passkey failures
+    # that could terminate the app as the signed-out flow was presented.
+    from: 1.3.3
   ClerkConvex:
     url: https://github.com/clerk/clerk-convex-swift
     exactVersion: 0.1.0
