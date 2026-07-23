@@ -19,6 +19,7 @@ run_post_clone() {
 
 unset LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY CONVEX_DEPLOYMENT_URL \
   CLERK_FRONTEND_API_HOST LAB86_BUILD_CHANNEL CI_BRANCH
+export CI_BRANCH=staging
 run_post_clone
 
 default_key="pk_test_$(printf '%s$' 'together-sawfish-53.clerk.accounts.dev' | base64 | tr -d '\n')"
@@ -54,6 +55,13 @@ LAB86_INFO_CLERK_FRONTEND_API_HOST = clerk.mail.lab86.io"
 actual="$(< "$test_root/repository/apps/ios/Config/Local.xcconfig")"
 [[ "$actual" == "$expected_production" ]]
 
+export LAB86_BUILD_CHANNEL=staging
+if run_post_clone 2>/dev/null; then
+  echo 'The main branch must reject an explicit staging channel.' >&2
+  exit 1
+fi
+unset LAB86_BUILD_CHANNEL
+
 export LAB86_API_BASE_URL='https://mail.lab86.io'
 export CONVEX_DEPLOYMENT_URL='https://proficient-viper-594.convex.cloud'
 export CLERK_FRONTEND_API_HOST='clerk.mail.lab86.io'
@@ -75,8 +83,9 @@ fi
 unset LAB86_BUILD_CHANNEL LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY \
   CONVEX_DEPLOYMENT_URL CLERK_FRONTEND_API_HOST
 export CI_BRANCH=feature/not-a-release
+export LAB86_BUILD_CHANNEL=production
 if run_post_clone 2>/dev/null; then
-  echo 'An unknown Xcode Cloud branch must fail closed.' >&2
+  echo 'An unknown Xcode Cloud branch must fail closed even with an explicit channel.' >&2
   exit 1
 fi
 

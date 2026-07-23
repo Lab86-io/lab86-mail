@@ -48,6 +48,51 @@ describe('Xcode Cloud build discovery', () => {
     expect(hasExplicitBuildTarget('workflow', 'branch')).toBe(true);
   });
 
+  test('explains that production workflow creation requires a configured template', async () => {
+    const environmentNames = [
+      'ASC_ISSUER_ID',
+      'ASC_KEY_ID',
+      'ASC_PRIVATE_KEY',
+      'APP_STORE_APP_ID',
+      'XCODE_CLOUD_WORKFLOW_NAME',
+      'XCODE_CLOUD_BRANCH_NAME',
+      'XCODE_CLOUD_TEMPLATE_WORKFLOW_ID',
+      'XCODE_CLOUD_WORKFLOW_ID',
+      'XCODE_CLOUD_BRANCH_REF_ID',
+    ];
+    const previousEnvironment = new Map(environmentNames.map((name) => [name, process.env[name]] as const));
+    const previousFetch = globalThis.fetch;
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    Object.assign(process.env, {
+      ASC_ISSUER_ID: 'issuer',
+      ASC_KEY_ID: 'key',
+      ASC_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      APP_STORE_APP_ID: 'app',
+      XCODE_CLOUD_WORKFLOW_NAME: 'Production App Store',
+      XCODE_CLOUD_BRANCH_NAME: 'main',
+    });
+    delete process.env.XCODE_CLOUD_TEMPLATE_WORKFLOW_ID;
+    delete process.env.XCODE_CLOUD_WORKFLOW_ID;
+    delete process.env.XCODE_CLOUD_BRANCH_REF_ID;
+    globalThis.fetch = async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/apps/app/ciProduct') {
+        return Response.json({ data: { id: 'product' } });
+      }
+      return Response.json({ data: [], links: { next: null } });
+    };
+
+    try {
+      await expect(main()).rejects.toThrow('no template workflow is configured');
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const [name, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   test('builds the App Store Connect relationship payload from discovered IDs', () => {
     expect(createBuildRunPayload('production-workflow', 'main-ref')).toEqual({
       data: {

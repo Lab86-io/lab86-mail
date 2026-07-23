@@ -31,22 +31,25 @@ xcconfig_url() {
   printf '%s' "$1" | sed 's#://#:/\$()/#'
 }
 
-build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-}")"
-if [[ -z "$build_channel" ]]; then
-  cloud_branch="$(normalize_cloud_value "${CI_BRANCH:-}")"
-  case "$cloud_branch" in
-    main)
-      build_channel=production
-      ;;
-    staging | "")
-      build_channel=staging
-      ;;
-    *)
-      echo "Xcode Cloud must set LAB86_BUILD_CHANNEL outside main or staging." >&2
-      exit 1
-      ;;
-  esac
+cloud_branch="$(normalize_cloud_value "${CI_BRANCH:-}")"
+case "$cloud_branch" in
+  main)
+    expected_build_channel=production
+    ;;
+  staging)
+    expected_build_channel=staging
+    ;;
+  *)
+    echo "Xcode Cloud builds must originate from main or staging." >&2
+    exit 1
+    ;;
+esac
+requested_build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-}")"
+if [[ -n "$requested_build_channel" && "$requested_build_channel" != "$expected_build_channel" ]]; then
+  echo "LAB86_BUILD_CHANNEL does not match Xcode Cloud branch $cloud_branch." >&2
+  exit 1
 fi
+build_channel="$expected_build_channel"
 case "$build_channel" in
   staging)
     # Staging is a named release environment, not a caller-selectable endpoint.

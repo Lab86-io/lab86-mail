@@ -198,7 +198,9 @@ export async function main() {
       workflowID = workflow.id;
     } else {
       if (!process.env.XCODE_CLOUD_TEMPLATE_WORKFLOW_ID) {
-        workflowID = selectWorkflowID(workflows, process.env.XCODE_CLOUD_WORKFLOW_NAME);
+        throw new Error(
+          `Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}" was not found and no template workflow is configured.`,
+        );
       }
       const template = await appStoreConnect(
         `/v1/ciWorkflows/${process.env.XCODE_CLOUD_TEMPLATE_WORKFLOW_ID}` +
