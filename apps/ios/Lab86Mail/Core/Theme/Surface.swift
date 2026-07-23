@@ -11,7 +11,13 @@ extension ThemeStore {
     // The page field. Light ≈ oklch(0.977) / dark ≈ oklch(0.145), same floors
     // as --color-bg on desktop.
     var paperColor: Color {
-        Self.adaptiveSurface(hue: accentHue, lightL: 0.977, lightC: 0.0035, darkL: 0.145, darkC: 0.006)
+        Self.adaptiveSurface(
+            hue: accentHue,
+            lightL: 0.977,
+            lightC: 0.002 + 0.008 * backgroundWash,
+            darkL: 0.145,
+            darkC: 0.003 + 0.009 * backgroundWash
+        )
     }
 
     // One step up: cards, message articles, composer chrome (--color-bg-elevated).
@@ -22,6 +28,16 @@ extension ThemeStore {
     // One step down: wells, inset fields, collapsed rows (--color-bg-subtle).
     var subtleColor: Color {
         Self.adaptiveSurface(hue: accentHue, lightL: 0.958, lightC: 0.004, darkL: 0.175, darkC: 0.006)
+    }
+
+    var railColor: Color {
+        Self.adaptiveSurface(
+            hue: accent2Hue,
+            lightL: 0.965,
+            lightC: 0.002 + 0.009 * railWash,
+            darkL: 0.165,
+            darkC: 0.003 + 0.01 * railWash
+        )
     }
 
     // Accent-soft wash for selected/quarantined surfaces (summary cards,
@@ -70,6 +86,34 @@ extension ThemeStore {
                 ? Self.oklch(l: 0.68, c: chroma * 0.85, h: hue)
                 : Self.oklch(l: 0.58, c: chroma, h: hue)
         })
+    }
+}
+
+struct GrainOverlay: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    let amount: Double
+
+    var body: some View {
+        if amount > 0, !reduceTransparency {
+            Canvas { context, size in
+                let spacing: CGFloat = 5
+                let columns = Int(size.width / spacing) + 1
+                let rows = Int(size.height / spacing) + 1
+                for row in 0..<rows {
+                    for column in 0..<columns {
+                        let hash = (row &* 73_856_093) ^ (column &* 19_349_663)
+                        guard hash % 7 == 0 else { continue }
+                        let x = CGFloat(column) * spacing + CGFloat(abs(hash % 3))
+                        let y = CGFloat(row) * spacing + CGFloat(abs((hash / 3) % 3))
+                        let rect = CGRect(x: x, y: y, width: 0.7, height: 0.7)
+                        context.fill(Path(ellipseIn: rect), with: .color(.primary.opacity(0.055 * amount)))
+                    }
+                }
+            }
+            .blendMode(.overlay)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 }
 

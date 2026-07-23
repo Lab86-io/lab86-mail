@@ -1,0 +1,153 @@
+@preconcurrency import AVFoundation
+import CoreLocation
+import Observation
+@preconcurrency import Speech
+
+@MainActor
+@Observable
+final class CaptureVoiceCoordinator: NSObject {
+    private let recognizer = SFSpeechRecognizer()
+    private let engine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+
+    private(set) var isRecording = false
+    private(set) var transcript = ""
+    var errorMessage: String?
+
+    func toggle() async {
+        if isRecording {
+            stop()
+        } else {
+            await start()
+        }
+    }
+
+    func stop() {
+        guard isRecording else { return }
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        task?.finish()
+        isRecording = false
+    }
+
+    private func start() async {
+        errorMessage = nil
+        let speech = await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+        }
+        guard speech == .authorized else {
+            errorMessage = "Speech recognition permission was not granted. You can keep typing."
+            return
+        }
+        let microphone = await withCheckedContinuation { continuation in
+            AVAudioSession.sharedInstance().requestRecordPermission {
+                continuation.resume(returning: $0)
+            }
+        }
+        guard microphone else {
+            errorMessage = "Microphone permission was not granted. You can keep typing."
+            return
+        }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+
+            let request = SFSpeechAudioBufferRecognitionRequest()
+            request.shouldReportPartialResults = true
+            self.request = request
+            let input = engine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+                request.append(buffer)
+            }
+            engine.prepare()
+            try engine.start()
+            isRecording = true
+            task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
+                Task { @MainActor in
+                    if let result {
+                        self?.transcript = result.bestTranscription.formattedString
+                        if result.isFinal { self?.stop() }
+                    }
+                    if let error {
+                        self?.errorMessage = error.localizedDescription
+                        self?.stop()
+                    }
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            stop()
+        }
+    }
+}
+
+@MainActor
+@Observable
+final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private(set) var location: CLLocation?
+    private(set) var isRequesting = false
+    var errorMessage: String?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func requestOnce() {
+        errorMessage = nil
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            isRequesting = true
+            manager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            isRequesting = true
+            manager.requestLocation()
+        case .denied, .restricted:
+            errorMessage = "Location permission is off. No location will be attached."
+        @unknown default:
+            errorMessage = "Location is unavailable. No location will be attached."
+        }
+    }
+
+    func clear() {
+        location = nil
+        isRequesting = false
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if status == .authorizedAlways || status == .authorizedWhenInUse {
+                self.manager.requestLocation()
+            } else if status == .denied || status == .restricted {
+                self.isRequesting = false
+                self.errorMessage = "Location permission is off. No location will be attached."
+            }
+        }
+    }
+
+    nonisolated func locationManager(
+        _ manager: CLLocationManager,
+        didUpdateLocations locations: [CLLocation]
+    ) {
+        Task { @MainActor in
+            location = locations.last
+            isRequesting = false
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let message = error.localizedDescription
+        Task { @MainActor in
+            isRequesting = false
+            errorMessage = message
+        }
+    }
+}

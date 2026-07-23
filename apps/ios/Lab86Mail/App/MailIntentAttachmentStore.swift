@@ -16,6 +16,12 @@ actor MailIntentAttachmentStore {
             data = file.data
         }
 
+        init(_ attachment: ComposeAttachment) {
+            filename = attachment.filename
+            typeIdentifier = UTType(mimeType: attachment.contentType)?.identifier
+            data = attachment.data
+        }
+
         var intentFile: IntentFile {
             IntentFile(data: data, filename: filename, type: typeIdentifier.flatMap(UTType.init))
         }
@@ -38,6 +44,17 @@ actor MailIntentAttachmentStore {
             return
         }
         let data = try JSONEncoder().encode(files.map(StoredAttachment.init))
+        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+    func saveComposeAttachments(_ attachments: [ComposeAttachment], draftID: String) throws {
+        try prepareDirectory()
+        let url = fileURL(draftID: draftID)
+        if attachments.isEmpty {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let data = try JSONEncoder().encode(attachments.map(StoredAttachment.init))
         try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
