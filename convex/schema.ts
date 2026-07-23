@@ -70,6 +70,7 @@ export default defineSchema({
     userId: v.string(),
     provider: v.string(),
     redirectTo: v.optional(v.string()),
+    nativeCallback: v.optional(v.boolean()),
     createdAt: v.number(),
     expiresAt: v.number(),
     consumedAt: v.optional(v.number()),
@@ -935,6 +936,7 @@ export default defineSchema({
     workState: v.optional(
       v.union(
         v.literal('active'),
+        v.literal('paused'),
         v.literal('waiting'),
         v.literal('blocked'),
         v.literal('done'),
@@ -1861,6 +1863,7 @@ export default defineSchema({
     state: v.string(),
     server: v.string(),
     payloadEncrypted: v.string(),
+    nativeCallback: v.optional(v.boolean()),
     expiresAt: v.number(),
     createdAt: v.number(),
   })

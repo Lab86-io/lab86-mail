@@ -197,18 +197,44 @@ describe('mobile notification preferences', () => {
         newMailPushEnabled: false,
         eventSuggestionPushEnabled: true,
         eveningCheckinEnabled: false,
+        eveningCheckinLocalTime: '19:30',
+        inAppEnabled: true,
+        emailFallbackEnabled: true,
+        emailFallbackDelayMinutes: 90,
         timezone: 'America/New_York',
       }),
-    ).toMatchObject({ newMailPushEnabled: false, timezone: 'America/New_York' });
+    ).toMatchObject({
+      newMailPushEnabled: false,
+      eveningCheckinLocalTime: '19:30',
+      emailFallbackDelayMinutes: 90,
+      timezone: 'America/New_York',
+    });
     expect(() =>
       parseMobileNotificationPreferences({
         nativePushEnabled: true,
         newMailPushEnabled: true,
         eventSuggestionPushEnabled: true,
         eveningCheckinEnabled: true,
+        eveningCheckinLocalTime: '19:00',
+        inAppEnabled: true,
+        emailFallbackEnabled: true,
+        emailFallbackDelayMinutes: 90,
         timezone: 'not/a-zone',
       }),
     ).toThrow(/timezone/);
+    expect(() =>
+      parseMobileNotificationPreferences({
+        nativePushEnabled: true,
+        newMailPushEnabled: true,
+        eventSuggestionPushEnabled: true,
+        eveningCheckinEnabled: true,
+        eveningCheckinLocalTime: '25:00',
+        inAppEnabled: true,
+        emailFallbackEnabled: true,
+        emailFallbackDelayMinutes: 90,
+        timezone: 'UTC',
+      }),
+    ).toThrow(/HH:MM/);
   });
 
   test('suppresses only the notification classes the user disabled', () => {

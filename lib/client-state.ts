@@ -62,6 +62,9 @@ export interface ClientState {
   selectedIds: string[];
   paletteOpen: boolean;
   compose: ComposeState;
+  // Exact attachment blobs restored after Undo Send. Transient by design;
+  // the durable copy lives in IndexedDB until the pending send is resolved.
+  composeRecoveredFiles: File[];
   shortcutsOpen: boolean;
   rightRailOpen: boolean;
   railOpen: boolean;
@@ -134,6 +137,7 @@ export interface ClientState {
     prefill?: ComposePrefill;
   }) => void;
   closeCompose: () => void;
+  setComposeRecoveredFiles: (files: File[]) => void;
   setShortcutsOpen: (open: boolean) => void;
   setRightRailOpen: (open: boolean) => void;
   setRailOpen: (open: boolean) => void;
@@ -205,6 +209,7 @@ export const useClientStore = create<ClientState>()(
       selectedIds: [],
       paletteOpen: false,
       compose: initialCompose,
+      composeRecoveredFiles: [],
       shortcutsOpen: false,
       rightRailOpen: true,
       railOpen: true,
@@ -297,6 +302,7 @@ export const useClientStore = create<ClientState>()(
           },
         })),
       closeCompose: () => set({ compose: { ...initialCompose } }),
+      setComposeRecoveredFiles: (composeRecoveredFiles) => set({ composeRecoveredFiles }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
       setRightRailOpen: (rightRailOpen) => set({ rightRailOpen }),
       setRailOpen: (railOpen) => set({ railOpen }),

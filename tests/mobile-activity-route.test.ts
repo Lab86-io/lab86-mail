@@ -20,6 +20,9 @@ function dependencies() {
       _id: 'checkin_1',
       status: 'open',
     })) as any,
+    listPendingQuestions: mock(async () => [
+      { questionId: 'question_1', prompt: 'Which deadline applies?', status: 'pending' },
+    ]) as any,
   };
 }
 
@@ -38,6 +41,7 @@ describe('mobile activity route', () => {
       ok: true,
       suggestions: [{ _id: 'suggestion_1', title: 'Review this', status: 'pending' }],
       checkin: { _id: 'checkin_1', status: 'open' },
+      questions: [{ questionId: 'question_1', prompt: 'Which deadline applies?', status: 'pending' }],
     });
     expect(deps.currentUser).toHaveBeenCalledTimes(1);
     expect(deps.listPendingSuggestions).toHaveBeenCalledWith({
@@ -45,6 +49,7 @@ describe('mobile activity route', () => {
       limit: 50,
     });
     expect(deps.latestUnansweredCheckin).toHaveBeenCalledWith({ userId: user.userId });
+    expect(deps.listPendingQuestions).toHaveBeenCalledWith({ userId: user.userId, limit: 50 });
   });
 
   test('returns the controlled authentication error without querying activity', async () => {
@@ -59,6 +64,7 @@ describe('mobile activity route', () => {
     expect(await response.json()).toEqual({ ok: false, error: 'Sign in required.' });
     expect(deps.listPendingSuggestions).not.toHaveBeenCalled();
     expect(deps.latestUnansweredCheckin).not.toHaveBeenCalled();
+    expect(deps.listPendingQuestions).not.toHaveBeenCalled();
   });
 
   test('does not expose unexpected server errors', async () => {

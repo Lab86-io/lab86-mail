@@ -4,16 +4,11 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { useClientStore } from '@/lib/client-state';
 
 export const SHORTCUTS: [string[], string][] = [
-  [['j', '↓'], 'Next thread'],
-  [['k', '↑'], 'Previous thread'],
-  [['↵', 'o'], 'Open thread'],
   [['u', 'esc'], 'Close thread'],
   [['e'], 'Archive'],
   [['#'], 'Trash'],
-  [['r'], 'Reply'],
   [['c'], 'Compose'],
   [['/'], 'Focus search'],
-  [['x'], 'Toggle selection'],
   [['s'], 'Summarize current thread'],
   [['t'], 'Triage current thread'],
   [['g', 'i'], 'Go to Inbox'],

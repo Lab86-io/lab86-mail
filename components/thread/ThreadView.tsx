@@ -79,7 +79,12 @@ export function ThreadView() {
     args: account && threadId ? { account, threadId } : 'skip',
   });
   const liveData = liveThread.status === 'success' ? liveThread.data : undefined;
-  const { data: fallbackThreadData, isLoading: fallbackThreadLoading } = useQuery({
+  const {
+    data: fallbackThreadData,
+    isLoading: fallbackThreadLoading,
+    error: fallbackThreadError,
+    refetch: refetchFallbackThread,
+  } = useQuery({
     queryKey: ['thread', account, threadId],
     queryFn: async () =>
       callTool<{
@@ -102,6 +107,14 @@ export function ThreadView() {
   });
   const data = liveData || fallbackThreadData;
   const isLoading = !data && (liveThread.status === 'pending' || fallbackThreadLoading);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+
+  useEffect(() => {
+    setLoadTimedOut(false);
+    if (data) return;
+    const timer = window.setTimeout(() => setLoadTimedOut(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [data]);
 
   // Fullscreen is a per-open-thread mode; closing the reader always resets it.
   useEffect(() => {
@@ -352,6 +365,34 @@ export function ThreadView() {
           <p className="max-w-[280px]">
             Select a thread to read. <kbd>j</kbd>/<kbd>k</kbd> to navigate.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data && (loadTimedOut || (liveThread.status === 'error' && fallbackThreadError))) {
+    const detail =
+      fallbackThreadError instanceof Error
+        ? fallbackThreadError.message
+        : liveThread.status === 'error'
+          ? 'Live mail stopped responding.'
+          : 'The thread did not finish loading.';
+    return (
+      <div className="grid h-full place-items-center px-6 text-center">
+        <div className="max-w-sm">
+          <Mail className="mx-auto h-7 w-7 text-[var(--color-text-faint)]" aria-hidden="true" />
+          <h2 className="mt-3 text-[14px] font-semibold text-[var(--color-text)]">Thread unavailable</h2>
+          <p className="mt-1 text-[12px] leading-relaxed text-[var(--color-text-muted)]">{detail}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoadTimedOut(false);
+              void refetchFallbackThread();
+            }}
+            className="mt-4 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-3 py-2 text-[12px] font-medium text-[var(--color-text)]"
+          >
+            Try Again
+          </button>
         </div>
       </div>
     );

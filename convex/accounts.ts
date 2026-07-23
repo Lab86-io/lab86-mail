@@ -17,6 +17,7 @@ export const createOAuthState = mutation({
     state: v.string(),
     provider: v.string(),
     redirectTo: v.optional(v.string()),
+    nativeCallback: v.optional(v.boolean()),
     ttlMs: v.number(),
   },
   handler: async (ctx, args) => {
@@ -27,6 +28,7 @@ export const createOAuthState = mutation({
       userId: args.userId,
       provider: args.provider,
       redirectTo: args.redirectTo,
+      nativeCallback: args.nativeCallback,
       createdAt: ts,
       expiresAt: ts + args.ttlMs,
     });

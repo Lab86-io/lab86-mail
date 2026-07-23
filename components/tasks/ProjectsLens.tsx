@@ -5,12 +5,14 @@
 // updates live through Convex reactivity; completing the last task plays one
 // quiet, motion-based moment (no confetti, no icons).
 
+import { useQuery as useHTTPQuery } from '@tanstack/react-query';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
 import { api } from '@/convex/_generated/api';
+import { callTool } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
 // Cast like `boardsApi` in TasksSurface: the albatrossWork functions are being
@@ -113,12 +115,50 @@ const CELEBRATION_LINE = 'One less albatross.';
 export function ProjectsLens({ onOpenTask }: { onOpenTask: (boardId: string, cardId: string) => void }) {
   const { isAuthenticated } = useConvexAuth();
   const reduced = useReducedMotion() ?? false;
-  const projects = useQuery(workApi.listProjectsWithProgress, isAuthenticated ? {} : 'skip') as
+  const liveProjects = useQuery(workApi.listProjectsWithProgress, isAuthenticated ? {} : 'skip') as
     | ProjectSummary[]
     | undefined;
+  const fallbackProjects = useHTTPQuery({
+    queryKey: ['projects', 'http-fallback'],
+    queryFn: async () => {
+      const result = await callTool<{ projects: Array<Partial<ProjectSummary> & { _id: string }> }>(
+        'albatross_list_projects',
+        { limit: 200 },
+      );
+      return result.projects.map(
+        (project): ProjectSummary => ({
+          _id: project._id,
+          title: project.title || 'Untitled project',
+          outcome: project.outcome,
+          status: project.status || 'active',
+          areaId: project.areaId,
+          sourceIntentId: project.sourceIntentId,
+          createdAt: project.createdAt || 0,
+          updatedAt: project.updatedAt || project.createdAt || 0,
+          taskCount: project.taskCount || 0,
+          completedTaskCount: project.completedTaskCount || 0,
+          intentCount: project.intentCount || 0,
+          eventCount: project.eventCount || 0,
+        }),
+      );
+    },
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+  const projects = liveProjects ?? fallbackProjects.data;
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (projects) {
+      setLoadTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setLoadTimedOut(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [projects]);
 
   // Session-scoped progress snapshots so completion is observed, not inferred
   // from the first payload. Keyed by project id.
@@ -158,7 +198,30 @@ export function ProjectsLens({ onOpenTask }: { onOpenTask: (boardId: string, car
   const selected =
     (selectedId && visible.find((p) => p._id === selectedId)) || groups.active[0] || visible[0] || null;
 
-  if (!isAuthenticated || projects === undefined) {
+  if (projects === undefined && loadTimedOut) {
+    return (
+      <div className="grid flex-1 place-items-center px-6 text-center">
+        <div className="max-w-sm">
+          <h2 className="text-[14px] font-semibold text-[var(--color-text)]">Tasks could not load</h2>
+          <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+            The live task session did not authenticate and the provider-backed fallback returned no data.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoadTimedOut(false);
+              void fallbackProjects.refetch();
+            }}
+            className="mt-4 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-3 py-2 text-[12px] font-medium"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (projects === undefined) {
     return (
       <div className="grid flex-1 place-items-center text-[13px] text-[var(--color-text-muted)]">
         Loading projects…

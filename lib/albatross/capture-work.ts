@@ -8,6 +8,7 @@ export interface CaptureWorkInput {
   transcript?: string;
   source: 'text' | 'voice' | 'chat';
   areaId?: string;
+  reviewedItems?: Array<{ title: string; rawText: string }>;
 }
 
 export interface CaptureWorkResult {
@@ -50,6 +51,26 @@ export async function captureWork(
     source: input.source,
   });
   try {
+    if (input.reviewedItems?.length) {
+      const items = input.reviewedItems.slice(0, 20).map((item) => ({
+        title:
+          String(item.title || '')
+            .trim()
+            .slice(0, 180) || 'Work',
+        rawText: String(item.rawText || '')
+          .trim()
+          .slice(0, 20_000),
+        primaryAreaId: input.areaId || undefined,
+        relatedAreaIds: [],
+      }));
+      if (items.some((item) => !item.rawText)) throw new Error('Reviewed Work cannot be empty.');
+      const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
+        userId: user.userId,
+        captureId,
+        items,
+      });
+      return { captureId, status: 'split', workIds };
+    }
     const [areas, facts] = await Promise.all([
       dependencies
         .query<any[]>((api as any).albatross.listAreas, { userId: user.userId, status: 'active' })

@@ -45,6 +45,10 @@ export async function PUT(request: Request) {
       newMailPushEnabled: body.newMailPushEnabled,
       eventSuggestionPushEnabled: body.eventSuggestionPushEnabled,
       eveningCheckinEnabled: body.eveningCheckinEnabled,
+      eveningCheckinLocalTime: body.eveningCheckinLocalTime,
+      inAppEnabled: body.inAppEnabled,
+      emailFallbackEnabled: body.emailFallbackEnabled,
+      emailFallbackDelayMinutes: body.emailFallbackDelayMinutes,
       timezone: body.timezone,
     });
     return Response.json({ ok: true });

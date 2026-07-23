@@ -674,6 +674,43 @@ export const albatrossListProjects = defineTool({
   },
 });
 
+export const albatrossUpdateProject = defineTool({
+  name: 'albatross_update_project',
+  description: 'Change an Albatross project state after explicit user review.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    projectId: z.string(),
+    status: z.enum(['active', 'paused', 'done', 'archived']),
+  }),
+  output: z.object({ ok: z.boolean(), operationId: z.string() }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const pane = await deps.convexQuery<any>(albatrossApi().getProjectPane, {
+      userId,
+      projectId: args.projectId,
+    });
+    const previousStatus = pane?.project?.status || 'active';
+    await deps.convexMutation(albatrossApi().updateProject, {
+      userId,
+      projectId: args.projectId,
+      status: args.status,
+    });
+    const operationId = await deps.recordOperation({
+      userId,
+      tool: 'albatross_update_project',
+      surface: 'albatross',
+      summary: `Changed project "${pane?.project?.title || 'Project'}" to ${args.status}`,
+      target: { kind: 'project', id: args.projectId },
+      inverse: {
+        kind: 'albatross.restore_project_status',
+        payload: { projectId: args.projectId, status: previousStatus },
+      },
+    });
+    return { ok: true, operationId };
+  },
+});
+
 export const albatrossCreateRoutine = defineTool({
   name: 'albatross_create_routine',
   description:
@@ -918,6 +955,14 @@ registerUndoExecutor('albatross.archive_project', async (payload, ctx) => {
     userId: ctx.userId,
     projectId: payload.projectId,
     status: 'archived',
+  });
+});
+
+registerUndoExecutor('albatross.restore_project_status', async (payload, ctx) => {
+  await deps.convexMutation(albatrossApi().updateProject, {
+    userId: ctx.userId,
+    projectId: payload.projectId,
+    status: payload.status,
   });
 });
 

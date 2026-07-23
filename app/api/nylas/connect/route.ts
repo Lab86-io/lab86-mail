@@ -57,7 +57,11 @@ export async function GET(req: NextRequest) {
     userId: user.userId,
     state,
     provider,
-    redirectTo: sanitizeInternalPath(url.searchParams.get('redirectTo')),
+    redirectTo:
+      url.searchParams.get('native') === '1'
+        ? 'lab86-native-callback'
+        : sanitizeInternalPath(url.searchParams.get('redirectTo')),
+    nativeCallback: url.searchParams.get('native') === '1',
     ttlMs: 10 * 60_000,
   });
   const scopes = scopesForProvider(provider as MailProvider);
@@ -72,6 +76,9 @@ export async function GET(req: NextRequest) {
     ...(scopes.length ? { scope: scopes } : {}),
   };
   const authUrl = requireNylas().auth.urlForOAuth2(config);
+  if (url.searchParams.get('format') === 'json') {
+    return NextResponse.json({ ok: true, authorizationUrl: authUrl });
+  }
   return NextResponse.redirect(authUrl);
 }
 
