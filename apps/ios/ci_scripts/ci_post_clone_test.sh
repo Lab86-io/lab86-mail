@@ -18,7 +18,7 @@ run_post_clone() {
 }
 
 unset LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY CONVEX_DEPLOYMENT_URL \
-  CLERK_FRONTEND_API_HOST
+  CLERK_FRONTEND_API_HOST LAB86_BUILD_CHANNEL
 run_post_clone
 
 default_key="pk_test_$(printf '%s$' 'together-sawfish-53.clerk.accounts.dev' | base64 | tr -d '\n')"
@@ -41,5 +41,26 @@ CONVEX_DEPLOYMENT_URL = https:/$()/convex.example.com
 CLERK_FRONTEND_API_HOST = clerk.example.com'
 actual="$(< "$test_root/repository/apps/ios/Config/Local.xcconfig")"
 [[ "$actual" == "$expected_override" ]]
+
+unset LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY CONVEX_DEPLOYMENT_URL \
+  CLERK_FRONTEND_API_HOST
+export LAB86_BUILD_CHANNEL=production
+if run_post_clone 2>/dev/null; then
+  echo 'Production configuration must fail closed when values are missing.' >&2
+  exit 1
+fi
+
+export LAB86_API_BASE_URL='https://mail.lab86.io'
+export CONVEX_DEPLOYMENT_URL='https://production-example.convex.cloud'
+export CLERK_FRONTEND_API_HOST='clerk.lab86.io'
+export CLERK_PUBLISHABLE_KEY='pk_live_example'
+run_post_clone
+
+expected_production='LAB86_API_BASE_URL = https:/$()/mail.lab86.io
+CLERK_PUBLISHABLE_KEY = pk_live_example
+CONVEX_DEPLOYMENT_URL = https:/$()/production-example.convex.cloud
+CLERK_FRONTEND_API_HOST = clerk.lab86.io'
+actual="$(< "$test_root/repository/apps/ios/Config/Local.xcconfig")"
+[[ "$actual" == "$expected_production" ]]
 
 printf 'ci_post_clone configuration tests passed\n'
