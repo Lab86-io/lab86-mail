@@ -85,7 +85,7 @@ jobs:
           --project "$RAILWAY_PROJECT_ID"
           --environment development
           --service "$RAILWAY_SERVICE_NAME"
-          --ci
+          --detach
           -m "$RAILWAY_DEPLOY_MESSAGE"
 
       - name: Wait for Railway development release
