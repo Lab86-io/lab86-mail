@@ -679,6 +679,27 @@ struct Lab86MailTests {
         #expect(restored.areaDetails?["area-1"]?.livingBrief?.lede == "Two things need you.")
     }
 
+    @Test
+    func areaInboxDeduplicatesHistoricalThreadLinksAndPrefersVerifiedEvidence() throws {
+        let value = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(#"""
+            {"area":{"_id":"area-1","name":"Launch","kind":"project"},
+             "mail":[
+               {"linkId":"candidate-link","providerThreadId":"thread-1","accountId":"account-1","subject":"Launch","lastDate":1752600000000,"linkStatus":"candidate"},
+               {"linkId":"verified-link","providerThreadId":"thread-1","accountId":"account-1","subject":"Launch","lastDate":1752600000000,"linkStatus":"verified"}
+             ]}
+            """#.utf8)
+        )
+
+        let detail = AreaDetail(json: value)
+
+        #expect(detail.mail.count == 1)
+        #expect(detail.mail.first?.id == "account-1:thread-1")
+        #expect(detail.mail.first?.linkID == "verified-link")
+        #expect(detail.mail.first?.linkStatus == "verified")
+    }
+
     @Test @MainActor
     func todayUsesEventIntervalOverlapInsteadOfEndpointDates() {
         let store = ProductStore(tools: ScriptedTools(responses: [:]), backend: BackendClient(baseURL: nil))
@@ -724,11 +745,15 @@ struct Lab86MailTests {
         navigation.openArea(id: "area-1", name: "Cardhunt job")
         #expect(navigation.selectedTab == .work)
         #expect(navigation.areaRoute?.areaID == "area-1")
+        #expect(navigation.canRevealSourceList)
 
         navigation.openThread(accountID: "a1", threadID: "t1", preservingCurrentRoot: true)
         #expect(navigation.selectedTab == .work)
         #expect(navigation.areaRoute?.areaID == "area-1")
         #expect(navigation.threadRoute == ThreadRoute(accountID: "a1", threadID: "t1"))
+        #expect(!navigation.canRevealSourceList)
+        navigation.threadRoute = nil
+        #expect(navigation.canRevealSourceList)
 
         navigation.openWork(id: "w1", title: "Prepare launch review")
         #expect(navigation.workRoute?.workID == "w1")

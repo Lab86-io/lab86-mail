@@ -180,7 +180,7 @@ struct AppShellView: View {
                     .offset(x: pageOffset)
                     .accessibilityHidden(showsSourceList)
 
-                if !showsSourceList {
+                if !showsSourceList, environment.navigation.canRevealSourceList {
                     Color.clear
                         .frame(width: 24, height: geometry.size.height)
                         .contentShape(.rect)
@@ -194,6 +194,7 @@ struct AppShellView: View {
         .onChange(of: environment.navigation.requestsSourceList) { _, requested in
             guard requested else { return }
             environment.navigation.requestsSourceList = false
+            guard environment.navigation.canRevealSourceList else { return }
             showsSourceList = true
             UIAccessibility.post(notification: .screenChanged, argument: "Navigation")
         }

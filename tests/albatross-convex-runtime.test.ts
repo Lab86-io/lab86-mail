@@ -925,6 +925,15 @@ describe('areaHome', () => {
         }
         await ctx.db.insert(
           'areaArtifactLinks',
+          bareLink(userId, areaId, {
+            artifactId: 'home_m1',
+            accountId: 'account_1',
+            status: 'verified',
+            updatedAt: ts - 500,
+          }) as any,
+        );
+        await ctx.db.insert(
+          'areaArtifactLinks',
           bareLink(userId, areaId, { artifactId: 'home_accountless' }) as any,
         );
 
@@ -1187,7 +1196,7 @@ describe('areaHome', () => {
       expect(home.counts.facts).toEqual({ verified: 1, candidate: 1 });
 
       expect(home.mail.map((row) => row.providerThreadId)).toEqual(['home_m2', 'home_m1']);
-      expect(home.mail[1]).toMatchObject({ unread: true, starred: true, linkStatus: 'candidate' });
+      expect(home.mail[1]).toMatchObject({ unread: true, starred: true, linkStatus: 'verified' });
 
       expect(home.events.map((row) => row.providerEventId)).toEqual(['evt_up', 'evt_past']);
 

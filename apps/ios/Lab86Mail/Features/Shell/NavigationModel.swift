@@ -150,6 +150,11 @@ final class NavigationModel {
         threadRoute != nil || eventRoute != nil || workRoute != nil || projectRoute != nil
     }
 
+    // The compact shell's leading-edge reveal must never compete with the
+    // system interactive-pop gesture. Once the pushed destination closes, the
+    // same edge is available again to reveal the source list.
+    var canRevealSourceList: Bool { !hasNestedDestination }
+
     func selectPrimary(_ destination: PrimaryTab) {
         selectedTab = destination
         areaRoute = nil

@@ -140,12 +140,17 @@ struct AreaDetailView: View {
             }
             Spacer(minLength: 0)
             if detail != nil {
-                HStack(spacing: 2) {
-                    surfacePill(.brief)
-                    surfacePill(.inbox)
+                Picker("Area view", selection: $surface) {
+                    ForEach(AreaSurface.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
                 }
-                .padding(3)
-                .glassEffect(.regular.interactive(), in: .capsule)
+                // The native segmented picker receives the platform's default
+                // Liquid Glass treatment and interaction behavior.
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 164)
+                .accessibilityIdentifier("area-surface-picker")
                 Menu {
                     Button("Reload") {
                         Task { await load(initial: false) }
@@ -201,25 +206,6 @@ struct AreaDetailView: View {
 
     private var refreshLabel: String {
         environment.store.areaRefreshStates[route.areaID]?.progress ?? "Refresh brief"
-    }
-
-    private func surfacePill(_ choice: AreaSurface) -> some View {
-        let selected = surface == choice
-        return Button {
-            withAnimation(.snappy(duration: 0.2)) { surface = choice }
-        } label: {
-            Text(choice.title)
-                .font(.subheadline.weight(selected ? .semibold : .regular))
-                .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 7)
-                .background(
-                    Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
-                )
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     // The area's mail as a first-class inbox list — same rows the brief's Mail

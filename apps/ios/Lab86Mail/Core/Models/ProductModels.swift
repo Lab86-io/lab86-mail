@@ -1203,7 +1203,7 @@ struct AreaDetail: Hashable, Codable, Sendable {
         verifiedFacts = (facts?["verified"]?.arrayValue ?? []).compactMap(Self.fact)
         candidateFacts = (facts?["candidate"]?.arrayValue ?? []).compactMap(Self.fact)
 
-        mail = (json["mail"]?.arrayValue ?? []).compactMap { row in
+        let decodedMail = (json["mail"]?.arrayValue ?? []).compactMap { row -> MailRow? in
             guard let threadID = row["providerThreadId"]?.stringValue ?? row["threadId"]?.stringValue else {
                 return nil
             }
@@ -1219,6 +1219,7 @@ struct AreaDetail: Hashable, Codable, Sendable {
                 linkStatus: row["linkStatus"]?.stringValue ?? "verified"
             )
         }
+        mail = Self.uniqueMailRows(decodedMail)
 
         events = (json["events"]?.arrayValue ?? []).compactMap { row in
             guard let eventID = row["providerEventId"]?.stringValue ?? row["eventId"]?.stringValue,
@@ -1317,6 +1318,22 @@ struct AreaDetail: Hashable, Codable, Sendable {
             value: value,
             status: row["status"]?.stringValue ?? "candidate"
         )
+    }
+
+    private static func uniqueMailRows(_ rows: [MailRow]) -> [MailRow] {
+        var indexByID: [String: Int] = [:]
+        var unique: [MailRow] = []
+        for row in rows {
+            if let index = indexByID[row.id] {
+                if unique[index].linkStatus != "verified", row.linkStatus == "verified" {
+                    unique[index] = row
+                }
+            } else {
+                indexByID[row.id] = unique.count
+                unique.append(row)
+            }
+        }
+        return unique
     }
 }
 

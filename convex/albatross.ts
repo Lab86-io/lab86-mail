@@ -1568,6 +1568,18 @@ async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link
   };
 }
 
+function uniqueAreaMailLinks(links: any[]) {
+  const byThread = new Map<string, any>();
+  for (const link of links) {
+    const key = `${String(link.accountId || '')}:${String(link.artifactId || '')}`;
+    const existing = byThread.get(key);
+    if (!existing || (existing.status !== 'verified' && link.status === 'verified')) {
+      byThread.set(key, link);
+    }
+  }
+  return [...byThread.values()];
+}
+
 async function resolveEventLink(ctx: QueryCtx | MutationCtx, userId: string, link: any) {
   const docId = ctx.db.normalizeId('calendarEvents', link.artifactId);
   let event = docId ? await ctx.db.get(docId) : null;
@@ -1676,9 +1688,11 @@ export const areaHome = query({
       byKind.set(link.artifactKind, list);
     }
 
-    const resolvedMail = (
-      await Promise.all((byKind.get('mailThread') || []).map((link) => resolveMailLink(ctx, userId, link)))
-    )
+    // Historical classifier runs can leave more than one active link for the
+    // same account/thread. Area Inbox rows require one stable identity each;
+    // prefer user-verified evidence and resolve every thread only once.
+    const mailLinks = uniqueAreaMailLinks(byKind.get('mailThread') || []);
+    const resolvedMail = (await Promise.all(mailLinks.map((link) => resolveMailLink(ctx, userId, link))))
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => b.lastDate - a.lastDate);
     const mail = resolvedMail.slice(0, AREA_HOME_MAIL_CAP);
@@ -1857,7 +1871,7 @@ export const areaHome = query({
         facts: { verified: verified.length, candidate: candidate.length },
         links: {
           mailThread: {
-            shown: Math.min((byKind.get('mailThread') || []).length, AREA_HOME_LINK_SCAN_CAPS.mailThread),
+            shown: Math.min(mailLinks.length, AREA_HOME_LINK_SCAN_CAPS.mailThread),
             bounded: true,
           },
           calendarEvent: {
