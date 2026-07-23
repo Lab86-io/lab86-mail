@@ -1,4 +1,5 @@
 import Foundation
+import MobileAPI
 
 struct AccountSummary: Identifiable, Hashable, Codable, Sendable {
     let id: String
@@ -953,6 +954,7 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     let title: String
     let narrative: String
     let html: String?
+    let document: BriefDocumentV2?
     let artifactStatus: String?
     let artifactSource: String?
     let hasAreaBrief: Bool
@@ -960,7 +962,7 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     let sectionCounts: SectionCounts
     let errors: [String]
 
-    var hasArtifact: Bool { !(html ?? "").isEmpty }
+    var hasArtifact: Bool { document != nil || !(html ?? "").isEmpty }
 
     // The edition is still being written when the doc is a partial or the
     // artifact is composing/enriching — Today shows a bounded progress note.
@@ -991,6 +993,12 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         title = json["title"]?.stringValue?.nilIfBlank ?? "Daily Report"
         narrative = json["narrative"]?.stringValue ?? ""
         html = json["html"]?.stringValue?.nilIfBlank
+        if let documentJSON = json["document"],
+           let data = try? JSONEncoder().encode(documentJSON) {
+            document = BriefDocumentV2.decode(data)
+        } else {
+            document = nil
+        }
         artifactStatus = json["artifactStatus"]?.stringValue?.nilIfBlank
         artifactSource = json["artifactSource"]?.stringValue?.nilIfBlank
         let sections = json["sections"]
@@ -1041,6 +1049,8 @@ struct AreaDetail: Hashable, Codable, Sendable {
         // Older editions stored their complete HTML artifact; current ones are
         // structured prose. When present, the artifact renders verbatim.
         let artifactHtml: String?
+        let document: BriefDocumentV2?
+        let artifactSource: String?
 
         var isReady: Bool { status == "ready" }
     }
@@ -1188,12 +1198,21 @@ struct AreaDetail: Hashable, Codable, Sendable {
         )
 
         if let brief = json["livingBrief"], brief.objectValue != nil {
+            let document: BriefDocumentV2?
+            if let documentJSON = brief["document"],
+               let data = try? JSONEncoder().encode(documentJSON) {
+                document = BriefDocumentV2.decode(data)
+            } else {
+                document = nil
+            }
             livingBrief = LivingBrief(
                 status: brief["status"]?.stringValue ?? "ready",
                 lede: brief["lede"]?.stringValue ?? "",
                 summary: brief["summary"]?.stringValue ?? "",
                 generatedAt: CalendarDateParser.date(brief["generatedAt"]),
-                artifactHtml: brief["artifactHtml"]?.stringValue?.nilIfBlank
+                artifactHtml: brief["artifactHtml"]?.stringValue?.nilIfBlank,
+                document: document,
+                artifactSource: brief["artifactSource"]?.stringValue?.nilIfBlank
             )
         } else {
             livingBrief = nil
@@ -1382,6 +1401,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let outcome: String?
         let summary: String?
         let artifactHTML: String?
+        let document: BriefDocumentV2?
+        let artifactSource: String?
         let artifactTitle: String?
         let assumptions: [String]
         let sources: [Source]
@@ -1441,6 +1462,13 @@ struct WorkDetail: Hashable, Codable, Sendable {
 
         if let planJSON = json["plan"], planJSON.objectValue != nil,
            let planID = planJSON["_id"]?.stringValue ?? planJSON["id"]?.stringValue {
+            let document: BriefDocumentV2?
+            if let documentJSON = planJSON["document"],
+               let data = try? JSONEncoder().encode(documentJSON) {
+                document = BriefDocumentV2.decode(data)
+            } else {
+                document = nil
+            }
             let digital = (planJSON["digitalActions"]?.arrayValue ?? []).compactMap { row -> Action? in
                 guard let title = row["title"]?.stringValue?.nilIfBlank else { return nil }
                 let key = row["actionKey"]?.stringValue ?? row["key"]?.stringValue ?? title
@@ -1461,6 +1489,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
                 outcome: planJSON["outcome"]?.stringValue?.nilIfBlank,
                 summary: planJSON["summary"]?.stringValue?.nilIfBlank,
                 artifactHTML: planJSON["artifactHtml"]?.stringValue?.nilIfBlank,
+                document: document,
+                artifactSource: planJSON["artifactSource"]?.stringValue?.nilIfBlank,
                 artifactTitle: planJSON["artifactTitle"]?.stringValue?.nilIfBlank,
                 assumptions: (planJSON["assumptions"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank },
                 sources: (planJSON["sourceRefs"]?.arrayValue ?? []).compactMap { row in

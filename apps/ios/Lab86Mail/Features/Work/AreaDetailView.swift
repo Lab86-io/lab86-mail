@@ -33,6 +33,7 @@ struct AreaDetailView: View {
     @State private var showsManagement = false
     @State private var inboxSelection: Set<String> = []
     @State private var inboxEditMode: EditMode = .inactive
+    @State private var artifactReview: ArtifactReviewRequest?
 
     var body: some View {
         @Bindable var navigation = environment.navigation
@@ -98,6 +99,11 @@ struct AreaDetailView: View {
                     showsManagement = false
                     environment.navigation.areaRoute = nil
                 }
+            }
+        }
+        .sheet(item: $artifactReview) { request in
+            ArtifactActionReviewSheet(request: request) {
+                await load(initial: false)
             }
         }
     }
@@ -323,8 +329,24 @@ struct AreaDetailView: View {
         }
     }
 
+    @ViewBuilder
     private func briefSurface(_ detail: AreaDetail) -> some View {
-        ScrollView {
+        if let document = detail.livingBrief?.document,
+           detail.livingBrief?.artifactSource == "document-v2" {
+            ScrollView {
+                BriefDocumentView(
+                    document: document,
+                    isComposing: detail.livingBrief?.status == "generating",
+                    scopeAreaID: detail.identity.id,
+                    onReview: { artifactReview = $0 },
+                    onRegenerate: { Task { await refreshBrief() } }
+                )
+                .padding(.top, 50)
+                .padding(.bottom, 24)
+            }
+            .refreshable { await load(initial: false) }
+        } else {
+            ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
             if let loadError {
                 Label("Showing your last saved view. \(loadError)", systemImage: "wifi.slash")
@@ -358,11 +380,12 @@ struct AreaDetailView: View {
             }
             }
             .padding(.bottom, 32)
+            }
+            // With a masthead picture the document owns the whole screen and the
+            // art slides under the status bar; text-first briefs stay below it.
+            .ignoresSafeArea(edges: detail.identity.imageURL != nil ? .top : [])
+            .refreshable { await load(initial: false) }
         }
-        // With a masthead picture the document owns the whole screen and the
-        // art slides under the status bar; text-first briefs stay below it.
-        .ignoresSafeArea(edges: detail.identity.imageURL != nil ? .top : [])
-        .refreshable { await load(initial: false) }
     }
 
     @ViewBuilder private func needsYouSection(_ detail: AreaDetail) -> some View {

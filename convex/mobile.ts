@@ -101,6 +101,263 @@ export const bootstrapState = query({
   },
 });
 
+const briefRefValidator = v.object({
+  kind: v.union(
+    v.literal('thread'),
+    v.literal('task'),
+    v.literal('event'),
+    v.literal('card'),
+    v.literal('work'),
+  ),
+  id: v.string(),
+  account: v.optional(v.string()),
+});
+
+function goneBriefEntity(ref: { kind: string; id: string; account?: string }) {
+  return {
+    kind: ref.kind === 'event' ? 'event' : ref.kind === 'thread' ? 'thread' : ref.kind,
+    id: ref.id,
+    account: ref.account,
+    title: 'No longer available',
+    status: 'gone',
+    gone: true,
+  };
+}
+
+export const resolveBriefRefs = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    refs: v.array(briefRefValidator),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const entities: any[] = [];
+    for (const ref of args.refs.slice(0, 100)) {
+      if (ref.kind === 'thread') {
+        if (!ref.account) {
+          entities.push(goneBriefEntity(ref));
+          continue;
+        }
+        const thread = await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_user_account_thread', (q) =>
+            q.eq('userId', args.userId).eq('accountId', ref.account!).eq('providerThreadId', ref.id),
+          )
+          .unique();
+        entities.push(
+          thread
+            ? {
+                kind: 'thread',
+                id: ref.id,
+                account: thread.accountId,
+                title: thread.subject || '(no subject)',
+                subtitle: thread.fromAddress || thread.snippet || undefined,
+                status: thread.labels.includes('TRASH')
+                  ? 'trashed'
+                  : thread.labels.includes('ARCHIVE')
+                    ? 'archived'
+                    : 'active',
+                unread: thread.unread,
+                updatedAt: thread.updatedAt,
+                gone: false,
+              }
+            : goneBriefEntity(ref),
+        );
+        continue;
+      }
+
+      if (ref.kind === 'event') {
+        let event: any = null;
+        if (ref.account) {
+          event = await ctx.db
+            .query('calendarEvents')
+            .withIndex('by_account_event', (q) =>
+              q.eq('accountId', ref.account!).eq('providerEventId', ref.id),
+            )
+            .unique();
+        } else {
+          const events = await ctx.db
+            .query('calendarEvents')
+            .withIndex('by_user', (q) => q.eq('userId', args.userId))
+            .take(1_000);
+          event = events.find((row) => row.providerEventId === ref.id) ?? null;
+        }
+        entities.push(
+          event && event.userId === args.userId
+            ? {
+                kind: 'event',
+                id: ref.id,
+                account: event.accountId,
+                title: event.title || 'Untitled event',
+                subtitle: event.location || undefined,
+                status: event.status || 'confirmed',
+                startAt: event.startAt,
+                endAt: event.endAt,
+                updatedAt: event.updatedAt,
+                gone: false,
+              }
+            : goneBriefEntity(ref),
+        );
+        continue;
+      }
+
+      if (ref.kind === 'work') {
+        const workId = ctx.db.normalizeId('albatrossIntents', ref.id);
+        const work = workId ? await ctx.db.get(workId) : null;
+        entities.push(
+          work && work.userId === args.userId
+            ? {
+                kind: 'work',
+                id: ref.id,
+                title: work.title || work.rawText.slice(0, 160) || 'Untitled work',
+                subtitle: work.rawText || undefined,
+                status: work.agentState || work.workState || work.status,
+                updatedAt: work.updatedAt,
+                gone: false,
+              }
+            : goneBriefEntity(ref),
+        );
+        continue;
+      }
+
+      const cardId = ctx.db.normalizeId('cards', ref.id);
+      const card = cardId ? await ctx.db.get(cardId) : null;
+      entities.push(
+        card && card.userId === args.userId
+          ? {
+              kind: ref.kind,
+              id: ref.id,
+              title: card.title || 'Untitled task',
+              subtitle: card.description || undefined,
+              status: card.completedAt ? 'completed' : 'open',
+              dueAt: card.dueAt,
+              completed: Boolean(card.completedAt),
+              updatedAt: card.updatedAt,
+              gone: false,
+            }
+          : goneBriefEntity(ref),
+      );
+    }
+    return entities;
+  },
+});
+
+const briefQueryValidator = v.union(
+  v.literal('tasks_due_today'),
+  v.literal('tasks_overdue'),
+  v.literal('events_today'),
+  v.literal('events_next_7d'),
+  v.literal('unresolved_tracked_threads'),
+  v.literal('area_open_work'),
+);
+
+export const queryBriefCatalog = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    name: briefQueryValidator,
+    areaId: v.optional(v.string()),
+    startAt: v.number(),
+    endAt: v.number(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(Math.floor(args.limit), 1), 48);
+    if (args.name === 'tasks_due_today' || args.name === 'tasks_overdue') {
+      const cards = await ctx.db
+        .query('cards')
+        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .take(1_000);
+      return cards
+        .filter((card) => !card.completedAt && typeof card.dueAt === 'number')
+        .filter((card) =>
+          args.name === 'tasks_overdue'
+            ? card.dueAt! < args.startAt
+            : card.dueAt! >= args.startAt && card.dueAt! < args.endAt,
+        )
+        .sort((left, right) => (left.dueAt ?? 0) - (right.dueAt ?? 0))
+        .slice(0, limit)
+        .map((card) => ({
+          kind: 'task',
+          id: String(card._id),
+          title: card.title,
+          subtitle: card.description || undefined,
+          status: 'open',
+          dueAt: card.dueAt,
+          completed: false,
+          updatedAt: card.updatedAt,
+          gone: false,
+        }));
+    }
+
+    if (args.name === 'events_today' || args.name === 'events_next_7d') {
+      const events = await ctx.db
+        .query('calendarEvents')
+        .withIndex('by_user_start', (q) =>
+          q.eq('userId', args.userId).gte('startAt', args.startAt).lt('startAt', args.endAt),
+        )
+        .take(limit);
+      return events.map((event) => ({
+        kind: 'event',
+        id: event.providerEventId,
+        account: event.accountId,
+        title: event.title || 'Untitled event',
+        subtitle: event.location || undefined,
+        status: event.status || 'confirmed',
+        startAt: event.startAt,
+        endAt: event.endAt,
+        updatedAt: event.updatedAt,
+        gone: false,
+      }));
+    }
+
+    if (args.name === 'unresolved_tracked_threads') {
+      const rows = await ctx.db
+        .query('userDocs')
+        .withIndex('by_user_kind_updatedAt', (q) => q.eq('userId', args.userId).eq('kind', 'trackedThread'))
+        .order('desc')
+        .take(200);
+      return rows
+        .map((row) => row.doc as any)
+        .filter((thread) => thread.status !== 'resolved' && thread.status !== 'dismissed')
+        .slice(0, limit)
+        .map((thread) => ({
+          kind: 'thread',
+          id: String(thread.threadId || thread._id),
+          account: thread.account ? String(thread.account) : undefined,
+          title: String(thread.subject || '(no subject)'),
+          subtitle: thread.reason ? String(thread.reason) : undefined,
+          status: String(thread.status || 'open'),
+          dueAt: typeof thread.dueAt === 'number' ? thread.dueAt : undefined,
+          updatedAt: typeof thread.updatedAt === 'number' ? thread.updatedAt : undefined,
+          gone: false,
+        }));
+    }
+
+    const areaId = args.areaId ? ctx.db.normalizeId('areas', args.areaId) : null;
+    if (!areaId) return [];
+    const work = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_primary_area', (q) => q.eq('userId', args.userId).eq('primaryAreaId', areaId))
+      .order('desc')
+      .take(200);
+    return work
+      .filter((item) => item.workState !== 'done' && item.workState !== 'archived')
+      .slice(0, limit)
+      .map((item) => ({
+        kind: 'work',
+        id: String(item._id),
+        title: item.title || item.rawText.slice(0, 160) || 'Untitled work',
+        subtitle: item.rawText || undefined,
+        status: item.agentState || item.workState || item.status,
+        updatedAt: item.updatedAt,
+        gone: false,
+      }));
+  },
+});
+
 export const beginCommand = mutation({
   args: {
     internalSecret: v.optional(v.string()),

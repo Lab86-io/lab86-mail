@@ -20,6 +20,7 @@ import { ContextVortex, type VortexSource } from '@/components/albatross/Context
 import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
 import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import {
   Empty,
@@ -40,6 +41,7 @@ import { useClientStore } from '@/lib/client-state';
 import { confirmDailyReportAction } from '@/lib/daily-report-action-review';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
+import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { formatDate, stripEmoji } from '@/lib/shared/format';
 import { taskSourceColor } from '@/lib/shared/task-colors';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
@@ -117,7 +119,7 @@ interface DailyReportMcpItem {
 }
 
 interface DailyReportArtifactError {
-  stage: 'ai_availability' | 'week_artifact' | 'month_artifact' | 'month_enrichment';
+  stage: 'ai_availability' | 'week_artifact' | 'month_artifact' | 'month_enrichment' | 'document_v2';
   message: string;
   at: number;
 }
@@ -156,8 +158,9 @@ interface DailyReportPayload {
   progress?: { stage: string; done: number; total: number };
   // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
   html?: string;
-  artifactStatus?: 'composing' | 'enriching' | 'rendered';
-  artifactSource?: 'ai' | 'deterministic';
+  document?: BriefDocumentV2;
+  artifactStatus?: 'composing' | 'enriching' | 'rendered' | 'ready';
+  artifactSource?: 'ai' | 'deterministic' | 'document-v2';
   artifactErrors?: DailyReportArtifactError[];
 }
 
@@ -938,6 +941,7 @@ export function DailyReport() {
   // clickable again to force a fresh run.
   const reportIsStale = !report || Date.now() - (report.generatedAt || 0) > STUCK_GENERATION_MS;
   const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
+  const displayDocument = Boolean(report?.document && report.artifactSource === 'document-v2');
   const structuredArtifactHidden =
     Boolean(report?.html) && artifactSource === 'deterministic' && !showStructuredFallback;
   const waitingForAiArtifact =
@@ -946,7 +950,7 @@ export function DailyReport() {
     (report?.artifactStatus === 'composing' || report?.artifactStatus === 'enriching');
   const structuredArtifactUnavailable =
     structuredArtifactHidden && !waitingForAiArtifact && (reportIsStale || report?.status !== 'partial');
-  const displayArtifact = Boolean(report?.html && !structuredArtifactHidden);
+  const displayArtifact = Boolean(report?.html && !structuredArtifactHidden && !displayDocument);
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
   const generating =
@@ -955,7 +959,8 @@ export function DailyReport() {
     (!reportIsStale && (report?.status === 'partial' || report?.artifactStatus === 'composing'));
   // The artifact is already shown; the broader month pass is filling in behind it.
   const enriching = !reportIsStale && report?.artifactStatus === 'enriching';
-  const showGeneratingState = generating && (!displayArtifact || waitingForNew || waitingForAiArtifact);
+  const showGeneratingState =
+    generating && ((!displayArtifact && !displayDocument) || waitingForNew || waitingForAiArtifact);
   const persistedHiddenTaskIds = useMemo(
     () => new Set(taskDismissalsQuery.data?.cardIds || []),
     [taskDismissalsQuery.data?.cardIds],
@@ -1172,7 +1177,7 @@ export function DailyReport() {
     <section className="report-paper relative flex h-full flex-col">
       {/* The agent-authored brief carries its own art masthead, so the app
           header is hidden for it and the controls move to a floating toolbar. */}
-      {!displayArtifact ? (
+      {!displayArtifact && !displayDocument ? (
         <header className="@container border-b border-[var(--color-border)] px-5 py-4">
           <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
@@ -1273,9 +1278,17 @@ export function DailyReport() {
       ) : null}
 
       {/* Floating toolbar for the artifact view — fades until hovered. */}
-      {displayArtifact ? (
+      {displayArtifact || displayDocument ? (
         <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
-          {artifactSource === 'deterministic' ? (
+          {displayDocument ? (
+            <span
+              title="This edition uses the native, live-hydrating Brief Document."
+              className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]"
+            >
+              <Newspaper className="size-2.5" />
+              <span className="hidden @[520px]:inline">Native live brief</span>
+            </span>
+          ) : artifactSource === 'deterministic' ? (
             <span
               title="AI composition was unavailable, so this edition is using the structured artifact fallback."
               className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]"
@@ -1352,16 +1365,18 @@ export function DailyReport() {
       <div
         className={cn(
           'min-h-0 flex-1',
-          displayArtifact || showGeneratingState ? 'overflow-hidden' : 'scrollable @container px-5 py-5',
+          displayArtifact || displayDocument || showGeneratingState
+            ? 'overflow-hidden'
+            : 'scrollable @container px-5 py-5',
         )}
       >
         {reportQuery.isLoading && !report ? (
           <ReportSkeleton />
-        ) : showGeneratingState || (displayArtifact && report?.html) ? (
+        ) : showGeneratingState || displayDocument || (displayArtifact && report?.html) ? (
           // Vortex while composing; when the brief lands, the vortex collapses
           // and the finished artifact springs out of it.
           <AnimatePresence mode="wait" initial={false}>
-            {showGeneratingState || !report?.html ? (
+            {showGeneratingState ? (
               <motion.div
                 key="vortex"
                 className="h-full"
@@ -1370,7 +1385,21 @@ export function DailyReport() {
               >
                 <ReportGenerating report={report} />
               </motion.div>
-            ) : (
+            ) : displayDocument && report?.document ? (
+              <motion.div
+                key="document-v2"
+                className="h-full"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.28, ease: 'easeOut' }}
+              >
+                <BriefCanvas
+                  value={report.document}
+                  composing={report.artifactStatus === 'composing'}
+                  onChanged={invalidate}
+                />
+              </motion.div>
+            ) : report?.html ? (
               <motion.div
                 key="artifact"
                 className="h-full"
@@ -1386,6 +1415,8 @@ export function DailyReport() {
                   onChanged={invalidate}
                 />
               </motion.div>
+            ) : (
+              <ReportGenerating report={report} />
             )}
           </AnimatePresence>
         ) : !report ? (

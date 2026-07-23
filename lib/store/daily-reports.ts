@@ -1,5 +1,6 @@
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
+import { parseBriefDocument } from '../shared/brief-document';
 import {
   DAILY_REPORT_ARTIFACT_ERROR_STAGES,
   type DailyReport,
@@ -121,6 +122,7 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
     composition: raw.composition,
+    document: migrateBriefDocument(raw.document),
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
     artifactSource: raw.artifactSource,
@@ -185,6 +187,15 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
   }
 
   return migrated;
+}
+
+function migrateBriefDocument(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+  try {
+    return parseBriefDocument(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function sanitizeArtifactErrors(value: unknown): DailyReportArtifactError[] {

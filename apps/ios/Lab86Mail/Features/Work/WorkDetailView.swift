@@ -180,7 +180,23 @@ struct WorkDetailView: View {
                     }
                 }
 
-                if let plan = detail.plan, let html = plan.artifactHTML {
+                if let plan = detail.plan,
+                   let document = plan.document,
+                   plan.artifactSource == "document-v2" {
+                    BriefDocumentView(
+                        document: document,
+                        isComposing: false,
+                        onReview: { artifactReview = $0 },
+                        onRegenerate: {
+                            Task {
+                                _ = await environment.store.advanceWork(route.workID)
+                                await load(initial: false)
+                            }
+                        }
+                    )
+                    .padding(.vertical, 20)
+                    .overlay(alignment: .top) { Divider() }
+                } else if let plan = detail.plan, let html = plan.artifactHTML {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(plan.artifactTitle ?? "Brief")
                             .font(.caption.weight(.semibold))

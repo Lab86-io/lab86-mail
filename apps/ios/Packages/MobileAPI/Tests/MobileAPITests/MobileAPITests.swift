@@ -11,6 +11,28 @@ func generatedContractVersionIsStable() {
 }
 
 @Test
+func briefDocumentDegradesFutureAndUnknownNodesWithoutGoingBlank() throws {
+    let future = Data(
+        """
+        {"version":3,"title":"Future brief","summary":"Still readable.","generatedAt":1,
+         "regions":[{"newShape":{"cannot":"decode as a v2 region"}}]}
+        """.utf8
+    )
+    let futureDocument = try #require(BriefDocumentV2.decode(future))
+    #expect(futureDocument.version == 2)
+    #expect(futureDocument.regions.first?.tree.kind == "group")
+
+    let unknown = Data(
+        """
+        {"version":2,"title":"Today","summary":"Summary","generatedAt":1,"regions":[{"id":"one","summary":"Region fallback","tree":{"kind":"new_layout","children":[{"kind":"text","text":"Known child"}]}}]}
+        """.utf8
+    )
+    let unknownDocument = try #require(BriefDocumentV2.decode(unknown))
+    #expect(unknownDocument.regions.first?.tree.kind == "stack")
+    #expect(unknownDocument.regions.first?.tree.children?.first?.text == "Known child")
+}
+
+@Test
 func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601

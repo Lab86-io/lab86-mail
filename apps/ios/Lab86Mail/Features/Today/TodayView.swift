@@ -42,20 +42,34 @@ struct TodayView: View {
         .shellToolbar()
     }
 
-    // Primary surface: the stored Daily Report artifact, rendered in the sandboxed
-    // web view with read-only action routing. Pull-to-refresh reloads the day.
+    // v2 editions render as native SwiftUI. Historical editions keep the
+    // sandboxed HTML path so saved report history remains readable.
+    @ViewBuilder
     private func artifactBody(_ report: DailyReportModel) -> some View {
-        ScrollView {
-            DailyBriefView(
-                report: report,
-                lastRefresh: store.lastRefresh,
-                isOffline: store.briefError != nil,
-                onAction: handleBriefAction,
-                onRegenerate: { Task { await store.generateBrief() } }
-            )
-            .padding(.bottom, 24)
+        if let document = report.document, report.artifactSource == "document-v2" {
+            ScrollView {
+                BriefDocumentView(
+                    document: document,
+                    isComposing: report.artifactStatus == "composing",
+                    onReview: { artifactReview = $0 },
+                    onRegenerate: { Task { await store.generateBrief() } }
+                )
+                .padding(.bottom, 24)
+            }
+            .refreshable { await store.refreshToday() }
+        } else {
+            ScrollView {
+                DailyBriefView(
+                    report: report,
+                    lastRefresh: store.lastRefresh,
+                    isOffline: store.briefError != nil,
+                    onAction: handleBriefAction,
+                    onRegenerate: { Task { await store.generateBrief() } }
+                )
+                .padding(.bottom, 24)
+            }
+            .refreshable { await store.refreshToday() }
         }
-        .refreshable { await store.refreshToday() }
     }
 
     // Fallback when no artifact exists yet (no edition, still generating, or a

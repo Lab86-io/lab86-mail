@@ -2,6 +2,7 @@ import ClerkConvex
 import ClerkKit
 import ConvexMobile
 import Foundation
+import MobileAPI
 import Observation
 import SwiftData
 
@@ -24,6 +25,7 @@ final class AppEnvironment {
     let syncCoordinator = SyncCoordinator()
     let pendingSends: PendingSendCoordinator
     let mobileClient: MobileV1Client?
+    let briefHydration: BriefHydrationClient?
     let outboxProcessor: CommandOutboxProcessor?
     let accountStore: AccountStore
     // The current Albatross conversation. Held here so switching destinations
@@ -65,6 +67,10 @@ final class AppEnvironment {
                 tokenProvider: tokenProvider
             )
             self.mobileClient = mobileClient
+            briefHydration = BriefHydrationClient(
+                baseURL: apiBaseURL,
+                tokenProvider: tokenProvider
+            )
             bootstrapSource = mobileClient
             outboxProcessor = CommandOutboxProcessor(
                 outbox: commandOutbox,
@@ -72,6 +78,7 @@ final class AppEnvironment {
             )
         } else {
             mobileClient = nil
+            briefHydration = nil
             outboxProcessor = nil
             bootstrapSource = UnavailableMobileBootstrapSource()
         }

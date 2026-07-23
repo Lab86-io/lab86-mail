@@ -93,6 +93,7 @@ struct BriefActionPayload: Hashable, Sendable {
     var threadID: String?
     var eventID: String?
     var areaID: String?
+    var workID: String?
     var calendarID: String?
     var view: String?
     var cardID: String?
@@ -101,6 +102,10 @@ struct BriefActionPayload: Hashable, Sendable {
     var body: String?
     var status: String?
     var trackedThreadID: String?
+    var previousStatus: String?
+    var text: String?
+    var questionID: String?
+    var answeredOptionID: String?
     var completed: Bool?
     var receivedAt: Double?
     var dueAt: Double?
@@ -115,6 +120,7 @@ struct BriefActionPayload: Hashable, Sendable {
         threadID: String? = nil,
         eventID: String? = nil,
         areaID: String? = nil,
+        workID: String? = nil,
         calendarID: String? = nil,
         view: String? = nil,
         cardID: String? = nil,
@@ -123,6 +129,10 @@ struct BriefActionPayload: Hashable, Sendable {
         body: String? = nil,
         status: String? = nil,
         trackedThreadID: String? = nil,
+        previousStatus: String? = nil,
+        text: String? = nil,
+        questionID: String? = nil,
+        answeredOptionID: String? = nil,
         completed: Bool? = nil,
         receivedAt: Double? = nil,
         dueAt: Double? = nil,
@@ -136,6 +146,7 @@ struct BriefActionPayload: Hashable, Sendable {
         self.threadID = threadID
         self.eventID = eventID
         self.areaID = areaID
+        self.workID = workID
         self.calendarID = calendarID
         self.view = view
         self.cardID = cardID
@@ -144,6 +155,10 @@ struct BriefActionPayload: Hashable, Sendable {
         self.body = body
         self.status = status
         self.trackedThreadID = trackedThreadID
+        self.previousStatus = previousStatus
+        self.text = text
+        self.questionID = questionID
+        self.answeredOptionID = answeredOptionID
         self.completed = completed
         self.receivedAt = receivedAt
         self.dueAt = dueAt
@@ -166,6 +181,7 @@ struct BriefActionPayload: Hashable, Sendable {
         threadID = string("threadId", "thread")
         eventID = string("eventId", "event")
         areaID = string("areaId", "area")
+        workID = string("workId", "work")
         calendarID = string("calendarId", "calendar")
         view = string("view")
         cardID = string("cardId", "card")
@@ -174,6 +190,10 @@ struct BriefActionPayload: Hashable, Sendable {
         body = string("body")
         status = string("status")
         trackedThreadID = string("trackedThreadId")
+        previousStatus = string("previousStatus")
+        text = string("text")
+        questionID = string("questionId")
+        answeredOptionID = string("answeredOptionId")
         func number(_ key: String) -> Double? {
             if let value = dict[key] as? NSNumber { return value.doubleValue }
             if let value = dict[key] as? Double { return value }
@@ -213,6 +233,9 @@ struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
         case "rsvp_event": return "Send a “\(payload.status ?? "response")” RSVP?"
         case "create_task": return "Add “\(payload.title ?? "this task")”?"
         case "create_event": return "Add “\(payload.title ?? "this event")” to your calendar?"
+        case "draft_reply": return "Open this reply for review?"
+        case "capture_intent": return "Capture “\(payload.text ?? "this thought")”?"
+        case "answer_question": return "Submit “\(payload.text ?? "this answer")”?"
         default: return "Review \(action.replacingOccurrences(of: "_", with: " "))"
         }
     }
@@ -225,6 +248,7 @@ struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
         [
             "toggle_task", "dismiss_task", "resolve_thread", "dismiss_thread",
             "archive_thread", "rsvp_event", "create_task", "create_event",
+            "draft_reply", "capture_intent", "answer_question",
         ].contains(action)
     }
 }
@@ -390,6 +414,55 @@ struct ArtifactActionReviewSheet: View {
             if let location = payload.location { arguments["location"] = .string(location) }
             if let description = payload.description { arguments["description"] = .string(description) }
             _ = try await environment.tools.invoke("calendar_create_event", arguments: arguments)
+        case "draft_reply":
+            guard let account = payload.account, let threadID = payload.threadID else {
+                throw BackendError.server(status: 400, message: "The brief omitted the reply context.")
+            }
+            await MainActor.run {
+                environment.navigation.pendingCompose = ComposePrefill(
+                    recipient: "",
+                    cc: "",
+                    bcc: "",
+                    subject: payload.subject ?? "",
+                    body: payload.body ?? "",
+                    mode: "reply",
+                    accountID: account,
+                    threadID: threadID,
+                    messageID: nil,
+                    replyAll: false,
+                    attachmentsKey: nil,
+                    draftID: nil
+                )
+                environment.navigation.sheet = .compose
+            }
+        case "capture_intent":
+            guard let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else {
+                throw BackendError.server(status: 400, message: "The brief omitted the text to capture.")
+            }
+            _ = try await environment.backend.post(
+                path: "/api/albatross/capture",
+                body: .object([
+                    "rawText": .string(text),
+                    "source": .string("chat"),
+                    "areaId": payload.areaID.map(JSONValue.string) ?? .null,
+                    "timezone": .string(TimeZone.current.identifier),
+                ])
+            )
+        case "answer_question":
+            guard let questionID = payload.questionID,
+                  let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else {
+                throw BackendError.server(status: 400, message: "The brief omitted the answer context.")
+            }
+            _ = try await environment.backend.post(
+                path: "/api/albatross/work/questions/\(questionID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? questionID)/answer",
+                body: .object([
+                    "answer": .string(text),
+                    "answeredOptionId": payload.answeredOptionID.map(JSONValue.string) ?? .null,
+                    "timezone": .string(TimeZone.current.identifier),
+                ])
+            )
         default:
             throw BackendError.server(status: 400, message: "Unsupported report action.")
         }

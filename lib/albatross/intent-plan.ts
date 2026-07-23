@@ -1,8 +1,17 @@
+import { stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { briefDocumentV2Enabled } from '@/lib/brief/feature';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { extractHtml } from '@/lib/mail/agent-report';
+import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '@/lib/mail/brief-document-prompt';
 import { briefServicesFromIds } from '@/lib/mail/brief-services';
+import {
+  type BriefDocumentV2,
+  type BriefRegion,
+  parseBriefDocument,
+  repairBriefDocument,
+} from '@/lib/shared/brief-document';
 import { withDeadline } from '@/lib/shared/deadline';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { invokeTool } from '@/lib/tools/registry';
@@ -688,53 +697,59 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
     );
 
     let artifactHtml: string | undefined;
+    let document: BriefDocumentV2 | undefined;
+    let artifactSource: string | undefined;
     const composeBrief =
       questions.every((question) => question.answer) &&
       shouldComposeWorkBrief({ declaredProjectTitle: generation.projectTitle, actions: digitalActions });
     try {
       if (!composeBrief) throw new Error('brief-not-required');
-      const artifact = await withDeadline(
-        deps.generateTextForCurrentUser({
-          feature: 'albatross_plan_artifact',
-          speed: 'primary',
-          userId: input.userId,
-          userEmail: input.userEmail,
-          userName: input.userName,
-          system: ARTIFACT_SYSTEM,
-          prompt: JSON.stringify(
-            {
-              title: generation.title,
-              outcome: generation.outcome,
-              summary: generation.summary,
-              digitalActions: digitalActions.map((action) => ({
-                // The verbatim handle each task card's Done control must carry.
-                key: action.key,
-                kind: action.kind,
-                title: action.title,
-                description: action.description,
-                priority: action.priority,
-                startIso: action.startIso,
-                endIso: action.endIso,
-                durationMinutes: action.durationMinutes,
-                to: action.to,
-                subject: action.subject,
-              })),
-              physicalActions: generation.physicalActions,
-              places: generation.places,
-              assumptions: generation.assumptions,
-              sources: sourceRefs,
-              services: briefServicesFromIds(planArtifactServiceIds(sourceRefs)),
-              openQuestions: questions.filter((question) => !question.answer).map((q) => q.prompt),
-            },
-            null,
-            2,
-          ),
-        }),
-        180_000,
-        'Artifact composition',
-      );
-      const extracted = extractHtml(artifact.text);
-      artifactHtml = extracted ? normalizeArtifactLinks(extracted) : undefined;
+      const artifactContext = {
+        title: generation.title,
+        outcome: generation.outcome,
+        summary: generation.summary,
+        digitalActions: digitalActions.map((action) => ({
+          key: action.key,
+          kind: action.kind,
+          title: action.title,
+          description: action.description,
+          priority: action.priority,
+          startIso: action.startIso,
+          endIso: action.endIso,
+          durationMinutes: action.durationMinutes,
+          account: action.account,
+          to: action.to,
+          subject: action.subject,
+          body: action.body,
+        })),
+        physicalActions: generation.physicalActions,
+        places: generation.places,
+        assumptions: generation.assumptions,
+        sources: sourceRefs,
+        services: briefServicesFromIds(planArtifactServiceIds(sourceRefs)),
+        openQuestions: questions.filter((question) => !question.answer).map((q) => q.prompt),
+      };
+      if (briefDocumentV2Enabled()) {
+        document = await composePlanDocumentV2(artifactContext, input);
+        artifactSource = 'document-v2';
+        artifactHtml = buildPlanDocumentLegacyHtml(artifactContext);
+      } else {
+        const artifact = await withDeadline(
+          deps.generateTextForCurrentUser({
+            feature: 'albatross_plan_artifact',
+            speed: 'primary',
+            userId: input.userId,
+            userEmail: input.userEmail,
+            userName: input.userName,
+            system: ARTIFACT_SYSTEM,
+            prompt: JSON.stringify(artifactContext, null, 2),
+          }),
+          180_000,
+          'Artifact composition',
+        );
+        const extracted = extractHtml(artifact.text);
+        artifactHtml = extracted ? normalizeArtifactLinks(extracted) : undefined;
+      }
     } catch (err) {
       // The plan is still fully usable without its brief; don't fail the loop.
       if (!(err instanceof Error && err.message === 'brief-not-required')) {
@@ -758,6 +773,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       assumptions: generation.assumptions,
       sourceRefs,
       artifactHtml,
+      document,
+      artifactSource,
       artifactTitle: generation.title,
       mapQuery: generation.mapQuery ?? generation.places[0]?.mapsQuery ?? undefined,
       places: generation.places,
@@ -775,4 +792,103 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       .catch(() => {});
     throw err;
   }
+}
+
+const PLAN_DOCUMENT_SYSTEM = `${BRIEF_DOCUMENT_V2_SYSTEM_PROMPT}
+
+You are composing a Work plan dossier.
+- Make the desired outcome and the next useful move unmistakable.
+- Group proposed digital and physical actions by sequence or decision, not by source JSON keys.
+- Use checklist for grounded steps. A checklist action may use create_task, create_event, or draft_reply only when its payload is complete; these remain review-gated.
+- Assumptions are not facts. Label them quietly and keep source provenance visible.
+- The host supplies Apply plan / Done controls outside this document. Do not invent apply_plan or toggle_step actions.
+- Omit empty ideas. The dossier should read clearly before the plan is applied and after provider state changes.`;
+
+export async function composePlanDocumentV2(
+  context: Record<string, any>,
+  input: { userId: string; userEmail?: string | null; userName?: string | null },
+): Promise<BriefDocumentV2> {
+  const regions: BriefRegion[] = [];
+  const finalized: { title?: string; summary?: string } = {};
+  const generatedAt = Date.now();
+  await withDeadline(
+    deps.generateTextForCurrentUser({
+      feature: 'albatross_plan_artifact',
+      speed: 'primary',
+      userId: input.userId,
+      userEmail: input.userEmail,
+      userName: input.userName,
+      system: PLAN_DOCUMENT_SYSTEM,
+      prompt: JSON.stringify(context, null, 2),
+      tools: {
+        place_region: tool({
+          description: 'Validate, repair, and place one plan dossier region.',
+          inputSchema: z.object({ region: z.record(z.string(), z.unknown()) }),
+          execute: async ({ region }) => {
+            const candidate = parseBriefDocument({
+              version: 2,
+              title: finalized.title || context.title || 'Work plan',
+              summary: finalized.summary || context.summary || context.outcome || 'A composed Work plan.',
+              generatedAt,
+              regions: [...regions, region],
+            });
+            const placed = candidate.regions[candidate.regions.length - 1];
+            if (!placed) throw new Error('The plan region could not be repaired.');
+            const existing = regions.findIndex((entry) => entry.id === placed.id);
+            if (existing >= 0) regions[existing] = placed;
+            else if (regions.length < 12) regions.push(placed);
+            return { ok: true, id: placed.id, placed: regions.length };
+          },
+        }),
+        finalize_brief: tool({
+          description: 'Set the plan dossier title and accessible plain-text summary.',
+          inputSchema: z.object({
+            title: z.string().trim().min(1).max(160),
+            summary: z.string().trim().min(1).max(1_200),
+          }),
+          execute: async (value) => {
+            finalized.title = value.title;
+            finalized.summary = value.summary;
+            return { ok: true, regions: regions.length };
+          },
+        }),
+      },
+      stopWhen: stepCountIs(14),
+    }),
+    180_000,
+    'Plan document composition',
+  );
+  if (!regions.length) throw new Error('AI did not place any plan dossier regions.');
+  return parseBriefDocument(
+    repairBriefDocument({
+      version: 2,
+      title: finalized.title || context.title || 'Work plan',
+      summary: finalized.summary || context.summary || context.outcome || 'A composed Work plan.',
+      generatedAt,
+      regions,
+    }),
+  );
+}
+
+function buildPlanDocumentLegacyHtml(context: Record<string, any>) {
+  const title = escapePlanHtml(String(context.title || 'Work plan'));
+  const summary = escapePlanHtml(String(context.summary || context.outcome || ''));
+  const steps = [...(context.digitalActions || []), ...(context.physicalActions || [])]
+    .slice(0, 24)
+    .map((action: any) => `<li>${escapePlanHtml(String(action.title || 'Step'))}</li>`)
+    .join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;padding:48px;font:16px/1.6 system-ui;background:#f7f5ef;color:#20231f}
+main{max-width:760px;margin:auto}h1{font:700 42px/1.05 Georgia,serif}li{margin:.6em 0}
+</style></head><body><main><p>Work plan</p><h1>${title}</h1><p>${summary}</p><ol>${steps}</ol></main></body></html>`;
+}
+
+function escapePlanHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === '&') return '&amp;';
+    if (character === '<') return '&lt;';
+    if (character === '>') return '&gt;';
+    if (character === '"') return '&quot;';
+    return '&#39;';
+  });
 }

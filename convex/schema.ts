@@ -737,6 +737,8 @@ export default defineSchema({
     // structured prose; dropping it from the validator blocks every deploy
     // as long as a preserved brief still exists.
     artifactHtml: v.optional(v.string()),
+    document: v.optional(v.any()),
+    artifactSource: v.optional(v.string()),
     sourceRefs: v.array(albatrossSourceRef),
     basedOnRevision: v.string(),
     generatedAt: v.optional(v.number()),
@@ -1036,6 +1038,8 @@ export default defineSchema({
       }),
     ),
     artifactHtml: v.optional(v.string()),
+    document: v.optional(v.any()),
+    artifactSource: v.optional(v.string()),
     artifactTitle: v.optional(v.string()),
     model: v.optional(v.string()),
     // Model-declared place for the plan's map column ("Penn Yan DMV, NY").
@@ -1137,6 +1141,9 @@ export default defineSchema({
     title: v.string(),
     generatedAt: v.number(),
     payload: v.any(),
+    // Additive v2 projection for consumers that read the typed document
+    // directly. The canonical report payload continues to dual-write it.
+    document: v.optional(v.any()),
   })
     .index('by_user', ['userId'])
     .index('by_user_generated', ['userId', 'generatedAt']),

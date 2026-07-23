@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto';
+import { stepCountIs, tool } from 'ai';
+import { z } from 'zod';
 import { generateTextForCurrentUser } from '../ai/gateway';
+import { briefDocumentV2Enabled } from '../brief/feature';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '../mail/brief-document-prompt';
+import {
+  type BriefDocumentV2,
+  type BriefRegion,
+  parseBriefDocument,
+  repairBriefDocument,
+} from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
 
@@ -393,7 +403,7 @@ export async function generateAreaLivingBrief(input: {
   if (
     !input.force &&
     home.livingBrief?.status === 'ready' &&
-    home.livingBrief?.artifactHtml &&
+    (home.livingBrief?.document || home.livingBrief?.artifactHtml) &&
     home.livingBrief?.basedOnRevision === revision
   ) {
     return home.livingBrief;
@@ -411,6 +421,42 @@ export async function generateAreaLivingBrief(input: {
   });
 
   try {
+    if (briefDocumentV2Enabled()) {
+      const legacyHtml = buildAreaDocumentLegacyHtml(home, fallback);
+      const document = await composeAreaDocumentV2(context, fallback, input, async (partial) => {
+        await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+          userId: input.userId,
+          areaId: input.areaId,
+          status: 'generating',
+          ...fallback,
+          document: partial,
+          artifactSource: 'document-v2',
+          artifactHtml: legacyHtml,
+          sourceRefs: [],
+          basedOnRevision: revision,
+        });
+      });
+      await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+        userId: input.userId,
+        areaId: input.areaId,
+        status: 'ready',
+        ...fallback,
+        document,
+        artifactSource: 'document-v2',
+        artifactHtml: legacyHtml,
+        sourceRefs: [],
+        basedOnRevision: revision,
+      });
+      return {
+        ...fallback,
+        document,
+        artifactSource: 'document-v2',
+        artifactHtml: legacyHtml,
+        status: 'ready',
+        basedOnRevision: revision,
+      };
+    }
+
     const { text } = await withDeadline(
       areaLivingBriefDependencies.generateTextForCurrentUser({
         feature: 'albatross_area_artifact',
@@ -452,4 +498,130 @@ export async function generateAreaLivingBrief(input: {
       .catch(() => undefined);
     throw error;
   }
+}
+
+const AREA_DOCUMENT_SYSTEM = `${BRIEF_DOCUMENT_V2_SYSTEM_PROMPT}
+
+You are composing one Area living brief, not a Daily Brief.
+- Declared Work and the user's explicit intent outrank evidence volume.
+- Use query_list {name:"area_open_work",areaId:"<current area id>"} when the region should stay live.
+- Include areaId on open_area, discuss_area, and capture_intent payloads.
+- Plans are nested under Work; never invent a standalone Plans destination.
+- Candidate context is uncertain. Phrase it as a question or omit it.
+- Answer: what this Area is, what matters now, what needs the user, what is moving, and what evidence supports the read.
+- A prompt leaf is encouraged when one capture or pending question is the clearest next move.`;
+
+export async function composeAreaDocumentV2(
+  context: Record<string, any>,
+  fallback: { lede: string; summary: string },
+  input: { userId: string; userEmail?: string | null; userName?: string | null },
+  onRegion?: (document: BriefDocumentV2) => Promise<void>,
+): Promise<BriefDocumentV2> {
+  const regions: BriefRegion[] = [];
+  const finalized: { title?: string; summary?: string } = {};
+  const generatedAt = Number(context.edition?.generatedAt) || Date.now();
+  const areaName = String(context.area?.name || 'Area');
+
+  await withDeadline(
+    areaLivingBriefDependencies.generateTextForCurrentUser({
+      feature: 'albatross_area_artifact',
+      speed: 'primary',
+      userId: input.userId,
+      userEmail: input.userEmail,
+      userName: input.userName,
+      system: AREA_DOCUMENT_SYSTEM,
+      prompt: JSON.stringify(
+        {
+          ...context,
+          actions: {
+            ...context.actions,
+            // v2 has one cross-surface navigation verb. Keep the legacy
+            // open_tasks contract out of this prompt so the model cannot emit
+            // an action the native renderers intentionally hide.
+            openTasks: { action: 'open_view', payload: { view: 'tasks' } },
+          },
+        },
+        null,
+        2,
+      ),
+      tools: {
+        place_region: tool({
+          description: 'Validate, repair, and place one Area Brief region in reading order.',
+          inputSchema: z.object({ region: z.record(z.string(), z.unknown()) }),
+          execute: async ({ region }) => {
+            const candidate = parseBriefDocument({
+              version: 2,
+              title: finalized.title || areaName,
+              summary: finalized.summary || fallback.summary,
+              generatedAt,
+              regions: [...regions, region],
+            });
+            const placed = candidate.regions[candidate.regions.length - 1];
+            if (!placed) throw new Error('The Area region could not be repaired.');
+            const existing = regions.findIndex((entry) => entry.id === placed.id);
+            if (existing >= 0) regions[existing] = placed;
+            else if (regions.length < 12) regions.push(placed);
+            if (onRegion) {
+              await onRegion(
+                parseBriefDocument({
+                  version: 2,
+                  title: finalized.title || areaName,
+                  summary: finalized.summary || fallback.summary,
+                  generatedAt,
+                  regions,
+                }),
+              );
+            }
+            return { ok: true, id: placed.id, placed: regions.length };
+          },
+        }),
+        finalize_brief: tool({
+          description: 'Set the Area document title and accessible plain-text summary.',
+          inputSchema: z.object({
+            title: z.string().trim().min(1).max(160),
+            summary: z.string().trim().min(1).max(1_200),
+          }),
+          execute: async (value) => {
+            finalized.title = value.title;
+            finalized.summary = value.summary;
+            return { ok: true, regions: regions.length };
+          },
+        }),
+      },
+      stopWhen: stepCountIs(14),
+    }),
+    AREA_ARTIFACT_DEADLINE_MS,
+    'Area document composition',
+  );
+
+  if (!regions.length) throw new Error('AI did not place any Area Brief regions.');
+  return parseBriefDocument(
+    repairBriefDocument({
+      version: 2,
+      title: finalized.title || areaName,
+      summary: finalized.summary || fallback.summary,
+      generatedAt,
+      regions,
+    }),
+  );
+}
+
+function buildAreaDocumentLegacyHtml(home: AreaHomeLike, fallback: { lede: string; summary: string }) {
+  const areaName = escapeAreaHtml(clean(home.area?.name, 180) || 'Area');
+  return normalizeAreaArtifactHtml(`<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;padding:48px;font:16px/1.6 system-ui;background:#f7f5ef;color:#20231f}
+main{max-width:760px;margin:auto}h1{font:700 42px/1.05 Georgia,serif}p{max-width:62ch}
+</style></head><body><main><p>Area brief</p><h1>${areaName}</h1>
+<p>${escapeAreaHtml(fallback.lede)}</p><p>${escapeAreaHtml(fallback.summary)}</p></main></body></html>`);
+}
+
+function escapeAreaHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === '&') return '&amp;';
+    if (character === '<') return '&lt;';
+    if (character === '>') return '&gt;';
+    if (character === '"') return '&quot;';
+    return '&#39;';
+  });
 }
