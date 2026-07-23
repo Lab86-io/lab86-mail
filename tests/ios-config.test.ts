@@ -126,6 +126,18 @@ describe('native iOS authentication configuration', () => {
     expect(project).not.toContain('SWIFT_OPTIMIZATION_LEVEL: -Onone');
   });
 
+  test('keeps the iOS 27 toolbar usable on the older Xcode Cloud compiler', () => {
+    const shell = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Shell/AppShellView.swift'),
+      'utf8',
+    );
+
+    expect(shell).toContain('.cloudCompatibleToolbarMinimizeBehavior()');
+    expect(shell).toContain('#if compiler(>=6.4)');
+    expect(shell).toContain('toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)');
+    expect(shell).toMatch(/#else\s+self\s+#endif/);
+  });
+
   test('keeps Spotlight mail private, routable, and removable at sign-out', () => {
     const indexer = readFileSync(
       path.join(process.cwd(), 'apps/ios/Lab86Mail/Core/Spotlight/MailSpotlightIndexer.swift'),
