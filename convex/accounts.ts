@@ -264,6 +264,7 @@ const USER_BULK_TABLES = [
   'mobileCommands',
   'mobileSyncChanges',
   'mobileSyncTombstones',
+  'nativePushDeliveries',
 ] as const;
 
 const PURGE_BATCH = 250;

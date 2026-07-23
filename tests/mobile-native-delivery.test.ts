@@ -16,6 +16,7 @@ function context(overrides: Record<string, unknown> = {}) {
     notification,
     mobileDevices: [{ token: 'aa'.repeat(32), environment: 'production' as const }],
     deliveries: [],
+    nativeDeviceDeliveries: [],
     preference: null,
     ...overrides,
   };
@@ -141,8 +142,22 @@ describe('dispatchNativeNotification', () => {
       deepLink: notification.deepLink,
     });
     expect(mutations).toEqual([
-      { token: devices[0].token, status: 'delivered' },
-      { token: devices[1].token, status: 'delivered' },
+      {
+        userId: 'user-1',
+        notificationId: 'notice-1',
+        token: devices[0].token,
+        status: 'delivered',
+        providerId: 'apns-1',
+        error: undefined,
+      },
+      {
+        userId: 'user-1',
+        notificationId: 'notice-1',
+        token: devices[1].token,
+        status: 'delivered',
+        providerId: 'apns-2',
+        error: undefined,
+      },
       {
         userId: 'user-1',
         notificationId: 'notice-1',
@@ -173,9 +188,137 @@ describe('dispatchNativeNotification', () => {
 
     expect(result).toEqual({ sent: 1, failed: 1 });
     expect(mutations).toEqual([
-      { token: devices[0].token, status: 'expired' },
-      { token: devices[1].token, status: 'delivered' },
-      expect.objectContaining({ channel: 'native_push', status: 'sent', providerId: 'apns-ok' }),
+      {
+        userId: 'user-1',
+        notificationId: 'notice-1',
+        token: devices[0].token,
+        status: 'expired',
+        providerId: undefined,
+        error: 'APNs rejected the notification: Unregistered.',
+      },
+      {
+        userId: 'user-1',
+        notificationId: 'notice-1',
+        token: devices[1].token,
+        status: 'delivered',
+        providerId: 'apns-ok',
+        error: undefined,
+      },
+      expect.objectContaining({
+        channel: 'native_push',
+        status: 'sent',
+        providerId: 'apns-ok',
+        error: undefined,
+      }),
+    ]);
+  });
+
+  test('a partial transient failure retries only the unresolved device', async () => {
+    const devices = [
+      { token: 'aa'.repeat(32), environment: 'production' as const },
+      { token: 'bb'.repeat(32), environment: 'production' as const },
+    ];
+    const receipts: Array<{ token: string; status: 'delivered' | 'expired' | 'failed' }> = [];
+    const sends: string[] = [];
+    let secondDeviceAttempt = 0;
+    const { deps } = makeDependencies({
+      query: async () =>
+        context({
+          mobileDevices: devices,
+          deliveries: [{ channel: 'native_push', status: 'failed' }],
+          nativeDeviceDeliveries: receipts,
+        }),
+      mutate: async (_fn: unknown, args: Record<string, unknown>) => {
+        if (typeof args.token === 'string' && typeof args.status === 'string') {
+          const existing = receipts.find((receipt) => receipt.token === args.token);
+          const status = args.status as 'delivered' | 'expired' | 'failed';
+          if (existing) existing.status = status;
+          else receipts.push({ token: args.token, status });
+        }
+        return null;
+      },
+      send: async (_envelope: unknown, device: { token: string }) => {
+        sends.push(device.token);
+        if (device.token === devices[1].token && secondDeviceAttempt++ === 0) {
+          throw new APNsDeliveryError(
+            'APNs rejected the notification: ServiceUnavailable.',
+            503,
+            'ServiceUnavailable',
+          );
+        }
+        return { providerId: `apns-${sends.length}` };
+      },
+    });
+
+    expect(await dispatchNativeNotification('user-1', 'notice-1', deps)).toEqual({
+      sent: 1,
+      failed: 1,
+    });
+    expect(await dispatchNativeNotification('user-1', 'notice-1', deps)).toEqual({
+      sent: 1,
+      failed: 0,
+    });
+    expect(sends).toEqual([devices[0].token, devices[1].token, devices[1].token]);
+  });
+
+  test('a device-state persistence failure is reported without aborting the remaining fanout', async () => {
+    const devices = [
+      { token: 'aa'.repeat(32), environment: 'production' as const },
+      { token: 'bb'.repeat(32), environment: 'production' as const },
+    ];
+    const mutations: Array<Record<string, unknown>> = [];
+    const { deps, sends } = makeDependencies({
+      query: async () => context({ mobileDevices: devices }),
+      mutate: async (_fn: unknown, args: Record<string, unknown>) => {
+        if (args.token === devices[0].token) throw new Error('device write unavailable');
+        mutations.push(args);
+        return null;
+      },
+    });
+
+    const result = await dispatchNativeNotification('user-1', 'notice-1', deps);
+
+    expect(result).toEqual({ sent: 1, failed: 1 });
+    expect(sends).toEqual(devices);
+    expect(mutations).toEqual([
+      {
+        userId: 'user-1',
+        notificationId: 'notice-1',
+        token: devices[1].token,
+        status: 'delivered',
+        providerId: 'apns-2',
+        error: undefined,
+      },
+      expect.objectContaining({
+        channel: 'native_push',
+        status: 'failed',
+        error: 'Could not persist delivered device receipt: device write unavailable',
+      }),
+    ]);
+  });
+
+  test('an invalid-token persistence failure remains retryable instead of escaping the dispatch', async () => {
+    const mutations: Array<Record<string, unknown>> = [];
+    const { deps } = makeDependencies({
+      mutate: async (_fn: unknown, args: Record<string, unknown>) => {
+        if (args.status === 'expired') throw new Error('device expiry unavailable');
+        mutations.push(args);
+        return null;
+      },
+    });
+    deps.send = async () => {
+      throw new APNsDeliveryError('APNs rejected the notification: Unregistered.', 410, 'Unregistered');
+    };
+
+    const result = await dispatchNativeNotification('user-1', 'notice-1', deps);
+
+    expect(result).toEqual({ sent: 0, failed: 1 });
+    expect(mutations).toEqual([
+      expect.objectContaining({
+        channel: 'native_push',
+        status: 'failed',
+        error: expect.stringContaining('Could not persist expired device receipt: device expiry unavailable'),
+      }),
     ]);
   });
 
@@ -196,10 +339,61 @@ describe('dispatchNativeNotification', () => {
       {
         userId: 'user-1',
         notificationId: 'notice-1',
+        token: 'aa'.repeat(32),
+        status: 'failed',
+        providerId: undefined,
+        error: 'APNs rejected the notification: ServiceUnavailable.',
+      },
+      {
+        userId: 'user-1',
+        notificationId: 'notice-1',
         channel: 'native_push',
         status: 'failed',
         providerId: undefined,
         error: 'APNs rejected the notification: ServiceUnavailable.',
+      },
+    ]);
+  });
+
+  test('all expired devices produce a failed aggregate rather than a false sent state', async () => {
+    const { deps, mutations } = makeDependencies();
+    deps.send = async () => {
+      throw new APNsDeliveryError('APNs rejected the notification: Unregistered.', 410, 'Unregistered');
+    };
+
+    const result = await dispatchNativeNotification('user-1', 'notice-1', deps);
+
+    expect(result).toEqual({ sent: 0, failed: 1 });
+    expect(mutations).toEqual([
+      expect.objectContaining({ token: 'aa'.repeat(32), status: 'expired' }),
+      expect.objectContaining({
+        channel: 'native_push',
+        status: 'failed',
+        error: 'APNs rejected the notification: Unregistered.',
+      }),
+    ]);
+  });
+
+  test('a retry with only expired receipts keeps the aggregate failed without resending', async () => {
+    const token = 'aa'.repeat(32);
+    const { deps, mutations, sends } = makeDependencies({
+      query: async () =>
+        context({
+          nativeDeviceDeliveries: [{ token, status: 'expired' }],
+        }),
+    });
+
+    const result = await dispatchNativeNotification('user-1', 'notice-1', deps);
+
+    expect(result).toEqual({ sent: 0, failed: 1 });
+    expect(sends).toEqual([]);
+    expect(mutations).toEqual([
+      {
+        userId: 'user-1',
+        notificationId: 'notice-1',
+        channel: 'native_push',
+        status: 'failed',
+        error: 'All registered devices are expired.',
       },
     ]);
   });
@@ -213,6 +407,9 @@ describe('dispatchNativeNotification', () => {
     const result = await dispatchNativeNotification('user-1', 'notice-1', deps);
 
     expect(result).toEqual({ sent: 0, failed: 1 });
-    expect(mutations[0]).toMatchObject({ status: 'failed', error: 'socket hang up' });
+    expect(mutations).toEqual([
+      expect.objectContaining({ token: 'aa'.repeat(32), status: 'failed', error: 'socket hang up' }),
+      expect.objectContaining({ channel: 'native_push', status: 'failed', error: 'socket hang up' }),
+    ]);
   });
 });

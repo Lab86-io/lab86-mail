@@ -14,45 +14,59 @@ function cursorRevision(raw: string | null) {
   return revision;
 }
 
-export async function GET(request: Request) {
-  const requestID = mobileRequestID(request);
-  try {
-    const user = await requireCurrentUser();
-    const url = new URL(request.url);
-    const domain = MobileDomainSchema.parse(url.searchParams.get('domain'));
-    const afterRevision = cursorRevision(url.searchParams.get('cursor'));
-    const requestedLimit = Number(url.searchParams.get('limit') || 200);
-    const limit = Number.isFinite(requestedLimit)
-      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 500)
-      : 200;
-    const result = await convexQuery<any>((api as any).mobile.listSync, {
-      userId: user.userId,
-      domain,
-      afterRevision,
-      limit,
-    });
-    const rows = result.page || [];
-    const lastRevision = rows.length ? rows[rows.length - 1].revision : afterRevision;
-    const payload = SyncEnvelopeSchema.parse({
-      items: rows
-        .filter((entry: any) => entry.type === 'change')
-        .map((entry: any) => ({
-          domain: entry.row.domain,
-          entityKind: entry.row.entityKind,
-          entityID: entry.row.entityId,
-          revision: entry.row.revision,
-          operation: 'upsert',
-          payload: entry.row.payload || {},
-        })),
-      deletedIDs: rows
-        .filter((entry: any) => entry.type === 'tombstone')
-        .map((entry: any) => String(entry.row.entityId)),
-      cursor: String(lastRevision),
-      serverRevision: result.serverRevision || 0,
-      hasMore: Boolean(result.hasMore),
-    });
-    return mobileJSON(payload, undefined, requestID);
-  } catch (error) {
-    return mobileErrorResponse(error, requestID);
-  }
+interface MobileSyncDependencies {
+  requireCurrentUser: typeof requireCurrentUser;
+  listSync(args: { userId: string; domain: string; afterRevision: number; limit: number }): Promise<any>;
 }
+
+const defaultDependencies: MobileSyncDependencies = {
+  requireCurrentUser,
+  listSync: (args) => convexQuery<any>((api as any).mobile.listSync, args),
+};
+
+export function createMobileSyncGet(deps: MobileSyncDependencies = defaultDependencies) {
+  return async function mobileSyncGet(request: Request) {
+    const requestID = mobileRequestID(request);
+    try {
+      const user = await deps.requireCurrentUser();
+      const url = new URL(request.url);
+      const domain = MobileDomainSchema.parse(url.searchParams.get('domain'));
+      const afterRevision = cursorRevision(url.searchParams.get('cursor'));
+      const requestedLimit = Number(url.searchParams.get('limit') || 200);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(Math.floor(requestedLimit), 1), 500)
+        : 200;
+      const result = await deps.listSync({
+        userId: user.userId,
+        domain,
+        afterRevision,
+        limit,
+      });
+      const rows = result.page || [];
+      const lastRevision = rows.length ? rows[rows.length - 1].revision : afterRevision;
+      const payload = SyncEnvelopeSchema.parse({
+        items: rows
+          .filter((entry: any) => entry.type === 'change')
+          .map((entry: any) => ({
+            domain: entry.row.domain,
+            entityKind: entry.row.entityKind,
+            entityID: entry.row.entityId,
+            revision: entry.row.revision,
+            operation: 'upsert',
+            payload: entry.row.payload || {},
+          })),
+        deletedIDs: rows
+          .filter((entry: any) => entry.type === 'tombstone')
+          .map((entry: any) => String(entry.row.entityId)),
+        cursor: String(lastRevision),
+        serverRevision: result.serverRevision || 0,
+        hasMore: Boolean(result.hasMore),
+      });
+      return mobileJSON(payload, undefined, requestID);
+    } catch (error) {
+      return mobileErrorResponse(error, requestID);
+    }
+  };
+}
+
+export const GET = createMobileSyncGet();

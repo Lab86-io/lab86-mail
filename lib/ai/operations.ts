@@ -32,6 +32,14 @@ export interface RecordOperationInput {
 type UndoExecutor = (payload: any, ctx: { userId: string }) => Promise<void>;
 
 const undoExecutors = new Map<string, UndoExecutor>();
+const UNDO_EXECUTION_LEASE_MS = 5 * 60_000;
+
+export class UndoOperationInProgressError extends Error {
+  constructor() {
+    super('This operation is already being undone.');
+    this.name = 'UndoOperationInProgressError';
+  }
+}
 
 export function registerUndoExecutor(kind: string, executor: UndoExecutor) {
   if (undoExecutors.has(kind)) {
@@ -83,17 +91,30 @@ export async function listRecentOperations(userId: string, opts?: { batchId?: st
 }
 
 export async function undoOperation(userId: string, operationId: string) {
+  const claimToken = randomUUID();
   const claimed = await convexMutation<{
+    state?: 'claimed' | 'already_undone' | 'in_progress';
     tool: string;
     surface: OperationSurface;
     summary: string;
-    inverse: InverseOp;
-  }>(api.operations.claimUndo, { userId, operationId });
+    inverse?: InverseOp;
+  }>(api.operations.claimUndo, {
+    userId,
+    operationId,
+    claimToken,
+    leaseMs: UNDO_EXECUTION_LEASE_MS,
+  });
+  if (claimed.state === 'already_undone') {
+    return { undone: claimed.summary, surface: claimed.surface };
+  }
+  if (claimed.state === 'in_progress') throw new UndoOperationInProgressError();
+  if (!claimed.inverse) throw new Error('Operation is not undoable.');
   const executor = undoExecutors.get(claimed.inverse.kind);
   if (!executor) {
     await convexMutation(api.operations.markUndoFailed, {
       userId,
       operationId,
+      claimToken,
       error: `No undo executor for "${claimed.inverse.kind}".`,
     });
     throw new Error(`This operation can no longer be undone (${claimed.inverse.kind}).`);
@@ -104,9 +125,14 @@ export async function undoOperation(userId: string, operationId: string) {
     await convexMutation(api.operations.markUndoFailed, {
       userId,
       operationId,
+      claimToken,
       error: err?.message || 'Undo failed.',
     }).catch(() => {});
     throw err;
   }
+  // Do not turn a completion-write outage into `undo_failed`: the provider
+  // inverse already succeeded, and leaving the durable operation in
+  // `undoing` blocks a duplicate inverse until reconciliation succeeds.
+  await convexMutation(api.operations.completeUndo, { userId, operationId, claimToken });
   return { undone: claimed.summary, surface: claimed.surface };
 }

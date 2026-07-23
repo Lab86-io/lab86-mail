@@ -157,6 +157,7 @@ function setupBase(h: Harness) {
   h.onConvex('calendarData:upsertEventBatch', () => ({ ok: true }));
   h.onConvex('calendarData:deleteEvent', () => ({ ok: true }));
   h.onConvex('operations:record', () => 'op_1');
+  h.onConvex('operations:completeUndo', () => ({ status: 'undone' }));
 }
 
 function eventResponse(id: string, overrides: Record<string, unknown> = {}) {

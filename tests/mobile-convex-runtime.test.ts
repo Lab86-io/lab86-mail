@@ -492,7 +492,7 @@ describe('mobile Convex runtime', () => {
     }
   });
 
-  test('recordUpsert authenticates but cannot persist a change today', async () => {
+  test('recordUpsert authenticates and persists a revisioned sync change', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-upsert-secret';
     try {
@@ -508,15 +508,25 @@ describe('mobile Convex runtime', () => {
         t.mutation(api.mobile.recordUpsert, { ...args, internalSecret: 'wrong-secret' }),
       ).rejects.toThrow('Invalid Convex internal secret.');
 
-      // Current behavior: the handler forwards its full args (including
-      // internalSecret) into the mobileSyncChanges insert, so schema
-      // validation rejects the row and the revision bump rolls back.
-      await expect(
-        t.mutation(api.mobile.recordUpsert, { ...args, internalSecret: 'mobile-upsert-secret' }),
-      ).rejects.toThrow('Unexpected field `internalSecret`');
+      const revision = await t.mutation(api.mobile.recordUpsert, {
+        ...args,
+        internalSecret: 'mobile-upsert-secret',
+      });
+      expect(revision).toBe(1);
       const heads = await t.run((ctx) => ctx.db.query('mobileSyncHeads').collect());
-      expect(heads).toHaveLength(0);
-      expect(await t.run((ctx) => ctx.db.query('mobileSyncChanges').collect())).toHaveLength(0);
+      expect(heads).toHaveLength(1);
+      const syncChanges = await t.run((ctx) => ctx.db.query('mobileSyncChanges').collect());
+      expect(syncChanges).toEqual([
+        expect.objectContaining({
+          userId: 'upsert_user',
+          domain: 'tasks',
+          entityKind: 'card',
+          entityId: 'card_1',
+          revision: 1,
+          payload: { title: 'x' },
+        }),
+      ]);
+      expect(syncChanges[0]).not.toHaveProperty('internalSecret');
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
@@ -601,6 +611,164 @@ describe('mobile Convex runtime', () => {
           commandId: undoableId,
         }),
       ).rejects.toThrow('Mobile command not found.');
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('undo claims serialize concurrent requests and enforce the server expiry window', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-undo-claim-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const begin = async (idempotencyKey: string, undoExpiresAt?: number) => {
+        const operationId = await t.run((ctx) =>
+          ctx.db.insert('aiOperations', {
+            userId: 'undo_claim_user',
+            agent: 'user',
+            tool: 'test_create',
+            surface: 'tasks',
+            summary: `Created ${idempotencyKey}`,
+            target: { id: idempotencyKey },
+            inverse: { kind: 'test.delete', payload: { id: idempotencyKey } },
+            status: 'applied',
+            createdAt: Date.now(),
+          }),
+        );
+        const begun = await t.mutation(api.mobile.beginCommand, {
+          internalSecret: 'mobile-undo-claim-secret',
+          userId: 'undo_claim_user',
+          idempotencyKey,
+          payloadHash: 'hash',
+          domain: 'tasks',
+          kind: 'card.create',
+          payload: {},
+          clientCreatedAt: '2026-07-23T12:00:00Z',
+        });
+        const commandId = begun.command?._id;
+        if (!commandId) throw new Error('expected a queued command');
+        await t.mutation(api.mobile.claimCommand, {
+          internalSecret: 'mobile-undo-claim-secret',
+          userId: 'undo_claim_user',
+          commandId,
+          claimToken: 'execute-lease',
+          leaseMs: 5_000,
+        });
+        await t.mutation(api.mobile.completeCommand, {
+          internalSecret: 'mobile-undo-claim-secret',
+          userId: 'undo_claim_user',
+          commandId,
+          claimToken: 'execute-lease',
+          status: 'applied',
+          operationId: String(operationId),
+          undoExpiresAt,
+        });
+        return { commandId, operationId };
+      };
+
+      const { commandId: expiredId } = await begin('expired', Date.now() - 1);
+      const expired = await t.mutation(api.mobile.claimCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId: expiredId,
+        claimToken: 'undo-expired',
+        leaseMs: 60_000,
+      });
+      expect(expired).toMatchObject({ claimed: false, reason: 'expired' });
+
+      const { commandId, operationId } = await begin('valid', Date.now() + 60_000);
+      const first = await t.mutation(api.mobile.claimCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-1',
+        leaseMs: 60_000,
+      });
+      expect(first).toMatchObject({ claimed: true, reason: 'claimed' });
+      const concurrent = await t.mutation(api.mobile.claimCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-2',
+        leaseMs: 1_000,
+      });
+      expect(concurrent).toMatchObject({ claimed: false, reason: 'in_progress' });
+
+      await t.run(async (ctx) => {
+        await ctx.db.patch(commandId, { undoClaimExpiresAt: Date.now() - 1 });
+        await ctx.db.patch(operationId, {
+          status: 'undoing',
+          undoClaimToken: 'provider-undo',
+          undoClaimExpiresAt: Date.now() + 60_000,
+        });
+      });
+      const blockedByProvider = await t.mutation(api.mobile.claimCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-reclaimed',
+        leaseMs: 60_000,
+      });
+      expect(blockedByProvider).toMatchObject({ claimed: false, reason: 'in_progress' });
+
+      await t.run(async (ctx) => {
+        await ctx.db.patch(operationId, {
+          status: 'undo_failed',
+          undoClaimToken: undefined,
+          undoClaimExpiresAt: undefined,
+        });
+      });
+      const reclaimed = await t.mutation(api.mobile.claimCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-reclaimed',
+        leaseMs: 60_000,
+      });
+      expect(reclaimed).toMatchObject({ claimed: true, reason: 'claimed' });
+
+      await t.mutation(api.mobile.releaseCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-reclaimed',
+      });
+      const retry = await t.mutation(api.mobile.claimCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-3',
+        leaseMs: 60_000,
+      });
+      expect(retry.claimed).toBe(true);
+      await t.run(async (ctx) => {
+        await ctx.db.patch(commandId, { undoClaimExpiresAt: Date.now() - 1 });
+        await ctx.db.patch(operationId, {
+          status: 'undone',
+          undoneAt: Date.now(),
+          undoClaimToken: undefined,
+          undoClaimExpiresAt: undefined,
+        });
+      });
+      const completed = await t.mutation(api.mobile.completeCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-3',
+      });
+      expect(completed?.undoneAt).toBeGreaterThan(0);
+
+      const repeated = await t.mutation(api.mobile.claimCommandUndo, {
+        internalSecret: 'mobile-undo-claim-secret',
+        userId: 'undo_claim_user',
+        commandId,
+        claimToken: 'undo-5',
+        leaseMs: 60_000,
+      });
+      expect(repeated).toMatchObject({ claimed: false, reason: 'already_undone' });
+      const changes = await t.run((ctx) => ctx.db.query('mobileSyncChanges').collect());
+      expect(changes.filter((row) => row.entityId === String(operationId))).toHaveLength(1);
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;

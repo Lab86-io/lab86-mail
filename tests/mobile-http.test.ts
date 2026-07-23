@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { AuthRequiredError } from '@/lib/auth/current-user';
 import {
   MobileConflictError,
+  MobileIdempotencyConflictError,
   MobileInputError,
+  MobileNotFoundError,
   mapMobileHTTPError,
   mobileErrorResponse,
   mobileJSON,
@@ -86,6 +88,18 @@ describe('mobile HTTP contract', () => {
       retryable: false,
       status: 409,
     });
+    expect(mapMobileHTTPError(new MobileNotFoundError('Missing.'))).toEqual({
+      code: 'NOT_FOUND',
+      message: 'Missing.',
+      retryable: false,
+      status: 404,
+    });
+    expect(mapMobileHTTPError(new MobileIdempotencyConflictError('Key reused.'))).toEqual({
+      code: 'IDEMPOTENCY_KEY_REUSED',
+      message: 'Key reused.',
+      retryable: false,
+      status: 409,
+    });
     expect(mapMobileHTTPError(new RateLimitError('Slow down.', 1_000, 10))).toEqual({
       code: 'RATE_LIMITED',
       message: 'Slow down.',
@@ -94,7 +108,7 @@ describe('mobile HTTP contract', () => {
     });
     expect(mapMobileHTTPError(new Error('Database unavailable.'))).toEqual({
       code: 'SERVER_ERROR',
-      message: 'Database unavailable.',
+      message: 'The server could not complete the request.',
       retryable: true,
       status: 500,
     });

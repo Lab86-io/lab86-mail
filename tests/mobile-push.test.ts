@@ -130,9 +130,11 @@ describe('APNs delivery contract', () => {
     const schema = readFileSync(path.join(process.cwd(), 'convex/schema.ts'), 'utf8');
     const accounts = readFileSync(path.join(process.cwd(), 'convex/accounts.ts'), 'utf8');
     expect(schema).toContain('mobilePushDevices: defineTable(');
+    expect(schema).toContain('nativePushDeliveries: defineTable(');
     expect(schema).toContain("v.literal('native_push')");
     expect(schema).toContain("v.literal('mail_message')");
     expect(accounts).toContain("'mobilePushDevices'");
+    expect(accounts).toContain("'nativePushDeliveries'");
   });
 });
 

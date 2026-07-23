@@ -17,6 +17,10 @@ interface NativeDeliveryContext {
     environment: 'development' | 'production';
   }>;
   deliveries: Array<{ channel: string; status: string }>;
+  nativeDeviceDeliveries?: Array<{
+    token: string;
+    status: 'delivered' | 'expired' | 'failed';
+  }>;
   preference?: {
     nativePushEnabled?: boolean;
     newMailPushEnabled?: boolean;
@@ -54,6 +58,25 @@ export async function dispatchNativeNotification(
     return { sent: 0, failed: 0, skipped: 'already_sent' as const };
   }
   if (!context.mobileDevices.length) return { sent: 0, failed: 0, skipped: 'no_devices' as const };
+  const settledTokens = new Set(
+    (context.nativeDeviceDeliveries || [])
+      .filter((delivery) => delivery.status === 'delivered' || delivery.status === 'expired')
+      .map((delivery) => delivery.token),
+  );
+  const pendingDevices = context.mobileDevices.filter((device) => !settledTokens.has(device.token));
+  if (!pendingDevices.length) {
+    const delivered = (context.nativeDeviceDeliveries || []).some(
+      (delivery) => delivery.status === 'delivered',
+    );
+    await dependencies.mutate((api as any).albatrossNotifications.recordDelivery, {
+      userId,
+      notificationId,
+      channel: 'native_push',
+      status: delivered ? 'sent' : 'failed',
+      error: delivered ? undefined : 'All registered devices are expired.',
+    });
+    return { sent: 0, failed: delivered ? 0 : settledTokens.size };
+  }
 
   const envelope: NotificationEnvelope = {
     id: String(context.notification._id),
@@ -63,34 +86,61 @@ export async function dispatchNativeNotification(
     deepLink: context.notification.deepLink,
   };
   let sent = 0;
+  let failed = 0;
   const providerIds: string[] = [];
-  const errors: string[] = [];
-  for (const device of context.mobileDevices) {
+  const deliveryErrors: string[] = [];
+  const unresolvedErrors: string[] = [];
+  const recordDevice = async (
+    token: string,
+    status: 'delivered' | 'expired' | 'failed',
+    providerId?: string,
+    error?: string,
+  ) => {
+    try {
+      await dependencies.mutate((api as any).albatrossNotifications.recordNativeDeviceDelivery, {
+        userId,
+        notificationId,
+        token,
+        status,
+        providerId,
+        error,
+      });
+      return true;
+    } catch (error) {
+      const message = `Could not persist ${status} device receipt: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      deliveryErrors.push(message);
+      unresolvedErrors.push(message);
+      return false;
+    }
+  };
+  for (const device of pendingDevices) {
     try {
       const result = await dependencies.send(envelope, device);
-      sent += 1;
       if (result.providerId) providerIds.push(result.providerId);
-      await dependencies.mutate((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
-        token: device.token,
-        status: 'delivered',
-      });
+      if (await recordDevice(device.token, 'delivered', result.providerId)) sent += 1;
+      else failed += 1;
     } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      deliveryErrors.push(message);
       if (error instanceof APNsDeliveryError && error.invalidToken) {
-        await dependencies.mutate((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
-          token: device.token,
-          status: 'expired',
-        });
+        await recordDevice(device.token, 'expired', undefined, message);
+      } else {
+        unresolvedErrors.push(message);
+        await recordDevice(device.token, 'failed', undefined, message);
       }
-      errors.push(error instanceof Error ? error.message : String(error));
     }
   }
+  const status = sent > 0 && unresolvedErrors.length === 0 ? 'sent' : 'failed';
   await dependencies.mutate((api as any).albatrossNotifications.recordDelivery, {
     userId,
     notificationId,
     channel: 'native_push',
-    status: sent > 0 ? 'sent' : 'failed',
+    status,
     providerId: providerIds.join(',').slice(0, 500) || undefined,
-    error: sent > 0 ? undefined : errors.join('; ').slice(0, 500),
+    error: status === 'sent' ? undefined : deliveryErrors.join('; ').slice(0, 500),
   });
-  return { sent, failed: errors.length };
+  return { sent, failed };
 }

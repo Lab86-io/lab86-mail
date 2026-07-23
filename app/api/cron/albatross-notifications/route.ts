@@ -4,8 +4,8 @@ import { checkinIsDue, fallbackEmailIsDue, localDateKey } from '@/lib/albatross/
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { isStagingRuntime } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { APNsDeliveryError, sendAPNsPush } from '@/lib/notifications/apns';
 import { type NotificationEnvelope, sendCheckinEmail, sendWebPush } from '@/lib/notifications/delivery';
+import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,37 +68,7 @@ export async function POST(req: NextRequest) {
     !sentChannels.has('native_push') &&
     context.mobileDevices?.length
   ) {
-    let sent = 0;
-    const providerIds: string[] = [];
-    const errors: string[] = [];
-    for (const device of context.mobileDevices) {
-      try {
-        const result = await sendAPNsPush(envelope, device);
-        sent += 1;
-        if (result.providerId) providerIds.push(result.providerId);
-        await convexMutation((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
-          token: device.token,
-          status: 'delivered',
-        });
-      } catch (error) {
-        if (error instanceof APNsDeliveryError && error.invalidToken) {
-          await convexMutation((api as any).albatrossNotifications.updateMobileDeviceDelivery, {
-            token: device.token,
-            status: 'expired',
-          });
-        }
-        errors.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-    await convexMutation((api as any).albatrossNotifications.recordDelivery, {
-      userId,
-      notificationId: String(notification._id),
-      channel: 'native_push',
-      status: sent > 0 ? 'sent' : 'failed',
-      providerId: providerIds.join(',').slice(0, 500) || undefined,
-      error: sent > 0 ? undefined : errors.join('; ').slice(0, 500),
-    });
-    results.nativePush = { sent, failed: errors.length };
+    results.nativePush = await dispatchNativeNotification(userId, String(notification._id));
   }
 
   if (body.webPushEnabled === true && !sentChannels.has('web_push') && context.subscriptions?.length) {

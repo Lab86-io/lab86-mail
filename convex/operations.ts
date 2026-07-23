@@ -86,23 +86,79 @@ export const liveRecent = query({
   },
 });
 
-// Claim an undo: flips applied → undone before the inverse executes so two
-// concurrent undo clicks can't both run it. The caller reverts via markUndoFailed
-// if execution then fails.
+// Claim an undo before the inverse executes. `undoing` is deliberately
+// distinct from `undone`: retries can reconcile a completed inverse without
+// treating a still-running (and potentially failing) provider call as success.
 export const claimUndo = mutation({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
     operationId: v.id('aiOperations'),
+    claimToken: v.string(),
+    leaseMs: v.number(),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const row = await ctx.db.get(args.operationId);
     if (!row || row.userId !== args.userId) throw new Error('Operation not found.');
-    if (row.status !== 'applied') throw new Error(`Operation is already ${row.status}.`);
     if (!row.inverse) throw new Error('Operation is not undoable.');
-    await ctx.db.patch(args.operationId, { status: 'undone', undoneAt: now() });
-    return { tool: row.tool, surface: row.surface, summary: row.summary, inverse: row.inverse };
+    if (row.status === 'undone') {
+      return {
+        state: 'already_undone' as const,
+        tool: row.tool,
+        surface: row.surface,
+        summary: row.summary,
+      };
+    }
+    const ts = now();
+    if (row.status === 'undoing' && row.undoClaimExpiresAt !== undefined && row.undoClaimExpiresAt > ts) {
+      return {
+        state: 'in_progress' as const,
+        tool: row.tool,
+        surface: row.surface,
+        summary: row.summary,
+      };
+    }
+    await ctx.db.patch(args.operationId, {
+      status: 'undoing',
+      undoClaimToken: args.claimToken,
+      undoClaimExpiresAt: ts + Math.max(args.leaseMs, 1_000),
+      error: undefined,
+      undoneAt: undefined,
+    });
+    return {
+      state: 'claimed' as const,
+      tool: row.tool,
+      surface: row.surface,
+      summary: row.summary,
+      inverse: row.inverse,
+    };
+  },
+});
+
+export const completeUndo = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    operationId: v.id('aiOperations'),
+    claimToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.operationId);
+    if (!row || row.userId !== args.userId) throw new Error('Operation not found.');
+    if (row.status === 'undone') return row;
+    if (row.status !== 'undoing' || row.undoClaimToken !== args.claimToken) {
+      throw new Error('Operation undo lease was lost.');
+    }
+    await ctx.db.patch(args.operationId, {
+      status: 'undone',
+      undoneAt: now(),
+      undoClaimToken: undefined,
+      undoClaimExpiresAt: undefined,
+      error: undefined,
+    });
+    return ctx.db.get(args.operationId);
   },
 });
 
@@ -111,16 +167,20 @@ export const markUndoFailed = mutation({
     internalSecret: v.optional(v.string()),
     userId: v.string(),
     operationId: v.id('aiOperations'),
+    claimToken: v.string(),
     error: v.string(),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const row = await ctx.db.get(args.operationId);
     if (!row || row.userId !== args.userId) return;
+    if (row.status !== 'undoing' || row.undoClaimToken !== args.claimToken) return;
     await ctx.db.patch(args.operationId, {
       status: 'undo_failed',
       error: args.error.slice(0, 500),
       undoneAt: undefined,
+      undoClaimToken: undefined,
+      undoClaimExpiresAt: undefined,
     });
   },
 });

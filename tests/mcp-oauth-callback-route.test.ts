@@ -25,6 +25,23 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe('MCP OAuth callback', () => {
+  test('rejects a missing state before consuming or exchanging anything', async () => {
+    let consumed = false;
+    const callback = createMcpOAuthCallback(
+      dependencies({
+        convexMutation: async () => {
+          consumed = true;
+          return null;
+        },
+      }),
+    );
+
+    const response = await callback(new NextRequest('http://localhost/api/mcp/oauth/callback?code=code_1'));
+
+    expect(response.headers.get('location')).toContain('mcp_error=Missing+OAuth+state');
+    expect(consumed).toBe(false);
+  });
+
   test('redirects expired state instead of throwing a framework error', async () => {
     const callback = createMcpOAuthCallback(
       dependencies({
@@ -70,5 +87,77 @@ describe('MCP OAuth callback', () => {
 
     expect(location).toContain('mcp_error=Authorization+was+not+completed');
     expect(location).not.toContain('private_provider_detail');
+  });
+
+  test('preserves native callback mode for provider denial and a missing code', async () => {
+    const deps = dependencies({
+      convexMutation: async () => ({
+        userId: 'user_1',
+        server: 'granola',
+        payloadEncrypted: 'payload',
+        nativeCallback: true,
+      }),
+      finishMcpOAuth: async () => {
+        throw new Error('token exchange must not run');
+      },
+    });
+    const callback = createMcpOAuthCallback(deps);
+
+    const denied = await callback(
+      new NextRequest('http://localhost/api/mcp/oauth/callback?state=state_1&error=access_denied'),
+    );
+    const missingCode = await callback(
+      new NextRequest('http://localhost/api/mcp/oauth/callback?state=state_1'),
+    );
+
+    expect(denied.headers.get('location')).toContain(
+      'lab86://oauth/connection?mcp_error=Authorization+was+not+completed',
+    );
+    expect(missingCode.headers.get('location')).toContain(
+      'lab86://oauth/connection?mcp_error=The+provider+did+not+return+an+authorization+code',
+    );
+  });
+
+  test('preserves native callback mode after exchange and first-sync failures', async () => {
+    const exchangeFailure = createMcpOAuthCallback(
+      dependencies({
+        convexMutation: async () => ({
+          userId: 'user_1',
+          server: 'granola',
+          payloadEncrypted: 'payload',
+          nativeCallback: true,
+        }),
+        finishMcpOAuth: async () => {
+          throw new Error('private token failure');
+        },
+      }),
+    );
+    const syncFailure = createMcpOAuthCallback(
+      dependencies({
+        convexMutation: async () => ({
+          userId: 'user_1',
+          server: 'granola',
+          payloadEncrypted: 'payload',
+          nativeCallback: true,
+        }),
+        syncConnection: async () => ({ ok: false, error: 'private sync detail' }),
+      }),
+    );
+
+    const exchange = await exchangeFailure(
+      new NextRequest('http://localhost/api/mcp/oauth/callback?state=state_1&code=code_1'),
+    );
+    const sync = await syncFailure(
+      new NextRequest('http://localhost/api/mcp/oauth/callback?state=state_1&code=code_1'),
+    );
+
+    expect(exchange.headers.get('location')).toContain(
+      'lab86://oauth/connection?mcp_error=Could+not+complete+authorization',
+    );
+    expect(exchange.headers.get('location')).not.toContain('private');
+    expect(sync.headers.get('location')).toContain(
+      'lab86://oauth/connection?mcp_error=Connected%2C+but+the+first+sync+failed',
+    );
+    expect(sync.headers.get('location')).not.toContain('private');
   });
 });

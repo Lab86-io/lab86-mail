@@ -1479,6 +1479,9 @@ export default defineSchema({
     approvalId: v.optional(v.string()),
     undoExpiresAt: v.optional(v.number()),
     undoneAt: v.optional(v.number()),
+    undoClaimToken: v.optional(v.string()),
+    undoClaimedAt: v.optional(v.number()),
+    undoClaimExpiresAt: v.optional(v.number()),
     claimToken: v.optional(v.string()),
     claimedAt: v.optional(v.number()),
     attemptCount: v.optional(v.number()),
@@ -1568,8 +1571,15 @@ export default defineSchema({
     // surface that recorded it; the UI only needs kind/id for deep links.
     target: v.any(),
     inverse: v.optional(v.object({ kind: v.string(), payload: v.any() })),
-    status: v.union(v.literal('applied'), v.literal('undone'), v.literal('undo_failed')),
+    status: v.union(
+      v.literal('applied'),
+      v.literal('undoing'),
+      v.literal('undone'),
+      v.literal('undo_failed'),
+    ),
     error: v.optional(v.string()),
+    undoClaimToken: v.optional(v.string()),
+    undoClaimExpiresAt: v.optional(v.number()),
     createdAt: v.number(),
     undoneAt: v.optional(v.number()),
   })
@@ -1729,6 +1739,24 @@ export default defineSchema({
     .index('by_notification', ['notificationId'])
     .index('by_user', ['userId'])
     .index('by_status_scheduled', ['status', 'scheduledFor']),
+
+  // One durable receipt per notification/device prevents a transient failure
+  // on one install from causing an already-delivered install to receive a
+  // duplicate when the aggregate native-push delivery is retried.
+  nativePushDeliveries: defineTable({
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+    token: v.string(),
+    status: v.union(v.literal('delivered'), v.literal('expired'), v.literal('failed')),
+    attemptCount: v.number(),
+    providerId: v.optional(v.string()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_notification', ['notificationId'])
+    .index('by_notification_token', ['notificationId', 'token'])
+    .index('by_user', ['userId']),
 
   albatrossDailyCheckins: defineTable({
     userId: v.string(),

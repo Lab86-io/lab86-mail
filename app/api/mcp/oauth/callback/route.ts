@@ -38,16 +38,28 @@ export function createMcpOAuthCallback(deps: typeof defaultDeps = defaultDeps) {
       req.nextUrl.searchParams.get('error_description') || req.nextUrl.searchParams.get('error');
     if (!state) return settingsRedirect('mcp_error', 'Missing OAuth state.');
 
+    let nativeCallback = false;
     try {
       const stored = await deps.convexMutation<any>((api as any).mcp.consumeOAuthStateFromCallback, {
         state,
       });
       if (!stored) return settingsRedirect('mcp_error', 'OAuth state is invalid or expired.');
+      nativeCallback = stored.nativeCallback === true;
       if (providerError) {
         console.warn('[mcp/oauth/callback] provider denied authorization', providerError);
-        return settingsRedirect('mcp_error', 'Authorization was not completed. Please try again.');
+        return settingsRedirect(
+          'mcp_error',
+          'Authorization was not completed. Please try again.',
+          nativeCallback,
+        );
       }
-      if (!code) return settingsRedirect('mcp_error', 'The provider did not return an authorization code.');
+      if (!code) {
+        return settingsRedirect(
+          'mcp_error',
+          'The provider did not return an authorization code.',
+          nativeCallback,
+        );
+      }
 
       const definition = deps.getServerDef(stored.server);
       if (!definition || definition.connectMode !== 'oauth') throw new Error('Unsupported OAuth server.');
@@ -70,13 +82,17 @@ export function createMcpOAuthCallback(deps: typeof defaultDeps = defaultDeps) {
         return settingsRedirect(
           'mcp_error',
           'Connected, but the first sync failed. Please reconnect and try again.',
-          stored.nativeCallback,
+          nativeCallback,
         );
       }
-      return settingsRedirect('mcp_connected', definition.label, stored.nativeCallback);
+      return settingsRedirect('mcp_connected', definition.label, nativeCallback);
     } catch (error) {
       console.error('[mcp/oauth/callback] OAuth connection failed', error);
-      return settingsRedirect('mcp_error', 'Could not complete authorization. Please sign in and try again.');
+      return settingsRedirect(
+        'mcp_error',
+        'Could not complete authorization. Please sign in and try again.',
+        nativeCallback,
+      );
     }
   };
 }

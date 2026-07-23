@@ -865,11 +865,15 @@ export const nativeDeliveryContext = query({
       .query('notificationDeliveries')
       .withIndex('by_notification', (q) => q.eq('notificationId', args.notificationId))
       .collect();
+    const nativeDeviceDeliveries = await ctx.db
+      .query('nativePushDeliveries')
+      .withIndex('by_notification', (q) => q.eq('notificationId', args.notificationId))
+      .collect();
     const preference = await ctx.db
       .query('albatrossNotificationPreferences')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .unique();
-    return { notification, mobileDevices, deliveries, preference };
+    return { notification, mobileDevices, deliveries, nativeDeviceDeliveries, preference };
   },
 });
 
@@ -962,6 +966,60 @@ export const updateMobileDeviceDelivery = mutation({
       ...(args.status === 'delivered' ? { lastDeliveredAt: ts } : { status: 'expired' as const }),
       updatedAt: ts,
     });
+  },
+});
+
+export const recordNativeDeviceDelivery = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+    token: v.string(),
+    status: v.union(v.literal('delivered'), v.literal('expired'), v.literal('failed')),
+    providerId: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const notification = await ctx.db.get(args.notificationId);
+    if (!notification || notification.userId !== args.userId) {
+      throw new Error('Notification not found.');
+    }
+    const device = await ctx.db
+      .query('mobilePushDevices')
+      .withIndex('by_token', (q) => q.eq('token', args.token))
+      .unique();
+    if (!device || device.userId !== args.userId) throw new Error('Mobile device not found.');
+
+    const ts = now();
+    const existing = await ctx.db
+      .query('nativePushDeliveries')
+      .withIndex('by_notification_token', (q) =>
+        q.eq('notificationId', args.notificationId).eq('token', args.token),
+      )
+      .unique();
+    const receipt = {
+      status: args.status,
+      attemptCount: (existing?.attemptCount ?? 0) + 1,
+      providerId: args.providerId,
+      error: args.error?.slice(0, 500),
+      updatedAt: ts,
+    };
+    if (existing) await ctx.db.patch(existing._id, receipt);
+    else {
+      await ctx.db.insert('nativePushDeliveries', {
+        userId: args.userId,
+        notificationId: args.notificationId,
+        token: args.token,
+        ...receipt,
+        createdAt: ts,
+      });
+    }
+    if (args.status === 'delivered') {
+      await ctx.db.patch(device._id, { lastDeliveredAt: ts, updatedAt: ts });
+    } else if (args.status === 'expired') {
+      await ctx.db.patch(device._id, { status: 'expired', updatedAt: ts });
+    }
   },
 });
 
