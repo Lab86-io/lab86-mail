@@ -507,9 +507,13 @@ export const livePendingQuestions = query({
 });
 
 export const areaWork = query({
-  args: { areaId: v.id('areas'), includeDone: v.optional(v.boolean()) },
+  args: {
+    ...callerArgs,
+    areaId: v.id('areas'),
+    includeDone: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, {});
+    const userId = await resolveUserId(ctx, args);
     await requireArea(ctx, args.areaId, userId);
     const [primaryRows, areaLinks] = await Promise.all([
       ctx.db
@@ -539,9 +543,12 @@ export const areaWork = query({
 });
 
 export const workDetail = query({
-  args: { workId: v.id('albatrossIntents') },
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+  },
   handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, {});
+    const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
     const [plan, project, questions, areaLinks, applications] = await Promise.all([
       work.latestPlanId ? ctx.db.get(work.latestPlanId) : null,
