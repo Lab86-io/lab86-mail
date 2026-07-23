@@ -1397,6 +1397,8 @@ export function DailyReport() {
                   value={report.document}
                   composing={report.artifactStatus === 'composing'}
                   onChanged={invalidate}
+                  masthead
+                  footer={<BriefFooter report={report} />}
                 />
               </motion.div>
             ) : report?.html ? (

@@ -154,7 +154,7 @@ function BriefGroup({
               {node.kicker}
             </span>
           ) : null}
-          <span className="font-serif text-lg font-semibold leading-tight">{node.title}</span>
+          <span className="font-display text-lg font-semibold leading-tight">{node.title}</span>
         </span>
         {node.collapsible ? (
           <ChevronDown className={cn('mt-1 size-4 transition-transform', !open && '-rotate-90')} />
@@ -191,7 +191,7 @@ function BriefLeaf({
         <Markdown
           className={cn(
             'max-w-none text-pretty [&_p]:my-0',
-            node.role === 'lede' && 'font-serif text-xl leading-relaxed @[600px]:text-2xl',
+            node.role === 'lede' && 'font-display text-xl leading-relaxed @[600px]:text-2xl',
             node.role === 'kicker' &&
               'text-[11px] font-semibold uppercase tracking-[0.17em] text-[var(--color-accent)]',
             node.role === 'body' && 'text-sm leading-relaxed @[600px]:text-[15px]',
@@ -216,7 +216,7 @@ function BriefLeaf({
       if (node.variant === 'space') return <div aria-hidden className="h-3" />;
       if (node.variant === 'flourish')
         return (
-          <div aria-hidden className="text-center font-serif text-[var(--color-text-faint)]">
+          <div aria-hidden className="text-center font-display text-[var(--color-text-faint)]">
             ✦
           </div>
         );
@@ -258,7 +258,7 @@ function BriefLeaf({
     case 'timeline':
       return (
         <section className={cn('space-y-3', nodeClass(node))}>
-          <h3 className="font-serif text-lg font-semibold">{node.title}</h3>
+          <h3 className="font-display text-lg font-semibold">{node.title}</h3>
           <ol className="space-y-1">
             {node.items.map((item, index) => (
               <li
@@ -300,7 +300,7 @@ function BriefLeaf({
     case 'checklist':
       return (
         <section className={cn('space-y-3', nodeClass(node))}>
-          <h3 className="font-serif text-lg font-semibold">{node.title}</h3>
+          <h3 className="font-display text-lg font-semibold">{node.title}</h3>
           <div className="divide-y divide-[var(--color-border)]">
             {node.items.map((item) => {
               const refKey = item.ref ? briefRefKey(item.ref) : '';
@@ -340,7 +340,7 @@ function BriefLeaf({
       if (!node.items.length) return node.emptyText ? <BriefEmpty text={node.emptyText} /> : null;
       return (
         <section className={cn('space-y-3', nodeClass(node))}>
-          {node.title ? <h3 className="font-serif text-lg font-semibold">{node.title}</h3> : null}
+          {node.title ? <h3 className="font-display text-lg font-semibold">{node.title}</h3> : null}
           <div
             className={cn(
               node.variant === 'shelf' && 'scrollbar-none flex snap-x gap-3 overflow-x-auto pb-2',
@@ -436,7 +436,7 @@ function BriefEntityList({
   if (!visible.length) return emptyText ? <BriefEmpty text={emptyText} /> : null;
   return (
     <section className="space-y-2.5">
-      {title ? <h3 className="font-serif text-lg font-semibold">{title}</h3> : null}
+      {title ? <h3 className="font-display text-lg font-semibold">{title}</h3> : null}
       <div
         className={cn(
           variant === 'cards' && 'grid grid-cols-1 gap-2.5 @[600px]:grid-cols-2',
@@ -532,7 +532,7 @@ function BriefStat({ node }: { node: Extract<BriefContentLeaf, { kind: 'stat' }>
         {node.label}
       </p>
       <div className="mt-2 flex items-baseline gap-2">
-        <strong className="font-serif text-3xl font-semibold">{value}</strong>
+        <strong className="font-display text-3xl font-semibold">{value}</strong>
         {node.unit ? <span className="text-sm text-[var(--color-text-muted)]">{node.unit}</span> : null}
       </div>
       {node.delta ? <p className="mt-1 text-xs text-[var(--color-accent)]">{node.delta}</p> : null}

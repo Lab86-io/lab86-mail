@@ -11,6 +11,7 @@ import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions'
 import { type BriefActionV2, type BriefSourceRefV2, parseBriefDocument } from '@/lib/shared/brief-document';
 import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { BriefActions } from './BriefActions';
+import { BriefMasthead } from './BriefMasthead';
 import { type BriefNodeContext, BriefNodeView } from './BriefNodeView';
 import type { BriefActionPayload } from './brief-action-runtime';
 
@@ -18,10 +19,14 @@ export function BriefCanvas({
   value,
   composing = false,
   onChanged,
+  masthead = false,
+  footer,
 }: {
   value: unknown;
   composing?: boolean;
   onChanged?: () => void;
+  masthead?: boolean;
+  footer?: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
   const document = useMemo(() => parseBriefDocument(value), [value]);
@@ -198,6 +203,7 @@ export function BriefCanvas({
       className="scrollable @container h-full overflow-y-auto bg-[var(--color-bg)] px-4 py-6 @[680px]:px-7"
       data-brief-document-version={document.version}
     >
+      {masthead ? <BriefMasthead title={document.title} generatedAt={document.generatedAt} /> : null}
       <header className="mx-auto mb-7 max-w-5xl border-b border-[var(--color-border)] pb-5">
         <div className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
           <Newspaper className="size-3.5" />
@@ -208,7 +214,7 @@ export function BriefCanvas({
               Adding regions…
             </span>
           ) : hydration.isError ? (
-            <span className="ml-auto flex items-center gap-1 normal-case tracking-normal text-amber-600">
+            <span className="ml-auto flex items-center gap-1 normal-case tracking-normal text-[var(--color-warning)]">
               <AlertTriangle className="size-3" />
               Saved details shown
             </span>
@@ -219,21 +225,25 @@ export function BriefCanvas({
             </span>
           )}
         </div>
-        <h1 className="max-w-3xl text-balance font-serif text-3xl font-semibold leading-[1.05] tracking-tight @[640px]:text-4xl">
-          {document.title}
-        </h1>
+        {masthead ? null : (
+          <h1 className="max-w-3xl text-balance font-display text-3xl font-semibold leading-[1.05] tracking-tight @[640px]:text-4xl">
+            {document.title}
+          </h1>
+        )}
         <p className="mt-3 max-w-3xl text-pretty text-sm leading-relaxed text-[var(--color-text-muted)] @[640px]:text-[15px]">
           {document.summary}
         </p>
-        <time className="mt-3 block text-[11px] text-[var(--color-text-faint)]">
-          {new Intl.DateTimeFormat(undefined, {
-            weekday: 'long',
-            month: 'long',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          }).format(new Date(document.generatedAt))}
-        </time>
+        {masthead ? null : (
+          <time className="mt-3 block text-[11px] text-[var(--color-text-faint)]">
+            {new Intl.DateTimeFormat(undefined, {
+              weekday: 'long',
+              month: 'long',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+            }).format(new Date(document.generatedAt))}
+          </time>
+        )}
       </header>
       <div className="mx-auto flex max-w-5xl flex-col gap-6">
         {document.regions.map((region) => (
@@ -242,6 +252,7 @@ export function BriefCanvas({
           </section>
         ))}
       </div>
+      {footer}
       {canvasReview ? (
         <div className="sticky bottom-3 z-20 mx-auto mt-4 flex max-w-xl items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 p-3 shadow-[var(--shadow-pop)] backdrop-blur">
           <p className="min-w-0 flex-1 text-xs text-[var(--color-text-muted)]">

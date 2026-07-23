@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useClientStore } from '@/lib/client-state';
 import { sanitizeEmailFrameHtml } from '@/lib/sanitize';
+import { readBriefTheme } from '@/lib/theme/brief-theme';
 
 const HEIGHTS = { compact: 180, medium: 300, tall: 460 } as const;
 
@@ -23,10 +25,23 @@ export function BriefCanvasLeaf({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [srcDoc, setSrcDoc] = useState('');
   const allowed = useMemo(() => new Set(allowedActions), [allowedActions]);
+  const appFont = useClientStore((state) => state.appFont);
 
   useEffect(() => {
-    const clean = sanitizeEmailFrameHtml(html);
-    if (!clean) return;
+    const raw = sanitizeEmailFrameHtml(html);
+    if (!raw) return;
+    // Canvas HTML is written against --brief-* tokens with light fallbacks;
+    // mirror the customizer's resolved fonts/colors in so the ornament matches
+    // the surrounding native brief (same contract as postBriefTheme).
+    const tokens = readBriefTheme(appFont);
+    const themeStyle = `<style>:root{${Object.entries(tokens)
+      .map(([name, value]) => `${name}:${value}`)
+      .join(';')}}</style>`;
+    const headClose = raw.toLowerCase().indexOf('</head>');
+    const clean =
+      headClose >= 0
+        ? `${raw.slice(0, headClose)}${themeStyle}${raw.slice(headClose)}`
+        : `${themeStyle}${raw}`;
     const bridge = `<script>
 document.addEventListener('click',function(event){
   var target=event.target&&event.target.closest&&event.target.closest('[data-action]');
@@ -41,7 +56,7 @@ document.addEventListener('click',function(event){
     setSrcDoc(
       bodyClose >= 0 ? `${clean.slice(0, bodyClose)}${bridge}${clean.slice(bodyClose)}` : `${clean}${bridge}`,
     );
-  }, [html]);
+  }, [html, appFont]);
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {
@@ -73,7 +88,7 @@ document.addEventListener('click',function(event){
       title={title}
       srcDoc={srcDoc}
       sandbox="allow-scripts"
-      className="w-full rounded-xl border border-[var(--color-border)] bg-white"
+      className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]"
       style={{ height: HEIGHTS[height] }}
     />
   );

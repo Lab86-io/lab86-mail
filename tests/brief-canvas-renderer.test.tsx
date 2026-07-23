@@ -8,13 +8,13 @@ import {
   richBriefDocumentFixture,
 } from '../lib/shared/brief-document-fixtures';
 
-function render(value: unknown) {
+function render(value: unknown, extras?: { masthead?: boolean; footer?: React.ReactNode }) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return renderToStaticMarkup(
     <QueryClientProvider client={queryClient}>
-      <BriefCanvas value={value} />
+      <BriefCanvas value={value} masthead={extras?.masthead} footer={extras?.footer} />
     </QueryClientProvider>,
   );
 }
@@ -34,6 +34,23 @@ describe('BriefCanvas degradation', () => {
     expect(html).toContain('A future leaf becomes a readable card.');
     expect(html).toContain('Tasks');
     expect(html).not.toContain('Dead action');
+  });
+
+  test('masthead hero and footer slot render around the document', () => {
+    const html = render(richBriefDocumentFixture, {
+      masthead: true,
+      footer: <div>Footer slot content</div>,
+    });
+    expect(html).toContain('The Daily Brief');
+    expect(html).toContain('Footer slot content');
+    // The masthead owns the title; the plain header h1 must not duplicate it.
+    expect(html.split('Thursday Brief').length - 1).toBe(1);
+  });
+
+  test('typography follows the customizer display face, not a fixed serif', () => {
+    const html = render(richBriefDocumentFixture);
+    expect(html).toContain('font-display');
+    expect(html).not.toContain('font-serif');
   });
 
   test('future documents reduce to an accessible title and summary', () => {
