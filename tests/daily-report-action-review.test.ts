@@ -23,6 +23,33 @@ describe('daily report action review policy', () => {
     expect(messages).toEqual(['Mark “Contract review” resolved and remove it from future briefs?']);
   });
 
+  test('covers every reviewed report mutation with action-specific copy and risk', () => {
+    expect(dailyReportActionReview('toggle_task', { completed: false })).toEqual({
+      message: 'Reopen “this task”?',
+      destructive: false,
+    });
+    expect(dailyReportActionReview('dismiss_thread', {})).toEqual({
+      message: 'Remove “this conversation” from future briefs?',
+      destructive: true,
+    });
+    expect(dailyReportActionReview('create_task', { title: 'Prepare slides' })).toEqual({
+      message: 'Add “Prepare slides” to your tasks?',
+      destructive: false,
+    });
+    expect(dailyReportActionReview('archive_thread', { subject: 'Old launch thread' })).toEqual({
+      message: 'Archive “Old launch thread” and remove it from future briefs?',
+      destructive: true,
+    });
+    expect(dailyReportActionReview('rsvp_event', { status: 'maybe' })).toEqual({
+      message: 'Send a “maybe” RSVP for this event?',
+      destructive: false,
+    });
+    expect(dailyReportActionReview('create_event', {})).toEqual({
+      message: 'Add “this event” to your calendar?',
+      destructive: false,
+    });
+  });
+
   test('read-only and unknown actions do not invent a mutation confirmation', () => {
     expect(dailyReportActionReview('open_thread', {})).toBeNull();
     expect(confirmDailyReportAction('open_thread', {}, () => false)).toBeTrue();
