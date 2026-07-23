@@ -90,3 +90,29 @@ test('an exact duplicate still continues and cleans up the private key', () => {
   assert.equal(removed.length, 1);
   assert.match(messages.join(''), /already accepted build 40/);
 });
+
+test('key setup failures still remove a partially written private key', () => {
+  const removed = [];
+  let uploadAttempted = false;
+
+  assert.throws(
+    () =>
+      uploadIOSExport({
+        env: baseEnvironment,
+        makeDirectory: () => {},
+        write: () => {},
+        chmod: () => {
+          throw new Error('could not protect private key');
+        },
+        remove: (path) => removed.push(path),
+        run: () => {
+          uploadAttempted = true;
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      }),
+    /could not protect private key/,
+  );
+
+  assert.equal(uploadAttempted, false);
+  assert.deepEqual(removed, ['/tmp/runner/app-store-connect-private-keys/AuthKey_key.p8']);
+});

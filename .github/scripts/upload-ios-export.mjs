@@ -49,11 +49,12 @@ export function uploadIOSExport({
 
   const privateKeysDirectory = join(env.RUNNER_TEMP, 'app-store-connect-private-keys');
   const privateKeyPath = join(privateKeysDirectory, `AuthKey_${env.ASC_KEY_ID}.p8`);
-  makeDirectory(privateKeysDirectory, { recursive: true });
-  write(privateKeyPath, `${env.ASC_PRIVATE_KEY.replace(/\s+$/, '')}\n`, { mode: 0o600 });
-  chmod(privateKeyPath, 0o600);
 
   try {
+    makeDirectory(privateKeysDirectory, { recursive: true });
+    write(privateKeyPath, `${env.ASC_PRIVATE_KEY.replace(/\s+$/, '')}\n`, { mode: 0o600 });
+    chmod(privateKeyPath, 0o600);
+
     const result = run(
       'xcrun',
       [
