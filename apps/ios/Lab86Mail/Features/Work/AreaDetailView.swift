@@ -338,8 +338,7 @@ struct AreaDetailView: View {
                     document: document,
                     isComposing: detail.livingBrief?.status == "generating",
                     scopeAreaID: detail.identity.id,
-                    onReview: { artifactReview = $0 },
-                    onRegenerate: { Task { await refreshBrief() } }
+                    onReview: { artifactReview = $0 }
                 )
                 .padding(.top, 50)
                 .padding(.bottom, 24)

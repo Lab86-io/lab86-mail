@@ -186,13 +186,7 @@ struct WorkDetailView: View {
                     BriefDocumentView(
                         document: document,
                         isComposing: false,
-                        onReview: { artifactReview = $0 },
-                        onRegenerate: {
-                            Task {
-                                _ = await environment.store.advanceWork(route.workID)
-                                await load(initial: false)
-                            }
-                        }
+                        onReview: { artifactReview = $0 }
                     )
                     .padding(.vertical, 20)
                     .overlay(alignment: .top) { Divider() }

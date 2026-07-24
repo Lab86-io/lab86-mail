@@ -2,12 +2,14 @@ import Charts
 import MobileAPI
 import SwiftUI
 
+// Content-only region renderer. Owner surfaces (Today, Area, Work) supply
+// their own chrome — masthead, titles, footers, and the Regenerate control
+// live with the owner, never inside the shared document.
 struct BriefDocumentView: View {
     let document: BriefDocumentV2
     let isComposing: Bool
     var scopeAreaID: String? = nil
     let onReview: (ArtifactReviewRequest) -> Void
-    let onRegenerate: () -> Void
 
     @Environment(AppEnvironment.self) private var environment
     @State private var entities: [String: BriefHydratedEntity] = [:]
@@ -19,7 +21,7 @@ struct BriefDocumentView: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 22) {
-            header
+            statusLine
             ForEach(document.regions, id: \.id) { region in
                 BriefNodeView(
                     node: region.tree,
@@ -62,53 +64,27 @@ struct BriefDocumentView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    // The only chrome the shared renderer keeps: transient status that belongs
+    // to the document body itself (still composing, or hydration fell back to
+    // saved details). The former title/date/Regenerate header is owner chrome.
+    @ViewBuilder private var statusLine: some View {
+        if isComposing {
             HStack(spacing: 6) {
-                Image(systemName: "newspaper")
-                Text("Native live brief")
-                Spacer()
-                if isComposing {
-                    ProgressView().controlSize(.mini)
-                    Text("Adding regions…")
-                } else if hydrationFailed {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text("Saved details")
-                } else {
-                    Image(systemName: "checkmark.circle")
-                    Text("Live")
-                }
+                ProgressView().controlSize(.mini)
+                Text("Adding regions…")
             }
             .font(.caption2.weight(.medium))
             .textCase(.uppercase)
             .foregroundStyle(.secondary)
-
-            Text(document.title)
-                .font(.largeTitle.weight(.bold))
-                .fontDesign(.serif)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-
-            Text(document.summary)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(Date(timeIntervalSince1970: document.generatedAt / 1_000).formatted(
-                .dateTime.weekday(.wide).month(.wide).day().hour().minute()
-            ))
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-
-            HStack {
-                Spacer()
-                Button("Regenerate", systemImage: "arrow.clockwise", action: onRegenerate)
-                    .font(.footnote.weight(.medium))
-                    .buttonStyle(.bordered)
+        } else if hydrationFailed {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                Text("Saved details")
             }
+            .font(.caption2.weight(.medium))
+            .textCase(.uppercase)
+            .foregroundStyle(.secondary)
         }
-        .padding(.bottom, 4)
-        .overlay(alignment: .bottom) { Divider() }
     }
 
     private var errorBinding: Binding<Bool> {

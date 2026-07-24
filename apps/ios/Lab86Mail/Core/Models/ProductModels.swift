@@ -939,6 +939,38 @@ struct AreaSummary: Identifiable, Hashable, Codable, Sendable {
 // fallback (narrative, stats, section counts) so Today never reduces the report
 // to one lossy string. Codable so the cached edition survives relaunch/offline;
 // `init?(json:)` decodes the `get_latest_daily_report` tool result.
+// The deterministic edition artwork the server derives from generatedAt —
+// the same museum piece and fallback order desktop renders, so the two
+// platforms can never disagree about an edition's masthead.
+struct DailyBriefArt: Hashable, Codable, Sendable {
+    let imageURL: URL
+    let fallbackURLs: [URL]
+    let credit: String?
+    let source: String?
+
+    // Ordered candidate list the masthead walks on load failure.
+    var orderedURLs: [URL] { [imageURL] + fallbackURLs }
+
+    init(imageURL: URL, fallbackURLs: [URL], credit: String?, source: String?) {
+        self.imageURL = imageURL
+        self.fallbackURLs = fallbackURLs
+        self.credit = credit
+        self.source = source
+    }
+
+    init?(json: JSONValue?) {
+        guard let json, json.objectValue != nil,
+              let urlString = json["imageUrl"]?.stringValue?.nilIfBlank,
+              let url = URL(string: urlString) else { return nil }
+        imageURL = url
+        fallbackURLs = (json["fallbacks"]?.arrayValue ?? []).compactMap {
+            $0.stringValue?.nilIfBlank.flatMap(URL.init(string:))
+        }
+        credit = json["credit"]?.stringValue?.nilIfBlank
+        source = json["source"]?.stringValue?.nilIfBlank
+    }
+}
+
 struct DailyReportModel: Hashable, Codable, Sendable {
     enum Status: String, Codable, Sendable { case partial, ready }
 
@@ -991,6 +1023,14 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     let stats: Stats
     let sectionCounts: SectionCounts
     let errors: [String]
+    // Optional additions (server ≥ this build attaches them); Optional storage
+    // keeps pre-existing cached snapshots decodable.
+    let art: DailyBriefArt?
+    private let services: [String]?
+
+    // Raw service ids the edition drew from (mail providers, mcp servers…).
+    // The footer derives its final list from these plus section content.
+    var serviceIDs: [String] { services ?? [] }
 
     var hasArtifact: Bool { document != nil || !(html ?? "").isEmpty }
 
@@ -1055,6 +1095,8 @@ struct DailyReportModel: Hashable, Codable, Sendable {
             calendar: sections?["calendar"]?.arrayValue?.count ?? 0
         )
         errors = (json["errors"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank }
+        art = DailyBriefArt(json: json["art"])
+        services = json["services"]?.arrayValue.map { $0.compactMap { $0.stringValue?.nilIfBlank } }
     }
 }
 

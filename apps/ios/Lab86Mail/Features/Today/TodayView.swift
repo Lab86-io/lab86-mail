@@ -4,8 +4,23 @@ struct TodayView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var showsHistory = false
     @State private var artifactReview: ArtifactReviewRequest?
+    @State private var isRegenerating = false
+    @State private var showsInlineDate = false
 
     private var store: ProductStore { environment.store }
+
+    private var dateline: String {
+        Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
+    }
+
+    // Whether the current render path shows the native masthead (which carries
+    // its own dateline). While it's on screen the navigation title stays
+    // suppressed so the date never appears twice; once the masthead scrolls
+    // away the date crossfades into the bar.
+    private var hasNativeMasthead: Bool {
+        guard let report = store.dailyReport, report.hasArtifact else { return false }
+        return report.document != nil && report.artifactSource == "document-v2"
+    }
 
     var body: some View {
         Group {
@@ -15,8 +30,20 @@ struct TodayView: View {
                 fallbackBody
             }
         }
-        .navigationTitle(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+        .navigationTitle(hasNativeMasthead ? "" : dateline)
         .toolbar {
+            if hasNativeMasthead {
+                ToolbarItem(placement: .principal) {
+                    Text(dateline)
+                        .font(.headline)
+                        .opacity(showsInlineDate ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.15), value: showsInlineDate)
+                        .accessibilityHidden(!showsInlineDate)
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                regenerateButton
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task {
@@ -48,13 +75,28 @@ struct TodayView: View {
     private func artifactBody(_ report: DailyReportModel) -> some View {
         if let document = report.document, report.artifactSource == "document-v2" {
             ScrollView {
-                BriefDocumentView(
-                    document: document,
-                    isComposing: report.artifactStatus == "composing",
-                    onReview: { artifactReview = $0 },
-                    onRegenerate: { Task { await store.generateBrief() } }
-                )
-                .padding(.bottom, 24)
+                VStack(alignment: .leading, spacing: 0) {
+                    DailyBriefMasthead(
+                        title: document.title,
+                        generatedAt: report.generatedAt,
+                        art: report.art
+                    )
+                    BriefDocumentView(
+                        document: document,
+                        isComposing: report.artifactStatus == "composing",
+                        onReview: { artifactReview = $0 }
+                    )
+                    DailyBriefFooter(report: report)
+                        .padding(.bottom, 24)
+                }
+            }
+            // The masthead carries the dateline; once it scrolls past, the
+            // date crossfades into the bar (the principal item above).
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.contentInsets.top
+                    > DailyBriefMasthead.height(forWidth: geometry.containerSize.width) - 56
+            } action: { _, crossed in
+                showsInlineDate = crossed
             }
             .refreshable { await store.refreshToday() }
         } else {
@@ -63,13 +105,33 @@ struct TodayView: View {
                     report: report,
                     lastRefresh: store.lastRefresh,
                     isOffline: store.briefError != nil,
-                    onAction: handleBriefAction,
-                    onRegenerate: { Task { await store.generateBrief() } }
+                    onAction: handleBriefAction
                 )
                 .padding(.bottom, 24)
             }
             .refreshable { await store.refreshToday() }
         }
+    }
+
+    // Regenerate lives in the top bar beside History — never inside the brief
+    // document. It shows progress while an edition is being rebuilt and stays
+    // tappable again after a failure (generateBrief surfaces its own error
+    // state through the store).
+    private var regenerateButton: some View {
+        Button {
+            isRegenerating = true
+            Task {
+                await store.generateBrief()
+                isRegenerating = false
+            }
+        } label: {
+            if isRegenerating || store.dailyReport?.isGenerating == true {
+                ProgressView()
+            } else {
+                Label("Regenerate brief", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(isRegenerating || store.dailyReport?.isGenerating == true)
     }
 
     // Fallback when no artifact exists yet (no edition, still generating, or a
