@@ -37,12 +37,16 @@ struct SidebarScrubTests {
         #expect(state.isActive)
         #expect(state.previewed == .primary(.today))
         // Same row again → no haptic.
-        #expect(!state.move(to: .primary(.today)))
+        let sameRow = state.move(to: .primary(.today))
+        #expect(!sameRow)
         // Crossing into a new row → one haptic.
-        #expect(state.move(to: .primary(.tasks)))
-        #expect(!state.move(to: .primary(.tasks)))
+        let crossed = state.move(to: .primary(.tasks))
+        #expect(crossed)
+        let repeated = state.move(to: .primary(.tasks))
+        #expect(!repeated)
         // Gaps keep the current highlight instead of clearing it.
-        #expect(!state.move(to: nil))
+        let intoGap = state.move(to: nil)
+        #expect(!intoGap)
         #expect(state.previewed == .primary(.tasks))
     }
 
@@ -51,11 +55,13 @@ struct SidebarScrubTests {
         var state = SidebarScrubState()
         state.activate(over: .mail(.codes), committed: .primary(.today))
         _ = state.move(to: .mail(.orders))
-        #expect(state.commit() == .mail(.orders))
+        let committed = state.commit()
+        #expect(committed == .mail(.orders))
         #expect(!state.isActive)
         #expect(state.previewed == nil)
         // A dead session commits nothing.
-        #expect(state.commit() == nil)
+        let deadCommit = state.commit()
+        #expect(deadCommit == nil)
     }
 
     @Test
@@ -64,9 +70,30 @@ struct SidebarScrubTests {
         state.activate(over: .settings, committed: .primary(.work))
         state.cancel()
         #expect(!state.isActive)
-        #expect(state.commit() == nil)
+        let afterCancel = state.commit()
+        #expect(afterCancel == nil)
         // Preview state never touched real navigation, so the prior committed
         // selection simply stands — there is nothing to restore.
+    }
+
+    // MARK: - Hold feedback
+
+    @Test
+    func liftHapticFiresExactlyOncePerHold() {
+        var feedback = SidebarScrubHoldFeedback()
+        // Hold completes → one haptic.
+        let first = feedback.shouldPlayOnHoldCompleted()
+        #expect(first)
+        // The gesture keeps emitting hold-completed / drag events for the same
+        // touch — none of them may double the haptic.
+        let repeated = feedback.shouldPlayOnHoldCompleted()
+        #expect(!repeated)
+        let again = feedback.shouldPlayOnHoldCompleted()
+        #expect(!again)
+        // Touch ends → the latch re-arms for the next hold.
+        feedback.reset()
+        let nextHold = feedback.shouldPlayOnHoldCompleted()
+        #expect(nextHold)
     }
 
     // MARK: - Cancellation rules

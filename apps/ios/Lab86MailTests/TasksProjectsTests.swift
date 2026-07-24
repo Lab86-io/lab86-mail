@@ -268,6 +268,59 @@ struct TasksProjectsTests {
     }
 
     @Test
+    func reorderErrorSurvivesEvenWhenTheRollbackRefreshAlsoFails() async {
+        // Both the move and the rollback board read fail: the user must see
+        // the action's error, not have it swallowed by the refresh.
+        let tools = CountingTools(
+            responses: [:],
+            failing: ["tasks_move_card", "tasks_get_board"]
+        )
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        store.tasks = [
+            TaskSummary(id: "t1", title: "One", column: "Todo", due: nil, completed: false, order: 100),
+            TaskSummary(id: "t2", title: "Two", column: "Doing", due: nil, completed: false, order: 200),
+        ]
+
+        await store.reorderTask(id: "t1", to: "Doing", before: "t2")
+        #expect(store.taskError == "scripted failure")
+        #expect(await tools.count(of: "tasks_get_board") == 1)
+    }
+
+    @Test
+    func successfulReorderClearsTheErrorAndKeepsTheMove() async {
+        let tools = CountingTools(responses: [
+            "tasks_move_card": .object([:]),
+            "tasks_get_board": boardJSON(),
+        ])
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        store.tasks = [
+            TaskSummary(id: "t1", title: "One", column: "Todo", due: nil, completed: false, order: 100),
+        ]
+        store.taskError = "stale error"
+
+        await store.reorderTask(id: "t1", to: "Doing", before: nil)
+        #expect(store.taskError == nil)
+        #expect(await tools.count(of: "tasks_move_card") == 1)
+    }
+
+    @Test
+    func listReorderFailureAlsoSurfacesItsErrorAfterRollback() async {
+        let tools = CountingTools(
+            responses: ["tasks_get_board": boardJSON()],
+            failing: ["tasks_move_card"]
+        )
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        store.tasks = [
+            TaskSummary(id: "t1", title: "One", column: "Todo", due: nil, completed: false, order: 100),
+            TaskSummary(id: "t2", title: "Two", column: "Todo", due: nil, completed: false, order: 200),
+        ]
+
+        await store.reorderTasks(in: "Todo", from: IndexSet(integer: 0), to: 2)
+        #expect(store.taskError == "scripted failure")
+        #expect(await tools.count(of: "tasks_get_board") == 1)
+    }
+
+    @Test
     func archivingAProjectKeepsBoardTasksOnTheirBoards() async throws {
         let tools = CountingTools(responses: [
             "albatross_update_project": .object([:]),
