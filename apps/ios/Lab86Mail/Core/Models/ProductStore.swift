@@ -703,8 +703,10 @@ final class ProductStore {
             await refreshTasks()
             await refreshProjectPanes(containing: task.id)
         } catch {
-            taskError = error.localizedDescription
+            // Rollback via server refresh, THEN surface the error —
+            // refreshTasks' success path clears taskError.
             await refreshTasks()
+            taskError = error.localizedDescription
         }
     }
 
@@ -753,8 +755,10 @@ final class ProductStore {
             await refreshTasks()
             await refreshProjectPanes(containing: task.id)
         } catch {
-            taskError = error.localizedDescription
+            // Rollback via server refresh, THEN surface the error —
+            // refreshTasks' success path clears taskError.
             await refreshTasks()
+            taskError = error.localizedDescription
         }
     }
 

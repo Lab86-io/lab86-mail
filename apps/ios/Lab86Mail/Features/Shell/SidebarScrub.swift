@@ -86,9 +86,13 @@ enum SidebarScrubLogic {
         rows.first { $0.value.contains(point) }?.key
     }
 
-    // Cancel when the thumb leaves the sidebar bounds by more than the slop.
+    // Cancel when the thumb leaves the sidebar bounds by MORE than the slop —
+    // exactly-at-the-slop stays in (CGRect.contains would exclude the max
+    // edge, cancelling at 44pt rather than beyond it).
     static func isOutside(location: CGPoint, sidebarBounds: CGRect, slop: CGFloat = cancelSlop) -> Bool {
-        !sidebarBounds.insetBy(dx: -slop, dy: -slop).contains(location)
+        let expanded = sidebarBounds.insetBy(dx: -slop, dy: -slop)
+        return location.x < expanded.minX || location.x > expanded.maxX
+            || location.y < expanded.minY || location.y > expanded.maxY
     }
 
     // Cancel on a dominant horizontal movement — that's the sidebar
