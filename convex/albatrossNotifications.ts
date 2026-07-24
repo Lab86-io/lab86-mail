@@ -344,13 +344,12 @@ export const saveMobilePreferences = mutation({
     ) {
       throw new Error('Invalid brief longitude.');
     }
-    if (
-      args.briefLocationEnabled === true &&
-      (args.briefLatitude === undefined || args.briefLongitude === undefined)
-    ) {
+    const briefLocationEnabled = args.briefLocationEnabled ?? existing?.briefLocationEnabled ?? false;
+    const briefLatitude = args.briefLatitude ?? existing?.briefLatitude;
+    const briefLongitude = args.briefLongitude ?? existing?.briefLongitude;
+    if (briefLocationEnabled && (briefLatitude === undefined || briefLongitude === undefined)) {
       throw new Error('Brief location coordinates are required.');
     }
-    const briefLocationEnabled = args.briefLocationEnabled ?? existing?.briefLocationEnabled ?? false;
     const mobile = {
       nativePushEnabled: args.nativePushEnabled,
       newMailPushEnabled: args.newMailPushEnabled,
@@ -363,8 +362,8 @@ export const saveMobilePreferences = mutation({
       emailFallbackDelayMinutes: Math.round(args.emailFallbackDelayMinutes),
       timezone: args.timezone,
       briefLocationEnabled,
-      briefLatitude: briefLocationEnabled ? (args.briefLatitude ?? existing?.briefLatitude) : undefined,
-      briefLongitude: briefLocationEnabled ? (args.briefLongitude ?? existing?.briefLongitude) : undefined,
+      briefLatitude: briefLocationEnabled ? briefLatitude : undefined,
+      briefLongitude: briefLocationEnabled ? briefLongitude : undefined,
       briefLocationLabel: briefLocationEnabled
         ? (args.briefLocationLabel ?? existing?.briefLocationLabel)
         : undefined,
@@ -794,7 +793,11 @@ export const answerCheckin = mutation({
     await ctx.db.patch(row._id, {
       status: isComplete ? 'answered' : 'open',
       ...(promptKind === 'reflection'
-        ? { responseText: reflectionText, reconciledChanges: changes, reflectionAnsweredAt: ts }
+        ? {
+            responseText: reflectionText,
+            reconciledChanges: [...(row.reconciledChanges ?? []), ...changes],
+            reflectionAnsweredAt: ts,
+          }
         : { tomorrowIntentText, tomorrowIntentAnsweredAt: ts }),
       ...(isComplete ? { answeredAt: ts } : {}),
       updatedAt: ts,

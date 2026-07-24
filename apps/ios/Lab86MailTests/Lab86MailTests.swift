@@ -1,4 +1,5 @@
 import AppIntents
+import CoreLocation
 import Foundation
 import MobileAPI
 import Testing
@@ -7,6 +8,45 @@ import UniformTypeIdentifiers
 @testable import Lab86Mail
 
 struct Lab86MailTests {
+    @MainActor
+    private final class StubLocationManager: CaptureLocationManaging {
+        var delegate: (any CLLocationManagerDelegate)?
+        var desiredAccuracy: CLLocationAccuracy = kCLLocationAccuracyHundredMeters
+        var authorizationStatus: CLAuthorizationStatus = .authorizedWhenInUse
+        private(set) var authorizationRequestCount = 0
+        private(set) var locationRequestCount = 0
+
+        func requestWhenInUseAuthorization() {
+            authorizationRequestCount += 1
+        }
+
+        func requestLocation() {
+            locationRequestCount += 1
+        }
+    }
+
+    @MainActor
+    private final class StubLocationLabelResolver: CaptureLocationLabelResolving {
+        private(set) var cancelCount = 0
+        private(set) var requestedLocations: [CLLocation] = []
+        private var continuations: [CheckedContinuation<String?, Never>] = []
+
+        func resolveLabel(for location: CLLocation) async -> String? {
+            requestedLocations.append(location)
+            return await withCheckedContinuation { continuation in
+                continuations.append(continuation)
+            }
+        }
+
+        func cancel() {
+            cancelCount += 1
+        }
+
+        func resumeRequest(at index: Int, with label: String?) {
+            continuations[index].resume(returning: label)
+        }
+    }
+
     private enum StubSignOutError: Error {
         case failed
     }
@@ -1513,6 +1553,84 @@ struct Lab86MailTests {
         let second = generation.invalidate()
         #expect(!generation.isCurrent(first))
         #expect(generation.isCurrent(second))
+    }
+
+    @Test
+    @MainActor
+    func briefLocationCoordinatorRejectsInvalidAccuracyAndStopsRequesting() async {
+        let manager = StubLocationManager()
+        let resolver = StubLocationLabelResolver()
+        let coordinator = CaptureLocationCoordinator(manager: manager, labelResolver: resolver)
+        coordinator.requestOnce()
+        #expect(manager.locationRequestCount == 1)
+        #expect(coordinator.isRequesting)
+
+        coordinator.locationManager(
+            CLLocationManager(),
+            didUpdateLocations: [
+                CLLocation(
+                    coordinate: CLLocationCoordinate2D(latitude: 43.15, longitude: -77.62),
+                    altitude: 0,
+                    horizontalAccuracy: -1,
+                    verticalAccuracy: -1,
+                    timestamp: Date()
+                ),
+            ]
+        )
+        await Task.yield()
+
+        #expect(!coordinator.isRequesting)
+        #expect(coordinator.location == nil)
+        #expect(coordinator.errorMessage == "Location accuracy is unavailable. Try again.")
+        #expect(resolver.requestedLocations.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func briefLocationCoordinatorIgnoresClearedAndSupersededLabels() async {
+        let manager = StubLocationManager()
+        let resolver = StubLocationLabelResolver()
+        let coordinator = CaptureLocationCoordinator(manager: manager, labelResolver: resolver)
+        let first = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 43.15, longitude: -77.62),
+            altitude: 0,
+            horizontalAccuracy: 25,
+            verticalAccuracy: 10,
+            timestamp: Date(timeIntervalSince1970: 1)
+        )
+        let second = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 42.89, longitude: -78.87),
+            altitude: 0,
+            horizontalAccuracy: 20,
+            verticalAccuracy: 10,
+            timestamp: Date(timeIntervalSince1970: 2)
+        )
+
+        coordinator.locationManager(CLLocationManager(), didUpdateLocations: [first])
+        await Task.yield()
+        coordinator.locationManager(CLLocationManager(), didUpdateLocations: [second])
+        await Task.yield()
+        #expect(resolver.requestedLocations.count == 2)
+        #expect(resolver.cancelCount == 2)
+
+        resolver.resumeRequest(at: 0, with: "Stale place")
+        await Task.yield()
+        #expect(coordinator.locationLabel == nil)
+        resolver.resumeRequest(at: 1, with: "Buffalo, NY")
+        await Task.yield()
+        #expect(coordinator.locationLabel == "Buffalo, NY")
+
+        coordinator.locationManager(CLLocationManager(), didUpdateLocations: [first])
+        await Task.yield()
+        #expect(resolver.requestedLocations.count == 3)
+        coordinator.clear()
+        #expect(coordinator.location == nil)
+        #expect(coordinator.locationLabel == nil)
+        #expect(!coordinator.isRequesting)
+        #expect(resolver.cancelCount == 4)
+        resolver.resumeRequest(at: 2, with: "Cleared place")
+        await Task.yield()
+        #expect(coordinator.locationLabel == nil)
     }
 
     @Test

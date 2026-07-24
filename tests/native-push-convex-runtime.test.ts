@@ -158,6 +158,24 @@ describe('native push Convex receipts', () => {
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
     try {
       const t = convexTest(schema, convexModules);
+      const workIds = await t.run(async (ctx) => {
+        const ts = Date.now();
+        return Promise.all(
+          ['First reconciled work', 'Second reconciled work'].map((title) =>
+            ctx.db.insert('albatrossIntents', {
+              userId: 'reflection_user',
+              rawText: title,
+              source: 'text',
+              title,
+              status: 'ready',
+              workState: 'active',
+              agentState: 'idle',
+              createdAt: ts,
+              updatedAt: ts,
+            }),
+          ),
+        );
+      });
       const created = await t.mutation(api.albatrossNotifications.ensureCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'reflection_user',
@@ -170,7 +188,7 @@ describe('native push Convex receipts', () => {
         checkinId: created.checkin._id,
         promptKind: 'reflection',
         responseText: 'I shipped the first pass.',
-        completed: [],
+        completed: [{ kind: 'work', id: String(workIds[0]) }],
       });
       await t.run(async (ctx) => {
         for (let index = 0; index < 25; index += 1) {
@@ -194,7 +212,7 @@ describe('native push Convex receipts', () => {
         checkinId: created.checkin._id,
         promptKind: 'reflection',
         responseText: '',
-        completed: [{ kind: 'work', id: 'missing_work' }],
+        completed: [{ kind: 'work', id: String(workIds[1]) }],
       });
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
@@ -225,6 +243,7 @@ describe('native push Convex receipts', () => {
       });
       expect(state.row?.responseText).toBe('I shipped the first pass.');
       expect(state.row?.tomorrowIntentText).toBe('I will validate the production build.');
+      expect(state.row?.reconciledChanges?.map((change) => change.id)).toEqual(workIds.map(String));
       expect(state.notification?.status).toBe('acted');
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
@@ -367,6 +386,18 @@ describe('native push Convex receipts', () => {
         briefLongitude: -77.62,
         briefLocationLabel: 'Rochester, New York',
       });
+      await t.mutation(api.albatrossNotifications.saveMobilePreferences, {
+        ...base,
+        briefLocationEnabled: true,
+        briefLocationLabel: 'Rochester, NY',
+      });
+      const resaved = await t.query(api.albatrossNotifications.mobilePreferences, {
+        internalSecret: 'native-push-secret',
+        userId: 'location_user',
+      });
+      expect(resaved.briefLatitude).toBe(43.15);
+      expect(resaved.briefLongitude).toBe(-77.62);
+      expect(resaved.briefLocationLabel).toBe('Rochester, NY');
       await t.mutation(api.albatrossNotifications.saveMobilePreferences, {
         ...base,
         briefLocationEnabled: false,

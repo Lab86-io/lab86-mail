@@ -100,17 +100,60 @@ struct LocationLookupGeneration: Equatable {
 }
 
 @MainActor
+protocol CaptureLocationManaging: AnyObject {
+    var delegate: (any CLLocationManagerDelegate)? { get set }
+    var desiredAccuracy: CLLocationAccuracy { get set }
+    var authorizationStatus: CLAuthorizationStatus { get }
+
+    func requestWhenInUseAuthorization()
+    func requestLocation()
+}
+
+extension CLLocationManager: CaptureLocationManaging {}
+
+@MainActor
+protocol CaptureLocationLabelResolving: AnyObject {
+    func resolveLabel(for location: CLLocation) async -> String?
+    func cancel()
+}
+
+@MainActor
+final class SystemLocationLabelResolver: CaptureLocationLabelResolving {
+    private let geocoder = CLGeocoder()
+
+    func resolveLabel(for location: CLLocation) async -> String? {
+        guard let placemark = try? await geocoder.reverseGeocodeLocation(location).first else {
+            return nil
+        }
+        let resolvedLabel = [placemark.locality, placemark.administrativeArea]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        return resolvedLabel.isEmpty ? nil : resolvedLabel
+    }
+
+    func cancel() {
+        geocoder.cancelGeocode()
+    }
+}
+
+@MainActor
 @Observable
 final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
-    private let geocoder = CLGeocoder()
+    private let manager: any CaptureLocationManaging
+    private let labelResolver: any CaptureLocationLabelResolving
     private(set) var location: CLLocation?
     private(set) var locationLabel: String?
     private(set) var isRequesting = false
     var errorMessage: String?
     private var lookupGeneration = LocationLookupGeneration()
 
-    override init() {
+    init(
+        manager: any CaptureLocationManaging = CLLocationManager(),
+        labelResolver: any CaptureLocationLabelResolving = SystemLocationLabelResolver()
+    ) {
+        self.manager = manager
+        self.labelResolver = labelResolver
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
@@ -138,7 +181,7 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
 
     func clear() {
         lookupGeneration.invalidate()
-        geocoder.cancelGeocode()
+        labelResolver.cancel()
         location = nil
         locationLabel = nil
         isRequesting = false
@@ -167,7 +210,7 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
                 return
             }
             let generation = lookupGeneration.invalidate()
-            geocoder.cancelGeocode()
+            labelResolver.cancel()
             guard Self.isValidHorizontalAccuracy(latest.horizontalAccuracy) else {
                 isRequesting = false
                 errorMessage = "Location accuracy is unavailable. Try again."
@@ -176,14 +219,10 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
             location = latest
             locationLabel = nil
             isRequesting = false
-            if let placemark = try? await geocoder.reverseGeocodeLocation(latest).first {
+            if let resolvedLabel = await labelResolver.resolveLabel(for: latest) {
                 guard lookupGeneration.isCurrent(generation),
                       location?.timestamp == latest.timestamp else { return }
-                let resolvedLabel = [placemark.locality, placemark.administrativeArea]
-                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: ", ")
-                locationLabel = resolvedLabel.isEmpty ? nil : resolvedLabel
+                locationLabel = resolvedLabel
             }
         }
     }
