@@ -217,6 +217,18 @@ describe('mail event suggestion safety gate', () => {
 });
 
 describe('mobile notification preferences', () => {
+  const validPreferences = {
+    nativePushEnabled: true,
+    newMailPushEnabled: true,
+    eventSuggestionPushEnabled: true,
+    eveningCheckinEnabled: true,
+    eveningCheckinLocalTime: '19:00',
+    inAppEnabled: true,
+    emailFallbackEnabled: true,
+    emailFallbackDelayMinutes: 90,
+    timezone: 'America/New_York',
+  };
+
   test('validates the complete account-level native preference contract', () => {
     expect(
       parseMobileNotificationPreferences({
@@ -262,6 +274,27 @@ describe('mobile notification preferences', () => {
         timezone: 'UTC',
       }),
     ).toThrow(/HH:MM/);
+  });
+
+  test('rejects malformed morning, location, coordinate, and fallback settings', () => {
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, morningBriefEnabled: 'yes' }),
+    ).toThrow(/morningBriefEnabled/);
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, briefLocationEnabled: 'yes' }),
+    ).toThrow(/briefLocationEnabled/);
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, emailFallbackDelayMinutes: 10 }),
+    ).toThrow(/between 15 and 1440/);
+    expect(() => parseMobileNotificationPreferences({ ...validPreferences, briefLatitude: 91 })).toThrow(
+      /briefLatitude/,
+    );
+    expect(() => parseMobileNotificationPreferences({ ...validPreferences, briefLongitude: -181 })).toThrow(
+      /briefLongitude/,
+    );
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, briefLocationEnabled: true }),
+    ).toThrow(/latitude and longitude/);
   });
 
   test('suppresses only the notification classes the user disabled', () => {

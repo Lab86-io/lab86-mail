@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { generateKeyPairSync } from 'node:crypto';
 import './tools/harness';
 import {
   buildDataPrompt,
@@ -144,6 +145,66 @@ describe('brief weather in the data pack', () => {
     expect(extras.weather?.location).toBe('New York');
     expect(extras.weather?.unit).toBe('°F');
     expect(extras.weather?.current.temp).toBe(71);
+  });
+
+  test('gatherBriefExtras uses WeatherKit for an explicitly shared iPhone location', async () => {
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const extras = await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), null, {
+        storedLocation: {
+          latitude: 43.15,
+          longitude: -77.62,
+          label: 'Rochester, New York',
+          timezone: 'America/New_York',
+        },
+        weatherEnvironment: {
+          WEATHERKIT_KEY_ID: 'test-key',
+          WEATHERKIT_TEAM_ID: 'test-team',
+          WEATHERKIT_SERVICE_ID: 'io.lab86.mail.test',
+          WEATHERKIT_PRIVATE_KEY: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+        },
+        weatherKitFetch: async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            currentWeather: {
+              asOf: '2026-07-24T12:00:00Z',
+              conditionCode: 'PartlyCloudy',
+              temperature: 20,
+              windSpeed: 16,
+              humidity: 0.65,
+              daylight: true,
+            },
+            forecastHourly: {
+              hours: [
+                {
+                  forecastStart: '2026-07-24T13:00:00Z',
+                  conditionCode: 'Rain',
+                  temperature: 21,
+                },
+              ],
+            },
+            forecastDaily: {
+              days: [
+                {
+                  forecastStart: '2026-07-24T04:00:00Z',
+                  conditionCode: 'PartlyCloudy',
+                  temperatureMin: 15,
+                  temperatureMax: 25,
+                  precipitationChance: 0.4,
+                },
+              ],
+            },
+          }),
+        }),
+      }),
+    );
+
+    expect(extras.weather).toMatchObject({
+      location: 'Rochester, New York',
+      source: 'Apple Weather',
+      attributionURL: 'https://weatherkit.apple.com/legal-attribution.html',
+    });
   });
 
   test('buildDataPrompt carries weather (and null when unresolved)', async () => {
