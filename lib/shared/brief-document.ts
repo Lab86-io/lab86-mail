@@ -83,11 +83,35 @@ const framingSchema = z.object({
   prep: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
 });
 
+const handoffEvidenceSchema = z.object({
+  label: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
+  ref: BriefSourceRefV2Schema.optional(),
+});
+
+const handoffRecommendationSchema = z.object({
+  label: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
+  ref: BriefSourceRefV2Schema.optional(),
+});
+
+export const BriefEntityHandoffV1Schema = z.object({
+  handoffId: z.string().trim().min(1).max(240).optional(),
+  itemCount: z.number().int().min(1).max(8).default(1),
+  situation: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
+  background: z.array(z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText)).max(3).default([]),
+  assessment: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
+  recommendation: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
+  recommendations: z.array(handoffRecommendationSchema).max(4).default([]),
+  evidence: z.array(handoffEvidenceSchema).max(4).default([]),
+});
+
 const entityItemSchema = z.object({
   ref: BriefSourceRefV2Schema,
   framing: framingSchema.default({}),
+  handoff: BriefEntityHandoffV1Schema.optional(),
   actions: z.array(BriefActionV2Schema).max(BRIEF_DOCUMENT_LIMITS.actions).default([]),
 });
+
+export type BriefEntityHandoffV1 = z.infer<typeof BriefEntityHandoffV1Schema>;
 
 const collectionItemSchema = z.object({
   image: z.url().optional(),
@@ -659,6 +683,7 @@ function repairLeaf(
             const sourceRef = ref(item?.ref);
             if (!item || !sourceRef) return [];
             const framing = record(item.framing) || {};
+            const handoff = repairEntityHandoff(item.handoff, ref);
             return [
               {
                 ref: sourceRef,
@@ -671,6 +696,7 @@ function repairLeaf(
                     ? { prep: clippedString(framing.prep, BRIEF_DOCUMENT_LIMITS.shortText) }
                     : {}),
                 },
+                ...(handoff ? { handoff } : {}),
                 actions: cleanActions(item.actions),
               },
             ];
@@ -830,6 +856,48 @@ function repairLeaf(
     default:
       return fallbackNode(summary);
   }
+}
+
+function repairEntityHandoff(
+  value: unknown,
+  ref: (value: unknown) => Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const handoff = record(value);
+  if (!handoff) return null;
+  const situation = clippedString(handoff.situation, BRIEF_DOCUMENT_LIMITS.shortText);
+  const assessment = clippedString(handoff.assessment, BRIEF_DOCUMENT_LIMITS.shortText);
+  const recommendation = clippedString(handoff.recommendation, BRIEF_DOCUMENT_LIMITS.shortText);
+  if (!situation || !assessment || !recommendation) return null;
+  const background = (Array.isArray(handoff.background) ? handoff.background : [])
+    .map((entry) => clippedString(entry, BRIEF_DOCUMENT_LIMITS.shortText))
+    .filter((entry): entry is string => Boolean(entry))
+    .slice(0, 3);
+  const recommendations = (Array.isArray(handoff.recommendations) ? handoff.recommendations : [])
+    .slice(0, 4)
+    .flatMap((entry) => {
+      const item = record(entry);
+      const label = clippedString(item?.label, BRIEF_DOCUMENT_LIMITS.shortText);
+      if (!item || !label) return [];
+      const sourceRef = ref(item.ref);
+      return [{ label, ...(sourceRef ? { ref: sourceRef } : {}) }];
+    });
+  const evidence = (Array.isArray(handoff.evidence) ? handoff.evidence : []).slice(0, 4).flatMap((entry) => {
+    const item = record(entry);
+    const label = clippedString(item?.label, BRIEF_DOCUMENT_LIMITS.shortText);
+    if (!item || !label) return [];
+    const sourceRef = ref(item.ref);
+    return [{ label, ...(sourceRef ? { ref: sourceRef } : {}) }];
+  });
+  return {
+    ...(clippedString(handoff.handoffId, 240) ? { handoffId: clippedString(handoff.handoffId, 240) } : {}),
+    itemCount: Math.min(8, Math.max(1, Math.floor(finiteNumber(handoff.itemCount) ?? 1))),
+    situation,
+    background,
+    assessment,
+    recommendation,
+    recommendations,
+    evidence,
+  };
 }
 
 function repairTimelineItems(

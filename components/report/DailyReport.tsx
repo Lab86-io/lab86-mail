@@ -209,6 +209,7 @@ const PILL_LABELS: Record<string, string> = {
   new_sender: 'New sender',
   known_contact: 'Known contact',
   due_soon: 'Due soon',
+  tracked: 'Tracked',
 };
 
 const EDITION: Record<DailyReportPayload['kind'], string> = {
@@ -496,6 +497,7 @@ function ReportArtifact({
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   // The brief is theme-agnostic HTML (CSS vars with fallbacks); the host injects
   // the user's actual theme so it matches the app and restyles live on change.
@@ -615,6 +617,23 @@ function ReportArtifact({
             setSelectedAreaId(String(payload.areaId));
             setPrimaryView('areas');
             return ack(true);
+          case 'open_work':
+            if (!payload.workId) return ack(false, 'missing workId');
+            if (payload.areaId) setSelectedAreaId(String(payload.areaId));
+            setSelectedWorkId(String(payload.workId));
+            setPrimaryView('areas');
+            return ack(true);
+          case 'open_url': {
+            if (typeof payload.url !== 'string') return ack(false, 'missing url');
+            try {
+              const url = new URL(payload.url);
+              if (url.protocol !== 'https:') return ack(false, 'unsupported url');
+              window.open(url.toString(), '_blank', 'noopener,noreferrer');
+              return ack(true);
+            } catch {
+              return ack(false, 'invalid url');
+            }
+          }
           case 'toggle_task':
             if (!payload.cardId) return ack(false, 'missing cardId');
             {
@@ -746,6 +765,7 @@ function ReportArtifact({
     setThreadAccount,
     setPrimaryView,
     setSelectedAreaId,
+    setSelectedWorkId,
     setPendingReplyBody,
     onChanged,
   ]);
@@ -2068,6 +2088,7 @@ function ReportRow({
   markingId,
   roomy,
 }: { item: DailyReportItem; index: number; roomy: boolean } & RowHandlers) {
+  const [whyOpen, setWhyOpen] = useState(false);
   const person = item.people[0] ? stripEmoji(item.people[0]) : '';
   const subject = stripEmoji(item.subject || '(no subject)');
   const framing = elapsedFraming(item);
@@ -2121,37 +2142,71 @@ function ReportRow({
         >
           {stripEmoji(item.whyItMatters)}
         </span>
-        {roomy && (item.nextAction || item.openLoops?.length) ? (
-          <div className="mt-2 space-y-1 text-[11.5px] leading-5 text-[var(--color-text-muted)]">
-            {item.nextAction ? (
-              <div>
-                <span className="font-medium text-[var(--color-text)]">{item.nextAction}</span>
-                {item.people[0] ? <span> with {stripEmoji(item.people[0])}</span> : null}
+        {item.nextAction ? (
+          <div className="mt-2 rounded-lg bg-[var(--color-bg-muted)] px-2.5 py-2">
+            <span className="block text-[9.5px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              Your move
+            </span>
+            <span
+              className={cn(
+                'mt-0.5 block text-[12px] font-medium leading-[1.45] text-[var(--color-text)]',
+                roomy ? 'line-clamp-2' : 'line-clamp-1',
+              )}
+            >
+              {stripEmoji(item.nextAction)}
+            </span>
+          </div>
+        ) : null}
+        {item.nextAction || item.openLoops?.length || framing || pills.length ? (
+          <>
+            <button
+              type="button"
+              aria-expanded={whyOpen}
+              onClick={(event) => {
+                event.stopPropagation();
+                setWhyOpen((value) => !value);
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+              className="mt-1.5 inline-flex min-h-7 items-center gap-1 rounded-md text-[11px] font-medium text-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+            >
+              Why this?
+              <ChevronDown
+                aria-hidden
+                className={cn('size-3 transition-transform', whyOpen && 'rotate-180')}
+              />
+            </button>
+            {whyOpen ? (
+              <div className="mt-1.5 space-y-2 border-l border-[var(--color-border-strong)] pl-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                <div>
+                  <span className="font-medium text-[var(--color-text)]">Why now: </span>
+                  {stripEmoji(item.whyItMatters)}
+                </div>
+                {item.openLoops?.length ? (
+                  <div>
+                    <span className="font-medium text-[var(--color-text)]">Relevant trail</span>
+                    <ul className="mt-0.5 list-disc space-y-0.5 pl-4">
+                      {item.openLoops.slice(0, 3).map((loop) => (
+                        <li key={loop}>{stripEmoji(loop)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {framing ? <div className="font-medium text-[var(--color-accent)]">{framing}</div> : null}
+                {pills.length ? (
+                  <div className="flex flex-wrap gap-1">
+                    {pills.map((code) => (
+                      <span
+                        key={code}
+                        className="rounded-sm bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.08em]"
+                      >
+                        {PILL_LABELS[code]}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
-            {item.openLoops?.slice(0, 2).map((loop) => (
-              <div key={loop} className="line-clamp-2">
-                {stripEmoji(loop)}
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {framing ? (
-          <span className="mt-0.5 block text-[11px] font-medium leading-tight text-[var(--color-accent)]">
-            {framing}
-          </span>
-        ) : null}
-        {pills.length ? (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {pills.map((code) => (
-              <span
-                key={code}
-                className="rounded-sm bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]"
-              >
-                {PILL_LABELS[code]}
-              </span>
-            ))}
-          </div>
+          </>
         ) : null}
       </div>
 

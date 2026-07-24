@@ -99,7 +99,14 @@ describe('BriefComposition', () => {
           author: 'Alex',
           url: 'https://github.com/acme/project/pull/42',
           sourceRefs: [{ kind: 'mcp', id: 'gh-pr-42', label: 'Review launch PR' }],
-          actions: [{ action: 'open_view', label: 'Open tools', payload: { view: 'mail' }, style: 'quiet' }],
+          actions: [
+            {
+              action: 'open_url',
+              label: 'Open in github',
+              payload: { url: 'https://github.com/acme/project/pull/42' },
+              style: 'quiet',
+            },
+          ],
         },
       ],
       sourceRefs: [{ kind: 'mcp', id: 'gh-pr-42', label: 'Review launch PR' }],

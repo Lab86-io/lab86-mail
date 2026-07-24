@@ -474,6 +474,11 @@ function navigateBriefAction(
       navigation.setSelectedWorkId(required(payload, 'workId'));
       navigation.setPrimaryView('areas');
       break;
+    case 'open_url': {
+      const url = safeExternalUrl(required(payload, 'url'));
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      break;
+    }
     case 'discuss_area': {
       const areaId = required(payload, 'areaId');
       navigation.setChatScope({ kind: 'area', areaId });
@@ -486,6 +491,15 @@ function navigateBriefAction(
       navigation.setPendingReplyBody(optional(payload, 'body') ?? '');
       navigation.setPrimaryView('mail');
       break;
+  }
+}
+
+function safeExternalUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
   }
 }
 

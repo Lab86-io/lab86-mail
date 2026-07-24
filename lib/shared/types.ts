@@ -1,6 +1,7 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import type { BriefComposition } from './brief-composition';
 import type { BriefDocumentV2 } from './brief-document';
+import type { TriageHandoffV1 } from './triage-handoff';
 
 export type AccountEmail = string;
 export type AccountProvider = 'google' | 'microsoft' | 'icloud' | 'imap';
@@ -327,6 +328,9 @@ export interface ThreadInsight {
   suggestedTrack: boolean;
   suggestedCategory: SmartCategoryId;
   reason: string;
+  // A specific recommended move. Generic lane labels such as "Reply" are
+  // repaired deterministically before the insight reaches a brief.
+  nextAction?: string;
   // Deterministic safety-floor signals (Stage 1 of the report pipeline).
   replyOwed: boolean;
   followUpOwed: boolean;
@@ -454,6 +458,9 @@ export interface DailyReport {
   accounts: AccountEmail[];
   title: string;
   narrative: string;
+  // Canonical, source-grounded SBAR index for this edition. Brief documents
+  // rank and render these records; source systems still own mutable state.
+  handoffs?: TriageHandoffV1[];
   // The self-contained HTML artifact for this edition. AI artifacts may be
   // model-authored full HTML; deterministic artifacts are rendered from
   // `composition`. The app owns sandboxing and the action bridge.

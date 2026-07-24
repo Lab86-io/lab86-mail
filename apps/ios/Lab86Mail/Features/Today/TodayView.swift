@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodayView: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.openURL) private var openURL
     @State private var showsHistory = false
     @State private var artifactReview: ArtifactReviewRequest?
     @State private var isRegenerating = false
@@ -310,6 +311,21 @@ struct TodayView: View {
     }
 
     private func handleBriefAction(_ action: String, _ payload: BriefActionPayload) {
+        if let intent = TodayBriefNavigationIntent.resolve(action: action, payload: payload) {
+            switch intent {
+            case .work(let workID, let areaID, let title):
+                if let areaID {
+                    environment.navigation.openArea(id: areaID, name: nil)
+                }
+                environment.navigation.openWork(id: workID, title: title)
+            case .primaryView(let view):
+                environment.navigation.openPrimaryView(view)
+            case .externalURL(let url):
+                openURL(url)
+            }
+            return
+        }
+
         switch action {
         case "open_thread":
             if let account = payload.account, let thread = payload.threadID {
@@ -330,8 +346,6 @@ struct TodayView: View {
                 let name = store.areas.first { $0.id == areaID }?.name
                 environment.navigation.openArea(id: areaID, name: name)
             }
-        case "open_view":
-            if let view = payload.view { environment.navigation.openPrimaryView(view) }
         case "draft_reply":
             if let account = payload.account, let threadID = payload.threadID {
                 environment.navigation.pendingCompose = ComposePrefill(
@@ -359,6 +373,34 @@ struct TodayView: View {
                 payload: payload,
                 source: store.dailyReport?.title ?? "Daily Report"
             )
+        }
+    }
+}
+
+enum TodayBriefNavigationIntent: Equatable {
+    case work(workID: String, areaID: String?, title: String?)
+    case primaryView(String)
+    case externalURL(URL)
+
+    static func resolve(action: String, payload: BriefActionPayload) -> Self? {
+        switch action {
+        case "open_work":
+            guard let workID = payload.workID else { return nil }
+            return .work(workID: workID, areaID: payload.areaID, title: payload.title)
+        case "open_view":
+            guard let view = payload.view else { return nil }
+            return .primaryView(view)
+        case "open_url":
+            guard let rawURL = payload.url,
+                  let url = URL(string: rawURL),
+                  url.scheme?.lowercased() == "https",
+                  url.host != nil
+            else {
+                return nil
+            }
+            return .externalURL(url)
+        default:
+            return nil
         }
     }
 }

@@ -12,6 +12,7 @@ struct BriefDocumentView: View {
     let onReview: (ArtifactReviewRequest) -> Void
 
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.openURL) private var openURL
     @State private var entities: [String: BriefHydratedEntity] = [:]
     @State private var hiddenRefs: Set<String> = []
     @State private var completedRefs: [String: Bool] = [:]
@@ -132,7 +133,11 @@ extension BriefDocumentView {
             refs[ref.key] = ref
         }
         func visit(_ node: BriefNode) {
-            node.items?.forEach { add($0.ref) }
+            node.items?.forEach {
+                add($0.ref)
+                $0.handoff?.recommendations?.forEach { add($0.ref) }
+                $0.handoff?.evidence.forEach { add($0.ref) }
+            }
             node.timelineItems?.forEach { add($0.ref) }
             node.checklistItems?.forEach { add($0.ref) }
             node.collectionItems?.forEach { add($0.ref) }
@@ -348,6 +353,21 @@ extension BriefDocumentView {
     }
 
     private func navigate(_ action: String, _ payload: BriefActionPayload) {
+        if let intent = TodayBriefNavigationIntent.resolve(action: action, payload: payload) {
+            switch intent {
+            case .work(let workID, let areaID, let title):
+                if let areaID {
+                    environment.navigation.openArea(id: areaID, name: nil)
+                }
+                environment.navigation.openWork(id: workID, title: title)
+            case .primaryView(let view):
+                environment.navigation.openPrimaryView(view)
+            case .externalURL(let url):
+                openURL(url)
+            }
+            return
+        }
+
         switch action {
         case "open_thread":
             if let account = payload.account, let threadID = payload.threadID {
@@ -370,15 +390,6 @@ extension BriefDocumentView {
                 let name = environment.store.areas.first { $0.id == areaID }?.name
                 environment.navigation.openArea(id: areaID, name: name)
             }
-        case "open_work":
-            if let workID = payload.workID {
-                if let areaID = payload.areaID {
-                    environment.navigation.openArea(id: areaID, name: nil)
-                }
-                environment.navigation.openWork(id: workID, title: payload.title)
-            }
-        case "open_view":
-            if let view = payload.view { environment.navigation.openPrimaryView(view) }
         case "discuss_area":
             if let areaID = payload.areaID {
                 environment.startAssistantChat(
@@ -421,7 +432,7 @@ private enum BriefActionPolicy {
         "rsvp_event", "create_task", "create_event", "draft_reply", "capture_intent", "answer_question",
     ]
     static let navigation: Set<String> = [
-        "open_thread", "open_view", "open_event", "open_area", "open_work", "discuss_area",
+        "open_thread", "open_view", "open_event", "open_area", "open_work", "discuss_area", "open_url",
     ]
     static let known = immediate.union(review).union(navigation)
 
@@ -700,6 +711,7 @@ private struct BriefEntityRow: View {
     let completed: Bool?
     let card: Bool
     let onAction: (BriefDocumentAction, BriefSourceRef?) async -> Void
+    @State private var whyExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -713,23 +725,33 @@ private struct BriefEntityRow: View {
                 .font(.subheadline.weight(.medium))
                 .strikethrough(entity?.gone == true || (completed ?? entity?.completed ?? false))
                 .foregroundStyle(entity?.gone == true ? .secondary : .primary)
-            let detail = [
-                item.framing?.reason,
-                item.framing?.prep,
-                entity?.subtitle,
-                entity?.gone == true ? "This item is no longer available." : entity?.status,
-            ].compactMap { $0 }.joined(separator: " · ")
-            if !detail.isEmpty {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let handoff = item.handoff {
+                handoffSummary(handoff)
+                BriefActionFlow(
+                    actions: item.actions ?? [],
+                    sourceRef: actionStateRef,
+                    onAction: onAction
+                )
+                handoffDisclosure(handoff)
+            } else {
+                let detail = [
+                    item.framing?.reason,
+                    item.framing?.prep,
+                    entity?.subtitle,
+                    entity?.gone == true ? "This item is no longer available." : entity?.status,
+                ].compactMap { $0 }.joined(separator: " · ")
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                BriefActionFlow(
+                    actions: item.actions ?? [],
+                    sourceRef: actionStateRef,
+                    onAction: onAction
+                )
             }
-            BriefActionFlow(
-                actions: item.actions ?? [],
-                sourceRef: item.ref,
-                onAction: onAction
-            )
         }
         .padding(card ? 13 : 9)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -739,6 +761,100 @@ private struct BriefEntityRow: View {
                 RoundedRectangle(cornerRadius: 14).stroke(.quaternary)
             }
         }
+    }
+
+    private var actionStateRef: BriefSourceRef {
+        guard let handoff = item.handoff,
+              (handoff.itemCount ?? 1) > 1,
+              let handoffID = handoff.handoffId
+        else {
+            return item.ref
+        }
+        return BriefSourceRef(
+            kind: "derived",
+            id: handoffID,
+            label: handoff.situation
+        )
+    }
+
+    private func handoffSummary(_ handoff: BriefEntityHandoff) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            (Text("My read: ").fontWeight(.semibold) + Text(handoff.assessment))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text((handoff.recommendations?.count ?? 0) > 1 ? "Your moves" : "Your move")
+                    .font(.caption2.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                if let recommendations = handoff.recommendations, recommendations.count > 1 {
+                    ForEach(Array(recommendations.enumerated()), id: \.offset) { index, move in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(index + 1).")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(move.label)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                } else {
+                    Text(handoff.recommendation)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private func handoffDisclosure(_ handoff: BriefEntityHandoff) -> some View {
+        DisclosureGroup(isExpanded: $whyExpanded) {
+            VStack(alignment: .leading, spacing: 9) {
+                labeledDetail("Why now", value: handoff.situation)
+                if !handoff.background.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Relevant trail").fontWeight(.semibold).foregroundStyle(.primary)
+                        ForEach(handoff.background, id: \.self) { item in
+                            Label(item, systemImage: "circle.fill")
+                                .labelStyle(.titleAndIcon)
+                                .symbolRenderingMode(.monochrome)
+                                .imageScale(.small)
+                        }
+                    }
+                }
+                if !handoff.evidence.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Evidence").fontWeight(.semibold).foregroundStyle(.primary)
+                        ForEach(Array(handoff.evidence.enumerated()), id: \.offset) { _, evidence in
+                            Text(evidence.label)
+                        }
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.top, 5)
+            .padding(.leading, 2)
+            .fixedSize(horizontal: false, vertical: true)
+        } label: {
+            Text("Why this?")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tint)
+                .frame(minHeight: 44, alignment: .leading)
+        }
+        .accessibilityHint(whyExpanded ? "Hides the supporting trail." : "Shows why this conversation surfaced.")
+    }
+
+    private func labeledDetail(_ label: String, value: String) -> some View {
+        (Text("\(label): ").fontWeight(.semibold).foregroundStyle(.primary) + Text(value))
     }
 }
 
@@ -1157,6 +1273,7 @@ private extension BriefActionPayload {
             workID: workID,
             calendarID: string("calendarId"),
             view: string("view"),
+            url: string("url"),
             cardID: cardID,
             title: string("title") ?? sourceRef?.label,
             subject: string("subject") ?? sourceRef?.label,

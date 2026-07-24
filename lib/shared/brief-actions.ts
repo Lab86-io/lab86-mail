@@ -1,7 +1,15 @@
 export const BRIEF_ACTION_TIERS = {
   immediate: ['toggle_task', 'dismiss_task', 'resolve_thread', 'dismiss_thread', 'archive_thread'],
   review: ['rsvp_event', 'create_task', 'create_event', 'draft_reply', 'capture_intent', 'answer_question'],
-  navigation: ['open_thread', 'open_view', 'open_event', 'open_area', 'open_work', 'discuss_area'],
+  navigation: [
+    'open_thread',
+    'open_view',
+    'open_event',
+    'open_area',
+    'open_work',
+    'discuss_area',
+    'open_url',
+  ],
 } as const;
 
 export type ImmediateBriefAction = (typeof BRIEF_ACTION_TIERS.immediate)[number];

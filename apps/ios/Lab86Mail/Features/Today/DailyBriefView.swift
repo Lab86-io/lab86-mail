@@ -88,6 +88,7 @@ struct BriefActionPayload: Hashable, Sendable {
     var workID: String?
     var calendarID: String?
     var view: String?
+    var url: String?
     var cardID: String?
     var title: String?
     var subject: String?
@@ -115,6 +116,7 @@ struct BriefActionPayload: Hashable, Sendable {
         workID: String? = nil,
         calendarID: String? = nil,
         view: String? = nil,
+        url: String? = nil,
         cardID: String? = nil,
         title: String? = nil,
         subject: String? = nil,
@@ -141,6 +143,7 @@ struct BriefActionPayload: Hashable, Sendable {
         self.workID = workID
         self.calendarID = calendarID
         self.view = view
+        self.url = url
         self.cardID = cardID
         self.title = title
         self.subject = subject
@@ -176,6 +179,7 @@ struct BriefActionPayload: Hashable, Sendable {
         workID = string("workId", "work")
         calendarID = string("calendarId", "calendar")
         view = string("view")
+        url = string("url")
         cardID = string("cardId", "card")
         title = string("title")
         subject = string("subject")
