@@ -55,6 +55,8 @@ test('production preserves diagnostics with an immutable upload action', () => {
 
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, new RegExp(immutableCheckout));
+  assert.match(contents, /name: Check out the production commit[\s\S]*?ref: main/);
+  assert.doesNotMatch(contents, /\$\{\{\s*github\.event\.workflow_run\.head_sha/);
   assert.match(contents, /node --test \.github\/scripts\/app-store-connect\.test\.mjs/);
   assert.match(contents, /node --test \.github\/scripts\/upload-ios-export\.test\.mjs/);
   assert.match(contents, /BUILD_NUMBER: \$\{\{ steps\.start\.outputs\.build_number \}\}/);
