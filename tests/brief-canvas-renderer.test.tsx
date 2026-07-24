@@ -5,7 +5,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { BriefCanvas } from '../components/report/brief-canvas/BriefCanvas';
 import { type BriefNodeContext, BriefNodeView } from '../components/report/brief-canvas/BriefNodeView';
 import { briefRefKey } from '../lib/brief/hydration';
-import type { BriefActionV2, BriefNode, BriefSourceRefV2 } from '../lib/shared/brief-document';
+import type {
+  BriefActionV2,
+  BriefDocumentV2,
+  BriefNode,
+  BriefSourceRefV2,
+} from '../lib/shared/brief-document';
 import {
   degenerateBriefDocumentFixture,
   futureBriefDocumentFixture,
@@ -66,6 +71,67 @@ describe('BriefCanvas degradation', () => {
     // Column units never split mid-card and query their own column width.
     expect(html).toContain('break-inside-avoid');
     expect(html).toContain('@container mb-6 break-inside-avoid');
+  });
+
+  test('flattened stacks preserve their density and parent presentation', () => {
+    const document: BriefDocumentV2 = {
+      version: 2,
+      title: 'Stack presentation',
+      summary: 'Three densities.',
+      generatedAt: 1_790_000_000_000,
+      regions: [
+        {
+          id: 'airy',
+          summary: 'Airy',
+          tree: {
+            kind: 'stack',
+            emphasis: 'primary',
+            tone: 'warning',
+            density: 'airy',
+            children: [
+              { kind: 'text', emphasis: 'standard', tone: 'neutral', role: 'body', text: 'Airy child' },
+            ],
+          },
+        },
+        {
+          id: 'standard',
+          summary: 'Standard',
+          tree: {
+            kind: 'stack',
+            emphasis: 'standard',
+            tone: 'neutral',
+            density: 'standard',
+            children: [
+              {
+                kind: 'text',
+                emphasis: 'standard',
+                tone: 'neutral',
+                role: 'body',
+                text: 'Standard child',
+              },
+            ],
+          },
+        },
+        {
+          id: 'dense',
+          summary: 'Dense',
+          tree: {
+            kind: 'stack',
+            emphasis: 'muted',
+            tone: 'urgent',
+            density: 'dense',
+            children: [
+              { kind: 'text', emphasis: 'standard', tone: 'neutral', role: 'body', text: 'Dense child' },
+            ],
+          },
+        },
+      ],
+    };
+
+    const html = render(document);
+    expect(html).toContain('@container mb-6 brief-emphasis-primary border-amber-500/30 break-inside-avoid');
+    expect(html).toContain('@container mb-4 break-inside-avoid');
+    expect(html).toContain('@container mb-2.5 opacity-75 border-destructive/35 break-inside-avoid');
   });
 
   test('the three voices and the depth ladder reach the rendered document', () => {
@@ -175,6 +241,7 @@ describe('BriefCanvas SBAR handoff rows', () => {
     expect(html).toContain('This item is no longer available.');
     expect(html).not.toContain('Merged assessment');
     expect(html).not.toContain('Your moves');
+    expect(html).not.toContain('Open merged');
   });
 });
 

@@ -75,6 +75,35 @@ func briefDocumentDecodesOptionalHandoffsWithoutBreakingLegacyEntities() throws 
 }
 
 @Test
+func briefDocumentHandoffCollectionsDefaultNullAndEnforceCaps() throws {
+    let data = Data(
+        """
+        {"version":2,"title":"Today","summary":"Collection boundaries.","generatedAt":1,
+         "regions":[{"id":"limits","summary":"Limits","tree":{"kind":"entity_list","items":[
+           {"ref":{"kind":"task","id":"nulls"},
+            "handoff":{"situation":"Null collections","background":null,"assessment":"Still valid.",
+              "recommendation":"Open the task.","recommendations":null,"evidence":null},"actions":[]},
+           {"ref":{"kind":"task","id":"caps"},
+            "handoff":{"situation":"Long collections","background":["b1","b2","b3","b4"],
+              "assessment":"Keep bounded.","recommendation":"Take the first move.",
+              "recommendations":[{"label":"r1"},{"label":"r2"},{"label":"r3"},{"label":"r4"},{"label":"r5"}],
+              "evidence":[{"label":"e1"},{"label":"e2"},{"label":"e3"},{"label":"e4"},{"label":"e5"}]},
+            "actions":[]}
+         ]}}]}
+        """.utf8
+    )
+
+    let document = try #require(BriefDocumentV2.decode(data))
+    let items = try #require(document.regions.first?.tree.items)
+    #expect(items[0].handoff?.background.isEmpty == true)
+    #expect(items[0].handoff?.recommendations.isEmpty == true)
+    #expect(items[0].handoff?.evidence.isEmpty == true)
+    #expect(items[1].handoff?.background == ["b1", "b2", "b3"])
+    #expect(items[1].handoff?.recommendations.map(\.label) == ["r1", "r2", "r3", "r4"])
+    #expect(items[1].handoff?.evidence.map(\.label) == ["e1", "e2", "e3", "e4"])
+}
+
+@Test
 func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601

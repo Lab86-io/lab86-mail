@@ -555,6 +555,7 @@ final class ProductStore {
                 ]
             )
             await refreshTasks()
+            await refreshProjectPanes(containing: task.id)
         } catch {
             errorMessage = error.localizedDescription
             await refreshTasks()

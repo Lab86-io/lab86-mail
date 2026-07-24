@@ -57,6 +57,11 @@ export function dailyReportActionReview(
         message: `Add “${payload.title || 'this event'}” to your calendar?`,
         destructive: false,
       };
+    case 'open_url':
+      return {
+        message: 'Open this external link in a new tab?',
+        destructive: false,
+      };
     default:
       return null;
   }

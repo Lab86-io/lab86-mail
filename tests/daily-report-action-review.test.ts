@@ -48,9 +48,21 @@ describe('daily report action review policy', () => {
       message: 'Add “this event” to your calendar?',
       destructive: false,
     });
+    expect(dailyReportActionReview('open_url', {})).toEqual({
+      message: 'Open this external link in a new tab?',
+      destructive: false,
+    });
   });
 
-  test('read-only and unknown actions do not invent a mutation confirmation', () => {
+  test('external URLs require host confirmation while trusted in-app navigation does not', () => {
+    const messages: string[] = [];
+    expect(
+      confirmDailyReportAction('open_url', {}, (message) => {
+        messages.push(message);
+        return false;
+      }),
+    ).toBeFalse();
+    expect(messages).toEqual(['Open this external link in a new tab?']);
     expect(dailyReportActionReview('open_thread', {})).toBeNull();
     expect(confirmDailyReportAction('open_thread', {}, () => false)).toBeTrue();
   });

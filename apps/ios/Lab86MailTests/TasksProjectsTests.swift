@@ -71,6 +71,26 @@ struct TasksProjectsTests {
         ])
     }
 
+    private func paneJSON(taskID: String, dueAt: Date?) -> JSONValue {
+        var card: [String: JSONValue] = [
+            "cardId": .string(taskID),
+            "title": .string("Task \(taskID)"),
+            "columnName": .string("Doing"),
+            "completed": .bool(false),
+            "order": .number(100),
+        ]
+        if let dueAt {
+            card["dueAt"] = .number(dueAt.timeIntervalSince1970)
+        }
+        return .object([
+            "pane": .object([
+                "tasks": .array([
+                    .object(["card": .object(card)]),
+                ]),
+            ]),
+        ])
+    }
+
     private func boardJSON() -> JSONValue {
         .object(["board": .object(["columns": .array([]), "cards": .array([])])])
     }
@@ -201,6 +221,33 @@ struct TasksProjectsTests {
     }
 
     @Test
+    func changingTaskDueRefreshesAnAlreadyLoadedProjectPane() async throws {
+        let due = try #require(
+            ISO8601DateFormatter().date(from: "2026-07-31T17:00:00Z")
+        )
+        let tools = CountingTools(responses: [
+            "albatross_get_project_pane": paneJSON(taskID: "t1", dueAt: nil),
+            "tasks_update_card": .object([:]),
+            "tasks_get_board": boardJSON(),
+        ])
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        await store.loadProjectPane(projectID: "p1")
+        #expect(store.projectPanes["p1"]?.tasks.first?.due == nil)
+
+        await tools.setResponse(
+            paneJSON(taskID: "t1", dueAt: due),
+            for: "albatross_get_project_pane"
+        )
+        await store.setTaskDue(
+            TaskSummary(id: "t1", title: "Task t1", column: "Doing", due: nil, completed: false, order: 100),
+            due: due
+        )
+
+        #expect(await tools.count(of: "albatross_get_project_pane") == 2)
+        #expect(store.projectPanes["p1"]?.tasks.first?.due == due)
+    }
+
+    @Test
     func failedReorderRollsBackThroughServerRefreshAndSurfacesTheError() async {
         let tools = CountingTools(
             responses: ["tasks_get_board": boardJSON()],
@@ -217,6 +264,7 @@ struct TasksProjectsTests {
         // The failure path re-reads the board so the optimistic move never
         // survives locally.
         #expect(await tools.count(of: "tasks_get_board") == 1)
+        #expect(store.tasks.isEmpty)
     }
 
     @Test
