@@ -8,7 +8,7 @@ import {
   getLatestDailyReportTool,
   listDailyReportsTool,
 } from '../lib/tools/daily-report';
-import { runTool, withToolContext } from './tools/harness';
+import { runTool, toolContext, withToolContext } from './tools/harness';
 
 // Stage 1 iOS 0.8 parity: get_latest_daily_report / get_daily_report /
 // list_daily_reports all attach the same deterministic edition art
@@ -66,7 +66,15 @@ describe('daily report tools attach deterministic edition art', () => {
   });
 
   test('get_latest_daily_report returns null without crashing when nothing matches', async () => {
-    const result = await runTool(getLatestDailyReportTool.handler, { kind: 'evening' });
+    // The per-user kv store is shared across every suite in this process and
+    // other files seed evening reports for the default test user, so the
+    // null path must run as a user nobody else writes for (file execution
+    // order differs between local runs and CI).
+    const emptyUser = { userId: 'tool_art_empty_user' };
+    const result = await withToolContext(
+      () => getLatestDailyReportTool.handler({ kind: 'evening' }, toolContext(emptyUser)),
+      emptyUser,
+    );
     expect(result.report).toBeNull();
   });
 
