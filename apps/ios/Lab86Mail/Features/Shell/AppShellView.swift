@@ -414,6 +414,7 @@ private struct SourceList: View {
     @State private var containerBounds: CGRect = .zero
     @State private var scrubCancelled = false
     @State private var autoscrollTarget: SidebarDestination?
+    @State private var holdHapticPlayed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -431,20 +432,6 @@ private struct SourceList: View {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(PrimaryTab.sourceList) { destination in
                         sourceButton(destination)
-                    }
-
-                    Divider()
-                        .padding(.vertical, 12)
-
-                    Text("Mail")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 2)
-                        .accessibilityAddTraits(.isHeader)
-
-                    ForEach(MailCategoryScope.allCases) { category in
-                        mailFilterButton(category)
                     }
 
                     Divider()
@@ -511,10 +498,31 @@ private struct SourceList: View {
                             .sidebarScrubHighlight(isScrubbing(.area(id: area.id, name: area.name)))
                         }
                     }
+
+                    Divider()
+                        .padding(.vertical, 12)
+
+                    Text("Mail")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 2)
+                        .accessibilityAddTraits(.isHeader)
+
+                    ForEach(MailCategoryScope.allCases) { category in
+                        mailFilterButton(category)
+                    }
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 16)
+                // The scrub gesture lives on the scroll CONTENT: attached to
+                // an ancestor of the ScrollView it never wins the touch — the
+                // scroll pan claims all movement and the scrub goes dead.
+                .gesture(scrubGesture, isEnabled: scrub != nil)
             }
+            // Once a scrub is live, the list must not pan out from under the
+            // thumb; edge autoscroll takes over deliberate movement instead.
+            .scrollDisabled(scrub?.wrappedValue.isActive == true)
             .onChange(of: autoscrollTarget) { _, target in
                 guard let target else { return }
                 withAnimation(reduceMotion ? nil : .linear(duration: 0.15)) {
@@ -542,6 +550,10 @@ private struct SourceList: View {
             .accessibilityHint("Opens account and app settings")
             .sidebarScrubRow(.settings, frames: $rowFrames)
             .sidebarScrubHighlight(isScrubbing(.settings))
+            // Settings sits outside the ScrollView, so it carries its own copy
+            // of the scrub gesture; frames share one coordinate space, so a
+            // scrub can start here and travel up the list.
+            .gesture(scrubGesture, isEnabled: scrub != nil)
         }
         .background(environment.theme.railColor)
         .refreshable { await environment.store.refreshWork() }
@@ -551,7 +563,6 @@ private struct SourceList: View {
         } action: { bounds in
             containerBounds = bounds
         }
-        .gesture(scrubGesture, isEnabled: scrub != nil)
     }
 
     // MARK: - Scrub session
@@ -560,8 +571,8 @@ private struct SourceList: View {
     // autoscroll targeting. Headers, dividers, and loading rows are absent.
     private var orderedDestinations: [SidebarDestination] {
         PrimaryTab.sourceList.map(SidebarDestination.primary)
-            + MailCategoryScope.allCases.map(SidebarDestination.mail)
             + environment.store.areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
+            + MailCategoryScope.allCases.map(SidebarDestination.mail)
             + [.settings]
     }
 
@@ -588,11 +599,23 @@ private struct SourceList: View {
                 )
             )
             .onChanged { value in
-                if case .second(true, let drag?) = value {
+                switch value {
+                case .second(true, nil):
+                    // The hold just completed and the thumb hasn't moved yet —
+                    // this is the moment scrubbing engages, so the lift haptic
+                    // fires here, before any drag event carries a location.
+                    if !holdHapticPlayed {
+                        holdHapticPlayed = true
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    }
+                case .second(true, let drag?):
                     handleScrubChange(drag)
+                default:
+                    break
                 }
             }
             .onEnded { value in
+                holdHapticPlayed = false
                 if case .second(true, _) = value {
                     endScrub()
                 } else {
@@ -615,9 +638,9 @@ private struct SourceList: View {
         }
         let destination = SidebarScrubLogic.destination(at: drag.location, rows: rowFrames)
         if !session.wrappedValue.isActive {
-            // One lift haptic when scrubbing engages.
+            // The lift haptic already fired on hold completion; this first
+            // drag event supplies the location that opens the session.
             session.wrappedValue.activate(over: destination, committed: currentDestination)
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             if let destination {
                 UIAccessibility.post(notification: .announcement, argument: "Previewing \(destination.title)")
             }

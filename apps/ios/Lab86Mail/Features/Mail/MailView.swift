@@ -81,6 +81,7 @@ struct MailView: View {
             }
         }
         .listStyle(.plain)
+        .listSectionSpacing(.compact)
         .scrollContentBackground(.hidden)
         .background(environment.theme.paperColor)
         .environment(\.editMode, $editMode)
@@ -394,7 +395,8 @@ struct MailView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.top, 2)
+            .padding(.bottom, 6)
         }
         .background(environment.theme.paperColor.opacity(0.01))
     }
@@ -730,9 +732,9 @@ private struct MailDateline: View {
                 .foregroundStyle(.secondary)
             Divider()
         }
-        .padding(.top, 6)
+        .padding(.top, 2)
         .textCase(nil)
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
+        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 0, trailing: 16))
         .accessibilityAddTraits(.isHeader)
     }
 }
