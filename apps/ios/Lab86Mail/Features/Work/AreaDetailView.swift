@@ -34,6 +34,7 @@ struct AreaDetailView: View {
     @State private var inboxSelection: Set<String> = []
     @State private var inboxEditMode: EditMode = .inactive
     @State private var artifactReview: ArtifactReviewRequest?
+    @State private var hasLoadedAreaMasthead = false
 
     var body: some View {
         @Bindable var navigation = environment.navigation
@@ -338,8 +339,7 @@ struct AreaDetailView: View {
                     document: document,
                     isComposing: detail.livingBrief?.status == "generating",
                     scopeAreaID: detail.identity.id,
-                    onReview: { artifactReview = $0 },
-                    onRegenerate: { Task { await refreshBrief() } }
+                    onReview: { artifactReview = $0 }
                 )
                 .padding(.top, 50)
                 .padding(.bottom, 24)
@@ -357,7 +357,9 @@ struct AreaDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            AreaBriefLead(detail: detail)
+            AreaBriefLead(detail: detail) { loaded in
+                hasLoadedAreaMasthead = loaded
+            }
 
             if !detail.hasAnyLinkedContent {
                 AreaDocumentSection(title: "In this Area") {
@@ -381,9 +383,9 @@ struct AreaDetailView: View {
             }
             .padding(.bottom, 32)
             }
-            // With a masthead picture the document owns the whole screen and the
-            // art slides under the status bar; text-first briefs stay below it.
-            .ignoresSafeArea(edges: detail.identity.imageURL != nil ? .top : [])
+            // Only successfully loaded art slides under the status bar. Invalid
+            // or exhausted candidates keep the text-first fallback below it.
+            .ignoresSafeArea(edges: hasLoadedAreaMasthead ? .top : [])
             .refreshable { await load(initial: false) }
         }
     }
@@ -709,6 +711,18 @@ struct AreaDetailView: View {
 private struct AreaBriefLead: View {
     @Environment(AppEnvironment.self) private var environment
     let detail: AreaDetail
+    let onMastheadAvailabilityChanged: (Bool) -> Void
+
+    // Ordered image → favicon fallback, matching AreaIdentityMark's chain, so
+    // the masthead never regresses to blank when only a favicon is on file.
+    @State private var mastheadWalk = ImageSourceWalk()
+
+    private var mastheadSources: [URL] {
+        AreaImageSource.ordered(imageURL: detail.identity.imageURL, faviconURL: detail.identity.faviconURL)
+            .compactMap(URL.init(string:))
+    }
+
+    private var mastheadURL: URL? { mastheadWalk.current(in: mastheadSources) }
 
     // The generated area brief presented as the document it is on desktop:
     // masthead (custom picture when set), display-face headline, the lede as
@@ -716,9 +730,17 @@ private struct AreaBriefLead: View {
     // that stored complete HTML render verbatim, themed.
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let imageURL = detail.identity.imageURL, let url = URL(string: imageURL) {
+            if let url = mastheadURL {
                 // Full-bleed masthead sliding under the glass toolbar.
                 KFImage(url)
+                    .onSuccess { _ in
+                        mastheadWalk.markCurrentResolved(in: mastheadSources)
+                        onMastheadAvailabilityChanged(mastheadWalk.hasResolvedSource)
+                    }
+                    .onFailure { _ in
+                        mastheadWalk.advance(in: mastheadSources)
+                        onMastheadAvailabilityChanged(false)
+                    }
                     .placeholder { environment.theme.accent2Color.opacity(0.14) }
                     .fade(duration: 0.2)
                     .resizable()
@@ -743,7 +765,7 @@ private struct AreaBriefLead: View {
                     .font(environment.theme.displayType.displayFont(size: 34))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                if detail.identity.imageURL == nil {
+                if mastheadURL == nil {
                     AreaDetailMonogram(name: detail.identity.name, seed: detail.identity.id)
                 }
             }
@@ -783,8 +805,15 @@ private struct AreaBriefLead: View {
         .padding(.horizontal, 20)
         // Text-first briefs clear the floating glass controls; a masthead
         // picture slides beneath them instead.
-        .padding(.top, detail.identity.imageURL == nil ? 60 : 20)
+        .padding(.top, mastheadURL == nil ? 60 : 20)
         .padding(.bottom, 24)
+        .onAppear {
+            onMastheadAvailabilityChanged(mastheadWalk.hasResolvedSource)
+        }
+        .onChange(of: mastheadSources) { old, new in
+            mastheadWalk.resetIfSourcesChanged(from: old, to: new)
+            onMastheadAvailabilityChanged(false)
+        }
         .accessibilityElement(children: .contain)
     }
 

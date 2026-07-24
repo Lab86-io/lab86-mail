@@ -9,11 +9,26 @@ import type {
 
 export const BRIEF_COMPOSITION_VERSION = 1;
 
-const BRIEF_SOURCE_REF_KINDS = ['thread', 'message', 'task', 'event', 'mcp', 'account', 'derived'] as const;
+const BRIEF_SOURCE_REF_KINDS = [
+  'thread',
+  'message',
+  'task',
+  'event',
+  'card',
+  'mcp',
+  'account',
+  'derived',
+  'area',
+  'work',
+] as const;
 const BRIEF_ACTION_TYPES = [
   'open_thread',
   'open_view',
   'open_event',
+  'open_area',
+  'open_work',
+  'discuss_area',
+  'open_url',
   'resolve_thread',
   'dismiss_thread',
   'toggle_task',
@@ -116,6 +131,25 @@ export const BriefBlockSchema = z.discriminatedUnion('type', [
           location: z.string().nullable().optional(),
           prep: z.string().max(700).optional(),
           sourceRefs: z.array(BriefSourceRefSchema).default([]),
+          actions: z.array(BriefActionSchema).default([]),
+        }),
+      )
+      .max(20),
+    sourceRefs: z.array(BriefSourceRefSchema).default([]),
+  }),
+  z.object({
+    type: z.literal('handoff_digest'),
+    title: z.string().max(80).default('Action handoffs'),
+    items: z
+      .array(
+        z.object({
+          id: z.string().min(1).max(240),
+          lane: z.string().max(80),
+          situation: z.string().min(1).max(500),
+          assessment: z.string().min(1).max(700),
+          background: z.array(z.string().min(1).max(500)).max(3).default([]),
+          recommendations: z.array(z.string().min(1).max(500)).min(1).max(4),
+          sourceRefs: z.array(BriefSourceRefSchema).min(1).max(9),
           actions: z.array(BriefActionSchema).default([]),
         }),
       )
@@ -352,6 +386,10 @@ function defaultActionLabel(action: BriefAction['action']): string {
     case 'open_thread':
     case 'open_event':
     case 'open_view':
+    case 'open_area':
+    case 'open_work':
+    case 'discuss_area':
+    case 'open_url':
       return 'Open';
     case 'resolve_thread':
       return 'Done';
@@ -403,12 +441,42 @@ export function compositionFromReport(report: DailyReport): BriefComposition {
     .sort((a, b) => Number(a.startAt || 0) - Number(b.startAt || 0))
     .slice(0, 12);
   const mcp = (sections.mcp || []).slice(0, 12);
+  const lede: BriefBlock = {
+    type: 'lede',
+    paragraphs: ledeParagraphs(report.narrative || fallbackNarrative(needs, tasks, events)),
+    sourceRefs: [],
+  };
+  if (report.handoffs?.length) {
+    const handoffBlocks: BriefBlock[] = chunks(report.handoffs.slice(0, 96), 20).map((handoffs, index) => ({
+      type: 'handoff_digest',
+      title: index === 0 ? 'Action handoffs' : 'More action handoffs',
+      items: handoffs.map((handoff) => ({
+        id: handoff.id,
+        lane: handoff.lane,
+        situation: handoff.situation,
+        assessment: handoff.assessment,
+        background: handoff.background,
+        recommendations: [...new Set(handoff.items.map((item) => item.recommendation))].slice(0, 4),
+        sourceRefs: uniqueCompositionRefs([handoff.primaryRef, ...handoff.relatedRefs]),
+        actions: handoff.actions.flatMap((action) => {
+          const parsed = BriefActionSchema.safeParse(action);
+          return parsed.success ? [parsed.data] : [];
+        }),
+      })),
+      sourceRefs: uniqueCompositionRefs(
+        handoffs.flatMap((handoff) => [handoff.primaryRef, ...handoff.relatedRefs]),
+      ),
+    }));
+    return {
+      version: BRIEF_COMPOSITION_VERSION,
+      title: report.title || 'Daily Brief',
+      summary: report.narrative,
+      services: report.services || [],
+      blocks: [lede, ...handoffBlocks],
+    };
+  }
   const blocks: BriefBlock[] = [
-    {
-      type: 'lede',
-      paragraphs: ledeParagraphs(report.narrative || fallbackNarrative(needs, tasks, events)),
-      sourceRefs: [],
-    },
+    lede,
     {
       type: 'needs_you',
       title: 'Needs you',
@@ -450,9 +518,9 @@ export function compositionFromReport(report: DailyReport): BriefComposition {
           actions: item.url
             ? [
                 {
-                  action: 'open_view',
-                  label: 'Open tools',
-                  payload: { view: 'mail' },
+                  action: 'open_url',
+                  label: `Open in ${item.server}`,
+                  payload: { url: item.url },
                   style: 'quiet',
                 },
               ]
@@ -469,6 +537,31 @@ export function compositionFromReport(report: DailyReport): BriefComposition {
     services: report.services || [],
     blocks,
   };
+}
+
+function uniqueCompositionRefs(
+  refs: Array<{
+    kind: BriefSourceRef['kind'];
+    id: string;
+    account?: string;
+    label?: string;
+  }>,
+): BriefSourceRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.kind}:${ref.account || ''}:${ref.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function chunks<T>(values: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
 }
 
 function withLane(items: DailyReportItem[], lane: string): BriefLaneItem[] {

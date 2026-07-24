@@ -34,7 +34,7 @@ export function BriefMasthead({ title, generatedAt }: { title: string; generated
         ) : null}
         <div
           aria-hidden
-          className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/10 to-black/45"
+          className="absolute inset-0 bg-gradient-to-b from-black/35 via-black/15 to-black/50"
         />
         <span className="absolute left-4 top-4 z-10 text-[10px] font-medium uppercase tracking-[0.16em] text-white/85 [text-shadow:0_1px_8px_rgba(0,0,0,0.6)]">
           {dateline}
@@ -42,7 +42,14 @@ export function BriefMasthead({ title, generatedAt }: { title: string; generated
         <span className="absolute right-4 top-4 z-10 rounded-full bg-black/35 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm">
           The Daily Brief
         </span>
-        <h1 className="relative z-10 max-w-4xl text-balance text-center font-display text-[clamp(2.4rem,8cqi,4.75rem)] font-semibold leading-[0.98] tracking-tight text-white [text-shadow:0_2px_28px_rgba(0,0,0,0.5)]">
+        {/* The title carries the editorial accent (accent-2). It derives from
+            the hue/chroma seeds at a fixed scrim-safe lightness instead of
+            reading --color-accent-2, whose light-mode L 0.45 would vanish
+            over the darkened artwork. */}
+        <h1
+          className="relative z-10 max-w-4xl text-balance text-center font-display text-[clamp(2.4rem,8cqi,4.75rem)] font-bold leading-[0.98] tracking-tight [text-shadow:0_2px_28px_rgba(0,0,0,0.55)]"
+          style={{ color: 'oklch(0.9 calc(var(--accent-2-chroma, 0.11) * 0.85) var(--accent-2-hue, 45))' }}
+        >
           {title}
         </h1>
         {art.credit ? (

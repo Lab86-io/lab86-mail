@@ -24,6 +24,11 @@ describe('Brief Document v2', () => {
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('area_open_work');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('Immediate with undo');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('Canvas is frozen ornament');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('primaryRef,relatedRefs,protected,items');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('All non-draft actions must be copied');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('draft_reply is the');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('only action you may derive');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('exact thread id and');
   });
   test('accepts the canonical rich and quiet documents', () => {
     expect(BriefDocumentV2Schema.parse(richBriefDocumentFixture)).toEqual(richBriefDocumentFixture);
@@ -108,6 +113,59 @@ describe('Brief Document v2', () => {
       ],
     };
     expect(parseBriefDocument(raw).regions[0].tree.kind).toBe('stack');
+  });
+
+  test('repairs bounded optional thread handoffs while old entity items remain valid', () => {
+    const raw = {
+      ...quietBriefDocumentFixture,
+      regions: [
+        {
+          id: 'needs-you',
+          summary: 'One reply needs attention.',
+          tree: {
+            kind: 'entity_list',
+            items: [
+              {
+                ref: { kind: 'thread', id: 'thread-1', account: 'jakob@example.com' },
+                framing: { lane: 'reply_owed' },
+                handoff: {
+                  handoffId: 'triage-thread-1',
+                  itemCount: 2,
+                  situation: 'Maya wrote about launch.',
+                  background: ['One', 'Two', 'Three', 'Four'],
+                  assessment: 'The date blocks planning.',
+                  recommendation: 'Confirm the delivery date.',
+                  recommendations: Array.from({ length: 6 }, (_, index) => ({
+                    label: `Move ${index + 1}`,
+                    ref: { kind: 'thread', id: `thread-${index + 1}`, account: 'jakob@example.com' },
+                  })),
+                  evidence: Array.from({ length: 7 }, (_, index) => ({
+                    label: `Evidence ${index + 1}`,
+                  })),
+                },
+                actions: [],
+              },
+              {
+                ref: { kind: 'thread', id: 'legacy-thread', account: 'jakob@example.com' },
+                framing: { reason: 'Legacy framing remains enough.' },
+                actions: [],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const repaired = parseBriefDocument(raw);
+    const tree = repaired.regions[0].tree;
+    expect(tree.kind).toBe('entity_list');
+    if (tree.kind !== 'entity_list') throw new Error('Expected entity list');
+
+    expect(tree.items[0].handoff?.background).toEqual(['One', 'Two', 'Three']);
+    expect(tree.items[0].handoff?.handoffId).toBe('triage-thread-1');
+    expect(tree.items[0].handoff?.itemCount).toBe(2);
+    expect(tree.items[0].handoff?.recommendations).toHaveLength(4);
+    expect(tree.items[0].handoff?.evidence).toHaveLength(4);
+    expect(tree.items[1].handoff).toBeUndefined();
   });
 });
 

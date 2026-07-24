@@ -71,6 +71,10 @@ final class ProductStore {
     var taskBoardRole = "viewer"
     var taskPublicToken: String?
     var projects: [ProjectSummary] = []
+    // Project panes keyed by project id — linked tasks, loading, error, and
+    // freshness — so the project surface reads store state instead of holding
+    // a one-shot view-local snapshot that drifts after task mutations.
+    var projectPanes: [String: ProjectPaneState] = [:]
     var areas: [AreaSummary] = []
     var approvals: [ApprovalSummary] = []
     var pendingQuestions: [PendingWorkQuestionSummary] = []
@@ -108,6 +112,8 @@ final class ProductStore {
     private(set) var areaDetails: [String: AreaDetail] = [:]
     private(set) var workDetails: [String: WorkDetail] = [:]
     private var mailSearchGeneration = 0
+    private var projectPaneLoadGeneration: [String: Int] = [:]
+    private var projectPaneSessionGeneration = 0
 
     init(
         tools: any ToolInvoking,
@@ -409,6 +415,7 @@ final class ProductStore {
                 arguments: ["cardId": .string(task.id), "completed": .bool(completed)]
             )
             await refreshTasks()
+            await refreshProjectPanes(containing: task.id)
         } catch {
             errorMessage = error.localizedDescription
             await refreshTasks()
@@ -433,6 +440,7 @@ final class ProductStore {
         do {
             _ = try await tools.invoke("tasks_create_card", arguments: arguments)
             await refreshTasks()
+            await refreshProjectPanes(containing: nil)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -465,6 +473,7 @@ final class ProductStore {
                 arguments: ["cardId": .string(task.id), "column": .string(column)]
             )
             await refreshTasks()
+            await refreshProjectPanes(containing: task.id)
         } catch {
             errorMessage = error.localizedDescription
             await refreshTasks()
@@ -498,6 +507,7 @@ final class ProductStore {
         do {
             _ = try await tools.invoke("tasks_update_card", arguments: arguments)
             await refreshTasks()
+            await refreshProjectPanes(containing: task.id)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -525,6 +535,7 @@ final class ProductStore {
                 "tasks_delete_card",
                 arguments: ["cardId": .string(task.id)]
             )
+            await refreshProjectPanes(containing: task.id)
         } catch {
             errorMessage = error.localizedDescription
             await refreshTasks()
@@ -544,6 +555,7 @@ final class ProductStore {
                 ]
             )
             await refreshTasks()
+            await refreshProjectPanes(containing: task.id)
         } catch {
             errorMessage = error.localizedDescription
             await refreshTasks()
@@ -689,6 +701,7 @@ final class ProductStore {
         do {
             _ = try await tools.invoke("tasks_move_card", arguments: arguments)
             await refreshTasks()
+            await refreshProjectPanes(containing: task.id)
         } catch {
             taskError = error.localizedDescription
             await refreshTasks()
@@ -738,6 +751,7 @@ final class ProductStore {
         do {
             _ = try await tools.invoke("tasks_move_card", arguments: arguments)
             await refreshTasks()
+            await refreshProjectPanes(containing: task.id)
         } catch {
             taskError = error.localizedDescription
             await refreshTasks()
@@ -892,6 +906,63 @@ final class ProductStore {
         } catch {
             taskError = error.localizedDescription
             return []
+        }
+    }
+
+    // Loads (or reloads) one project's pane into the store. `force` bypasses
+    // the freshness check; plain calls are cheap no-ops while a pane is
+    // already loaded or loading.
+    func loadProjectPane(projectID: String, force: Bool = false) async {
+        let sessionGeneration = projectPaneSessionGeneration
+        if !force, let pane = projectPanes[projectID], pane.isLoading || pane.lastRefreshed != nil {
+            return
+        }
+        var pane = projectPanes[projectID] ?? ProjectPaneState()
+        pane.isLoading = true
+        pane.error = nil
+        projectPanes[projectID] = pane
+        let generation = (projectPaneLoadGeneration[projectID] ?? 0) + 1
+        projectPaneLoadGeneration[projectID] = generation
+        do {
+            let result = try await tools.invoke(
+                "albatross_get_project_pane",
+                arguments: ["projectId": .string(projectID)]
+            )
+            let linked = (result["pane"]?["tasks"]?.arrayValue ?? []).compactMap { row -> TaskSummary? in
+                guard let card = row["card"] else { return nil }
+                return TaskSummary(json: card, column: card["columnName"]?.stringValue ?? "Tasks")
+            }
+            guard projectPaneSessionGeneration == sessionGeneration,
+                  projectPaneLoadGeneration[projectID] == generation
+            else { return }
+            projectPanes[projectID] = ProjectPaneState(
+                tasks: linked,
+                isLoading: false,
+                error: nil,
+                lastRefreshed: .now
+            )
+        } catch {
+            guard projectPaneSessionGeneration == sessionGeneration,
+                  projectPaneLoadGeneration[projectID] == generation
+            else { return }
+            pane.isLoading = false
+            pane.error = error.localizedDescription
+            projectPanes[projectID] = pane
+        }
+    }
+
+    // Task mutations funnel through here: every loaded pane that links the
+    // mutated task refreshes from the server, so project surfaces stay honest
+    // while the task card itself keeps a single identity — a project pane is
+    // links over board tasks, never a second task record. Pass nil to refresh
+    // every loaded pane (e.g. after a task was created or hard-deleted, when
+    // membership can appear/disappear without the old pane knowing).
+    func refreshProjectPanes(containing taskID: String?) async {
+        let affected = projectPanes.filter { _, pane in
+            taskID == nil || pane.tasks.contains { $0.id == taskID }
+        }.map(\.key)
+        for projectID in affected {
+            await loadProjectPane(projectID: projectID, force: true)
         }
     }
 
@@ -2106,6 +2177,9 @@ final class ProductStore {
         completedMailSearchQuery = nil
         isSearchingMail = false
         mailSearchGeneration += 1
+        projectPaneSessionGeneration += 1
+        projectPanes = [:]
+        projectPaneLoadGeneration = [:]
         events = []
         tasks = []
         areas = []

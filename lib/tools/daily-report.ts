@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { generateAgentReport } from '../mail/agent-report';
+import { getDailyArt } from '../mail/daily-art';
 import { injectReportAreaBrief } from '../mail/report-area-brief';
 import type { DailyReport } from '../shared/types';
 import {
@@ -103,7 +104,8 @@ export const getLatestDailyReportTool = defineTool({
   input: z.object({ kind: ReportKindSchema.optional() }).optional(),
   output: z.object({ report: z.any().nullable() }),
   async handler(input) {
-    return { report: withDisplayAreaBrief(await getLatestDailyReport(input?.kind)) };
+    const report = withDisplayAreaBrief(await getLatestDailyReport(input?.kind));
+    return { report: report ? attachDailyReportArt(report) : null };
   },
 });
 
@@ -120,6 +122,15 @@ function withDisplayAreaBrief(report: DailyReport | null): DailyReport | null {
   return html === rawHtml ? report : { ...report, html };
 }
 
+// `art` mirrors the deterministic edition art desktop derives from
+// generatedAt (components/report/DailyReport.tsx) so native surfaces render
+// the same museum piece without their own art-pool logic. Always clones —
+// never mutates the report object returned by the store — and `services`
+// (already on DailyReport) passes through untouched via the spread.
+function attachDailyReportArt<T extends DailyReport>(report: T): T & { art: ReturnType<typeof getDailyArt> } {
+  return { ...report, art: getDailyArt(report.generatedAt) };
+}
+
 export const listDailyReportsTool = defineTool({
   name: 'list_daily_reports',
   description: 'List stored Daily Reports.',
@@ -128,7 +139,8 @@ export const listDailyReportsTool = defineTool({
   input: z.object({ limit: z.number().int().min(1).max(100).default(20) }).optional(),
   output: z.object({ reports: z.array(z.any()) }),
   async handler(input) {
-    return { reports: await listDailyReportsStore(input?.limit || 20) };
+    const reports = await listDailyReportsStore(input?.limit || 20);
+    return { reports: reports.map(attachDailyReportArt) };
   },
 });
 
@@ -140,7 +152,8 @@ export const getDailyReportTool = defineTool({
   input: z.object({ id: z.string() }),
   output: z.object({ report: z.any().nullable() }),
   async handler({ id }) {
-    return { report: await getDailyReportStore(id) };
+    const report = await getDailyReportStore(id);
+    return { report: report ? attachDailyReportArt(report) : null };
   },
 });
 

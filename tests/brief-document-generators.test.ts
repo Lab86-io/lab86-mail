@@ -85,6 +85,34 @@ describe('Brief Document v2 generators', () => {
     expect(document.regions[0].tree.kind).toBe('hero');
   });
 
+  test('Daily composition restores a protected thread omitted by the model', async () => {
+    const report = reportFixture();
+    report.accounts = ['jakob@example.com'];
+    report.sections.replyOwed = [
+      {
+        account: 'jakob@example.com',
+        threadId: 'thread-required',
+        subject: 'Launch date',
+        people: ['Maya'],
+        whyItMatters: 'The date blocks planning.',
+        nextAction: 'Confirm the July 31 delivery date.',
+        openLoops: ['Confirm delivery date'],
+        lane: 'reply_owed',
+        surfacedBecause: ['reply_owed'],
+        unread: false,
+      },
+    ];
+
+    const document = await withToolContext(() =>
+      composeDocumentV2(report, undefined, undefined, toolCallingGenerator() as any),
+    );
+    const json = JSON.stringify(document);
+
+    expect(json).toContain('thread-required');
+    expect(json).toContain('Confirm the July 31 delivery date.');
+    expect(json).toContain('needs-you-required');
+  });
+
   test('Area composition exposes only the shared v2 navigation vocabulary', async () => {
     let prompt = '';
     const restore = setAreaLivingBriefDependenciesForTest({

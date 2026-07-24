@@ -103,7 +103,13 @@ private struct AreaListRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AreaMonogram(area: area)
+            AreaIdentityMark(
+                name: area.name,
+                seed: area.id,
+                imageURL: area.imageURL,
+                faviconURL: area.faviconURL,
+                size: 30
+            )
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(area.name).font(.headline).lineLimit(1)
@@ -137,17 +143,6 @@ private struct AreaListRow: View {
         if let status = area.overview?.statusLine { parts.append(status) }
         if area.overview?.needsAttention == true { parts.append("needs attention") }
         return parts.joined(separator: ", ")
-    }
-}
-
-// A quiet monogram identity mark — avoids loading arbitrary remote favicon URLs
-// on device while still giving each area a stable colour drawn from the live
-// accent family, the same derivation as every other identity mark.
-struct AreaMonogram: View {
-    let area: AreaSummary
-
-    var body: some View {
-        InitialsAvatar(name: area.name, seed: area.id, size: 30)
     }
 }
 

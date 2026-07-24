@@ -175,6 +175,16 @@
        written inline on <html> by the theme panel. */
     --accent-2-hue: 45;
     --accent-2-chroma: 0.11;
+    /* Third accent: the highlight voice (badges, lanes, stat deltas, data
+       pops). Defaults reproduce the chord's slate blue; see
+       lib/theme/palette-presets.ts for the chord geometry. */
+    --accent-3-hue: 250;
+    --accent-3-chroma: 0.08;
+    /* Depth spread scales how far the surface ladder's rungs sit from the
+       paper (well < paper < card < float) and how strong shadows draw.
+       1 reproduces the original palette exactly; the theme panel exposes it
+       as the Depth control (0.4 flat … 1.6 deep). */
+    --depth-spread: 1;
     /* Background is its OWN axis (Arc separates window color from accent):
        --bg-hue + --surface-tint drive every surface; accent never bleeds into
        backgrounds unless the user dials it in themselves. 0 tint reproduces
@@ -185,18 +195,32 @@
     --grain-opacity: 0;
 
     /* Surfaces derive from the same hue so a background tint follows the
-       accent (Arc's background/backgroundExtra pattern). */
+       accent (Arc's background/backgroundExtra pattern). Together they form
+       the depth ladder — well (recessed) < paper < card < float — with every
+       rung's distance from the paper multiplied by --depth-spread. At spread
+       1 the legacy constants reproduce exactly. */
     --color-bg: oklch(
       calc(0.977 - var(--surface-tint) * 0.012) calc(0.005 + var(--surface-tint) * 0.022) var(--bg-hue)
     );
     --color-bg-elevated: oklch(
-      calc(0.995 - var(--surface-tint) * 0.008) calc(var(--surface-tint) * 0.014) var(--bg-hue)
+      min(0.998, calc(0.977 + 0.018 * var(--depth-spread) - var(--surface-tint) * 0.008))
+        calc(var(--surface-tint) * 0.014) var(--bg-hue)
+    );
+    --color-surface-float: oklch(
+      min(0.999, calc(0.977 + 0.022 * var(--depth-spread) - var(--surface-tint) * 0.006))
+        calc(var(--surface-tint) * 0.01) var(--bg-hue)
+    );
+    --color-surface-well: oklch(
+      calc(0.977 - 0.022 * var(--depth-spread) - var(--surface-tint) * 0.013)
+        calc(0.007 + var(--surface-tint) * 0.024) var(--bg-hue)
     );
     --color-bg-subtle: oklch(
-      calc(0.965 - var(--surface-tint) * 0.012) calc(0.006 + var(--surface-tint) * 0.024) var(--bg-hue)
+      calc(0.977 - 0.012 * var(--depth-spread) - var(--surface-tint) * 0.012)
+        calc(0.006 + var(--surface-tint) * 0.024) var(--bg-hue)
     );
     --color-bg-muted: oklch(
-      calc(0.93 - var(--surface-tint) * 0.015) calc(0.008 + var(--surface-tint) * 0.026) var(--bg-hue)
+      calc(0.977 - 0.047 * var(--depth-spread) - var(--surface-tint) * 0.015)
+        calc(0.008 + var(--surface-tint) * 0.026) var(--bg-hue)
     );
     --color-border: oklch(
       calc(0.905 - var(--surface-tint) * 0.015) calc(0.01 + var(--surface-tint) * 0.026) var(--bg-hue)
@@ -221,6 +245,15 @@
     --color-accent-soft: oklch(0.55 calc(var(--accent-chroma) * 0.8) var(--accent-hue) / 0.13);
     --color-accent-2: oklch(0.45 var(--accent-2-chroma) var(--accent-2-hue));
     --color-accent-2-soft: oklch(0.55 calc(var(--accent-2-chroma) * 0.8) var(--accent-2-hue) / 0.13);
+    --color-accent-3: oklch(0.45 var(--accent-3-chroma) var(--accent-3-hue));
+    --color-accent-3-soft: oklch(0.55 calc(var(--accent-3-chroma) * 0.8) var(--accent-3-hue) / 0.13);
+    /* Shadow weight rides the same depth axis as the surface ladder. */
+    --shadow-soft:
+      0 1px 2px rgb(15 23 42 / calc(0.04 * var(--depth-spread))),
+      0 10px 24px rgb(15 23 42 / calc(0.06 * var(--depth-spread)));
+    --shadow-pop:
+      0 18px 44px rgb(15 23 42 / calc(0.14 * var(--depth-spread))),
+      0 4px 12px rgb(15 23 42 / calc(0.08 * var(--depth-spread)));
     --color-accent-shine-1: oklch(0.45 var(--accent-chroma) var(--accent-hue));
     --color-accent-shine-2: oklch(0.62 calc(var(--accent-chroma) * 1.1) var(--accent-hue));
     --color-accent-shine-3: oklch(0.39 var(--accent-chroma) var(--accent-hue));
@@ -290,14 +323,30 @@
     --color-bg: oklch(
       calc(0.145 + var(--surface-tint) * 0.14) calc(0.006 + var(--surface-tint) * 0.04) var(--bg-hue)
     );
+    /* Depth ladder, dark direction: elevation lightens (industry-standard
+       dark elevation), the well dips below the paper. Every rung carries the
+       paper's full tint term plus a spread-scaled offset so the ladder stays
+       monotonic at ANY tint; spread 1 + tint 0 reproduces the legacy
+       constants. */
     --color-bg-elevated: oklch(
-      calc(0.22 + var(--surface-tint) * 0.025) calc(var(--surface-tint) * 0.032) var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.14 + 0.075 * var(--depth-spread)) calc(var(--surface-tint) * 0.032)
+        var(--bg-hue)
+    );
+    --color-surface-float: oklch(
+      calc(0.145 + var(--surface-tint) * 0.14 + 0.13 * var(--depth-spread)) calc(var(--surface-tint) * 0.03)
+        var(--bg-hue)
+    );
+    --color-surface-well: oklch(
+      max(0.09, calc(0.145 + var(--surface-tint) * 0.14 - 0.024 * var(--depth-spread)))
+        calc(0.005 + var(--surface-tint) * 0.036) var(--bg-hue)
     );
     --color-bg-subtle: oklch(
-      calc(0.178 + var(--surface-tint) * 0.025) calc(var(--surface-tint) * 0.034) var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.14 + 0.033 * var(--depth-spread)) calc(var(--surface-tint) * 0.034)
+        var(--bg-hue)
     );
     --color-bg-muted: oklch(
-      calc(0.27 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.03) var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.14 + 0.125 * var(--depth-spread)) calc(var(--surface-tint) * 0.03)
+        var(--bg-hue)
     );
     --color-border: oklch(
       calc(0.25 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.03) var(--bg-hue)
@@ -318,6 +367,8 @@
     --color-accent-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);
     --color-accent-2: oklch(0.73 calc(var(--accent-2-chroma) * 0.78) var(--accent-2-hue));
     --color-accent-2-soft: oklch(0.73 calc(var(--accent-2-chroma) * 0.7) var(--accent-2-hue) / 0.14);
+    --color-accent-3: oklch(0.73 calc(var(--accent-3-chroma) * 0.78) var(--accent-3-hue));
+    --color-accent-3-soft: oklch(0.73 calc(var(--accent-3-chroma) * 0.7) var(--accent-3-hue) / 0.14);
     --color-accent-foreground: oklch(0.17 calc(var(--accent-chroma) * 0.4) var(--accent-hue));
     --color-accent-shine-1: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-accent-shine-2: oklch(0.85 calc(var(--accent-chroma) * 0.6) var(--accent-hue));
@@ -356,10 +407,14 @@
     --color-prio-1: #e1655c;
     --color-prio-2: #d49a4d;
     --color-prio-3: #889aa8;
-    --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
+    --shadow-soft:
+      0 1px 2px rgb(0 0 0 / calc(0.4 * var(--depth-spread))),
+      0 4px 12px rgb(0 0 0 / calc(0.3 * var(--depth-spread)));
     --shadow-control:
       inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.45), 0 8px 18px rgb(0 0 0 / 0.22);
-    --shadow-pop: 0 14px 36px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.3);
+    --shadow-pop:
+      0 14px 36px rgb(0 0 0 / calc(0.45 * var(--depth-spread))),
+      0 2px 6px rgb(0 0 0 / calc(0.3 * var(--depth-spread)));
   }
 
   * {

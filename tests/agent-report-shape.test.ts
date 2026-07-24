@@ -188,6 +188,42 @@ describe('daily brief service metadata', () => {
     expect(data.services.every((service: any) => service.logoSvg.includes('footer-logo'))).toBe(true);
     expect(data.services[0].logoSvg).toContain('viewBox="0 0 800 636.36322"');
     expect(data.services[0].logoSvg).toContain('gmail-footer-gradient-a');
+    expect(data.handoffs).toHaveLength(1);
+    expect(data.handoffs[0]).toMatchObject({
+      source: 'github',
+      kind: 'connected',
+      situation: 'Review auth fix',
+    });
+  });
+
+  test('buildDataPrompt rejects an invalid stored index and rebuilds canonical handoffs', async () => {
+    const base = reportFixture();
+    const report = reportFixture({
+      handoffs: [{ version: 1, id: 'invalid-without-contract-fields' } as any],
+      sections: {
+        ...base.sections,
+        mcp: [
+          {
+            server: 'github',
+            externalId: 'pull-86',
+            kind: 'pull_request',
+            title: 'Review SBAR fix',
+            url: 'https://github.com/Lab86-io/lab86-mail/pull/86',
+          },
+        ],
+      },
+    });
+    const prompt = await withToolContext(() =>
+      Promise.resolve(buildDataPrompt(report, { digests: [], voiceSamples: [], services: [] })),
+    );
+    const data = JSON.parse(prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
+
+    expect(data.handoffs).toHaveLength(1);
+    expect(data.handoffs[0]).toMatchObject({
+      version: 1,
+      source: 'github',
+      sourceKey: 'connected:github:pull-86',
+    });
   });
 
   test('buildDataPrompt carries Albatross area context for artifact area briefs', async () => {
@@ -252,6 +288,8 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('CONTENT (compose from your analysis');
     expect(HTML_ARTIFACT_BRIEF).toContain('repeated bordered cards');
     expect(HTML_ARTIFACT_BRIEF).toContain('charts that decorate');
+    expect(HTML_ARTIFACT_BRIEF).toContain('canonical, source-grounded, deduplicated attention index');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Render every protected handoff exactly once');
   });
 });
 

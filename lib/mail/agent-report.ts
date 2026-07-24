@@ -5,6 +5,7 @@ import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { briefDocumentV2Enabled } from '../brief/feature';
+import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { listNylasAccounts } from '../nylas/provider';
 import { type BriefComposition, compositionFromReport } from '../shared/brief-composition';
 import {
@@ -15,6 +16,7 @@ import {
 } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { emailFromHeader } from '../shared/format';
+import { parseTriageHandoffs } from '../shared/triage-handoff';
 import {
   type DailyReport,
   type DailyReportArtifactError,
@@ -33,6 +35,7 @@ import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from './brief-document-prompt';
 import { briefServiceFromProvider, briefServicesFromIds } from './brief-services';
 import { resolveBriefTimezone } from './brief-timezone';
 import { getDailyArt } from './daily-art';
+import { enforceDailyBriefHandoffCoverage } from './daily-brief-handoff';
 import { generateDailyReport } from './daily-report';
 import { buildNativeDailyReportArtifact } from './report-artifact';
 
@@ -719,7 +722,7 @@ export async function composeDocumentV2(
   );
 
   if (!regions.length) throw new Error('AI did not place any brief regions.');
-  return parseBriefDocument(
+  const composed = parseBriefDocument(
     repairBriefDocument({
       version: 2,
       title: finalized.title || report.title || 'Daily Brief',
@@ -728,6 +731,7 @@ export async function composeDocumentV2(
       regions,
     }),
   );
+  return enforceDailyBriefHandoffCoverage(composed, report);
 }
 
 async function composeArtifactHtml(report: DailyReport, userId?: string | null): Promise<string> {
@@ -769,11 +773,13 @@ export function extractHtml(raw: string): string | null {
 
 // ---- Prompts ---------------------------------------------------------------
 
-export const HTML_ARTIFACT_BRIEF = `You are the user's chief of staff AND a world-class editorial designer/front-end engineer. You are handed the RAW material — actual email bodies, the week's calendar, tasks, and connected tool items — and you do your OWN analysis: read the threads, judge what genuinely needs the user, connect the dots across mail/calendar/tasks/tools, and compose a single, self-contained, beautiful HTML "Daily Brief". Polish of a Claude Artifact × a finely-typeset broadsheet.
+export const HTML_ARTIFACT_BRIEF = `You are the user's chief of staff AND a world-class editorial designer/front-end engineer. You are handed data.handoffs — the canonical, source-grounded, deduplicated attention index — plus raw source material for evidence and drafting. Rank and present those handoffs as a single, self-contained, beautiful HTML "Daily Brief". Polish of a Claude Artifact × a finely-typeset broadsheet.
 
 ANALYZE, DON'T TRANSCRIBE:
-- Read the email bodies in data.threads and decide for yourself what matters and why — do not parrot subjects. Form a real point of view. Each thread may also carry the app's first-pass read (whyItMatters, nextAction, openLoops, surfacedBecause, isNewSender); treat that as a STARTING POINT you can sharpen or overrule with your own reading.
-- Build an INTEGRATED STORY: weave what needs the user now (recent mail) with what's coming (next 7 days of calendar + due tasks), drawing explicit connections ("Thu review with Sam ↔ his unanswered Tuesday thread ↔ prep task").
+- Rank data.handoffs and form a point of view about how the user should spend attention. Each handoff already contains Situation, Background, Assessment, Recommendation, source items, evidence, and source actions. Do not build a parallel triage from the raw arrays.
+- Keep merged handoffs merged. Render every protected handoff exactly once, including every distinct recommendation inside it. You may omit unprotected handoffs only for density.
+- Use data.threads, calendar, tasks, mcp, and albatross as supporting evidence and draft context. They may sharpen the explanation but cannot replace indexed evidence, ids, recommendations, or actions.
+- Build an INTEGRATED STORY from the index: weave what needs the user now with what's coming, especially connections already represented by a merged handoff.
 - Be PROACTIVE: propose to-dos, meeting prep, ready-to-send reply drafts, calendar holds, invite responses, and cleanup actions when the data supports them. Nothing mutates without a user tap and host confirmation.
 - Adaptive density: short and calm on a light day, fuller when it's busy. Never pad.
 
@@ -861,7 +867,7 @@ AI SLOP BAN LIST — before final output, ensure none of these dominate:
 
 CONTENT (compose from your analysis; omit empty parts):
 - A stylized integrated lede from the STYLIZED LEDE SYSTEM — the through-line of the day connecting mail, calendar, tasks, and connected tools.
-- "Needs you": the threads YOU judged as needing action — person, your one-line read of why from the body, how long it's sat, an open-thread button, and for reply-owed ones a proposed draft (in the user's voice) via draft_reply.
+- "Needs you": protected data.handoffs across mail, tasks, calendar, Areas/Work, and connected tools. Show the indexed read, all concrete moves, the supporting trail, and exact source actions. For reply-owed source items, add a grounded proposed draft via draft_reply when the thread bodies support it.
 - "The week ahead": today → +7 days of calendar as a clean timeline/table/swimlane; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
 - Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from mail/meetings (create_task). Tasks are first-class, not a footnote.
 - Area briefs: if data.albatross exists, show the active/relevant areas and why they matter today. Ask-before-centering areas should read as questions, not assumptions.
@@ -871,6 +877,8 @@ VALID ACTIONS:
 - open_thread payload { account, threadId }
 - open_view payload { view:"mail"|"tasks"|"calendar"|"areas" }
 - open_area payload { areaId }
+- open_work payload { workId, areaId? }
+- open_url payload { url }. Use only an exact https URL supplied by a connected item.
 - open_event payload { account, eventId }
 - resolve_thread payload { account, threadId, subject?, receivedAt?, trackedThreadId? }
 - dismiss_thread payload { account, threadId, subject?, receivedAt? }
@@ -937,6 +945,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   const localDate = fmt({ day: '2-digit', month: 'short', year: 'numeric' });
   const localTime = fmt({ hour: 'numeric', minute: '2-digit' });
   const art = getDailyArt(report.generatedAt);
+  const storedHandoffs = parseTriageHandoffs(report.handoffs);
 
   const serviceIds = [
     ...(report.services || []),
@@ -959,6 +968,9 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     voiceSamples: extras.voiceSamples,
     // RAW material to analyze yourself: real thread bodies (most recent last).
     threads: extras.digests,
+    // Canonical attention index: already source-grounded, deduplicated, and
+    // explicitly merged where source links prove the items belong together.
+    handoffs: (storedHandoffs.length ? storedHandoffs : buildTriageHandoffIndex(report)).slice(0, 64),
     tasks,
     calendar,
     // Items from connected tools the user enabled for the
@@ -971,7 +983,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   return [
     `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
     `This is the "${report.kind}" edition.`,
-    'Read data.threads (real email bodies), the calendar, tasks, and connected tool items. Do your own analysis and return the complete Daily Brief HTML document.',
+    'Compose the brief from data.handoffs, the canonical deduplicated attention index. Use the raw threads, calendar, tasks, Areas, and connected items as supporting evidence and draft context, not as a second triage pass.',
     'Backend contract: use exact ids/accounts from this JSON verbatim. For action controls, use only valid data-action enum strings and valid data-payload JSON. Omit any action you cannot wire exactly.',
     'Design contract: be editorial and component-minded. Create the layout, visual comparisons, timelines, checklists, or compact dashboards that best fit the actual day.',
     '',

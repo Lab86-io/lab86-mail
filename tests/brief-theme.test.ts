@@ -16,6 +16,10 @@ describe('briefThemeTokens', () => {
       '--color-accent': 'oklch(70% 0.12 210)',
       '--color-accent-soft': 'rgba(20,120,200,0.14)',
       '--color-accent-2': 'oklch(73% 0.09 70)',
+      '--color-accent-3': 'oklch(73% 0.06 320)',
+      '--color-bg-elevated': '#1b1b21',
+      '--color-surface-well': '#0c0c10',
+      '--color-surface-float': '#26262d',
     };
     const theme = briefThemeTokens((name) => vars[name] ?? '', 'news');
     expect(theme['--brief-bg']).toBe('#101014');
@@ -25,6 +29,10 @@ describe('briefThemeTokens', () => {
     expect(theme['--brief-accent']).toBe('oklch(70% 0.12 210)');
     expect(theme['--brief-accent-soft']).toBe('rgba(20,120,200,0.14)');
     expect(theme['--brief-accent-2']).toBe('oklch(73% 0.09 70)');
+    expect(theme['--brief-accent-3']).toBe('oklch(73% 0.06 320)');
+    expect(theme['--brief-card']).toBe('#1b1b21');
+    expect(theme['--brief-well']).toBe('#0c0c10');
+    expect(theme['--brief-float']).toBe('#26262d');
     expect(theme['--brief-font-display']).toBe(BRIEF_FONT_FAMILIES.news);
     expect(theme['--brief-font-body']).toBe(BRIEF_FONT_FAMILIES.sans);
     expect(theme['--brief-display-tracking']).toBe('0em');
@@ -39,6 +47,11 @@ describe('briefThemeTokens', () => {
     // the terracotta accent.
     expect(theme['--brief-accent-2']).toBe('#774914');
     expect(theme['--brief-accent-2']).not.toBe(theme['--brief-accent']);
+    // The third voice and the depth rungs fall back against the warm paper.
+    expect(theme['--brief-accent-3']).toBe('#305880');
+    expect(theme['--brief-card']).toBe('#fefdfb');
+    expect(theme['--brief-well']).toBe('#f1f0eb');
+    expect(theme['--brief-float']).toBe('#fffffd');
     expect(theme['--brief-font-display']).toBe(BRIEF_FONT_FAMILIES.serif);
   });
 

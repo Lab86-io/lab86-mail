@@ -2,30 +2,38 @@
 
 import { MonitorCog, Moon, Palette, SunMedium } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useClientStore } from '@/lib/client-state';
 import {
+  brillianceFromChroma,
+  clampBrilliance,
   DEFAULT_ACCENT_2_CHROMA,
   DEFAULT_ACCENT_2_HUE,
+  DEFAULT_ACCENT_3_CHROMA,
+  DEFAULT_ACCENT_3_HUE,
   DEFAULT_ACCENT_CHROMA,
   DEFAULT_ACCENT_HUE,
-  PALETTE_PRESETS,
+  MAX_BRILLIANCE,
+  MIN_BRILLIANCE,
+  nearestWheelStop,
+  type PaletteStop,
+  paletteStop,
+  WHEEL_STOP_COUNT,
 } from '@/lib/theme/palette-presets';
 import { cn } from '@/lib/utils';
 
-// Arc-style theme panel. Accent and background are independent axes (Arc
-// separates the space color from the derived chrome): accent = hue+intensity,
-// background = its own hue + tint amount, plus the rail gradient wash, film
-// grain, and the editorial display font. Every control writes CSS variables
-// on <html>; the OKLCH derivations in globals.css do the rest.
+// Arc-style theme panel around one master control: the palette wheel. Each of
+// its 20 detented stops is a complete palette object (paper seat + depth
+// ladder + three-accent chord) — the chord geometry rotated across the OKLCH
+// spectrum (lib/theme/palette-presets.ts). Clicking or dragging around the
+// wheel scrubs stops; pressing and pulling in/out (or the Brilliance slider)
+// scales every chroma and the paper tint together. The fine controls
+// underneath edit single axes on top of whatever the wheel wrote. Every
+// control writes CSS variables on <html>; the OKLCH derivations in
+// globals.css do the rest.
 const DEFAULT_HUE = DEFAULT_ACCENT_HUE;
 const DEFAULT_CHROMA = DEFAULT_ACCENT_CHROMA;
-
-// Each quick swatch is a curated two-accent + background pairing, not just an
-// accent: an editorial pair (see lib/theme/palette-presets.ts) over a paper
-// tint that sits well under both.
-const PRESETS = PALETTE_PRESETS;
 
 // Display-layer font: wordmark, sender names, subjects, section headers.
 // Body copy and controls always stay sans.
@@ -46,8 +54,11 @@ export function useApplyThemeExtras() {
   const accentChroma = useClientStore((s) => s.accentChroma);
   const accent2Hue = useClientStore((s) => s.accent2Hue);
   const accent2Chroma = useClientStore((s) => s.accent2Chroma);
+  const accent3Hue = useClientStore((s) => s.accent3Hue);
+  const accent3Chroma = useClientStore((s) => s.accent3Chroma);
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
+  const depthSpread = useClientStore((s) => s.depthSpread);
   const washOpacity = useClientStore((s) => s.washOpacity);
   const bgWashOpacity = useClientStore((s) => s.bgWashOpacity);
   const grainOpacity = useClientStore((s) => s.grainOpacity);
@@ -66,8 +77,14 @@ export function useApplyThemeExtras() {
       '--accent-2-chroma',
       accent2Hue == null ? null : String(accent2Chroma ?? DEFAULT_ACCENT_2_CHROMA),
     );
+    setOrClear('--accent-3-hue', accent3Hue == null ? null : String(accent3Hue));
+    setOrClear(
+      '--accent-3-chroma',
+      accent3Hue == null ? null : String(accent3Chroma ?? DEFAULT_ACCENT_3_CHROMA),
+    );
     setOrClear('--bg-hue', bgHue == null ? null : String(bgHue));
     setOrClear('--surface-tint', surfaceTint > 0 ? String(surfaceTint) : null);
+    setOrClear('--depth-spread', depthSpread !== 1 ? String(depthSpread) : null);
     setOrClear('--wash-opacity', washOpacity > 0 ? String(washOpacity) : null);
     setOrClear('--bg-wash-opacity', bgWashOpacity > 0 ? String(bgWashOpacity) : null);
     setOrClear('--grain-opacity', grainOpacity > 0 ? String(grainOpacity) : null);
@@ -79,8 +96,11 @@ export function useApplyThemeExtras() {
     accentChroma,
     accent2Hue,
     accent2Chroma,
+    accent3Hue,
+    accent3Chroma,
     bgHue,
     surfaceTint,
+    depthSpread,
     washOpacity,
     bgWashOpacity,
     grainOpacity,
@@ -91,6 +111,131 @@ export function useApplyThemeExtras() {
 
 const HUE_TRACK =
   'linear-gradient(to right, oklch(0.62 0.11 0), oklch(0.62 0.11 60), oklch(0.62 0.11 120), oklch(0.62 0.11 180), oklch(0.62 0.11 240), oklch(0.62 0.11 300), oklch(0.62 0.11 359))';
+
+// Wheel geometry (px, inside a 176px square).
+const WHEEL_SIZE = 176;
+const STOP_RING_RADIUS = 72;
+const STOP_STEP_DEG = 360 / WHEEL_STOP_COUNT;
+// Radial drag: pulling one dot-spacing in/out shifts brilliance by ~0.45.
+const BRILLIANCE_PER_PX = 0.011;
+
+function stopSwatch(stop: PaletteStop) {
+  const a1 = `oklch(0.62 ${stop.chroma} ${stop.hue})`;
+  const a2 = `oklch(0.62 ${stop.chroma2} ${stop.hue2})`;
+  const a3 = `oklch(0.62 ${stop.chroma3} ${stop.hue3})`;
+  return `conic-gradient(from 210deg, ${a1} 0 33.4%, ${a2} 33.4% 66.7%, ${a3} 66.7% 100%)`;
+}
+
+function PaletteWheel({
+  stopIndex,
+  brilliance,
+  onScrub,
+}: {
+  stopIndex: number;
+  brilliance: number;
+  onScrub: (stopIndex: number, brilliance: number) => void;
+}) {
+  const wheelRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startRadius: number; startBrilliance: number; moved: boolean } | null>(null);
+  const current = paletteStop(stopIndex, brilliance);
+  const paper = `oklch(0.96 ${0.008 + current.surfaceTint * 0.03} ${current.bgHue})`;
+
+  const polar = (event: React.PointerEvent) => {
+    const rect = wheelRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const dx = event.clientX - (rect.left + rect.width / 2);
+    const dy = event.clientY - (rect.top + rect.height / 2);
+    const angle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+    const index =
+      ((Math.round(angle / STOP_STEP_DEG) % WHEEL_STOP_COUNT) + WHEEL_STOP_COUNT) % WHEEL_STOP_COUNT;
+    return { index, radius: Math.hypot(dx, dy) };
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div
+        ref={wheelRef}
+        role="slider"
+        aria-label="Palette wheel"
+        aria-valuemin={0}
+        aria-valuemax={WHEEL_STOP_COUNT - 1}
+        aria-valuenow={stopIndex}
+        aria-valuetext={`Palette ${stopIndex + 1} of ${WHEEL_STOP_COUNT}`}
+        tabIndex={0}
+        className="relative cursor-pointer touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/50"
+        style={{ width: WHEEL_SIZE, height: WHEEL_SIZE }}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            onScrub((stopIndex + 1) % WHEEL_STOP_COUNT, brilliance);
+          } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            onScrub((stopIndex - 1 + WHEEL_STOP_COUNT) % WHEEL_STOP_COUNT, brilliance);
+          }
+        }}
+        onPointerDown={(event) => {
+          const point = polar(event);
+          if (!point) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          dragRef.current = { startRadius: point.radius, startBrilliance: brilliance, moved: false };
+          onScrub(point.index, brilliance);
+        }}
+        onPointerMove={(event) => {
+          const drag = dragRef.current;
+          const point = drag && polar(event);
+          if (!drag || !point) return;
+          const pulled = point.radius - drag.startRadius;
+          if (Math.abs(pulled) > 6) drag.moved = true;
+          onScrub(
+            point.index,
+            drag.moved ? clampBrilliance(drag.startBrilliance + pulled * BRILLIANCE_PER_PX) : brilliance,
+          );
+        }}
+        onPointerUp={() => {
+          dragRef.current = null;
+        }}
+      >
+        {Array.from({ length: WHEEL_STOP_COUNT }, (_, index) => {
+          const stop = paletteStop(index, brilliance);
+          const angle = ((index * STOP_STEP_DEG - 90) * Math.PI) / 180;
+          const x = WHEEL_SIZE / 2 + Math.cos(angle) * STOP_RING_RADIUS;
+          const y = WHEEL_SIZE / 2 + Math.sin(angle) * STOP_RING_RADIUS;
+          return (
+            <span
+              key={stop.hue}
+              aria-hidden
+              className={cn(
+                'absolute block size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-black/10 transition-transform duration-[var(--duration-fast)]',
+                index === stopIndex &&
+                  'scale-125 ring-2 ring-[var(--color-text)] ring-offset-2 ring-offset-[var(--color-bg-elevated)]',
+              )}
+              style={{ left: x, top: y, background: stopSwatch(stop) }}
+            />
+          );
+        })}
+        {/* Center preview: the paper seat carrying the three voices. */}
+        <div
+          className="absolute left-1/2 top-1/2 grid size-[76px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-[var(--color-border)] shadow-[var(--shadow-soft)]"
+          style={{ background: paper }}
+        >
+          <div className="flex items-center -space-x-1.5">
+            {[
+              [current.chroma, current.hue],
+              [current.chroma2, current.hue2],
+              [current.chroma3, current.hue3],
+            ].map(([chroma, hue]) => (
+              <span
+                key={hue}
+                className="block size-5 rounded-full border-2 border-[var(--color-bg-elevated)]"
+                style={{ background: `oklch(0.55 ${chroma} ${hue})` }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -142,6 +287,47 @@ function Slider({
   );
 }
 
+function AccentSliders({
+  title,
+  hue,
+  chroma,
+  onChange,
+}: {
+  title: string;
+  hue: number;
+  chroma: number;
+  onChange: (hue: number, chroma: number) => void;
+}) {
+  return (
+    <Section title={title}>
+      <div className="space-y-2">
+        <Slider
+          label="Hue"
+          min={0}
+          max={359}
+          step={1}
+          value={hue}
+          readout={`${Math.round(hue)}°`}
+          onChange={(value) => onChange(value, Math.max(chroma, 0.08))}
+          trackStyle={{ background: HUE_TRACK }}
+        />
+        <Slider
+          label="Intensity"
+          min={0.01}
+          max={0.16}
+          step={0.005}
+          value={chroma}
+          readout={`${Math.round(((chroma - 0.01) / 0.15) * 100)}%`}
+          onChange={(value) => onChange(hue, value)}
+          trackStyle={{
+            background: `linear-gradient(to right, oklch(0.62 0.01 ${hue}), oklch(0.62 0.16 ${hue}))`,
+          }}
+        />
+      </div>
+    </Section>
+  );
+}
+
 export function ThemePanel({ className }: { className?: string }) {
   useApplyThemeExtras();
   const { theme, setTheme } = useTheme();
@@ -167,10 +353,15 @@ export function ThemePanel({ className }: { className?: string }) {
   const accent2Hue = useClientStore((s) => s.accent2Hue);
   const accent2Chroma = useClientStore((s) => s.accent2Chroma);
   const setAccent2 = useClientStore((s) => s.setAccent2);
+  const accent3Hue = useClientStore((s) => s.accent3Hue);
+  const accent3Chroma = useClientStore((s) => s.accent3Chroma);
+  const setAccent3 = useClientStore((s) => s.setAccent3);
   const bgHue = useClientStore((s) => s.bgHue);
   const setBgHue = useClientStore((s) => s.setBgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
   const setSurfaceTint = useClientStore((s) => s.setSurfaceTint);
+  const depthSpread = useClientStore((s) => s.depthSpread);
+  const setDepthSpread = useClientStore((s) => s.setDepthSpread);
   const washOpacity = useClientStore((s) => s.washOpacity);
   const setWashOpacity = useClientStore((s) => s.setWashOpacity);
   const bgWashOpacity = useClientStore((s) => s.bgWashOpacity);
@@ -186,7 +377,22 @@ export function ThemePanel({ className }: { className?: string }) {
   const chroma = accentChroma ?? DEFAULT_CHROMA;
   const hue2 = accent2Hue ?? DEFAULT_ACCENT_2_HUE;
   const chroma2 = accent2Chroma ?? DEFAULT_ACCENT_2_CHROMA;
+  const hue3 = accent3Hue ?? DEFAULT_ACCENT_3_HUE;
+  const chroma3 = accent3Chroma ?? DEFAULT_ACCENT_3_CHROMA;
   const backgroundHue = bgHue ?? DEFAULT_HUE;
+  const wheelStop = nearestWheelStop(hue);
+  const brilliance = brillianceFromChroma(chroma);
+
+  // A wheel scrub writes the complete palette object: chord + paper + tint.
+  const applyWheel = (index: number, nextBrilliance: number) => {
+    const stop = paletteStop(index, nextBrilliance);
+    setAccent(stop.hue, stop.chroma);
+    setAccent2(stop.hue2, stop.chroma2);
+    setAccent3(stop.hue3, stop.chroma3);
+    setBgHue(stop.bgHue);
+    setSurfaceTint(stop.surfaceTint);
+  };
+
   if (!mounted) return <div className={cn('h-7 w-7', className)} />;
   const mode = theme === 'light' || theme === 'dark' ? theme : 'system';
 
@@ -205,7 +411,11 @@ export function ThemePanel({ className }: { className?: string }) {
           <Palette className="h-3.5 w-3.5" />
         </button>
       </PopoverTrigger>
-      <PopoverContent side="top" align="end" className="w-64 space-y-2.5 p-3">
+      <PopoverContent
+        side="top"
+        align="end"
+        className="max-h-[min(80vh,760px)] w-64 space-y-2.5 overflow-y-auto p-3"
+      >
         {/* Appearance — Arc's auto/light/dark row. */}
         <div className="flex items-center justify-center gap-1">
           {(
@@ -232,107 +442,27 @@ export function ThemePanel({ className }: { className?: string }) {
           ))}
         </div>
 
-        <Section title="Accent">
-          <div className="mb-2 grid grid-cols-6 gap-1.5">
-            {PRESETS.map((preset) => {
-              const isDefault = preset.hue === DEFAULT_HUE && accentHue === null;
-              const selected =
-                isDefault ||
-                (accentHue !== null && preset.hue === hue && Math.abs(preset.chroma - chroma) < 0.005);
-              return (
-                <button
-                  key={preset.name}
-                  type="button"
-                  title={preset.name}
-                  onClick={() => {
-                    if (preset.hue === DEFAULT_HUE && preset.chroma === DEFAULT_CHROMA) {
-                      setAccent(null, null);
-                    } else {
-                      setAccent(preset.hue, preset.chroma);
-                    }
-                    if (preset.hue2 === DEFAULT_ACCENT_2_HUE && preset.chroma2 === DEFAULT_ACCENT_2_CHROMA) {
-                      setAccent2(null, null);
-                    } else {
-                      setAccent2(preset.hue2, preset.chroma2);
-                    }
-                    setBgHue(preset.bgHue);
-                    setSurfaceTint(preset.surfaceTint);
-                  }}
-                  className={cn(
-                    'grid h-7 w-7 place-items-center rounded-full border border-[var(--color-border)] transition-transform duration-[var(--duration-fast)] hover:scale-110',
-                    selected &&
-                      'ring-2 ring-[var(--color-text)] ring-offset-2 ring-offset-[var(--color-bg-elevated)]',
-                  )}
-                  style={{
-                    background:
-                      preset.bgHue == null
-                        ? 'var(--color-bg)'
-                        : `oklch(0.96 ${0.012 + preset.surfaceTint * 0.03} ${preset.bgHue})`,
-                  }}
-                >
-                  <span
-                    className="block h-3.5 w-3.5 rounded-full"
-                    style={{
-                      background: `linear-gradient(135deg, oklch(0.62 ${preset.chroma} ${preset.hue}) 50%, oklch(0.62 ${preset.chroma2} ${preset.hue2}) 50%)`,
-                    }}
-                  />
-                  <span className="sr-only">{preset.name}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="space-y-2">
+        <Section title="Palette">
+          <PaletteWheel stopIndex={wheelStop} brilliance={brilliance} onScrub={applyWheel} />
+          <div className="mt-2">
             <Slider
-              label="Hue"
-              min={0}
-              max={359}
-              step={1}
-              value={hue}
-              readout={`${Math.round(hue)}°`}
-              onChange={(value) => setAccent(value, Math.max(chroma, 0.08))}
-              trackStyle={{ background: HUE_TRACK }}
-            />
-            <Slider
-              label="Intensity"
-              min={0.01}
-              max={0.16}
-              step={0.005}
-              value={chroma}
-              readout={`${Math.round(((chroma - 0.01) / 0.15) * 100)}%`}
-              onChange={(value) => setAccent(hue, value)}
+              label="Brilliance"
+              min={MIN_BRILLIANCE}
+              max={MAX_BRILLIANCE}
+              step={0.05}
+              value={brilliance}
+              readout={`${Math.round(brilliance * 100)}%`}
+              onChange={(value) => applyWheel(wheelStop, value)}
               trackStyle={{
-                background: `linear-gradient(to right, oklch(0.62 0.01 ${hue}), oklch(0.62 0.16 ${hue}))`,
+                background: `linear-gradient(to right, oklch(0.62 0.012 ${hue}), oklch(0.62 0.135 ${hue}))`,
               }}
             />
           </div>
         </Section>
 
-        <Section title="Second accent">
-          <div className="space-y-2">
-            <Slider
-              label="Hue"
-              min={0}
-              max={359}
-              step={1}
-              value={hue2}
-              readout={`${Math.round(hue2)}°`}
-              onChange={(value) => setAccent2(value, Math.max(chroma2, 0.08))}
-              trackStyle={{ background: HUE_TRACK }}
-            />
-            <Slider
-              label="Intensity"
-              min={0.01}
-              max={0.16}
-              step={0.005}
-              value={chroma2}
-              readout={`${Math.round(((chroma2 - 0.01) / 0.15) * 100)}%`}
-              onChange={(value) => setAccent2(hue2, value)}
-              trackStyle={{
-                background: `linear-gradient(to right, oklch(0.62 0.01 ${hue2}), oklch(0.62 0.16 ${hue2}))`,
-              }}
-            />
-          </div>
-        </Section>
+        <AccentSliders title="Accent" hue={hue} chroma={chroma} onChange={setAccent} />
+        <AccentSliders title="Second accent" hue={hue2} chroma={chroma2} onChange={setAccent2} />
+        <AccentSliders title="Third accent" hue={hue3} chroma={chroma3} onChange={setAccent3} />
 
         <Section title="Background">
           <div className="space-y-2">
@@ -357,6 +487,15 @@ export function ThemePanel({ className }: { className?: string }) {
               trackStyle={{
                 background: `linear-gradient(to right, var(--color-bg-muted), oklch(0.45 0.06 ${backgroundHue}))`,
               }}
+            />
+            <Slider
+              label="Depth"
+              min={0.4}
+              max={1.6}
+              step={0.05}
+              value={depthSpread}
+              readout={depthSpread < 0.75 ? 'Flat' : depthSpread > 1.25 ? 'Deep' : 'Standard'}
+              onChange={setDepthSpread}
             />
           </div>
         </Section>

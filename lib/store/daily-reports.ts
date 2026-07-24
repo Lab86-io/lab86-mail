@@ -1,6 +1,8 @@
+import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
 import { parseBriefDocument } from '../shared/brief-document';
+import { parseTriageHandoffs } from '../shared/triage-handoff';
 import {
   DAILY_REPORT_ARTIFACT_ERROR_STAGES,
   type DailyReport,
@@ -121,6 +123,7 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
     services: Array.isArray(raw.services) ? raw.services : undefined,
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
+    handoffs: parseTriageHandoffs(raw.handoffs),
     composition: raw.composition,
     document: migrateBriefDocument(raw.document),
     html: typeof raw.html === 'string' ? raw.html : undefined,
@@ -163,6 +166,10 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
     model: raw.model,
     errors: Array.isArray(raw.errors) ? raw.errors : undefined,
   };
+
+  if (!migrated.handoffs?.length) {
+    migrated.handoffs = buildTriageHandoffIndex(migrated);
+  }
 
   if (!migrated.composition && migrated.status !== 'partial') {
     migrated.composition = compositionFromReport(migrated);

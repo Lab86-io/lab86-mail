@@ -360,6 +360,81 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toContain('draft_reply');
   });
 
+  test('renders populated SBAR handoffs with every move, trail, and adjacent action', () => {
+    const html = buildNativeDailyReportArtifact(sampleReport(), {
+      version: 1,
+      title: 'SBAR Brief',
+      services: ['github'],
+      blocks: [
+        {
+          type: 'handoff_digest',
+          title: 'Action handoffs',
+          items: [
+            {
+              id: 'handoff-1',
+              lane: 'needs_you',
+              situation: 'Launch <date> is unresolved.',
+              assessment: 'Planning is blocked.',
+              background: ['Maya asked for a date.', 'The review is tomorrow.'],
+              recommendations: ['Confirm July 31.', 'Send Maya the final date.'],
+              sourceRefs: [{ kind: 'thread', id: 'thread-1', account: 'me@example.test' }],
+              actions: [
+                {
+                  action: 'open_thread',
+                  label: 'Open thread',
+                  payload: { account: 'me@example.test', threadId: 'thread-1' },
+                  style: 'primary',
+                },
+              ],
+            },
+            {
+              id: 'handoff-2',
+              lane: 'focus',
+              situation: 'Review the build.',
+              assessment: 'The build is ready.',
+              background: [],
+              recommendations: ['Approve the build.'],
+              sourceRefs: [{ kind: 'work', id: 'work-1' }],
+              actions: [],
+            },
+          ],
+          sourceRefs: [
+            { kind: 'thread', id: 'thread-1', account: 'me@example.test' },
+            { kind: 'work', id: 'work-1' },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain('data-handoff-id="handoff-1"');
+    expect(html).toContain('Launch &lt;date&gt; is unresolved.');
+    expect(html).toContain('<strong>My read:</strong> Planning is blocked.');
+    expect(html).toContain('aria-label="Your moves"');
+    expect(html).toContain('<li>Confirm July 31.</li><li>Send Maya the final date.</li>');
+    expect(html).toContain('<summary>Why this?</summary>');
+    expect(html).toContain('open_thread');
+    expect(html).toContain('aria-label="Your move"');
+    expect(html).not.toContain('undefined');
+  });
+
+  test('renders an honest empty state for an empty handoff digest', () => {
+    const html = buildNativeDailyReportArtifact(sampleReport(), {
+      version: 1,
+      title: 'Quiet Brief',
+      services: [],
+      blocks: [
+        {
+          type: 'handoff_digest',
+          title: 'Action handoffs',
+          items: [],
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(html).toContain('No action handoff needs you right now.');
+  });
+
   test('keeps non-destructive quiet actions labeled', () => {
     const html = buildNativeDailyReportArtifact(sampleReport(), {
       version: 1,

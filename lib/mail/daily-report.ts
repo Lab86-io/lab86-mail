@@ -5,8 +5,8 @@ import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import {
   type AlbatrossDailyReportContext,
   loadLiveAlbatrossDailyReportContext,
-  summarizeAlbatrossDailyReportContext,
 } from '../albatross/daily-report';
+import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
@@ -41,6 +41,12 @@ import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
 import { classifyThreadsBatched } from '../tools/ai';
 import { briefServiceFromProvider } from './brief-services';
+import {
+  deterministicRecommendation,
+  normalizeRecommendation,
+  recommendationFor,
+  recommendationForInsight,
+} from './thread-handoff';
 
 // The user's own addresses. Used to decide message direction (inbound vs outbound)
 // for reply/follow-up detection and to keep him out of the "people" list. The
@@ -429,7 +435,14 @@ export async function generateDailyReport(input: {
             : 'open',
         reason: insight.reason,
         openLoops: insight.openLoops,
-        nextAction: insight.needsReply ? 'Reply' : insight.waitingOnSomeone ? 'Follow up' : 'Review',
+        nextAction:
+          insight.nextAction ||
+          deterministicRecommendation({
+            lane: insight.lane,
+            people: insight.people,
+            subject: insight.subject,
+            openLoops: insight.openLoops,
+          }),
         dueAt: insight.commitments.find((c) => c.dueAt)?.dueAt || null,
         importance: insight.needsReply || insight.commitments.length ? 1 : 2,
         source: 'report',
@@ -445,7 +458,10 @@ export async function generateDailyReport(input: {
     accounts,
     services: serviceIds,
     insights,
-    tracked: refreshedTracked.filter((item) => accountIdSet.has(String(item.account).toLowerCase())),
+    tracked: refreshedTracked.filter((item) => {
+      const trackedAccount = String(item.account).toLowerCase();
+      return accountIdSet.has(trackedAccount) || selectedAccounts.has(trackedAccount);
+    }),
     lastDateByKey,
     calendarContext,
     taskContext,
@@ -778,6 +794,12 @@ async function buildThreadInsight(
     now,
   });
   let openLoops = baseOpenLoops;
+  let nextAction = deterministicRecommendation({
+    lane: floor.lane,
+    people,
+    subject: thread.subject,
+    openLoops: baseOpenLoops,
+  });
   let lane = floor.lane;
   let model = 'local';
 
@@ -802,7 +824,7 @@ async function buildThreadInsight(
       const parsed = parseJson(aiText);
       if (parsed) {
         summary = stripEmoji(String(parsed.summary || summary)).slice(0, 500);
-        reason = stripEmoji(String(parsed.reason || parsed.nextAction || reason)).slice(0, 280);
+        reason = stripEmoji(String(parsed.reason || reason)).slice(0, 280);
         if (Array.isArray(parsed.openLoops) && parsed.openLoops.length) {
           openLoops = parsed.openLoops
             .map((v: unknown) => stripEmoji(String(v)))
@@ -811,6 +833,13 @@ async function buildThreadInsight(
         }
         // Clamp: the LLM can only promote above the deterministic floor lane.
         lane = laneMax(floor.lane, parseLane(parsed.suggestedLane) || floor.lane);
+        nextAction = recommendationFor({
+          candidate: normalizeRecommendation(parsed.nextAction),
+          lane,
+          people,
+          subject: thread.subject,
+          openLoops,
+        });
         model = describeProvider().primary || 'primary';
       }
     } catch (err) {
@@ -839,6 +868,14 @@ async function buildThreadInsight(
     suggestedTrack: floor.protected,
     suggestedCategory: (smart?.primary as SmartCategoryId) || 'review',
     reason,
+    nextAction:
+      nextAction ||
+      deterministicRecommendation({
+        lane,
+        people,
+        subject: thread.subject,
+        openLoops,
+      }),
     replyOwed: floor.replyOwed,
     followUpOwed: floor.followUpOwed,
     isNewSender: floor.isNewSender,
@@ -900,7 +937,7 @@ async function composeReport(input: {
       subject: stripEmoji(insight.subject),
       people: insight.people,
       whyItMatters: stripEmoji(insight.reason || insight.summary),
-      nextAction: insight.replyOwed ? 'Reply' : insight.followUpOwed ? 'Follow up' : tracked?.nextAction,
+      nextAction: recommendationForInsight(insight, tracked),
       openLoops: insight.openLoops.slice(0, 3),
       // Bulk-tail items never carry a due date — automated notices are not
       // time-boxed actions, and stale tracked records must not leak one in.
@@ -958,29 +995,69 @@ async function composeReport(input: {
       subject: stripEmoji(item.subject),
       people: item.participants.map(stripEmoji),
       whyItMatters: trackedReason(item, input.now),
-      nextAction: item.nextAction ? stripEmoji(item.nextAction) : undefined,
+      nextAction: recommendationFor({
+        candidate: item.nextAction,
+        lane: 'tracked',
+        people: item.participants,
+        subject: item.subject,
+        openLoops: item.openLoops,
+      }),
+      openLoops: item.openLoops.map(stripEmoji).slice(0, 3),
       dueAt: item.dueAt,
       unread: false,
       trackedThreadId: item._id,
+      surfacedBecause: ['tracked'],
       lane: 'tracked' as ReportLane,
       receivedAt: input.lastDateByKey.get(`${item.account}:${item.threadId}`) || null,
     }));
   const visibleTrackedItems = trackedItems.filter((item) => !hiddenByUser(item));
 
-  let narrative = localNarrative(
-    input.kind,
+  let narrative = '';
+  const sections: DailyReport['sections'] = {
     replyOwed,
     followUpOwed,
     newPeople,
-    visibleTrackedItems,
-    reportTasks,
-    reportCalendar,
-    input.now,
-  );
-  const albatrossSummary = summarizeAlbatrossDailyReportContext(input.albatrossContext);
-  if (albatrossSummary) {
-    narrative = `${narrative} ${albatrossSummary}`;
-  }
+    timeSensitive,
+    tracked: visibleTrackedItems,
+    fyi,
+    bulkTail,
+    tasks: reportTasks,
+    calendar: reportCalendar,
+    mcp: input.mcpContext ?? [],
+    albatross: input.albatrossContext,
+    noiseSummary:
+      'Bulk, subscribed, platform, and promo mail is collapsed into the tail below. Real people are never hidden there.',
+  };
+  const stats: DailyReport['stats'] = {
+    scannedThreads: input.insights.length,
+    trackedThreads: visibleTrackedItems.length,
+    needsReply: replyOwed.length,
+    replyOwed: replyOwed.length,
+    dueSoon: timeSensitive.length,
+    bulkTailCount: bulkTail.length,
+    unread: 0,
+    openTasks: reportTasks.filter((task) => !task.completedAt).length,
+    completedTasks: reportTasks.filter((task) => task.completedAt).length,
+    calendarEvents: reportCalendar.length,
+    albatrossActiveIntents: input.albatrossContext.activeIntents.length,
+    albatrossActiveProjects: input.albatrossContext.activeProjects.length,
+    albatrossQuestions: input.albatrossContext.askBeforeCentering.length,
+  };
+  const reportId = input.reportId ?? randomUUID();
+  const title = `${
+    input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'
+  } Daily Report`;
+  const handoffs = buildTriageHandoffIndex({
+    _id: reportId,
+    kind: input.kind,
+    generatedAt: input.now,
+    accounts: input.accounts,
+    title,
+    narrative,
+    sections,
+    stats,
+  });
+  narrative = localHandoffNarrative(input.kind, handoffs);
   let model = 'local';
 
   if (!input.skipNarrative && (await hasAiForCurrentUser())) {
@@ -988,19 +1065,21 @@ async function composeReport(input: {
       const { text } = await generateTextForCurrentUser({
         feature: 'daily_report_narrative',
         speed: 'primary',
-        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from their email, tasks, calendar, memories, tracked threads, and Albatross area/intent context — like a sharp chief-of-staff briefing them over coffee. Tell the story of where things stand: open with the through-line of the day, then walk through replies owed, follow-ups, active tasks, active intents/projects, and calendar commitments. Use the last week first, then fold in relevant month context. Name people, task titles, project titles, and event titles when useful. Loud Albatross areas marked ask_before_centering must be phrased as an explicit question, not treated as today's priority. Active declared intents should appear even if inbox volume is quiet. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, no greeting, no bullet lists. Don't mention low-value promotions except as excluded noise. Around 170-230 words.`,
+        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from the supplied canonical SBAR handoff index — like a sharp chief of staff briefing them over coffee. Lead with the through-line of the day and rank the already-deduplicated handoffs; do not rebuild triage from raw source categories, split merged handoffs, or omit protected handoffs. Name people, tasks, projects, events, and tools when useful. Areas asking before centering must remain explicit questions. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, greeting, bullet lists, clinical SBAR labels, or low-value noise. Around 170-230 words.`,
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
-          `Calendar context: ${reportCalendar.map(calendarContextLine).join(' | ') || 'none'}`,
-          `Task context: ${reportTasks.map(taskContextLine).join(' | ') || 'none'}`,
-          `Albatross context: ${albatrossSummary || 'none'}`,
+          `Canonical handoffs: ${JSON.stringify(
+            handoffs.slice(0, 64).map((handoff) => ({
+              id: handoff.id,
+              protected: handoff.protected,
+              lane: handoff.lane,
+              situation: handoff.situation,
+              assessment: handoff.assessment,
+              recommendations: handoff.items.map((item) => item.recommendation),
+            })),
+          )}`,
           `Memory context: ${input.memoryContext.join(' | ') || 'none'}`,
-          `Reply owed: ${replyOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
-          `Follow-up owed: ${followUpOwed.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
-          `New people: ${newPeople.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
-          `Time-sensitive: ${timeSensitive.map((i) => `${i.people.join(', ')}: ${i.subject} due ${i.dueAt ? new Date(i.dueAt).toString() : ''}`).join('\n')}`,
-          `Tracked: ${visibleTrackedItems.map((i) => `${i.people.join(', ')}: ${i.subject} (${i.whyItMatters})`).join('\n')}`,
         ].join('\n\n'),
       });
       narrative = stripEmoji(text.trim()) || narrative;
@@ -1008,149 +1087,46 @@ async function composeReport(input: {
     } catch {}
   }
 
-  return {
-    _id: input.reportId ?? randomUUID(),
+  const report: DailyReport = {
+    _id: reportId,
     kind: input.kind,
     generatedAt: input.now,
     status: input.status ?? 'ready',
     progress: input.progress,
     accounts: input.accounts,
     services: input.services,
-    title: `${input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'} Daily Report`,
+    title,
     narrative: stripEmoji(narrative),
-    sections: {
-      replyOwed,
-      followUpOwed,
-      newPeople,
-      timeSensitive,
-      tracked: visibleTrackedItems,
-      fyi,
-      bulkTail,
-      tasks: reportTasks,
-      calendar: reportCalendar,
-      mcp: input.mcpContext ?? [],
-      albatross: input.albatrossContext,
-      noiseSummary:
-        'Bulk, subscribed, platform, and promo mail is collapsed into the tail below. Real people are never hidden there.',
-    },
-    stats: {
-      scannedThreads: input.insights.length,
-      trackedThreads: visibleTrackedItems.length,
-      needsReply: replyOwed.length,
-      replyOwed: replyOwed.length,
-      dueSoon: timeSensitive.length,
-      bulkTailCount: bulkTail.length,
-      unread: 0,
-      openTasks: reportTasks.filter((task) => !task.completedAt).length,
-      completedTasks: reportTasks.filter((task) => task.completedAt).length,
-      calendarEvents: reportCalendar.length,
-      albatrossActiveIntents: input.albatrossContext.activeIntents.length,
-      albatrossActiveProjects: input.albatrossContext.activeProjects.length,
-      albatrossQuestions: input.albatrossContext.askBeforeCentering.length,
-    },
+    handoffs,
+    sections,
+    stats,
     model,
     errors: input.errors,
-  } satisfies DailyReport;
+  };
+  return report;
 }
 
-function localNarrative(
+function localHandoffNarrative(
   kind: DailyReport['kind'],
-  replyOwed: DailyReportItem[],
-  followUpOwed: DailyReportItem[],
-  newPeople: DailyReportItem[],
-  tracked: DailyReportItem[],
-  tasks: DailyReportTaskItem[] = [],
-  calendar: DailyReportCalendarItem[] = [],
-  now: number = Date.now(),
-) {
+  handoffs: NonNullable<DailyReport['handoffs']>,
+): string {
   const opener =
     kind === 'evening'
       ? "Tonight's wrap-up:"
       : kind === 'morning'
         ? "This morning's brief:"
         : "Here's where things stand:";
-
-  if (!replyOwed.length && !followUpOwed.length && !newPeople.length) {
-    return `${opener} a quiet inbox — nothing is waiting on you.`;
-  }
-
-  const pieces: string[] = [];
-  if (replyOwed.length)
-    pieces.push(`${replyOwed.length} ${replyOwed.length === 1 ? 'reply is' : 'replies are'} owed`);
-  if (followUpOwed.length)
-    pieces.push(
-      `${followUpOwed.length} ${followUpOwed.length === 1 ? 'thread needs' : 'threads need'} a follow-up`,
-    );
-  if (newPeople.length)
-    pieces.push(`${newPeople.length} new ${newPeople.length === 1 ? 'person' : 'people'} reached out`);
-
-  const sentence =
-    pieces.length === 1 ? pieces[0] : `${pieces.slice(0, -1).join(', ')}, and ${pieces[pieces.length - 1]}`;
-  const parts = [`${opener} ${sentence}.`];
-
-  // Name a few of the people awaiting a reply — a more human briefing.
-  const nameList = (items: DailyReportItem[]) =>
-    items
-      .slice(0, 3)
-      .map((i) => personName(i.people[0] || '') || subjectClause(i.subject))
-      .filter(Boolean);
-  const joinNames = (names: string[]) =>
-    names.length <= 1 ? names[0] || '' : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-
-  const replyNames = nameList(replyOwed);
-  if (replyNames.length) {
-    const more = replyOwed.length - replyNames.length;
-    parts.push(
-      `${joinNames(replyNames)}${more > 0 ? ` and ${more} other${more === 1 ? '' : 's'}` : ''} ${
-        replyOwed.length === 1 ? 'is' : 'are'
-      } still waiting to hear back from you.`,
-    );
-  }
-
-  const lead = replyOwed[0] || followUpOwed[0] || newPeople[0];
-  if (lead) {
-    const who = personName(lead.people[0] || '') || subjectClause(lead.subject);
-    parts.push(`Start with ${who} — ${lead.whyItMatters}`);
-  }
-
-  if (followUpOwed.length) {
-    const who = personName(followUpOwed[0].people[0] || '') || subjectClause(followUpOwed[0].subject);
-    const more = followUpOwed.length - 1;
-    parts.push(
-      `You're still waiting on ${who}${more > 0 ? ` and ${more} other${more === 1 ? '' : 's'}` : ''} to circle back.`,
-    );
-  }
-
-  if (tracked.length) {
-    const names = nameList(tracked);
-    if (names.length) parts.push(`And you're keeping an eye on ${joinNames(names)}.`);
-  }
-  const openTasks = tasks.filter((task) => !task.completedAt);
-  if (openTasks.length) {
-    const first = openTasks[0];
-    parts.push(
-      `On the task board, ${first.title}${openTasks.length > 1 ? ` leads ${openTasks.length - 1} other open task${openTasks.length - 1 === 1 ? '' : 's'}` : ' is the active item'}.`,
-    );
-  }
-  const nextEvent = calendar.find((event) => event.endAt >= now);
-  if (nextEvent) {
-    parts.push(`Calendar-wise, ${nextEvent.title} is the next visible commitment.`);
-  }
-  return parts.join(' ');
+  if (!handoffs.length) return `${opener} a quiet day — no open handoff needs your attention.`;
+  const protectedCount = handoffs.filter((handoff) => handoff.protected).length;
+  const lead = handoffs[0];
+  const countLine = protectedCount
+    ? `${protectedCount} ${protectedCount === 1 ? 'handoff needs' : 'handoffs need'} you`
+    : `${handoffs.length} ${handoffs.length === 1 ? 'handoff is' : 'handoffs are'} worth keeping in view`;
+  return `${opener} ${countLine}. Start with ${lead.situation}: ${lead.recommendation}`;
 }
 
 function contextScope(ts: number, now: number): 'week' | 'month' {
   return ts >= now - WEEK_CONTEXT_WINDOW && ts <= now + WEEK_CONTEXT_WINDOW ? 'week' : 'month';
-}
-
-function taskContextLine(task: DailyReportTaskItem) {
-  const parts = [
-    task.completedAt ? 'done' : 'open',
-    task.dueAt ? `due ${new Date(task.dueAt).toLocaleDateString()}` : '',
-    task.columnName ? `in ${task.columnName}` : '',
-    task.priority ? `${task.priority} priority` : '',
-  ].filter(Boolean);
-  return `${task.title}${parts.length ? ` (${parts.join(', ')})` : ''}`;
 }
 
 function calendarContextLine(event: DailyReportCalendarItem) {

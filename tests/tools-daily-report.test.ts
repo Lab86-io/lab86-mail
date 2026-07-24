@@ -162,6 +162,44 @@ describe('daily report tools', () => {
     expect(JSON.stringify(report.sections)).not.toContain('Outside scope');
   });
 
+  test('tracked handoffs preserve open loops and replace generic actions', async () => {
+    const seeded = await seedThreadMessage({
+      account: 'handoff@example.test',
+      threadId: 'tracked_handoff',
+      messageId: 'msg_tracked_handoff',
+      subject: 'Partner agreement',
+      from: 'Ben <ben@example.test>',
+      textBody: 'Legal still needs to approve the partner agreement.',
+    });
+    await withToolContext(() =>
+      upsertTrackedThread({
+        account: seeded.account,
+        threadId: seeded.threadId,
+        subject: 'Partner agreement',
+        participants: ['Ben'],
+        status: 'open',
+        nextAction: 'Review',
+        openLoops: ['Legal approval'],
+      }),
+    );
+
+    const report = await withToolContext(() =>
+      generateDailyReport({
+        kind: 'manual',
+        accounts: [seeded.account],
+        includeCalendar: false,
+        maxRecentPerAccount: 1,
+        now: Date.parse('2026-06-10T15:00:00.000Z'),
+      }),
+    );
+    const tracked = report.sections.tracked.find((item) => item.threadId === seeded.threadId);
+
+    expect(tracked?.openLoops).toEqual(['Legal approval']);
+    expect(tracked?.nextAction).toBe(
+      'Review “Partner agreement” with Ben and close the loop on Legal approval.',
+    );
+  });
+
   test('get_latest_daily_report returns the display artifact with the area brief injected, without mutating stored history', async () => {
     await withToolContext(async () => {
       const storedHtml =
