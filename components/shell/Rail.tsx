@@ -63,6 +63,7 @@ import { UserIcon } from '@/components/ui/user';
 import { UsersIcon } from '@/components/ui/users';
 import { api } from '@/convex/_generated/api';
 import { railAreaBadge, railAreaRows } from '@/lib/albatross/area-home';
+import { orderedAreaImageSources } from '@/lib/albatross/area-image';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
@@ -179,8 +180,12 @@ function AreaRailIcon({
 }: {
   area: { _id: string; name: string; faviconUrl?: string | null; imageUrl?: string | null };
 }) {
-  const [failed, setFailed] = useState(false);
-  const src = !failed ? area.faviconUrl || area.imageUrl || null : null;
+  // Tracks how many sources have failed so far (not just a single boolean) —
+  // the image is tried first, then the favicon, before falling back to the
+  // colored dot.
+  const [attempt, setAttempt] = useState(0);
+  const sources = orderedAreaImageSources(area);
+  const src = sources[attempt] ?? null;
   return (
     <div className="grid size-4 shrink-0 place-items-center">
       {src ? (
@@ -190,7 +195,7 @@ function AreaRailIcon({
           alt=""
           className="size-4 rounded-sm object-cover"
           referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
+          onError={() => setAttempt((a) => a + 1)}
         />
       ) : (
         <span

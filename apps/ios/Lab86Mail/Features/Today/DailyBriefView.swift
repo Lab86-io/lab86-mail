@@ -14,7 +14,6 @@ struct DailyBriefView: View {
     let lastRefresh: Date?
     let isOffline: Bool
     let onAction: (String, BriefActionPayload) -> Void
-    let onRegenerate: () -> Void
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
@@ -66,13 +65,6 @@ struct DailyBriefView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if !report.isGenerating {
-                Button("Regenerate", action: onRegenerate)
-                    .font(.footnote.weight(.medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
-                    .accessibilityHint("Builds a fresh edition of today’s brief")
-            }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)

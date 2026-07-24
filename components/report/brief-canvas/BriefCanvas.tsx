@@ -8,7 +8,12 @@ import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
 import { useClientStore } from '@/lib/client-state';
 import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
-import { type BriefActionV2, type BriefSourceRefV2, parseBriefDocument } from '@/lib/shared/brief-document';
+import {
+  type BriefActionV2,
+  type BriefNode,
+  type BriefSourceRefV2,
+  parseBriefDocument,
+} from '@/lib/shared/brief-document';
 import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { BriefActions } from './BriefActions';
 import { BriefMasthead } from './BriefMasthead';
@@ -200,11 +205,11 @@ export function BriefCanvas({
 
   return (
     <article
-      className="scrollable @container h-full overflow-y-auto bg-[var(--color-bg)] px-4 py-6 @[680px]:px-7"
+      className="scrollable @container h-full overflow-y-auto bg-[var(--color-bg)] px-4 py-6 @[680px]:px-7 @[1200px]:px-10"
       data-brief-document-version={document.version}
     >
       {masthead ? <BriefMasthead title={document.title} generatedAt={document.generatedAt} /> : null}
-      <header className="mx-auto mb-7 max-w-5xl border-b border-[var(--color-border)] pb-5">
+      <header className="mx-auto mb-7 max-w-[1760px] border-b border-[var(--color-border)] pb-5">
         <div className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
           <Newspaper className="size-3.5" />
           Native live brief
@@ -245,10 +250,18 @@ export function BriefCanvas({
           </time>
         )}
       </header>
-      <div className="mx-auto flex max-w-5xl flex-col gap-6">
+      {/* Newspaper flow: one column on narrow panes, two from ~840px, three
+          on a rail-closed 16:9 display (~1200px of container). Each top-level
+          block is a column unit — unbreakable, and its own container-query
+          context so nested grids respond to the column width, not the page. */}
+      <div className="mx-auto max-w-[1760px] gap-x-9 @[840px]:columns-2 @[1200px]:columns-3">
         {document.regions.map((region) => (
-          <section key={region.id} data-brief-region={region.id}>
-            <BriefNodeView node={region.tree} context={context} regionSummary={region.summary} />
+          <section key={region.id} data-brief-region={region.id} className="contents">
+            {columnBlocks(region.tree).map((block, index) => (
+              <div key={block.id ?? `${block.kind}-${index}`} className="@container mb-6 break-inside-avoid">
+                <BriefNodeView node={block} context={context} regionSummary={region.summary} />
+              </div>
+            ))}
           </section>
         ))}
       </div>
@@ -508,6 +521,13 @@ function payloadRefKey(payload: BriefActionPayload) {
   if (optional(payload, 'eventId'))
     return ['event', optional(payload, 'account') ?? '', optional(payload, 'eventId')].join(':');
   return '';
+}
+
+/* Column units for the newspaper layout: region roots that are plain stacks
+ * flatten so the columns balance at block granularity instead of treating a
+ * whole region as one unbreakable slab. */
+function columnBlocks(tree: BriefNode): BriefNode[] {
+  return tree.kind === 'stack' && tree.children.length ? tree.children : [tree];
 }
 
 function humanizeAction(action: string) {

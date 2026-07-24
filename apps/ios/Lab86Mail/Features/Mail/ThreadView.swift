@@ -1,5 +1,6 @@
 import Combine
 import ConvexMobile
+import Kingfisher
 import QuickLook
 import SwiftUI
 
@@ -23,49 +24,36 @@ struct ThreadView: View {
         Group {
             if let detail {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        threadHeader(detail)
-                        if let modelSummary {
-                            summaryCard(modelSummary)
-                        }
-                        if !linkedTasks.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Linked tasks")
-                                    .font(.headline)
-                                ForEach(linkedTasks) { task in
-                                    Button {
-                                        openTask = task
-                                    } label: {
-                                        HStack {
-                                            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                                            Text(task.title)
-                                                .foregroundStyle(.primary)
-                                            Spacer()
-                                            Image(systemName: "chevron.forward")
-                                                .font(.caption)
-                                                .foregroundStyle(.tertiary)
-                                        }
-                                        .padding(12)
-                                        .background(.thinMaterial, in: .rect(cornerRadius: 12))
-                                    }
-                                    .buttonStyle(.plain)
+                    // Each message is its own section with a pinned sender
+                    // header: as the next message reaches the bar, its sender
+                    // pushes the previous one out — the inbox's dateline
+                    // behavior, applied to authors.
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        threadLead(detail)
+                        ForEach(Array(detail.messages.enumerated()), id: \.element.id) { index, message in
+                            Section {
+                                MessageView(
+                                    message: message,
+                                    accountID: route.accountID,
+                                    expandedMessageID: $expandedMessageID
+                                )
+                                if index < detail.messages.count - 1 {
+                                    Divider()
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 2)
                                 }
+                            } header: {
+                                MessageSenderHeader(
+                                    message: message,
+                                    accountID: route.accountID,
+                                    expandedMessageID: $expandedMessageID
+                                )
                             }
                         }
-                        ForEach(detail.messages) { message in
-                            MessageView(
-                                message: message,
-                                accountID: route.accountID,
-                                expandedMessageID: $expandedMessageID
-                            )
-                        }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.top, 8)
                     .padding(.bottom, 24)
                 }
                 .background(environment.theme.paperColor)
-                .safeAreaInset(edge: .bottom, spacing: 0) { replyCapsule }
             } else if isLoading {
                 ProgressView("Opening thread…")
             } else {
@@ -78,18 +66,60 @@ struct ThreadView: View {
                 }
             }
         }
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
+        // The subject is the page's own title: it starts large and collapses
+        // into the navigation bar with the native transition. Long subjects
+        // truncate only in the compact bar state — the full text stays
+        // available through the lead row (VoiceOver + copy).
+        .navigationTitle(pageTitle)
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await summarize() }
                 } label: {
                     if isSummarizing { ProgressView() } else { Label("Summarize", systemImage: "text.append") }
                 }
                 .disabled(detail == nil || isSummarizing)
-
-                actionsMenu
+            }
+            // The thread's actions live in a native bottom bar with proper
+            // safe-area handling — Reply is the primary verb, Reply All and
+            // Forward sit one menu away, Archive keeps its own button, and
+            // everything else is under More.
+            ToolbarItem(placement: .bottomBar) {
+                Button {
+                    openComposer(mode: "reply")
+                } label: {
+                    Label("Reply", systemImage: "arrowshape.turn.up.left")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(detail == nil)
+            }
+            ToolbarItem(placement: .bottomBar) {
+                Menu {
+                    Button("Reply All", systemImage: "arrowshape.turn.up.left.2") {
+                        openComposer(mode: "reply", replyAll: true)
+                    }
+                    Button("Forward", systemImage: "arrowshape.turn.up.right") {
+                        openComposer(mode: "forward")
+                    }
+                } label: {
+                    Label("Reply options", systemImage: "ellipsis.bubble")
+                }
+                .disabled(detail == nil)
+            }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+            if let summary {
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Archive", systemImage: "archivebox") {
+                        Task {
+                            await environment.store.archive(summary)
+                            environment.navigation.threadRoute = nil
+                        }
+                    }
+                }
+            }
+            ToolbarItem(placement: .bottomBar) {
+                moreMenu
             }
         }
         .task(id: route) { await load() }
@@ -100,24 +130,58 @@ struct ThreadView: View {
         .sheet(item: $openTask) { TaskDetailView(task: $0) }
     }
 
-    // The subject as the document's own headline — the thread reads as a page,
-    // not a bar title.
-    private func threadHeader(_ detail: MailThreadDetail) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(detail.subject.isEmpty ? "No subject" : detail.subject)
-                .font(environment.theme.displayType.displayFont(size: 23))
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+    private var pageTitle: String {
+        let subject = detail?.subject ?? summary?.subject ?? ""
+        return subject.isEmpty ? "No subject" : subject
+    }
+
+    // The lead block under the large title: message count and latest activity,
+    // then machine summary and linked tasks when present. Carries the complete
+    // subject for VoiceOver and copy, since the bar truncates long titles once
+    // collapsed.
+    private func threadLead(_ detail: MailThreadDetail) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             Text(metaLine(detail))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("\(pageTitle). \(metaLine(detail))")
+                .contextMenu {
+                    Button("Copy Subject", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = pageTitle
+                    }
+                }
+            if let modelSummary {
+                summaryCard(modelSummary)
+            }
+            if !linkedTasks.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Linked tasks")
+                        .font(.headline)
+                    ForEach(linkedTasks) { task in
+                        Button {
+                            openTask = task
+                        } label: {
+                            HStack {
+                                Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
+                                Text(task.title)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "chevron.forward")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(12)
+                            .background(.thinMaterial, in: .rect(cornerRadius: 12))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 4)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 16)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
     }
 
     private func metaLine(_ detail: MailThreadDetail) -> String {
@@ -177,57 +241,7 @@ struct ThreadView: View {
         .padding(.bottom, 2)
     }
 
-    // The thread's named actions in one floating glass dock where the thumb
-    // is; rarer verbs stay in the toolbar menu.
-    private var replyCapsule: some View {
-        HStack(spacing: 4) {
-            Button {
-                openComposer(mode: "reply")
-            } label: {
-                Text("Reply")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 9)
-                    .background(Capsule().fill(environment.theme.accentColor))
-            }
-            .buttonStyle(.plain)
-            Button("Reply all") { openComposer(mode: "reply", replyAll: true) }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.primary)
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-            Button("Forward") { openComposer(mode: "forward") }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.primary)
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-            if let summary {
-                Spacer(minLength: 0)
-                Button("Archive") {
-                    Task {
-                        await environment.store.archive(summary)
-                        environment.navigation.threadRoute = nil
-                    }
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-            }
-        }
-        .padding(6)
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-        .disabled(detail == nil)
-    }
-
-    private var actionsMenu: some View {
+    private var moreMenu: some View {
         Menu {
             Button("Add to Calendar", systemImage: "calendar.badge.plus") { showsEventReview = true }
             if let summary {
@@ -249,7 +263,7 @@ struct ThreadView: View {
                 }
             }
         } label: {
-            Label("Actions", systemImage: "ellipsis.circle")
+            Label("More", systemImage: "ellipsis.circle")
         }
     }
 
@@ -261,9 +275,22 @@ struct ThreadView: View {
             if expandedMessageID == nil { expandedMessageID = detail?.messages.last?.id }
             if let summary, summary.unread { await environment.store.markRead(summary) }
             linkedTasks = await environment.store.tasksForThread(route.threadID)
+            await resolveSenderPhotos()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // One resolve pass per loaded thread; the store dedupes against its cache,
+    // and pinned-header transitions never re-trigger this (headers only read
+    // the already-cached URL).
+    private func resolveSenderPhotos() async {
+        guard let detail else { return }
+        let entries = detail.messages.compactMap { message -> (email: String, account: String)? in
+            guard let email = message.fromEmail else { return nil }
+            return (email: email, account: route.accountID)
+        }
+        await environment.mailIdentity.resolve(entries: entries)
     }
 
     private func followLiveThread() async {
@@ -340,8 +367,112 @@ struct ThreadView: View {
     }
 }
 
-// Each message is a one-elevation-step card: identity header, collapsed
-// snippet or full body — the desktop MessageCard article.
+// The message's identity row, pinned as its section header: as the reader
+// scrolls, the current author stays visible beneath the navigation bar until
+// the next message's header pushes it out. Pure presentation over cached
+// state — pinning and unpinning triggers no requests or mutations.
+private struct MessageSenderHeader: View {
+    @Environment(AppEnvironment.self) private var environment
+    let message: MailMessage
+    let accountID: String
+    @Binding var expandedMessageID: String?
+
+    private var isExpanded: Bool { expandedMessageID == message.id }
+
+    var body: some View {
+        Button {
+            withAnimation(.snappy) {
+                expandedMessageID = isExpanded ? nil : message.id
+            }
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
+                senderAvatar
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(message.sender)
+                        .font(environment.theme.displayType.displayFont(size: 15))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if !message.recipients.isEmpty {
+                        Text("to \(message.recipients)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer()
+                Text(message.date, format: .dateTime.month().day().hour().minute())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        // Opaque paper background so pinned headers read cleanly over the
+        // message content scrolling beneath them.
+        .background(environment.theme.paperColor)
+        .overlay(alignment: .bottom) {
+            Divider().opacity(0.6)
+        }
+        .contextMenu {
+            Button("Show Emails With Them", systemImage: "magnifyingglass") {
+                environment.navigation.threadRoute = nil
+                environment.navigation.selectPrimary(.mail)
+                environment.navigation.pendingMailSearch = contactAddress
+            }
+            Button("New Email", systemImage: "square.and.pencil") {
+                environment.navigation.pendingCompose = ComposePrefill(
+                    recipient: contactAddress,
+                    cc: "",
+                    bcc: "",
+                    subject: "",
+                    body: "",
+                    mode: "new",
+                    accountID: accountID,
+                    threadID: nil,
+                    messageID: nil,
+                    replyAll: false,
+                    attachmentsKey: nil,
+                    draftID: nil
+                )
+                environment.navigation.sheet = .compose
+            }
+        }
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+
+    // Provider photo when the identity store has one cached, initials
+    // otherwise — identical 30pt geometry either way.
+    @ViewBuilder
+    private var senderAvatar: some View {
+        if let url = environment.mailIdentity.photoURL(for: message.fromEmail) {
+            KFImage(url)
+                .placeholder { InitialsAvatar(name: message.sender, size: 30) }
+                .fade(duration: 0.15)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 30, height: 30)
+                .clipShape(Circle())
+        } else {
+            InitialsAvatar(name: message.sender, size: 30)
+        }
+    }
+
+    private var contactAddress: String {
+        if let email = message.fromEmail { return email }
+        let raw = message.sender
+        if let start = raw.lastIndex(of: "<"), let end = raw.lastIndex(of: ">"), start < end {
+            return String(raw[raw.index(after: start)..<end])
+        }
+        return raw
+    }
+}
+
+// The message content at full reader width: no outer card, border, or shadow —
+// just readable internal padding, with messages separated by spacing and a
+// hairline. The identity row lives in MessageSenderHeader.
 private struct MessageView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
@@ -356,78 +487,23 @@ private struct MessageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.snappy) {
-                    expandedMessageID = isExpanded ? nil : message.id
-                }
-            } label: {
-                HStack(alignment: .center, spacing: 10) {
-                    InitialsAvatar(name: message.sender, size: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(message.sender)
-                            .font(environment.theme.displayType.displayFont(size: 15))
-                            .lineLimit(1)
-                        if !message.recipients.isEmpty {
-                            Text("to \(message.recipients)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                    }
-                    Spacer()
-                    Text(message.date, format: .dateTime.month().day().hour().minute())
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .contextMenu {
-                Button("Show Emails With Them", systemImage: "magnifyingglass") {
-                    environment.navigation.threadRoute = nil
-                    environment.navigation.selectPrimary(.mail)
-                    environment.navigation.pendingMailSearch = contactAddress
-                }
-                Button("New Email", systemImage: "square.and.pencil") {
-                    environment.navigation.pendingCompose = ComposePrefill(
-                        recipient: contactAddress,
-                        cc: "",
-                        bcc: "",
-                        subject: "",
-                        body: "",
-                        mode: "new",
-                        accountID: accountID,
-                        threadID: nil,
-                        messageID: nil,
-                        replyAll: false,
-                        attachmentsKey: nil,
-                        draftID: nil
-                    )
-                    environment.navigation.sheet = .compose
-                }
-            }
-
             if isExpanded {
-                Divider()
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 4)
                 if let html = message.htmlBody {
                     // Rich body and normal remote images render immediately; the
                     // sanitizer strips tracking beacons and sets no-referrer.
+                    // Full safe content width — the reader owns the screen.
                     EmailHTMLView(
                         html: html,
                         allowRemoteContent: true,
                         onOpenURL: openLink
                     )
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 12)
                     .padding(.bottom, 14)
                 } else {
                     Text(message.body)
                         .textSelection(.enabled)
                         .font(.body)
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 16)
                         .padding(.bottom, 14)
                 }
                 if !message.attachments.isEmpty {
@@ -464,7 +540,7 @@ private struct MessageView: View {
                                 .foregroundStyle(.red)
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 14)
                 }
             } else {
@@ -474,11 +550,12 @@ private struct MessageView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
                 .padding(.bottom, 12)
             }
         }
-        .surfaceCard(cornerRadius: 16)
+        .padding(.top, isExpanded ? 8 : 0)
         .quickLookPreview($attachmentPreviewURL)
         .onChange(of: attachmentPreviewURL) { previous, current in
             if current == nil, let previous {
@@ -498,14 +575,6 @@ private struct MessageView: View {
         } else {
             openURL(url)
         }
-    }
-
-    private var contactAddress: String {
-        let raw = message.sender
-        if let start = raw.lastIndex(of: "<"), let end = raw.lastIndex(of: ">"), start < end {
-            return String(raw[raw.index(after: start)..<end])
-        }
-        return raw
     }
 
     private func openAttachment(_ attachment: MailAttachment) async {

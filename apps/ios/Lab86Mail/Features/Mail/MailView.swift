@@ -1,10 +1,11 @@
+import Kingfisher
 import SwiftUI
 
 struct MailView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var searchText = ""
     @State private var accountScope: Set<String> = []
-    @State private var categoryScope = MailCategoryScope.all
+    @State private var categoryScope = MailCategoryScope.main
     @State private var mailboxScope = MailboxScope.inbox
     @State private var selectedThreadKeys: Set<String> = []
     @State private var editMode: EditMode = .inactive
@@ -48,6 +49,15 @@ struct MailView: View {
     var body: some View {
         @Bindable var navigation = environment.navigation
         List(selection: $selectedThreadKeys) {
+            // The category strip is the list's first (non-pinned) row so the
+            // inbox starts immediately beneath the navigation bar — no stacked
+            // large-title/top-inset blank band. Date groups stay pinned.
+            Section {
+                categoryPills
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
             if filteredThreads.isEmpty {
                 ContentUnavailableView(
                     searchText.isEmpty ? "No mail here" : "No matching mail",
@@ -74,16 +84,61 @@ struct MailView: View {
         .scrollContentBackground(.hidden)
         .background(environment.theme.paperColor)
         .environment(\.editMode, $editMode)
-        .safeAreaInset(edge: .top, spacing: 0) { categoryPills }
+        .contentMargins(.top, 0, for: .scrollContent)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if editMode.isEditing {
-                bulkToolbar
-            } else if let bulkActionLabel, !recentlyRemoved.isEmpty {
+            if let bulkActionLabel, !recentlyRemoved.isEmpty, !editMode.isEditing {
                 undoBanner(label: bulkActionLabel)
             }
         }
         .navigationTitle("Mail")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Mail owns its bottom bar: the system search field beside the
+            // global create menu (the iOS 26+ search-plus-action pattern Apple
+            // Mail uses). Selection mode swaps in the bulk actions and hands
+            // the bar back when selection ends.
+            if editMode.isEditing {
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Archive", systemImage: "archivebox") {
+                        performBulkRemoval(label: "Archived") { threads in
+                            await environment.store.bulkArchive(threads)
+                        }
+                    }
+                    .disabled(selectedThreads.isEmpty)
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Trash", systemImage: "trash", role: .destructive) {
+                        performBulkRemoval(label: "Moved to Trash") { threads in
+                            await environment.store.bulkTrash(threads)
+                        }
+                    }
+                    .disabled(selectedThreads.isEmpty)
+                }
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+                ToolbarItem(placement: .bottomBar) {
+                    Button {
+                        let threads = selectedThreads
+                        isBulkTriaging = true
+                        Task {
+                            triageVerdicts = await environment.store.bulkTriage(threads)
+                            isBulkTriaging = false
+                            editMode = .inactive
+                            selectedThreadKeys.removeAll()
+                        }
+                    } label: {
+                        if isBulkTriaging { ProgressView() } else { Text("Triage") }
+                    }
+                    .disabled(selectedThreads.isEmpty || isBulkTriaging)
+                }
+            } else {
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+                ToolbarItem(placement: .bottomBar) {
+                    GlobalCreateMenu {
+                        Label("Create", systemImage: "plus")
+                    }
+                }
+            }
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     Section("Account") {
@@ -133,13 +188,13 @@ struct MailView: View {
                 environment.navigation.pendingMailSearch = nil
             }
             if let raw = environment.navigation.pendingMailCategory {
-                categoryScope = MailCategoryScope(rawValue: raw) ?? .all
+                categoryScope = MailCategoryScope.from(raw: raw)
                 environment.navigation.pendingMailCategory = nil
             }
         }
         .onChange(of: environment.navigation.pendingMailCategory) { _, raw in
             guard let raw else { return }
-            categoryScope = MailCategoryScope(rawValue: raw) ?? .all
+            categoryScope = MailCategoryScope.from(raw: raw)
             environment.navigation.pendingMailCategory = nil
         }
         .task(id: effectiveQuery) {
@@ -154,6 +209,17 @@ struct MailView: View {
                 return
             }
             await environment.store.searchMail(query)
+        }
+        // Resolve sender photos for whatever's currently visible, grouped by
+        // each thread's own account. Re-runs only when the visible set of
+        // (account, sender) pairs actually changes — the store itself
+        // dedupes against its cache, so this just keeps it fed.
+        .task(id: visibleSenderResolutionKey) {
+            let entries = filteredThreads.compactMap { thread -> (email: String, account: String)? in
+                guard let email = thread.senderEmail else { return nil }
+                return (email: email, account: thread.accountID)
+            }
+            await environment.mailIdentity.resolve(entries: entries)
         }
         .sheet(item: $categoryInfoThread) { thread in
             CategoryExplanationSheet(thread: thread) { category in
@@ -216,7 +282,7 @@ struct MailView: View {
                 })
             }
         }
-        .shellToolbar(includesCompose: true)
+        .shellToolbar()
     }
 
     @ViewBuilder
@@ -304,20 +370,24 @@ struct MailView: View {
                     Button {
                         categoryScope = category
                     } label: {
-                        Text(category.title)
-                            .font(.subheadline.weight(selected ? .semibold : .regular))
-                            .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
-                            )
-                            .overlay {
-                                if !selected {
-                                    Capsule().strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
-                                }
+                        HStack(spacing: 5) {
+                            Image(systemName: selected ? category.selectedSymbol : category.symbol)
+                                .font(.footnote)
+                            Text(category.title)
+                                .font(.subheadline.weight(selected ? .semibold : .regular))
+                        }
+                        .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
+                        )
+                        .overlay {
+                            if !selected {
+                                Capsule().strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
                             }
-                            .contentShape(Capsule())
+                        }
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
@@ -369,6 +439,16 @@ struct MailView: View {
         return date.formatted(.dateTime.month(.wide).year())
     }
 
+    // Structural key for the `.task(id:)` above: changes whenever the visible
+    // (account, sender) pairs change, so photo resolution re-fires exactly
+    // when there's something new to look up.
+    private var visibleSenderResolutionKey: String {
+        filteredThreads.compactMap { thread -> String? in
+            guard let email = thread.senderEmail else { return nil }
+            return "\(thread.accountID):\(email)"
+        }.joined(separator: ",")
+    }
+
     private var filteredThreads: [MailThreadSummary] {
         let query = effectiveQuery
         let candidates: [MailThreadSummary]
@@ -387,7 +467,7 @@ struct MailView: View {
         }
         return candidates.filter { thread in
             (accountScope.isEmpty || accountScope.contains(thread.accountID))
-                && (categoryScope == .all || thread.category == categoryScope.rawValue)
+                && categoryScope.includes(storedCategory: thread.category)
         }
     }
 
@@ -413,38 +493,6 @@ struct MailView: View {
 
     private var selectedThreads: [MailThreadSummary] {
         filteredThreads.filter { selectedThreadKeys.contains(threadKey($0)) }
-    }
-
-    private var bulkToolbar: some View {
-        HStack(spacing: 16) {
-            Button("Archive", systemImage: "archivebox") {
-                performBulkRemoval(label: "Archived") { threads in
-                    await environment.store.bulkArchive(threads)
-                }
-            }
-            Button("Trash", systemImage: "trash", role: .destructive) {
-                performBulkRemoval(label: "Moved to Trash") { threads in
-                    await environment.store.bulkTrash(threads)
-                }
-            }
-            Spacer()
-            Button {
-                let threads = selectedThreads
-                isBulkTriaging = true
-                Task {
-                    triageVerdicts = await environment.store.bulkTriage(threads)
-                    isBulkTriaging = false
-                    editMode = .inactive
-                    selectedThreadKeys.removeAll()
-                }
-            } label: {
-                if isBulkTriaging { ProgressView() } else { Label("Triage", systemImage: "sparkles") }
-            }
-            .disabled(selectedThreads.isEmpty || isBulkTriaging)
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .background(.bar)
     }
 
     private func undoBanner(label: String) -> some View {
@@ -515,33 +563,80 @@ struct MailView: View {
     }
 }
 
+// The visible mail scopes. The classifier's stored vocabulary is wider —
+// needs_reply/review/finance_admin fold into Main at presentation time, and
+// noise is suppressed from Main but always reachable through All Mail. Those
+// signals stay internal (Brief intelligence, notification triage); they are
+// no longer mailboxes. No stored value is migrated or rewritten.
 enum MailCategoryScope: String, CaseIterable, Identifiable {
-    case all
     case main
-    case needsReply = "needs_reply"
-    case review
     case codes
     case orders
-    case financeAdmin = "finance_admin"
-    case noise
+    case all
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .all: "All Mail"
         case .main: "Main"
-        case .needsReply: "Needs Reply"
-        case .review: "Review"
         case .codes: "Codes"
         case .orders: "Orders"
-        case .financeAdmin: "Finance & Admin"
-        case .noise: "Noise"
+        case .all: "All Mail"
         }
     }
 
+    var symbol: String {
+        switch self {
+        case .main: "person.crop.circle"
+        case .codes: "key"
+        case .orders: "shippingbox"
+        case .all: "tray.full"
+        }
+    }
+
+    // Filled variants carry the selected state where the symbol has one.
+    var selectedSymbol: String {
+        switch self {
+        case .main: "person.crop.circle.fill"
+        case .codes: "key.fill"
+        case .orders: "shippingbox.fill"
+        case .all: "tray.full.fill"
+        }
+    }
+
+    // Categories a thread can be corrected INTO. All Mail is a viewing scope,
+    // not a classifier destination.
     static var feedbackCases: [MailCategoryScope] {
-        [.main, .needsReply, .review, .codes, .orders, .financeAdmin, .noise]
+        [.main, .codes, .orders]
+    }
+
+    // Maps any raw category string — including the retired stored labels and
+    // deep-link values minted before the cleanup — onto the scope that shows
+    // that mail today.
+    static func from(raw: String?) -> MailCategoryScope {
+        guard let raw, !raw.isEmpty else { return .main }
+        if let scope = MailCategoryScope(rawValue: raw) { return scope }
+        switch raw {
+        case "needs_reply", "review", "finance_admin": return .main
+        case "noise": return .all
+        default: return .main
+        }
+    }
+
+    // Whether a stored classification is visible inside this scope. Main is
+    // the catch-all for everything that isn't codes/orders/noise (including
+    // unclassified mail and the folded-in legacy labels).
+    func includes(storedCategory: String?) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .codes:
+            return storedCategory == "codes"
+        case .orders:
+            return storedCategory == "orders"
+        case .main:
+            return storedCategory != "codes" && storedCategory != "orders" && storedCategory != "noise"
+        }
     }
 }
 
@@ -656,7 +751,7 @@ private struct MailThreadRow: View {
                 .frame(width: 7, height: 7)
                 .padding(.top, 16)
                 .accessibilityHidden(true)
-            InitialsAvatar(name: thread.sender, size: 40)
+            senderAvatar
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
@@ -693,6 +788,24 @@ private struct MailThreadRow: View {
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityValue(thread.unread ? "Unread" : "Read")
+    }
+
+    // Stable 40pt geometry whether it resolves to a cached provider/company
+    // photo or the InitialsAvatar fallback, so rows don't reflow as photos
+    // stream in.
+    @ViewBuilder
+    private var senderAvatar: some View {
+        if let url = environment.mailIdentity.photoURL(for: thread.senderEmail) {
+            KFImage(url)
+                .placeholder { InitialsAvatar(name: thread.sender, size: 40) }
+                .fade(duration: 0.15)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
+        } else {
+            InitialsAvatar(name: thread.sender, size: 40)
+        }
     }
 }
 

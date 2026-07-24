@@ -90,10 +90,18 @@ export interface ClientState {
   // from lib/theme/palette-presets.ts.
   accent2Hue: number | null;
   accent2Chroma: number | null;
+  // Third accent: the highlight voice (badges, lanes, stat deltas). null =
+  // the default slate blue; the palette wheel writes chord positions from
+  // lib/theme/palette-presets.ts.
+  accent3Hue: number | null;
+  accent3Chroma: number | null;
   // Background hue is its own axis, decoupled from the accent.
   bgHue: number | null;
   // 0..1 how much of bgHue bleeds into the background surfaces.
   surfaceTint: number;
+  // Depth ladder spread (0.4 flat … 1.6 deep); 1 = the stock ladder. Scales
+  // how far well/card/float surfaces sit from the paper and shadow weight.
+  depthSpread: number;
   // 0..1 Arc-style gradient wash on the rail.
   washOpacity: number;
   // 0..1 accent-tinted wash over the main background, independent of the rail.
@@ -153,8 +161,10 @@ export interface ClientState {
   setPendingReplyBody: (body: string | null) => void;
   setAccent: (hue: number | null, chroma: number | null) => void;
   setAccent2: (hue: number | null, chroma: number | null) => void;
+  setAccent3: (hue: number | null, chroma: number | null) => void;
   setBgHue: (hue: number | null) => void;
   setSurfaceTint: (tint: number) => void;
+  setDepthSpread: (spread: number) => void;
   setWashOpacity: (opacity: number) => void;
   setBgWashOpacity: (opacity: number) => void;
   setGrainOpacity: (opacity: number) => void;
@@ -226,8 +236,11 @@ export const useClientStore = create<ClientState>()(
       accentChroma: null,
       accent2Hue: null,
       accent2Chroma: null,
+      accent3Hue: null,
+      accent3Chroma: null,
       bgHue: null,
       surfaceTint: 0,
+      depthSpread: 1,
       washOpacity: 0,
       bgWashOpacity: 0,
       grainOpacity: 0,
@@ -315,8 +328,10 @@ export const useClientStore = create<ClientState>()(
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),
       setAccent: (accentHue, accentChroma) => set({ accentHue, accentChroma }),
       setAccent2: (accent2Hue, accent2Chroma) => set({ accent2Hue, accent2Chroma }),
+      setAccent3: (accent3Hue, accent3Chroma) => set({ accent3Hue, accent3Chroma }),
       setBgHue: (bgHue) => set({ bgHue }),
       setSurfaceTint: (surfaceTint) => set({ surfaceTint }),
+      setDepthSpread: (depthSpread) => set({ depthSpread }),
       setWashOpacity: (washOpacity) => set({ washOpacity }),
       setBgWashOpacity: (bgWashOpacity) => set({ bgWashOpacity }),
       setGrainOpacity: (grainOpacity) => set({ grainOpacity }),
@@ -348,8 +363,11 @@ export const useClientStore = create<ClientState>()(
         accentChroma: s.accentChroma,
         accent2Hue: s.accent2Hue,
         accent2Chroma: s.accent2Chroma,
+        accent3Hue: s.accent3Hue,
+        accent3Chroma: s.accent3Chroma,
         bgHue: s.bgHue,
         surfaceTint: s.surfaceTint,
+        depthSpread: s.depthSpread,
         washOpacity: s.washOpacity,
         bgWashOpacity: s.bgWashOpacity,
         grainOpacity: s.grainOpacity,

@@ -16,6 +16,7 @@ import {
   listNylasLabels,
   searchNylasThreads,
 } from '../nylas/provider';
+import { emailFromHeader } from '../shared/format';
 import type { Thread } from '../shared/types';
 import { upsertMessage as upsertMessageRecord } from '../store/messages';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
@@ -29,6 +30,24 @@ import {
 import { defineTool } from './registry';
 
 const LOCAL_CURSOR_PREFIX = 'local:';
+
+// Both fields are additive/non-destructive: derived at read time from the
+// existing header string, never persisted, and null-safe when the header is
+// missing or unparseable. Native clients use them to look up cached provider
+// photos without re-parsing the "Name <a@b.com>" header themselves.
+function withThreadSenderEmail<T extends { fromAddress?: string | null; from?: string | null }>(
+  thread: T,
+): T & { senderEmail: string | null } {
+  // `||`, not `??`: some writers persist `fromAddress: ''`, which must still
+  // fall back to the `from` header.
+  return { ...thread, senderEmail: emailFromHeader(thread.fromAddress || thread.from || null) };
+}
+
+function withMessageFromEmail<T extends { from?: string | null }>(
+  message: T,
+): T & { fromEmail: string | null } {
+  return { ...message, fromEmail: emailFromHeader(message.from || null) };
+}
 
 export const listAccounts = defineTool({
   name: 'list_accounts',
@@ -137,7 +156,7 @@ export const searchThreads = defineTool({
         nylas.items.filter((item) => item._id).map((item) => upsertThread(account, item)),
       );
     }
-    return nylas;
+    return { ...nylas, items: nylas.items.map(withThreadSenderEmail) };
   },
 });
 
@@ -378,7 +397,7 @@ export const getThread = defineTool({
           account,
           threadId,
           subject: bundle.subject,
-          messages: bundle.messages,
+          messages: (bundle.messages || []).map(withMessageFromEmail),
           summary: cachedThread?.summary ?? null,
           summaryAt: cachedThread?.summaryAt ?? null,
           summaryModel: cachedThread?.summaryModel ?? null,
@@ -417,6 +436,7 @@ export const getThread = defineTool({
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
     return {
       ...nylas,
+      messages: nylas.messages.map(withMessageFromEmail),
       summary: cachedThread?.summary ?? null,
       summaryAt: cachedThread?.summaryAt ?? null,
       summaryModel: cachedThread?.summaryModel ?? null,
@@ -503,9 +523,9 @@ export const listAccountThreads = defineTool({
         accountId: account,
         limit,
       }).catch(() => null);
-      if (rows?.length) return { threads: rows };
+      if (rows?.length) return { threads: rows.map(withThreadSenderEmail) };
     }
-    return { threads: await listThreadsForAccount(account, limit) };
+    return { threads: (await listThreadsForAccount(account, limit)).map(withThreadSenderEmail) };
   },
 });
 
