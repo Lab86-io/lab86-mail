@@ -756,7 +756,8 @@ export const answerCheckin = mutation({
       }
     }
     const reflectionText = promptKind === 'reflection' ? responseText || row.responseText : row.responseText;
-    const tomorrowIntentText = promptKind === 'tomorrow' ? responseText : row.tomorrowIntentText;
+    const tomorrowIntentText =
+      promptKind === 'tomorrow' ? responseText || row.tomorrowIntentText : row.tomorrowIntentText;
     const isComplete = Boolean(reflectionText?.trim() && tomorrowIntentText?.trim());
     await ctx.db.patch(row._id, {
       status: isComplete ? 'answered' : 'open',

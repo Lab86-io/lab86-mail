@@ -162,6 +162,22 @@ describe('native push Convex receipts', () => {
         responseText: '',
         completed: [{ kind: 'work', id: 'missing_work' }],
       });
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'reflection_user',
+        checkinId: created.checkin._id,
+        promptKind: 'tomorrow',
+        responseText: 'I will validate the production build.',
+        completed: [],
+      });
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'reflection_user',
+        checkinId: created.checkin._id,
+        promptKind: 'tomorrow',
+        responseText: '',
+        completed: [{ kind: 'work', id: 'ignored_for_tomorrow' }],
+      });
 
       const state = await t.run(async (ctx) => {
         const row = await ctx.db.get(created.checkin._id);
@@ -174,6 +190,7 @@ describe('native push Convex receipts', () => {
         return { row, notification };
       });
       expect(state.row?.responseText).toBe('I shipped the first pass.');
+      expect(state.row?.tomorrowIntentText).toBe('I will validate the production build.');
       expect(state.notification?.status).toBe('acted');
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
