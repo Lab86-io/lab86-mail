@@ -583,7 +583,9 @@ function ReportArtifact({
       // content, so a prompt-injected script could post a state-changing action
       // with no user click. Gate EVERY mutating action behind a host-rendered
       // confirm() (a sandboxed iframe cannot suppress a top-window dialog).
-      // Read-only actions (open_*, draft_reply only seeds the composer) are exempt.
+      // Trusted in-app navigation and draft_reply (which only seeds the
+      // composer) are exempt. open_url is still reviewed because it crosses
+      // from model-authored iframe content into an external browser surface.
       if (!confirmDailyReportAction(data.action, payload, window.confirm)) {
         return ack(false, 'cancelled');
       }

@@ -18,7 +18,7 @@ import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { safeExternalUrl } from '@/lib/shared/url';
 import { BriefActions } from './BriefActions';
 import { BriefMasthead } from './BriefMasthead';
-import { type BriefNodeContext, BriefNodeView } from './BriefNodeView';
+import { type BriefNodeContext, BriefNodeView, briefNodePresentationClass } from './BriefNodeView';
 import type { BriefActionPayload } from './brief-action-runtime';
 
 export function BriefCanvas({
@@ -261,8 +261,11 @@ export function BriefCanvas({
         {document.regions.map((region) => (
           <section key={region.id} data-brief-region={region.id} className="contents">
             {columnBlocks(region.tree).map((block, index) => (
-              <div key={block.id ?? `${block.kind}-${index}`} className="@container mb-6 break-inside-avoid">
-                <BriefNodeView node={block} context={context} regionSummary={region.summary} />
+              <div
+                key={block.node.id ?? `${block.node.kind}-${index}`}
+                className={`@container ${block.wrapperClass} break-inside-avoid`}
+              >
+                <BriefNodeView node={block.node} context={context} regionSummary={region.summary} />
               </div>
             ))}
           </section>
@@ -521,8 +524,16 @@ function payloadRefKey(payload: BriefActionPayload) {
 /* Column units for the newspaper layout: region roots that are plain stacks
  * flatten so the columns balance at block granularity instead of treating a
  * whole region as one unbreakable slab. */
-function columnBlocks(tree: BriefNode): BriefNode[] {
-  return tree.kind === 'stack' && tree.children.length ? tree.children : [tree];
+function columnBlocks(tree: BriefNode): Array<{ node: BriefNode; wrapperClass: string }> {
+  if (tree.kind === 'stack' && tree.children.length) {
+    const spacing = tree.density === 'airy' ? 'mb-6' : tree.density === 'dense' ? 'mb-2.5' : 'mb-4';
+    const presentation = briefNodePresentationClass(tree);
+    return tree.children.map((node) => ({
+      node,
+      wrapperClass: [spacing, presentation].filter(Boolean).join(' '),
+    }));
+  }
+  return [{ node: tree, wrapperClass: 'mb-6' }];
 }
 
 function humanizeAction(action: string) {

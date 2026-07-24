@@ -541,7 +541,7 @@ function BriefEntityRow({
             </p>
           ) : null}
         </div>
-        {item.actions.length ? (
+        {!gone && item.actions.length ? (
           <BriefActions
             actions={item.actions}
             sourceRef={item.ref}
@@ -769,6 +769,10 @@ function heroSurfaceClass(surface: 'plain' | 'elevated' | 'glass') {
 }
 
 function nodeClass(node: { emphasis: string; tone: string }) {
+  return briefNodePresentationClass(node);
+}
+
+export function briefNodePresentationClass(node: { emphasis: string; tone: string }) {
   return cn(
     node.emphasis === 'primary' && 'brief-emphasis-primary',
     node.emphasis === 'muted' && 'opacity-75',
