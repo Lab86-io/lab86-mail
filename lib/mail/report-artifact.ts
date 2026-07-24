@@ -72,6 +72,11 @@ main{max-width:1120px;margin:0 auto;padding:clamp(2rem,5vw,4rem) 1.25rem 3rem}
 .tag{font-size:.74rem;font-weight:700;letter-spacing:.02em;color:var(--brief-accent-2,var(--brief-accent))}
 .need h3{margin:.25rem 0 .35rem;font-family:var(--brief-font-display);font-size:1.2rem;line-height:1.12;letter-spacing:var(--brief-display-tracking)}
 .need p,.muted{margin:0;color:var(--brief-muted);line-height:1.5}
+.handoff-read{margin-top:.35rem}
+.handoff-moves{margin:.65rem 0 0;padding:.65rem .8rem .65rem 1.8rem;border-radius:.65rem;background:var(--brief-accent-soft);color:var(--brief-ink)}
+.handoff-moves li+li{margin-top:.3rem}
+.handoff-trail{margin-top:.6rem;color:var(--brief-muted);font-size:.78rem}
+.handoff-trail summary{cursor:pointer;color:var(--brief-accent);font-weight:700}
 .actions{display:flex;align-items:start;gap:.5rem}
 .btn{border:1px solid var(--brief-hairline);border-radius:999px;background:transparent;color:var(--brief-ink);padding:.5rem .8rem;cursor:pointer;white-space:nowrap}
 .btn.primary{border-color:var(--brief-accent);background:var(--brief-accent);color:var(--brief-bg)}
@@ -149,6 +154,8 @@ function renderBlock(block: BriefBlock, timezone: string): string {
       return renderLedeBlock(block);
     case 'needs_you':
       return renderNeedsBlock(block);
+    case 'handoff_digest':
+      return renderHandoffBlock(block);
     case 'task_digest':
       return renderTasksBlock(block, timezone);
     case 'week_ahead':
@@ -166,6 +173,34 @@ function renderBlock(block: BriefBlock, timezone: string): string {
     default:
       return '';
   }
+}
+
+function renderHandoffBlock(block: Extract<BriefBlock, { type: 'handoff_digest' }>) {
+  if (!block.items.length) {
+    return `<section><h2 class="section-title">${escapeHtml(block.title)}</h2><div class="empty">No action handoff needs you right now.</div></section>`;
+  }
+  return `<section class="block"><h2 class="section-title">${escapeHtml(block.title)}</h2><div class="needs">${block.items
+    .map(
+      (item) => `<article class="need" data-handoff-id="${escapeAttr(item.id)}">
+        <div>
+          <div class="tag">${escapeHtml(item.lane.replaceAll('_', ' '))}</div>
+          <h3>${escapeHtml(item.situation)}</h3>
+          <p class="handoff-read"><strong>My read:</strong> ${escapeHtml(item.assessment)}</p>
+          <ol class="handoff-moves" aria-label="${escapeAttr(
+            item.recommendations.length > 1 ? 'Your moves' : 'Your move',
+          )}">${item.recommendations.map((move) => `<li>${escapeHtml(move)}</li>`).join('')}</ol>
+          ${
+            item.background.length
+              ? `<details class="handoff-trail"><summary>Why this?</summary><ul>${item.background
+                  .map((entry) => `<li>${escapeHtml(entry)}</li>`)
+                  .join('')}</ul></details>`
+              : ''
+          }
+        </div>
+        ${item.actions.length ? `<div class="actions">${renderActions(item.actions)}</div>` : ''}
+      </article>`,
+    )
+    .join('')}</div></section>`;
 }
 
 function renderLedeBlock(block: Extract<BriefBlock, { type: 'lede' }>) {

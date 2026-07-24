@@ -497,18 +497,72 @@ public struct BriefFraming: Codable, Hashable, Sendable {
     }
 }
 
+public struct BriefHandoffEvidence: Codable, Hashable, Sendable {
+    public let label: String
+    public let ref: BriefSourceRef?
+
+    public init(label: String, ref: BriefSourceRef? = nil) {
+        self.label = label
+        self.ref = ref
+    }
+}
+
+public struct BriefHandoffRecommendation: Codable, Hashable, Sendable {
+    public let label: String
+    public let ref: BriefSourceRef?
+
+    public init(label: String, ref: BriefSourceRef? = nil) {
+        self.label = label
+        self.ref = ref
+    }
+}
+
+public struct BriefEntityHandoff: Codable, Hashable, Sendable {
+    public let handoffId: String?
+    public let itemCount: Int?
+    public let situation: String
+    public let background: [String]
+    public let assessment: String
+    public let recommendation: String
+    public let recommendations: [BriefHandoffRecommendation]?
+    public let evidence: [BriefHandoffEvidence]
+
+    public init(
+        handoffId: String? = nil,
+        itemCount: Int? = nil,
+        situation: String,
+        background: [String] = [],
+        assessment: String,
+        recommendation: String,
+        recommendations: [BriefHandoffRecommendation] = [],
+        evidence: [BriefHandoffEvidence] = []
+    ) {
+        self.handoffId = handoffId
+        self.itemCount = itemCount
+        self.situation = situation
+        self.background = Array(background.prefix(3))
+        self.assessment = assessment
+        self.recommendation = recommendation
+        self.recommendations = Array(recommendations.prefix(4))
+        self.evidence = Array(evidence.prefix(4))
+    }
+}
+
 public struct BriefEntityItem: Codable, Hashable, Sendable {
     public let ref: BriefSourceRef
     public let framing: BriefFraming?
+    public let handoff: BriefEntityHandoff?
     public let actions: [BriefDocumentAction]?
 
     public init(
         ref: BriefSourceRef,
         framing: BriefFraming? = nil,
+        handoff: BriefEntityHandoff? = nil,
         actions: [BriefDocumentAction]? = nil
     ) {
         self.ref = ref
         self.framing = framing
+        self.handoff = handoff
         self.actions = actions
     }
 }

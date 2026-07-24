@@ -33,6 +33,42 @@ func briefDocumentDegradesFutureAndUnknownNodesWithoutGoingBlank() throws {
 }
 
 @Test
+func briefDocumentDecodesOptionalHandoffsWithoutBreakingLegacyEntities() throws {
+    let data = Data(
+        """
+        {"version":2,"title":"Today","summary":"Two conversations.","generatedAt":1,
+         "regions":[{"id":"needs-you","summary":"Needs you","tree":{"kind":"entity_list","variant":"rows",
+           "items":[
+             {"ref":{"kind":"thread","id":"thread-1","account":"jakob@example.com"},
+              "framing":{"lane":"reply_owed"},
+              "handoff":{"handoffId":"triage-thread-1","itemCount":2,"situation":"Maya wrote about launch.","background":["Confirm the date"],
+                "assessment":"The date blocks planning.","recommendation":"Confirm July 31.",
+                "recommendations":[{"label":"Confirm July 31.",
+                  "ref":{"kind":"thread","id":"thread-1","account":"jakob@example.com"}},
+                  {"label":"Update the launch task.","ref":{"kind":"task","id":"task-1"}}],
+                "evidence":[{"label":"Source conversation",
+                  "ref":{"kind":"thread","id":"thread-1","account":"jakob@example.com"}}]},
+              "actions":[]},
+             {"ref":{"kind":"thread","id":"legacy","account":"jakob@example.com"},
+              "framing":{"reason":"Legacy framing"},"actions":[]}
+           ]}}]}
+        """.utf8
+    )
+    let document = try #require(BriefDocumentV2.decode(data))
+    let items = try #require(document.regions.first?.tree.items)
+
+    #expect(items.count == 2)
+    #expect(items[0].handoff?.recommendation == "Confirm July 31.")
+    #expect(items[0].handoff?.handoffId == "triage-thread-1")
+    #expect(items[0].handoff?.itemCount == 2)
+    #expect(items[0].handoff?.recommendations?.count == 2)
+    #expect(items[0].handoff?.recommendations?.last?.ref?.id == "task-1")
+    #expect(items[0].handoff?.background == ["Confirm the date"])
+    #expect(items[0].handoff?.evidence.first?.ref?.id == "thread-1")
+    #expect(items[1].handoff == nil)
+}
+
+@Test
 func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601

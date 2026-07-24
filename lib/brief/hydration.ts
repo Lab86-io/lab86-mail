@@ -24,6 +24,12 @@ export function collectBriefRefs(document: BriefDocumentV2): BriefSourceRefV2[] 
       case 'entity_list':
         node.items.forEach((item) => {
           add(item.ref);
+          item.handoff?.recommendations.forEach((move) => {
+            add(move.ref);
+          });
+          item.handoff?.evidence.forEach((evidence) => {
+            add(evidence.ref);
+          });
         });
         break;
       case 'chart':

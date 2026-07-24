@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodayView: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.openURL) private var openURL
     @State private var showsHistory = false
     @State private var artifactReview: ArtifactReviewRequest?
 
@@ -246,8 +247,22 @@ struct TodayView: View {
                 let name = store.areas.first { $0.id == areaID }?.name
                 environment.navigation.openArea(id: areaID, name: name)
             }
+        case "open_work":
+            if let workID = payload.workID {
+                if let areaID = payload.areaID {
+                    environment.navigation.openArea(id: areaID, name: nil)
+                }
+                environment.navigation.openWork(id: workID, title: payload.title)
+            }
         case "open_view":
             if let view = payload.view { environment.navigation.openPrimaryView(view) }
+        case "open_url":
+            if let rawURL = payload.url,
+               let url = URL(string: rawURL),
+               url.scheme == "https"
+            {
+                openURL(url)
+            }
         case "draft_reply":
             if let account = payload.account, let threadID = payload.threadID {
                 environment.navigation.pendingCompose = ComposePrefill(

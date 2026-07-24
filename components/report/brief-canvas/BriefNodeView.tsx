@@ -10,6 +10,7 @@ import { briefQueryKeys, briefRefKey } from '@/lib/brief/hydration';
 import type {
   BriefActionV2,
   BriefContentLeaf,
+  BriefEntityHandoffV1,
   BriefNode,
   BriefQuery,
   BriefSourceRefV2,
@@ -230,6 +231,7 @@ function BriefLeaf({
             reason: item.framing.reason,
             lane: item.framing.lane,
             prep: item.framing.prep,
+            handoff: item.handoff,
             actions: item.actions,
           }))}
           emptyText={node.emptyText}
@@ -416,6 +418,7 @@ type EntityRow = {
   reason?: string;
   lane?: string;
   prep?: string;
+  handoff?: BriefEntityHandoffV1;
   actions: BriefActionV2[];
 };
 
@@ -443,57 +446,153 @@ function BriefEntityList({
           variant !== 'cards' && 'divide-y divide-[var(--color-border)]',
         )}
       >
-        {visible.map((item) => {
-          const entity = context.entities.get(briefRefKey(item.ref));
-          const title = entity?.title || item.ref.label || 'Unavailable item';
-          const completed = context.completedRefs.get(briefRefKey(item.ref)) ?? entity?.completed ?? false;
-          const gone = entity?.gone === true;
-          return (
-            <article
-              key={briefRefKey(item.ref)}
-              className={cn(
-                variant === 'cards'
-                  ? 'rounded-xl border bg-[var(--color-bg-subtle)] p-3.5'
-                  : variant === 'compact'
-                    ? 'py-2'
-                    : 'py-3',
-                gone && 'opacity-55',
-              )}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  {item.lane ? (
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent)]">
-                      {item.lane}
-                    </span>
-                  ) : null}
-                  <p className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}>
-                    {title}
-                  </p>
-                  <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-[var(--color-text-muted)]">
-                    {[item.reason, item.prep, entity?.subtitle].filter(Boolean).join(' · ') ||
-                      (gone ? 'This item is no longer available.' : entity?.status)}
-                  </p>
-                  {entity?.startAt ? (
-                    <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                      {formatBriefTime(entity.startAt)}
-                    </p>
-                  ) : null}
-                </div>
-                {item.actions.length ? (
-                  <BriefActions
-                    actions={item.actions}
-                    sourceRef={item.ref}
-                    compact
-                    onAction={(action, payload) => context.onAction(action, payload, item.ref)}
-                  />
-                ) : null}
-              </div>
-            </article>
-          );
-        })}
+        {visible.map((item) => (
+          <BriefEntityRow key={briefRefKey(item.ref)} item={item} variant={variant} context={context} />
+        ))}
       </div>
     </section>
+  );
+}
+
+function BriefEntityRow({
+  item,
+  variant,
+  context,
+}: {
+  item: EntityRow;
+  variant: 'rows' | 'cards' | 'compact';
+  context: BriefNodeContext;
+}) {
+  const [whyOpen, setWhyOpen] = useState(false);
+  const entity = context.entities.get(briefRefKey(item.ref));
+  const title = entity?.title || item.ref.label || 'Unavailable item';
+  const completed = context.completedRefs.get(briefRefKey(item.ref)) ?? entity?.completed ?? false;
+  const gone = entity?.gone === true;
+  const detail =
+    [item.reason, item.prep, entity?.subtitle].filter(Boolean).join(' · ') ||
+    (gone ? 'This item is no longer available.' : entity?.status);
+
+  return (
+    <article
+      className={cn(
+        variant === 'cards'
+          ? 'rounded-xl border bg-[var(--color-bg-subtle)] p-3.5'
+          : variant === 'compact'
+            ? 'py-2'
+            : 'py-3',
+        gone && 'opacity-55',
+      )}
+    >
+      <div className="flex flex-col gap-3 @[520px]:flex-row @[520px]:items-start @[520px]:justify-between">
+        <div className="min-w-0 flex-1">
+          {item.lane ? (
+            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent)]">
+              {item.lane.replaceAll('_', ' ')}
+            </span>
+          ) : null}
+          <p className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}>{title}</p>
+          {item.handoff ? (
+            <>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+                <span className="font-medium text-[var(--color-text)]">My read: </span>
+                {item.handoff.assessment}
+              </p>
+              <div className="mt-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-2">
+                <span className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                  {item.handoff.recommendations.length > 1 ? 'Your moves' : 'Your move'}
+                </span>
+                {item.handoff.recommendations.length > 1 ? (
+                  <ol className="mt-1 list-decimal space-y-1 pl-4 text-sm font-medium leading-snug text-[var(--color-text)]">
+                    {item.handoff.recommendations.map((move) => (
+                      <li key={`${move.label}:${move.ref?.kind ?? ''}:${move.ref?.id ?? ''}`}>
+                        {move.label}
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="mt-0.5 text-sm font-medium leading-snug text-[var(--color-text)]">
+                    {item.handoff.recommendation}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                aria-expanded={whyOpen}
+                onClick={() => setWhyOpen((value) => !value)}
+                className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-md px-1 text-xs font-medium text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+              >
+                Why this?
+                <ChevronDown
+                  aria-hidden
+                  className={cn('size-3.5 transition-transform', whyOpen && 'rotate-180')}
+                />
+              </button>
+              {whyOpen ? <BriefHandoffTrail handoff={item.handoff} /> : null}
+            </>
+          ) : (
+            <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-[var(--color-text-muted)]">
+              {detail}
+            </p>
+          )}
+          {entity?.startAt ? (
+            <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+              {formatBriefTime(entity.startAt)}
+            </p>
+          ) : null}
+        </div>
+        {item.actions.length ? (
+          <BriefActions
+            actions={item.actions}
+            sourceRef={item.ref}
+            compact
+            onAction={(action, payload) =>
+              context.onAction(
+                action,
+                payload,
+                item.handoff?.itemCount && item.handoff.itemCount > 1 && item.handoff.handoffId
+                  ? {
+                      kind: 'derived',
+                      id: `${item.handoff.handoffId}:${action.action}`,
+                      label: item.handoff.situation,
+                    }
+                  : item.ref,
+              )
+            }
+          />
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function BriefHandoffTrail({ handoff }: { handoff: BriefEntityHandoffV1 }) {
+  return (
+    <div className="mt-1.5 space-y-2 border-l border-[var(--color-border-strong)] pl-3 text-xs leading-relaxed">
+      <div>
+        <span className="font-medium text-[var(--color-text)]">Why now: </span>
+        <span className="text-[var(--color-text-muted)]">{handoff.situation}</span>
+      </div>
+      {handoff.background.length ? (
+        <div>
+          <span className="font-medium text-[var(--color-text)]">Relevant trail</span>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--color-text-muted)]">
+            {handoff.background.map((entry) => (
+              <li key={entry}>{entry}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {handoff.evidence.length ? (
+        <div>
+          <span className="font-medium text-[var(--color-text)]">Evidence</span>
+          <ul className="mt-1 space-y-0.5 text-[var(--color-text-muted)]">
+            {handoff.evidence.map((entry, index) => (
+              <li key={`${entry.label}:${entry.ref?.kind || ''}:${entry.ref?.id || index}`}>{entry.label}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
