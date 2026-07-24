@@ -72,6 +72,32 @@ const MAX_BODY_CHARS = 1100;
 const MAX_VOICE_SAMPLES = 6;
 const MAX_VOICE_CHARS = 600;
 
+// Progressive artifact callbacks can outlive withDeadline(): Promise.race
+// rejects the caller but cannot cancel an already-running model/tool loop. A
+// late region write must never overwrite the terminal fallback with
+// `composing` again. Closing waits for an in-flight write, prevents queued or
+// future writes, and lets the caller persist the terminal state last.
+export function createGenerationScopedWriter<T>(persist: (value: T) => Promise<void>) {
+  let active = true;
+  let pending: Promise<void> = Promise.resolve();
+
+  return {
+    write(value: T): Promise<void> {
+      if (!active) return Promise.resolve();
+      const operation = pending.then(async () => {
+        if (!active) return;
+        await persist(value);
+      });
+      pending = operation.catch(() => undefined);
+      return operation;
+    },
+    async close(): Promise<void> {
+      active = false;
+      await pending;
+    },
+  };
+}
+
 interface ThreadDigest {
   threadKey: string;
   account: string;
@@ -516,18 +542,20 @@ async function runAgentReport(input: {
   }).catch(() => undefined);
 
   if (briefDocumentV2Enabled()) {
-    try {
-      const document = await composeDocumentV2(week, input.userId, async (partial) => {
-        await saveDailyReport({
-          ...week,
-          composition: nativeWeekComposition,
-          document: partial,
-          html: nativeWeekHtml,
-          artifactStatus: 'composing',
-          artifactSource: 'document-v2',
-          model: describeProvider().primary || week.model,
-        });
+    const partialDocumentWriter = createGenerationScopedWriter<BriefDocumentV2>(async (partial) => {
+      await saveDailyReport({
+        ...week,
+        composition: nativeWeekComposition,
+        document: partial,
+        html: nativeWeekHtml,
+        artifactStatus: 'composing',
+        artifactSource: 'document-v2',
+        model: describeProvider().primary || week.model,
       });
+    });
+    try {
+      const document = await composeDocumentV2(week, input.userId, partialDocumentWriter.write);
+      await partialDocumentWriter.close();
       const nativeDocumentReport: DailyReport = {
         ...week,
         composition: nativeWeekComposition,
@@ -540,6 +568,7 @@ async function runAgentReport(input: {
       await saveDailyReport(nativeDocumentReport);
       return nativeDocumentReport;
     } catch (err) {
+      await partialDocumentWriter.close();
       console.error('[agent-report] document v2 composition failed:', err);
       const fallback = withArtifactError(
         {
