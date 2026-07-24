@@ -4,7 +4,7 @@ import {
   setAreaLivingBriefDependenciesForTest,
 } from '../lib/albatross/area-living-brief';
 import { __setIntentPlanDepsForTest, composePlanDocumentV2 } from '../lib/albatross/intent-plan';
-import { composeDocumentV2 } from '../lib/mail/agent-report';
+import { composeDocumentV2, createGenerationScopedWriter } from '../lib/mail/agent-report';
 import type { DailyReport } from '../lib/shared/types';
 import './tools/harness';
 import { withToolContext } from './tools/harness';
@@ -64,6 +64,35 @@ function reportFixture(): DailyReport {
 }
 
 describe('Brief Document v2 generators', () => {
+  test('terminal artifact writes cannot be overwritten by late progressive callbacks', async () => {
+    const events: string[] = [];
+    let releasePersist!: () => void;
+    let markPersistStarted!: () => void;
+    const persistStarted = new Promise<void>((resolve) => {
+      markPersistStarted = resolve;
+    });
+    const persistReleased = new Promise<void>((resolve) => {
+      releasePersist = resolve;
+    });
+    const writer = createGenerationScopedWriter<string>(async (value) => {
+      events.push(`start:${value}`);
+      markPersistStarted();
+      await persistReleased;
+      events.push(`finish:${value}`);
+    });
+
+    const inFlight = writer.write('partial');
+    await persistStarted;
+    const closing = writer.close();
+    const late = writer.write('late');
+    releasePersist();
+    await Promise.all([inFlight, closing, late]);
+    await writer.write('later');
+    events.push('terminal');
+
+    expect(events).toEqual(['start:partial', 'finish:partial', 'terminal']);
+  });
+
   test('Daily composition validates tool-placed regions and publishes progressive documents', async () => {
     const partials: string[][] = [];
     const document = await withToolContext(() =>
