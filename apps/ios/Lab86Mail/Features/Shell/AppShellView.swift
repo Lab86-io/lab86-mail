@@ -255,37 +255,26 @@ struct AppShellView: View {
                 }
         }
         .overlay(alignment: .bottomTrailing) {
-            // The create surface floats over every root page as a liquid-glass
-            // button; chat hides it (its composer owns that corner).
-            if !environment.navigation.hasNestedDestination,
-               environment.navigation.selectedTab != .chat {
-                createMenu
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 24)
+            // The create surface floats over root pages as a liquid-glass
+            // button. Mail hides the floating copy because it mounts the same
+            // menu in its bottom toolbar beside the system search field; chat
+            // hides it because its composer owns that corner.
+            if GlobalCreateMenuPolicy.showsFloatingButton(
+                selectedTab: environment.navigation.selectedTab,
+                hasNestedDestination: environment.navigation.hasNestedDestination
+            ) {
+                GlobalCreateMenu {
+                    Image(systemName: "plus")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 56, height: 56)
+                        .contentShape(Circle())
+                }
+                .glassEffect(.regular.interactive(), in: .circle)
+                .padding(.trailing, 20)
+                .padding(.bottom, 24)
             }
         }
-    }
-
-    private var createMenu: some View {
-        Menu {
-            Button("New intent") {
-                environment.navigation.sheet = .assistant
-            }
-            Button("New chat") {
-                environment.startAssistantChat()
-            }
-            Button("Compose email") {
-                environment.navigation.sheet = .compose
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 56, height: 56)
-                .contentShape(Circle())
-        }
-        .glassEffect(.regular.interactive(), in: .circle)
-        .accessibilityLabel("New intent, chat, or email")
     }
 
     @ViewBuilder private var rootDestination: some View {
@@ -546,7 +535,7 @@ private struct SourceList: View {
             onSelect()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: category == .all ? "tray.full" : "line.3.horizontal.decrease")
+                Image(systemName: category.symbol)
                     .font(.footnote)
                     .frame(width: 20)
                     .foregroundStyle(.secondary)
