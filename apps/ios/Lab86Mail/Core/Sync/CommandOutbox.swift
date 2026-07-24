@@ -251,6 +251,93 @@ enum CommandOutboxError: Error, Equatable {
     case idempotencyKeyReused
 }
 
+struct PendingNotificationResponse: Equatable, Sendable {
+    let id: UUID
+    let response: NotificationTextResponse
+}
+
+@ModelActor
+actor NotificationResponseOutbox {
+    func enqueue(_ response: NotificationTextResponse) throws -> PendingNotificationResponse {
+        let record = PendingNotificationResponseRecord(
+            responseData: try JSONEncoder().encode(response)
+        )
+        modelContext.insert(record)
+        try modelContext.save()
+        return PendingNotificationResponse(id: record.id, response: response)
+    }
+
+    func pending() throws -> [PendingNotificationResponse] {
+        let descriptor = FetchDescriptor<PendingNotificationResponseRecord>(
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        var pending: [PendingNotificationResponse] = []
+        var removedCorruptRecord = false
+        for record in try modelContext.fetch(descriptor) {
+            guard let response = try? JSONDecoder().decode(
+                NotificationTextResponse.self,
+                from: record.responseData
+            ) else {
+                modelContext.delete(record)
+                removedCorruptRecord = true
+                continue
+            }
+            pending.append(PendingNotificationResponse(id: record.id, response: response))
+        }
+        if removedCorruptRecord { try modelContext.save() }
+        return pending
+    }
+
+    func claimPending(now: Date = .now) throws -> [PendingNotificationResponse] {
+        let staleLease = now.addingTimeInterval(-300)
+        let descriptor = FetchDescriptor<PendingNotificationResponseRecord>(
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        var claimed: [PendingNotificationResponse] = []
+        for record in try modelContext.fetch(descriptor)
+        where !record.isSubmitting || record.updatedAt <= staleLease {
+            guard let response = try? JSONDecoder().decode(
+                NotificationTextResponse.self,
+                from: record.responseData
+            ) else {
+                modelContext.delete(record)
+                continue
+            }
+            record.isSubmitting = true
+            record.updatedAt = now
+            claimed.append(PendingNotificationResponse(id: record.id, response: response))
+        }
+        try modelContext.save()
+        return claimed
+    }
+
+    func release(id: UUID) throws {
+        let descriptor = FetchDescriptor<PendingNotificationResponseRecord>(
+            predicate: #Predicate { $0.id == id }
+        )
+        guard let record = try modelContext.fetch(descriptor).first else { return }
+        record.isSubmitting = false
+        record.updatedAt = .now
+        try modelContext.save()
+    }
+
+    func remove(id: UUID) throws {
+        let descriptor = FetchDescriptor<PendingNotificationResponseRecord>(
+            predicate: #Predicate { $0.id == id }
+        )
+        guard let record = try modelContext.fetch(descriptor).first else { return }
+        modelContext.delete(record)
+        try modelContext.save()
+    }
+
+    func purge() throws {
+        for record in try modelContext.fetch(FetchDescriptor<PendingNotificationResponseRecord>()) {
+            modelContext.delete(record)
+        }
+        try modelContext.save()
+    }
+}
+
 private extension Duration {
     var timeInterval: TimeInterval {
         let parts = components

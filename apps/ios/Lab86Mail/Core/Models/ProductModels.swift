@@ -1748,6 +1748,8 @@ struct CheckinSummary: Identifiable, Hashable, Codable, Sendable {
     let localDate: String
     let status: String
     let candidates: [CheckinCandidateSummary]
+    let reflectionText: String?
+    let tomorrowIntentText: String?
 
     init?(json: JSONValue) {
         guard let id = json["_id"]?.stringValue ?? json["id"]?.stringValue else { return nil }
@@ -1755,6 +1757,8 @@ struct CheckinSummary: Identifiable, Hashable, Codable, Sendable {
         localDate = json["localDate"]?.stringValue ?? "Today"
         status = json["status"]?.stringValue ?? "open"
         candidates = (json["candidateItems"]?.arrayValue ?? []).compactMap(CheckinCandidateSummary.init)
+        reflectionText = json["responseText"]?.stringValue?.nilIfBlank
+        tomorrowIntentText = json["tomorrowIntentText"]?.stringValue?.nilIfBlank
     }
 }
 

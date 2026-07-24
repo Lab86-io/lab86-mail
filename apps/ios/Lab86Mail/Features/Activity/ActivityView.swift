@@ -4,6 +4,7 @@ struct ActivityView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
     @State private var checkinText = ""
+    @State private var tomorrowText = ""
     @State private var completedCandidateIDs: Set<String> = []
     @State private var isSavingCheckin = false
     @State private var checkinError: String?
@@ -86,15 +87,24 @@ struct ActivityView: View {
                                     )
                                 }
                             }
+                        }
+                        Section("What do you want to get done tomorrow?") {
+                            Text("This becomes an explicit intent signal for the next brief and its recommended next moves.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            TextEditor(text: $tomorrowText)
+                                .frame(minHeight: 110)
+                                .accessibilityLabel("What do you want to get done tomorrow")
                             if let checkinError { Text(checkinError).font(.footnote).foregroundStyle(.red) }
                             Button {
                                 Task { await saveCheckin(checkin) }
                             } label: {
-                                if isSavingCheckin { ProgressView() } else { Text("Save Check-In") }
+                                if isSavingCheckin { ProgressView() } else { Text("Save Daily Alignment") }
                             }
                             .disabled(
                                 isSavingCheckin || (
                                     checkinText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                        && tomorrowText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                         && completedCandidateIDs.isEmpty
                                 )
                             )
@@ -213,6 +223,7 @@ struct ActivityView: View {
             .task {
                 loadLocalState()
                 await environment.store.refreshToday()
+                loadCheckinDraft()
             }
             .refreshable { await environment.store.refreshToday() }
             .sheet(item: $questionForReview) { item in
@@ -291,13 +302,21 @@ struct ActivityView: View {
         do {
             try await environment.store.answerCheckin(
                 responseText: checkinText.trimmingCharacters(in: .whitespacesAndNewlines),
+                tomorrowIntentText: tomorrowText.trimmingCharacters(in: .whitespacesAndNewlines),
                 completed: checkin.candidates.filter { completedCandidateIDs.contains($0.id) }
             )
             checkinText = ""
+            tomorrowText = ""
             completedCandidateIDs = []
             checkinError = nil
         } catch {
             checkinError = error.localizedDescription
         }
+    }
+
+    private func loadCheckinDraft() {
+        guard let checkin = environment.store.checkin else { return }
+        if checkinText.isEmpty { checkinText = checkin.reflectionText ?? "" }
+        if tomorrowText.isEmpty { tomorrowText = checkin.tomorrowIntentText ?? "" }
     }
 }

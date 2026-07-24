@@ -89,7 +89,32 @@ describe('APNs delivery contract', () => {
       },
       notificationId: 'notice-1',
       route: '/checkin?id=checkin_123',
+      promptKind: 'reflection',
     });
+  });
+
+  test('keeps tomorrow intent distinct and gives a ready brief its own category', () => {
+    const tomorrow = buildAPNsPayload({
+      id: 'notice-tomorrow',
+      userId: 'user-1',
+      type: 'daily_checkin',
+      title: 'What do you want to get done tomorrow?',
+      body: 'Reply in your own words.',
+      deepLink: '/?checkin=checkin_123&prompt=tomorrow',
+    });
+    expect(tomorrow.route).toBe('/checkin?id=checkin_123&prompt=tomorrow');
+    expect(tomorrow.promptKind).toBe('tomorrow');
+    expect(tomorrow.aps.category).toBe('LAB86_CHECKIN');
+
+    const brief = buildAPNsPayload({
+      id: 'notice-brief',
+      userId: 'user-1',
+      type: 'brief_ready',
+      title: 'Your Daily Brief is ready',
+      body: 'Open it.',
+      deepLink: '/brief?id=report_1',
+    });
+    expect(brief.aps.category).toBe('LAB86_BRIEF');
   });
 
   test('includes an actionable suggestion id without exposing mail content as custom data', () => {
@@ -192,6 +217,18 @@ describe('mail event suggestion safety gate', () => {
 });
 
 describe('mobile notification preferences', () => {
+  const validPreferences = {
+    nativePushEnabled: true,
+    newMailPushEnabled: true,
+    eventSuggestionPushEnabled: true,
+    eveningCheckinEnabled: true,
+    eveningCheckinLocalTime: '19:00',
+    inAppEnabled: true,
+    emailFallbackEnabled: true,
+    emailFallbackDelayMinutes: 90,
+    timezone: 'America/New_York',
+  };
+
   test('validates the complete account-level native preference contract', () => {
     expect(
       parseMobileNotificationPreferences({
@@ -239,6 +276,27 @@ describe('mobile notification preferences', () => {
     ).toThrow(/HH:MM/);
   });
 
+  test('rejects malformed morning, location, coordinate, and fallback settings', () => {
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, morningBriefEnabled: 'yes' }),
+    ).toThrow(/morningBriefEnabled/);
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, briefLocationEnabled: 'yes' }),
+    ).toThrow(/briefLocationEnabled/);
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, emailFallbackDelayMinutes: 10 }),
+    ).toThrow(/between 15 and 1440/);
+    expect(() => parseMobileNotificationPreferences({ ...validPreferences, briefLatitude: 91 })).toThrow(
+      /briefLatitude/,
+    );
+    expect(() => parseMobileNotificationPreferences({ ...validPreferences, briefLongitude: -181 })).toThrow(
+      /briefLongitude/,
+    );
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, briefLocationEnabled: true }),
+    ).toThrow(/latitude and longitude/);
+  });
+
   test('suppresses only the notification classes the user disabled', () => {
     expect(nativePushDisabledReason('mail_message', { newMailPushEnabled: false })).toBe('new_mail_disabled');
     expect(nativePushDisabledReason('event_suggestion', { eventSuggestionPushEnabled: false })).toBe(
@@ -247,6 +305,9 @@ describe('mobile notification preferences', () => {
     expect(nativePushDisabledReason('daily_checkin', { newMailPushEnabled: false })).toBeNull();
     expect(nativePushDisabledReason('daily_checkin', { nativePushEnabled: false })).toBe(
       'native_push_disabled',
+    );
+    expect(nativePushDisabledReason('brief_ready', { morningBriefEnabled: false })).toBe(
+      'morning_brief_disabled',
     );
   });
 });

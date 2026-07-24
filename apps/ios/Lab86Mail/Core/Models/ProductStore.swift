@@ -2138,7 +2138,11 @@ final class ProductStore {
         } catch { record(error) }
     }
 
-    func answerCheckin(responseText: String, completed: [CheckinCandidateSummary]) async throws {
+    func answerCheckin(
+        responseText: String,
+        tomorrowIntentText: String,
+        completed: [CheckinCandidateSummary]
+    ) async throws {
         guard let checkin else { return }
         let completedJSON = completed.map { candidate in
             JSONValue.object([
@@ -2150,13 +2154,16 @@ final class ProductStore {
             path: "/api/albatross/checkin/\(checkin.id)/answer",
             body: .object([
                 "responseText": .string(responseText),
+                "tomorrowIntentText": .string(tomorrowIntentText),
                 "completed": .array(completedJSON),
             ])
         )
         guard response["ok"]?.boolValue == true else {
             throw BackendError.server(status: 500, message: response["error"]?.stringValue ?? "Check-in failed.")
         }
-        self.checkin = nil
+        if response["status"]?.stringValue == "answered" {
+            self.checkin = nil
+        }
         await persistCache()
         await refreshToday()
     }

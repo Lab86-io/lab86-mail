@@ -62,12 +62,19 @@ export function createMobilePreferencesHandlers(deps: MobilePreferencesDependenc
         nativePushEnabled: body.nativePushEnabled,
         newMailPushEnabled: body.newMailPushEnabled,
         eventSuggestionPushEnabled: body.eventSuggestionPushEnabled,
+        morningBriefEnabled: body.morningBriefEnabled,
         eveningCheckinEnabled: body.eveningCheckinEnabled,
         eveningCheckinLocalTime: body.eveningCheckinLocalTime,
         inAppEnabled: body.inAppEnabled,
         emailFallbackEnabled: body.emailFallbackEnabled,
         emailFallbackDelayMinutes: body.emailFallbackDelayMinutes,
         timezone: body.timezone,
+        briefLocationEnabled: body.briefLocationEnabled,
+        briefLatitude: body.briefLatitude,
+        briefLongitude: body.briefLongitude,
+        briefLocationLabel: body.briefLocationLabel,
+        briefLocationAccuracy: body.briefLocationAccuracy,
+        briefLocationUpdatedAt: body.briefLocationUpdatedAt,
       });
       return Response.json({ ok: true });
     } catch (error) {

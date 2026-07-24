@@ -66,6 +66,8 @@ export interface BriefWeather {
   longitude: number;
   timezone: string;
   unit: TemperatureUnit;
+  source?: 'Apple Weather' | 'Open-Meteo';
+  attributionURL?: string;
   current: NormalizedForecast['current'] & { tempMin: number; tempMax: number };
   hourly: HourlyPoint[];
   daily: DailyPoint[];

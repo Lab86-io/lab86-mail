@@ -14,12 +14,14 @@ const preferences = {
   nativePushEnabled: true,
   newMailPushEnabled: true,
   eventSuggestionPushEnabled: false,
+  morningBriefEnabled: true,
   eveningCheckinEnabled: true,
   eveningCheckinLocalTime: '19:30',
   inAppEnabled: true,
   emailFallbackEnabled: false,
   emailFallbackDelayMinutes: 90,
   timezone: 'America/New_York',
+  briefLocationEnabled: false,
 };
 
 function request(body: unknown) {
@@ -59,7 +61,7 @@ describe('mobile preferences route', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
-    expect(deps.convexMutation.mock.calls[0][1]).toEqual({ userId: user.userId, ...preferences });
+    expect(deps.convexMutation.mock.calls[0][1]).toMatchObject({ userId: user.userId, ...preferences });
   });
 
   test('returns 400 for malformed JSON and validation failures', async () => {
@@ -77,6 +79,46 @@ describe('mobile preferences route', () => {
     expect(invalidResponse.status).toBe(400);
     expect((await invalidResponse.json()).error).toBe('timezone must be a valid IANA timezone.');
     expect(deps.convexMutation).not.toHaveBeenCalled();
+  });
+
+  test('validates and forwards an explicitly opted-in approximate brief location', async () => {
+    const deps = dependencies();
+    const handlers = createMobilePreferencesHandlers(deps as any);
+    const located = {
+      ...preferences,
+      briefLocationEnabled: true,
+      briefLatitude: 43.15,
+      briefLongitude: -77.62,
+      briefLocationLabel: 'Rochester, New York',
+      briefLocationAccuracy: 125,
+      briefLocationUpdatedAt: 1_800_000_000_000,
+    };
+
+    const response = await handlers.PUT(request(located));
+
+    expect(response.status).toBe(200);
+    expect(deps.convexMutation.mock.calls[0][1]).toEqual({
+      userId: user.userId,
+      ...located,
+    });
+  });
+
+  test('rejects incomplete and out-of-range opted-in brief locations', async () => {
+    const invalidLocations = [
+      { briefLocationEnabled: true, briefLongitude: -77.62 },
+      { briefLocationEnabled: true, briefLatitude: 43.15 },
+      { briefLocationEnabled: true, briefLatitude: 91, briefLongitude: -77.62 },
+      { briefLocationEnabled: true, briefLatitude: 43.15, briefLongitude: -181 },
+    ];
+
+    for (const location of invalidLocations) {
+      const deps = dependencies();
+      const response = await createMobilePreferencesHandlers(deps as any).PUT(
+        request({ ...preferences, ...location }),
+      );
+      expect(response.status).toBe(400);
+      expect(deps.convexMutation).not.toHaveBeenCalled();
+    }
   });
 
   test('preserves controlled authentication failures', async () => {

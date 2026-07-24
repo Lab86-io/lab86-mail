@@ -12,7 +12,7 @@ export interface APNsPayload {
   aps: {
     alert: { title: string; body: string };
     sound: 'default';
-    category: 'LAB86_CHECKIN' | 'LAB86_COMMITMENT' | 'LAB86_MAIL';
+    category: 'LAB86_CHECKIN' | 'LAB86_COMMITMENT' | 'LAB86_MAIL' | 'LAB86_BRIEF';
     'thread-id': string;
     'content-available': 1;
   };
@@ -22,6 +22,7 @@ export interface APNsPayload {
   accountId?: string;
   threadId?: string;
   messageId?: string;
+  promptKind?: 'reflection' | 'tomorrow';
 }
 
 interface APNsConfiguration {
@@ -67,8 +68,13 @@ export function apnsHost(environment: MobilePushEnvironment) {
 
 function nativeRoute(envelope: NotificationEnvelope) {
   if (/[?&]checkin=/.test(envelope.deepLink)) {
-    const checkinId = new URL(envelope.deepLink, 'https://lab86.io').searchParams.get('checkin');
-    return checkinId ? `/checkin?id=${encodeURIComponent(checkinId)}` : '/checkin';
+    const link = new URL(envelope.deepLink, 'https://lab86.io');
+    const checkinId = link.searchParams.get('checkin');
+    const promptKind = link.searchParams.get('prompt');
+    if (!checkinId) return '/checkin';
+    return `/checkin?id=${encodeURIComponent(checkinId)}${
+      promptKind ? `&prompt=${encodeURIComponent(promptKind)}` : ''
+    }`;
   }
   return envelope.deepLink.startsWith('/') ? envelope.deepLink : '/activity';
 }
@@ -80,13 +86,18 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
   const accountId = deepLink.searchParams.get('account');
   const threadId = deepLink.searchParams.get('thread');
   const messageId = deepLink.searchParams.get('message');
-  const category = route.startsWith('/checkin')
-    ? 'LAB86_CHECKIN'
-    : suggestionId
-      ? 'LAB86_COMMITMENT'
-      : route.startsWith('/mail/thread')
-        ? 'LAB86_MAIL'
-        : 'LAB86_COMMITMENT';
+  const promptKind =
+    deepLink.searchParams.get('prompt') === 'tomorrow' ? ('tomorrow' as const) : ('reflection' as const);
+  const category =
+    envelope.type === 'brief_ready'
+      ? 'LAB86_BRIEF'
+      : route.startsWith('/checkin')
+        ? 'LAB86_CHECKIN'
+        : suggestionId
+          ? 'LAB86_COMMITMENT'
+          : route.startsWith('/mail/thread')
+            ? 'LAB86_MAIL'
+            : 'LAB86_COMMITMENT';
   return {
     aps: {
       alert: {
@@ -104,6 +115,7 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
     ...(accountId ? { accountId } : {}),
     ...(threadId ? { threadId } : {}),
     ...(messageId ? { messageId } : {}),
+    ...(route.startsWith('/checkin') ? { promptKind } : {}),
   };
 }
 

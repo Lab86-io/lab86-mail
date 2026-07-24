@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { generateKeyPairSync } from 'node:crypto';
 import './tools/harness';
 import {
   buildDataPrompt,
@@ -59,6 +60,21 @@ const WEATHER: BriefWeather = {
     { dateIso: '2026-07-08', label: 'Wed', conditionCode: 'clear', tempMin: 63.9, tempMax: 81.5 },
   ],
 };
+
+function openMeteoForecastJSON() {
+  return {
+    timezone: 'America/New_York',
+    current: { time: '2026-07-24T09:30', temperature_2m: 72, weather_code: 1 },
+    hourly: { time: ['2026-07-24T10:00'], temperature_2m: [74], weather_code: [1] },
+    daily: {
+      time: ['2026-07-24'],
+      weather_code: [1],
+      temperature_2m_max: [79],
+      temperature_2m_min: [62],
+      precipitation_probability_max: [10],
+    },
+  };
+}
 
 describe('toBriefWeather', () => {
   test('produces the compact prompt pack', () => {
@@ -146,6 +162,164 @@ describe('brief weather in the data pack', () => {
     expect(extras.weather?.current.temp).toBe(71);
   });
 
+  test('gatherBriefExtras uses WeatherKit for an explicitly shared iPhone location', async () => {
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const extras = await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), null, {
+        storedLocation: {
+          latitude: 43.15,
+          longitude: -77.62,
+          label: 'Rochester, New York',
+          timezone: 'America/New_York',
+        },
+        weatherEnvironment: {
+          WEATHERKIT_KEY_ID: 'test-key',
+          WEATHERKIT_TEAM_ID: 'test-team',
+          WEATHERKIT_SERVICE_ID: 'io.lab86.mail.test',
+          WEATHERKIT_PRIVATE_KEY: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+        },
+        weatherKitFetch: async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            currentWeather: {
+              asOf: '2026-07-24T12:00:00Z',
+              conditionCode: 'PartlyCloudy',
+              temperature: 20,
+              windSpeed: 16,
+              humidity: 0.65,
+              daylight: true,
+            },
+            forecastHourly: {
+              hours: [
+                {
+                  forecastStart: '2026-07-24T13:00:00Z',
+                  conditionCode: 'Rain',
+                  temperature: 21,
+                },
+              ],
+            },
+            forecastDaily: {
+              days: [
+                {
+                  forecastStart: '2026-07-24T04:00:00Z',
+                  conditionCode: 'PartlyCloudy',
+                  temperatureMin: 15,
+                  temperatureMax: 25,
+                  precipitationChance: 0.4,
+                },
+              ],
+            },
+          }),
+        }),
+      }),
+    );
+
+    expect(extras.weather).toMatchObject({
+      location: 'Rochester, New York',
+      source: 'Apple Weather',
+      attributionURL: 'https://weatherkit.apple.com/legal-attribution.html',
+    });
+  });
+
+  test('loads only an explicitly opted-in stored location through mobile preferences', async () => {
+    const queriedUsers: string[] = [];
+    const requestedURLs: string[] = [];
+    const extras = await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), 'weather_user', {
+        mobilePreferencesQuery: async (userId) => {
+          queriedUsers.push(userId);
+          return {
+            briefLocationEnabled: true,
+            briefLatitude: 43.15,
+            briefLongitude: -77.62,
+            briefLocationLabel: 'Rochester, New York',
+            timezone: 'America/New_York',
+          };
+        },
+        weatherFetch: async (url: string) => {
+          requestedURLs.push(url);
+          return { ok: true, status: 200, json: async () => openMeteoForecastJSON() };
+        },
+      }),
+    );
+
+    expect(queriedUsers).toEqual(['weather_user']);
+    expect(requestedURLs).toHaveLength(1);
+    expect(requestedURLs[0]).toContain('api.open-meteo.com/v1/forecast');
+    expect(extras.weather?.location).toBe('Rochester, New York');
+  });
+
+  test('ignores stored coordinates when location consent is disabled', async () => {
+    const requestedURLs: string[] = [];
+    await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), 'weather_user', {
+        mobilePreferencesQuery: async () => ({
+          briefLocationEnabled: false,
+          briefLatitude: 43.15,
+          briefLongitude: -77.62,
+          briefLocationLabel: 'Private location',
+          timezone: 'America/New_York',
+        }),
+        weatherFetch: async (url: string) => {
+          requestedURLs.push(url);
+          return {
+            ok: true,
+            status: 200,
+            json: async () =>
+              url.includes('geocoding-api')
+                ? {
+                    results: [
+                      {
+                        name: 'New York',
+                        latitude: 40.7,
+                        longitude: -74,
+                        timezone: 'America/New_York',
+                      },
+                    ],
+                  }
+                : openMeteoForecastJSON(),
+          };
+        },
+      }),
+    );
+
+    expect(requestedURLs.some((url) => url.includes('geocoding-api'))).toBe(true);
+    expect(requestedURLs.join(' ')).not.toContain('43.15');
+  });
+
+  test('falls back to Open-Meteo without resolving the same location twice when WeatherKit fails', async () => {
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const requestedURLs: string[] = [];
+    const extras = await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), null, {
+        storedLocation: {
+          latitude: 43.15,
+          longitude: -77.62,
+          label: 'Rochester, New York',
+          timezone: 'America/New_York',
+        },
+        weatherEnvironment: {
+          WEATHERKIT_KEY_ID: 'test-key',
+          WEATHERKIT_TEAM_ID: 'test-team',
+          WEATHERKIT_SERVICE_ID: 'io.lab86.mail.test',
+          WEATHERKIT_PRIVATE_KEY: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+        },
+        weatherKitFetch: async () => {
+          throw new Error('WeatherKit unavailable');
+        },
+        weatherFetch: async (url: string) => {
+          requestedURLs.push(url);
+          return { ok: true, status: 200, json: async () => openMeteoForecastJSON() };
+        },
+      }),
+    );
+
+    expect(requestedURLs).toHaveLength(1);
+    expect(requestedURLs[0]).toContain('api.open-meteo.com/v1/forecast');
+    expect(extras.weather).toMatchObject({ location: 'Rochester, New York', current: { temp: 72 } });
+  });
+
   test('buildDataPrompt carries weather (and null when unresolved)', async () => {
     await withToolContext(async () => {
       const withWeather = buildDataPrompt(reportFixture(), {
@@ -166,6 +340,67 @@ describe('brief weather in the data pack', () => {
       expect(without).toContain('"weather": null');
     });
   });
+
+  test('buildDataPrompt carries daily alignment and prioritizes matching handoffs', async () => {
+    await withToolContext(async () => {
+      const handoff = (id: string, situation: string) =>
+        ({
+          version: 1,
+          id,
+          source: 'test',
+          sourceKey: id,
+          kind: 'work',
+          lane: 'focus',
+          status: 'open',
+          priority: 'normal',
+          protected: false,
+          situation,
+          background: [],
+          assessment: situation,
+          recommendation: situation,
+          evidence: [],
+          primaryRef: { kind: 'work', id },
+          relatedRefs: [],
+          items: [
+            {
+              sourceKey: id,
+              ref: { kind: 'work', id },
+              situation,
+              assessment: situation,
+              recommendation: situation,
+            },
+          ],
+          actions: [],
+          generatedAt: 1,
+        }) as any;
+      const prompt = buildDataPrompt(
+        reportFixture({
+          handoffs: [
+            handoff('billing', 'Review the billing launch'),
+            handoff('passport', 'Renew the passport before the trip'),
+          ],
+          sections: {
+            albatross: {
+              dailyAlignment: {
+                localDate: '2026-07-06',
+                reflection: 'Shipped the migration.',
+                tomorrowIntent: 'Finish passport renewal.',
+              },
+            },
+          } as any,
+        }),
+        {
+          digests: [],
+          voiceSamples: [],
+          services: ['gmail'],
+          weather: null,
+        } as any,
+      );
+      expect(prompt).toContain('"tomorrowIntent": "Finish passport renewal."');
+      expect(prompt.indexOf('"id": "passport"')).toBeLessThan(prompt.indexOf('"id": "billing"'));
+      expect(prompt).toContain('authoritative attention signal');
+    });
+  });
 });
 
 describe('artifact brief prompt', () => {
@@ -176,6 +411,7 @@ describe('artifact brief prompt', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.daily');
     expect(HTML_ARTIFACT_BRIEF).toContain('near the masthead/lede');
     expect(HTML_ARTIFACT_BRIEF).toContain('never invent weather');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Weather data by Apple Weather');
   });
 
   test('uses the second accent for headers and rules, with a safe fallback', () => {

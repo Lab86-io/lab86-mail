@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
@@ -84,6 +85,118 @@ function notificationPayload(input: {
   return { ...input, status: 'queued' as const, createdAt: ts, updatedAt: ts };
 }
 
+async function ensureInAppDelivery(
+  ctx: MutationCtx,
+  input: {
+    userId: string;
+    notificationId: Id<'albatrossNotifications'>;
+    enabled: boolean;
+    timestamp: number;
+  },
+) {
+  if (!input.enabled) return false;
+  const deliveries = await ctx.db
+    .query('notificationDeliveries')
+    .withIndex('by_notification', (q) => q.eq('notificationId', input.notificationId))
+    .collect();
+  if (deliveries.some((delivery) => delivery.channel === 'in_app')) return false;
+  await ctx.db.insert('notificationDeliveries', {
+    userId: input.userId,
+    notificationId: input.notificationId,
+    channel: 'in_app',
+    status: 'sent',
+    attemptCount: 1,
+    scheduledFor: input.timestamp,
+    sentAt: input.timestamp,
+    createdAt: input.timestamp,
+    updatedAt: input.timestamp,
+  });
+  const notification = await ctx.db.get(input.notificationId);
+  if (notification?.status === 'queued') {
+    await ctx.db.patch(input.notificationId, {
+      status: 'delivered',
+      updatedAt: input.timestamp,
+    });
+  }
+  return true;
+}
+
+async function ensureDailyAlignmentNotifications(
+  ctx: MutationCtx,
+  input: {
+    userId: string;
+    checkinId: any;
+    localDate: string;
+    candidateCount: number;
+  },
+) {
+  const ts = now();
+  const preference = await ctx.db
+    .query('albatrossNotificationPreferences')
+    .withIndex('by_user', (q) => q.eq('userId', input.userId))
+    .unique();
+  const inAppEnabled = preference?.inAppEnabled !== false;
+  const prompts = [
+    {
+      kind: 'reflection' as const,
+      title: 'What did you get done today?',
+      body: input.candidateCount
+        ? `Albatross found ${input.candidateCount} things that may have moved. Reply in your own words.`
+        : 'Tell Albatross what moved, what did not, and what you learned.',
+    },
+    {
+      kind: 'tomorrow' as const,
+      title: 'What do you want to get done tomorrow?',
+      body: 'Reply in your own words. Albatross will use this intent to shape your next brief and next actions.',
+    },
+  ];
+  const notificationIds = [];
+  for (const prompt of prompts) {
+    const dedupeKey = `daily-checkin:${input.localDate}:${prompt.kind}`;
+    let notification = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', input.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    // Reuse the pre-alignment reflection notification when upgrading an
+    // already-open check-in, instead of sending a duplicate.
+    if (!notification && prompt.kind === 'reflection') {
+      notification = await ctx.db
+        .query('albatrossNotifications')
+        .withIndex('by_user_dedupe', (q) =>
+          q.eq('userId', input.userId).eq('dedupeKey', `daily-checkin:${input.localDate}`),
+        )
+        .unique();
+    }
+    if (!notification) {
+      const notificationId = await ctx.db.insert(
+        'albatrossNotifications',
+        notificationPayload({
+          userId: input.userId,
+          type: 'daily_checkin',
+          title: prompt.title,
+          body: prompt.body,
+          entityKind: 'checkin',
+          entityId: String(input.checkinId),
+          deepLink: `/?checkin=${String(input.checkinId)}&prompt=${prompt.kind}`,
+          dedupeKey,
+          scheduledFor: ts,
+        }),
+      );
+      notification = await ctx.db.get(notificationId);
+    }
+    if (notification) {
+      await ensureInAppDelivery(ctx, {
+        userId: input.userId,
+        notificationId: notification._id,
+        enabled: inAppEnabled,
+        timestamp: ts,
+      });
+      notificationIds.push(notification._id);
+    }
+  }
+  return notificationIds;
+}
+
 export const getPreferences = query({
   args: {},
   handler: async (ctx) => {
@@ -103,8 +216,10 @@ export const getPreferences = query({
         nativePushEnabled: true,
         newMailPushEnabled: true,
         eventSuggestionPushEnabled: true,
+        morningBriefEnabled: true,
         emailFallbackEnabled: true,
         emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
+        briefLocationEnabled: false,
       }
     );
   },
@@ -166,12 +281,19 @@ export const mobilePreferences = query({
       nativePushEnabled: row?.nativePushEnabled ?? true,
       newMailPushEnabled: row?.newMailPushEnabled ?? true,
       eventSuggestionPushEnabled: row?.eventSuggestionPushEnabled ?? true,
+      morningBriefEnabled: row?.morningBriefEnabled ?? true,
       eveningCheckinEnabled: row?.eveningCheckinEnabled ?? true,
       eveningCheckinLocalTime: row?.eveningCheckinLocalTime ?? DEFAULT_CHECKIN_TIME,
       inAppEnabled: row?.inAppEnabled ?? true,
       emailFallbackEnabled: row?.emailFallbackEnabled ?? true,
       emailFallbackDelayMinutes: row?.emailFallbackDelayMinutes ?? DEFAULT_EMAIL_DELAY,
       timezone: row?.timezone ?? DEFAULT_TZ,
+      briefLocationEnabled: row?.briefLocationEnabled ?? false,
+      briefLatitude: row?.briefLatitude,
+      briefLongitude: row?.briefLongitude,
+      briefLocationLabel: row?.briefLocationLabel,
+      briefLocationAccuracy: row?.briefLocationAccuracy,
+      briefLocationUpdatedAt: row?.briefLocationUpdatedAt,
     };
   },
 });
@@ -183,12 +305,19 @@ export const saveMobilePreferences = mutation({
     nativePushEnabled: v.boolean(),
     newMailPushEnabled: v.boolean(),
     eventSuggestionPushEnabled: v.boolean(),
+    morningBriefEnabled: v.optional(v.boolean()),
     eveningCheckinEnabled: v.boolean(),
     eveningCheckinLocalTime: v.string(),
     inAppEnabled: v.boolean(),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
     timezone: v.string(),
+    briefLocationEnabled: v.optional(v.boolean()),
+    briefLatitude: v.optional(v.number()),
+    briefLongitude: v.optional(v.number()),
+    briefLocationLabel: v.optional(v.string()),
+    briefLocationAccuracy: v.optional(v.number()),
+    briefLocationUpdatedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -203,16 +332,47 @@ export const saveMobilePreferences = mutation({
     if (args.emailFallbackDelayMinutes < 15 || args.emailFallbackDelayMinutes > 1_440) {
       throw new Error('Fallback delay must be between 15 and 1440 minutes.');
     }
+    if (
+      args.briefLatitude !== undefined &&
+      (!Number.isFinite(args.briefLatitude) || args.briefLatitude < -90 || args.briefLatitude > 90)
+    ) {
+      throw new Error('Invalid brief latitude.');
+    }
+    if (
+      args.briefLongitude !== undefined &&
+      (!Number.isFinite(args.briefLongitude) || args.briefLongitude < -180 || args.briefLongitude > 180)
+    ) {
+      throw new Error('Invalid brief longitude.');
+    }
+    const briefLocationEnabled = args.briefLocationEnabled ?? existing?.briefLocationEnabled ?? false;
+    const briefLatitude = args.briefLatitude ?? existing?.briefLatitude;
+    const briefLongitude = args.briefLongitude ?? existing?.briefLongitude;
+    if (briefLocationEnabled && (briefLatitude === undefined || briefLongitude === undefined)) {
+      throw new Error('Brief location coordinates are required.');
+    }
     const mobile = {
       nativePushEnabled: args.nativePushEnabled,
       newMailPushEnabled: args.newMailPushEnabled,
       eventSuggestionPushEnabled: args.eventSuggestionPushEnabled,
+      morningBriefEnabled: args.morningBriefEnabled ?? existing?.morningBriefEnabled ?? true,
       eveningCheckinEnabled: args.eveningCheckinEnabled,
       eveningCheckinLocalTime: args.eveningCheckinLocalTime,
       inAppEnabled: args.inAppEnabled,
       emailFallbackEnabled: args.emailFallbackEnabled,
       emailFallbackDelayMinutes: Math.round(args.emailFallbackDelayMinutes),
       timezone: args.timezone,
+      briefLocationEnabled,
+      briefLatitude: briefLocationEnabled ? briefLatitude : undefined,
+      briefLongitude: briefLocationEnabled ? briefLongitude : undefined,
+      briefLocationLabel: briefLocationEnabled
+        ? (args.briefLocationLabel ?? existing?.briefLocationLabel)
+        : undefined,
+      briefLocationAccuracy: briefLocationEnabled
+        ? (args.briefLocationAccuracy ?? existing?.briefLocationAccuracy)
+        : undefined,
+      briefLocationUpdatedAt: briefLocationEnabled
+        ? (args.briefLocationUpdatedAt ?? existing?.briefLocationUpdatedAt)
+        : undefined,
       updatedAt: ts,
     };
     if (existing) {
@@ -478,6 +638,63 @@ export const queueMailNotification = mutation({
   },
 });
 
+export const queueBriefReady = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    reportId: v.string(),
+    localDate: v.string(),
+    title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    if (preference?.morningBriefEnabled === false) {
+      return { notificationId: null, created: false, skipped: 'disabled' as const };
+    }
+    const ts = now();
+    const inAppEnabled = preference?.inAppEnabled !== false;
+    const dedupeKey = `brief-ready:${args.localDate}`;
+    const existing = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    if (existing) {
+      await ensureInAppDelivery(ctx, {
+        userId: args.userId,
+        notificationId: existing._id,
+        enabled: inAppEnabled,
+        timestamp: ts,
+      });
+      return { notificationId: existing._id, created: false };
+    }
+    const notificationId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'brief_ready',
+        title: String(args.title || 'Your Daily Brief is ready')
+          .trim()
+          .slice(0, 180),
+        body: 'Weather, today’s pressure, and your stated intent for tomorrow are assembled.',
+        deepLink: `/brief?id=${encodeURIComponent(args.reportId)}`,
+        dedupeKey,
+        scheduledFor: ts,
+      }),
+    );
+    await ensureInAppDelivery(ctx, {
+      userId: args.userId,
+      notificationId,
+      enabled: inAppEnabled,
+      timestamp: ts,
+    });
+    return { notificationId, created: true };
+  },
+});
+
 export const markNotification = mutation({
   args: {
     notificationId: v.id('albatrossNotifications'),
@@ -512,6 +729,7 @@ export const answerCheckin = mutation({
   args: {
     ...notificationCallerArgs,
     checkinId: v.id('albatrossDailyCheckins'),
+    promptKind: v.optional(v.union(v.literal('reflection'), v.literal('tomorrow'))),
     responseText: v.string(),
     completed: v.optional(v.array(v.object({ kind: v.string(), id: v.string() }))),
   },
@@ -519,12 +737,13 @@ export const answerCheckin = mutation({
     const userId = await notificationCallerUserId(ctx, args);
     const row = await ctx.db.get(args.checkinId);
     if (!row || row.userId !== userId) throw new Error('Check-in not found.');
+    const promptKind = args.promptKind ?? 'reflection';
     const responseText = args.responseText.trim().slice(0, 10_000);
     if (!responseText && !args.completed?.length) throw new Error('Tell Albatross what happened.');
     const completed = new Set((args.completed || []).map((entry) => `${entry.kind}:${entry.id}`));
     const changes: Array<{ kind: string; id: string; previousState?: string; nextState?: string }> = [];
     const ts = now();
-    for (const item of row.candidateItems) {
+    for (const item of promptKind === 'reflection' ? row.candidateItems : []) {
       if (!completed.has(`${item.kind}:${item.id}`)) continue;
       if (item.kind === 'work') {
         const workId = ctx.db.normalizeId('albatrossIntents', item.id);
@@ -567,27 +786,46 @@ export const answerCheckin = mutation({
         }
       }
     }
+    const reflectionText = promptKind === 'reflection' ? responseText || row.responseText : row.responseText;
+    const tomorrowIntentText =
+      promptKind === 'tomorrow' ? responseText || row.tomorrowIntentText : row.tomorrowIntentText;
+    const isComplete = Boolean(reflectionText?.trim() && tomorrowIntentText?.trim());
     await ctx.db.patch(row._id, {
-      status: 'answered',
-      responseText,
-      reconciledChanges: changes,
-      answeredAt: ts,
+      status: isComplete ? 'answered' : 'open',
+      ...(promptKind === 'reflection'
+        ? {
+            responseText: reflectionText,
+            reconciledChanges: [...(row.reconciledChanges ?? []), ...changes],
+            reflectionAnsweredAt: ts,
+          }
+        : { tomorrowIntentText, tomorrowIntentAnsweredAt: ts }),
+      ...(isComplete ? { answeredAt: ts } : {}),
       updatedAt: ts,
     });
-    const notification = await ctx.db
+    const notificationDedupeKey =
+      promptKind === 'tomorrow'
+        ? `daily-checkin:${row.localDate}:tomorrow`
+        : `daily-checkin:${row.localDate}:reflection`;
+    let matchingNotification = await ctx.db
       .query('albatrossNotifications')
-      .withIndex('by_user_dedupe', (q) =>
-        q.eq('userId', userId).eq('dedupeKey', `daily-checkin:${row.localDate}`),
-      )
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', notificationDedupeKey))
       .unique();
-    if (notification)
-      await ctx.db.patch(notification._id, {
+    if (!matchingNotification && promptKind === 'reflection') {
+      matchingNotification = await ctx.db
+        .query('albatrossNotifications')
+        .withIndex('by_user_dedupe', (q) =>
+          q.eq('userId', userId).eq('dedupeKey', `daily-checkin:${row.localDate}`),
+        )
+        .unique();
+    }
+    if (matchingNotification)
+      await ctx.db.patch(matchingNotification._id, {
         status: 'acted',
         actedAt: ts,
-        readAt: notification.readAt ?? ts,
+        readAt: matchingNotification.readAt ?? ts,
         updatedAt: ts,
       });
-    return { changes };
+    return { changes, status: isComplete ? 'answered' : 'open' };
   },
 });
 
@@ -657,6 +895,7 @@ export const targets = internalQuery({
         nativePushEnabled: preference?.nativePushEnabled ?? true,
         newMailPushEnabled: preference?.newMailPushEnabled ?? true,
         eventSuggestionPushEnabled: preference?.eventSuggestionPushEnabled ?? true,
+        morningBriefEnabled: preference?.morningBriefEnabled ?? true,
         emailFallbackEnabled: preference?.emailFallbackEnabled ?? true,
         emailFallbackDelayMinutes: preference?.emailFallbackDelayMinutes ?? DEFAULT_EMAIL_DELAY,
       });
@@ -699,7 +938,23 @@ export const ensureCheckin = mutation({
       .query('albatrossDailyCheckins')
       .withIndex('by_user_date', (q) => q.eq('userId', args.userId).eq('localDate', args.localDate))
       .unique();
-    if (existing) return { checkin: existing, created: false };
+    if (existing) {
+      const notificationIds = await ensureDailyAlignmentNotifications(ctx, {
+        userId: args.userId,
+        checkinId: existing._id,
+        localDate: existing.localDate,
+        candidateCount: existing.candidateItems.length,
+      });
+      if (existing.status === 'answered' && !existing.tomorrowIntentText?.trim()) {
+        await ctx.db.patch(existing._id, { status: 'open', updatedAt: now() });
+      }
+      return {
+        checkin: await ctx.db.get(existing._id),
+        notificationId: notificationIds[0],
+        notificationIds,
+        created: false,
+      };
+    }
     const dayStart = localDayStartUtc(args.timezone, args.localDate);
     const dayEnd = dayStart + 36 * 60 * 60 * 1000;
     const [recentCompletions, activeWork, activeProjects, cards] = await Promise.all([
@@ -777,35 +1032,18 @@ export const ensureCheckin = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
-    const notificationId = await ctx.db.insert(
-      'albatrossNotifications',
-      notificationPayload({
-        userId: args.userId,
-        type: 'daily_checkin',
-        title: 'What did you actually get done today?',
-        body: candidates.length
-          ? `Albatross found ${candidates.length} things that may have moved. Confirm them or tell it what really happened.`
-          : 'Tell Albatross what moved, what did not, and what should change tomorrow.',
-        entityKind: 'checkin',
-        entityId: String(checkinId),
-        deepLink: `/?checkin=${String(checkinId)}`,
-        dedupeKey: `daily-checkin:${args.localDate}`,
-        scheduledFor: ts,
-      }),
-    );
-    await ctx.db.insert('notificationDeliveries', {
+    const notificationIds = await ensureDailyAlignmentNotifications(ctx, {
       userId: args.userId,
-      notificationId,
-      channel: 'in_app',
-      status: 'sent',
-      attemptCount: 1,
-      scheduledFor: ts,
-      sentAt: ts,
-      createdAt: ts,
-      updatedAt: ts,
+      checkinId,
+      localDate: args.localDate,
+      candidateCount: candidates.length,
     });
-    await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
-    return { checkin: await ctx.db.get(checkinId), notificationId, created: true };
+    return {
+      checkin: await ctx.db.get(checkinId),
+      notificationId: notificationIds[0],
+      notificationIds,
+      created: true,
+    };
   },
 });
 
@@ -819,7 +1057,13 @@ export const deliveryContext = query({
     requireInternalSecret(args.internalSecret);
     const checkin = await ctx.db.get(args.checkinId);
     if (!checkin || checkin.userId !== args.userId) return null;
-    const notification = await ctx.db
+    let notification = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) =>
+        q.eq('userId', args.userId).eq('dedupeKey', `daily-checkin:${checkin.localDate}:reflection`),
+      )
+      .unique();
+    notification ??= await ctx.db
       .query('albatrossNotifications')
       .withIndex('by_user_dedupe', (q) =>
         q.eq('userId', args.userId).eq('dedupeKey', `daily-checkin:${checkin.localDate}`),
@@ -874,6 +1118,21 @@ export const nativeDeliveryContext = query({
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .unique();
     return { notification, mobileDevices, deliveries, nativeDeviceDeliveries, preference };
+  },
+});
+
+export const notificationResponseContext = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const notificationId = ctx.db.normalizeId('albatrossNotifications', args.notificationId);
+    if (!notificationId) return null;
+    const notification = await ctx.db.get(notificationId);
+    return notification?.userId === args.userId ? notification : null;
   },
 });
 

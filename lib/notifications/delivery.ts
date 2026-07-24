@@ -31,6 +31,7 @@ export function setNotificationDeliveryDependenciesForTest(
 export interface NotificationEnvelope {
   id: string;
   userId: string;
+  type?: string;
   title: string;
   body: string;
   deepLink: string;

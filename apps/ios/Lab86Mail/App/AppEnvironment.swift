@@ -23,6 +23,7 @@ final class AppEnvironment {
     let convex: ConvexClientWithAuth<String>?
     let mobileContainer: ModelContainer
     let commandOutbox: CommandOutbox
+    let notificationResponseOutbox: NotificationResponseOutbox
     let syncCoordinator = SyncCoordinator()
     let pendingSends: PendingSendCoordinator
     let mobileClient: MobileV1Client?
@@ -61,6 +62,8 @@ final class AppEnvironment {
         self.mobileContainer = mobileContainer
         let commandOutbox = CommandOutbox(modelContainer: mobileContainer)
         self.commandOutbox = commandOutbox
+        let notificationResponseOutbox = NotificationResponseOutbox(modelContainer: mobileContainer)
+        self.notificationResponseOutbox = notificationResponseOutbox
         let bootstrapSource: any MobileBootstrapFetching
         if let apiBaseURL = configuration.apiBaseURL {
             let mobileClient = MobileV1Client(
@@ -93,8 +96,40 @@ final class AppEnvironment {
         convex = convexClient
         store = ProductStore(tools: tools, backend: backend, convex: convexClient)
         mailIdentity = MailIdentityStore(tools: tools)
-        notifications = NotificationCoordinator(backend: backend)
+        notifications = NotificationCoordinator(
+            backend: backend,
+            responseOutbox: notificationResponseOutbox
+        )
         modelRouter = ModelRouter(tools: tools)
+        NotificationCoordinator.installTextResponseHandler { [backend, store] response in
+            do {
+                switch response.kind {
+                case .checkIn(let notificationID, let promptKind):
+                    let result = try await backend.post(
+                        path: "/api/mobile/notifications/respond",
+                        body: .object([
+                            "notificationId": .string(notificationID),
+                            "promptKind": .string(promptKind),
+                            "responseText": .string(response.text),
+                        ])
+                    )
+                    guard result["ok"]?.boolValue == true else { return false }
+                    await store.refreshToday()
+                    return true
+                case .mail(let accountID, let threadID, let messageID):
+                    try await store.reply(
+                        accountID: accountID,
+                        threadID: threadID,
+                        messageID: messageID,
+                        body: response.text
+                    )
+                    await store.refreshMail()
+                    return true
+                }
+            } catch {
+                return false
+            }
+        }
     }
 
     func startAssistantChat(scope: AssistantChatScope = .global) {
