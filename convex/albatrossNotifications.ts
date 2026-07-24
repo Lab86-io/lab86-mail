@@ -94,6 +94,11 @@ async function ensureDailyAlignmentNotifications(
   },
 ) {
   const ts = now();
+  const preference = await ctx.db
+    .query('albatrossNotificationPreferences')
+    .withIndex('by_user', (q) => q.eq('userId', input.userId))
+    .unique();
+  const inAppEnabled = preference?.inAppEnabled !== false;
   const prompts = [
     {
       kind: 'reflection' as const,
@@ -140,18 +145,20 @@ async function ensureDailyAlignmentNotifications(
           scheduledFor: ts,
         }),
       );
-      await ctx.db.insert('notificationDeliveries', {
-        userId: input.userId,
-        notificationId,
-        channel: 'in_app',
-        status: 'sent',
-        attemptCount: 1,
-        scheduledFor: ts,
-        sentAt: ts,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-      await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
+      if (inAppEnabled) {
+        await ctx.db.insert('notificationDeliveries', {
+          userId: input.userId,
+          notificationId,
+          channel: 'in_app',
+          status: 'sent',
+          attemptCount: 1,
+          scheduledFor: ts,
+          sentAt: ts,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
+      }
       notification = await ctx.db.get(notificationId);
     }
     if (notification) notificationIds.push(notification._id);
@@ -748,27 +755,33 @@ export const answerCheckin = mutation({
         }
       }
     }
-    const reflectionText = promptKind === 'reflection' ? responseText : row.responseText;
+    const reflectionText = promptKind === 'reflection' ? responseText || row.responseText : row.responseText;
     const tomorrowIntentText = promptKind === 'tomorrow' ? responseText : row.tomorrowIntentText;
     const isComplete = Boolean(reflectionText?.trim() && tomorrowIntentText?.trim());
     await ctx.db.patch(row._id, {
       status: isComplete ? 'answered' : 'open',
       ...(promptKind === 'reflection'
-        ? { responseText, reconciledChanges: changes, reflectionAnsweredAt: ts }
+        ? { responseText: reflectionText, reconciledChanges: changes, reflectionAnsweredAt: ts }
         : { tomorrowIntentText, tomorrowIntentAnsweredAt: ts }),
       ...(isComplete ? { answeredAt: ts } : {}),
       updatedAt: ts,
     });
-    const notifications = await ctx.db
+    const notificationDedupeKey =
+      promptKind === 'tomorrow'
+        ? `daily-checkin:${row.localDate}:tomorrow`
+        : `daily-checkin:${row.localDate}:reflection`;
+    let matchingNotification = await ctx.db
       .query('albatrossNotifications')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(20);
-    const matchingNotification = notifications.find((notification) => {
-      if (notification.entityId !== String(row._id)) return false;
-      if (promptKind === 'tomorrow') return /[?&]prompt=tomorrow\b/.test(notification.deepLink);
-      return !/[?&]prompt=tomorrow\b/.test(notification.deepLink);
-    });
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', notificationDedupeKey))
+      .unique();
+    if (!matchingNotification && promptKind === 'reflection') {
+      matchingNotification = await ctx.db
+        .query('albatrossNotifications')
+        .withIndex('by_user_dedupe', (q) =>
+          q.eq('userId', userId).eq('dedupeKey', `daily-checkin:${row.localDate}`),
+        )
+        .unique();
+    }
     if (matchingNotification)
       await ctx.db.patch(matchingNotification._id, {
         status: 'acted',

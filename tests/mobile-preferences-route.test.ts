@@ -97,7 +97,28 @@ describe('mobile preferences route', () => {
     const response = await handlers.PUT(request(located));
 
     expect(response.status).toBe(200);
-    expect(deps.convexMutation.mock.calls[0][1]).toMatchObject(located);
+    expect(deps.convexMutation.mock.calls[0][1]).toEqual({
+      userId: user.userId,
+      ...located,
+    });
+  });
+
+  test('rejects incomplete and out-of-range opted-in brief locations', async () => {
+    const invalidLocations = [
+      { briefLocationEnabled: true, briefLongitude: -77.62 },
+      { briefLocationEnabled: true, briefLatitude: 43.15 },
+      { briefLocationEnabled: true, briefLatitude: 91, briefLongitude: -77.62 },
+      { briefLocationEnabled: true, briefLatitude: 43.15, briefLongitude: -181 },
+    ];
+
+    for (const location of invalidLocations) {
+      const deps = dependencies();
+      const response = await createMobilePreferencesHandlers(deps as any).PUT(
+        request({ ...preferences, ...location }),
+      );
+      expect(response.status).toBe(400);
+      expect(deps.convexMutation).not.toHaveBeenCalled();
+    }
   });
 
   test('preserves controlled authentication failures', async () => {

@@ -31,7 +31,7 @@ prompt kind from the durable user-owned notification instead of trusting the
 client.
 
 The sidebar’s direct scrub is shaped like a restrained system wheel: the
-selected item stays face-on while adjacent items rotate away on the x axis.
+selected item stays face-on while adjacent items rotate away on the x-axis.
 The motion is removed when Reduce Motion is enabled, following Apple’s
 [Accessibility guidance](https://developer.apple.com/design/human-interface-guidelines/accessibility).
 Apple’s [Picker guidance](https://developer.apple.com/design/human-interface-guidelines/pickers)

@@ -1476,6 +1476,36 @@ struct Lab86MailTests {
     }
 
     @Test
+    func notificationResponseOutboxKeepsTextUntilConfirmedAndCanBePurged() async throws {
+        let container = MobilePersistence.makeContainer(inMemory: true)
+        let outbox = NotificationResponseOutbox(modelContainer: container)
+        let response = NotificationTextResponse(
+            kind: .checkIn(notificationID: "notification-1", promptKind: "tomorrow"),
+            text: "Ship the production push flow."
+        )
+
+        let saved = try await outbox.enqueue(response)
+        #expect(try await outbox.pending() == [saved])
+        #expect(try await outbox.claimPending().isEmpty)
+
+        try await outbox.release(id: saved.id)
+        #expect(try await outbox.claimPending() == [saved])
+        try await outbox.remove(id: saved.id)
+        #expect(try await outbox.pending().isEmpty)
+
+        _ = try await outbox.enqueue(response)
+        try await outbox.purge()
+        #expect(try await outbox.pending().isEmpty)
+    }
+
+    @Test
+    func briefLocationRejectsInvalidNegativeAccuracy() {
+        #expect(CaptureLocationCoordinator.isValidHorizontalAccuracy(0))
+        #expect(CaptureLocationCoordinator.isValidHorizontalAccuracy(125))
+        #expect(!CaptureLocationCoordinator.isValidHorizontalAccuracy(-1))
+    }
+
+    @Test
     func commandReceiptsAndSyncCursorsNeverReportUnconfirmedWorkAsApplied() async throws {
         let container = MobilePersistence.makeContainer(inMemory: true)
         let outbox = CommandOutbox(modelContainer: container)

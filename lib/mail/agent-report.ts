@@ -233,15 +233,17 @@ async function gatherBriefWeather(
       label?: string;
       timezone?: string;
     } | null;
+    mobilePreferencesQuery?: (userId: string) => Promise<any>;
   } = {},
 ): Promise<BriefWeatherPack | null> {
   const contextTimezone = getAiRequestContext().userTimezone;
   try {
     let storedLocation = opts.storedLocation;
     if (storedLocation === undefined && userId) {
-      const preference = await convexQuery<any>((api as any).albatrossNotifications.mobilePreferences, {
-        userId,
-      }).catch(() => null);
+      const preference = await (opts.mobilePreferencesQuery
+        ? opts.mobilePreferencesQuery(userId)
+        : convexQuery<any>((api as any).albatrossNotifications.mobilePreferences, { userId })
+      ).catch(() => null);
       storedLocation =
         preference?.briefLocationEnabled === true &&
         Number.isFinite(preference?.briefLatitude) &&
@@ -293,7 +295,16 @@ async function gatherBriefWeather(
       }
     }
     weather ??= await withDeadline(
-      briefWeather(weatherInput, opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {}),
+      briefWeather(
+        {
+          latitude: resolved.latitude,
+          longitude: resolved.longitude,
+          place: resolved.admin1 ? `${resolved.name}, ${resolved.admin1}` : resolved.name,
+          timezone,
+          unit,
+        },
+        opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {},
+      ),
       WEATHER_DEADLINE_MS,
       'Brief weather fallback',
     );
@@ -325,6 +336,7 @@ export async function gatherBriefExtras(
       label?: string;
       timezone?: string;
     } | null;
+    mobilePreferencesQuery?: (userId: string) => Promise<any>;
   } = {},
 ): Promise<BriefExtras> {
   const accounts = userId ? await listNylasAccounts(userId).catch(() => []) : [];

@@ -146,6 +146,7 @@ struct SettingsView: View {
                     await environment.store.clearForSignOut()
                     await environment.pendingSends.clear(ownerID: ownerID)
                     environment.accountStore.clear()
+                    try? await environment.notificationResponseOutbox.purge()
                     if let ownerID {
                         clearActivityLocalState(ownerID: ownerID)
                         try? await environment.commandOutbox.purge(ownerID: ownerID)
@@ -230,6 +231,7 @@ private struct AccountDeletionView: View {
             await environment.store.clearForSignOut()
             await environment.pendingSends.clear(ownerID: ownerID)
             environment.accountStore.clear()
+            try? await environment.notificationResponseOutbox.purge()
             if let ownerID {
                 clearActivityLocalState(ownerID: ownerID)
                 try? await environment.commandOutbox.purge(ownerID: ownerID)

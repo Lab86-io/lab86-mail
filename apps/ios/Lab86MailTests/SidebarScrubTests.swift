@@ -155,6 +155,26 @@ struct SidebarScrubTests {
                 zone: .top
             ) == nil
         )
+        #expect(
+            SidebarScrubLogic.autoscrollTargets(
+                from: .primary(.today),
+                in: ordered,
+                zone: .bottom,
+                steps: 3
+            ) == [
+                .area(id: "area_1", name: "House"),
+                .area(id: "area_2", name: "Work"),
+                .mail(.main),
+            ]
+        )
+        #expect(
+            SidebarScrubLogic.autoscrollTargets(
+                from: .mail(.main),
+                in: ordered,
+                zone: .bottom,
+                steps: 3
+            ).isEmpty
+        )
     }
 
     @Test

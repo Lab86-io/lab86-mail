@@ -121,8 +121,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     private nonisolated func notifyResponseFailure() async {
         let content = UNMutableNotificationContent()
-        content.title = "Albatross couldn’t send that reply"
-        content.body = "Open the app to try again."
+        content.title = "Reply saved for retry"
+        content.body = "Albatross will send it when the app reconnects."
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "notification-response-failed-\(UUID().uuidString)",

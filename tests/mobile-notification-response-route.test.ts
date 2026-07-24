@@ -85,6 +85,42 @@ describe('mobile notification text response route', () => {
     expect(missingDeps.mutate).not.toHaveBeenCalled();
   });
 
+  test('rejects malformed JSON, wrong notification types, and missing check-in entities', async () => {
+    const malformedDeps = dependencies();
+    const malformed = new Request('http://localhost/api/mobile/notifications/respond', {
+      method: 'POST',
+      body: '{',
+    });
+    expect((await createNotificationResponsePost(malformedDeps as any)(malformed)).status).toBe(400);
+
+    for (const notification of [
+      {
+        _id: 'mail_notice',
+        userId: user.userId,
+        type: 'mail_message',
+        entityKind: 'thread',
+        entityId: 'thread_1',
+        deepLink: '/mail/thread_1',
+      },
+      {
+        _id: 'broken_checkin',
+        userId: user.userId,
+        type: 'daily_checkin',
+        entityKind: 'checkin',
+        entityId: '',
+        deepLink: '/?prompt=reflection',
+      },
+    ]) {
+      const deps = dependencies();
+      deps.query.mockImplementation(async () => notification as any);
+      const response = await createNotificationResponsePost(deps as any)(
+        request({ notificationId: notification._id, responseText: 'Private answer' }),
+      );
+      expect(response.status).toBe(404);
+      expect(deps.mutate).not.toHaveBeenCalled();
+    }
+  });
+
   test('preserves authentication failures without exposing backend detail', async () => {
     const deps = dependencies();
     deps.requireCurrentUser.mockImplementation(async () => {

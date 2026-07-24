@@ -396,6 +396,18 @@ describe('Albatross Daily Report context', () => {
       'passport',
       'calendar',
     ]);
+
+    const protectedBilling = { ...handoff('billing', 'Review the billing launch'), protected: true };
+    expect(
+      prioritizeHandoffsForIntent(
+        [
+          handoff('calendar', 'Clean up the calendar'),
+          handoff('passport', 'Renew the passport before the trip'),
+          protectedBilling,
+        ],
+        'Finish passport renewal',
+      ).map((item) => item.id),
+    ).toEqual(['billing', 'passport', 'calendar']);
   });
 
   test('loads live daily report context through an injected query and falls back on errors', async () => {

@@ -75,6 +75,112 @@ describe('native push Convex receipts', () => {
     }
   });
 
+  test('keeps native alignment prompts queueable while honoring disabled in-app delivery', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const ts = Date.now();
+      await t.run(async (ctx) => {
+        await ctx.db.insert('albatrossNotificationPreferences', {
+          userId: 'native_only_user',
+          timezone: 'UTC',
+          eveningCheckinEnabled: true,
+          eveningCheckinLocalTime: '19:00',
+          inAppEnabled: false,
+          webPushEnabled: false,
+          nativePushEnabled: true,
+          morningBriefEnabled: true,
+          emailFallbackEnabled: false,
+          emailFallbackDelayMinutes: 90,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      });
+
+      const checkin = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'native_only_user',
+        localDate: '2026-07-24',
+        timezone: 'UTC',
+      });
+      expect(checkin.notificationIds).toHaveLength(2);
+      expect(
+        await t.run((ctx) =>
+          ctx.db
+            .query('notificationDeliveries')
+            .withIndex('by_user', (q) => q.eq('userId', 'native_only_user'))
+            .collect(),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('preserves an earlier reflection on completion-only updates and acts the direct dedupe row', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const created = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'reflection_user',
+        localDate: '2026-07-24',
+        timezone: 'UTC',
+      });
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'reflection_user',
+        checkinId: created.checkin._id,
+        promptKind: 'reflection',
+        responseText: 'I shipped the first pass.',
+        completed: [],
+      });
+      await t.run(async (ctx) => {
+        for (let index = 0; index < 25; index += 1) {
+          await ctx.db.insert('albatrossNotifications', {
+            userId: 'reflection_user',
+            type: 'agent_error',
+            title: `Later ${index}`,
+            body: 'Noise after the check-in notification.',
+            deepLink: '/activity',
+            dedupeKey: `later:${index}`,
+            status: 'queued',
+            scheduledFor: Date.now(),
+            createdAt: Date.now() + index,
+            updatedAt: Date.now() + index,
+          });
+        }
+      });
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'reflection_user',
+        checkinId: created.checkin._id,
+        promptKind: 'reflection',
+        responseText: '',
+        completed: [{ kind: 'work', id: 'missing_work' }],
+      });
+
+      const state = await t.run(async (ctx) => {
+        const row = await ctx.db.get(created.checkin._id);
+        const notification = await ctx.db
+          .query('albatrossNotifications')
+          .withIndex('by_user_dedupe', (q) =>
+            q.eq('userId', 'reflection_user').eq('dedupeKey', 'daily-checkin:2026-07-24:reflection'),
+          )
+          .unique();
+        return { row, notification };
+      });
+      expect(state.row?.responseText).toBe('I shipped the first pass.');
+      expect(state.notification?.status).toBe('acted');
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
   test('queues one deduplicated brief-ready notification unless the morning preference is disabled', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';

@@ -101,6 +101,10 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
 
+    static func isValidHorizontalAccuracy(_ accuracy: CLLocationAccuracy) -> Bool {
+        accuracy >= 0
+    }
+
     func requestOnce() {
         errorMessage = nil
         switch manager.authorizationStatus {
@@ -145,7 +149,13 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
                 isRequesting = false
                 return
             }
+            guard Self.isValidHorizontalAccuracy(latest.horizontalAccuracy) else {
+                isRequesting = false
+                errorMessage = "Location accuracy is unavailable. Try again."
+                return
+            }
             location = latest
+            locationLabel = nil
             isRequesting = false
             if let placemark = try? await geocoder.reverseGeocodeLocation(latest).first {
                 let resolvedLabel = [placemark.locality, placemark.administrativeArea]

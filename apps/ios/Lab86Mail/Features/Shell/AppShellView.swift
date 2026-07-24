@@ -74,6 +74,7 @@ struct AppShellView: View {
             }
             await environment.store.bootstrap(cacheOwner: ownerID)
             await environment.notifications.refreshAuthorizationStatus()
+            await environment.notifications.retryPendingTextResponses()
             environment.navigation.consumeAppIntentRequests()
             await consumeMailNotificationAction()
             await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
@@ -83,6 +84,7 @@ struct AppShellView: View {
             environment.navigation.consumeAppIntentRequests()
             BackgroundRefreshCoordinator.shared.schedule()
             Task {
+                await environment.notifications.retryPendingTextResponses()
                 await consumeMailNotificationAction()
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
             }
@@ -416,6 +418,9 @@ private struct SourceList: View {
     @State private var scrubCancelled = false
     @State private var previewDelayTask: Task<Void, Never>?
     @State private var autoscrollTarget: SidebarDestination?
+    @State private var autoscrollTask: Task<Void, Never>?
+    @State private var autoscrollZone: SidebarScrubLogic.EdgeZone?
+    @State private var scrubDestinations: [SidebarDestination] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -568,6 +573,16 @@ private struct SourceList: View {
         } action: { bounds in
             containerBounds = bounds
         }
+        .onAppear {
+            refreshScrubDestinations()
+        }
+        .onChange(of: environment.store.areas.map { "\($0.id):\($0.name)" }) { _, _ in
+            refreshScrubDestinations()
+        }
+        .onDisappear {
+            stopAutoscroll()
+            previewDelayTask?.cancel()
+        }
         // One drag owns the wheel-style scrub. The viewport is programmatically
         // centered, so there is still no competing scroll pan; VoiceOver
         // continues to activate each real Button directly.
@@ -576,8 +591,8 @@ private struct SourceList: View {
 
     // MARK: - Scrub session
 
-    private var orderedDestinations: [SidebarDestination] {
-        PrimaryTab.sourceList.map(SidebarDestination.primary)
+    private func refreshScrubDestinations() {
+        scrubDestinations = PrimaryTab.sourceList.map(SidebarDestination.primary)
             + environment.store.areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
             + MailCategoryScope.allCases.map(SidebarDestination.mail)
             + [.settings]
@@ -597,8 +612,8 @@ private struct SourceList: View {
     private func wheelDistance(to destination: SidebarDestination) -> Int? {
         guard scrub?.wrappedValue.isActive == true,
               let previewed = scrub?.wrappedValue.previewed,
-              let selectedIndex = orderedDestinations.firstIndex(of: previewed),
-              let destinationIndex = orderedDestinations.firstIndex(of: destination) else {
+              let selectedIndex = scrubDestinations.firstIndex(of: previewed),
+              let destinationIndex = scrubDestinations.firstIndex(of: destination) else {
             return nil
         }
         return destinationIndex - selectedIndex
@@ -630,20 +645,10 @@ private struct SourceList: View {
                 UIAccessibility.post(notification: .announcement, argument: "Navigation preview cancelled")
             }
             scrubCancelled = true
+            stopAutoscroll()
             return
         }
-        var destination = SidebarScrubLogic.destination(at: drag.location, rows: rowFrames)
-        if session.wrappedValue.isActive,
-           let zone = SidebarScrubLogic.autoscrollZone(forY: drag.location.y, in: scrollBounds),
-           let next = SidebarScrubLogic.autoscrollTarget(
-               from: session.wrappedValue.previewed,
-               in: orderedDestinations,
-               zone: zone
-           ),
-           next != .settings {
-            destination = next
-            autoscrollTarget = next
-        }
+        let destination = SidebarScrubLogic.destination(at: drag.location, rows: rowFrames)
         if !session.wrappedValue.isActive {
             session.wrappedValue.activate(over: destination, committed: currentDestination)
             // The page preview waits for a row crossing or the ready delay so
@@ -664,9 +669,11 @@ private struct SourceList: View {
                 UIAccessibility.post(notification: .announcement, argument: destination.title)
             }
         }
+        updateAutoscroll(forY: drag.location.y)
     }
 
     private func endScrub() {
+        stopAutoscroll()
         previewDelayTask?.cancel()
         previewDelayTask = nil
         defer { scrubCancelled = false }
@@ -676,6 +683,46 @@ private struct SourceList: View {
         }
         guard let destination = session.wrappedValue.commit() else { return }
         commitScrub(destination)
+    }
+
+    private func updateAutoscroll(forY y: CGFloat) {
+        guard scrub?.wrappedValue.isActive == true,
+              let zone = SidebarScrubLogic.autoscrollZone(forY: y, in: scrollBounds) else {
+            stopAutoscroll()
+            return
+        }
+        guard zone != autoscrollZone else { return }
+        stopAutoscroll()
+        autoscrollZone = zone
+        advanceAutoscroll(zone)
+        autoscrollTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(240))
+                guard !Task.isCancelled, autoscrollZone == zone else { return }
+                advanceAutoscroll(zone)
+            }
+        }
+    }
+
+    private func advanceAutoscroll(_ zone: SidebarScrubLogic.EdgeZone) {
+        guard let session = scrub,
+              let next = SidebarScrubLogic.autoscrollTarget(
+                  from: session.wrappedValue.previewed,
+                  in: scrubDestinations,
+                  zone: zone
+              ),
+              SidebarScrubLogic.isAutoscrollable(next) else { return }
+        autoscrollTarget = next
+        if session.wrappedValue.move(to: next) {
+            UISelectionFeedbackGenerator().selectionChanged()
+            UIAccessibility.post(notification: .announcement, argument: next.title)
+        }
+    }
+
+    private func stopAutoscroll() {
+        autoscrollTask?.cancel()
+        autoscrollTask = nil
+        autoscrollZone = nil
     }
 
     // Committing routes through the exact paths a tap uses — the preview never

@@ -136,6 +136,28 @@ enum SidebarScrubLogic {
         }
     }
 
+    static func autoscrollTargets(
+        from current: SidebarDestination?,
+        in ordered: [SidebarDestination],
+        zone: EdgeZone,
+        steps: Int
+    ) -> [SidebarDestination] {
+        guard steps > 0 else { return [] }
+        var cursor = current
+        var targets: [SidebarDestination] = []
+        for _ in 0..<steps {
+            guard let next = autoscrollTarget(from: cursor, in: ordered, zone: zone),
+                  isAutoscrollable(next) else { break }
+            targets.append(next)
+            cursor = next
+        }
+        return targets
+    }
+
+    static func isAutoscrollable(_ destination: SidebarDestination) -> Bool {
+        destination != .settings
+    }
+
     // A restrained cylindrical projection inspired by the system wheel
     // picker. Only the active scrub neighborhood receives depth. The selected
     // row remains face-on; nearby rows curve away without losing legibility.

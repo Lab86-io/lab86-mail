@@ -17,8 +17,8 @@ enum NotificationCategoryID {
     static let brief = "LAB86_BRIEF"
 }
 
-struct NotificationTextResponse: Equatable, Sendable {
-    enum Kind: Equatable, Sendable {
+struct NotificationTextResponse: Codable, Equatable, Sendable {
+    enum Kind: Codable, Equatable, Sendable {
         case checkIn(notificationID: String, promptKind: String)
         case mail(accountID: String, threadID: String, messageID: String)
     }
@@ -51,6 +51,7 @@ struct MobileNotificationPreferences: Equatable, Sendable {
 final class NotificationCoordinator {
     typealias TextResponseHandler = @MainActor @Sendable (NotificationTextResponse) async -> Bool
     private static var textResponseHandler: TextResponseHandler?
+    private static var responseOutbox: NotificationResponseOutbox?
 
     private let backend: BackendClient
     var authorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -59,15 +60,44 @@ final class NotificationCoordinator {
     var preferences = MobileNotificationPreferences()
     var preferencesError: String?
 
-    init(backend: BackendClient) { self.backend = backend }
+    init(backend: BackendClient, responseOutbox: NotificationResponseOutbox) {
+        self.backend = backend
+        Self.responseOutbox = responseOutbox
+    }
+
+    deinit {}
 
     static func installTextResponseHandler(_ handler: @escaping TextResponseHandler) {
         textResponseHandler = handler
     }
 
     static func handleTextResponse(_ response: NotificationTextResponse) async -> Bool {
-        guard let textResponseHandler else { return false }
-        return await textResponseHandler(response)
+        guard let responseOutbox else { return false }
+        guard let pending = try? await responseOutbox.enqueue(response) else { return false }
+        guard let textResponseHandler else {
+            try? await responseOutbox.release(id: pending.id)
+            return false
+        }
+        let handled = await textResponseHandler(response)
+        if handled {
+            try? await responseOutbox.remove(id: pending.id)
+        } else {
+            try? await responseOutbox.release(id: pending.id)
+        }
+        return handled
+    }
+
+    func retryPendingTextResponses() async {
+        guard let responseOutbox = Self.responseOutbox,
+              let textResponseHandler = Self.textResponseHandler,
+              let pending = try? await responseOutbox.claimPending() else { return }
+        for item in pending {
+            if await textResponseHandler(item.response) {
+                try? await responseOutbox.remove(id: item.id)
+            } else {
+                try? await responseOutbox.release(id: item.id)
+            }
+        }
     }
 
     func refreshAuthorizationStatus() async {

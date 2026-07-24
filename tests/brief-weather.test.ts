@@ -61,6 +61,21 @@ const WEATHER: BriefWeather = {
   ],
 };
 
+function openMeteoForecastJSON() {
+  return {
+    timezone: 'America/New_York',
+    current: { time: '2026-07-24T09:30', temperature_2m: 72, weather_code: 1 },
+    hourly: { time: ['2026-07-24T10:00'], temperature_2m: [74], weather_code: [1] },
+    daily: {
+      time: ['2026-07-24'],
+      weather_code: [1],
+      temperature_2m_max: [79],
+      temperature_2m_min: [62],
+      precipitation_probability_max: [10],
+    },
+  };
+}
+
 describe('toBriefWeather', () => {
   test('produces the compact prompt pack', () => {
     const pack = toBriefWeather(WEATHER);
@@ -205,6 +220,104 @@ describe('brief weather in the data pack', () => {
       source: 'Apple Weather',
       attributionURL: 'https://weatherkit.apple.com/legal-attribution.html',
     });
+  });
+
+  test('loads only an explicitly opted-in stored location through mobile preferences', async () => {
+    const queriedUsers: string[] = [];
+    const requestedURLs: string[] = [];
+    const extras = await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), 'weather_user', {
+        mobilePreferencesQuery: async (userId) => {
+          queriedUsers.push(userId);
+          return {
+            briefLocationEnabled: true,
+            briefLatitude: 43.15,
+            briefLongitude: -77.62,
+            briefLocationLabel: 'Rochester, New York',
+            timezone: 'America/New_York',
+          };
+        },
+        weatherFetch: async (url: string) => {
+          requestedURLs.push(url);
+          return { ok: true, status: 200, json: async () => openMeteoForecastJSON() };
+        },
+      }),
+    );
+
+    expect(queriedUsers).toEqual(['weather_user']);
+    expect(requestedURLs).toHaveLength(1);
+    expect(requestedURLs[0]).toContain('api.open-meteo.com/v1/forecast');
+    expect(extras.weather?.location).toBe('Rochester, New York');
+  });
+
+  test('ignores stored coordinates when location consent is disabled', async () => {
+    const requestedURLs: string[] = [];
+    await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), 'weather_user', {
+        mobilePreferencesQuery: async () => ({
+          briefLocationEnabled: false,
+          briefLatitude: 43.15,
+          briefLongitude: -77.62,
+          briefLocationLabel: 'Private location',
+          timezone: 'America/New_York',
+        }),
+        weatherFetch: async (url: string) => {
+          requestedURLs.push(url);
+          return {
+            ok: true,
+            status: 200,
+            json: async () =>
+              url.includes('geocoding-api')
+                ? {
+                    results: [
+                      {
+                        name: 'New York',
+                        latitude: 40.7,
+                        longitude: -74,
+                        timezone: 'America/New_York',
+                      },
+                    ],
+                  }
+                : openMeteoForecastJSON(),
+          };
+        },
+      }),
+    );
+
+    expect(requestedURLs.some((url) => url.includes('geocoding-api'))).toBe(true);
+    expect(requestedURLs.join(' ')).not.toContain('43.15');
+  });
+
+  test('falls back to Open-Meteo without resolving the same location twice when WeatherKit fails', async () => {
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const requestedURLs: string[] = [];
+    const extras = await withToolContext(async () =>
+      gatherBriefExtras(reportFixture(), null, {
+        storedLocation: {
+          latitude: 43.15,
+          longitude: -77.62,
+          label: 'Rochester, New York',
+          timezone: 'America/New_York',
+        },
+        weatherEnvironment: {
+          WEATHERKIT_KEY_ID: 'test-key',
+          WEATHERKIT_TEAM_ID: 'test-team',
+          WEATHERKIT_SERVICE_ID: 'io.lab86.mail.test',
+          WEATHERKIT_PRIVATE_KEY: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+        },
+        weatherKitFetch: async () => {
+          throw new Error('WeatherKit unavailable');
+        },
+        weatherFetch: async (url: string) => {
+          requestedURLs.push(url);
+          return { ok: true, status: 200, json: async () => openMeteoForecastJSON() };
+        },
+      }),
+    );
+
+    expect(requestedURLs).toHaveLength(1);
+    expect(requestedURLs[0]).toContain('api.open-meteo.com/v1/forecast');
+    expect(extras.weather).toMatchObject({ location: 'Rochester, New York', current: { temp: 72 } });
   });
 
   test('buildDataPrompt carries weather (and null when unresolved)', async () => {

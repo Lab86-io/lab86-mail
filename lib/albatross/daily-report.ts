@@ -164,7 +164,8 @@ function intentTerms(text: string): Set<string> {
 }
 
 /**
- * Stable intent overlay for the SBAR feed. A stated plan moves matching
+ * Stable intent overlay for the SBAR feed. Protected handoffs retain their
+ * safety precedence; within each protection tier, a stated plan moves matching
  * handoffs upward without deleting or rewriting source-grounded records.
  */
 export function prioritizeHandoffsForIntent(
@@ -185,9 +186,9 @@ export function prioritizeHandoffsForIntent(
       ].join(' ');
       const available = intentTerms(searchable);
       const matches = [...desired].filter((term) => available.has(term)).length;
-      return { handoff, index, matches };
+      return { handoff, index, matches, protected: handoff.protected === true };
     })
-    .sort((a, b) => b.matches - a.matches || a.index - b.index)
+    .sort((a, b) => Number(b.protected) - Number(a.protected) || b.matches - a.matches || a.index - b.index)
     .map(({ handoff }) => handoff);
 }
 

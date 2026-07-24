@@ -262,6 +262,28 @@ final class RouteRequestRecord {
 }
 
 @Model
+final class PendingNotificationResponseRecord {
+    @Attribute(.unique) var id: UUID
+    @Attribute(.externalStorage) var responseData: Data
+    var isSubmitting: Bool
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        responseData: Data,
+        isSubmitting: Bool = true,
+        createdAt: Date = .now
+    ) {
+        self.id = id
+        self.responseData = responseData
+        self.isSubmitting = isSubmitting
+        self.createdAt = createdAt
+        updatedAt = createdAt
+    }
+}
+
+@Model
 final class LegacySnapshotImportRecord {
     @Attribute(.unique) var ownerID: String
     var importedAt: Date
@@ -313,6 +335,7 @@ enum MobilePersistence {
         PendingCommandRecord.self,
         SyncCursorRecord.self,
         RouteRequestRecord.self,
+        PendingNotificationResponseRecord.self,
         LegacySnapshotImportRecord.self,
         CachedAccountRecord.self,
     ])

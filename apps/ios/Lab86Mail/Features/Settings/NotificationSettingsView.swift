@@ -135,11 +135,14 @@ struct NotificationSettingsView: View {
             isLoaded = true
         }
         .onChange(of: locationCoordinator.location?.timestamp) { _, _ in
-            guard let location = locationCoordinator.location else { return }
+            guard let location = locationCoordinator.location,
+                  CaptureLocationCoordinator.isValidHorizontalAccuracy(location.horizontalAccuracy) else {
+                return
+            }
             preferences.briefLocationEnabled = true
             preferences.briefLatitude = location.coordinate.latitude
             preferences.briefLongitude = location.coordinate.longitude
-            preferences.briefLocationAccuracy = max(0, location.horizontalAccuracy)
+            preferences.briefLocationAccuracy = location.horizontalAccuracy
             preferences.briefLocationUpdatedAt = location.timestamp.timeIntervalSince1970 * 1_000
             preferences.briefLocationLabel = locationCoordinator.locationLabel ?? "Current location"
         }
