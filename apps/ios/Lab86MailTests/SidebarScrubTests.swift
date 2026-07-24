@@ -76,24 +76,36 @@ struct SidebarScrubTests {
         // selection simply stands — there is nothing to restore.
     }
 
-    // MARK: - Hold feedback
+    // MARK: - Preview readiness (tap vs scrub)
 
     @Test
-    func liftHapticFiresExactlyOncePerHold() {
-        var feedback = SidebarScrubHoldFeedback()
-        // Hold completes → one haptic.
-        let first = feedback.shouldPlayOnHoldCompleted()
-        #expect(first)
-        // The gesture keeps emitting hold-completed / drag events for the same
-        // touch — none of them may double the haptic.
-        let repeated = feedback.shouldPlayOnHoldCompleted()
-        #expect(!repeated)
-        let again = feedback.shouldPlayOnHoldCompleted()
-        #expect(!again)
-        // Touch ends → the latch re-arms for the next hold.
-        feedback.reset()
-        let nextHold = feedback.shouldPlayOnHoldCompleted()
-        #expect(nextHold)
+    func plainTapNeverFlashesThePreviewButCrossingOrDelayShowsIt() {
+        var state = SidebarScrubState()
+        state.activate(over: .primary(.today), committed: .primary(.calendar))
+        // Touch-down alone: session live, preview held back — a quick tap
+        // commits without the page ever flashing.
+        #expect(state.isActive)
+        #expect(!state.previewReady)
+        // Crossing into another row makes the preview ready immediately…
+        _ = state.move(to: .primary(.tasks))
+        #expect(state.previewReady)
+
+        // …and a stationary touch becomes ready via the delay callback.
+        var held = SidebarScrubState()
+        held.activate(over: .settings, committed: nil)
+        #expect(!held.previewReady)
+        held.markPreviewReady()
+        #expect(held.previewReady)
+
+        // markPreviewReady on a dead session is a no-op (the delay task can
+        // outlive a fast tap).
+        var dead = SidebarScrubState()
+        dead.markPreviewReady()
+        #expect(!dead.previewReady)
+
+        // Commit/cancel reset readiness with the rest of the session.
+        _ = held.commit()
+        #expect(!held.previewReady)
     }
 
     // MARK: - Cancellation rules
@@ -115,34 +127,4 @@ struct SidebarScrubTests {
         #expect(!SidebarScrubLogic.isHorizontalDismissal(translation: CGSize(width: 80, height: 60)))
     }
 
-    // MARK: - Edge autoscroll
-
-    @Test
-    func edgeZonesAreThe36PointBands() {
-        #expect(SidebarScrubLogic.autoscrollZone(forY: 10, in: bounds) == .top)
-        #expect(SidebarScrubLogic.autoscrollZone(forY: 35, in: bounds) == .top)
-        #expect(SidebarScrubLogic.autoscrollZone(forY: 300, in: bounds) == nil)
-        #expect(SidebarScrubLogic.autoscrollZone(forY: 590, in: bounds) == .bottom)
-        // Degenerate short sidebars never autoscroll.
-        #expect(SidebarScrubLogic.autoscrollZone(forY: 10, in: CGRect(x: 0, y: 0, width: 300, height: 60)) == nil)
-    }
-
-    @Test
-    func autoscrollTargetsTheNeighborInVisualOrder() {
-        let ordered: [SidebarDestination] = [
-            .primary(.today), .primary(.tasks), .mail(.main), .settings,
-        ]
-        #expect(
-            SidebarScrubLogic.autoscrollTarget(from: .primary(.tasks), in: ordered, zone: .top)
-                == .primary(.today)
-        )
-        #expect(
-            SidebarScrubLogic.autoscrollTarget(from: .primary(.tasks), in: ordered, zone: .bottom)
-                == .mail(.main)
-        )
-        // The ends stop cleanly.
-        #expect(SidebarScrubLogic.autoscrollTarget(from: .primary(.today), in: ordered, zone: .top) == nil)
-        #expect(SidebarScrubLogic.autoscrollTarget(from: .settings, in: ordered, zone: .bottom) == nil)
-        #expect(SidebarScrubLogic.autoscrollTarget(from: nil, in: ordered, zone: .top) == nil)
-    }
 }

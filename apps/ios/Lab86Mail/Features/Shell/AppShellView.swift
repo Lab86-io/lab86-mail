@@ -139,7 +139,7 @@ struct AppShellView: View {
         } detail: {
             destinationStack(showsNavigationButton: false)
                 .overlay {
-                    if scrub.isActive, let previewed = scrub.previewed {
+                    if scrub.isActive, scrub.previewReady, let previewed = scrub.previewed {
                         SidebarDestinationPreview(destination: previewed)
                             .id(previewed)
                             .transition(.opacity)
@@ -194,7 +194,7 @@ struct AppShellView: View {
                     .overlay {
                         // While scrubbing, the visible page strip crossfades
                         // between read-only previews of the highlighted row.
-                        if showsSourceList, scrub.isActive, let previewed = scrub.previewed {
+                        if showsSourceList, scrub.isActive, scrub.previewReady, let previewed = scrub.previewed {
                             SidebarDestinationPreview(destination: previewed)
                                 .clipShape(pageShape)
                                 .id(previewed)
@@ -413,8 +413,7 @@ private struct SourceList: View {
     @State private var rowFrames: [SidebarDestination: CGRect] = [:]
     @State private var containerBounds: CGRect = .zero
     @State private var scrubCancelled = false
-    @State private var autoscrollTarget: SidebarDestination?
-    @State private var holdFeedback = SidebarScrubHoldFeedback()
+    @State private var previewDelayTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -427,9 +426,12 @@ private struct SourceList: View {
             .padding(.top, 10)
             .padding(.bottom, 14)
 
-            ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
+            // The sidebar does not scroll. It behaves like a menu: touch down
+            // anywhere, slide, the highlight follows the finger, release
+            // commits — the scrub IS how you move through it, so no scroll
+            // pan ever competes for the swipe. Content is bounded to fit
+            // (areas cap below; the Areas page carries the full list).
+            VStack(alignment: .leading, spacing: 4) {
                     ForEach(PrimaryTab.sourceList) { destination in
                         sourceButton(destination)
                     }
@@ -447,7 +449,7 @@ private struct SourceList: View {
                     if environment.store.areas.isEmpty {
                         areaState
                     } else {
-                        ForEach(environment.store.areas) { area in
+                        ForEach(environment.store.areas.prefix(Self.maxSidebarAreas)) { area in
                             Button {
                                 environment.navigation.openArea(id: area.id, name: area.name)
                                 onSelect()
@@ -497,6 +499,14 @@ private struct SourceList: View {
                             .sidebarScrubRow(.area(id: area.id, name: area.name), frames: $rowFrames)
                             .sidebarScrubHighlight(isScrubbing(.area(id: area.id, name: area.name)))
                         }
+                        if environment.store.areas.count > Self.maxSidebarAreas {
+                            // Not a scrub stop — the Areas page lists everything.
+                            Text("+\(environment.store.areas.count - Self.maxSidebarAreas) more in Areas")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 2)
+                        }
                     }
 
                     Divider()
@@ -512,25 +522,11 @@ private struct SourceList: View {
                     ForEach(MailCategoryScope.allCases) { category in
                         mailFilterButton(category)
                     }
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 16)
-                // The scrub gesture lives on the scroll CONTENT: attached to
-                // an ancestor of the ScrollView it never wins the touch — the
-                // scroll pan claims all movement and the scrub goes dead.
-                .gesture(scrubGesture, isEnabled: scrub != nil)
+
+                    Spacer(minLength: 0)
             }
-            // Once a scrub is live, the list must not pan out from under the
-            // thumb; edge autoscroll takes over deliberate movement instead.
-            .scrollDisabled(scrub?.wrappedValue.isActive == true)
-            .onChange(of: autoscrollTarget) { _, target in
-                guard let target else { return }
-                withAnimation(reduceMotion ? nil : .linear(duration: 0.15)) {
-                    proxy.scrollTo(target, anchor: nil)
-                }
-                autoscrollTarget = nil
-            }
-            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 16)
 
             Divider()
 
@@ -550,31 +546,27 @@ private struct SourceList: View {
             .accessibilityHint("Opens account and app settings")
             .sidebarScrubRow(.settings, frames: $rowFrames)
             .sidebarScrubHighlight(isScrubbing(.settings))
-            // Settings sits outside the ScrollView, so it carries its own copy
-            // of the scrub gesture; frames share one coordinate space, so a
-            // scrub can start here and travel up the list.
-            .gesture(scrubGesture, isEnabled: scrub != nil)
         }
         .background(environment.theme.railColor)
-        .refreshable { await environment.store.refreshWork() }
         .coordinateSpace(name: SidebarScrubCoordinateSpace.name)
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named(SidebarScrubCoordinateSpace.name))
         } action: { bounds in
             containerBounds = bounds
         }
+        // One drag owns every touch on the sidebar, menu-style: tap commits
+        // the touched row, slide moves the highlight with ticks, release
+        // commits. High priority is safe because nothing here scrolls, and
+        // VoiceOver still activates the row Buttons directly (activation
+        // bypasses touch recognition entirely).
+        .highPriorityGesture(scrubGesture, isEnabled: scrub != nil)
     }
 
     // MARK: - Scrub session
 
-    // Every navigable row participates, in visual order — used for edge
-    // autoscroll targeting. Headers, dividers, and loading rows are absent.
-    private var orderedDestinations: [SidebarDestination] {
-        PrimaryTab.sourceList.map(SidebarDestination.primary)
-            + environment.store.areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
-            + MailCategoryScope.allCases.map(SidebarDestination.mail)
-            + [.settings]
-    }
+    // Bounded so the sidebar always fits without scrolling; the Areas page
+    // carries the complete list.
+    static let maxSidebarAreas = 5
 
     private var currentDestination: SidebarDestination? {
         if let route = environment.navigation.areaRoute {
@@ -587,41 +579,21 @@ private struct SourceList: View {
         scrub?.wrappedValue.isActive == true && scrub?.wrappedValue.previewed == destination
     }
 
-    // Hold ~350ms, then a zero-distance drag scrubs the whole sidebar. Until
-    // the hold fires, ordinary scrolling and the sidebar reveal/dismiss drag
-    // keep their priority (the sequence gesture claims nothing before then).
+    // Menu-style touch handling: the session opens on touch-down, the
+    // highlight follows the finger, release commits whatever is under it. A
+    // plain tap is just the degenerate scrub (down and up on one row). No
+    // hold, no scroll — there is nothing left to arbitrate against.
     private var scrubGesture: some Gesture {
-        LongPressGesture(minimumDuration: SidebarScrubLogic.holdDuration)
-            .sequenced(
-                before: DragGesture(
-                    minimumDistance: 0,
-                    coordinateSpace: .named(SidebarScrubCoordinateSpace.name)
-                )
-            )
-            .onChanged { value in
-                switch value {
-                case .second(true, nil):
-                    // The hold just completed and the thumb hasn't moved yet —
-                    // this is the moment scrubbing engages, so the lift haptic
-                    // fires here, before any drag event carries a location.
-                    if holdFeedback.shouldPlayOnHoldCompleted() {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    }
-                case .second(true, let drag?):
-                    handleScrubChange(drag)
-                default:
-                    break
-                }
-            }
-            .onEnded { value in
-                holdFeedback.reset()
-                if case .second(true, _) = value {
-                    endScrub()
-                } else {
-                    scrub?.wrappedValue.cancel()
-                    scrubCancelled = false
-                }
-            }
+        DragGesture(
+            minimumDistance: 0,
+            coordinateSpace: .named(SidebarScrubCoordinateSpace.name)
+        )
+        .onChanged { drag in
+            handleScrubChange(drag)
+        }
+        .onEnded { _ in
+            endScrub()
+        }
     }
 
     private func handleScrubChange(_ drag: DragGesture.Value) {
@@ -637,9 +609,15 @@ private struct SourceList: View {
         }
         let destination = SidebarScrubLogic.destination(at: drag.location, rows: rowFrames)
         if !session.wrappedValue.isActive {
-            // The lift haptic already fired on hold completion; this first
-            // drag event supplies the location that opens the session.
             session.wrappedValue.activate(over: destination, committed: currentDestination)
+            // The page preview waits for a row crossing or the ready delay so
+            // a plain tap never flashes it.
+            previewDelayTask?.cancel()
+            previewDelayTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(SidebarScrubLogic.previewDelayMilliseconds))
+                guard !Task.isCancelled else { return }
+                scrub?.wrappedValue.markPreviewReady()
+            }
             if let destination {
                 UIAccessibility.post(notification: .announcement, argument: "Previewing \(destination.title)")
             }
@@ -650,18 +628,11 @@ private struct SourceList: View {
                 UIAccessibility.post(notification: .announcement, argument: destination.title)
             }
         }
-        if let zone = SidebarScrubLogic.autoscrollZone(forY: drag.location.y, in: containerBounds),
-           let target = SidebarScrubLogic.autoscrollTarget(
-               from: session.wrappedValue.previewed,
-               in: orderedDestinations,
-               zone: zone
-           ),
-           target != .settings {
-            autoscrollTarget = target
-        }
     }
 
     private func endScrub() {
+        previewDelayTask?.cancel()
+        previewDelayTask = nil
         defer { scrubCancelled = false }
         guard let session = scrub, !scrubCancelled, session.wrappedValue.isActive else {
             scrub?.wrappedValue.cancel()

@@ -40,6 +40,9 @@ struct SidebarScrubState: Equatable {
     private(set) var committed: SidebarDestination?
     private(set) var previewed: SidebarDestination?
     private(set) var isActive = false
+    // The page preview stays hidden until the finger crosses into another row
+    // or the ready delay elapses — a plain tap never flashes it.
+    private(set) var previewReady = false
 
     mutating func activate(over destination: SidebarDestination?, committed current: SidebarDestination?) {
         isActive = true
@@ -47,12 +50,19 @@ struct SidebarScrubState: Equatable {
         previewed = destination
     }
 
+    mutating func markPreviewReady() {
+        guard isActive else { return }
+        previewReady = true
+    }
+
     // Moves the highlight; returns true when the thumb actually crossed into
     // a new row (that's the selection-haptic trigger). Gaps between rows keep
-    // the current highlight rather than clearing it.
+    // the current highlight rather than clearing it. Any crossing makes the
+    // preview ready immediately.
     mutating func move(to destination: SidebarDestination?) -> Bool {
         guard isActive, let destination, destination != previewed else { return false }
         previewed = destination
+        previewReady = true
         return true
     }
 
@@ -69,33 +79,14 @@ struct SidebarScrubState: Equatable {
     }
 }
 
-// The lift-haptic latch: fires exactly once when the hold completes, stays
-// quiet through every subsequent gesture event (including the first drag,
-// which opens the session but must not double the haptic), and re-arms only
-// when the touch ends.
-struct SidebarScrubHoldFeedback: Equatable {
-    private(set) var played = false
-
-    // True exactly once per hold — the moment the lift haptic should fire.
-    mutating func shouldPlayOnHoldCompleted() -> Bool {
-        guard !played else { return false }
-        played = true
-        return true
-    }
-
-    mutating func reset() {
-        played = false
-    }
-}
-
 // MARK: - Pure gesture rules
 
-// The scrub's geometry rules, extracted so hold/crossing/cancel/autoscroll
-// math is unit-testable without SwiftUI.
+// The scrub's geometry rules, extracted so crossing/cancel math is
+// unit-testable without SwiftUI.
 enum SidebarScrubLogic {
-    static let holdDuration: TimeInterval = 0.35
     static let cancelSlop: CGFloat = 44
-    static let edgeZone: CGFloat = 36
+    // How long a stationary touch waits before the page preview appears.
+    static let previewDelayMilliseconds = 250
 
     // The row under the thumb; frames are in the sidebar's named space.
     static func destination(
@@ -118,29 +109,6 @@ enum SidebarScrubLogic {
     // reveal/dismiss language, not a scrub.
     static func isHorizontalDismissal(translation: CGSize) -> Bool {
         abs(translation.width) > 56 && abs(translation.width) > abs(translation.height) * 2
-    }
-
-    enum EdgeZone { case top, bottom }
-
-    // Autoscroll when the thumb sits in the sidebar's top/bottom edge band.
-    static func autoscrollZone(forY y: CGFloat, in bounds: CGRect, zone: CGFloat = edgeZone) -> EdgeZone? {
-        guard bounds.height > zone * 2 else { return nil }
-        if y < bounds.minY + zone { return .top }
-        if y > bounds.maxY - zone { return .bottom }
-        return nil
-    }
-
-    // The neighbor to scroll toward while autoscrolling.
-    static func autoscrollTarget(
-        from current: SidebarDestination?,
-        in ordered: [SidebarDestination],
-        zone: EdgeZone
-    ) -> SidebarDestination? {
-        guard let current, let index = ordered.firstIndex(of: current) else { return nil }
-        switch zone {
-        case .top: return index > 0 ? ordered[index - 1] : nil
-        case .bottom: return index + 1 < ordered.count ? ordered[index + 1] : nil
-        }
     }
 }
 
