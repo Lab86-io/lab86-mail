@@ -31,6 +31,14 @@ export function briefThemeTokens(
     // rules); accent-1 stays the action/emphasis voice. Fallback is a deep
     // ochre picked against the brief's paper, distinct from the terracotta.
     '--brief-accent-2': v('--color-accent-2') || '#774914',
+    // Third accent: the highlight voice (badges, lanes, stat deltas).
+    // Fallback is a slate blue against the warm paper.
+    '--brief-accent-3': v('--color-accent-3') || '#305880',
+    // Depth ladder rungs so artifact HTML can sit cards and wells on the same
+    // elevation system as the host app.
+    '--brief-card': v('--color-bg-elevated') || '#fefdfb',
+    '--brief-well': v('--color-surface-well') || '#f1f0eb',
+    '--brief-float': v('--color-surface-float') || '#fffffd',
     // Two fonts, like the rest of the app: the picked face drives the display
     // layer (headings/masthead); body copy stays sans.
     '--brief-font-display': BRIEF_FONT_FAMILIES[appFont ?? 'serif'] ?? BRIEF_FONT_FAMILIES.serif,

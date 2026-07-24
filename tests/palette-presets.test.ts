@@ -1,16 +1,31 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  brillianceFromChroma,
+  clampBrilliance,
   DEFAULT_ACCENT_2_CHROMA,
   DEFAULT_ACCENT_2_HUE,
+  DEFAULT_ACCENT_3_CHROMA,
+  DEFAULT_ACCENT_3_HUE,
   DEFAULT_ACCENT_CHROMA,
   DEFAULT_ACCENT_HUE,
-  PALETTE_PRESETS,
+  DEFAULT_BG_HUE,
+  DEFAULT_SURFACE_TINT,
+  MAX_BRILLIANCE,
+  MIN_BRILLIANCE,
+  nearestWheelStop,
+  PALETTE_CHORD,
+  paletteStop,
+  rotateHue,
+  WHEEL_STOP_COUNT,
 } from '../lib/theme/palette-presets';
 
-/* Recompute the OKLCH derivations from app/globals.css and hold every curated
- * accent pair to the same bar the picker promises: readable as text (>= 4.5:1)
- * against the preset's own paper tint in light AND dark, and genuinely a pair
- * (two distinct hues), not one accent twice. */
+/* Recompute the OKLCH derivations from app/globals.css and hold the wheel to
+ * the bar the panel promises: every one of the 20 stops, across the whole
+ * brilliance range, keeps all THREE accents readable as text (>= 4.5:1)
+ * against that stop's own paper in light AND dark — the mathematical
+ * guarantee that the scrubber can never land on an illegible palette. The
+ * depth ladder must also stay monotonic (well < paper < card < float) at
+ * every Depth setting. */
 
 // OKLCH -> gamut-clamped sRGB (standard OKLab matrices).
 function oklchToSrgb(L: number, C: number, H: number): [number, number, number] {
@@ -46,12 +61,12 @@ function hueDistance(a: number, b: number) {
   return Math.min(d, 360 - d);
 }
 
-// The same surface/accent formulas globals.css derives from a preset's seeds.
-function lightBg(bgHue: number | null, tint: number) {
-  return oklchToSrgb(0.977 - tint * 0.012, 0.005 + tint * 0.022, bgHue ?? 156);
+// The same surface/accent formulas globals.css derives from the seeds.
+function lightBg(bgHue: number, tint: number) {
+  return oklchToSrgb(0.977 - tint * 0.012, 0.005 + tint * 0.022, bgHue);
 }
-function darkBg(bgHue: number | null, tint: number) {
-  return oklchToSrgb(0.145 + tint * 0.14, 0.006 + tint * 0.04, bgHue ?? 156);
+function darkBg(bgHue: number, tint: number) {
+  return oklchToSrgb(0.145 + tint * 0.14, 0.006 + tint * 0.04, bgHue);
 }
 function lightAccent(hue: number, chroma: number) {
   return oklchToSrgb(0.45, chroma, hue);
@@ -60,59 +75,126 @@ function darkAccent(hue: number, chroma: number) {
   return oklchToSrgb(0.73, chroma * 0.78, hue);
 }
 
-describe('palette presets', () => {
-  it('defines both accents on every preset', () => {
-    expect(PALETTE_PRESETS.length).toBeGreaterThan(0);
-    for (const preset of PALETTE_PRESETS) {
-      expect(Number.isFinite(preset.hue)).toBe(true);
-      expect(Number.isFinite(preset.hue2)).toBe(true);
-      expect(preset.chroma).toBeGreaterThan(0);
-      expect(preset.chroma2).toBeGreaterThan(0);
+// The depth ladder's lightness terms (globals.css), by spread and tint.
+function lightLadder(spread: number, tint: number) {
+  return {
+    well: 0.977 - 0.022 * spread - tint * 0.013,
+    paper: 0.977 - tint * 0.012,
+    card: Math.min(0.998, 0.977 + 0.018 * spread - tint * 0.008),
+    float: Math.min(0.999, 0.977 + 0.022 * spread - tint * 0.006),
+  };
+}
+function darkLadder(spread: number, tint: number) {
+  return {
+    well: Math.max(0.09, 0.145 + tint * 0.14 - 0.024 * spread),
+    paper: 0.145 + tint * 0.14,
+    card: 0.145 + tint * 0.14 + 0.075 * spread,
+    float: 0.145 + tint * 0.14 + 0.13 * spread,
+  };
+}
+
+describe('palette chord', () => {
+  it('anchors stop 0 on the defaults globals.css carries', () => {
+    const stop = paletteStop(0, 1);
+    expect(stop.hue).toBe(DEFAULT_ACCENT_HUE);
+    expect(stop.chroma).toBeCloseTo(DEFAULT_ACCENT_CHROMA, 5);
+    expect(stop.hue2).toBe(DEFAULT_ACCENT_2_HUE);
+    expect(stop.chroma2).toBeCloseTo(DEFAULT_ACCENT_2_CHROMA, 5);
+    expect(stop.hue3).toBe(DEFAULT_ACCENT_3_HUE);
+    expect(stop.chroma3).toBeCloseTo(DEFAULT_ACCENT_3_CHROMA, 5);
+    expect(stop.bgHue).toBe(DEFAULT_BG_HUE);
+    expect(stop.surfaceTint).toBeCloseTo(DEFAULT_SURFACE_TINT, 5);
+  });
+
+  it('keeps the three voices genuinely distinct hues at every stop', () => {
+    for (let index = 0; index < WHEEL_STOP_COUNT; index += 1) {
+      const stop = paletteStop(index);
+      expect(hueDistance(stop.hue, stop.hue2)).toBeGreaterThanOrEqual(60);
+      expect(hueDistance(stop.hue, stop.hue3)).toBeGreaterThanOrEqual(45);
+      expect(hueDistance(stop.hue2, stop.hue3)).toBeGreaterThanOrEqual(45);
     }
   });
 
-  it('pairs two genuinely different hues, not the accent twice', () => {
-    for (const preset of PALETTE_PRESETS) {
-      expect(hueDistance(preset.hue, preset.hue2)).toBeGreaterThanOrEqual(60);
+  it('wraps hues and rounds stops consistently', () => {
+    expect(rotateHue(350, 20)).toBe(10);
+    expect(rotateHue(10, -20)).toBe(350);
+    for (let index = 0; index < WHEEL_STOP_COUNT; index += 1) {
+      expect(nearestWheelStop(paletteStop(index).hue)).toBe(index);
     }
   });
 
-  it('keeps preset names and pairings unique', () => {
-    const names = PALETTE_PRESETS.map((p) => p.name);
-    expect(new Set(names).size).toBe(names.length);
-    const pairs = PALETTE_PRESETS.map((p) => `${p.hue2}/${p.chroma2}`);
-    expect(new Set(pairs).size).toBe(pairs.length);
+  it('clamps brilliance and recovers it from the applied chroma', () => {
+    expect(clampBrilliance(0)).toBe(MIN_BRILLIANCE);
+    expect(clampBrilliance(99)).toBe(MAX_BRILLIANCE);
+    expect(clampBrilliance(Number.NaN)).toBe(1);
+    expect(brillianceFromChroma(DEFAULT_ACCENT_CHROMA)).toBeCloseTo(1, 5);
+    const dim = paletteStop(3, 0.5);
+    expect(brillianceFromChroma(dim.chroma)).toBeCloseTo(0.5, 5);
   });
 
-  it('holds both accents to text contrast >= 4.5:1 on the preset paper, light and dark', () => {
-    for (const preset of PALETTE_PRESETS) {
-      const paperLight = lightBg(preset.bgHue, preset.surfaceTint);
-      const paperDark = darkBg(preset.bgHue, preset.surfaceTint);
-      for (const [hue, chroma] of [
-        [preset.hue, preset.chroma],
-        [preset.hue2, preset.chroma2],
-      ] as const) {
-        expect(contrastRatio(lightAccent(hue, chroma), paperLight)).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(darkAccent(hue, chroma), paperDark)).toBeGreaterThanOrEqual(4.5);
+  it('holds all three accents to >= 4.5:1 on the paper at every stop and brilliance, light and dark', () => {
+    for (let index = 0; index < WHEEL_STOP_COUNT; index += 1) {
+      for (const brilliance of [MIN_BRILLIANCE, 0.6, 1, MAX_BRILLIANCE]) {
+        const stop = paletteStop(index, brilliance);
+        const paperLight = lightBg(stop.bgHue, stop.surfaceTint);
+        const paperDark = darkBg(stop.bgHue, stop.surfaceTint);
+        for (const [hue, chroma] of [
+          [stop.hue, stop.chroma],
+          [stop.hue2, stop.chroma2],
+          [stop.hue3, stop.chroma3],
+        ] as const) {
+          expect(contrastRatio(lightAccent(hue, chroma), paperLight)).toBeGreaterThanOrEqual(4.5);
+          expect(contrastRatio(darkAccent(hue, chroma), paperDark)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+});
+
+describe('depth ladder', () => {
+  it('stays monotonic (well < paper < card < float) across the Depth range in both modes', () => {
+    for (const spread of [0.4, 0.7, 1, 1.3, 1.6]) {
+      for (const tint of [0, DEFAULT_SURFACE_TINT, 0.4]) {
+        const light = lightLadder(spread, tint);
+        expect(light.well).toBeLessThan(light.paper);
+        expect(light.paper).toBeLessThan(light.card);
+        expect(light.card).toBeLessThan(light.float);
+        const dark = darkLadder(spread, tint);
+        expect(dark.well).toBeLessThan(dark.paper);
+        expect(dark.paper).toBeLessThan(dark.card);
+        expect(dark.card).toBeLessThan(dark.float);
       }
     }
   });
 
-  it('matches the CSS defaults for the Forest preset', async () => {
-    const forest = PALETTE_PRESETS[0];
-    expect(forest.name).toBe('Forest');
-    expect(forest.hue).toBe(DEFAULT_ACCENT_HUE);
-    expect(forest.chroma).toBe(DEFAULT_ACCENT_CHROMA);
-    expect(forest.hue2).toBe(DEFAULT_ACCENT_2_HUE);
-    expect(forest.chroma2).toBe(DEFAULT_ACCENT_2_CHROMA);
-    // globals.css :root carries the same seeds, so a null (auto) accent-2
-    // reproduces the Forest pairing.
+  it('reproduces the legacy surfaces exactly at Depth 1, tint 0', () => {
+    const light = lightLadder(1, 0);
+    expect(light.paper).toBeCloseTo(0.977, 5);
+    expect(light.card).toBeCloseTo(0.995, 5);
+    const dark = darkLadder(1, 0);
+    expect(dark.paper).toBeCloseTo(0.145, 5);
+    expect(dark.card).toBeCloseTo(0.22, 5);
+  });
+});
+
+describe('globals.css carries the same seeds and derivations', () => {
+  it('matches the chord defaults and depth tokens', async () => {
     const css = await Bun.file(new URL('../app/globals.css', import.meta.url)).text();
     expect(css).toContain(`--accent-2-hue: ${DEFAULT_ACCENT_2_HUE};`);
     expect(css).toContain(`--accent-2-chroma: ${DEFAULT_ACCENT_2_CHROMA};`);
-    expect(css).toContain('--color-accent-2: oklch(0.45 var(--accent-2-chroma) var(--accent-2-hue))');
+    expect(css).toContain(`--accent-3-hue: ${DEFAULT_ACCENT_3_HUE};`);
+    expect(css).toContain(`--accent-3-chroma: ${DEFAULT_ACCENT_3_CHROMA};`);
+    expect(css).toContain('--depth-spread: 1;');
+    expect(css).toContain('--color-accent-3: oklch(0.45 var(--accent-3-chroma) var(--accent-3-hue))');
     expect(css).toContain(
-      '--color-accent-2: oklch(0.73 calc(var(--accent-2-chroma) * 0.78) var(--accent-2-hue))',
+      '--color-accent-3: oklch(0.73 calc(var(--accent-3-chroma) * 0.78) var(--accent-3-hue))',
     );
+    expect(css).toContain('--color-surface-well');
+    expect(css).toContain('--color-surface-float');
+    // The chord offsets encoded in the presets module stay in sync with the
+    // default seeds above.
+    expect(rotateHue(DEFAULT_ACCENT_HUE, PALETTE_CHORD.accent2Offset)).toBe(DEFAULT_ACCENT_2_HUE);
+    expect(rotateHue(DEFAULT_ACCENT_HUE, PALETTE_CHORD.accent3Offset)).toBe(DEFAULT_ACCENT_3_HUE);
+    expect(rotateHue(DEFAULT_ACCENT_HUE, PALETTE_CHORD.paperOffset)).toBe(DEFAULT_BG_HUE);
   });
 });

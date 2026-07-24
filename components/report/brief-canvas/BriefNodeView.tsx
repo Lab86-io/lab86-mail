@@ -105,7 +105,7 @@ export function BriefNodeView({
         <section
           className={cn(
             'overflow-hidden rounded-2xl border px-5 py-6 @[620px]:px-7 @[620px]:py-8',
-            surfaceClass(node.surface),
+            heroSurfaceClass(node.surface),
             common,
           )}
         >
@@ -150,7 +150,7 @@ function BriefGroup({
       >
         <span>
           {node.kicker ? (
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-accent)]">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-accent-2)]">
               {node.kicker}
             </span>
           ) : null}
@@ -193,9 +193,9 @@ function BriefLeaf({
             'max-w-none text-pretty [&_p]:my-0',
             node.role === 'lede' && 'font-display text-xl leading-relaxed @[600px]:text-2xl',
             node.role === 'kicker' &&
-              'text-[11px] font-semibold uppercase tracking-[0.17em] text-[var(--color-accent)]',
+              'text-[11px] font-semibold uppercase tracking-[0.17em] text-[var(--color-accent-2)]',
             node.role === 'body' && 'text-sm leading-relaxed @[600px]:text-[15px]',
-            node.role === 'aside' && 'border-l-2 border-[var(--color-accent)] pl-3 text-sm italic',
+            node.role === 'aside' && 'border-l-2 border-[var(--color-accent-2)] pl-3 text-sm italic',
             node.role === 'caption' && 'text-xs text-[var(--color-text-muted)]',
             nodeClass(node),
           )}
@@ -266,7 +266,7 @@ function BriefLeaf({
                 className="grid grid-cols-[18px_1fr] gap-2 py-2"
               >
                 <div className="flex flex-col items-center">
-                  <Clock3 className="size-3.5 text-[var(--color-accent)]" />
+                  <Clock3 className="size-3.5 text-[var(--color-accent-2)]" />
                   {index < node.items.length - 1 ? (
                     <span className="mt-1 w-px flex-1 bg-[var(--color-border)]" />
                   ) : null}
@@ -354,8 +354,9 @@ function BriefLeaf({
                 className={cn(
                   'min-w-0',
                   node.variant === 'shelf' &&
-                    'w-[min(78%,260px)] shrink-0 snap-start overflow-hidden rounded-xl border bg-[var(--color-bg-subtle)]',
-                  node.variant === 'grid' && 'overflow-hidden rounded-xl border bg-[var(--color-bg-subtle)]',
+                    'w-[min(78%,260px)] shrink-0 snap-start overflow-hidden rounded-xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+                  node.variant === 'grid' &&
+                    'overflow-hidden rounded-xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
                   node.variant === 'list' && 'flex gap-3 py-3',
                 )}
               >
@@ -377,7 +378,7 @@ function BriefLeaf({
                 ) : null}
                 <div className={cn('min-w-0', node.variant === 'list' ? 'flex-1' : 'p-3')}>
                   {item.badge ? (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent)]">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent-3)]">
                       {item.badge}
                     </span>
                   ) : null}
@@ -453,7 +454,7 @@ function BriefEntityList({
               key={briefRefKey(item.ref)}
               className={cn(
                 variant === 'cards'
-                  ? 'rounded-xl border bg-[var(--color-bg-subtle)] p-3.5'
+                  ? 'rounded-xl border bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]'
                   : variant === 'compact'
                     ? 'py-2'
                     : 'py-3',
@@ -463,7 +464,7 @@ function BriefEntityList({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   {item.lane ? (
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent)]">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent-3)]">
                       {item.lane}
                     </span>
                   ) : null}
@@ -527,7 +528,12 @@ function BriefStat({ node }: { node: Extract<BriefContentLeaf, { kind: 'stat' }>
   const query = useBriefQuery(node.queryValue, 48);
   const value = node.queryValue ? (query.data?.count ?? '—') : node.value;
   return (
-    <div className={cn('rounded-xl border bg-[var(--color-bg-subtle)] p-4', nodeClass(node))}>
+    <div
+      className={cn(
+        'rounded-xl border bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]',
+        nodeClass(node),
+      )}
+    >
       <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
         {node.label}
       </p>
@@ -535,7 +541,7 @@ function BriefStat({ node }: { node: Extract<BriefContentLeaf, { kind: 'stat' }>
         <strong className="font-display text-3xl font-semibold">{value}</strong>
         {node.unit ? <span className="text-sm text-[var(--color-text-muted)]">{node.unit}</span> : null}
       </div>
-      {node.delta ? <p className="mt-1 text-xs text-[var(--color-accent)]">{node.delta}</p> : null}
+      {node.delta ? <p className="mt-1 text-xs text-[var(--color-accent-3)]">{node.delta}</p> : null}
     </div>
   );
 }
@@ -570,7 +576,7 @@ function BriefPrompt({
   };
   return (
     <form
-      className="flex items-center gap-2 rounded-xl border bg-[var(--color-bg-subtle)] p-2"
+      className="flex items-center gap-2 rounded-xl border bg-[var(--color-surface-well)] p-2"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
@@ -644,11 +650,22 @@ function BriefEmpty({ text }: { text: string }) {
   );
 }
 
+/* Depth ladder mapping (well < paper < card < float, see globals.css):
+ * elevated blocks sit on the card rung; heroes climb to float so the lead
+ * story visibly leaves the paper. */
 function surfaceClass(surface: 'plain' | 'elevated' | 'glass') {
   if (surface === 'elevated')
-    return 'border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-soft)]';
+    return 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]';
   if (surface === 'glass')
-    return 'border-white/20 bg-[var(--color-bg)]/75 shadow-[var(--shadow-soft)] backdrop-blur-xl';
+    return 'border-white/20 bg-[var(--color-bg-elevated)]/75 shadow-[var(--shadow-soft)] backdrop-blur-xl';
+  return 'border-[var(--color-border)] bg-transparent';
+}
+
+function heroSurfaceClass(surface: 'plain' | 'elevated' | 'glass') {
+  if (surface === 'elevated')
+    return 'border-[var(--color-border)] bg-[var(--color-surface-float)] shadow-[var(--shadow-soft)]';
+  if (surface === 'glass')
+    return 'border-white/20 bg-[var(--color-surface-float)]/80 shadow-[var(--shadow-soft)] backdrop-blur-xl';
   return 'border-[var(--color-border)] bg-transparent';
 }
 
