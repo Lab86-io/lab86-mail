@@ -89,6 +89,7 @@ export function BriefCanvas({
           setPendingReplyBody,
           setChatScope,
           setAiBarOpen,
+          openExternal: (url, target, features) => window.open(url, target, features),
         });
         return;
       }
@@ -115,6 +116,7 @@ export function BriefCanvas({
             setPendingReplyBody,
             setChatScope,
             setAiBarOpen,
+            openExternal: (url, target, features) => window.open(url, target, features),
           });
         }
         refresh();
@@ -436,7 +438,7 @@ async function undoBriefAction(action: string, payload: BriefActionPayload) {
   }
 }
 
-function navigateBriefAction(
+export function navigateBriefAction(
   action: string,
   payload: BriefActionPayload,
   navigation: {
@@ -448,6 +450,7 @@ function navigateBriefAction(
     setPendingReplyBody: (value: string | null) => void;
     setChatScope: (value: { kind: 'area'; areaId: string }) => void;
     setAiBarOpen: (value: boolean) => void;
+    openExternal: (url: string, target: '_blank', features: 'noopener,noreferrer') => void;
   },
 ) {
   switch (action) {
@@ -477,7 +480,7 @@ function navigateBriefAction(
       break;
     case 'open_url': {
       const url = safeExternalUrl(required(payload, 'url'));
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      if (url) navigation.openExternal(url, '_blank', 'noopener,noreferrer');
       break;
     }
     case 'discuss_area': {

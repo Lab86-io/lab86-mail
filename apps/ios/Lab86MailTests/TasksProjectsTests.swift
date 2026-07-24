@@ -134,6 +134,33 @@ struct TasksProjectsTests {
     }
 
     @Test
+    func signOutClearsProjectPanesAndRejectsInFlightResponsesFromThePriorSession() async {
+        let tools = OrderedPaneTools()
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+
+        let priorSession = Task {
+            await store.loadProjectPane(projectID: "p1", force: true)
+        }
+        await tools.waitForCallCount(1)
+        #expect(store.projectPanes["p1"]?.isLoading == true)
+
+        await store.clearForSignOut()
+        #expect(store.projectPanes.isEmpty)
+
+        await tools.resolve(call: 0, with: paneJSON(taskIDs: ["prior-account-task"]))
+        await priorSession.value
+        #expect(store.projectPanes.isEmpty)
+
+        let nextSession = Task {
+            await store.loadProjectPane(projectID: "p1", force: true)
+        }
+        await tools.waitForCallCount(2)
+        await tools.resolve(call: 1, with: paneJSON(taskIDs: ["next-account-task"]))
+        await nextSession.value
+        #expect(store.projectPanes["p1"]?.tasks.map(\.id) == ["next-account-task"])
+    }
+
+    @Test
     func completingALinkedTaskRefreshesThePaneWithTheSameCardIdentity() async {
         let tools = CountingTools(responses: [
             "albatross_get_project_pane": paneJSON(taskIDs: ["t1"]),

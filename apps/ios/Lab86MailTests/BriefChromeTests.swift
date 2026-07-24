@@ -210,4 +210,21 @@ struct BriefChromeTests {
         walk.resetIfSourcesChanged(from: dead, to: fresh)
         #expect(walk.current(in: fresh) == fresh[0])
     }
+
+    @Test
+    func imageSourceWalkReportsSafeAreaReadinessOnlyAfterARealImageLoads() {
+        let dead = [URL(string: "https://a.example/dead.jpg")!]
+        let fresh = [URL(string: "https://a.example/new-hero.jpg")!]
+        var walk = ImageSourceWalk()
+
+        #expect(!walk.hasResolvedSource)
+        walk.advance(in: dead)
+        #expect(walk.current(in: dead) == nil)
+        #expect(!walk.hasResolvedSource)
+
+        walk.resetIfSourcesChanged(from: dead, to: fresh)
+        #expect(!walk.hasResolvedSource)
+        walk.markCurrentResolved(in: fresh)
+        #expect(walk.hasResolvedSource)
+    }
 }

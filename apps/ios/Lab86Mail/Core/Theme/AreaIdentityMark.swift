@@ -20,6 +20,9 @@ enum AreaImageSource {
 // views hold in @State, so the walk itself is unit-testable without SwiftUI.
 struct ImageSourceWalk: Equatable {
     private(set) var attempt = 0
+    private(set) var resolvedAttempt: Int?
+
+    var hasResolvedSource: Bool { resolvedAttempt == attempt }
 
     func current(in sources: [URL]) -> URL? {
         guard attempt < sources.count else { return nil }
@@ -27,7 +30,14 @@ struct ImageSourceWalk: Equatable {
     }
 
     mutating func advance(in sources: [URL]) {
-        if attempt < sources.count { attempt += 1 }
+        if attempt < sources.count {
+            attempt += 1
+            resolvedAttempt = nil
+        }
+    }
+
+    mutating func markCurrentResolved(in sources: [URL]) {
+        if current(in: sources) != nil { resolvedAttempt = attempt }
     }
 
     // A terminal cursor must start over when the source list itself changes
@@ -35,7 +45,10 @@ struct ImageSourceWalk: Equatable {
     // the surface on its fallback forever. Views call this from onChange(of:
     // sources).
     mutating func resetIfSourcesChanged(from old: [URL], to new: [URL]) {
-        if old != new { attempt = 0 }
+        if old != new {
+            attempt = 0
+            resolvedAttempt = nil
+        }
     }
 }
 

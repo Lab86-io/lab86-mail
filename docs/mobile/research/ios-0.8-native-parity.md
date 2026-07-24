@@ -117,6 +117,46 @@ visual language.
   never race-conditions against a `.draggable`/`.dropDestination` gesture
   recognizer. Implemented in Stage 5 alongside the drag repair itself.
 
+### Kanban action discoverability follow-up
+
+Fresh Mobbin validation on 2026-07-24 used iOS queries for draggable kanban
+cards, move-to-column flows, and visible task-card action menus:
+
+- [Trello board drag](https://mobbin.com/screens/dbf08dd0-415a-4caf-9784-4bb5d0e9ff97)
+  makes the whole horizontal board a drag surface and exposes archive as a
+  dedicated drop target; swiping a card is not its secondary-action model.
+- [Asana mobile board](https://mobbin.com/screens/a9fa4530-00b6-4114-8b8c-1a71c17602c1)
+  keeps compact cards and column navigation visible while using explicit
+  completion controls and overflow entry points.
+- [Todoist task actions](https://mobbin.com/screens/44f33505-7150-46ba-9113-f8442bea3d87)
+  opens Complete/Schedule/Move/Priority/Delete from a visible ellipsis, and its
+  [move flow](https://mobbin.com/flows/c5725143-eb49-48fc-8acc-aa7a056752f5)
+  follows that menu with a dedicated destination sheet.
+- [monday.com move-to-group flow](https://mobbin.com/flows/f51f9383-d0d8-4ad8-8661-df90b6305f15)
+  similarly separates the action menu from the destination choice instead of
+  overloading the board's horizontal gesture.
+- [Things 3 task menu](https://mobbin.com/screens/c89b824c-7ad7-4fb4-9e0c-44f8af421629)
+  preserves a direct completion control while placing Move and destructive
+  actions behind an explicit overflow menu.
+
+Browserbase cross-checks loaded Apple's live
+[Context menus](https://developer.apple.com/design/human-interface-guidelines/context-menus)
+and [Drag and drop](https://developer.apple.com/design/human-interface-guidelines/drag-and-drop)
+guidance as distinct interaction primitives. Trello's public
+[Move cards or lists](https://support.atlassian.com/trello/docs/moving-cards-or-lists/)
+documentation likewise gives users two paths: direct drag within/between lists,
+or an explicit Move action from the card/actions menu. That supports redundant
+discoverability without asking swipe and drag to compete for the same gesture.
+
+Decision: removing board-card swipe actions is supported because horizontal
+board navigation and hold-to-drag already own that gesture. Long press alone is
+not discoverable enough, so board cards now retain the native context menu and
+also show a quiet trailing ellipsis that opens the same Complete / Move / Due /
+Delete actions. List mode keeps its existing swipe affordance because it does
+not compete with a horizontal board or drag reorder. This preserves Albatross's
+compact density while matching the recurring Mobbin pattern: direct completion,
+visible overflow, then a focused move destination.
+
 ## Identity media contract (this stage)
 
 Two independent identity chains, both image → secondary-image → monogram:
