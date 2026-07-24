@@ -101,7 +101,7 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
 
-    static func isValidHorizontalAccuracy(_ accuracy: CLLocationAccuracy) -> Bool {
+    nonisolated static func isValidHorizontalAccuracy(_ accuracy: CLLocationAccuracy) -> Bool {
         accuracy >= 0
     }
 
