@@ -383,7 +383,14 @@ struct AreaDetailView: View {
             }
             // With a masthead picture the document owns the whole screen and the
             // art slides under the status bar; text-first briefs stay below it.
-            .ignoresSafeArea(edges: detail.identity.imageURL != nil ? .top : [])
+            // Mirrors AreaBriefLead's own image → favicon chain so a
+            // favicon-only area still gets the under-status-bar treatment.
+            .ignoresSafeArea(
+                edges: AreaImageSource.ordered(
+                    imageURL: detail.identity.imageURL,
+                    faviconURL: detail.identity.faviconURL
+                ).isEmpty ? [] : .top
+            )
             .refreshable { await load(initial: false) }
         }
     }
@@ -710,15 +717,31 @@ private struct AreaBriefLead: View {
     @Environment(AppEnvironment.self) private var environment
     let detail: AreaDetail
 
+    // Ordered image → favicon fallback, matching AreaIdentityMark's chain, so
+    // the masthead never regresses to blank when only a favicon is on file.
+    @State private var mastheadAttempt = 0
+
+    private var mastheadSources: [String] {
+        AreaImageSource.ordered(imageURL: detail.identity.imageURL, faviconURL: detail.identity.faviconURL)
+    }
+
+    private var mastheadURL: URL? {
+        guard mastheadAttempt < mastheadSources.count else { return nil }
+        return URL(string: mastheadSources[mastheadAttempt])
+    }
+
     // The generated area brief presented as the document it is on desktop:
     // masthead (custom picture when set), display-face headline, the lede as
     // a standfirst, and the full summary as flowing body copy. Legacy editions
     // that stored complete HTML render verbatim, themed.
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let imageURL = detail.identity.imageURL, let url = URL(string: imageURL) {
+            if let url = mastheadURL {
                 // Full-bleed masthead sliding under the glass toolbar.
                 KFImage(url)
+                    .onFailure { _ in
+                        if mastheadAttempt < mastheadSources.count { mastheadAttempt += 1 }
+                    }
                     .placeholder { environment.theme.accent2Color.opacity(0.14) }
                     .fade(duration: 0.2)
                     .resizable()
@@ -743,7 +766,7 @@ private struct AreaBriefLead: View {
                     .font(environment.theme.displayType.displayFont(size: 34))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                if detail.identity.imageURL == nil {
+                if mastheadURL == nil {
                     AreaDetailMonogram(name: detail.identity.name, seed: detail.identity.id)
                 }
             }
@@ -783,7 +806,7 @@ private struct AreaBriefLead: View {
         .padding(.horizontal, 20)
         // Text-first briefs clear the floating glass controls; a masthead
         // picture slides beneath them instead.
-        .padding(.top, detail.identity.imageURL == nil ? 60 : 20)
+        .padding(.top, mastheadURL == nil ? 60 : 20)
         .padding(.bottom, 24)
         .accessibilityElement(children: .contain)
     }

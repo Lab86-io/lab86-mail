@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   Archive,
@@ -76,6 +76,7 @@ import { LIST_PREFETCH_MARGIN_PX, shouldRequestNextPage } from '@/lib/mail/list-
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
+import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
 import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
@@ -564,7 +565,10 @@ export function Inbox() {
 
   // Once we know the visible senders, resolve provider contact photos or
   // company-domain logos. Initials remain the fallback when no image exists.
-  // Cached server-side for ~7 days, including misses.
+  // Cached server-side for ~7 days, including misses. Rows are grouped by
+  // their REAL account (not one shared account) so the unified ALL_ACCOUNTS
+  // view resolves each sender against the mailbox that actually knows them —
+  // one resolve_photos call per account group, merged into a single map.
   const primaryAccount = useClientStore((s) => s.primaryAccount);
   const photoAccount =
     primaryAccount && primaryAccount !== ALL_ACCOUNTS
@@ -572,25 +576,30 @@ export function Inbox() {
       : account && account !== ALL_ACCOUNTS
         ? account
         : ALL_ACCOUNTS;
-  const photoEmails = useMemo(() => {
-    const set = new Set<string>();
-    for (const it of items.slice(0, 48)) {
-      const email = emailFromHeader(it.from || it.fromAddress);
-      if (email) set.add(email);
-    }
-    return [...set].sort();
-  }, [items]);
-  const photosQuery = useQuery({
-    queryKey: ['photos', photoAccount, photoEmails.join(',')],
-    queryFn: async () =>
-      callTool<{ photos: Record<string, string | null> }>('resolve_photos', {
-        account: photoAccount,
-        emails: photoEmails,
-      }),
-    enabled: photoEmails.length > 0,
-    staleTime: 24 * 60 * 60_000,
+  const senderGroups = useMemo(() => groupSenderEmailsByAccount(items, photoAccount), [items, photoAccount]);
+  const senderGroupEntries = useMemo(
+    () => Object.entries(senderGroups).sort(([a], [b]) => a.localeCompare(b)),
+    [senderGroups],
+  );
+  const photoQueries = useQueries({
+    queries: senderGroupEntries.map(([groupAccount, emails]) => ({
+      queryKey: ['photos', groupAccount, emails.join(',')],
+      queryFn: async () =>
+        callTool<{ photos: Record<string, string | null> }>('resolve_photos', {
+          account: groupAccount,
+          emails,
+        }),
+      enabled: emails.length > 0,
+      staleTime: 24 * 60 * 60_000,
+    })),
   });
-  const photos = photosQuery.data?.photos || {};
+  const photos = useMemo(() => {
+    const merged: Record<string, string | null> = {};
+    for (const query of photoQueries) {
+      if (query.data?.photos) Object.assign(merged, query.data.photos);
+    }
+    return merged;
+  }, [photoQueries]);
 
   const prefetchThread = useCallback(
     (item: ThreadRow) => {

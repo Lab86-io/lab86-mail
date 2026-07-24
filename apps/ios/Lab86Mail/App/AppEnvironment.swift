@@ -13,6 +13,7 @@ final class AppEnvironment {
     let backend: BackendClient
     let tools: ToolClient
     let store: ProductStore
+    let mailIdentity: MailIdentityStore
     let sessionStore = SessionStore()
     let navigation = NavigationModel()
     let theme = ThemeStore()
@@ -91,6 +92,7 @@ final class AppEnvironment {
         )
         convex = convexClient
         store = ProductStore(tools: tools, backend: backend, convex: convexClient)
+        mailIdentity = MailIdentityStore(tools: tools)
         notifications = NotificationCoordinator(backend: backend)
         modelRouter = ModelRouter(tools: tools)
     }

@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { AREA_IMAGE_MAX_BYTES, validateAreaImageUpload } from '../lib/albatross/area-image';
+import {
+  AREA_IMAGE_MAX_BYTES,
+  orderedAreaImageSources,
+  validateAreaImageUpload,
+} from '../lib/albatross/area-image';
 
 describe('Area image upload contract', () => {
   test('accepts bounded images', () => {
@@ -29,5 +33,26 @@ describe('Area image upload contract', () => {
     expect(mutation).toContain(".query('agentUploads')");
     expect(mutation).toContain('ctx.db.delete(previousUpload._id)');
     expect(mutation).toContain('ctx.storage.delete(previousStorageId)');
+  });
+});
+
+describe('orderedAreaImageSources', () => {
+  test('prefers the area image over its favicon', () => {
+    expect(
+      orderedAreaImageSources({
+        imageUrl: 'https://example.com/image.png',
+        faviconUrl: 'https://example.com/favicon.ico',
+      }),
+    ).toEqual(['https://example.com/image.png', 'https://example.com/favicon.ico']);
+  });
+
+  test('drops blank/whitespace-only values and falls back to whatever is left', () => {
+    expect(
+      orderedAreaImageSources({ imageUrl: '   ', faviconUrl: 'https://example.com/favicon.ico' }),
+    ).toEqual(['https://example.com/favicon.ico']);
+    expect(orderedAreaImageSources({ imageUrl: 'https://example.com/image.png', faviconUrl: null })).toEqual([
+      'https://example.com/image.png',
+    ]);
+    expect(orderedAreaImageSources({ imageUrl: null, faviconUrl: undefined })).toEqual([]);
   });
 });

@@ -31,6 +31,11 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
     let category: String?
     let categoryReason: String?
     let categoryConfidence: Double?
+    // Lowercased sender email, used to look up cached provider photos
+    // (MailIdentityStore). New field on an already-Codable struct — synthesized
+    // Codable decodes Optionals via decodeIfPresent, so old cached snapshots
+    // written before this field existed still decode.
+    let senderEmail: String?
 
     init(
         id: String,
@@ -43,7 +48,8 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         starred: Bool,
         category: String? = nil,
         categoryReason: String? = nil,
-        categoryConfidence: Double? = nil
+        categoryConfidence: Double? = nil,
+        senderEmail: String? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -56,6 +62,7 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         self.category = category
         self.categoryReason = categoryReason
         self.categoryConfidence = categoryConfidence
+        self.senderEmail = senderEmail ?? EmailTextNormalizer.email(from: sender)
     }
 
     init?(json: JSONValue, accountID fallbackAccountID: String? = nil) {
@@ -80,6 +87,10 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         category = json["smartCategory"]?["primary"]?.stringValue
         categoryReason = json["smartCategory"]?["reason"]?.stringValue?.nilIfBlank
         categoryConfidence = json["smartCategory"]?["confidence"]?.doubleValue
+        // Server-derived when present; otherwise fall back to parsing the same
+        // header string the display `sender` was built from.
+        senderEmail = json["senderEmail"]?.stringValue?.nilIfBlank?.lowercased()
+            ?? EmailTextNormalizer.email(from: json["fromAddress"]?.stringValue ?? json["from"]?.stringValue)
     }
 
     private static func date(from value: Double?) -> Date {
@@ -110,6 +121,8 @@ struct MailMessage: Identifiable, Hashable, Sendable {
     let htmlBody: String?
     let attachments: [MailAttachment]
     let date: Date
+    // Lowercased sender email for photo lookups (MailIdentityStore).
+    let fromEmail: String?
 
     var body: String {
         EmailTextNormalizer.readerText(textBody.nilIfBlank ?? snippet)
@@ -128,6 +141,8 @@ struct MailMessage: Identifiable, Hashable, Sendable {
         var timestamp = json["receivedAt"]?.doubleValue ?? json["date"]?.doubleValue ?? 0
         if timestamp > 10_000_000_000 { timestamp /= 1_000 }
         date = Date(timeIntervalSince1970: timestamp)
+        fromEmail = json["fromEmail"]?.stringValue?.nilIfBlank?.lowercased()
+            ?? EmailTextNormalizer.email(from: json["from"]?.stringValue ?? json["fromAddress"]?.stringValue)
     }
 
     init(payload: LiveMailMessagePayload, index: Int) {
@@ -139,6 +154,7 @@ struct MailMessage: Identifiable, Hashable, Sendable {
         htmlBody = payload.htmlBody?.nilIfBlank
         attachments = payload.attachments.map(\.attachment)
         date = Self.date(from: payload.date)
+        fromEmail = payload.fromEmail?.nilIfBlank?.lowercased() ?? EmailTextNormalizer.email(from: payload.from)
     }
 
     private static func date(from rawValue: Double) -> Date {
@@ -228,6 +244,7 @@ struct LiveMailThreadPayload: Decodable, Sendable {
     let unread: Bool
     let starred: Bool?
     let smartCategory: LiveMailCategoryPayload?
+    let senderEmail: String?
 
     enum CodingKeys: String, CodingKey {
         case account
@@ -241,6 +258,7 @@ struct LiveMailThreadPayload: Decodable, Sendable {
         case unread
         case starred
         case smartCategory
+        case senderEmail
     }
 
     init(from decoder: Decoder) throws {
@@ -256,6 +274,7 @@ struct LiveMailThreadPayload: Decodable, Sendable {
         unread = try values.decodeIfPresent(Bool.self, forKey: .unread) ?? false
         starred = try values.decodeIfPresent(Bool.self, forKey: .starred)
         smartCategory = try values.decodeIfPresent(LiveMailCategoryPayload.self, forKey: .smartCategory)
+        senderEmail = try values.decodeIfPresent(String.self, forKey: .senderEmail)
     }
 
     var summary: MailThreadSummary {
@@ -272,7 +291,8 @@ struct LiveMailThreadPayload: Decodable, Sendable {
             starred: starred ?? false,
             category: smartCategory?.primary,
             categoryReason: smartCategory?.reason,
-            categoryConfidence: smartCategory?.confidence
+            categoryConfidence: smartCategory?.confidence,
+            senderEmail: senderEmail?.nilIfBlank?.lowercased() ?? EmailTextNormalizer.email(from: fromAddress)
         )
     }
 }
@@ -304,6 +324,7 @@ struct LiveMailMessagePayload: Decodable, Sendable {
     let textBody: String?
     let htmlBody: String?
     let attachments: [LiveMailAttachmentPayload]
+    let fromEmail: String?
 
     enum CodingKeys: String, CodingKey {
         case id = "_id"
@@ -314,6 +335,7 @@ struct LiveMailMessagePayload: Decodable, Sendable {
         case textBody
         case htmlBody
         case attachments
+        case fromEmail
     }
 
     init(from decoder: Decoder) throws {
@@ -326,6 +348,7 @@ struct LiveMailMessagePayload: Decodable, Sendable {
         textBody = try values.decodeIfPresent(String.self, forKey: .textBody)
         htmlBody = try values.decodeIfPresent(String.self, forKey: .htmlBody)
         attachments = try values.decodeIfPresent([LiveMailAttachmentPayload].self, forKey: .attachments) ?? []
+        fromEmail = try values.decodeIfPresent(String.self, forKey: .fromEmail)
     }
 }
 
@@ -885,8 +908,14 @@ struct AreaSummary: Identifiable, Hashable, Codable, Sendable {
     let kind: String
     let detail: String?
     // New optional fields keep old ProductSnapshot caches decodable (synthesized
-    // Codable uses decodeIfPresent for Optionals).
+    // Codable uses decodeIfPresent for Optionals). `imageURL` is the area's own
+    // image only; `faviconURL` is the separate favicon fallback — callers that
+    // render an identity mark should try imageURL, then faviconURL (see
+    // AreaImageSource.ordered). Older cached snapshots wrote the merged
+    // imageUrl||faviconUrl value into `imageURL` with no `faviconURL`, which
+    // still decodes fine and simply skips straight to the monogram fallback.
     let imageURL: String?
+    let faviconURL: String?
     let overview: AreaOverviewCounts?
 
     init?(json: JSONValue) {
@@ -896,7 +925,8 @@ struct AreaSummary: Identifiable, Hashable, Codable, Sendable {
         self.name = name
         kind = json["kind"]?.stringValue ?? "area"
         detail = json["description"]?.stringValue?.nilIfBlank
-        imageURL = (json["imageUrl"] ?? json["faviconUrl"])?.stringValue?.nilIfBlank
+        imageURL = json["imageUrl"]?.stringValue?.nilIfBlank
+        faviconURL = json["faviconUrl"]?.stringValue?.nilIfBlank
         let workCounts = json["workCounts"]
         let factCounts = json["factCounts"]
         overview = (workCounts?.objectValue != nil || factCounts?.objectValue != nil)
@@ -1038,7 +1068,11 @@ struct AreaDetail: Hashable, Codable, Sendable {
         let kind: String
         let description: String?
         let primaryDomain: String?
+        // Split the same way as AreaSummary: imageURL is the area's own image,
+        // faviconURL the separate fallback. Both optional so old cached details
+        // (which only ever wrote imageURL) keep decoding.
         let imageURL: String?
+        let faviconURL: String?
     }
 
     struct LivingBrief: Hashable, Codable, Sendable {
@@ -1194,7 +1228,8 @@ struct AreaDetail: Hashable, Codable, Sendable {
             kind: area?["kind"]?.stringValue?.nilIfBlank ?? "area",
             description: area?["description"]?.stringValue?.nilIfBlank,
             primaryDomain: area?["primaryDomain"]?.stringValue?.nilIfBlank,
-            imageURL: (area?["imageUrl"] ?? area?["faviconUrl"])?.stringValue?.nilIfBlank
+            imageURL: area?["imageUrl"]?.stringValue?.nilIfBlank,
+            faviconURL: area?["faviconUrl"]?.stringValue?.nilIfBlank
         )
 
         if let brief = json["livingBrief"], brief.objectValue != nil {

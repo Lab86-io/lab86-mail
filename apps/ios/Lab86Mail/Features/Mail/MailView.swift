@@ -1,3 +1,4 @@
+import Kingfisher
 import SwiftUI
 
 struct MailView: View {
@@ -154,6 +155,17 @@ struct MailView: View {
                 return
             }
             await environment.store.searchMail(query)
+        }
+        // Resolve sender photos for whatever's currently visible, grouped by
+        // each thread's own account. Re-runs only when the visible set of
+        // (account, sender) pairs actually changes — the store itself
+        // dedupes against its cache, so this just keeps it fed.
+        .task(id: visibleSenderResolutionKey) {
+            let entries = filteredThreads.compactMap { thread -> (email: String, account: String)? in
+                guard let email = thread.senderEmail else { return nil }
+                return (email: email, account: thread.accountID)
+            }
+            await environment.mailIdentity.resolve(entries: entries)
         }
         .sheet(item: $categoryInfoThread) { thread in
             CategoryExplanationSheet(thread: thread) { category in
@@ -367,6 +379,16 @@ struct MailView: View {
             return date.formatted(.dateTime.month(.wide))
         }
         return date.formatted(.dateTime.month(.wide).year())
+    }
+
+    // Structural key for the `.task(id:)` above: changes whenever the visible
+    // (account, sender) pairs change, so photo resolution re-fires exactly
+    // when there's something new to look up.
+    private var visibleSenderResolutionKey: String {
+        filteredThreads.compactMap { thread -> String? in
+            guard let email = thread.senderEmail else { return nil }
+            return "\(thread.accountID):\(email)"
+        }.joined(separator: ",")
     }
 
     private var filteredThreads: [MailThreadSummary] {
@@ -656,7 +678,7 @@ private struct MailThreadRow: View {
                 .frame(width: 7, height: 7)
                 .padding(.top, 16)
                 .accessibilityHidden(true)
-            InitialsAvatar(name: thread.sender, size: 40)
+            senderAvatar
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
@@ -693,6 +715,24 @@ private struct MailThreadRow: View {
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityValue(thread.unread ? "Unread" : "Read")
+    }
+
+    // Stable 40pt geometry whether it resolves to a cached provider/company
+    // photo or the InitialsAvatar fallback, so rows don't reflow as photos
+    // stream in.
+    @ViewBuilder
+    private var senderAvatar: some View {
+        if let url = environment.mailIdentity.photoURL(for: thread.senderEmail) {
+            KFImage(url)
+                .placeholder { InitialsAvatar(name: thread.sender, size: 40) }
+                .fade(duration: 0.15)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
+        } else {
+            InitialsAvatar(name: thread.sender, size: 40)
+        }
     }
 }
 

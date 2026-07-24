@@ -441,7 +441,13 @@ private struct SourceList: View {
                                 onSelect()
                             } label: {
                                 HStack(spacing: 10) {
-                                    AreaMonogram(area: area)
+                                    AreaIdentityMark(
+                                        name: area.name,
+                                        seed: area.id,
+                                        imageURL: area.imageURL,
+                                        faviconURL: area.faviconURL,
+                                        size: 30
+                                    )
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(area.name)
                                             .font(.body)

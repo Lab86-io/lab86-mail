@@ -8,10 +8,26 @@ enum EmailTextNormalizer {
     private static let entityPattern = try! NSRegularExpression(
         pattern: #"&(?:#([0-9]+)|#x([0-9a-fA-F]+)|([a-zA-Z]+));"#
     )
+    private static let emailPattern = try! NSRegularExpression(
+        pattern: #"[\w.+-]+@[\w.-]+\.[\w.-]+"#
+    )
 
     static func header(_ value: String?) -> String {
         guard let value else { return "" }
         return collapseWhitespace(decodeHTMLEntities(decodeEncodedWords(value)))
+    }
+
+    // Pulls the bare email out of a header string like `"Name" <a@b.com>`, or
+    // returns the lowercased value if it's already a bare address. Mirrors
+    // lib/shared/format.ts emailFromHeader so native and server derive the
+    // same senderEmail/fromEmail fallback when the field isn't already
+    // present on the payload. Returns nil when nothing email-shaped exists.
+    static func email(from value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = emailPattern.firstMatch(in: value, range: range),
+              let matchRange = Range(match.range, in: value) else { return nil }
+        return String(value[matchRange]).lowercased()
     }
 
     static func preview(_ value: String) -> String {
