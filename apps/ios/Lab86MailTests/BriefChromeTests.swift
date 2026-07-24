@@ -195,4 +195,19 @@ struct BriefChromeTests {
         #expect(walk.current(in: sources) == nil)
         #expect(ImageSourceWalk().current(in: []) == nil)
     }
+
+    @Test
+    func imageSourceWalkRestartsWhenTheSourceListChanges() {
+        let dead = [URL(string: "https://a.example/dead.jpg")!]
+        let fresh = [URL(string: "https://a.example/new-hero.jpg")!, URL(string: "https://a.example/alt.jpg")!]
+        var walk = ImageSourceWalk()
+        walk.advance(in: dead)
+        #expect(walk.current(in: dead) == nil)
+        // Same sources → terminal state is preserved (no retry loop) …
+        walk.resetIfSourcesChanged(from: dead, to: dead)
+        #expect(walk.current(in: dead) == nil)
+        // … but replaced sources restart the walk at the new first URL.
+        walk.resetIfSourcesChanged(from: dead, to: fresh)
+        #expect(walk.current(in: fresh) == fresh[0])
+    }
 }

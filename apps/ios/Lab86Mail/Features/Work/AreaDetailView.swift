@@ -805,6 +805,9 @@ private struct AreaBriefLead: View {
         // picture slides beneath them instead.
         .padding(.top, mastheadURL == nil ? 60 : 20)
         .padding(.bottom, 24)
+        .onChange(of: mastheadSources) { old, new in
+            mastheadWalk.resetIfSourcesChanged(from: old, to: new)
+        }
         .accessibilityElement(children: .contain)
     }
 

@@ -96,6 +96,9 @@ struct DailyBriefMasthead: View {
         } action: { newWidth in
             width = newWidth
         }
+        .onChange(of: sources) { old, new in
+            walk.resetIfSourcesChanged(from: old, to: new)
+        }
         .accessibilityElement(children: .combine)
     }
 

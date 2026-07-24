@@ -29,6 +29,14 @@ struct ImageSourceWalk: Equatable {
     mutating func advance(in sources: [URL]) {
         if attempt < sources.count { attempt += 1 }
     }
+
+    // A terminal cursor must start over when the source list itself changes
+    // (fresh artwork/identity after a refresh) — otherwise one dead URL parks
+    // the surface on its fallback forever. Views call this from onChange(of:
+    // sources).
+    mutating func resetIfSourcesChanged(from old: [URL], to new: [URL]) {
+        if old != new { attempt = 0 }
+    }
 }
 
 // A shared area icon mark used everywhere an area renders an identity image:
@@ -73,6 +81,9 @@ struct AreaIdentityMark: View {
             }
         }
         .frame(width: size, height: size)
+        .onChange(of: sources) { old, new in
+            walk.resetIfSourcesChanged(from: old, to: new)
+        }
         .accessibilityHidden(true)
     }
 
