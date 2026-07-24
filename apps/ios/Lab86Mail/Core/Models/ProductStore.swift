@@ -112,6 +112,7 @@ final class ProductStore {
     private(set) var areaDetails: [String: AreaDetail] = [:]
     private(set) var workDetails: [String: WorkDetail] = [:]
     private var mailSearchGeneration = 0
+    private var projectPaneLoadGeneration: [String: Int] = [:]
 
     init(
         tools: any ToolInvoking,
@@ -917,6 +918,8 @@ final class ProductStore {
         pane.isLoading = true
         pane.error = nil
         projectPanes[projectID] = pane
+        let generation = (projectPaneLoadGeneration[projectID] ?? 0) + 1
+        projectPaneLoadGeneration[projectID] = generation
         do {
             let result = try await tools.invoke(
                 "albatross_get_project_pane",
@@ -926,6 +929,7 @@ final class ProductStore {
                 guard let card = row["card"] else { return nil }
                 return TaskSummary(json: card, column: card["columnName"]?.stringValue ?? "Tasks")
             }
+            guard projectPaneLoadGeneration[projectID] == generation else { return }
             projectPanes[projectID] = ProjectPaneState(
                 tasks: linked,
                 isLoading: false,
@@ -933,6 +937,7 @@ final class ProductStore {
                 lastRefreshed: .now
             )
         } catch {
+            guard projectPaneLoadGeneration[projectID] == generation else { return }
             pane.isLoading = false
             pane.error = error.localizedDescription
             projectPanes[projectID] = pane

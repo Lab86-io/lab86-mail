@@ -30,6 +30,29 @@ struct TasksProjectsTests {
         func clearFailure(_ name: String) { failures.remove(name) }
     }
 
+    private actor OrderedPaneTools: ToolInvoking {
+        private var continuations: [Int: CheckedContinuation<JSONValue, any Error>] = [:]
+        private var callCount = 0
+
+        func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
+            let call = callCount
+            callCount += 1
+            return try await withCheckedThrowingContinuation { continuation in
+                continuations[call] = continuation
+            }
+        }
+
+        func waitForCallCount(_ expected: Int) async {
+            while callCount < expected {
+                await Task.yield()
+            }
+        }
+
+        func resolve(call: Int, with value: JSONValue) {
+            continuations.removeValue(forKey: call)?.resume(returning: value)
+        }
+    }
+
     private func paneJSON(taskIDs: [String]) -> JSONValue {
         .object([
             "pane": .object([
@@ -89,6 +112,25 @@ struct TasksProjectsTests {
         await store.loadProjectPane(projectID: "p1", force: true)
         #expect(store.projectPanes["p1"]?.error == nil)
         #expect(store.projectPanes["p1"]?.tasks.map(\.id) == ["t1"])
+    }
+
+    @Test
+    func newerForcedProjectPaneLoadWinsWhenOlderRequestFinishesLast() async {
+        let tools = OrderedPaneTools()
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+
+        let older = Task { await store.loadProjectPane(projectID: "p1", force: true) }
+        await tools.waitForCallCount(1)
+        let newer = Task { await store.loadProjectPane(projectID: "p1", force: true) }
+        await tools.waitForCallCount(2)
+
+        await tools.resolve(call: 1, with: paneJSON(taskIDs: ["newer"]))
+        await newer.value
+        await tools.resolve(call: 0, with: paneJSON(taskIDs: ["older"]))
+        await older.value
+
+        #expect(store.projectPanes["p1"]?.tasks.map(\.id) == ["newer"])
+        #expect(store.projectPanes["p1"]?.isLoading == false)
     }
 
     @Test
