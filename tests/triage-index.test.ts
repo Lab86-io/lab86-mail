@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildTriageHandoffIndex } from '../lib/brief/triage-index';
+import { buildTriageHandoffIndex, triageHandoffForMailItem } from '../lib/brief/triage-index';
 import { enforceDailyBriefHandoffCoverage } from '../lib/mail/daily-brief-handoff';
 import { compositionFromReport } from '../lib/shared/brief-composition';
 import type { BriefDocumentV2 } from '../lib/shared/brief-document';
@@ -65,6 +65,21 @@ describe('canonical SBAR triage index', () => {
     expect(
       mailTask?.actions.find((action) => action.action === 'resolve_thread')?.payload.trackedThreadId,
     ).toBe('tracked-1');
+  });
+
+  test('clamps the fully composed mail situation so long names and subjects survive parsing', () => {
+    const handoff = triageHandoffForMailItem(
+      {
+        ...threadItem(),
+        people: ['M'.repeat(250)],
+        subject: 'S'.repeat(400),
+      },
+      'reply_owed',
+      NOW,
+    );
+
+    expect(handoff.situation).toStartWith(`${'M'.repeat(250)} · `);
+    expect(handoff.situation).toHaveLength(500);
   });
 
   test('makes deterministic and model-authored briefs project the same merged index', () => {

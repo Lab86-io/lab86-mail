@@ -48,24 +48,30 @@ func briefDocumentDecodesOptionalHandoffsWithoutBreakingLegacyEntities() throws 
                   {"label":"Update the launch task.","ref":{"kind":"task","id":"task-1"}}],
                 "evidence":[{"label":"Source conversation",
                   "ref":{"kind":"thread","id":"thread-1","account":"jakob@example.com"}}]},
-              "actions":[]},
+             "actions":[]},
              {"ref":{"kind":"thread","id":"legacy","account":"jakob@example.com"},
-              "framing":{"reason":"Legacy framing"},"actions":[]}
+              "framing":{"reason":"Legacy framing"},"actions":[]},
+             {"ref":{"kind":"task","id":"defaulted-handoff"},
+              "handoff":{"situation":"A task needs attention.","assessment":"It is due.",
+                "recommendation":"Open the task."},"actions":[]}
            ]}}]}
         """.utf8
     )
     let document = try #require(BriefDocumentV2.decode(data))
     let items = try #require(document.regions.first?.tree.items)
 
-    #expect(items.count == 2)
+    #expect(items.count == 3)
     #expect(items[0].handoff?.recommendation == "Confirm July 31.")
     #expect(items[0].handoff?.handoffId == "triage-thread-1")
     #expect(items[0].handoff?.itemCount == 2)
-    #expect(items[0].handoff?.recommendations?.count == 2)
-    #expect(items[0].handoff?.recommendations?.last?.ref?.id == "task-1")
+    #expect(items[0].handoff?.recommendations.count == 2)
+    #expect(items[0].handoff?.recommendations.last?.ref?.id == "task-1")
     #expect(items[0].handoff?.background == ["Confirm the date"])
     #expect(items[0].handoff?.evidence.first?.ref?.id == "thread-1")
     #expect(items[1].handoff == nil)
+    #expect(items[2].handoff?.recommendations.isEmpty == true)
+    #expect(items[2].handoff?.background.isEmpty == true)
+    #expect(items[2].handoff?.evidence.isEmpty == true)
 }
 
 @Test

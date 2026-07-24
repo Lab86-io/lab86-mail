@@ -70,7 +70,7 @@ export function triageHandoffForMailItem(
       openLoops: item.openLoops,
     }) || `Open “${subject}” and decide the next step.`;
   const protectedRecord = lane === 'reply_owed' || lane === 'follow_up_owed' || lane === 'tracked';
-  const situation = person ? `${person} · ${subject}` : subject;
+  const situation = clean(person ? `${person} · ${subject}` : subject);
   const assessment =
     clean(item.whyItMatters) || `This conversation is waiting for a decision about ${subject}.`;
   const sourceKey = boundedSourceKey(`mail:${item.account.toLowerCase()}:${item.threadId}`);

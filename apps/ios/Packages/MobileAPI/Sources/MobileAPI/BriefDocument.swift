@@ -524,8 +524,13 @@ public struct BriefEntityHandoff: Codable, Hashable, Sendable {
     public let background: [String]
     public let assessment: String
     public let recommendation: String
-    public let recommendations: [BriefHandoffRecommendation]?
+    public let recommendations: [BriefHandoffRecommendation]
     public let evidence: [BriefHandoffEvidence]
+
+    private enum CodingKeys: String, CodingKey {
+        case handoffId, itemCount, situation, background, assessment, recommendation
+        case recommendations, evidence
+    }
 
     public init(
         handoffId: String? = nil,
@@ -545,6 +550,26 @@ public struct BriefEntityHandoff: Codable, Hashable, Sendable {
         self.recommendation = recommendation
         self.recommendations = Array(recommendations.prefix(4))
         self.evidence = Array(evidence.prefix(4))
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        handoffId = try values.decodeIfPresent(String.self, forKey: .handoffId)
+        itemCount = try values.decodeIfPresent(Int.self, forKey: .itemCount)
+        situation = try values.decode(String.self, forKey: .situation)
+        background = Array(
+            (try values.decodeIfPresent([String].self, forKey: .background) ?? []).prefix(3)
+        )
+        assessment = try values.decode(String.self, forKey: .assessment)
+        recommendation = try values.decode(String.self, forKey: .recommendation)
+        recommendations = Array(
+            (try values.decodeIfPresent([BriefHandoffRecommendation].self, forKey: .recommendations) ?? [])
+                .prefix(4)
+        )
+        evidence = Array(
+            (try values.decodeIfPresent([BriefHandoffEvidence].self, forKey: .evidence) ?? [])
+                .prefix(4)
+        )
     }
 }
 

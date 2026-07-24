@@ -25,3 +25,12 @@ export function normalizeUrl(input: string): string | null {
     return null;
   }
 }
+
+export function safeExternalUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.host ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
