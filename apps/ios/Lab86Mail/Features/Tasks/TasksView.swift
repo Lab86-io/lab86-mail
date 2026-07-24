@@ -300,6 +300,17 @@ struct TasksView: View {
                     .foregroundStyle(task.completed ? .secondary : .primary)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                Menu {
+                    cardActions(task)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Actions for \(task.title)")
             }
             if task.priority != nil || task.due != nil || task.details?.isEmpty == false {
             HStack(spacing: 6) {
@@ -343,32 +354,37 @@ struct TasksView: View {
         .onTapGesture { openTask = task }
         // Board mode carries NO swipe actions: horizontal swipes fight the
         // hold-and-drag reorder gesture, which is why cards felt unmovable.
-        // Complete/Move/Delete stay reachable through the context menu (and
-        // swipes remain in list mode, where nothing competes).
+        // Complete/Move/Delete stay reachable through the visible overflow
+        // menu and native context menu (swipes remain in list mode).
         .contextMenu {
-            Button(task.completed ? "Reopen" : "Complete") {
-                Task { await store.setTaskCompleted(task, completed: !task.completed) }
-            }
-            Menu("Move to") {
-                ForEach(columns, id: \.self) { column in
-                    Button(column) {
-                        Task { await store.moveTask(task, to: column) }
-                    }
-                    .disabled(column == task.column)
+            cardActions(task)
+        }
+    }
+
+    @ViewBuilder
+    private func cardActions(_ task: TaskSummary) -> some View {
+        Button(task.completed ? "Reopen" : "Complete") {
+            Task { await store.setTaskCompleted(task, completed: !task.completed) }
+        }
+        Menu("Move to") {
+            ForEach(columns, id: \.self) { column in
+                Button(column) {
+                    Task { await store.moveTask(task, to: column) }
                 }
+                .disabled(column == task.column)
             }
-            Menu("Due") {
-                Button("Today evening") { Task { await store.setTaskDue(task, due: dueDate(0)) } }
-                Button("Tomorrow") { Task { await store.setTaskDue(task, due: dueDate(1)) } }
-                Button("Next week") { Task { await store.setTaskDue(task, due: dueDate(7)) } }
-                if task.due != nil {
-                    Button("Clear due date") { Task { await store.setTaskDue(task, due: nil) } }
-                }
+        }
+        Menu("Due") {
+            Button("Today evening") { Task { await store.setTaskDue(task, due: dueDate(0)) } }
+            Button("Tomorrow") { Task { await store.setTaskDue(task, due: dueDate(1)) } }
+            Button("Next week") { Task { await store.setTaskDue(task, due: dueDate(7)) } }
+            if task.due != nil {
+                Button("Clear due date") { Task { await store.setTaskDue(task, due: nil) } }
             }
-            Divider()
-            Button("Delete", role: .destructive) {
-                pendingDeleteTask = task
-            }
+        }
+        Divider()
+        Button("Delete", role: .destructive) {
+            pendingDeleteTask = task
         }
     }
 

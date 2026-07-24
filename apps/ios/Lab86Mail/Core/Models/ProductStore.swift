@@ -113,6 +113,7 @@ final class ProductStore {
     private(set) var workDetails: [String: WorkDetail] = [:]
     private var mailSearchGeneration = 0
     private var projectPaneLoadGeneration: [String: Int] = [:]
+    private var projectPaneSessionGeneration = 0
 
     init(
         tools: any ToolInvoking,
@@ -911,6 +912,7 @@ final class ProductStore {
     // the freshness check; plain calls are cheap no-ops while a pane is
     // already loaded or loading.
     func loadProjectPane(projectID: String, force: Bool = false) async {
+        let sessionGeneration = projectPaneSessionGeneration
         if !force, let pane = projectPanes[projectID], pane.isLoading || pane.lastRefreshed != nil {
             return
         }
@@ -929,7 +931,9 @@ final class ProductStore {
                 guard let card = row["card"] else { return nil }
                 return TaskSummary(json: card, column: card["columnName"]?.stringValue ?? "Tasks")
             }
-            guard projectPaneLoadGeneration[projectID] == generation else { return }
+            guard projectPaneSessionGeneration == sessionGeneration,
+                  projectPaneLoadGeneration[projectID] == generation
+            else { return }
             projectPanes[projectID] = ProjectPaneState(
                 tasks: linked,
                 isLoading: false,
@@ -937,7 +941,9 @@ final class ProductStore {
                 lastRefreshed: .now
             )
         } catch {
-            guard projectPaneLoadGeneration[projectID] == generation else { return }
+            guard projectPaneSessionGeneration == sessionGeneration,
+                  projectPaneLoadGeneration[projectID] == generation
+            else { return }
             pane.isLoading = false
             pane.error = error.localizedDescription
             projectPanes[projectID] = pane
@@ -2170,6 +2176,9 @@ final class ProductStore {
         completedMailSearchQuery = nil
         isSearchingMail = false
         mailSearchGeneration += 1
+        projectPaneSessionGeneration += 1
+        projectPanes = [:]
+        projectPaneLoadGeneration = [:]
         events = []
         tasks = []
         areas = []

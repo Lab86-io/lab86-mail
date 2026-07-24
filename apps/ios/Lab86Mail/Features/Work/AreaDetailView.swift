@@ -34,6 +34,7 @@ struct AreaDetailView: View {
     @State private var inboxSelection: Set<String> = []
     @State private var inboxEditMode: EditMode = .inactive
     @State private var artifactReview: ArtifactReviewRequest?
+    @State private var hasLoadedAreaMasthead = false
 
     var body: some View {
         @Bindable var navigation = environment.navigation
@@ -356,7 +357,9 @@ struct AreaDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            AreaBriefLead(detail: detail)
+            AreaBriefLead(detail: detail) { loaded in
+                hasLoadedAreaMasthead = loaded
+            }
 
             if !detail.hasAnyLinkedContent {
                 AreaDocumentSection(title: "In this Area") {
@@ -380,16 +383,9 @@ struct AreaDetailView: View {
             }
             .padding(.bottom, 32)
             }
-            // With a masthead picture the document owns the whole screen and the
-            // art slides under the status bar; text-first briefs stay below it.
-            // Mirrors AreaBriefLead's own image → favicon chain so a
-            // favicon-only area still gets the under-status-bar treatment.
-            .ignoresSafeArea(
-                edges: AreaImageSource.ordered(
-                    imageURL: detail.identity.imageURL,
-                    faviconURL: detail.identity.faviconURL
-                ).isEmpty ? [] : .top
-            )
+            // Only successfully loaded art slides under the status bar. Invalid
+            // or exhausted candidates keep the text-first fallback below it.
+            .ignoresSafeArea(edges: hasLoadedAreaMasthead ? .top : [])
             .refreshable { await load(initial: false) }
         }
     }
@@ -715,6 +711,7 @@ struct AreaDetailView: View {
 private struct AreaBriefLead: View {
     @Environment(AppEnvironment.self) private var environment
     let detail: AreaDetail
+    let onMastheadAvailabilityChanged: (Bool) -> Void
 
     // Ordered image → favicon fallback, matching AreaIdentityMark's chain, so
     // the masthead never regresses to blank when only a favicon is on file.
@@ -736,8 +733,13 @@ private struct AreaBriefLead: View {
             if let url = mastheadURL {
                 // Full-bleed masthead sliding under the glass toolbar.
                 KFImage(url)
+                    .onSuccess { _ in
+                        mastheadWalk.markCurrentResolved(in: mastheadSources)
+                        onMastheadAvailabilityChanged(mastheadWalk.hasResolvedSource)
+                    }
                     .onFailure { _ in
                         mastheadWalk.advance(in: mastheadSources)
+                        onMastheadAvailabilityChanged(false)
                     }
                     .placeholder { environment.theme.accent2Color.opacity(0.14) }
                     .fade(duration: 0.2)
@@ -805,8 +807,12 @@ private struct AreaBriefLead: View {
         // picture slides beneath them instead.
         .padding(.top, mastheadURL == nil ? 60 : 20)
         .padding(.bottom, 24)
+        .onAppear {
+            onMastheadAvailabilityChanged(mastheadWalk.hasResolvedSource)
+        }
         .onChange(of: mastheadSources) { old, new in
             mastheadWalk.resetIfSourcesChanged(from: old, to: new)
+            onMastheadAvailabilityChanged(false)
         }
         .accessibilityElement(children: .contain)
     }
