@@ -113,6 +113,40 @@ describe('native push Convex receipts', () => {
             .collect(),
         ),
       ).toHaveLength(0);
+
+      await t.run(async (ctx) => {
+        const preference = await ctx.db
+          .query('albatrossNotificationPreferences')
+          .withIndex('by_user', (q) => q.eq('userId', 'native_only_user'))
+          .unique();
+        if (!preference) throw new Error('Missing test preference.');
+        await ctx.db.patch(preference._id, { inAppEnabled: true, updatedAt: Date.now() });
+      });
+      await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'native_only_user',
+        localDate: '2026-07-24',
+        timezone: 'UTC',
+      });
+      await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'native_only_user',
+        localDate: '2026-07-24',
+        timezone: 'UTC',
+      });
+      const restored = await t.run(async (ctx) => {
+        const deliveries = await ctx.db
+          .query('notificationDeliveries')
+          .withIndex('by_user', (q) => q.eq('userId', 'native_only_user'))
+          .collect();
+        const notifications = await ctx.db
+          .query('albatrossNotifications')
+          .withIndex('by_user', (q) => q.eq('userId', 'native_only_user'))
+          .collect();
+        return { deliveries, notifications };
+      });
+      expect(restored.deliveries).toHaveLength(2);
+      expect(restored.notifications.every((notification) => notification.status === 'delivered')).toBe(true);
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
@@ -243,6 +277,64 @@ describe('native push Convex receipts', () => {
       });
       expect(created.created).toBe(true);
       expect(duplicate).toMatchObject({ notificationId: created.notificationId, created: false });
+
+      await t.run(async (ctx) => {
+        await ctx.db.insert('albatrossNotificationPreferences', {
+          userId: 'brief_toggle_user',
+          timezone: 'UTC',
+          eveningCheckinEnabled: true,
+          eveningCheckinLocalTime: '19:00',
+          inAppEnabled: false,
+          webPushEnabled: false,
+          nativePushEnabled: true,
+          morningBriefEnabled: true,
+          emailFallbackEnabled: false,
+          emailFallbackDelayMinutes: 90,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      });
+      const hidden = await t.mutation(api.albatrossNotifications.queueBriefReady, {
+        internalSecret: 'native-push-secret',
+        userId: 'brief_toggle_user',
+        reportId: 'report_hidden',
+        localDate: '2026-07-24',
+      });
+      const hiddenState = await t.run(async (ctx) => {
+        const notification = await ctx.db.get(hidden.notificationId!);
+        const deliveries = await ctx.db
+          .query('notificationDeliveries')
+          .withIndex('by_notification', (q) => q.eq('notificationId', hidden.notificationId!))
+          .collect();
+        return { notification, deliveries };
+      });
+      expect(hiddenState.notification?.status).toBe('queued');
+      expect(hiddenState.deliveries).toHaveLength(0);
+      await t.run(async (ctx) => {
+        const preference = await ctx.db
+          .query('albatrossNotificationPreferences')
+          .withIndex('by_user', (q) => q.eq('userId', 'brief_toggle_user'))
+          .unique();
+        if (!preference) throw new Error('Missing test preference.');
+        await ctx.db.patch(preference._id, { inAppEnabled: true, updatedAt: Date.now() });
+      });
+      const restoredBrief = await t.mutation(api.albatrossNotifications.queueBriefReady, {
+        internalSecret: 'native-push-secret',
+        userId: 'brief_toggle_user',
+        reportId: 'report_hidden',
+        localDate: '2026-07-24',
+      });
+      const briefState = await t.run(async (ctx) => {
+        const notification = await ctx.db.get(hidden.notificationId!);
+        const deliveries = await ctx.db
+          .query('notificationDeliveries')
+          .withIndex('by_notification', (q) => q.eq('notificationId', hidden.notificationId!))
+          .collect();
+        return { notification, deliveries };
+      });
+      expect(restoredBrief).toMatchObject({ notificationId: hidden.notificationId, created: false });
+      expect(briefState.notification?.status).toBe('delivered');
+      expect(briefState.deliveries.filter((delivery) => delivery.channel === 'in_app')).toHaveLength(1);
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;

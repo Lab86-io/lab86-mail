@@ -85,6 +85,20 @@ final class CaptureVoiceCoordinator: NSObject {
     }
 }
 
+struct LocationLookupGeneration: Equatable {
+    private(set) var value = 0
+
+    @discardableResult
+    mutating func invalidate() -> Int {
+        value &+= 1
+        return value
+    }
+
+    func isCurrent(_ candidate: Int) -> Bool {
+        candidate == value
+    }
+}
+
 @MainActor
 @Observable
 final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
@@ -94,6 +108,7 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
     private(set) var locationLabel: String?
     private(set) var isRequesting = false
     var errorMessage: String?
+    private var lookupGeneration = LocationLookupGeneration()
 
     override init() {
         super.init()
@@ -122,6 +137,8 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
     }
 
     func clear() {
+        lookupGeneration.invalidate()
+        geocoder.cancelGeocode()
         location = nil
         locationLabel = nil
         isRequesting = false
@@ -149,6 +166,8 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
                 isRequesting = false
                 return
             }
+            let generation = lookupGeneration.invalidate()
+            geocoder.cancelGeocode()
             guard Self.isValidHorizontalAccuracy(latest.horizontalAccuracy) else {
                 isRequesting = false
                 errorMessage = "Location accuracy is unavailable. Try again."
@@ -158,6 +177,8 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
             locationLabel = nil
             isRequesting = false
             if let placemark = try? await geocoder.reverseGeocodeLocation(latest).first {
+                guard lookupGeneration.isCurrent(generation),
+                      location?.timestamp == latest.timestamp else { return }
                 let resolvedLabel = [placemark.locality, placemark.administrativeArea]
                     .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }

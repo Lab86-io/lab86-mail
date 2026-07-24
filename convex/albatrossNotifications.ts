@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
@@ -84,6 +85,42 @@ function notificationPayload(input: {
   return { ...input, status: 'queued' as const, createdAt: ts, updatedAt: ts };
 }
 
+async function ensureInAppDelivery(
+  ctx: MutationCtx,
+  input: {
+    userId: string;
+    notificationId: Id<'albatrossNotifications'>;
+    enabled: boolean;
+    timestamp: number;
+  },
+) {
+  if (!input.enabled) return false;
+  const deliveries = await ctx.db
+    .query('notificationDeliveries')
+    .withIndex('by_notification', (q) => q.eq('notificationId', input.notificationId))
+    .collect();
+  if (deliveries.some((delivery) => delivery.channel === 'in_app')) return false;
+  await ctx.db.insert('notificationDeliveries', {
+    userId: input.userId,
+    notificationId: input.notificationId,
+    channel: 'in_app',
+    status: 'sent',
+    attemptCount: 1,
+    scheduledFor: input.timestamp,
+    sentAt: input.timestamp,
+    createdAt: input.timestamp,
+    updatedAt: input.timestamp,
+  });
+  const notification = await ctx.db.get(input.notificationId);
+  if (notification?.status === 'queued') {
+    await ctx.db.patch(input.notificationId, {
+      status: 'delivered',
+      updatedAt: input.timestamp,
+    });
+  }
+  return true;
+}
+
 async function ensureDailyAlignmentNotifications(
   ctx: MutationCtx,
   input: {
@@ -145,23 +182,17 @@ async function ensureDailyAlignmentNotifications(
           scheduledFor: ts,
         }),
       );
-      if (inAppEnabled) {
-        await ctx.db.insert('notificationDeliveries', {
-          userId: input.userId,
-          notificationId,
-          channel: 'in_app',
-          status: 'sent',
-          attemptCount: 1,
-          scheduledFor: ts,
-          sentAt: ts,
-          createdAt: ts,
-          updatedAt: ts,
-        });
-        await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
-      }
       notification = await ctx.db.get(notificationId);
     }
-    if (notification) notificationIds.push(notification._id);
+    if (notification) {
+      await ensureInAppDelivery(ctx, {
+        userId: input.userId,
+        notificationId: notification._id,
+        enabled: inAppEnabled,
+        timestamp: ts,
+      });
+      notificationIds.push(notification._id);
+    }
   }
   return notificationIds;
 }
@@ -625,13 +656,22 @@ export const queueBriefReady = mutation({
     if (preference?.morningBriefEnabled === false) {
       return { notificationId: null, created: false, skipped: 'disabled' as const };
     }
+    const ts = now();
+    const inAppEnabled = preference?.inAppEnabled !== false;
     const dedupeKey = `brief-ready:${args.localDate}`;
     const existing = await ctx.db
       .query('albatrossNotifications')
       .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
       .unique();
-    if (existing) return { notificationId: existing._id, created: false };
-    const ts = now();
+    if (existing) {
+      await ensureInAppDelivery(ctx, {
+        userId: args.userId,
+        notificationId: existing._id,
+        enabled: inAppEnabled,
+        timestamp: ts,
+      });
+      return { notificationId: existing._id, created: false };
+    }
     const notificationId = await ctx.db.insert(
       'albatrossNotifications',
       notificationPayload({
@@ -646,20 +686,12 @@ export const queueBriefReady = mutation({
         scheduledFor: ts,
       }),
     );
-    if (preference?.inAppEnabled !== false) {
-      await ctx.db.insert('notificationDeliveries', {
-        userId: args.userId,
-        notificationId,
-        channel: 'in_app',
-        status: 'sent',
-        attemptCount: 1,
-        scheduledFor: ts,
-        sentAt: ts,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
-    await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
+    await ensureInAppDelivery(ctx, {
+      userId: args.userId,
+      notificationId,
+      enabled: inAppEnabled,
+      timestamp: ts,
+    });
     return { notificationId, created: true };
   },
 });

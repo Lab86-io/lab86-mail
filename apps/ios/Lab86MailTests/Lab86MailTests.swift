@@ -1506,6 +1506,16 @@ struct Lab86MailTests {
     }
 
     @Test
+    func locationLookupGenerationRejectsClearedAndSupersededResults() {
+        var generation = LocationLookupGeneration()
+        let first = generation.invalidate()
+        #expect(generation.isCurrent(first))
+        let second = generation.invalidate()
+        #expect(!generation.isCurrent(first))
+        #expect(generation.isCurrent(second))
+    }
+
+    @Test
     func commandReceiptsAndSyncCursorsNeverReportUnconfirmedWorkAsApplied() async throws {
         let container = MobilePersistence.makeContainer(inMemory: true)
         let outbox = CommandOutbox(modelContainer: container)
