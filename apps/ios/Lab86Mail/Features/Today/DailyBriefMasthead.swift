@@ -12,7 +12,7 @@ struct DailyBriefMasthead: View {
     let generatedAt: Date
     let art: DailyBriefArt?
 
-    @State private var attempt = 0
+    @State private var walk = ImageSourceWalk()
     @State private var width: CGFloat = 0
 
     // Mobile-friendly aspect-fill crop: height tracks the container width but
@@ -24,20 +24,15 @@ struct DailyBriefMasthead: View {
 
     private var sources: [URL] { art?.orderedURLs ?? [] }
 
-    private var currentSource: URL? {
-        guard attempt < sources.count else { return nil }
-        return sources[attempt]
-    }
-
     var body: some View {
         ZStack {
             // Ordered fallback walking; when every source fails the accent
             // field carries the masthead — never a broken-image state.
             environment.theme.accentSoftColor
-            if let url = currentSource {
+            if let url = walk.current(in: sources) {
                 KFImage(url)
                     .onFailure { _ in
-                        if attempt < sources.count { attempt += 1 }
+                        walk.advance(in: sources)
                     }
                     .placeholder { environment.theme.accentSoftColor }
                     .fade(duration: 0.2)

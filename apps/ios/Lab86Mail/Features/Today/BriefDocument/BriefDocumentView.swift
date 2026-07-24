@@ -68,7 +68,8 @@ struct BriefDocumentView: View {
     // to the document body itself (still composing, or hydration fell back to
     // saved details). The former title/date/Regenerate header is owner chrome.
     @ViewBuilder private var statusLine: some View {
-        if isComposing {
+        switch BriefDocumentStatus.make(isComposing: isComposing, hydrationFailed: hydrationFailed) {
+        case .composing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
                 Text("Adding regions…")
@@ -76,7 +77,7 @@ struct BriefDocumentView: View {
             .font(.caption2.weight(.medium))
             .textCase(.uppercase)
             .foregroundStyle(.secondary)
-        } else if hydrationFailed {
+        case .savedDetails:
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle")
                 Text("Saved details")
@@ -84,6 +85,8 @@ struct BriefDocumentView: View {
             .font(.caption2.weight(.medium))
             .textCase(.uppercase)
             .foregroundStyle(.secondary)
+        case nil:
+            EmptyView()
         }
     }
 
@@ -93,7 +96,22 @@ struct BriefDocumentView: View {
             set: { if !$0 { actionError = nil } }
         )
     }
+}
 
+// The document's transient body status, decided in one pure place so the
+// precedence (composing beats saved-details, nothing when live) is testable.
+enum BriefDocumentStatus: Equatable {
+    case composing
+    case savedDetails
+
+    static func make(isComposing: Bool, hydrationFailed: Bool) -> BriefDocumentStatus? {
+        if isComposing { return .composing }
+        if hydrationFailed { return .savedDetails }
+        return nil
+    }
+}
+
+extension BriefDocumentView {
     private func hydratePinnedRefs() async {
         guard let client = environment.briefHydration else { return }
         let refs = collectRefs()

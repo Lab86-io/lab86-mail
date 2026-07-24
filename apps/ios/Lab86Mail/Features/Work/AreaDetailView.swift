@@ -718,16 +718,14 @@ private struct AreaBriefLead: View {
 
     // Ordered image → favicon fallback, matching AreaIdentityMark's chain, so
     // the masthead never regresses to blank when only a favicon is on file.
-    @State private var mastheadAttempt = 0
+    @State private var mastheadWalk = ImageSourceWalk()
 
-    private var mastheadSources: [String] {
+    private var mastheadSources: [URL] {
         AreaImageSource.ordered(imageURL: detail.identity.imageURL, faviconURL: detail.identity.faviconURL)
+            .compactMap(URL.init(string:))
     }
 
-    private var mastheadURL: URL? {
-        guard mastheadAttempt < mastheadSources.count else { return nil }
-        return URL(string: mastheadSources[mastheadAttempt])
-    }
+    private var mastheadURL: URL? { mastheadWalk.current(in: mastheadSources) }
 
     // The generated area brief presented as the document it is on desktop:
     // masthead (custom picture when set), display-face headline, the lede as
@@ -739,7 +737,7 @@ private struct AreaBriefLead: View {
                 // Full-bleed masthead sliding under the glass toolbar.
                 KFImage(url)
                     .onFailure { _ in
-                        if mastheadAttempt < mastheadSources.count { mastheadAttempt += 1 }
+                        mastheadWalk.advance(in: mastheadSources)
                     }
                     .placeholder { environment.theme.accent2Color.opacity(0.14) }
                     .fade(duration: 0.2)

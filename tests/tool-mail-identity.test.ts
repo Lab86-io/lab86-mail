@@ -165,6 +165,31 @@ describe('mail tools carry sender identity for native photo lookups', () => {
     });
   });
 
+  test('list_account_threads falls through an empty fromAddress to the from header', async () => {
+    await withHarness(async (h) => {
+      h.onConvex('mailCorpus:listRecentCorpusThreads', () => [
+        {
+          _id: 'thread_c',
+          account: 'acct_1',
+          subject: 'Legacy row',
+          // Some writers persist fromAddress: '' — the derivation must not
+          // stop there (`||`, not `??`) and still reads the from header.
+          fromAddress: '',
+          from: '"Carol Legacy" <Carol@Legacy.com>',
+          lastDate: 1_700_000_000_000,
+          snippet: '',
+          labels: [],
+          unread: false,
+          starred: false,
+          cachedAt: 1_700_000_000_000,
+        },
+      ]);
+
+      const result = await run(() => listAccountThreads.handler({ account: 'acct_1', limit: 80 }, ctx));
+      expect(result.threads[0].senderEmail).toBe('carol@legacy.com');
+    });
+  });
+
   test('search_threads attaches senderEmail derived from provider participants', async () => {
     await withHarness(async (h) => {
       h.onConvex('accounts:getConnectedAccount', () => account());

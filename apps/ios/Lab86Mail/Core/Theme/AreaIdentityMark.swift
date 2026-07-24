@@ -15,6 +15,22 @@ enum AreaImageSource {
     }
 }
 
+// Ordered image-source cursor shared by every surface that walks a fallback
+// chain on load failure (identity marks and both mastheads): a pure value the
+// views hold in @State, so the walk itself is unit-testable without SwiftUI.
+struct ImageSourceWalk: Equatable {
+    private(set) var attempt = 0
+
+    func current(in sources: [URL]) -> URL? {
+        guard attempt < sources.count else { return nil }
+        return sources[attempt]
+    }
+
+    mutating func advance(in sources: [URL]) {
+        if attempt < sources.count { attempt += 1 }
+    }
+}
+
 // A shared area icon mark used everywhere an area renders an identity image:
 // sidebar rows, the Areas list, and area detail surfaces. Fallback chain is
 // imageURL → (on load failure) faviconURL → a deterministic monogram, reusing
@@ -32,21 +48,18 @@ struct AreaIdentityMark: View {
     var size: CGFloat = 30
     var cornerStyle: CornerStyle = .circle
 
-    @State private var attempt = 0
+    @State private var walk = ImageSourceWalk()
 
-    private var sources: [String] { AreaImageSource.ordered(imageURL: imageURL, faviconURL: faviconURL) }
-
-    private var currentSource: URL? {
-        guard attempt < sources.count else { return nil }
-        return URL(string: sources[attempt])
+    private var sources: [URL] {
+        AreaImageSource.ordered(imageURL: imageURL, faviconURL: faviconURL).compactMap(URL.init(string:))
     }
 
     var body: some View {
         Group {
-            if let url = currentSource {
+            if let url = walk.current(in: sources) {
                 KFImage(url)
                     .onFailure { _ in
-                        if attempt < sources.count { attempt += 1 }
+                        walk.advance(in: sources)
                     }
                     .placeholder { monogram }
                     .fade(duration: 0.15)

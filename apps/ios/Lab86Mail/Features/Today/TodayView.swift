@@ -13,13 +13,26 @@ struct TodayView: View {
         Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
     }
 
+    // The single source of truth for "this report renders the native v2
+    // document" — the toolbar dateline and artifactBody must agree, or the
+    // date shows twice / the crossfade never fires.
+    static func rendersNativeDocument(_ report: DailyReportModel) -> Bool {
+        report.document != nil && report.artifactSource == "document-v2"
+    }
+
+    // Whether the masthead's dateline has scrolled far enough off screen that
+    // the navigation bar should carry the date instead.
+    static func mastheadScrolledPast(offset: CGFloat, containerWidth: CGFloat) -> Bool {
+        offset > DailyBriefMasthead.height(forWidth: containerWidth) - 56
+    }
+
     // Whether the current render path shows the native masthead (which carries
     // its own dateline). While it's on screen the navigation title stays
     // suppressed so the date never appears twice; once the masthead scrolls
     // away the date crossfades into the bar.
     private var hasNativeMasthead: Bool {
         guard let report = store.dailyReport, report.hasArtifact else { return false }
-        return report.document != nil && report.artifactSource == "document-v2"
+        return Self.rendersNativeDocument(report)
     }
 
     var body: some View {
@@ -73,7 +86,7 @@ struct TodayView: View {
     // sandboxed HTML path so saved report history remains readable.
     @ViewBuilder
     private func artifactBody(_ report: DailyReportModel) -> some View {
-        if let document = report.document, report.artifactSource == "document-v2" {
+        if let document = report.document, Self.rendersNativeDocument(report) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     DailyBriefMasthead(
@@ -93,8 +106,10 @@ struct TodayView: View {
             // The masthead carries the dateline; once it scrolls past, the
             // date crossfades into the bar (the principal item above).
             .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.contentInsets.top
-                    > DailyBriefMasthead.height(forWidth: geometry.containerSize.width) - 56
+                Self.mastheadScrolledPast(
+                    offset: geometry.contentOffset.y + geometry.contentInsets.top,
+                    containerWidth: geometry.containerSize.width
+                )
             } action: { _, crossed in
                 showsInlineDate = crossed
             }
@@ -113,25 +128,32 @@ struct TodayView: View {
         }
     }
 
+    // Regenerate is busy — progress shown, button disabled — while a rebuild
+    // is in flight locally or the server still reports the edition generating.
+    static func regenerateInFlight(isRegenerating: Bool, report: DailyReportModel?) -> Bool {
+        isRegenerating || report?.isGenerating == true
+    }
+
     // Regenerate lives in the top bar beside History — never inside the brief
     // document. It shows progress while an edition is being rebuilt and stays
     // tappable again after a failure (generateBrief surfaces its own error
     // state through the store).
     private var regenerateButton: some View {
-        Button {
+        let busy = Self.regenerateInFlight(isRegenerating: isRegenerating, report: store.dailyReport)
+        return Button {
             isRegenerating = true
             Task {
                 await store.generateBrief()
                 isRegenerating = false
             }
         } label: {
-            if isRegenerating || store.dailyReport?.isGenerating == true {
+            if busy {
                 ProgressView()
             } else {
                 Label("Regenerate brief", systemImage: "arrow.clockwise")
             }
         }
-        .disabled(isRegenerating || store.dailyReport?.isGenerating == true)
+        .disabled(busy)
     }
 
     // Fallback when no artifact exists yet (no edition, still generating, or a

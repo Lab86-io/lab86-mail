@@ -38,13 +38,15 @@ const LOCAL_CURSOR_PREFIX = 'local:';
 function withThreadSenderEmail<T extends { fromAddress?: string | null; from?: string | null }>(
   thread: T,
 ): T & { senderEmail: string | null } {
-  return { ...thread, senderEmail: emailFromHeader(thread.fromAddress ?? thread.from ?? null) };
+  // `||`, not `??`: some writers persist `fromAddress: ''`, which must still
+  // fall back to the `from` header.
+  return { ...thread, senderEmail: emailFromHeader(thread.fromAddress || thread.from || null) };
 }
 
 function withMessageFromEmail<T extends { from?: string | null }>(
   message: T,
 ): T & { fromEmail: string | null } {
-  return { ...message, fromEmail: emailFromHeader(message.from ?? null) };
+  return { ...message, fromEmail: emailFromHeader(message.from || null) };
 }
 
 export const listAccounts = defineTool({

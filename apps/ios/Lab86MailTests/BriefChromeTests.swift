@@ -115,4 +115,84 @@ struct BriefChromeTests {
         #expect(DailyBriefMasthead.height(forWidth: 402) == max(220, min(360, 402 * 0.62)))
         #expect(DailyBriefMasthead.height(forWidth: 1_024) == 360)
     }
+
+    // MARK: - Document status precedence
+
+    @Test
+    func documentStatusPrefersComposingThenSavedDetailsThenNothing() {
+        #expect(BriefDocumentStatus.make(isComposing: true, hydrationFailed: false) == .composing)
+        #expect(BriefDocumentStatus.make(isComposing: true, hydrationFailed: true) == .composing)
+        #expect(BriefDocumentStatus.make(isComposing: false, hydrationFailed: true) == .savedDetails)
+        #expect(BriefDocumentStatus.make(isComposing: false, hydrationFailed: false) == nil)
+    }
+
+    // MARK: - Nav-title crossfade and regenerate state
+
+    @Test
+    func mastheadCrossfadeFiresExactlyPastTheThreshold() {
+        let width: CGFloat = 402
+        let threshold = DailyBriefMasthead.height(forWidth: width) - 56
+        #expect(!TodayView.mastheadScrolledPast(offset: 0, containerWidth: width))
+        #expect(!TodayView.mastheadScrolledPast(offset: threshold, containerWidth: width))
+        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: width))
+    }
+
+    @Test
+    func nativeDocumentPredicateGatesMastheadAndBodyTogether() throws {
+        let v2 = try #require(DailyReportModel(json: .object([
+            "_id": .string("r1"),
+            "generatedAt": .number(1_753_300_000_000),
+            "artifactSource": .string("document-v2"),
+            "document": .object([
+                "version": .number(2),
+                "title": .string("Thursday Brief"),
+                "summary": .string("Quiet."),
+                "generatedAt": .number(1_753_300_000_000),
+                "regions": .array([]),
+            ]),
+        ])))
+        #expect(TodayView.rendersNativeDocument(v2))
+
+        let legacy = try #require(DailyReportModel(json: .object([
+            "_id": .string("r2"),
+            "generatedAt": .number(1_753_300_000_000),
+            "html": .string("<main>edition</main>"),
+        ])))
+        #expect(!TodayView.rendersNativeDocument(legacy))
+    }
+
+    @Test
+    func regenerateIsBusyWhileLocallyInFlightOrServerStillGenerating() throws {
+        #expect(TodayView.regenerateInFlight(isRegenerating: true, report: nil))
+        #expect(!TodayView.regenerateInFlight(isRegenerating: false, report: nil))
+        let partial = try #require(DailyReportModel(json: .object([
+            "_id": .string("r3"),
+            "generatedAt": .number(1_753_300_000_000),
+            "status": .string("partial"),
+        ])))
+        #expect(TodayView.regenerateInFlight(isRegenerating: false, report: partial))
+        let ready = try #require(DailyReportModel(json: .object([
+            "_id": .string("r4"),
+            "generatedAt": .number(1_753_300_000_000),
+            "status": .string("ready"),
+        ])))
+        #expect(!TodayView.regenerateInFlight(isRegenerating: false, report: ready))
+    }
+
+    // MARK: - Shared image fallback walk
+
+    @Test
+    func imageSourceWalkAdvancesInOrderAndTerminates() {
+        let sources = [URL(string: "https://a.example/1.jpg")!, URL(string: "https://a.example/2.jpg")!]
+        var walk = ImageSourceWalk()
+        #expect(walk.current(in: sources) == sources[0])
+        walk.advance(in: sources)
+        #expect(walk.current(in: sources) == sources[1])
+        walk.advance(in: sources)
+        #expect(walk.current(in: sources) == nil)
+        // Advancing past the end stays terminal instead of trapping/looping.
+        walk.advance(in: sources)
+        #expect(walk.current(in: sources) == nil)
+        #expect(ImageSourceWalk().current(in: []) == nil)
+    }
 }

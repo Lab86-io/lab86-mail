@@ -88,9 +88,12 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         categoryReason = json["smartCategory"]?["reason"]?.stringValue?.nilIfBlank
         categoryConfidence = json["smartCategory"]?["confidence"]?.doubleValue
         // Server-derived when present; otherwise fall back to parsing the same
-        // header string the display `sender` was built from.
+        // header strings the display `sender` was built from. Each header is
+        // parsed independently so an empty/unparseable fromAddress still falls
+        // through to `from`.
         senderEmail = json["senderEmail"]?.stringValue?.nilIfBlank?.lowercased()
-            ?? EmailTextNormalizer.email(from: json["fromAddress"]?.stringValue ?? json["from"]?.stringValue)
+            ?? EmailTextNormalizer.email(from: json["fromAddress"]?.stringValue)
+            ?? EmailTextNormalizer.email(from: json["from"]?.stringValue)
     }
 
     private static func date(from value: Double?) -> Date {
@@ -142,7 +145,8 @@ struct MailMessage: Identifiable, Hashable, Sendable {
         if timestamp > 10_000_000_000 { timestamp /= 1_000 }
         date = Date(timeIntervalSince1970: timestamp)
         fromEmail = json["fromEmail"]?.stringValue?.nilIfBlank?.lowercased()
-            ?? EmailTextNormalizer.email(from: json["from"]?.stringValue ?? json["fromAddress"]?.stringValue)
+            ?? EmailTextNormalizer.email(from: json["from"]?.stringValue)
+            ?? EmailTextNormalizer.email(from: json["fromAddress"]?.stringValue)
     }
 
     init(payload: LiveMailMessagePayload, index: Int) {

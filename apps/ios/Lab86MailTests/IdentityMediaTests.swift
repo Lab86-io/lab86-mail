@@ -50,6 +50,16 @@ struct IdentityMediaTests {
     }
 
     @Test
+    func mailThreadSummaryFallsThroughAnEmptyFromAddressToFrom() {
+        let thread = MailThreadSummary(json: .object([
+            "_id": .string("t2b"),
+            "fromAddress": .string(""),
+            "from": .string("Fallback Person <fallback@example.com>"),
+        ]))
+        #expect(thread?.senderEmail == "fallback@example.com")
+    }
+
+    @Test
     func mailThreadSummarySenderEmailIsNilWhenUnavailable() {
         let thread = MailThreadSummary(json: .object([
             "_id": .string("t3"),

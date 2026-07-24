@@ -48,7 +48,7 @@ export const corpusSearch = defineTool({
                 account,
                 source: 'mail',
                 searchTier: result?.searchTier,
-                senderEmail: emailFromHeader(item.fromAddress ?? item.from ?? null),
+                senderEmail: emailFromHeader(item.fromAddress || item.from || null),
               })),
             )
             .catch(() => []),
