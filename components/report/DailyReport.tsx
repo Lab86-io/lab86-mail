@@ -39,6 +39,7 @@ import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { confirmDailyReportAction } from '@/lib/daily-report-action-review';
+import { handleDailyReportNavigationAction } from '@/lib/daily-report-navigation';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
@@ -618,21 +619,14 @@ function ReportArtifact({
             setPrimaryView('areas');
             return ack(true);
           case 'open_work':
-            if (!payload.workId) return ack(false, 'missing workId');
-            if (payload.areaId) setSelectedAreaId(String(payload.areaId));
-            setSelectedWorkId(String(payload.workId));
-            setPrimaryView('areas');
-            return ack(true);
           case 'open_url': {
-            if (typeof payload.url !== 'string') return ack(false, 'missing url');
-            try {
-              const url = new URL(payload.url);
-              if (url.protocol !== 'https:') return ack(false, 'unsupported url');
-              window.open(url.toString(), '_blank', 'noopener,noreferrer');
-              return ack(true);
-            } catch {
-              return ack(false, 'invalid url');
-            }
+            const result = handleDailyReportNavigationAction(data.action, payload, {
+              setSelectedAreaId,
+              setSelectedWorkId,
+              setPrimaryView,
+              openExternal: (url, target, features) => window.open(url, target, features),
+            });
+            return ack(result.ok, result.ok ? undefined : result.error);
           }
           case 'toggle_task':
             if (!payload.cardId) return ack(false, 'missing cardId');

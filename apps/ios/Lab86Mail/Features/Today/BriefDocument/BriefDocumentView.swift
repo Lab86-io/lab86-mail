@@ -135,7 +135,7 @@ extension BriefDocumentView {
         func visit(_ node: BriefNode) {
             node.items?.forEach {
                 add($0.ref)
-                $0.handoff?.recommendations?.forEach { add($0.ref) }
+                $0.handoff?.recommendations.forEach { add($0.ref) }
                 $0.handoff?.evidence.forEach { add($0.ref) }
             }
             node.timelineItems?.forEach { add($0.ref) }
@@ -785,12 +785,12 @@ private struct BriefEntityRow: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text((handoff.recommendations?.count ?? 0) > 1 ? "Your moves" : "Your move")
+                Text(handoff.recommendations.count > 1 ? "Your moves" : "Your move")
                     .font(.caption2.weight(.semibold))
                     .textCase(.uppercase)
                     .foregroundStyle(.secondary)
-                if let recommendations = handoff.recommendations, recommendations.count > 1 {
-                    ForEach(Array(recommendations.enumerated()), id: \.offset) { index, move in
+                if handoff.recommendations.count > 1 {
+                    ForEach(Array(handoff.recommendations.enumerated()), id: \.offset) { index, move in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text("\(index + 1).")
                                 .font(.caption.weight(.semibold))

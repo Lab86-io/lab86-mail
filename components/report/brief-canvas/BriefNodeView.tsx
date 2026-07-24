@@ -492,7 +492,7 @@ function BriefEntityRow({
             </span>
           ) : null}
           <p className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}>{title}</p>
-          {item.handoff ? (
+          {item.handoff && !gone ? (
             <>
               <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
                 <span className="font-medium text-[var(--color-text)]">My read: </span>

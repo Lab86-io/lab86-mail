@@ -15,6 +15,7 @@ import {
   parseBriefDocument,
 } from '@/lib/shared/brief-document';
 import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
+import { safeExternalUrl } from '@/lib/shared/url';
 import { BriefActions } from './BriefActions';
 import { BriefMasthead } from './BriefMasthead';
 import { type BriefNodeContext, BriefNodeView } from './BriefNodeView';
@@ -491,15 +492,6 @@ function navigateBriefAction(
       navigation.setPendingReplyBody(optional(payload, 'body') ?? '');
       navigation.setPrimaryView('mail');
       break;
-  }
-}
-
-function safeExternalUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
   }
 }
 
