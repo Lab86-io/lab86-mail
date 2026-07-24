@@ -127,4 +127,50 @@ struct SidebarScrubTests {
         #expect(!SidebarScrubLogic.isHorizontalDismissal(translation: CGSize(width: 80, height: 60)))
     }
 
+    // MARK: - Long-list wheel behavior
+
+    @Test
+    func edgeZonesAdvanceToTheNextDestinationInVisualOrder() {
+        let ordered: [SidebarDestination] = [
+            .primary(.today),
+            .area(id: "area_1", name: "House"),
+            .area(id: "area_2", name: "Work"),
+            .mail(.main),
+            .settings,
+        ]
+        #expect(SidebarScrubLogic.autoscrollZone(forY: 10, in: bounds) == .top)
+        #expect(SidebarScrubLogic.autoscrollZone(forY: 610, in: bounds) == .bottom)
+        #expect(SidebarScrubLogic.autoscrollZone(forY: 300, in: bounds) == nil)
+        #expect(
+            SidebarScrubLogic.autoscrollTarget(
+                from: .area(id: "area_1", name: "House"),
+                in: ordered,
+                zone: .bottom
+            ) == .area(id: "area_2", name: "Work")
+        )
+        #expect(
+            SidebarScrubLogic.autoscrollTarget(
+                from: .primary(.today),
+                in: ordered,
+                zone: .top
+            ) == nil
+        )
+    }
+
+    @Test
+    func wheelProjectionFacesTheSelectionAndCurvesItsNeighbors() {
+        let selected = SidebarScrubLogic.wheelTransform(distance: 0, reduceMotion: false)
+        let below = SidebarScrubLogic.wheelTransform(distance: 2, reduceMotion: false)
+        let above = SidebarScrubLogic.wheelTransform(distance: -2, reduceMotion: false)
+        #expect(selected.rotationDegrees == 0)
+        #expect(selected.scale > below.scale)
+        #expect(below.rotationDegrees < 0)
+        #expect(above.rotationDegrees > 0)
+        #expect(below.opacity < selected.opacity)
+
+        let reduced = SidebarScrubLogic.wheelTransform(distance: 2, reduceMotion: true)
+        #expect(reduced.rotationDegrees == 0)
+        #expect(reduced.offsetY == 0)
+    }
+
 }

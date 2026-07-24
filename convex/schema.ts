@@ -1684,8 +1684,17 @@ export default defineSchema({
     nativePushEnabled: v.optional(v.boolean()),
     newMailPushEnabled: v.optional(v.boolean()),
     eventSuggestionPushEnabled: v.optional(v.boolean()),
+    morningBriefEnabled: v.optional(v.boolean()),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
+    // Explicitly opted-in approximate iPhone location for morning weather.
+    // Optional fields keep existing preference rows readable.
+    briefLocationEnabled: v.optional(v.boolean()),
+    briefLatitude: v.optional(v.number()),
+    briefLongitude: v.optional(v.number()),
+    briefLocationLabel: v.optional(v.string()),
+    briefLocationAccuracy: v.optional(v.number()),
+    briefLocationUpdatedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
@@ -1786,6 +1795,7 @@ export default defineSchema({
       }),
     ),
     responseText: v.optional(v.string()),
+    tomorrowIntentText: v.optional(v.string()),
     reconciledChanges: v.optional(
       v.array(
         v.object({
@@ -1798,6 +1808,8 @@ export default defineSchema({
     ),
     conversationId: v.string(),
     openedAt: v.optional(v.number()),
+    reflectionAnsweredAt: v.optional(v.number()),
+    tomorrowIntentAnsweredAt: v.optional(v.number()),
     answeredAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),

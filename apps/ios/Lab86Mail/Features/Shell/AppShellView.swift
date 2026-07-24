@@ -412,8 +412,10 @@ private struct SourceList: View {
 
     @State private var rowFrames: [SidebarDestination: CGRect] = [:]
     @State private var containerBounds: CGRect = .zero
+    @State private var scrollBounds: CGRect = .zero
     @State private var scrubCancelled = false
     @State private var previewDelayTask: Task<Void, Never>?
+    @State private var autoscrollTarget: SidebarDestination?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -426,12 +428,13 @@ private struct SourceList: View {
             .padding(.top, 10)
             .padding(.bottom, 14)
 
-            // The sidebar does not scroll. It behaves like a menu: touch down
-            // anywhere, slide, the highlight follows the finger, release
-            // commits — the scrub IS how you move through it, so no scroll
-            // pan ever competes for the swipe. Content is bounded to fit
-            // (areas cap below; the Areas page carries the full list).
-            VStack(alignment: .leading, spacing: 4) {
+            // Every Area stays in the hierarchy. The viewport itself never
+            // pans under the thumb: the direct scrub advances the centered
+            // destination, giving long Area lists the behavior of a system
+            // wheel without competing scroll and selection gestures.
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(PrimaryTab.sourceList) { destination in
                         sourceButton(destination)
                     }
@@ -449,7 +452,8 @@ private struct SourceList: View {
                     if environment.store.areas.isEmpty {
                         areaState
                     } else {
-                        ForEach(environment.store.areas.prefix(Self.maxSidebarAreas)) { area in
+                        ForEach(environment.store.areas) { area in
+                            let destination = SidebarDestination.area(id: area.id, name: area.name)
                             Button {
                                 environment.navigation.openArea(id: area.id, name: area.name)
                                 onSelect()
@@ -495,17 +499,10 @@ private struct SourceList: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel(areaAccessibilityLabel(area))
                             .accessibilityAddTraits(isSelected(area) ? [.isButton, .isSelected] : .isButton)
-                            .id(SidebarDestination.area(id: area.id, name: area.name))
-                            .sidebarScrubRow(.area(id: area.id, name: area.name), frames: $rowFrames)
-                            .sidebarScrubHighlight(isScrubbing(.area(id: area.id, name: area.name)))
-                        }
-                        if environment.store.areas.count > Self.maxSidebarAreas {
-                            // Not a scrub stop — the Areas page lists everything.
-                            Text("+\(environment.store.areas.count - Self.maxSidebarAreas) more in Areas")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 2)
+                            .id(destination)
+                            .sidebarScrubRow(destination, frames: $rowFrames)
+                            .sidebarScrubHighlight(isScrubbing(destination))
+                            .sidebarScrubWheel(distance: wheelDistance(to: destination))
                         }
                     }
 
@@ -524,9 +521,25 @@ private struct SourceList: View {
                     }
 
                     Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 16)
+                }
+                .scrollIndicators(.hidden)
+                .scrollDisabled(true)
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .named(SidebarScrubCoordinateSpace.name))
+                } action: { bounds in
+                    scrollBounds = bounds
+                }
+                .onChange(of: autoscrollTarget) { _, destination in
+                    guard let destination else { return }
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.22, extraBounce: 0)) {
+                        proxy.scrollTo(destination, anchor: .center)
+                    }
+                    autoscrollTarget = nil
+                }
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 16)
 
             Divider()
 
@@ -546,6 +559,7 @@ private struct SourceList: View {
             .accessibilityHint("Opens account and app settings")
             .sidebarScrubRow(.settings, frames: $rowFrames)
             .sidebarScrubHighlight(isScrubbing(.settings))
+            .sidebarScrubWheel(distance: wheelDistance(to: .settings))
         }
         .background(environment.theme.railColor)
         .coordinateSpace(name: SidebarScrubCoordinateSpace.name)
@@ -554,19 +568,20 @@ private struct SourceList: View {
         } action: { bounds in
             containerBounds = bounds
         }
-        // One drag owns every touch on the sidebar, menu-style: tap commits
-        // the touched row, slide moves the highlight with ticks, release
-        // commits. High priority is safe because nothing here scrolls, and
-        // VoiceOver still activates the row Buttons directly (activation
-        // bypasses touch recognition entirely).
+        // One drag owns the wheel-style scrub. The viewport is programmatically
+        // centered, so there is still no competing scroll pan; VoiceOver
+        // continues to activate each real Button directly.
         .highPriorityGesture(scrubGesture, isEnabled: scrub != nil)
     }
 
     // MARK: - Scrub session
 
-    // Bounded so the sidebar always fits without scrolling; the Areas page
-    // carries the complete list.
-    static let maxSidebarAreas = 5
+    private var orderedDestinations: [SidebarDestination] {
+        PrimaryTab.sourceList.map(SidebarDestination.primary)
+            + environment.store.areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
+            + MailCategoryScope.allCases.map(SidebarDestination.mail)
+            + [.settings]
+    }
 
     private var currentDestination: SidebarDestination? {
         if let route = environment.navigation.areaRoute {
@@ -577,6 +592,16 @@ private struct SourceList: View {
 
     private func isScrubbing(_ destination: SidebarDestination) -> Bool {
         scrub?.wrappedValue.isActive == true && scrub?.wrappedValue.previewed == destination
+    }
+
+    private func wheelDistance(to destination: SidebarDestination) -> Int? {
+        guard scrub?.wrappedValue.isActive == true,
+              let previewed = scrub?.wrappedValue.previewed,
+              let selectedIndex = orderedDestinations.firstIndex(of: previewed),
+              let destinationIndex = orderedDestinations.firstIndex(of: destination) else {
+            return nil
+        }
+        return destinationIndex - selectedIndex
     }
 
     // Menu-style touch handling: the session opens on touch-down, the
@@ -607,7 +632,18 @@ private struct SourceList: View {
             scrubCancelled = true
             return
         }
-        let destination = SidebarScrubLogic.destination(at: drag.location, rows: rowFrames)
+        var destination = SidebarScrubLogic.destination(at: drag.location, rows: rowFrames)
+        if session.wrappedValue.isActive,
+           let zone = SidebarScrubLogic.autoscrollZone(forY: drag.location.y, in: scrollBounds),
+           let next = SidebarScrubLogic.autoscrollTarget(
+               from: session.wrappedValue.previewed,
+               in: orderedDestinations,
+               zone: zone
+           ),
+           next != .settings {
+            destination = next
+            autoscrollTarget = next
+        }
         if !session.wrappedValue.isActive {
             session.wrappedValue.activate(over: destination, committed: currentDestination)
             // The page preview waits for a row crossing or the ready delay so
@@ -693,6 +729,7 @@ private struct SourceList: View {
         .id(SidebarDestination.primary(destination))
         .sidebarScrubRow(.primary(destination), frames: $rowFrames)
         .sidebarScrubHighlight(isScrubbing(.primary(destination)))
+        .sidebarScrubWheel(distance: wheelDistance(to: .primary(destination)))
     }
 
     private func mailFilterButton(_ category: MailCategoryScope) -> some View {
@@ -719,6 +756,7 @@ private struct SourceList: View {
         .id(SidebarDestination.mail(category))
         .sidebarScrubRow(.mail(category), frames: $rowFrames)
         .sidebarScrubHighlight(isScrubbing(.mail(category)))
+        .sidebarScrubWheel(distance: wheelDistance(to: .mail(category)))
     }
 
     @ViewBuilder private var areaState: some View {

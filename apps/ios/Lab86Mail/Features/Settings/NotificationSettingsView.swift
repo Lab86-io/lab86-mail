@@ -7,6 +7,7 @@ struct NotificationSettingsView: View {
     @State private var preferences = MobileNotificationPreferences()
     @State private var isLoaded = false
     @State private var isSaving = false
+    @State private var locationCoordinator = CaptureLocationCoordinator()
 
     var body: some View {
         Form {
@@ -30,6 +31,8 @@ struct NotificationSettingsView: View {
                     .disabled(!preferences.nativePushEnabled)
                 Toggle("Calendar suggestions from mail", isOn: $preferences.eventSuggestionPushEnabled)
                     .disabled(!preferences.nativePushEnabled)
+                Toggle("Morning Brief is ready", isOn: $preferences.morningBriefEnabled)
+                    .disabled(!preferences.nativePushEnabled)
                 Toggle("In-app Activity", isOn: $preferences.inAppEnabled)
             } header: {
                 Text("Delivery")
@@ -51,7 +54,50 @@ struct NotificationSettingsView: View {
             } header: {
                 Text("Check-in schedule")
             } footer: {
-                Text("Timezone uses an IANA identifier such as \(TimeZone.current.identifier).")
+                Text("Two freeform prompts ask what moved today and what matters tomorrow. Timezone uses an IANA identifier such as \(TimeZone.current.identifier).")
+            }
+
+            Section {
+                LabeledContent(
+                    "Brief weather",
+                    value: preferences.briefLocationEnabled
+                        ? (preferences.briefLocationLabel ?? "Current location")
+                        : "Timezone estimate"
+                )
+                Button {
+                    locationCoordinator.requestOnce()
+                } label: {
+                    if locationCoordinator.isRequesting {
+                        Label("Finding location…", systemImage: "location")
+                    } else {
+                        Label(
+                            preferences.briefLocationEnabled
+                                ? "Update Current Location"
+                                : "Use Current Location",
+                            systemImage: "location.fill"
+                        )
+                    }
+                }
+                .disabled(locationCoordinator.isRequesting)
+                if preferences.briefLocationEnabled {
+                    Button("Stop Using Location", role: .destructive) {
+                        preferences.briefLocationEnabled = false
+                        preferences.briefLatitude = nil
+                        preferences.briefLongitude = nil
+                        preferences.briefLocationLabel = nil
+                        preferences.briefLocationAccuracy = nil
+                        preferences.briefLocationUpdatedAt = nil
+                    }
+                }
+                if let error = locationCoordinator.errorMessage {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Daily Brief location")
+            } footer: {
+                Text("Albatross stores an approximate location only after you tap Use Current Location. It is used to fetch local morning weather and can be removed here.")
             }
 
             Section {
@@ -87,6 +133,19 @@ struct NotificationSettingsView: View {
             await environment.notifications.loadPreferences()
             preferences = environment.notifications.preferences
             isLoaded = true
+        }
+        .onChange(of: locationCoordinator.location?.timestamp) { _, _ in
+            guard let location = locationCoordinator.location else { return }
+            preferences.briefLocationEnabled = true
+            preferences.briefLatitude = location.coordinate.latitude
+            preferences.briefLongitude = location.coordinate.longitude
+            preferences.briefLocationAccuracy = max(0, location.horizontalAccuracy)
+            preferences.briefLocationUpdatedAt = location.timestamp.timeIntervalSince1970 * 1_000
+            preferences.briefLocationLabel = locationCoordinator.locationLabel ?? "Current location"
+        }
+        .onChange(of: locationCoordinator.locationLabel) { _, label in
+            guard preferences.briefLocationEnabled, let label, !label.isEmpty else { return }
+            preferences.briefLocationLabel = label
         }
     }
 

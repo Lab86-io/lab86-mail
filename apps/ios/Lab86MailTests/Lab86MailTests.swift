@@ -1225,7 +1225,7 @@ struct Lab86MailTests {
     @Test
     func mapsDurableCheckinCandidatesWithoutAssumingWebViewState() throws {
         let data = Data(
-            #"{"_id":"checkin-1","localDate":"2026-07-15","status":"open","candidateItems":[{"kind":"work","id":"work-1","title":"Ship native mail"}]}"#.utf8
+            #"{"_id":"checkin-1","localDate":"2026-07-15","status":"open","responseText":"Shipped the inline reply.","tomorrowIntentText":"Verify production APNs.","candidateItems":[{"kind":"work","id":"work-1","title":"Ship native mail"}]}"#.utf8
         )
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
         let checkin = CheckinSummary(json: value)
@@ -1233,6 +1233,8 @@ struct Lab86MailTests {
         #expect(checkin?.id == "checkin-1")
         #expect(checkin?.candidates.first?.id == "work:work-1")
         #expect(checkin?.candidates.first?.title == "Ship native mail")
+        #expect(checkin?.reflectionText == "Shipped the inline reply.")
+        #expect(checkin?.tomorrowIntentText == "Verify production APNs.")
     }
 
     @Test @MainActor

@@ -137,6 +137,7 @@ describe('dispatchNativeNotification', () => {
     expect(envelopes[0]).toEqual({
       id: 'notice-1',
       userId: 'user-1',
+      type: 'daily_checkin',
       title: notification.title,
       body: notification.body,
       deepLink: notification.deepLink,

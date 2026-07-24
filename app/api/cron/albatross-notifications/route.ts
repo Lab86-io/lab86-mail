@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
   };
   const at = new Date();
   let checkin: any = null;
+  let dueNotificationIds: string[] = [];
   if (body.force === true || checkinIsDue(preference, at, 15)) {
     const ensured = await convexMutation<any>((api as any).albatrossNotifications.ensureCheckin, {
       userId,
@@ -37,6 +38,11 @@ export async function POST(req: NextRequest) {
       timezone: preference.timezone,
     });
     checkin = ensured?.checkin;
+    dueNotificationIds = Array.isArray(ensured?.notificationIds)
+      ? ensured.notificationIds.map(String)
+      : ensured?.notificationId
+        ? [String(ensured.notificationId)]
+        : [];
   }
   if (!checkin) {
     checkin = await convexQuery<any>((api as any).albatrossNotifications.latestUnansweredCheckin, { userId });
@@ -65,10 +71,14 @@ export async function POST(req: NextRequest) {
   if (
     body.nativePushEnabled !== false &&
     context.preference?.nativePushEnabled !== false &&
-    !sentChannels.has('native_push') &&
     context.mobileDevices?.length
   ) {
-    results.nativePush = await dispatchNativeNotification(userId, String(notification._id));
+    // `ensured` carries both alignment prompts on the due path. On fallback
+    // lookup, the reflection notification remains the safe single target.
+    const nativeNotificationIds = dueNotificationIds.length ? dueNotificationIds : [String(notification._id)];
+    results.nativePush = await Promise.all(
+      nativeNotificationIds.map((id: string) => dispatchNativeNotification(userId, String(id))),
+    );
   }
 
   if (body.webPushEnabled === true && !sentChannels.has('web_push') && context.subscriptions?.length) {

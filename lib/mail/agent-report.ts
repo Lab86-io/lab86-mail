@@ -4,8 +4,10 @@ import { z } from 'zod';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
+import { prioritizeHandoffsForIntent } from '../albatross/daily-report';
 import { briefDocumentV2Enabled } from '../brief/feature';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
+import { api, convexQuery } from '../hosted/convex';
 import { listNylasAccounts } from '../nylas/provider';
 import { type BriefComposition, compositionFromReport } from '../shared/brief-composition';
 import {
@@ -30,7 +32,19 @@ import {
 } from '../shared/types';
 import { getDailyReport, saveDailyReport } from '../store/daily-reports';
 import { getThreadMessages } from '../store/messages';
-import { type BriefWeather, briefWeather, type FetchLike } from '../weather/open-meteo';
+import {
+  type BriefWeather,
+  briefWeather,
+  cityFromTimezone,
+  defaultUnitForTimezone,
+  type FetchLike,
+  resolveWeatherPlace,
+} from '../weather/open-meteo';
+import {
+  fetchWeatherKitBrief,
+  type WeatherKitFetchLike,
+  weatherKitConfiguration,
+} from '../weather/weatherkit';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from './brief-document-prompt';
 import { briefServiceFromProvider, briefServicesFromIds } from './brief-services';
 import { resolveBriefTimezone } from './brief-timezone';
@@ -123,8 +137,8 @@ interface BriefExtras {
   digests: ThreadDigest[];
   voiceSamples: string[];
   services: string[];
-  // Real local weather (Open-Meteo, keyless) for the brief's weather module.
-  // Null when no location can be resolved — the module is simply omitted.
+  // Real local weather (WeatherKit in hosted environments) for the brief's
+  // weather module. Null when no location can be resolved.
   weather?: BriefWeatherPack | null;
 }
 
@@ -132,6 +146,8 @@ interface BriefExtras {
 export interface BriefWeatherPack {
   location: string;
   unit: '°F' | '°C';
+  source?: string;
+  attributionURL?: string;
   current: {
     temp: number;
     condition: string;
@@ -159,6 +175,8 @@ export function toBriefWeather(weather: BriefWeather): BriefWeatherPack {
   return {
     location: weather.locationName,
     unit: weather.unit === 'fahrenheit' ? '°F' : '°C',
+    source: weather.source,
+    attributionURL: weather.attributionURL,
     current: {
       temp: Math.round(weather.current.temperature),
       condition: weather.current.conditionLabel,
@@ -204,17 +222,80 @@ export function weatherLocationCandidates(calendar: DailyReportCalendarItem[] | 
 
 async function gatherBriefWeather(
   report: DailyReport,
-  fetchImpl?: FetchLike,
+  userId?: string | null,
+  opts: {
+    weatherFetch?: FetchLike;
+    weatherKitFetch?: WeatherKitFetchLike;
+    weatherEnvironment?: NodeJS.ProcessEnv;
+    storedLocation?: {
+      latitude: number;
+      longitude: number;
+      label?: string;
+      timezone?: string;
+    } | null;
+  } = {},
 ): Promise<BriefWeatherPack | null> {
-  const timezone = getAiRequestContext().userTimezone;
+  const contextTimezone = getAiRequestContext().userTimezone;
   try {
-    const weather = await withDeadline(
-      briefWeather(
-        { timezone, candidates: weatherLocationCandidates(report.sections.calendar) },
-        fetchImpl ? { fetchImpl } : {},
-      ),
+    let storedLocation = opts.storedLocation;
+    if (storedLocation === undefined && userId) {
+      const preference = await convexQuery<any>((api as any).albatrossNotifications.mobilePreferences, {
+        userId,
+      }).catch(() => null);
+      storedLocation =
+        preference?.briefLocationEnabled === true &&
+        Number.isFinite(preference?.briefLatitude) &&
+        Number.isFinite(preference?.briefLongitude)
+          ? {
+              latitude: Number(preference.briefLatitude),
+              longitude: Number(preference.briefLongitude),
+              label: String(preference.briefLocationLabel || '').trim() || undefined,
+              timezone: String(preference.timezone || '').trim() || undefined,
+            }
+          : null;
+    }
+    const timezone = storedLocation?.timezone || contextTimezone || 'UTC';
+    const weatherInput = {
+      latitude: storedLocation?.latitude,
+      longitude: storedLocation?.longitude,
+      place:
+        storedLocation?.label ||
+        (storedLocation ? cityFromTimezone(timezone) || 'Current location' : undefined),
+      timezone,
+      candidates: weatherLocationCandidates(report.sections.calendar),
+    };
+    const resolved = await withDeadline(
+      resolveWeatherPlace(weatherInput, opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {}),
       WEATHER_DEADLINE_MS,
-      'Brief weather',
+      'Brief weather location',
+    );
+    if (!resolved) return null;
+    const unit = defaultUnitForTimezone(timezone || resolved.timezone);
+    let weather: BriefWeather | null = null;
+    if (weatherKitConfiguration(opts.weatherEnvironment)) {
+      try {
+        weather = await withDeadline(
+          fetchWeatherKitBrief(
+            { place: resolved, timezone, unit },
+            {
+              fetchImpl: opts.weatherKitFetch,
+              environment: opts.weatherEnvironment,
+            },
+          ),
+          WEATHER_DEADLINE_MS,
+          'WeatherKit forecast',
+        );
+      } catch (error) {
+        console.warn(
+          '[agent-report] WeatherKit failed; using the existing forecast fallback:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    weather ??= await withDeadline(
+      briefWeather(weatherInput, opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {}),
+      WEATHER_DEADLINE_MS,
+      'Brief weather fallback',
     );
     return weather ? toBriefWeather(weather) : null;
   } catch (err) {
@@ -234,7 +315,17 @@ function cleanBody(message: Message): string {
 export async function gatherBriefExtras(
   report: DailyReport,
   userId?: string | null,
-  opts: { weatherFetch?: FetchLike } = {},
+  opts: {
+    weatherFetch?: FetchLike;
+    weatherKitFetch?: WeatherKitFetchLike;
+    weatherEnvironment?: NodeJS.ProcessEnv;
+    storedLocation?: {
+      latitude: number;
+      longitude: number;
+      label?: string;
+      timezone?: string;
+    } | null;
+  } = {},
 ): Promise<BriefExtras> {
   const accounts = userId ? await listNylasAccounts(userId).catch(() => []) : [];
   const self = new Set(
@@ -322,7 +413,7 @@ export async function gatherBriefExtras(
   if ((s.tasks ?? []).length) services.push('tasks');
   if (!services.length) services.push('mail');
 
-  const weather = await gatherBriefWeather(report, opts.weatherFetch);
+  const weather = await gatherBriefWeather(report, userId, opts);
 
   return { digests, voiceSamples, services, weather };
 }
@@ -841,6 +932,7 @@ WEATHER MODULE (required whenever data.weather is non-null; omit entirely when n
 - Optional refinement when daily data is rich: render the 7-day span as slim horizontal range bars (min→max) on a shared temperature scale — hairline track in var(--brief-hairline), filled span in var(--brief-accent-2, var(--brief-accent)).
 - Style with theme tokens only: temperature figure in var(--brief-ink), condition and strip labels in var(--brief-muted), accents/rules on the module in var(--brief-accent-2, var(--brief-accent)). No weather clip-art, no emoji; a minimal inline-SVG glyph per condition (sun disc, cloud outline, rain strokes) drawn with token strokes is welcome.
 - Weave it into the lede when relevant ("rain by 3 PM argues for the morning errand"), and never invent weather — data.weather is real.
+- When data.weather.source is "Apple Weather", include a small visible "Weather data by Apple Weather" attribution link using data.weather.attributionURL. Attribution is part of the module, never hidden in comments or omitted.
 
 STYLIZED LEDE SYSTEM (required after the masthead):
 - The lede is a designed editorial object, not a plain paragraph block. Implement it with your own CSS in the document; do not use external libraries.
@@ -975,6 +1067,11 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   const localTime = fmt({ hour: 'numeric', minute: '2-digit' });
   const art = getDailyArt(report.generatedAt);
   const storedHandoffs = parseTriageHandoffs(report.handoffs);
+  const dailyAlignment = report.sections.albatross?.dailyAlignment ?? null;
+  const handoffs = prioritizeHandoffsForIntent(
+    storedHandoffs.length ? storedHandoffs : buildTriageHandoffIndex(report),
+    dailyAlignment?.tomorrowIntent,
+  );
 
   const serviceIds = [
     ...(report.services || []),
@@ -999,7 +1096,10 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     threads: extras.digests,
     // Canonical attention index: already source-grounded, deduplicated, and
     // explicitly merged where source links prove the items belong together.
-    handoffs: (storedHandoffs.length ? storedHandoffs : buildTriageHandoffIndex(report)).slice(0, 64),
+    handoffs: handoffs.slice(0, 64),
+    // The user's evening reflection and explicit plan for tomorrow. This is an
+    // intent overlay, not evidence that a source-owned item was completed.
+    dailyAlignment,
     tasks,
     calendar,
     // Items from connected tools the user enabled for the
@@ -1013,6 +1113,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
     `This is the "${report.kind}" edition.`,
     'Compose the brief from data.handoffs, the canonical deduplicated attention index. Use the raw threads, calendar, tasks, Areas, and connected items as supporting evidence and draft context, not as a second triage pass.',
+    "When data.dailyAlignment.tomorrowIntent is present, treat it as the user's authoritative attention signal. Put matching handoffs and concrete next moves first, ground every recommendation and response draft in source evidence, and retain unrelated protected handoffs. Never treat the reflection as completion evidence by itself.",
     'Backend contract: use exact ids/accounts from this JSON verbatim. For action controls, use only valid data-action enum strings and valid data-payload JSON. Omit any action you cannot wire exactly.',
     'Design contract: be editorial and component-minded. Create the layout, visual comparisons, timelines, checklists, or compact dashboards that best fit the actual day.',
     '',

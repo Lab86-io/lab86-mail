@@ -81,6 +81,7 @@ export async function dispatchNativeNotification(
   const envelope: NotificationEnvelope = {
     id: String(context.notification._id),
     userId,
+    type: context.notification.type,
     title: context.notification.title,
     body: context.notification.body,
     deepLink: context.notification.deepLink,

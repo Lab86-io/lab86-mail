@@ -4,6 +4,7 @@ import {
   buildAlbatrossDailyReportContext,
   buildAlbatrossDailyReportContextFromLive,
   loadLiveAlbatrossDailyReportContext,
+  prioritizeHandoffsForIntent,
 } from '../lib/albatross/daily-report';
 import {
   appliedStepsFromApplyResult,
@@ -341,6 +342,14 @@ describe('Albatross Daily Report context', () => {
           closedAt: Date.parse('2026-06-30T13:00:00.000Z'),
         },
       ],
+      checkins: [
+        {
+          localDate: '2026-06-29',
+          responseText: 'Shipped the billing fix.',
+          tomorrowIntentText: 'Renew the passport and confirm the trip.',
+          updatedAt: Date.parse('2026-06-30T01:00:00.000Z'),
+        },
+      ],
     });
 
     expect(context.activeProjects.map((project) => project.id)).toEqual(['project_live']);
@@ -353,6 +362,40 @@ describe('Albatross Daily Report context', () => {
     expect(context.contextReview.map((item) => item.title)).toContain('Choose renewal route');
     expect(context.completions.map((event) => event.summary)).toContain('Closed sprint: Week of Jun 29');
     expect(context.completions.map((event) => event.summary)).toContain('Completed project: Old paperwork');
+    expect(context.dailyAlignment).toEqual({
+      localDate: '2026-06-29',
+      reflection: 'Shipped the billing fix.',
+      tomorrowIntent: 'Renew the passport and confirm the trip.',
+    });
+  });
+
+  test('uses tomorrow intent as a stable ordering overlay for SBAR handoffs', () => {
+    const handoff = (id: string, situation: string) =>
+      ({
+        id,
+        situation,
+        assessment: situation,
+        recommendation: situation,
+        background: [],
+        evidence: [],
+        items: [],
+      }) as any;
+    const original = [
+      handoff('billing', 'Review the billing launch'),
+      handoff('passport', 'Renew the passport before the trip'),
+      handoff('calendar', 'Clean up the calendar'),
+    ];
+
+    expect(
+      prioritizeHandoffsForIntent(original, 'Tomorrow I want to finish passport renewal').map(
+        (item) => item.id,
+      ),
+    ).toEqual(['passport', 'billing', 'calendar']);
+    expect(prioritizeHandoffsForIntent(original, undefined).map((item) => item.id)).toEqual([
+      'billing',
+      'passport',
+      'calendar',
+    ]);
   });
 
   test('loads live daily report context through an injected query and falls back on errors', async () => {

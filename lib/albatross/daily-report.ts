@@ -1,5 +1,6 @@
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
+import type { TriageHandoffV1 } from '../shared/triage-handoff';
 import { areaBrandingFromFacts } from './area-home';
 
 export interface AlbatrossDailyReportArea {
@@ -27,6 +28,12 @@ export interface AlbatrossDailyReportProject {
   outcome?: string;
 }
 
+export interface AlbatrossDailyAlignment {
+  localDate: string;
+  reflection?: string;
+  tomorrowIntent?: string;
+}
+
 export interface AlbatrossDailyReportContext {
   includedAreas: AlbatrossDailyReportArea[];
   askBeforeCentering: Array<{
@@ -42,6 +49,7 @@ export interface AlbatrossDailyReportContext {
   activeProjects: AlbatrossDailyReportProject[];
   contextReview: Array<{ id: string; areaId?: string; title: string; reason?: string }>;
   completions: Array<{ id: string; areaId?: string; summary: string; completedAt?: string }>;
+  dailyAlignment?: AlbatrossDailyAlignment;
   monthlyPrompt?: string;
 }
 
@@ -60,6 +68,7 @@ interface BuildAlbatrossDailyReportFromLiveInput {
   applications?: any[];
   sprints?: any[];
   areas?: any[];
+  checkins?: any[];
 }
 
 interface LoadLiveAlbatrossDailyReportInput {
@@ -97,6 +106,89 @@ function completionTime(row: any): string | undefined {
 
 function plural(count: number, one: string, many = `${one}s`) {
   return count === 1 ? one : many;
+}
+
+function cleanText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value.trim();
+  return cleaned || undefined;
+}
+
+function latestDailyAlignment(rows: any[]): AlbatrossDailyAlignment | undefined {
+  const checkin = [...rows]
+    .filter((row) => cleanText(row.responseText) || cleanText(row.tomorrowIntentText))
+    .sort(
+      (a, b) =>
+        String(b.localDate || '').localeCompare(String(a.localDate || '')) ||
+        Number(b.updatedAt || 0) - Number(a.updatedAt || 0),
+    )[0];
+  if (!checkin) return undefined;
+  return {
+    localDate: String(checkin.localDate || ''),
+    reflection: cleanText(checkin.responseText),
+    tomorrowIntent: cleanText(checkin.tomorrowIntentText),
+  };
+}
+
+const INTENT_STOP_WORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'also',
+  'before',
+  'done',
+  'from',
+  'have',
+  'into',
+  'just',
+  'need',
+  'that',
+  'their',
+  'them',
+  'then',
+  'there',
+  'this',
+  'today',
+  'tomorrow',
+  'want',
+  'with',
+]);
+
+function intentTerms(text: string): Set<string> {
+  return new Set(
+    text
+      .toLocaleLowerCase()
+      .match(/[\p{L}\p{N}]+/gu)
+      ?.filter((term) => term.length > 2 && !INTENT_STOP_WORDS.has(term)) ?? [],
+  );
+}
+
+/**
+ * Stable intent overlay for the SBAR feed. A stated plan moves matching
+ * handoffs upward without deleting or rewriting source-grounded records.
+ */
+export function prioritizeHandoffsForIntent(
+  handoffs: TriageHandoffV1[],
+  tomorrowIntent?: string | null,
+): TriageHandoffV1[] {
+  const desired = intentTerms(tomorrowIntent?.trim() || '');
+  if (!desired.size) return [...handoffs];
+  return handoffs
+    .map((handoff, index) => {
+      const searchable = [
+        handoff.situation,
+        handoff.assessment,
+        handoff.recommendation,
+        ...handoff.background,
+        ...handoff.evidence.map((item) => item.label),
+        ...handoff.items.flatMap((item) => [item.situation, item.assessment, item.recommendation]),
+      ].join(' ');
+      const available = intentTerms(searchable);
+      const matches = [...desired].filter((term) => available.has(term)).length;
+      return { handoff, index, matches };
+    })
+    .sort((a, b) => b.matches - a.matches || a.index - b.index)
+    .map(({ handoff }) => handoff);
 }
 
 export function buildAlbatrossDailyReportContext(
@@ -197,6 +289,7 @@ export function buildAlbatrossDailyReportContext(
       completedAt: event.completedAt,
     }))
     .slice(0, 4);
+  const dailyAlignment = latestDailyAlignment(table(seedData, 'albatrossDailyCheckins'));
 
   return {
     includedAreas,
@@ -205,6 +298,7 @@ export function buildAlbatrossDailyReportContext(
     activeProjects,
     contextReview,
     completions,
+    dailyAlignment,
     monthlyPrompt:
       input.isFirstOpenOfMonth === true
         ? 'First report of the month: review active areas, paused projects, and stale context before prioritizing today.'
@@ -220,6 +314,7 @@ export function buildAlbatrossDailyReportContextFromLive(
   const applications = input.applications ?? [];
   const sprints = input.sprints ?? [];
   const areaRows = input.areas ?? [];
+  const checkins = input.checkins ?? [];
   const areaById = new Map(
     areaRows.map((area) => {
       const branding = areaBrandingFromFacts(area, []);
@@ -365,6 +460,7 @@ export function buildAlbatrossDailyReportContextFromLive(
     completions: [...projectCompletions, ...sprintCompletions, ...applicationCompletions]
       .sort((a, b) => (Date.parse(b.completedAt || '') || 0) - (Date.parse(a.completedAt || '') || 0))
       .slice(0, 4),
+    dailyAlignment: latestDailyAlignment(checkins),
     monthlyPrompt:
       input.isFirstOpenOfMonth === true
         ? 'First report of the month: review active areas, paused projects, and stale context before prioritizing today.'
@@ -398,6 +494,7 @@ export async function loadLiveAlbatrossDailyReportContext(
       applications: live?.applications,
       sprints: live?.sprints,
       areas: live?.areas,
+      checkins: live?.checkins,
     });
   } catch (err: any) {
     console.warn('Daily report Albatross context failed:', err?.message || err);
@@ -448,6 +545,14 @@ export function summarizeAlbatrossDailyReportContext(context: AlbatrossDailyRepo
         .map((event) => event.summary)
         .slice(0, 3)
         .join(' | ')}`,
+    );
+  }
+  if (context.dailyAlignment?.reflection) {
+    parts.push(`User reflection (${context.dailyAlignment.localDate}): ${context.dailyAlignment.reflection}`);
+  }
+  if (context.dailyAlignment?.tomorrowIntent) {
+    parts.push(
+      `User's explicit next-day intent (${context.dailyAlignment.localDate}): ${context.dailyAlignment.tomorrowIntent}`,
     );
   }
   if (context.monthlyPrompt) parts.push(context.monthlyPrompt);

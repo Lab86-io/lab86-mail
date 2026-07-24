@@ -54,7 +54,7 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Albatross transcribes voice captures into editable text you review before saving.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Albatross attaches your approximate location only when you explicitly choose Add Location for a capture.</string>
+	<string>Albatross uses approximate location only when you explicitly add it to a capture or enable local weather for your Daily Brief.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

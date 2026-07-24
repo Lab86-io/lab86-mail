@@ -5,6 +5,7 @@ import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import {
   type AlbatrossDailyReportContext,
   loadLiveAlbatrossDailyReportContext,
+  prioritizeHandoffsForIntent,
 } from '../albatross/daily-report';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
@@ -1047,16 +1048,19 @@ async function composeReport(input: {
   const title = `${
     input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'
   } Daily Report`;
-  const handoffs = buildTriageHandoffIndex({
-    _id: reportId,
-    kind: input.kind,
-    generatedAt: input.now,
-    accounts: input.accounts,
-    title,
-    narrative,
-    sections,
-    stats,
-  });
+  const handoffs = prioritizeHandoffsForIntent(
+    buildTriageHandoffIndex({
+      _id: reportId,
+      kind: input.kind,
+      generatedAt: input.now,
+      accounts: input.accounts,
+      title,
+      narrative,
+      sections,
+      stats,
+    }),
+    input.albatrossContext.dailyAlignment?.tomorrowIntent,
+  );
   narrative = localHandoffNarrative(input.kind, handoffs);
   let model = 'local';
 
@@ -1065,7 +1069,7 @@ async function composeReport(input: {
       const { text } = await generateTextForCurrentUser({
         feature: 'daily_report_narrative',
         speed: 'primary',
-        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from the supplied canonical SBAR handoff index — like a sharp chief of staff briefing them over coffee. Lead with the through-line of the day and rank the already-deduplicated handoffs; do not rebuild triage from raw source categories, split merged handoffs, or omit protected handoffs. Name people, tasks, projects, events, and tools when useful. Areas asking before centering must remain explicit questions. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, greeting, bullet lists, clinical SBAR labels, or low-value noise. Around 170-230 words.`,
+        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from the supplied canonical SBAR handoff index — like a sharp chief of staff briefing them over coffee. Lead with the through-line of the day and rank the already-deduplicated handoffs; do not rebuild triage from raw source categories, split merged handoffs, or omit protected handoffs. When an explicit next-day intent is supplied, treat it as the user's authoritative attention signal: connect matching evidence, recommendations, and response drafts to it while retaining unrelated protected handoffs. Name people, tasks, projects, events, and tools when useful. Areas asking before centering must remain explicit questions. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, greeting, bullet lists, clinical SBAR labels, or low-value noise. Around 170-230 words.`,
         prompt: [
           `Kind: ${input.kind}`,
           `Now: ${new Date(input.now).toString()}`,
@@ -1080,6 +1084,7 @@ async function composeReport(input: {
             })),
           )}`,
           `Memory context: ${input.memoryContext.join(' | ') || 'none'}`,
+          `Daily alignment: ${JSON.stringify(input.albatrossContext.dailyAlignment ?? null)}`,
         ].join('\n\n'),
       });
       narrative = stripEmoji(text.trim()) || narrative;

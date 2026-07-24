@@ -2,7 +2,9 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { isStagingRuntime } from '@/lib/hosted/controls';
+import { api, convexMutation } from '@/lib/hosted/convex';
 import { generateAgentReport } from '@/lib/mail/agent-report';
+import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,8 +41,44 @@ export async function POST(req: NextRequest) {
     const report = await runWithAiRequestContext({ userId, agent: 'ai', userTimezone }, () =>
       generateAgentReport({ kind, userId }),
     );
+    let briefNotification: unknown;
+    if (kind === 'morning') {
+      try {
+        const dateParts = new Intl.DateTimeFormat('en-US', {
+          timeZone: userTimezone || 'UTC',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        })
+          .formatToParts(new Date(report.generatedAt))
+          .reduce<Record<string, string>>((parts, part) => {
+            if (part.type !== 'literal') parts[part.type] = part.value;
+            return parts;
+          }, {});
+        const localDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+        const queued = await convexMutation<any>((api as any).albatrossNotifications.queueBriefReady, {
+          userId,
+          reportId: report._id,
+          localDate,
+        });
+        briefNotification = queued?.notificationId
+          ? await dispatchNativeNotification(userId, String(queued.notificationId))
+          : { skipped: queued?.skipped || 'not_queued' };
+      } catch (notificationError) {
+        console.error('[cron/daily-report] brief-ready notification failed', userId, notificationError);
+        briefNotification = { failed: true };
+      }
+    }
     return NextResponse.json(
-      { ok: true, started: false, userId, kind, reportId: report._id, artifactStatus: report.artifactStatus },
+      {
+        ok: true,
+        started: false,
+        userId,
+        kind,
+        reportId: report._id,
+        artifactStatus: report.artifactStatus,
+        briefNotification,
+      },
       { status: 200 },
     );
   } catch (err: any) {

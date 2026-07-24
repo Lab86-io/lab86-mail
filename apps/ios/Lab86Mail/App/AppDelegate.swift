@@ -45,6 +45,41 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let route = info["route"] as? String
             ?? info["deepLink"] as? String
             ?? "/activity"
+        if let textResponse = response as? UNTextInputNotificationResponse {
+            let text = textResponse.userText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let input: NotificationTextResponse?
+            if response.actionIdentifier == "ANSWER_CHECKIN",
+               let notificationID = info["notificationId"] as? String {
+                input = NotificationTextResponse(
+                    kind: .checkIn(
+                        notificationID: notificationID,
+                        promptKind: info["promptKind"] as? String ?? "reflection"
+                    ),
+                    text: text
+                )
+            } else if response.actionIdentifier == "MAIL_REPLY",
+                      let accountID = info["accountId"] as? String,
+                      let threadID = info["threadId"] as? String,
+                      let messageID = info["messageId"] as? String {
+                input = NotificationTextResponse(
+                    kind: .mail(
+                        accountID: accountID,
+                        threadID: threadID,
+                        messageID: messageID
+                    ),
+                    text: text
+                )
+            } else {
+                input = nil
+            }
+            if let input, !text.isEmpty {
+                let handled = await NotificationCoordinator.handleTextResponse(input)
+                if !handled {
+                    await notifyResponseFailure()
+                }
+                return
+            }
+        }
         if let accountID = info["accountId"] as? String,
            let threadID = info["threadId"] as? String,
            ["MAIL_MARK_READ", "MAIL_ARCHIVE", "MAIL_REPLY"].contains(response.actionIdentifier) {
@@ -82,5 +117,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             )
         }
         NotificationCenter.default.post(name: .lab86OpenRoute, object: route)
+    }
+
+    private nonisolated func notifyResponseFailure() async {
+        let content = UNMutableNotificationContent()
+        content.title = "Albatross couldn’t send that reply"
+        content.body = "Open the app to try again."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "notification-response-failed-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        try? await UNUserNotificationCenter.current().add(request)
     }
 }

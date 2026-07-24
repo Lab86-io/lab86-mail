@@ -85,6 +85,7 @@ struct SidebarScrubState: Equatable {
 // unit-testable without SwiftUI.
 enum SidebarScrubLogic {
     static let cancelSlop: CGFloat = 44
+    static let edgeZone: CGFloat = 40
     // How long a stationary touch waits before the page preview appears.
     static let previewDelayMilliseconds = 250
 
@@ -110,9 +111,73 @@ enum SidebarScrubLogic {
     static func isHorizontalDismissal(translation: CGSize) -> Bool {
         abs(translation.width) > 56 && abs(translation.width) > abs(translation.height) * 2
     }
+
+    enum EdgeZone: Equatable { case top, bottom }
+
+    // The scroll viewport's edge bands advance the wheel by one destination.
+    // This keeps every Area reachable without turning the direct scrub into a
+    // competing pan gesture.
+    static func autoscrollZone(forY y: CGFloat, in bounds: CGRect, zone: CGFloat = edgeZone) -> EdgeZone? {
+        guard bounds.height > zone * 2 else { return nil }
+        if y < bounds.minY + zone { return .top }
+        if y > bounds.maxY - zone { return .bottom }
+        return nil
+    }
+
+    static func autoscrollTarget(
+        from current: SidebarDestination?,
+        in ordered: [SidebarDestination],
+        zone: EdgeZone
+    ) -> SidebarDestination? {
+        guard let current, let index = ordered.firstIndex(of: current) else { return nil }
+        switch zone {
+        case .top: return index > 0 ? ordered[index - 1] : nil
+        case .bottom: return index + 1 < ordered.count ? ordered[index + 1] : nil
+        }
+    }
+
+    // A restrained cylindrical projection inspired by the system wheel
+    // picker. Only the active scrub neighborhood receives depth. The selected
+    // row remains face-on; nearby rows curve away without losing legibility.
+    static func wheelTransform(
+        distance: Int?,
+        reduceMotion: Bool
+    ) -> SidebarWheelTransform {
+        guard let distance else { return .identity }
+        let clamped = max(-3, min(3, distance))
+        guard !reduceMotion else {
+            return SidebarWheelTransform(
+                rotationDegrees: 0,
+                scale: clamped == 0 ? 1.025 : 1,
+                opacity: clamped == 0 ? 1 : 0.82,
+                offsetY: 0
+            )
+        }
+        let magnitude = CGFloat(abs(clamped))
+        return SidebarWheelTransform(
+            rotationDegrees: Double(clamped) * -10,
+            scale: max(0.90, 1.035 - magnitude * 0.035),
+            opacity: max(0.58, 1 - Double(magnitude) * 0.13),
+            offsetY: CGFloat(clamped) * -1.5
+        )
+    }
 }
 
 // MARK: - Row visual treatment
+
+struct SidebarWheelTransform: Equatable {
+    let rotationDegrees: Double
+    let scale: CGFloat
+    let opacity: Double
+    let offsetY: CGFloat
+
+    static let identity = SidebarWheelTransform(
+        rotationDegrees: 0,
+        scale: 1,
+        opacity: 1,
+        offsetY: 0
+    )
+}
 
 // The magnetic pick-up: the scrubbed row's capsule expands 2–3pt, contents
 // scale ~1.025, text turns semibold and slightly brighter — layout and hit
@@ -144,6 +209,37 @@ private struct SidebarScrubHighlight: ViewModifier {
 extension View {
     func sidebarScrubHighlight(_ active: Bool) -> some View {
         modifier(SidebarScrubHighlight(active: active))
+    }
+}
+
+private struct SidebarScrubWheel: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let distance: Int?
+
+    func body(content: Content) -> some View {
+        let transform = SidebarScrubLogic.wheelTransform(
+            distance: distance,
+            reduceMotion: reduceMotion
+        )
+        content
+            .rotation3DEffect(
+                .degrees(transform.rotationDegrees),
+                axis: (x: 1, y: 0, z: 0),
+                perspective: reduceMotion ? 0 : 0.72
+            )
+            .scaleEffect(transform.scale)
+            .opacity(transform.opacity)
+            .offset(y: transform.offsetY)
+            .animation(
+                reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.82),
+                value: distance
+            )
+    }
+}
+
+extension View {
+    func sidebarScrubWheel(distance: Int?) -> some View {
+        modifier(SidebarScrubWheel(distance: distance))
     }
 }
 

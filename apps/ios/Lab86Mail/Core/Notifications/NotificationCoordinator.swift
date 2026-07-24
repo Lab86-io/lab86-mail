@@ -14,23 +14,44 @@ enum NotificationCategoryID {
     static let commitment = "LAB86_COMMITMENT"
     static let checkIn = "LAB86_CHECKIN"
     static let mail = "LAB86_MAIL"
+    static let brief = "LAB86_BRIEF"
+}
+
+struct NotificationTextResponse: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case checkIn(notificationID: String, promptKind: String)
+        case mail(accountID: String, threadID: String, messageID: String)
+    }
+
+    let kind: Kind
+    let text: String
 }
 
 struct MobileNotificationPreferences: Equatable, Sendable {
     var nativePushEnabled = true
     var newMailPushEnabled = true
     var eventSuggestionPushEnabled = true
+    var morningBriefEnabled = true
     var eveningCheckinEnabled = true
     var eveningCheckinLocalTime = "19:00"
     var timezone = TimeZone.current.identifier
     var inAppEnabled = true
     var emailFallbackEnabled = true
     var emailFallbackDelayMinutes = 90
+    var briefLocationEnabled = false
+    var briefLatitude: Double?
+    var briefLongitude: Double?
+    var briefLocationLabel: String?
+    var briefLocationAccuracy: Double?
+    var briefLocationUpdatedAt: Double?
 }
 
 @MainActor
 @Observable
 final class NotificationCoordinator {
+    typealias TextResponseHandler = @MainActor @Sendable (NotificationTextResponse) async -> Bool
+    private static var textResponseHandler: TextResponseHandler?
+
     private let backend: BackendClient
     var authorizationStatus: UNAuthorizationStatus = .notDetermined
     var registrationError: String?
@@ -39,6 +60,15 @@ final class NotificationCoordinator {
     var preferencesError: String?
 
     init(backend: BackendClient) { self.backend = backend }
+
+    static func installTextResponseHandler(_ handler: @escaping TextResponseHandler) {
+        textResponseHandler = handler
+    }
+
+    static func handleTextResponse(_ response: NotificationTextResponse) async -> Bool {
+        guard let textResponseHandler else { return false }
+        return await textResponseHandler(response)
+    }
 
     func refreshAuthorizationStatus() async {
         authorizationStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
@@ -72,12 +102,19 @@ final class NotificationCoordinator {
                 nativePushEnabled: value["nativePushEnabled"]?.boolValue ?? true,
                 newMailPushEnabled: value["newMailPushEnabled"]?.boolValue ?? true,
                 eventSuggestionPushEnabled: value["eventSuggestionPushEnabled"]?.boolValue ?? true,
+                morningBriefEnabled: value["morningBriefEnabled"]?.boolValue ?? true,
                 eveningCheckinEnabled: value["eveningCheckinEnabled"]?.boolValue ?? true,
                 eveningCheckinLocalTime: value["eveningCheckinLocalTime"]?.stringValue ?? "19:00",
                 timezone: value["timezone"]?.stringValue ?? TimeZone.current.identifier,
                 inAppEnabled: value["inAppEnabled"]?.boolValue ?? true,
                 emailFallbackEnabled: value["emailFallbackEnabled"]?.boolValue ?? true,
-                emailFallbackDelayMinutes: Int(value["emailFallbackDelayMinutes"]?.doubleValue ?? 90)
+                emailFallbackDelayMinutes: Int(value["emailFallbackDelayMinutes"]?.doubleValue ?? 90),
+                briefLocationEnabled: value["briefLocationEnabled"]?.boolValue ?? false,
+                briefLatitude: value["briefLatitude"]?.doubleValue,
+                briefLongitude: value["briefLongitude"]?.doubleValue,
+                briefLocationLabel: value["briefLocationLabel"]?.stringValue,
+                briefLocationAccuracy: value["briefLocationAccuracy"]?.doubleValue,
+                briefLocationUpdatedAt: value["briefLocationUpdatedAt"]?.doubleValue
             )
             preferencesError = nil
         } catch {
@@ -89,19 +126,31 @@ final class NotificationCoordinator {
         let previous = preferences
         preferences = value
         do {
+            var body: [String: JSONValue] = [
+                "nativePushEnabled": .bool(value.nativePushEnabled),
+                "newMailPushEnabled": .bool(value.newMailPushEnabled),
+                "eventSuggestionPushEnabled": .bool(value.eventSuggestionPushEnabled),
+                "morningBriefEnabled": .bool(value.morningBriefEnabled),
+                "eveningCheckinEnabled": .bool(value.eveningCheckinEnabled),
+                "eveningCheckinLocalTime": .string(value.eveningCheckinLocalTime),
+                "timezone": .string(value.timezone),
+                "inAppEnabled": .bool(value.inAppEnabled),
+                "emailFallbackEnabled": .bool(value.emailFallbackEnabled),
+                "emailFallbackDelayMinutes": .number(Double(value.emailFallbackDelayMinutes)),
+                "briefLocationEnabled": .bool(value.briefLocationEnabled),
+            ]
+            if let latitude = value.briefLatitude { body["briefLatitude"] = .number(latitude) }
+            if let longitude = value.briefLongitude { body["briefLongitude"] = .number(longitude) }
+            if let label = value.briefLocationLabel { body["briefLocationLabel"] = .string(label) }
+            if let accuracy = value.briefLocationAccuracy {
+                body["briefLocationAccuracy"] = .number(accuracy)
+            }
+            if let updatedAt = value.briefLocationUpdatedAt {
+                body["briefLocationUpdatedAt"] = .number(updatedAt)
+            }
             _ = try await backend.put(
                 path: "/api/mobile/preferences",
-                body: .object([
-                    "nativePushEnabled": .bool(value.nativePushEnabled),
-                    "newMailPushEnabled": .bool(value.newMailPushEnabled),
-                    "eventSuggestionPushEnabled": .bool(value.eventSuggestionPushEnabled),
-                    "eveningCheckinEnabled": .bool(value.eveningCheckinEnabled),
-                    "eveningCheckinLocalTime": .string(value.eveningCheckinLocalTime),
-                    "timezone": .string(value.timezone),
-                    "inAppEnabled": .bool(value.inAppEnabled),
-                    "emailFallbackEnabled": .bool(value.emailFallbackEnabled),
-                    "emailFallbackDelayMinutes": .number(Double(value.emailFallbackDelayMinutes)),
-                ])
+                body: .object(body)
             )
             preferencesError = nil
         } catch {
@@ -161,7 +210,13 @@ final class NotificationCoordinator {
             actions: [add, view, dismiss],
             intentIdentifiers: []
         )
-        let answer = UNNotificationAction(identifier: "ANSWER_CHECKIN", title: "Answer", options: [.foreground])
+        let answer = UNTextInputNotificationAction(
+            identifier: "ANSWER_CHECKIN",
+            title: "Reply",
+            options: [],
+            textInputButtonTitle: "Send",
+            textInputPlaceholder: "Type or dictate your answer"
+        )
         let later = UNNotificationAction(identifier: "CHECKIN_LATER", title: "Later")
         let checkIn = UNNotificationCategory(
             identifier: NotificationCategoryID.checkIn,
@@ -170,13 +225,25 @@ final class NotificationCoordinator {
         )
         let markRead = UNNotificationAction(identifier: "MAIL_MARK_READ", title: "Mark Read")
         let archive = UNNotificationAction(identifier: "MAIL_ARCHIVE", title: "Archive", options: [.destructive])
-        let reply = UNNotificationAction(identifier: "MAIL_REPLY", title: "Reply", options: [.foreground])
+        let reply = UNTextInputNotificationAction(
+            identifier: "MAIL_REPLY",
+            title: "Reply",
+            options: [],
+            textInputButtonTitle: "Send",
+            textInputPlaceholder: "Write a reply"
+        )
         let mail = UNNotificationCategory(
             identifier: NotificationCategoryID.mail,
             actions: [reply, markRead, archive],
             intentIdentifiers: []
         )
-        UNUserNotificationCenter.current().setNotificationCategories([commitment, checkIn, mail])
+        let openBrief = UNNotificationAction(identifier: "OPEN_BRIEF", title: "Open Brief", options: [.foreground])
+        let brief = UNNotificationCategory(
+            identifier: NotificationCategoryID.brief,
+            actions: [openBrief],
+            intentIdentifiers: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([commitment, checkIn, mail, brief])
     }
 
     private static var pushEnvironment: String {

@@ -89,7 +89,9 @@ final class CaptureVoiceCoordinator: NSObject {
 @Observable
 final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
+    private let geocoder = CLGeocoder()
     private(set) var location: CLLocation?
+    private(set) var locationLabel: String?
     private(set) var isRequesting = false
     var errorMessage: String?
 
@@ -117,6 +119,7 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
 
     func clear() {
         location = nil
+        locationLabel = nil
         isRequesting = false
     }
 
@@ -138,8 +141,19 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         didUpdateLocations locations: [CLLocation]
     ) {
         Task { @MainActor in
-            location = locations.last
+            guard let latest = locations.last else {
+                isRequesting = false
+                return
+            }
+            location = latest
             isRequesting = false
+            if let placemark = try? await geocoder.reverseGeocodeLocation(latest).first {
+                let resolvedLabel = [placemark.locality, placemark.administrativeArea]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: ", ")
+                locationLabel = resolvedLabel.isEmpty ? nil : resolvedLabel
+            }
         }
     }
 

@@ -41,12 +41,13 @@ export async function POST(req: NextRequest, context: { params: Promise<{ checki
     const { checkinId } = await context.params;
     const body = await req.json();
     const responseText = String(body.responseText || '').trim();
+    const tomorrowIntentText = String(body.tomorrowIntentText || '').trim();
     const selected = Array.isArray(body.completed)
       ? body.completed
           .map((entry: any) => ({ kind: String(entry.kind || ''), id: String(entry.id || '') }))
           .filter((entry: any) => entry.kind && entry.id)
       : [];
-    if (!responseText && !selected.length) {
+    if (!responseText && !tomorrowIntentText && !selected.length) {
       return Response.json({ ok: false, error: 'Tell Albatross what happened.' }, { status: 400 });
     }
     const caller = checkinCallerArgs(user.userId);
@@ -74,12 +75,29 @@ Mark an item completed only when the user's words explicitly say it was done, fi
       (entry, index, all) =>
         all.findIndex((candidate) => candidate.kind === entry.kind && candidate.id === entry.id) === index,
     );
-    const result = await convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
-      ...caller,
-      checkinId,
-      responseText,
-      completed: deduped,
-    });
+    let result: any = { changes: [], status: checkin.status };
+    if (responseText || selected.length) {
+      result = await convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
+        ...caller,
+        checkinId,
+        promptKind: 'reflection',
+        responseText,
+        completed: deduped,
+      });
+    }
+    if (tomorrowIntentText) {
+      const tomorrow = await convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
+        ...caller,
+        checkinId,
+        promptKind: 'tomorrow',
+        responseText: tomorrowIntentText,
+        completed: [],
+      });
+      result = {
+        ...result,
+        status: tomorrow.status,
+      };
+    }
     return Response.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof RateLimitError) return rateLimitResponse(error);

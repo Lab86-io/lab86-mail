@@ -166,6 +166,67 @@ describe('brief weather in the data pack', () => {
       expect(without).toContain('"weather": null');
     });
   });
+
+  test('buildDataPrompt carries daily alignment and prioritizes matching handoffs', async () => {
+    await withToolContext(async () => {
+      const handoff = (id: string, situation: string) =>
+        ({
+          version: 1,
+          id,
+          source: 'test',
+          sourceKey: id,
+          kind: 'work',
+          lane: 'focus',
+          status: 'open',
+          priority: 'normal',
+          protected: false,
+          situation,
+          background: [],
+          assessment: situation,
+          recommendation: situation,
+          evidence: [],
+          primaryRef: { kind: 'work', id },
+          relatedRefs: [],
+          items: [
+            {
+              sourceKey: id,
+              ref: { kind: 'work', id },
+              situation,
+              assessment: situation,
+              recommendation: situation,
+            },
+          ],
+          actions: [],
+          generatedAt: 1,
+        }) as any;
+      const prompt = buildDataPrompt(
+        reportFixture({
+          handoffs: [
+            handoff('billing', 'Review the billing launch'),
+            handoff('passport', 'Renew the passport before the trip'),
+          ],
+          sections: {
+            albatross: {
+              dailyAlignment: {
+                localDate: '2026-07-06',
+                reflection: 'Shipped the migration.',
+                tomorrowIntent: 'Finish passport renewal.',
+              },
+            },
+          } as any,
+        }),
+        {
+          digests: [],
+          voiceSamples: [],
+          services: ['gmail'],
+          weather: null,
+        } as any,
+      );
+      expect(prompt).toContain('"tomorrowIntent": "Finish passport renewal."');
+      expect(prompt.indexOf('"id": "passport"')).toBeLessThan(prompt.indexOf('"id": "billing"'));
+      expect(prompt).toContain('authoritative attention signal');
+    });
+  });
 });
 
 describe('artifact brief prompt', () => {
@@ -176,6 +237,7 @@ describe('artifact brief prompt', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.daily');
     expect(HTML_ARTIFACT_BRIEF).toContain('near the masthead/lede');
     expect(HTML_ARTIFACT_BRIEF).toContain('never invent weather');
+    expect(HTML_ARTIFACT_BRIEF).toContain('Weather data by Apple Weather');
   });
 
   test('uses the second accent for headers and rules, with a safe fallback', () => {
