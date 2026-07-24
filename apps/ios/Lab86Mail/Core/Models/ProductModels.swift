@@ -741,6 +741,16 @@ struct CaptureSuggestion: Identifiable, Hashable, Sendable {
     }
 }
 
+// One project's pane state: the linked board tasks plus load bookkeeping.
+// Projects are metadata and links over existing tasks — this never copies a
+// card into a project-owned record.
+struct ProjectPaneState: Hashable, Sendable {
+    var tasks: [TaskSummary] = []
+    var isLoading = false
+    var error: String?
+    var lastRefreshed: Date?
+}
+
 struct ProjectSummary: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String

@@ -156,6 +156,9 @@ struct TasksView: View {
             case .before(let id): id
             case .end: nil
             }
+            // One confirmation tick when the drop lands; the lift/placeholder
+            // feedback during the drag is the native reorder container's.
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             Task {
                 await store.reorderTask(
                     id: taskID,
@@ -262,7 +265,6 @@ struct TasksView: View {
                 .padding(.bottom, 12)
             }
             .refreshable { await store.refreshToday() }
-            .swipeActionsContainer()
         }
         .background(
             Color(uiColor: .secondarySystemGroupedBackground).opacity(0.6),
@@ -339,24 +341,14 @@ struct TasksView: View {
         .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
         .contentShape(.rect)
         .onTapGesture { openTask = task }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+        // Board mode carries NO swipe actions: horizontal swipes fight the
+        // hold-and-drag reorder gesture, which is why cards felt unmovable.
+        // Complete/Move/Delete stay reachable through the context menu (and
+        // swipes remain in list mode, where nothing competes).
+        .contextMenu {
             Button(task.completed ? "Reopen" : "Complete") {
                 Task { await store.setTaskCompleted(task, completed: !task.completed) }
             }
-            .tint(environment.theme.accentColor)
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if let destination = nextColumn(after: task.column) {
-                Button("Move to \(destination)") {
-                    Task { await store.moveTask(task, to: destination) }
-                }
-                .tint(.indigo)
-            }
-            Button("Delete", role: .destructive) {
-                pendingDeleteTask = task
-            }
-        }
-        .contextMenu {
             Menu("Move to") {
                 ForEach(columns, id: \.self) { column in
                     Button(column) {
@@ -571,7 +563,6 @@ struct ProjectsSheet: View {
 struct ProjectDetailView: View {
     @Environment(AppEnvironment.self) private var environment
     let project: ProjectSummary
-    @State private var linkedTasks: [TaskSummary] = []
     @State private var openTask: TaskSummary?
     @State private var status: String
     @State private var isWorking = false
@@ -580,6 +571,12 @@ struct ProjectDetailView: View {
     init(project: ProjectSummary) {
         self.project = project
         _status = State(initialValue: project.status)
+    }
+
+    // The pane lives in ProductStore keyed by project id, so task mutations
+    // anywhere in the app refresh this surface — no one-shot local snapshot.
+    private var pane: ProjectPaneState? {
+        environment.store.projectPanes[project.id]
     }
 
     var body: some View {
@@ -596,11 +593,30 @@ struct ProjectDetailView: View {
             }
 
             Section("Tasks") {
-                if linkedTasks.isEmpty {
+                if let error = pane?.error {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Couldn’t load this project’s tasks", systemImage: "exclamationmark.triangle")
+                            .font(.subheadline.weight(.medium))
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Try Again") {
+                            Task { await environment.store.loadProjectPane(projectID: project.id, force: true) }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(.vertical, 2)
+                } else if pane == nil || (pane?.isLoading == true && pane?.tasks.isEmpty != false) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading linked tasks…")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if pane?.tasks.isEmpty == true {
                     Text("No linked tasks yet.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(linkedTasks) { task in
+                ForEach(pane?.tasks ?? []) { task in
                     Button {
                         openTask = task
                     } label: {
@@ -664,7 +680,10 @@ struct ProjectDetailView: View {
             }
         }
         .task {
-            linkedTasks = await environment.store.projectTasks(projectID: project.id)
+            await environment.store.loadProjectPane(projectID: project.id)
+        }
+        .refreshable {
+            await environment.store.loadProjectPane(projectID: project.id, force: true)
         }
         .sheet(item: $openTask) { TaskDetailView(task: $0) }
         .confirmationDialog(
