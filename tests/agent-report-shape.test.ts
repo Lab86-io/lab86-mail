@@ -196,6 +196,36 @@ describe('daily brief service metadata', () => {
     });
   });
 
+  test('buildDataPrompt rejects an invalid stored index and rebuilds canonical handoffs', async () => {
+    const base = reportFixture();
+    const report = reportFixture({
+      handoffs: [{ version: 1, id: 'invalid-without-contract-fields' } as any],
+      sections: {
+        ...base.sections,
+        mcp: [
+          {
+            server: 'github',
+            externalId: 'pull-86',
+            kind: 'pull_request',
+            title: 'Review SBAR fix',
+            url: 'https://github.com/Lab86-io/lab86-mail/pull/86',
+          },
+        ],
+      },
+    });
+    const prompt = await withToolContext(() =>
+      Promise.resolve(buildDataPrompt(report, { digests: [], voiceSamples: [], services: [] })),
+    );
+    const data = JSON.parse(prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
+
+    expect(data.handoffs).toHaveLength(1);
+    expect(data.handoffs[0]).toMatchObject({
+      version: 1,
+      source: 'github',
+      sourceKey: 'connected:github:pull-86',
+    });
+  });
+
   test('buildDataPrompt carries Albatross area context for artifact area briefs', async () => {
     const report = reportFixture({
       sections: {

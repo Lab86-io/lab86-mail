@@ -105,6 +105,83 @@ describe('canonical SBAR triage index', () => {
     expect(connected?.actions).toEqual([]);
   });
 
+  test('retains only exact connected and work navigation proposals', () => {
+    const report = reportFixture();
+    report.handoffs = buildTriageHandoffIndex(report);
+    const connected = report.handoffs.find((handoff) => handoff.kind === 'connected');
+    const areaWork = report.handoffs.find((handoff) =>
+      handoff.items.some((item) => item.sourceKey === 'work:project:project-1'),
+    );
+    if (!connected || !areaWork) throw new Error('Expected connected and work handoffs');
+    const document: BriefDocumentV2 = {
+      ...emptyDocument(),
+      regions: [
+        {
+          id: 'authored',
+          summary: 'Authored actions',
+          tree: {
+            kind: 'entity_list',
+            emphasis: 'standard',
+            tone: 'neutral',
+            variant: 'rows',
+            items: [
+              {
+                ref: connected.primaryRef,
+                framing: {},
+                actions: [
+                  {
+                    action: 'open_url',
+                    label: 'Exact connected URL',
+                    payload: { url: 'https://github.com/lab86/mail/pull/86' },
+                    style: 'primary',
+                  },
+                  {
+                    action: 'open_url',
+                    label: 'Different URL',
+                    payload: { url: 'https://example.test/not-grounded' },
+                    style: 'primary',
+                  },
+                  {
+                    action: 'open_url',
+                    label: 'Insecure URL',
+                    payload: { url: 'http://github.com/lab86/mail/pull/86' },
+                    style: 'primary',
+                  },
+                ],
+              },
+              {
+                ref: areaWork.items.find((item) => item.ref.kind === 'work')!.ref,
+                framing: {},
+                actions: [
+                  {
+                    action: 'open_work',
+                    label: 'Exact work',
+                    payload: { workId: 'project-1', areaId: 'area-lab86' },
+                    style: 'primary',
+                  },
+                  {
+                    action: 'open_work',
+                    label: 'Wrong work',
+                    payload: { workId: 'project-other', areaId: 'area-lab86' },
+                    style: 'primary',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const repaired = enforceDailyBriefHandoffCoverage(document, report);
+    const json = JSON.stringify(repaired);
+    expect(json.match(/https:\/\/github\.com\/lab86\/mail\/pull\/86/g)).toHaveLength(1);
+    expect(json).not.toContain('not-grounded');
+    expect(json).not.toContain('http://github.com');
+    expect(json.match(/"workId":"project-1"/g)).toHaveLength(1);
+    expect(json).not.toContain('project-other');
+  });
+
   test('paginates a busy deterministic fallback without dropping indexed handoffs', () => {
     const report = reportFixture();
     const seed = buildTriageHandoffIndex(report)[0];

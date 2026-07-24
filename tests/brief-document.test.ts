@@ -24,6 +24,11 @@ describe('Brief Document v2', () => {
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('area_open_work');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('Immediate with undo');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('Canvas is frozen ornament');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('primaryRef,relatedRefs,protected,items');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('All non-draft actions must be copied');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('draft_reply is the');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('only action you may derive');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('exact thread id and');
   });
   test('accepts the canonical rich and quiet documents', () => {
     expect(BriefDocumentV2Schema.parse(richBriefDocumentFixture)).toEqual(richBriefDocumentFixture);

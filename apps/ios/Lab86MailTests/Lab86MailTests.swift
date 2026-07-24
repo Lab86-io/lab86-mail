@@ -884,6 +884,62 @@ struct Lab86MailTests {
         #expect(payload.view == "calendar")
     }
 
+    @Test
+    func todayBriefNavigationResolvesWorkWithAndWithoutArea() {
+        #expect(
+            TodayBriefNavigationIntent.resolve(
+                action: "open_work",
+                payload: BriefActionPayload(workID: "work-1", title: "Ship SBAR")
+            )
+                == .work(workID: "work-1", areaID: nil, title: "Ship SBAR")
+        )
+        #expect(
+            TodayBriefNavigationIntent.resolve(
+                action: "open_work",
+                payload: BriefActionPayload(areaID: "area-1", workID: "work-1")
+            )
+                == .work(workID: "work-1", areaID: "area-1", title: nil)
+        )
+        #expect(
+            TodayBriefNavigationIntent.resolve(
+                action: "open_work",
+                payload: BriefActionPayload(areaID: "area-1")
+            ) == nil
+        )
+    }
+
+    @Test
+    func todayBriefNavigationResolvesPrimaryViewsAndOnlyValidHTTPSURLs() throws {
+        #expect(
+            TodayBriefNavigationIntent.resolve(
+                action: "open_view",
+                payload: BriefActionPayload(view: "calendar")
+            ) == .primaryView("calendar")
+        )
+        let httpsURL = try #require(URL(string: "https://example.test/path?item=1"))
+        #expect(
+            TodayBriefNavigationIntent.resolve(
+                action: "open_url",
+                payload: BriefActionPayload(url: httpsURL.absoluteString)
+            ) == .externalURL(httpsURL)
+        )
+
+        for rawURL in [
+            "http://example.test/path",
+            "ftp://example.test/path",
+            "javascript:alert(1)",
+            "not a URL",
+            "https:///missing-host",
+        ] {
+            #expect(
+                TodayBriefNavigationIntent.resolve(
+                    action: "open_url",
+                    payload: BriefActionPayload(url: rawURL)
+                ) == nil
+            )
+        }
+    }
+
     @Test @MainActor
     func calendarRefreshKeepsHealthyEventsAndRecordsDecodeIssuesLocally() async {
         let events = JSONValue.object([

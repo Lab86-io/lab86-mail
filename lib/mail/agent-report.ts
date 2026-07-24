@@ -16,6 +16,7 @@ import {
 } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { emailFromHeader } from '../shared/format';
+import { parseTriageHandoffs } from '../shared/triage-handoff';
 import {
   type DailyReport,
   type DailyReportArtifactError,
@@ -944,6 +945,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   const localDate = fmt({ day: '2-digit', month: 'short', year: 'numeric' });
   const localTime = fmt({ hour: 'numeric', minute: '2-digit' });
   const art = getDailyArt(report.generatedAt);
+  const storedHandoffs = parseTriageHandoffs(report.handoffs);
 
   const serviceIds = [
     ...(report.services || []),
@@ -968,7 +970,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     threads: extras.digests,
     // Canonical attention index: already source-grounded, deduplicated, and
     // explicitly merged where source links prove the items belong together.
-    handoffs: (report.handoffs?.length ? report.handoffs : buildTriageHandoffIndex(report)).slice(0, 64),
+    handoffs: (storedHandoffs.length ? storedHandoffs : buildTriageHandoffIndex(report)).slice(0, 64),
     tasks,
     calendar,
     // Items from connected tools the user enabled for the

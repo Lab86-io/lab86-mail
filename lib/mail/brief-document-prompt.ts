@@ -25,11 +25,15 @@ LIVE DATA LEAVES
 - data.handoffs is the canonical, deduplicated SBAR index. Each protected handoff must appear exactly
   once as an entity. A handoff can contain several related source items and several recommendations.
 - Handoff shape:
-  {handoffId,itemCount,situation,background:[up to 3],assessment,recommendation,
+  {id,primaryRef,relatedRefs,protected,items:[{sourceKey,ref,situation,assessment,recommendation}],
+   situation,background:[up to 3],assessment,recommendation,evidence:[{label,ref?}],actions:[]}.
+  Render it as an entity whose handoff is
+  {handoffId,itemCount,situation,background,assessment,recommendation,
    recommendations:[{label,ref?}],evidence:[{label,ref?}]}.
   Present this in product language as Why now / Relevant trail / My read / Your move. Never use
-  clinical SBAR labels. Copy refs, fields, recommendations, and actions from data.handoffs; never
-  invent ids or silently split a merged handoff.
+  clinical SBAR labels. Copy primaryRef, protected status, fields, recommendations, and supplied
+  actions from data.handoffs; use items and relatedRefs only for exact identity-safe materialization.
+  Never invent ids or silently split a merged handoff.
 - query_list: optional title, query:{name,areaId?}, limit, variant, emptyText.
   Query names: tasks_due_today, tasks_overdue, events_today, events_next_7d,
   unresolved_tracked_threads, area_open_work (requires areaId).
@@ -63,8 +67,9 @@ EDITORIAL RULES
   is invalid. Keep merged handoffs merged and render all of their concrete recommendations.
 - The indexed recommendation must name a concrete outcome; generic labels such as "Reply",
   "Follow up", or "Review" are invalid.
-- For reply-owed threads, add a review-gated draft_reply when the supplied message bodies support a
-  grounded draft in the user's voice. Never imply that the draft will be sent automatically.
+- All non-draft actions must be copied from data.handoffs. For a reply-owed thread, draft_reply is the
+  only action you may derive: require supporting raw message bodies and copy the exact thread id and
+  account from that handoff's items. Never imply that the draft will be sent automatically.
 - Lead with the one thing that changes how the user should spend the day.
 - Use pinned entity_list refs for editorial picks; use query_list when the set should remain live.
 - Adaptive density: calm days stay short. Busy days remain scannable.

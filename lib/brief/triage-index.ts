@@ -581,6 +581,8 @@ function mergeRelatedHandoffs(records: AtomicHandoff[]): TriageHandoffV1[] {
 
 function mergeGroup(group: AtomicHandoff[]): TriageHandoffV1 {
   const ordered = [...group].sort(compareHandoffs);
+  const byLane = [...ordered].sort((a, b) => LANE_SCORE[b.lane] - LANE_SCORE[a.lane]);
+  const byPriority = [...ordered].sort((a, b) => PRIORITY_SCORE[b.priority] - PRIORITY_SCORE[a.priority]);
   const primary = ordered[0];
   const items = uniqueBy(
     ordered.flatMap((record) => record.items),
@@ -601,13 +603,13 @@ function mergeGroup(group: AtomicHandoff[]): TriageHandoffV1 {
     source: isComposite ? 'multi' : primary.source,
     sourceKey,
     kind: isComposite ? 'composite' : primary.kind,
-    lane: ordered.sort((a, b) => LANE_SCORE[b.lane] - LANE_SCORE[a.lane])[0].lane,
+    lane: byLane[0].lane,
     status: ordered.some((record) => record.status === 'open')
       ? 'open'
       : ordered.some((record) => record.status === 'waiting')
         ? 'waiting'
         : 'scheduled',
-    priority: ordered.sort((a, b) => PRIORITY_SCORE[b.priority] - PRIORITY_SCORE[a.priority])[0].priority,
+    priority: byPriority[0].priority,
     protected: ordered.some((record) => record.protected),
     situation: isComposite
       ? sharedArea

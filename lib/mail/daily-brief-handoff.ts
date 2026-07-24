@@ -54,7 +54,24 @@ export function enforceDailyBriefHandoffCoverage(
   if (missing.length) {
     const needsYou = deterministicNeedsYouRegion(missing);
     if (regions.length < 12) regions.push(needsYou);
-    else regions[regions.length - 1] = needsYou;
+    else {
+      const finalRegion = regions[regions.length - 1];
+      regions[regions.length - 1] = {
+        ...finalRegion,
+        intent: uniqueBy(
+          [finalRegion.intent, needsYou.intent].filter((value): value is string => Boolean(value)),
+          (value) => value,
+        ).join(' '),
+        summary: `${finalRegion.summary} ${needsYou.summary}`.trim(),
+        tree: {
+          kind: 'stack',
+          emphasis: 'standard',
+          tone: 'neutral',
+          density: 'standard',
+          children: [finalRegion.tree, needsYou.tree],
+        },
+      };
+    }
   }
 
   return { ...document, regions };
@@ -75,7 +92,7 @@ function patchNode(node: BriefNode, index: TriageHandoffV1[], seen: Set<string>)
       const matches = matchingRecords(index, entity.ref);
       // An under-specified ref is unsafe when it can mean more than one
       // indexed source. Protected records are restored with exact refs below.
-      if (matches.length > 1) return [];
+      if (matches.length > 1) return [entity];
       const record = matches[0];
       if (!record) return [entity];
       if (seen.has(record.id)) return [];
@@ -136,6 +153,33 @@ function validProposal(action: BriefActionV2, record: TriageHandoffV1): boolean 
           action.payload.account === item.ref.account &&
           action.payload.eventId === item.ref.id,
       )
+    );
+  }
+  if (action.action === 'open_work') {
+    const workId = typeof action.payload.workId === 'string' ? action.payload.workId.trim() : '';
+    const areaId = typeof action.payload.areaId === 'string' ? action.payload.areaId.trim() : '';
+    if (!workId || !record.items.some((item) => item.ref.kind === 'work' && item.ref.id === workId)) {
+      return false;
+    }
+    return (
+      !areaId ||
+      [record.primaryRef, ...record.relatedRefs, ...record.items.map((item) => item.ref)].some(
+        (ref) => ref.kind === 'area' && ref.id === areaId,
+      )
+    );
+  }
+  if (action.action === 'open_url') {
+    const rawUrl = typeof action.payload.url === 'string' ? action.payload.url : '';
+    try {
+      if (new URL(rawUrl).protocol !== 'https:') return false;
+    } catch {
+      return false;
+    }
+    return record.actions.some(
+      (candidate) =>
+        candidate.action === 'open_url' &&
+        typeof candidate.payload.url === 'string' &&
+        candidate.payload.url === rawUrl,
     );
   }
   return false;

@@ -136,6 +136,131 @@ describe('Daily Brief handoff recommendations', () => {
       ),
     ).toBe(true);
   });
+
+  test('keeps an ambiguous unqualified entity unchanged and restores exact protected handoffs', () => {
+    const first = replyItem();
+    const second = { ...replyItem(), account: 'other@example.com' };
+    const report = reportWithProtectedThreads();
+    report.sections.replyOwed = [first, second];
+    report.sections.tracked = [];
+    const ambiguous = {
+      ref: { kind: 'thread' as const, id: first.threadId, label: first.subject },
+      framing: { reason: 'Authored without an account.' },
+      actions: [],
+    };
+    const document: BriefDocumentV2 = {
+      ...emptyDocument(),
+      regions: [{ id: 'authored', summary: 'Authored', tree: entityListNode([ambiguous as any]) }],
+    };
+
+    const entities = entityItems(enforceDailyBriefHandoffCoverage(document, report));
+    expect(entities).toHaveLength(3);
+    expect(entities[0]).toEqual(ambiguous);
+    expect(
+      entities
+        .filter((entity) => entity.handoff)
+        .map((entity) => entity.ref.account)
+        .sort(),
+    ).toEqual(['jakob@example.com', 'other@example.com']);
+  });
+
+  test('uses an account-qualified ref for one exact handoff without duplicating it', () => {
+    const first = replyItem();
+    const second = { ...replyItem(), account: 'other@example.com' };
+    const report = reportWithProtectedThreads();
+    report.sections.replyOwed = [first, second];
+    report.sections.tracked = [];
+    const document: BriefDocumentV2 = {
+      ...emptyDocument(),
+      regions: [
+        {
+          id: 'authored',
+          summary: 'Authored',
+          tree: entityListNode([protectedEntity(first, [])]),
+        },
+      ],
+    };
+
+    const entities = entityItems(enforceDailyBriefHandoffCoverage(document, report));
+    expect(entities).toHaveLength(2);
+    expect(entities.filter((entity) => entity.ref.account === first.account)).toHaveLength(1);
+    expect(entities.filter((entity) => entity.ref.account === second.account)).toHaveLength(1);
+  });
+
+  test('keeps existing final-region content when protected coverage fills a capped document', () => {
+    const document: BriefDocumentV2 = {
+      ...emptyDocument(),
+      regions: Array.from({ length: 12 }, (_, index) => ({
+        id: `region-${index}`,
+        summary: `Original summary ${index}`,
+        tree: {
+          kind: 'text' as const,
+          emphasis: 'standard' as const,
+          tone: 'neutral' as const,
+          role: 'body' as const,
+          text: `Original content ${index}`,
+        },
+      })),
+    };
+
+    const repaired = enforceDailyBriefHandoffCoverage(document, reportWithProtectedThreads());
+    expect(repaired.regions).toHaveLength(12);
+    expect(JSON.stringify(repaired.regions[11].tree)).toContain('Original content 11');
+    expect(JSON.stringify(repaired.regions[11].tree)).toContain('Required follow-through');
+    expect(repaired.regions[11].summary).toContain('Original summary 11');
+    expect(entityItems(repaired)).toHaveLength(2);
+  });
+
+  test('accepts only grounded review-gated drafts and returns an unchanged document without an index', () => {
+    const report = reportWithProtectedThreads();
+    const item = replyItem();
+    const document: BriefDocumentV2 = {
+      ...emptyDocument(),
+      regions: [
+        {
+          id: 'authored',
+          summary: 'Authored',
+          tree: entityListNode([
+            protectedEntity(item, [
+              {
+                action: 'draft_reply',
+                label: 'Review draft',
+                payload: {
+                  account: item.account,
+                  threadId: item.threadId,
+                  body: 'July 31 works on my side.',
+                },
+                style: 'primary',
+              },
+              {
+                action: 'draft_reply',
+                label: 'Wrong account',
+                payload: {
+                  account: 'wrong@example.com',
+                  threadId: item.threadId,
+                  body: 'Unsafe.',
+                },
+                style: 'primary',
+              },
+            ]),
+          ]),
+        },
+      ],
+    };
+
+    const repaired = enforceDailyBriefHandoffCoverage(document, report);
+    const drafts = entityItems(repaired)
+      .find((entity) => entity.ref.id === item.threadId)
+      ?.actions.filter((action: any) => action.action === 'draft_reply');
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].payload.body).toBe('July 31 works on my side.');
+
+    const emptyReport = reportWithProtectedThreads();
+    emptyReport.sections.replyOwed = [];
+    emptyReport.sections.tracked = [];
+    const untouched = emptyDocument();
+    expect(enforceDailyBriefHandoffCoverage(untouched, emptyReport)).toBe(untouched);
+  });
 });
 
 function replyItem(): DailyReportItem {
