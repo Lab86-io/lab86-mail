@@ -76,6 +76,26 @@ struct SidebarScrubTests {
         // selection simply stands — there is nothing to restore.
     }
 
+    // MARK: - Hold feedback
+
+    @Test
+    func liftHapticFiresExactlyOncePerHold() {
+        var feedback = SidebarScrubHoldFeedback()
+        // Hold completes → one haptic.
+        let first = feedback.shouldPlayOnHoldCompleted()
+        #expect(first)
+        // The gesture keeps emitting hold-completed / drag events for the same
+        // touch — none of them may double the haptic.
+        let repeated = feedback.shouldPlayOnHoldCompleted()
+        #expect(!repeated)
+        let again = feedback.shouldPlayOnHoldCompleted()
+        #expect(!again)
+        // Touch ends → the latch re-arms for the next hold.
+        feedback.reset()
+        let nextHold = feedback.shouldPlayOnHoldCompleted()
+        #expect(nextHold)
+    }
+
     // MARK: - Cancellation rules
 
     @Test

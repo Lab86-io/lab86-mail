@@ -414,7 +414,7 @@ private struct SourceList: View {
     @State private var containerBounds: CGRect = .zero
     @State private var scrubCancelled = false
     @State private var autoscrollTarget: SidebarDestination?
-    @State private var holdHapticPlayed = false
+    @State private var holdFeedback = SidebarScrubHoldFeedback()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -604,8 +604,7 @@ private struct SourceList: View {
                     // The hold just completed and the thumb hasn't moved yet —
                     // this is the moment scrubbing engages, so the lift haptic
                     // fires here, before any drag event carries a location.
-                    if !holdHapticPlayed {
-                        holdHapticPlayed = true
+                    if holdFeedback.shouldPlayOnHoldCompleted() {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     }
                 case .second(true, let drag?):
@@ -615,7 +614,7 @@ private struct SourceList: View {
                 }
             }
             .onEnded { value in
-                holdHapticPlayed = false
+                holdFeedback.reset()
                 if case .second(true, _) = value {
                     endScrub()
                 } else {

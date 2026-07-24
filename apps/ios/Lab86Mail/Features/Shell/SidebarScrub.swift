@@ -69,6 +69,25 @@ struct SidebarScrubState: Equatable {
     }
 }
 
+// The lift-haptic latch: fires exactly once when the hold completes, stays
+// quiet through every subsequent gesture event (including the first drag,
+// which opens the session but must not double the haptic), and re-arms only
+// when the touch ends.
+struct SidebarScrubHoldFeedback: Equatable {
+    private(set) var played = false
+
+    // True exactly once per hold — the moment the lift haptic should fire.
+    mutating func shouldPlayOnHoldCompleted() -> Bool {
+        guard !played else { return false }
+        played = true
+        return true
+    }
+
+    mutating func reset() {
+        played = false
+    }
+}
+
 // MARK: - Pure gesture rules
 
 // The scrub's geometry rules, extracted so hold/crossing/cancel/autoscroll
