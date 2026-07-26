@@ -86,6 +86,8 @@ struct SidebarScrubState: Equatable {
 enum SidebarScrubLogic {
     static let cancelSlop: CGFloat = 44
     static let edgeZone: CGFloat = 40
+    static let maximumContentDrag: CGFloat = 96
+    static let scrollEndInset: CGFloat = 56
     // How long a stationary touch waits before the page preview appears.
     static let previewDelayMilliseconds = 250
 
@@ -95,6 +97,24 @@ enum SidebarScrubLogic {
         rows: [SidebarDestination: CGRect]
     ) -> SidebarDestination? {
         rows.first { $0.value.contains(point) }?.key
+    }
+
+    // The selection slot stays where the scrub began while the menu surface
+    // follows the finger. Hit-testing the unshifted row frames therefore moves
+    // opposite the drag: pulling the menu down brings an earlier row into the
+    // fixed slot; pushing it up brings a later row in.
+    static func anchoredSelectionPoint(
+        anchor: CGPoint,
+        translation: CGSize
+    ) -> CGPoint {
+        CGPoint(x: anchor.x, y: anchor.y - translation.height)
+    }
+
+    // Keep the surface directly attached to the finger without letting a long
+    // drag move the entire navigation hierarchy offscreen. Selection and edge
+    // advancement continue beyond this visual travel.
+    static func contentDragOffset(translation: CGSize) -> CGFloat {
+        max(-maximumContentDrag, min(maximumContentDrag, translation.height))
     }
 
     // Cancel when the thumb leaves the sidebar bounds by MORE than the slop —
@@ -114,14 +134,25 @@ enum SidebarScrubLogic {
 
     enum EdgeZone: Equatable { case top, bottom }
 
-    // The scroll viewport's edge bands advance the wheel by one destination.
-    // This keeps every Area reachable without turning the direct scrub into a
-    // competing pan gesture.
+    // The scroll viewport's edge bands advance the fixed-slot wheel by one
+    // destination. Direction is intentionally inverted from thumb tracking:
+    // pulling the surface down at the bottom reveals the previous item, while
+    // pushing it up at the top reveals the next item.
     static func autoscrollZone(forY y: CGFloat, in bounds: CGRect, zone: CGFloat = edgeZone) -> EdgeZone? {
         guard bounds.height > zone * 2 else { return nil }
         if y < bounds.minY + zone { return .top }
         if y > bounds.maxY - zone { return .bottom }
         return nil
+    }
+
+    // Scroll the newly advanced row back to the original touch slot. A
+    // ScrollViewProxy uses one unit point for both the row and viewport, so a
+    // bounded slot fraction is the closest stable alignment without changing
+    // the gesture's captured row geometry.
+    static func autoscrollAnchor(slotY: CGFloat?, in bounds: CGRect) -> UnitPoint {
+        guard let slotY, bounds.height > 0 else { return .center }
+        let fraction = (slotY - bounds.minY) / bounds.height
+        return UnitPoint(x: 0.5, y: max(0.08, min(0.92, fraction)))
     }
 
     static func autoscrollTarget(
@@ -131,8 +162,8 @@ enum SidebarScrubLogic {
     ) -> SidebarDestination? {
         guard let current, let index = ordered.firstIndex(of: current) else { return nil }
         switch zone {
-        case .top: return index > 0 ? ordered[index - 1] : nil
-        case .bottom: return index + 1 < ordered.count ? ordered[index + 1] : nil
+        case .top: return index + 1 < ordered.count ? ordered[index + 1] : nil
+        case .bottom: return index > 0 ? ordered[index - 1] : nil
         }
     }
 

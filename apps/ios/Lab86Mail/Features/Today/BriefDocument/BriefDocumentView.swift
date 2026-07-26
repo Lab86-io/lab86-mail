@@ -444,6 +444,7 @@ private enum BriefActionPolicy {
 }
 
 private struct BriefNodeView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let node: BriefNode
     let regionSummary: String
     let entities: [String: BriefHydratedEntity]
@@ -456,11 +457,7 @@ private struct BriefNodeView: View {
         case "stack":
             VStack(alignment: .leading, spacing: stackSpacing) { children }
         case "grid":
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 170), spacing: 12)],
-                alignment: .leading,
-                spacing: 12
-            ) { children }
+            editorialGrid
         case "split":
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 16) { children }
@@ -539,6 +536,61 @@ private struct BriefNodeView: View {
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    @ViewBuilder private var editorialGrid: some View {
+        if horizontalSizeClass == .compact {
+            VStack(alignment: .leading, spacing: 12) { children }
+        } else {
+            Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 12) {
+                ForEach(Array(gridRows.enumerated()), id: \.offset) { _, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, child in
+                            BriefNodeView(
+                                node: child,
+                                regionSummary: regionSummary,
+                                entities: entities,
+                                hiddenRefs: hiddenRefs,
+                                completedRefs: completedRefs,
+                                onAction: onAction
+                            )
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: child.footprint == "feature" ? 320 : nil,
+                                alignment: .topLeading
+                            )
+                            .gridCellColumns(child.footprint == "wide" || child.footprint == "feature" ? 2 : 1)
+                        }
+                        if row.count == 1, row[0].footprint != "wide", row[0].footprint != "feature" {
+                            Color.clear
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var gridRows: [[BriefNode]] {
+        var rows: [[BriefNode]] = []
+        var current: [BriefNode] = []
+        var used = 0
+        for child in node.children ?? [] {
+            let span = child.footprint == "wide" || child.footprint == "feature" ? 2 : 1
+            if used + span > 2, !current.isEmpty {
+                rows.append(current)
+                current = []
+                used = 0
+            }
+            current.append(child)
+            used += span
+            if used == 2 {
+                rows.append(current)
+                current = []
+                used = 0
+            }
+        }
+        if !current.isEmpty { rows.append(current) }
+        return rows
     }
 
     @ViewBuilder private var divider: some View {
@@ -721,10 +773,22 @@ private struct BriefEntityRow: View {
                     .textCase(.uppercase)
                     .foregroundStyle(.tint)
             }
-            Text(entity?.title ?? item.ref.label ?? "Unavailable item")
-                .font(.subheadline.weight(.medium))
-                .strikethrough(entity?.gone == true || (completed ?? entity?.completed ?? false))
-                .foregroundStyle(entity?.gone == true ? .secondary : .primary)
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text(entity?.title ?? item.ref.label ?? "Unavailable item")
+                    .font(.subheadline.weight(.medium))
+                    .strikethrough(entity?.gone == true || (completed ?? entity?.completed ?? false))
+                    .foregroundStyle(entity?.gone == true ? .secondary : .primary)
+                    .lineLimit(2)
+                if let count = item.handoff?.itemCount, count > 1 {
+                    Text("\(count) updates")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.09), in: Capsule())
+                        .fixedSize()
+                }
+            }
             if let handoff = item.handoff {
                 handoffSummary(handoff)
                 BriefActionFlow(

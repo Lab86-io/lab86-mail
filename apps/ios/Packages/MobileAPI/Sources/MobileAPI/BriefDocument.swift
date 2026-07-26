@@ -6,19 +6,22 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
     public let summary: String
     public let generatedAt: Double
     public let regions: [BriefRegion]
+    public let timezone: String?
 
     public init(
         version: Int,
         title: String,
         summary: String,
         generatedAt: Double,
-        regions: [BriefRegion]
+        regions: [BriefRegion],
+        timezone: String? = nil
     ) {
         self.version = version
         self.title = title
         self.summary = summary
         self.generatedAt = generatedAt
         self.regions = regions
+        self.timezone = timezone
     }
 
     public static func decode(_ data: Data) -> BriefDocumentV2? {
@@ -27,6 +30,7 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
             let title: String
             let summary: String
             let generatedAt: Double
+            let timezone: String?
         }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else { return nil }
         if envelope.version != 2 {
@@ -46,7 +50,8 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
                         summary: summary,
                         tree: .fallback(title: title, summary: summary)
                     ),
-                ]
+                ],
+                timezone: envelope.timezone
             )
         }
         guard let decoded = try? JSONDecoder().decode(Self.self, from: data) else { return nil }
@@ -70,7 +75,8 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
                         summary: fallbackSummary,
                         tree: .fallback(title: fallbackTitle, summary: fallbackSummary)
                     ),
-                ]
+                ],
+                timezone: timezone
             )
         }
         var normalizedRegions: [BriefRegion] = []
@@ -100,7 +106,8 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
                         tree: .fallback(title: fallbackTitle, summary: fallbackSummary)
                     ),
                 ]
-                : normalizedRegions
+                : normalizedRegions,
+            timezone: timezone
         )
     }
 }
@@ -124,6 +131,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
     public let id: String?
     public let emphasis: String?
     public let tone: String?
+    public let footprint: String?
     public let density: String?
     public let columns: Int?
     public let ratio: String?
@@ -162,7 +170,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
     public let collectionItems: [BriefCollectionItem]?
 
     enum CodingKeys: String, CodingKey {
-        case kind, id, emphasis, tone, density, columns, ratio, surface, title, kicker, collapsible, children
+        case kind, id, emphasis, tone, footprint, density, columns, ratio, surface, title, kicker, collapsible, children
         case role, text, actions, variant, placeholder, questionId, canvasId, html, fallbackText
         case allowedActions, height, items, query, limit, emptyText, label, value, queryValue, delta
         case unit, description, data, sourceRefs
@@ -174,6 +182,10 @@ public struct BriefNode: Codable, Hashable, Sendable {
         id = try values.decodeIfPresent(String.self, forKey: .id)
         emphasis = try values.decodeIfPresent(String.self, forKey: .emphasis)
         tone = try values.decodeIfPresent(String.self, forKey: .tone)
+        let decodedFootprint = try values.decodeIfPresent(String.self, forKey: .footprint)
+        footprint = ["standard", "wide", "feature"].contains(decodedFootprint ?? "")
+            ? decodedFootprint
+            : nil
         density = try values.decodeIfPresent(String.self, forKey: .density)
         columns = try values.decodeIfPresent(Int.self, forKey: .columns)
         ratio = try values.decodeIfPresent(String.self, forKey: .ratio)
@@ -240,6 +252,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
         try values.encodeIfPresent(id, forKey: .id)
         try values.encodeIfPresent(emphasis, forKey: .emphasis)
         try values.encodeIfPresent(tone, forKey: .tone)
+        try values.encodeIfPresent(footprint, forKey: .footprint)
         try values.encodeIfPresent(density, forKey: .density)
         try values.encodeIfPresent(columns, forKey: .columns)
         try values.encodeIfPresent(ratio, forKey: .ratio)
@@ -290,6 +303,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
         id: String? = nil,
         emphasis: String? = nil,
         tone: String? = nil,
+        footprint: String? = nil,
         density: String? = nil,
         columns: Int? = nil,
         ratio: String? = nil,
@@ -329,6 +343,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
         self.id = id
         self.emphasis = emphasis
         self.tone = tone
+        self.footprint = footprint
         self.density = density
         self.columns = columns
         self.ratio = ratio
@@ -410,6 +425,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
             id: id,
             emphasis: ["primary", "standard", "muted"].contains(emphasis ?? "") ? emphasis : "standard",
             tone: ["neutral", "positive", "warning", "urgent"].contains(tone ?? "") ? tone : "neutral",
+            footprint: ["standard", "wide", "feature"].contains(footprint ?? "") ? footprint : nil,
             density: ["airy", "standard", "dense"].contains(density ?? "") ? density : "standard",
             columns: columns == 3 ? 3 : 2,
             ratio: ratio == "lead" ? "lead" : "balanced",

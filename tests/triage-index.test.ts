@@ -120,6 +120,26 @@ describe('canonical SBAR triage index', () => {
     expect(connected?.actions).toEqual([]);
   });
 
+  test('groups Xcode Cloud build updates into one source-preserving episode', () => {
+    const report = reportFixture();
+    report.sections.mcp = Array.from({ length: 4 }, (_, index) => ({
+      server: 'github' as const,
+      externalId: `xcode-build-${index + 1}`,
+      kind: 'Xcode Cloud build',
+      title: `Xcode Cloud build ${index + 1} ${index === 3 ? 'succeeded' : 'completed'}`,
+      state: index === 3 ? 'succeeded' : 'completed',
+      url: `https://example.test/builds/${index + 1}`,
+    }));
+
+    const builds = buildTriageHandoffIndex(report).filter((handoff) =>
+      handoff.items.some((item) => item.sourceKey.includes('xcode-build-')),
+    );
+    expect(builds).toHaveLength(1);
+    expect(builds[0]?.items).toHaveLength(4);
+    expect(builds[0]?.relatedRefs).toHaveLength(3);
+    expect(builds[0]?.actions).toHaveLength(4);
+  });
+
   test('retains only exact connected and work navigation proposals', () => {
     const report = reportFixture();
     report.handoffs = buildTriageHandoffIndex(report);

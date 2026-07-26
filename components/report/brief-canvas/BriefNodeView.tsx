@@ -491,7 +491,16 @@ function BriefEntityRow({
               {item.lane.replaceAll('_', ' ')}
             </span>
           ) : null}
-          <p className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}>{title}</p>
+          <div className="flex min-w-0 items-center gap-2">
+            <p className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}>
+              {title}
+            </p>
+            {item.handoff?.itemCount && item.handoff.itemCount > 1 ? (
+              <span className="shrink-0 rounded-full bg-[var(--color-bg-muted)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
+                {item.handoff.itemCount} updates
+              </span>
+            ) : null}
+          </div>
           {item.handoff && !gone ? (
             <>
               <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">

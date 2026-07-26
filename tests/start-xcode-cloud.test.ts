@@ -37,7 +37,7 @@ describe('Xcode Cloud build discovery', () => {
     expect(() => selectWorkflowID([], 'Production App Store')).toThrow(
       'Xcode Cloud workflow "Production App Store" was not found.',
     );
-    expect(() => selectBranchRefID([], 'main')).toThrow('Xcode Cloud branch "main" was not found.');
+    expect(() => selectBranchRefID([], 'main')).toThrow('Xcode Cloud git reference "main" was not found.');
     expect(() => hasExplicitBuildTarget('workflow', undefined)).toThrow(
       'XCODE_CLOUD_WORKFLOW_ID and XCODE_CLOUD_BRANCH_REF_ID must be provided together.',
     );

@@ -8,7 +8,6 @@ import SwiftUI
 // show the identical museum piece for an edition.
 struct DailyBriefMasthead: View {
     @Environment(AppEnvironment.self) private var environment
-    let title: String
     let generatedAt: Date
     let art: DailyBriefArt?
 
@@ -20,6 +19,13 @@ struct DailyBriefMasthead: View {
     static func height(forWidth width: CGFloat) -> CGFloat {
         guard width > 0 else { return 280 }
         return min(360, max(220, width * 0.62))
+    }
+
+    static func editionTitle(for date: Date, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let weekdayIndex = max(1, min(7, calendar.component(.weekday, from: date))) - 1
+        return "The \(calendar.weekdaySymbols[weekdayIndex]) Brief"
     }
 
     private var sources: [URL] { art?.orderedURLs ?? [] }
@@ -48,7 +54,7 @@ struct DailyBriefMasthead: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
-            Text(title)
+            Text(Self.editionTitle(for: generatedAt))
                 .font(environment.theme.displayType.displayFont(size: 40))
                 .fontWeight(.semibold)
                 .multilineTextAlignment(.center)
@@ -68,17 +74,6 @@ struct DailyBriefMasthead: View {
                 .foregroundStyle(.white.opacity(0.85))
                 .shadow(color: .black.opacity(0.6), radius: 4)
                 .padding(12)
-        }
-        .overlay(alignment: .topTrailing) {
-            Text("The Daily Brief")
-                .font(.caption2.weight(.medium))
-                .textCase(.uppercase)
-                .kerning(1.1)
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.black.opacity(0.35), in: Capsule())
-                .padding(10)
         }
         .overlay(alignment: .bottomTrailing) {
             if let credit = creditLine {
@@ -106,6 +101,30 @@ struct DailyBriefMasthead: View {
         guard let art, let credit = art.credit else { return nil }
         if let source = art.source { return "\(credit) · \(source)" }
         return credit
+    }
+}
+
+struct DailyBriefLede: View {
+    @Environment(AppEnvironment.self) private var environment
+    let text: String
+
+    var body: some View {
+        let copy = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let initial = String(copy.prefix(1))
+        let remainder = String(copy.dropFirst())
+        (Text(initial)
+            .font(environment.theme.displayType.displayFont(size: 48))
+            .fontWeight(.semibold)
+            .foregroundColor(environment.theme.accent2Color)
+            + Text(remainder)
+                .font(environment.theme.displayType.displayFont(size: 20))
+                .foregroundColor(.secondary))
+            .lineSpacing(5)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(copy)
     }
 }
 

@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { matchReflectionCandidates } from '../lib/albatross/daily-intent';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -740,7 +741,12 @@ export const answerCheckin = mutation({
     const promptKind = args.promptKind ?? 'reflection';
     const responseText = args.responseText.trim().slice(0, 10_000);
     if (!responseText && !args.completed?.length) throw new Error('Tell Albatross what happened.');
-    const completed = new Set((args.completed || []).map((entry) => `${entry.kind}:${entry.id}`));
+    const inferredCompleted =
+      promptKind === 'reflection' ? matchReflectionCandidates(responseText, row.candidateItems) : [];
+    const completed = new Set([
+      ...(args.completed || []).map((entry) => `${entry.kind}:${entry.id}`),
+      ...inferredCompleted.map((entry) => `${entry.kind}:${entry.id}`),
+    ]);
     const changes: Array<{ kind: string; id: string; previousState?: string; nextState?: string }> = [];
     const ts = now();
     for (const item of promptKind === 'reflection' ? row.candidateItems : []) {
@@ -825,7 +831,11 @@ export const answerCheckin = mutation({
         readAt: matchingNotification.readAt ?? ts,
         updatedAt: ts,
       });
-    return { changes, status: isComplete ? 'answered' : 'open' };
+    return {
+      changes,
+      matchedByReflection: inferredCompleted.map((entry) => ({ kind: entry.kind, id: entry.id })),
+      status: isComplete ? 'answered' : 'open',
+    };
   },
 });
 
@@ -955,28 +965,23 @@ export const ensureCheckin = mutation({
         created: false,
       };
     }
-    const dayStart = localDayStartUtc(args.timezone, args.localDate);
-    const dayEnd = dayStart + 36 * 60 * 60 * 1000;
-    const [recentCompletions, activeWork, activeProjects, cards] = await Promise.all([
-      ctx.db
-        .query('completionEvents')
-        .withIndex('by_user_completedAt', (q) => q.eq('userId', args.userId).gte('completedAt', dayStart))
-        .take(50),
+    const dayEnd = localDayStartUtc(args.timezone, args.localDate) + 36 * 60 * 60 * 1000;
+    const [activeWork, activeProjects, cards] = await Promise.all([
       ctx.db
         .query('albatrossIntents')
-        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId).gte('updatedAt', dayStart))
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
         .order('desc')
-        .take(30),
+        .take(120),
       ctx.db
         .query('albatrossProjects')
-        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId).gte('updatedAt', dayStart))
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
         .order('desc')
-        .take(20),
+        .take(80),
       ctx.db
         .query('cards')
-        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
         .order('desc')
-        .take(100),
+        .take(200),
     ]);
     const candidates: Array<{
       kind: 'work' | 'project' | 'task' | 'event' | 'artifact';
@@ -985,38 +990,47 @@ export const ensureCheckin = mutation({
       suggestedState?: string;
       evidence: Array<{ kind: string; id: string; label?: string }>;
     }> = [];
-    const completedIds = new Set(
-      recentCompletions.map((event) => `${event.artifactKind}:${event.artifactId}`),
-    );
-    for (const work of activeWork) {
-      if (work.updatedAt > dayEnd || work.workState === 'archived') continue;
+    // Reflection must be able to resolve older, still-open digital work—not
+    // only records the user already touched today. Bound each source family so
+    // Work, Projects, and tasks all remain represented in the 60-item corpus.
+    for (const work of activeWork
+      .filter(
+        (work) =>
+          work.updatedAt <= dayEnd &&
+          work.workState !== 'done' &&
+          work.workState !== 'archived' &&
+          work.status !== 'done' &&
+          work.status !== 'archived',
+      )
+      .slice(0, 20)) {
       candidates.push({
         kind: 'work',
         id: String(work._id),
         title: work.title || work.rawText.slice(0, 120),
-        suggestedState:
-          completedIds.has(`intent:${String(work._id)}`) || work.workState === 'done' ? 'done' : 'moved',
+        suggestedState: 'moved',
         evidence: [{ kind: 'work', id: String(work._id), label: work.title }],
       });
     }
-    for (const project of activeProjects) {
-      if (project.updatedAt > dayEnd || project.status === 'archived') continue;
+    for (const project of activeProjects
+      .filter(
+        (project) =>
+          project.updatedAt <= dayEnd && project.status !== 'done' && project.status !== 'archived',
+      )
+      .slice(0, 20)) {
       candidates.push({
         kind: 'project',
         id: String(project._id),
         title: project.title,
-        suggestedState: project.status === 'done' ? 'done' : 'moved',
+        suggestedState: 'moved',
         evidence: [{ kind: 'project', id: String(project._id), label: project.title }],
       });
     }
-    for (const card of cards
-      .filter((card) => card.updatedAt >= dayStart && card.updatedAt <= dayEnd)
-      .slice(0, 30)) {
+    for (const card of cards.filter((card) => !card.completedAt && card.updatedAt <= dayEnd).slice(0, 20)) {
       candidates.push({
         kind: 'task',
         id: String(card._id),
         title: card.title,
-        suggestedState: card.completedAt ? 'done' : 'moved',
+        suggestedState: 'moved',
         evidence: [{ kind: 'task', id: String(card._id), label: card.title }],
       });
     }

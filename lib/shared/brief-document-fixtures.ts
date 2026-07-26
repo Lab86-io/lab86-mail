@@ -7,6 +7,7 @@ export const richBriefDocumentFixture: BriefDocumentV2 = {
   title: 'Thursday Brief',
   summary: 'A product review leads the day, followed by two replies and an afternoon planning block.',
   generatedAt: now,
+  timezone: 'UTC',
   regions: [
     {
       id: 'lead',
@@ -14,6 +15,7 @@ export const richBriefDocumentFixture: BriefDocumentV2 = {
       summary: 'Prepare for the product review at 10:00 AM.',
       tree: {
         kind: 'hero',
+        footprint: 'feature',
         emphasis: 'primary',
         tone: 'neutral',
         surface: 'elevated',

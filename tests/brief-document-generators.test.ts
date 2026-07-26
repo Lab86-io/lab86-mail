@@ -110,7 +110,7 @@ describe('Brief Document v2 generators', () => {
     );
 
     expect(partials).toEqual([['lead']]);
-    expect(document.title).toBe('Composed brief');
+    expect(document.title).toBe('The Thursday Brief');
     expect(document.regions[0].tree.kind).toBe('hero');
   });
 

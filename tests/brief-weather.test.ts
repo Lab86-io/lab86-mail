@@ -380,7 +380,22 @@ describe('brief weather in the data pack', () => {
             handoff('passport', 'Renew the passport before the trip'),
           ],
           sections: {
+            tasks: [
+              {
+                cardId: 'billing-task',
+                boardId: 'board-1',
+                columnId: 'column-1',
+                title: 'Review the billing launch',
+                scope: 'week',
+              },
+            ],
             albatross: {
+              includedAreas: [],
+              askBeforeCentering: [],
+              activeIntents: [],
+              activeProjects: [],
+              contextReview: [],
+              completions: [],
               dailyAlignment: {
                 localDate: '2026-07-06',
                 reflection: 'Shipped the migration.',
@@ -397,8 +412,94 @@ describe('brief weather in the data pack', () => {
         } as any,
       );
       expect(prompt).toContain('"tomorrowIntent": "Finish passport renewal."');
-      expect(prompt.indexOf('"id": "passport"')).toBeLessThan(prompt.indexOf('"id": "billing"'));
-      expect(prompt).toContain('authoritative attention signal');
+      expect(prompt).toContain('"id": "passport"');
+      expect(prompt).not.toContain('"id": "billing"');
+      expect(prompt).not.toContain('"cardId": "billing-task"');
+      expect(prompt).toContain('"suppressUnrelated": true');
+      expect(prompt).toContain('authoritative attention budget');
+    });
+  });
+
+  test('accountless legacy refs never pull a colliding thread from another account', async () => {
+    await withToolContext(async () => {
+      const prompt = buildDataPrompt(
+        reportFixture({
+          handoffs: [
+            {
+              version: 1,
+              id: 'selected-thread',
+              source: 'mail',
+              sourceKey: 'selected-thread',
+              kind: 'conversation',
+              lane: 'focus',
+              status: 'open',
+              priority: 'normal',
+              protected: false,
+              situation: 'Review selected thread',
+              background: [],
+              assessment: 'The selected account needs a reply.',
+              recommendation: 'Review selected thread',
+              evidence: [],
+              primaryRef: { kind: 'thread', id: 'shared-thread', account: 'selected@example.test' },
+              relatedRefs: [{ kind: 'thread', id: 'shared-thread' }],
+              items: [
+                {
+                  sourceKey: 'selected-thread',
+                  ref: { kind: 'thread', id: 'shared-thread', account: 'selected@example.test' },
+                  situation: 'Review selected thread',
+                  assessment: 'The selected account needs a reply.',
+                  recommendation: 'Review selected thread',
+                },
+              ],
+              actions: [],
+              generatedAt: 1,
+            },
+          ] as any,
+          sections: {
+            albatross: {
+              includedAreas: [],
+              askBeforeCentering: [],
+              activeIntents: [],
+              activeProjects: [],
+              contextReview: [],
+              completions: [],
+              dailyAlignment: {
+                localDate: '2026-07-06',
+                tomorrowIntent: 'Review selected thread.',
+              },
+            },
+          } as any,
+        }),
+        {
+          digests: [
+            {
+              threadKey: 'selected@example.test:shared-thread',
+              account: 'selected@example.test',
+              threadId: 'shared-thread',
+              subject: 'Selected account subject',
+              people: [],
+              unread: true,
+              lastReceivedAt: 1,
+              messages: [],
+            },
+            {
+              threadKey: 'other@example.test:shared-thread',
+              account: 'other@example.test',
+              threadId: 'shared-thread',
+              subject: 'Other account secret',
+              people: [],
+              unread: true,
+              lastReceivedAt: 1,
+              messages: [],
+            },
+          ],
+          voiceSamples: [],
+          services: ['gmail'],
+          weather: null,
+        } as any,
+      );
+      const data = JSON.parse(prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
+      expect(data.threads.map((thread: any) => thread.subject)).toEqual(['Selected account subject']);
     });
   });
 });

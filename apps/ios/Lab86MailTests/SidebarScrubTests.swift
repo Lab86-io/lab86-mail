@@ -28,6 +28,23 @@ struct SidebarScrubTests {
         #expect(SidebarScrubLogic.destination(at: CGPoint(x: 150, y: 580), rows: rows) == .settings)
     }
 
+    @Test
+    func menuSurfaceMovesUnderAFixedSelectionSlot() {
+        let anchor = CGPoint(x: 150, y: 70)
+        let pulledDown = SidebarScrubLogic.anchoredSelectionPoint(
+            anchor: anchor,
+            translation: CGSize(width: 0, height: 50)
+        )
+        let pushedUp = SidebarScrubLogic.anchoredSelectionPoint(
+            anchor: anchor,
+            translation: CGSize(width: 0, height: -50)
+        )
+        #expect(SidebarScrubLogic.destination(at: pulledDown, rows: rows) == .primary(.today))
+        #expect(SidebarScrubLogic.destination(at: pushedUp, rows: rows) == .mail(.main))
+        #expect(SidebarScrubLogic.contentDragOffset(translation: CGSize(width: 0, height: 240)) == 96)
+        #expect(SidebarScrubLogic.contentDragOffset(translation: CGSize(width: 0, height: -240)) == -96)
+    }
+
     // MARK: - Session state and haptic triggers
 
     @Test
@@ -130,7 +147,7 @@ struct SidebarScrubTests {
     // MARK: - Long-list wheel behavior
 
     @Test
-    func edgeZonesAdvanceToTheNextDestinationInVisualOrder() {
+    func edgeZonesAdvanceInInvertedSurfaceDirection() {
         let ordered: [SidebarDestination] = [
             .primary(.today),
             .area(id: "area_1", name: "House"),
@@ -145,21 +162,28 @@ struct SidebarScrubTests {
             SidebarScrubLogic.autoscrollTarget(
                 from: .area(id: "area_1", name: "House"),
                 in: ordered,
-                zone: .bottom
+                zone: .top
             ) == .area(id: "area_2", name: "Work")
         )
         #expect(
             SidebarScrubLogic.autoscrollTarget(
                 from: .primary(.today),
                 in: ordered,
-                zone: .top
+                zone: .bottom
             ) == nil
+        )
+        #expect(
+            SidebarScrubLogic.autoscrollTarget(
+                from: .mail(.main),
+                in: ordered,
+                zone: .bottom
+            ) == .area(id: "area_2", name: "Work")
         )
         #expect(
             SidebarScrubLogic.autoscrollTargets(
                 from: .primary(.today),
                 in: ordered,
-                zone: .bottom,
+                zone: .top,
                 steps: 3
             ) == [
                 .area(id: "area_1", name: "House"),
@@ -172,9 +196,26 @@ struct SidebarScrubTests {
                 from: .mail(.main),
                 in: ordered,
                 zone: .bottom,
+                steps: 2
+            ) == [
+                .area(id: "area_2", name: "Work"),
+                .area(id: "area_1", name: "House"),
+            ]
+        )
+        #expect(
+            SidebarScrubLogic.autoscrollTargets(
+                from: .mail(.main),
+                in: ordered,
+                zone: .top,
                 steps: 3
             ).isEmpty
         )
+        let slotAnchor = SidebarScrubLogic.autoscrollAnchor(
+            slotY: 180,
+            in: CGRect(x: 0, y: 20, width: 300, height: 400)
+        )
+        #expect(slotAnchor.x == 0.5)
+        #expect(slotAnchor.y == 0.4)
     }
 
     @Test

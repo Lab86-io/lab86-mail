@@ -40,6 +40,7 @@ import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
+import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import {
   createHitlAutoContinueGuard,
   isHitlToolName,
@@ -708,6 +709,11 @@ export function AssistantChat() {
                           subject: draft.subject,
                           body: draft.body,
                         }),
+                      openThread: (target) =>
+                        routeEmailPreviewThread(target, {
+                          setThreadAccount,
+                          setSelectedThread,
+                        }),
                     }}
                   >
                     {messages.map((m, i) => (
@@ -919,6 +925,7 @@ function userTextFromMessage(message: any): string {
 interface ChatPartHandlers {
   answer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
   openDraft?: (draft: { to?: string; cc?: string; bcc?: string; subject?: string; body?: string }) => void;
+  openThread?: (target: { account: string; threadId: string }) => void;
 }
 const ChatPartContext = createContext<ChatPartHandlers>({ answer: () => {} });
 
@@ -1014,6 +1021,13 @@ function HitlToolPart({ toolName, part }: { toolName: string; part: any }) {
 // A successful show_* tool output, rendered with its tool-ui component. Falls
 // back to null (→ activity row) when the payload is not renderable.
 function RichDisplayPart({ toolName, output }: { toolName: string; output: any }) {
-  const { openDraft } = useContext(ChatPartContext);
-  return <ToolUiDisplayPart toolName={toolName} output={output} onOpenDraft={openDraft} />;
+  const { openDraft, openThread } = useContext(ChatPartContext);
+  return (
+    <ToolUiDisplayPart
+      toolName={toolName}
+      output={output}
+      onOpenDraft={openDraft}
+      onOpenThread={openThread}
+    />
+  );
 }

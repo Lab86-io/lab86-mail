@@ -344,10 +344,24 @@ describe('Albatross Daily Report context', () => {
       ],
       checkins: [
         {
+          localDate: '2026-06-28',
+          responseText: 'Collected the passport paperwork.',
+          tomorrowIntentText: 'Review the renewal checklist.',
+          updatedAt: Date.parse('2026-06-29T01:00:00.000Z'),
+        },
+        {
           localDate: '2026-06-29',
           responseText: 'Shipped the billing fix.',
           tomorrowIntentText: 'Renew the passport and confirm the trip.',
           updatedAt: Date.parse('2026-06-30T01:00:00.000Z'),
+        },
+      ],
+      areas: [
+        {
+          _id: 'area_trip',
+          name: 'Travel',
+          primaryDomain: 'travel.example.test',
+          imageUrl: 'https://travel.example.test/cover.jpg',
         },
       ],
     });
@@ -355,6 +369,12 @@ describe('Albatross Daily Report context', () => {
     expect(context.activeProjects.map((project) => project.id)).toEqual(['project_live']);
     expect(context.activeIntents.map((intent) => intent.id)).toEqual(['intent_passport']);
     expect(context.includedAreas.map((area) => area.areaId)).toContain('area_trip');
+    expect(context.includedAreas.find((area) => area.areaId === 'area_trip')).toMatchObject({
+      name: 'Travel',
+      primaryDomain: 'travel.example.test',
+      faviconUrl: 'https://www.google.com/s2/favicons?domain=travel.example.test&sz=64',
+      imageUrl: 'https://travel.example.test/cover.jpg',
+    });
     expect(context.askBeforeCentering.map((item) => item.areaId)).toContain('area_cardhunt');
     expect(context.askBeforeCentering.map((item) => item.areaId)).not.toContain('area_trip');
     expect(context.askBeforeCentering[0].prompt).toContain("Include it in today's report?");

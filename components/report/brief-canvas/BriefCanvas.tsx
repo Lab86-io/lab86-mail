@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Newspaper } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
@@ -211,34 +211,35 @@ export function BriefCanvas({
       className="scrollable @container h-full overflow-y-auto bg-[var(--color-bg)] px-4 py-6 @[680px]:px-7 @[1200px]:px-10"
       data-brief-document-version={document.version}
     >
-      {masthead ? <BriefMasthead title={document.title} generatedAt={document.generatedAt} /> : null}
+      {masthead ? <BriefMasthead generatedAt={document.generatedAt} timezone={document.timezone} /> : null}
       <header className="mx-auto mb-7 max-w-[1760px] border-b border-[var(--color-border)] pb-5">
-        <div className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
-          <Newspaper className="size-3.5" />
-          Native live brief
-          {composing ? (
-            <span className="ml-auto flex items-center gap-1.5 normal-case tracking-normal text-[var(--color-accent)]">
-              <span className="size-1.5 animate-pulse rounded-full bg-current" />
-              Adding regions…
-            </span>
-          ) : hydration.isError ? (
-            <span className="ml-auto flex items-center gap-1 normal-case tracking-normal text-[var(--color-warning)]">
-              <AlertTriangle className="size-3" />
-              Saved details shown
-            </span>
-          ) : (
-            <span className="ml-auto flex items-center gap-1 normal-case tracking-normal">
-              <CheckCircle2 className="size-3" />
-              Live
-            </span>
-          )}
-        </div>
+        {composing || hydration.isError ? (
+          <div className="mb-3 flex items-center justify-end gap-2 text-[11px] font-medium text-[var(--color-text-muted)]">
+            {composing ? (
+              <span className="flex items-center gap-1.5 text-[var(--color-accent)]">
+                <span className="size-1.5 animate-pulse rounded-full bg-current" />
+                Adding regions…
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[var(--color-warning)]">
+                <AlertTriangle className="size-3" />
+                Saved details shown
+              </span>
+            )}
+          </div>
+        ) : null}
         {masthead ? null : (
           <h1 className="max-w-3xl text-balance font-display text-3xl font-semibold leading-[1.05] tracking-tight @[640px]:text-4xl">
             {document.title}
           </h1>
         )}
-        <p className="mt-3 max-w-3xl text-pretty text-sm leading-relaxed text-[var(--color-text-muted)] @[640px]:text-[15px]">
+        <p
+          className={
+            masthead
+              ? 'mt-3 max-w-4xl text-pretty font-display text-lg leading-relaxed text-[var(--color-text-muted)] first-letter:float-left first-letter:mr-2 first-letter:font-display first-letter:text-5xl first-letter:font-semibold first-letter:leading-[0.82] first-letter:text-[var(--color-accent-2)] @[640px]:text-xl'
+              : 'mt-3 max-w-3xl text-pretty text-sm leading-relaxed text-[var(--color-text-muted)] @[640px]:text-[15px]'
+          }
+        >
           {document.summary}
         </p>
         {masthead ? null : (
@@ -253,17 +254,16 @@ export function BriefCanvas({
           </time>
         )}
       </header>
-      {/* Newspaper flow: one column on narrow panes, two from ~840px, three
-          on a rail-closed 16:9 display (~1200px of container). Each top-level
-          block is a column unit — unbreakable, and its own container-query
-          context so nested grids respond to the column width, not the page. */}
-      <div className="mx-auto max-w-[1760px] gap-x-9 @[840px]:columns-2 @[1200px]:columns-3">
+      {/* Editorial grid: phone widths remain a single reading column; roomy
+          panes let authored wide/feature concepts claim a bounded 2×1 or 2×2
+          footprint. Each unit retains its own container-query context. */}
+      <div className="mx-auto grid max-w-[1760px] grid-cols-1 gap-x-9 @[840px]:grid-cols-2 @[1200px]:grid-cols-3">
         {document.regions.map((region) => (
           <section key={region.id} data-brief-region={region.id} className="contents">
             {columnBlocks(region.tree).map((block, index) => (
               <div
                 key={block.node.id ?? `${block.node.kind}-${index}`}
-                className={`@container ${block.wrapperClass} break-inside-avoid`}
+                className={`@container ${block.wrapperClass}`}
               >
                 <BriefNodeView node={block.node} context={context} regionSummary={region.summary} />
               </div>
@@ -530,10 +530,18 @@ function columnBlocks(tree: BriefNode): Array<{ node: BriefNode; wrapperClass: s
     const presentation = briefNodePresentationClass(tree);
     return tree.children.map((node) => ({
       node,
-      wrapperClass: [spacing, presentation].filter(Boolean).join(' '),
+      wrapperClass: [spacing, presentation, footprintClass(node)].filter(Boolean).join(' '),
     }));
   }
-  return [{ node: tree, wrapperClass: 'mb-6' }];
+  return [{ node: tree, wrapperClass: ['mb-6', footprintClass(tree)].filter(Boolean).join(' ') }];
+}
+
+function footprintClass(node: BriefNode): string {
+  if (node.footprint === 'feature') {
+    return '@[840px]:col-span-2 @[840px]:row-span-2 @[840px]:min-h-[420px] [&>*]:h-full';
+  }
+  if (node.footprint === 'wide') return '@[840px]:col-span-2';
+  return '';
 }
 
 function humanizeAction(action: string) {

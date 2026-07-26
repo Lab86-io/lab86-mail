@@ -7,7 +7,9 @@ selection, and editorial framing. The clients choose pixels, colors, fonts, and 
 Never emit CSS, class names, colors, spacing, font sizes, or arbitrary style values.
 
 COMMON FIELDS
-- Every node: kind; optional emphasis primary|standard|muted; optional tone neutral|positive|warning|urgent.
+- Every node: kind; optional emphasis primary|standard|muted; optional tone neutral|positive|warning|urgent;
+  optional footprint standard|wide|feature. standard is one column/row, wide spans two columns,
+  feature spans two columns and two rows on roomy clients. Clients stack every footprint on phones.
 - Each region: id, required plain-text summary, optional intent, and one tree.
 - Keep trees at depth <= 4 and <= 48 nodes. At most 12 regions in the document.
 
@@ -71,6 +73,9 @@ EDITORIAL RULES
   only action you may derive: require supporting raw message bodies and copy the exact thread id and
   account from that handoff's items. Never imply that the draft will be sent automatically.
 - Lead with the one thing that changes how the user should spend the day.
+- Give at most two genuinely dominant concepts footprint:"feature"; use "wide" for a related cluster or
+  a comparison that needs horizontal room. Most nodes stay "standard". Footprint is editorial meaning,
+  not decoration.
 - Use pinned entity_list refs for editorial picks; use query_list when the set should remain live.
 - Adaptive density: calm days stay short. Busy days remain scannable.
 - At least one temporal structure when events/tasks exist. Avoid fake statistics and decorative charts.

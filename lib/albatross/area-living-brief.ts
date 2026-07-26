@@ -13,6 +13,7 @@ import {
 } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
+import { dailyIntentBudget, intentAppliesToScope } from './daily-intent';
 
 const AREA_ARTIFACT_DEADLINE_MS = 180_000;
 
@@ -50,6 +51,11 @@ type AreaHomeLike = {
   projects?: any[];
   places?: any[];
   counts?: Record<string, any>;
+  dailyAlignment?: {
+    localDate?: string;
+    reflection?: string | null;
+    tomorrowIntent?: string | null;
+  } | null;
 };
 
 function iso(value: unknown) {
@@ -72,6 +78,15 @@ export function buildAreaArtifactContext(
   evidenceIndex?: Record<string, any> | null,
 ) {
   const areaId = String(home.area?._id || '');
+  const nextDayIntent = clean(home.dailyAlignment?.tomorrowIntent, 10_000);
+  const intentLabels = [
+    clean(home.area?.name, 180),
+    clean(home.area?.description, 1_200),
+    ...(home.plans || []).flatMap((row) => [clean(row.title, 240), clean(row.outcome, 1_200)]),
+    ...(home.projects || []).flatMap((row) => [clean(row.title, 240), clean(row.outcome, 1_200)]),
+    ...(home.tasks || []).map((row) => clean(row.title, 500)),
+  ].filter((value): value is string => Boolean(value));
+  const intentBudget = dailyIntentBudget(nextDayIntent);
   return {
     edition: {
       generatedAt,
@@ -85,6 +100,14 @@ export function buildAreaArtifactContext(
       kind: clean(home.area?.kind, 80),
       primaryDomain: clean(home.area?.primaryDomain, 240),
     },
+    nextDayIntent: nextDayIntent
+      ? {
+          localDate: clean(home.dailyAlignment?.localDate, 20),
+          text: nextDayIntent,
+          appliesToArea: intentAppliesToScope(nextDayIntent, intentLabels),
+          ...intentBudget,
+        }
+      : null,
     // In this read model, plans are the latest plan nested under each active
     // Work intent. Keep both identities explicit so the document never turns
     // Plans back into a standalone navigation destination.
@@ -315,6 +338,7 @@ THIS DOCUMENT IS THE AREA SCREEN. It is not a widget inside a dashboard. Be crea
 
 PRODUCT TRUTH:
 - Albatross is an intent layer. Declared Work and what the user explicitly said they are trying to do outrank the volume of mail, events, or tasks.
+- nextDayIntent is the user's explicit attention budget. When appliesToArea is true, fit this Area's optional work to its requestedItems/requestedMinutes and make that constraint visible in the composition. When false, compose this Area normally; do not let intent for another Area suppress it.
 - Projects/Epics are durable multi-week containers grouping tasks and Work. A plan is nested under the Work it implements; never create a standalone Plans destination or Plans section.
 - Evidence can support a read but cannot prove intent or completion. Never say work is done unless an explicit completed/completedAt state says so. Never infer completion from email silence or activity.
 - livingIndex.strength is bounded corroboration, not a completion score or probability. Use it only to explain how well-grounded the Area model is. More repeated evidence should make the read more confident, never louder or falsely certain.
@@ -504,6 +528,7 @@ const AREA_DOCUMENT_SYSTEM = `${BRIEF_DOCUMENT_V2_SYSTEM_PROMPT}
 
 You are composing one Area living brief, not a Daily Brief.
 - Declared Work and the user's explicit intent outrank evidence volume.
+- nextDayIntent is authoritative only when appliesToArea is true. Honor its requested item/time budget as the Area's editorial scope. When false, render the Area normally.
 - Use query_list {name:"area_open_work",areaId:"<current area id>"} when the region should stay live.
 - Include areaId on open_area, discuss_area, and capture_intent payloads.
 - Plans are nested under Work; never invent a standalone Plans destination.
