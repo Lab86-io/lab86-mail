@@ -28,7 +28,10 @@ jobs:
       - name: Check out the production commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || 'main' }}
+          # Deploy Production creates and pushes the versioned release commit.
+          # workflow_run.head_sha is its pre-release input, so always build the
+          # resulting commit at the protected production branch tip.
+          ref: main
 
       - name: Verify release automation
         run: |
