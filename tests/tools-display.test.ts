@@ -202,6 +202,11 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
     );
     expect(citations[0].domain).toBe('example.com');
     for (const citation of citations) expectParses(SerializableCitationSchema, citation);
+    expect(
+      buildCitationsPayload({
+        citations: [{ url: 'not a valid url', title: 'Imported reference' }],
+      })[0].domain,
+    ).toBeUndefined();
   });
 
   test('link preview / image / gallery / video / audio', () => {
@@ -336,6 +341,16 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
       date: 1_753_200_000_000,
     });
     expect(payload.snippet.length).toBeLessThan(1_230);
+    expect(
+      buildEmailPreviewPayload({
+        account: 'account-1',
+        threadId: 'thread-10',
+        subject: 'Lake plans',
+        from: 'Sam',
+        date: 1_753_200_000_000,
+        snippet: 'See you there.',
+      }).date,
+    ).toBe(1_753_200_000_000);
     expect(() =>
       buildEmailPreviewPayload({
         account: '',
@@ -426,6 +441,17 @@ describe('display tool registration', () => {
       ['show_social_post', { network: 'x', authorName: 'Jane' }, 'social-post'],
       ['show_message_draft', { to: ['sam@example.com'], subject: 'Hi', body: 'Hello' }, 'message-draft'],
       [
+        'show_email_preview',
+        {
+          account: 'account-1',
+          threadId: 'thread-9',
+          subject: 'Lake plans',
+          from: 'Sam',
+          snippet: 'See you there.',
+        },
+        'email-preview',
+      ],
+      [
         'show_chart',
         { type: 'bar', xKey: 'x', series: [{ key: 'y', label: 'Y' }], data: [{ x: 'a', y: 1 }] },
         'chart',
@@ -512,6 +538,25 @@ describe('show_weather', () => {
       const result: any = await invokeTool(showWeather, { place: 'Nowhereville' }, toolContext());
       expect(result.ok).toBe(false);
       expect(result.error).toContain('Could not resolve a location');
+    } finally {
+      setWeatherFetchForTests(undefined);
+    }
+  });
+
+  test('reports ok:false when the weather provider fails', async () => {
+    setWeatherFetchForTests(async () => {
+      throw new Error('Weather provider unavailable');
+    });
+    try {
+      const result: any = await invokeTool(
+        showWeather,
+        { latitude: 43.15, longitude: -77.62 },
+        toolContext(),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.component).toBe('weather-widget');
+      expect(result.payload).toBeNull();
+      expect(result.error).toBe('Weather provider unavailable');
     } finally {
       setWeatherFetchForTests(undefined);
     }
