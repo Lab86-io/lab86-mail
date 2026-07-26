@@ -532,8 +532,19 @@ function connectedHandoff(item: DailyReportMcpItem, generatedAt: number): Atomic
         ]
       : [],
     generatedAt,
-    mergeKeys: refMergeKeys(ref),
+    mergeKeys: uniqueStrings([...refMergeKeys(ref), ...connectedEpisodeMergeKeys(item)]),
   };
+}
+
+// Some connected sources emit one row per mechanical update even though the
+// user experiences them as one editorial episode. Preserve every source item,
+// action, and ref, but let the canonical index compose the episode once.
+function connectedEpisodeMergeKeys(item: DailyReportMcpItem): string[] {
+  const descriptor = `${item.kind} ${item.title}`.toLocaleLowerCase();
+  if (descriptor.includes('xcode') && descriptor.includes('cloud') && descriptor.includes('build')) {
+    return [`episode:${item.server}:xcode-cloud-builds`];
+  }
+  return [];
 }
 
 function safeHttpsUrl(value: string | null | undefined): string | null {

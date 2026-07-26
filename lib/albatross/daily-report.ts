@@ -1,7 +1,11 @@
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
-import type { TriageHandoffV1 } from '../shared/triage-handoff';
 import { areaBrandingFromFacts } from './area-home';
+
+export {
+  prioritizeHandoffsForIntent,
+  selectHandoffsForIntent,
+} from './daily-intent';
 
 export interface AlbatrossDailyReportArea {
   areaId: string;
@@ -128,68 +132,6 @@ function latestDailyAlignment(rows: any[]): AlbatrossDailyAlignment | undefined 
     reflection: cleanText(checkin.responseText),
     tomorrowIntent: cleanText(checkin.tomorrowIntentText),
   };
-}
-
-const INTENT_STOP_WORDS = new Set([
-  'about',
-  'after',
-  'again',
-  'also',
-  'before',
-  'done',
-  'from',
-  'have',
-  'into',
-  'just',
-  'need',
-  'that',
-  'their',
-  'them',
-  'then',
-  'there',
-  'this',
-  'today',
-  'tomorrow',
-  'want',
-  'with',
-]);
-
-function intentTerms(text: string): Set<string> {
-  return new Set(
-    text
-      .toLocaleLowerCase()
-      .match(/[\p{L}\p{N}]+/gu)
-      ?.filter((term) => term.length > 2 && !INTENT_STOP_WORDS.has(term)) ?? [],
-  );
-}
-
-/**
- * Stable intent overlay for the SBAR feed. Protected handoffs retain their
- * safety precedence; within each protection tier, a stated plan moves matching
- * handoffs upward without deleting or rewriting source-grounded records.
- */
-export function prioritizeHandoffsForIntent(
-  handoffs: TriageHandoffV1[],
-  tomorrowIntent?: string | null,
-): TriageHandoffV1[] {
-  const desired = intentTerms(tomorrowIntent?.trim() || '');
-  if (!desired.size) return [...handoffs];
-  return handoffs
-    .map((handoff, index) => {
-      const searchable = [
-        handoff.situation,
-        handoff.assessment,
-        handoff.recommendation,
-        ...handoff.background,
-        ...handoff.evidence.map((item) => item.label),
-        ...handoff.items.flatMap((item) => [item.situation, item.assessment, item.recommendation]),
-      ].join(' ');
-      const available = intentTerms(searchable);
-      const matches = [...desired].filter((term) => available.has(term)).length;
-      return { handoff, index, matches, protected: handoff.protected === true };
-    })
-    .sort((a, b) => Number(b.protected) - Number(a.protected) || b.matches - a.matches || a.index - b.index)
-    .map(({ handoff }) => handoff);
 }
 
 export function buildAlbatrossDailyReportContext(

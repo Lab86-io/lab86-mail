@@ -75,6 +75,7 @@ const commonNodeShape = {
   id: z.string().trim().min(1).max(120).optional(),
   emphasis: emphasisSchema,
   tone: toneSchema,
+  footprint: z.enum(['standard', 'wide', 'feature']).optional(),
 };
 
 const framingSchema = z.object({
@@ -256,6 +257,7 @@ export type BriefNode =
       id?: string;
       emphasis: 'primary' | 'standard' | 'muted';
       tone: 'neutral' | 'positive' | 'warning' | 'urgent';
+      footprint?: 'standard' | 'wide' | 'feature';
       density: 'airy' | 'standard' | 'dense';
       children: BriefNode[];
     }
@@ -264,6 +266,7 @@ export type BriefNode =
       id?: string;
       emphasis: 'primary' | 'standard' | 'muted';
       tone: 'neutral' | 'positive' | 'warning' | 'urgent';
+      footprint?: 'standard' | 'wide' | 'feature';
       columns: 2 | 3;
       children: BriefNode[];
     }
@@ -272,6 +275,7 @@ export type BriefNode =
       id?: string;
       emphasis: 'primary' | 'standard' | 'muted';
       tone: 'neutral' | 'positive' | 'warning' | 'urgent';
+      footprint?: 'standard' | 'wide' | 'feature';
       ratio: 'balanced' | 'lead';
       children: [BriefNode, BriefNode];
     }
@@ -280,6 +284,7 @@ export type BriefNode =
       id?: string;
       emphasis: 'primary' | 'standard' | 'muted';
       tone: 'neutral' | 'positive' | 'warning' | 'urgent';
+      footprint?: 'standard' | 'wide' | 'feature';
       surface: 'plain' | 'elevated' | 'glass';
       children: BriefNode[];
     }
@@ -288,6 +293,7 @@ export type BriefNode =
       id?: string;
       emphasis: 'primary' | 'standard' | 'muted';
       tone: 'neutral' | 'positive' | 'warning' | 'urgent';
+      footprint?: 'standard' | 'wide' | 'feature';
       title: string;
       kicker?: string;
       surface: 'plain' | 'elevated' | 'glass';
@@ -1017,6 +1023,11 @@ function commonNodeFields(node: Record<string, unknown>) {
     ...(clippedString(node.id, 120) ? { id: clippedString(node.id, 120) } : {}),
     emphasis: oneOf(node.emphasis, ['primary', 'standard', 'muted'], 'standard'),
     tone: oneOf(node.tone, ['neutral', 'positive', 'warning', 'urgent'], 'neutral'),
+    ...(node.footprint === 'wide' || node.footprint === 'feature'
+      ? { footprint: node.footprint }
+      : node.footprint === 'standard'
+        ? { footprint: 'standard' as const }
+        : {}),
   };
 }
 

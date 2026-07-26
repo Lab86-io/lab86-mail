@@ -10,6 +10,7 @@
 // shiki, leaflet, recharts, the weather effect runtime — never weigh down the
 // shell bundle until a card actually renders.
 
+import { Mail, Paperclip } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { Loader } from '@/components/ui/loader';
 
@@ -133,6 +134,7 @@ export const TOOL_UI_RENDERED_TOOLS: ReadonlySet<string> = new Set([
   'show_order_summary',
   'show_social_post',
   'show_message_draft',
+  'show_email_preview',
 ]);
 
 export interface DraftOpenRequest {
@@ -149,10 +151,12 @@ export function ToolUiDisplayPart({
   toolName,
   output,
   onOpenDraft,
+  onOpenThread,
 }: {
   toolName: string;
   output: any;
   onOpenDraft?: (draft: DraftOpenRequest) => void;
+  onOpenThread?: (target: { account: string; threadId: string }) => void;
 }) {
   const payload = output?.payload;
   if (!output?.ok || !payload || typeof payload !== 'object') return null;
@@ -225,6 +229,56 @@ export function ToolUiDisplayPart({
                 : undefined
             }
           />
+        );
+      case 'show_email_preview':
+        return (
+          <button
+            type="button"
+            onClick={() =>
+              onOpenThread?.({ account: String(payload.account), threadId: String(payload.threadId) })
+            }
+            disabled={!onOpenThread}
+            className="group w-full max-w-[520px] overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-left shadow-[var(--shadow-soft)] transition hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-pop)] disabled:cursor-default"
+          >
+            <div className="flex items-start gap-3 border-b border-[var(--color-border)] px-4 py-3.5">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+                <Mail className="size-4.5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-3">
+                  <span className="truncate text-sm font-semibold text-[var(--color-text)]">
+                    {payload.from}
+                  </span>
+                  {payload.date ? (
+                    <time className="shrink-0 text-[10px] text-[var(--color-text-faint)]">
+                      {new Intl.DateTimeFormat(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      }).format(new Date(payload.date))}
+                    </time>
+                  ) : null}
+                </span>
+                <span className="mt-0.5 block line-clamp-2 font-display text-base font-semibold leading-tight text-[var(--color-text)]">
+                  {payload.subject}
+                </span>
+              </span>
+            </div>
+            <span className="block px-4 py-3 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+              <span className="line-clamp-4">{payload.snippet}</span>
+              <span className="mt-3 flex items-center gap-3 text-[10px] font-medium text-[var(--color-text-faint)]">
+                {payload.messageCount ? <span>{payload.messageCount} messages</span> : null}
+                {payload.attachmentCount ? (
+                  <span className="inline-flex items-center gap-1">
+                    <Paperclip className="size-3" />
+                    {payload.attachmentCount}
+                  </span>
+                ) : null}
+                <span className="ml-auto text-[var(--color-accent)] group-hover:underline">Open email</span>
+              </span>
+            </span>
+          </button>
         );
       default:
         return null;

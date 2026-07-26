@@ -14,6 +14,7 @@ export const richBriefDocumentFixture: BriefDocumentV2 = {
       summary: 'Prepare for the product review at 10:00 AM.',
       tree: {
         kind: 'hero',
+        footprint: 'feature',
         emphasis: 'primary',
         tone: 'neutral',
         surface: 'elevated',

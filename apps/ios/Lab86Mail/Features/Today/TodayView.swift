@@ -91,10 +91,10 @@ struct TodayView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     DailyBriefMasthead(
-                        title: document.title,
                         generatedAt: report.generatedAt,
                         art: report.art
                     )
+                    DailyBriefLede(text: document.summary)
                     BriefDocumentView(
                         document: document,
                         isComposing: report.artifactStatus == "composing",

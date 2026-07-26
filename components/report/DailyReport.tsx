@@ -1296,15 +1296,7 @@ export function DailyReport() {
       {/* Floating toolbar for the artifact view — fades until hovered. */}
       {displayArtifact || displayDocument ? (
         <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
-          {displayDocument ? (
-            <span
-              title="This edition uses the native, live-hydrating Brief Document."
-              className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]"
-            >
-              <Newspaper className="size-2.5" />
-              <span className="hidden @[520px]:inline">Native live brief</span>
-            </span>
-          ) : artifactSource === 'deterministic' ? (
+          {displayDocument ? null : artifactSource === 'deterministic' ? (
             <span
               title="AI composition was unavailable, so this edition is using the structured artifact fallback."
               className="flex items-center gap-1 pl-1.5 pr-1 text-[10px] text-[var(--color-text-muted)]"

@@ -30,6 +30,7 @@ import {
   buildCitationsPayload,
   buildCodeDiffPayload,
   buildCodePayload,
+  buildEmailPreviewPayload,
   buildImageGalleryPayload,
   buildImagePayload,
   buildLinkPreviewPayload,
@@ -312,6 +313,39 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
     expectParses(SerializableMessageDraftSchema, payload);
     expect(() => buildMessageDraftPayload({ to: [], subject: 'x', body: 'y' }, 'draft-bad')).toThrow();
   });
+
+  test('email preview keeps exact routing identity and clamps body copy', () => {
+    const payload = buildEmailPreviewPayload(
+      {
+        account: ' account-1 ',
+        threadId: ' thread-9 ',
+        subject: 'Lake plans',
+        from: 'Sam',
+        date: 1_753_200_000,
+        snippet: 'A'.repeat(1_500),
+        messageCount: 4.4,
+        attachmentCount: 2,
+      },
+      'email-preview-test',
+    );
+    expect(payload).toMatchObject({
+      account: 'account-1',
+      threadId: 'thread-9',
+      subject: 'Lake plans',
+      messageCount: 4,
+      date: 1_753_200_000_000,
+    });
+    expect(payload.snippet.length).toBeLessThan(1_230);
+    expect(() =>
+      buildEmailPreviewPayload({
+        account: '',
+        threadId: 'thread-9',
+        subject: 'x',
+        from: 'Sam',
+        snippet: 'x',
+      }),
+    ).toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -320,7 +354,7 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
 
 describe('display tool registration', () => {
   test('every display tool is registered and named show_*', () => {
-    expect(DISPLAY_TOOL_NAMES.length).toBe(20);
+    expect(DISPLAY_TOOL_NAMES.length).toBe(21);
     for (const name of DISPLAY_TOOL_NAMES) {
       expect(name.startsWith('show_')).toBe(true);
       expect(getTool(name)?.name).toBe(name);

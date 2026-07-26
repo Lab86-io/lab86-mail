@@ -380,7 +380,22 @@ describe('brief weather in the data pack', () => {
             handoff('passport', 'Renew the passport before the trip'),
           ],
           sections: {
+            tasks: [
+              {
+                cardId: 'billing-task',
+                boardId: 'board-1',
+                columnId: 'column-1',
+                title: 'Review the billing launch',
+                scope: 'week',
+              },
+            ],
             albatross: {
+              includedAreas: [],
+              askBeforeCentering: [],
+              activeIntents: [],
+              activeProjects: [],
+              contextReview: [],
+              completions: [],
               dailyAlignment: {
                 localDate: '2026-07-06',
                 reflection: 'Shipped the migration.',
@@ -397,8 +412,11 @@ describe('brief weather in the data pack', () => {
         } as any,
       );
       expect(prompt).toContain('"tomorrowIntent": "Finish passport renewal."');
-      expect(prompt.indexOf('"id": "passport"')).toBeLessThan(prompt.indexOf('"id": "billing"'));
-      expect(prompt).toContain('authoritative attention signal');
+      expect(prompt).toContain('"id": "passport"');
+      expect(prompt).not.toContain('"id": "billing"');
+      expect(prompt).not.toContain('"cardId": "billing-task"');
+      expect(prompt).toContain('"suppressUnrelated": true');
+      expect(prompt).toContain('authoritative attention budget');
     });
   });
 });

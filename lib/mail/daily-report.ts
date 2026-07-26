@@ -5,7 +5,7 @@ import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import {
   type AlbatrossDailyReportContext,
   loadLiveAlbatrossDailyReportContext,
-  prioritizeHandoffsForIntent,
+  selectHandoffsForIntent,
 } from '../albatross/daily-report';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
@@ -1048,7 +1048,7 @@ async function composeReport(input: {
   const title = `${
     input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'
   } Daily Report`;
-  const handoffs = prioritizeHandoffsForIntent(
+  const handoffs = selectHandoffsForIntent(
     buildTriageHandoffIndex({
       _id: reportId,
       kind: input.kind,
@@ -1060,7 +1060,7 @@ async function composeReport(input: {
       stats,
     }),
     input.albatrossContext.dailyAlignment?.tomorrowIntent,
-  );
+  ).handoffs;
   narrative = localHandoffNarrative(input.kind, handoffs);
   let model = 'local';
 

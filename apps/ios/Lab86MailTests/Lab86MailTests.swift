@@ -323,6 +323,33 @@ struct Lab86MailTests {
         #expect(value["result"]?["threads"]?.arrayValue?.first?["subject"]?.stringValue == "Dinner")
     }
 
+    @Test
+    func parsesInlineEmailPreviewWithExactThreadIdentity() {
+        let card = AssistantToolCard.parse(
+            toolName: "show_email_preview",
+            output: .object([
+                "ok": .bool(true),
+                "payload": .object([
+                    "account": .string("account-1"),
+                    "threadId": .string("thread-9"),
+                    "subject": .string("Lake plans"),
+                    "from": .string("Sam"),
+                    "date": .number(1_753_000_000_000),
+                    "snippet": .string("Bring sunscreen."),
+                    "messageCount": .number(4),
+                ]),
+            ])
+        )
+        guard case .email(let email) = card else {
+            Issue.record("Expected an email preview card")
+            return
+        }
+        #expect(email.account == "account-1")
+        #expect(email.threadID == "thread-9")
+        #expect(email.subject == "Lake plans")
+        #expect(email.messageCount == 4)
+    }
+
     @Test @MainActor
     func chatApprovalResumesThePausedToolCallWithARealToolResult() {
         let input: JSONValue = .object([

@@ -49,6 +49,20 @@ enum AssistantToolCard: Equatable, Sendable {
         let body: String
     }
 
+    struct EmailCard: Identifiable, Equatable, Sendable {
+        let account: String
+        let threadID: String
+        let subject: String
+        let sender: String
+        let recipient: String?
+        let date: Date?
+        let snippet: String
+        let messageCount: Int?
+        let attachmentCount: Int?
+
+        var id: String { "\(account):\(threadID)" }
+    }
+
     struct ChartCard: Equatable, Sendable {
         struct Point: Equatable, Sendable {
             let x: String
@@ -69,6 +83,7 @@ enum AssistantToolCard: Equatable, Sendable {
     case images([ImageCard])
     case weather(WeatherCard)
     case draft(DraftCard)
+    case email(EmailCard)
     case chart(ChartCard)
     case summary(tool: String, String)
 
@@ -161,6 +176,29 @@ enum AssistantToolCard: Equatable, Sendable {
                   let body = payload["body"]?.stringValue else { break }
             return .draft(DraftCard(to: to, subject: subject, body: body))
 
+        case "show_email_preview":
+            guard let account = payload["account"]?.stringValue,
+                  let threadID = payload["threadId"]?.stringValue,
+                  let subject = payload["subject"]?.stringValue,
+                  let sender = payload["from"]?.stringValue,
+                  let snippet = payload["snippet"]?.stringValue else { break }
+            var date: Date?
+            if var timestamp = payload["date"]?.doubleValue {
+                if timestamp > 10_000_000_000 { timestamp /= 1_000 }
+                date = Date(timeIntervalSince1970: timestamp)
+            }
+            return .email(EmailCard(
+                account: account,
+                threadID: threadID,
+                subject: subject,
+                sender: sender,
+                recipient: payload["to"]?.stringValue,
+                date: date,
+                snippet: snippet,
+                messageCount: payload["messageCount"]?.doubleValue.map { Int($0) },
+                attachmentCount: payload["attachmentCount"]?.doubleValue.map { Int($0) }
+            ))
+
         case "show_chart":
             let xKey = payload["xKey"]?.stringValue ?? "x"
             let series = (payload["series"]?.arrayValue ?? []).compactMap { row -> (String, String)? in
@@ -218,6 +256,7 @@ struct AssistantToolCardView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     let card: AssistantToolCard
+    @State private var presentedEmail: AssistantToolCard.EmailCard?
 
     var body: some View {
         Group {
@@ -356,6 +395,69 @@ struct AssistantToolCardView: View {
                     }
                 }
 
+            case .email(let email):
+                Button {
+                    presentedEmail = email
+                } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(alignment: .top, spacing: 11) {
+                            ZStack {
+                                Circle().fill(environment.theme.accentSoftColor)
+                                Image(systemName: "envelope.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(environment.theme.accentColor)
+                            }
+                            .frame(width: 38, height: 38)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(email.sender)
+                                        .font(.subheadline.weight(.semibold))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    if let date = email.date {
+                                        Text(date.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                Text(email.subject)
+                                    .font(environment.theme.displayType.displayFont(size: 18))
+                                    .fontWeight(.semibold)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                        }
+                        .padding(13)
+                        Divider()
+                        Text(email.snippet)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(5)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 13)
+                            .padding(.top, 11)
+                        HStack(spacing: 10) {
+                            if let count = email.messageCount {
+                                Text("\(count) message\(count == 1 ? "" : "s")")
+                            }
+                            if let count = email.attachmentCount, count > 0 {
+                                Label("\(count)", systemImage: "paperclip")
+                            }
+                            Spacer()
+                            Label("Open email", systemImage: "arrow.up.right")
+                                .foregroundStyle(environment.theme.accentColor)
+                        }
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.tertiary)
+                        .padding(13)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .surfaceCard(cornerRadius: 16)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Email from \(email.sender), \(email.subject)")
+                .accessibilityHint("Opens the full email in a sheet")
+
             case .chart(let chart):
                 cardShell(chart.title) {
                     Chart(Array(chart.points.enumerated()), id: \.offset) { _, point in
@@ -379,6 +481,19 @@ struct AssistantToolCardView: View {
             case .summary(_, let text):
                 cardShell(nil) {
                     Text(text).font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .sheet(item: $presentedEmail) { email in
+            NavigationStack {
+                ThreadView(
+                    route: ThreadRoute(accountID: email.account, threadID: email.threadID),
+                    summary: nil
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { presentedEmail = nil }
+                    }
                 }
             }
         }

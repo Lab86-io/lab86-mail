@@ -159,7 +159,7 @@ describe('native push Convex receipts', () => {
     try {
       const t = convexTest(schema, convexModules);
       const workIds = await t.run(async (ctx) => {
-        const ts = Date.now();
+        const ts = Date.parse('2026-07-24T12:00:00.000Z');
         return Promise.all(
           ['First reconciled work', 'Second reconciled work'].map((title) =>
             ctx.db.insert('albatrossIntents', {
@@ -245,6 +245,56 @@ describe('native push Convex receipts', () => {
       expect(state.row?.tomorrowIntentText).toBe('I will validate the production build.');
       expect(state.row?.reconciledChanges?.map((change) => change.id)).toEqual(workIds.map(String));
       expect(state.notification?.status).toBe('acted');
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('reconciles a unique free-form reflection match into durable source completion', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const workId = await t.run((ctx) => {
+        // The unresolved Work predates the check-in day. It must still be in
+        // the reconciliation corpus so free-form reflection can retire it.
+        const ts = Date.parse('2026-05-01T12:00:00.000Z');
+        return ctx.db.insert('albatrossIntents', {
+          userId: 'freeform_reflection_user',
+          rawText: 'Ship notification flow',
+          source: 'text',
+          title: 'Ship notification flow',
+          status: 'ready',
+          workState: 'active',
+          agentState: 'idle',
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      });
+      const created = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'freeform_reflection_user',
+        localDate: '2026-07-25',
+        timezone: 'UTC',
+      });
+      const result = await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'freeform_reflection_user',
+        checkinId: created.checkin._id,
+        promptKind: 'reflection',
+        responseText: 'I shipped the notification flow today.',
+        completed: [],
+      });
+      expect(result.matchedByReflection).toEqual([{ kind: 'work', id: String(workId) }]);
+
+      const state = await t.run(async (ctx) => ({
+        work: await ctx.db.get(workId),
+        checkin: await ctx.db.get(created.checkin._id),
+      }));
+      expect(state.work?.workState).toBe('done');
+      expect(state.work?.status).toBe('done');
+      expect(state.checkin?.reconciledChanges?.map((change) => change.id)).toEqual([String(workId)]);
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;

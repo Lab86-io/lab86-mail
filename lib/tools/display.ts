@@ -616,6 +616,48 @@ export interface MessageDraftInput {
   from?: string;
 }
 
+export interface EmailPreviewInput {
+  account: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  to?: string;
+  date?: number;
+  snippet: string;
+  messageCount?: number;
+  attachmentCount?: number;
+}
+
+export function buildEmailPreviewPayload(input: EmailPreviewInput, id = displayId('email-preview')) {
+  if (!input.account.trim() || !input.threadId.trim()) {
+    throw new Error('Email preview requires an exact account and thread id.');
+  }
+  const date =
+    input.date !== undefined && Number.isFinite(input.date)
+      ? input.date < 10_000_000_000
+        ? input.date * 1_000
+        : input.date
+      : undefined;
+  return {
+    id,
+    account: input.account.trim(),
+    threadId: input.threadId.trim(),
+    subject: input.subject.trim() || '(no subject)',
+    from: input.from.trim() || 'Unknown sender',
+    to: input.to?.trim() || undefined,
+    date,
+    snippet: clip(input.snippet.trim(), 1_200),
+    messageCount:
+      input.messageCount !== undefined
+        ? Math.round(Math.max(1, Math.min(100, input.messageCount)))
+        : undefined,
+    attachmentCount:
+      input.attachmentCount !== undefined
+        ? Math.round(Math.max(0, Math.min(50, input.attachmentCount)))
+        : undefined,
+  };
+}
+
 export function buildMessageDraftPayload(input: MessageDraftInput, id = displayId('draft')) {
   if (!input.to.length) throw new Error('At least one recipient is required.');
   return {
@@ -1146,6 +1188,33 @@ export const showMessageDraft = defineTool({
   },
 });
 
+export const showEmailPreview = defineTool({
+  name: 'show_email_preview',
+  description:
+    'Render one retrieved email thread as an inline preview card. Copy account and threadId exactly from search_threads/corpus_search/read_thread, then use the newest real sender/date/body excerpt. The card opens the existing mail reader when the user taps it.',
+  category: 'meta',
+  mutating: false,
+  input: z.object({
+    account: z.string().min(1),
+    threadId: z.string().min(1),
+    subject: z.string().min(1),
+    from: z.string().min(1),
+    to: z.string().optional(),
+    date: z.number().optional(),
+    snippet: z.string().min(1),
+    messageCount: z.number().int().positive().max(100).optional(),
+    attachmentCount: z.number().int().nonnegative().max(50).optional(),
+  }),
+  output: displayOutput,
+  async handler(args) {
+    return displayResult(
+      'email-preview',
+      () => buildEmailPreviewPayload(args),
+      `Email preview: ${args.subject}`,
+    );
+  },
+});
+
 export const DISPLAY_TOOLS = [
   showWeather,
   showChart,
@@ -1167,6 +1236,7 @@ export const DISPLAY_TOOLS = [
   showOrderSummary,
   showSocialPost,
   showMessageDraft,
+  showEmailPreview,
 ];
 
 export const DISPLAY_TOOL_NAMES = DISPLAY_TOOLS.map((tool) => tool.name);

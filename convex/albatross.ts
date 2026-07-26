@@ -1834,6 +1834,14 @@ export const areaHome = query({
       .query('albatrossAreaBriefs')
       .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
       .unique();
+    const recentCheckins = await ctx.db
+      .query('albatrossDailyCheckins')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(14);
+    const alignment = recentCheckins.find(
+      (checkin) => checkin.responseText?.trim() || checkin.tomorrowIntentText?.trim(),
+    );
     const evidence = {
       mail: {
         shown: mail.length,
@@ -1859,6 +1867,13 @@ export const areaHome = query({
     return {
       area: { ...area, ...branding },
       livingBrief,
+      dailyAlignment: alignment
+        ? {
+            localDate: alignment.localDate,
+            reflection: alignment.responseText ?? null,
+            tomorrowIntent: alignment.tomorrowIntentText ?? null,
+          }
+        : null,
       facts: { verified, candidate },
       mail,
       events,
