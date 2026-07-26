@@ -71,6 +71,10 @@ test('production preserves diagnostics with an immutable upload action', () => {
     readFileSync(new URL('./start-xcode-cloud.mjs', import.meta.url), 'utf8'),
     /manualTagStartCondition/,
   );
+  assert.match(
+    readFileSync(new URL('./start-xcode-cloud.mjs', import.meta.url), 'utf8'),
+    /manualBranchStartCondition/,
+  );
   assert.match(contents, /git -C "\$release_repo" merge-base --is-ancestor "\$release_sha" origin\/main/);
   assert.match(
     contents,

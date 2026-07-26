@@ -44,27 +44,35 @@ function tagPatternMatches(pattern, tagName) {
   return pattern.isPrefix ? tagName.startsWith(pattern.pattern) : tagName === pattern.pattern;
 }
 
-export function manualTagConditionAllows(condition, tagName) {
+function manualSourceConditionAllows(condition, sourceName) {
   const patterns = condition?.source?.patterns;
   if (!Array.isArray(patterns) || patterns.length === 0) return false;
-  const matches = patterns.map((pattern) => tagPatternMatches(pattern, tagName));
+  const matches = patterns.map((pattern) => tagPatternMatches(pattern, sourceName));
   return condition.source.isAllMatch ? matches.every(Boolean) : matches.some(Boolean);
 }
 
-export function createManualTagConditionUpdatePayload(workflowID, condition, tagName) {
+export function manualBranchConditionAllows(condition, branchName) {
+  return manualSourceConditionAllows(condition, branchName);
+}
+
+export function manualTagConditionAllows(condition, tagName) {
+  return manualSourceConditionAllows(condition, tagName);
+}
+
+function createManualSourceConditionUpdatePayload(workflowID, conditionAttribute, condition, sourceName) {
   const existingPatterns = Array.isArray(condition?.source?.patterns)
     ? condition.source.patterns.filter((pattern) => pattern && typeof pattern.pattern === 'string')
     : [];
-  const patterns = existingPatterns.some((pattern) => !pattern.isPrefix && pattern.pattern === tagName)
+  const patterns = existingPatterns.some((pattern) => !pattern.isPrefix && pattern.pattern === sourceName)
     ? existingPatterns
-    : [...existingPatterns, { isPrefix: false, pattern: tagName }];
+    : [...existingPatterns, { isPrefix: false, pattern: sourceName }];
 
   return {
     data: {
       type: 'ciWorkflows',
       id: workflowID,
       attributes: {
-        manualTagStartCondition: {
+        [conditionAttribute]: {
           source: {
             isAllMatch: false,
             patterns,
@@ -73,6 +81,19 @@ export function createManualTagConditionUpdatePayload(workflowID, condition, tag
       },
     },
   };
+}
+
+export function createManualBranchConditionUpdatePayload(workflowID, condition, branchName) {
+  return createManualSourceConditionUpdatePayload(
+    workflowID,
+    'manualBranchStartCondition',
+    condition,
+    branchName,
+  );
+}
+
+export function createManualTagConditionUpdatePayload(workflowID, condition, tagName) {
+  return createManualSourceConditionUpdatePayload(workflowID, 'manualTagStartCondition', condition, tagName);
 }
 
 export async function startBuildRunWithConditionPropagation(
@@ -333,23 +354,35 @@ export async function main() {
     const selectedRefName =
       gitReference.attributes?.name ?? gitRefName.replace(/^refs\/(?:heads|tags)\//, '');
 
-    if (
-      gitReference.attributes?.canonicalName?.startsWith('refs/tags/') &&
-      !manualTagConditionAllows(workflow.attributes?.manualTagStartCondition, selectedRefName)
-    ) {
+    const isBranch = gitReference.attributes?.canonicalName?.startsWith('refs/heads/');
+    const isTag = gitReference.attributes?.canonicalName?.startsWith('refs/tags/');
+    const missingManualBranchCondition =
+      isBranch &&
+      !manualBranchConditionAllows(workflow.attributes?.manualBranchStartCondition, selectedRefName);
+    const missingManualTagCondition =
+      isTag && !manualTagConditionAllows(workflow.attributes?.manualTagStartCondition, selectedRefName);
+
+    if (missingManualBranchCondition || missingManualTagCondition) {
+      const conditionKind = isBranch ? 'branch' : 'tag';
       const updated = await appStoreConnect(`/v1/ciWorkflows/${workflowID}`, {
         method: 'PATCH',
         body: JSON.stringify(
-          createManualTagConditionUpdatePayload(
-            workflowID,
-            workflow.attributes?.manualTagStartCondition,
-            selectedRefName,
-          ),
+          isBranch
+            ? createManualBranchConditionUpdatePayload(
+                workflowID,
+                workflow.attributes?.manualBranchStartCondition,
+                selectedRefName,
+              )
+            : createManualTagConditionUpdatePayload(
+                workflowID,
+                workflow.attributes?.manualTagStartCondition,
+                selectedRefName,
+              ),
         ),
       });
       workflow = updated.data;
       console.log(
-        `Associated release tag "${selectedRefName}" with Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}".`,
+        `Associated ${conditionKind} "${selectedRefName}" with Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}".`,
       );
     }
   }
