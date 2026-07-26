@@ -1,6 +1,10 @@
 import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createAppStoreConnectToken, requestAppStoreConnect } from './app-store-connect.mjs';
+import {
+  AppStoreConnectRequestError,
+  createAppStoreConnectToken,
+  requestAppStoreConnect,
+} from './app-store-connect.mjs';
 
 export function selectWorkflowID(workflows, workflowName) {
   const workflow = workflows.find(({ attributes }) => attributes.name === workflowName);
@@ -10,7 +14,7 @@ export function selectWorkflowID(workflows, workflowName) {
   return workflow.id;
 }
 
-export function selectGitRefID(references, refName) {
+export function selectGitReference(references, refName) {
   const reference = references.find(
     ({ attributes }) =>
       attributes.name === refName ||
@@ -20,10 +24,73 @@ export function selectGitRefID(references, refName) {
   if (!reference) {
     throw new Error(`Xcode Cloud git reference "${refName}" was not found.`);
   }
-  return reference.id;
+  return reference;
+}
+
+export function selectGitRefID(references, refName) {
+  return selectGitReference(references, refName).id;
 }
 
 export const selectBranchRefID = selectGitRefID;
+
+function tagPatternMatches(pattern, tagName) {
+  if (!pattern || typeof pattern.pattern !== 'string') return false;
+  return pattern.isPrefix ? tagName.startsWith(pattern.pattern) : tagName === pattern.pattern;
+}
+
+export function manualTagConditionAllows(condition, tagName) {
+  const patterns = condition?.source?.patterns;
+  if (!Array.isArray(patterns) || patterns.length === 0) return false;
+  const matches = patterns.map((pattern) => tagPatternMatches(pattern, tagName));
+  return condition.source.isAllMatch ? matches.every(Boolean) : matches.some(Boolean);
+}
+
+export function createManualTagConditionUpdatePayload(workflowID, condition, tagName) {
+  const existingPatterns = Array.isArray(condition?.source?.patterns)
+    ? condition.source.patterns.filter((pattern) => pattern && typeof pattern.pattern === 'string')
+    : [];
+  const patterns = existingPatterns.some((pattern) => !pattern.isPrefix && pattern.pattern === tagName)
+    ? existingPatterns
+    : [...existingPatterns, { isPrefix: false, pattern: tagName }];
+
+  return {
+    data: {
+      type: 'ciWorkflows',
+      id: workflowID,
+      attributes: {
+        manualTagStartCondition: {
+          source: {
+            isAllMatch: false,
+            patterns,
+          },
+        },
+      },
+    },
+  };
+}
+
+export async function startBuildRunWithConditionPropagation(
+  startBuildRun,
+  {
+    attempts = 4,
+    delayMilliseconds = 3_000,
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await startBuildRun();
+    } catch (error) {
+      const conditionIsPropagating =
+        error instanceof AppStoreConnectRequestError &&
+        error.status === 409 &&
+        error.message.includes('not associated with the workflow');
+      if (!conditionIsPropagating || attempt === attempts) throw error;
+      await sleep(delayMilliseconds);
+    }
+  }
+  throw new Error('Xcode Cloud build start exhausted its retry budget.');
+}
 
 export function createBuildRunPayload(workflowID, branchRefID) {
   return {
@@ -201,7 +268,7 @@ export async function main() {
       `/v1/ciProducts/${product.data.id}/workflows?limit=200`,
       appStoreConnect,
     );
-    const workflow = workflows.find(
+    let workflow = workflows.find(
       ({ attributes }) => attributes.name === process.env.XCODE_CLOUD_WORKFLOW_NAME,
     );
     if (workflow) {
@@ -227,6 +294,7 @@ export async function main() {
         ),
       });
       workflowID = created.data.id;
+      workflow = created.data;
       console.log(`Created Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}" (${workflowID}).`);
     }
 
@@ -235,13 +303,36 @@ export async function main() {
       `/v1/scmRepositories/${repository.data.id}/gitReferences?limit=200`,
       appStoreConnect,
     );
-    branchRefID = selectGitRefID(references, gitRefName);
+    const gitReference = selectGitReference(references, gitRefName);
+    branchRefID = gitReference.id;
+
+    if (
+      gitReference.attributes?.canonicalName?.startsWith('refs/tags/') &&
+      !manualTagConditionAllows(workflow.attributes?.manualTagStartCondition, gitRefName)
+    ) {
+      const updated = await appStoreConnect(`/v1/ciWorkflows/${workflowID}`, {
+        method: 'PATCH',
+        body: JSON.stringify(
+          createManualTagConditionUpdatePayload(
+            workflowID,
+            workflow.attributes?.manualTagStartCondition,
+            gitRefName,
+          ),
+        ),
+      });
+      workflow = updated.data;
+      console.log(
+        `Associated release tag "${gitRefName}" with Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}".`,
+      );
+    }
   }
 
-  const response = await appStoreConnect('/v1/ciBuildRuns', {
-    method: 'POST',
-    body: JSON.stringify(createBuildRunPayload(workflowID, branchRefID)),
-  });
+  const response = await startBuildRunWithConditionPropagation(() =>
+    appStoreConnect('/v1/ciBuildRuns', {
+      method: 'POST',
+      body: JSON.stringify(createBuildRunPayload(workflowID, branchRefID)),
+    }),
+  );
 
   const buildRun = response.data;
   console.log(

@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
+import { AppStoreConnectRequestError } from '../.github/scripts/app-store-connect.mjs';
 import {
   collectAppStoreConnectPages,
   createBuildRunPayload,
+  createManualTagConditionUpdatePayload,
   createProductionWorkflowPayload,
   hasExplicitBuildTarget,
   main,
+  manualTagConditionAllows,
   selectBranchRefID,
   selectWorkflowID,
+  startBuildRunWithConditionPropagation,
 } from '../.github/scripts/start-xcode-cloud.mjs';
 
 describe('Xcode Cloud build discovery', () => {
@@ -108,6 +112,94 @@ describe('Xcode Cloud build discovery', () => {
         },
       },
     });
+  });
+
+  test('recognizes exact and prefix manual tag conditions', () => {
+    expect(
+      manualTagConditionAllows(
+        {
+          source: {
+            isAllMatch: false,
+            patterns: [
+              { isPrefix: true, pattern: 'release/' },
+              { isPrefix: false, pattern: 'v0.9.0' },
+            ],
+          },
+        },
+        'v0.9.0',
+      ),
+    ).toBe(true);
+    expect(
+      manualTagConditionAllows(
+        {
+          source: {
+            isAllMatch: false,
+            patterns: [{ isPrefix: true, pattern: 'v' }],
+          },
+        },
+        'v0.9.1',
+      ),
+    ).toBe(true);
+    expect(manualTagConditionAllows(undefined, 'v0.9.0')).toBe(false);
+  });
+
+  test('adds the immutable release tag without discarding existing manual tag patterns', () => {
+    expect(
+      createManualTagConditionUpdatePayload(
+        'production-workflow',
+        {
+          source: {
+            isAllMatch: true,
+            patterns: [{ isPrefix: true, pattern: 'release/' }],
+          },
+        },
+        'v0.9.0',
+      ),
+    ).toEqual({
+      data: {
+        type: 'ciWorkflows',
+        id: 'production-workflow',
+        attributes: {
+          manualTagStartCondition: {
+            source: {
+              isAllMatch: false,
+              patterns: [
+                { isPrefix: true, pattern: 'release/' },
+                { isPrefix: false, pattern: 'v0.9.0' },
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test('retries only while an updated workflow tag condition propagates', async () => {
+    let calls = 0;
+    const response = await startBuildRunWithConditionPropagation(
+      async () => {
+        calls += 1;
+        if (calls < 3) {
+          throw new AppStoreConnectRequestError('The tag is not associated with the workflow.', {
+            status: 409,
+          });
+        }
+        return { data: { id: 'build-run' } };
+      },
+      { delayMilliseconds: 0 },
+    );
+
+    expect(response).toEqual({ data: { id: 'build-run' } });
+    expect(calls).toBe(3);
+
+    await expect(
+      startBuildRunWithConditionPropagation(
+        async () => {
+          throw new AppStoreConnectRequestError('Daily build limit reached.', { status: 409 });
+        },
+        { delayMilliseconds: 0 },
+      ),
+    ).rejects.toThrow('Daily build limit reached');
   });
 
   test('creates a main-only App Store workflow from the proven archive template', () => {
@@ -356,6 +448,112 @@ describe('Xcode Cloud build discovery', () => {
       'APP_STORE_ELIGIBLE',
     );
     expect(requests.at(-1)?.body).toEqual(createBuildRunPayload('production-workflow', 'main-ref'));
+  });
+
+  test('associates an immutable release tag with the production workflow before starting it', async () => {
+    const environmentNames = [
+      'ASC_ISSUER_ID',
+      'ASC_KEY_ID',
+      'ASC_PRIVATE_KEY',
+      'APP_STORE_APP_ID',
+      'XCODE_CLOUD_WORKFLOW_NAME',
+      'XCODE_CLOUD_BRANCH_NAME',
+      'XCODE_CLOUD_GIT_REF_NAME',
+      'XCODE_CLOUD_TEMPLATE_WORKFLOW_ID',
+      'XCODE_CLOUD_WORKFLOW_ID',
+      'XCODE_CLOUD_BRANCH_REF_ID',
+      'GITHUB_OUTPUT',
+    ];
+    const previousEnvironment = new Map(environmentNames.map((name) => [name, process.env[name]] as const));
+    const previousFetch = globalThis.fetch;
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+
+    Object.assign(process.env, {
+      ASC_ISSUER_ID: 'issuer',
+      ASC_KEY_ID: 'key',
+      ASC_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      APP_STORE_APP_ID: 'app',
+      XCODE_CLOUD_WORKFLOW_NAME: 'Production App Store',
+      XCODE_CLOUD_BRANCH_NAME: 'main',
+      XCODE_CLOUD_GIT_REF_NAME: 'v0.9.0',
+      XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 'staging-workflow',
+    });
+    delete process.env.XCODE_CLOUD_WORKFLOW_ID;
+    delete process.env.XCODE_CLOUD_BRANCH_REF_ID;
+    delete process.env.GITHUB_OUTPUT;
+
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      requests.push({ path: `${url.pathname}${url.search}`, method, body });
+
+      if (url.pathname === '/v1/apps/app/ciProduct') {
+        return Response.json({ data: { id: 'product' } });
+      }
+      if (url.pathname === '/v1/ciProducts/product/workflows') {
+        return Response.json({
+          data: [
+            {
+              id: 'production-workflow',
+              attributes: {
+                name: 'Production App Store',
+                manualTagStartCondition: null,
+              },
+            },
+          ],
+          links: { next: null },
+        });
+      }
+      if (url.pathname === '/v1/ciWorkflows/production-workflow/repository') {
+        return Response.json({ data: { id: 'repository' } });
+      }
+      if (url.pathname === '/v1/scmRepositories/repository/gitReferences') {
+        return Response.json({
+          data: [
+            {
+              id: 'release-ref',
+              attributes: { name: 'v0.9.0', canonicalName: 'refs/tags/v0.9.0' },
+            },
+          ],
+          links: { next: null },
+        });
+      }
+      if (url.pathname === '/v1/ciWorkflows/production-workflow' && method === 'PATCH') {
+        return Response.json({
+          data: {
+            id: 'production-workflow',
+            attributes: {
+              name: 'Production App Store',
+              manualTagStartCondition: body.data.attributes.manualTagStartCondition,
+            },
+          },
+        });
+      }
+      if (url.pathname === '/v1/ciBuildRuns' && method === 'POST') {
+        return Response.json({ data: { id: 'build-run', attributes: { number: 83 } } });
+      }
+      return new Response('not found', { status: 404 });
+    };
+
+    try {
+      await main();
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const [name, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+
+    const updateWorkflow = requests.find(
+      ({ path, method }) => path === '/v1/ciWorkflows/production-workflow' && method === 'PATCH',
+    );
+    expect(updateWorkflow?.body).toEqual(
+      createManualTagConditionUpdatePayload('production-workflow', undefined, 'v0.9.0'),
+    );
+    expect(requests.at(-1)?.body).toEqual(createBuildRunPayload('production-workflow', 'release-ref'));
   });
 
   test('follows absolute pagination links and returns every discovery result', async () => {
