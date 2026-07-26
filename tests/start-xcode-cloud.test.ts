@@ -230,7 +230,7 @@ describe('Xcode Cloud build discovery', () => {
         'production-workflow',
         {
           source: {
-            isAllMatch: true,
+            isAllMatch: false,
             patterns: [{ isPrefix: true, pattern: 'release/' }],
           },
         },
@@ -261,7 +261,7 @@ describe('Xcode Cloud build discovery', () => {
         'production-workflow',
         {
           source: {
-            isAllMatch: true,
+            isAllMatch: false,
             patterns: [{ isPrefix: true, pattern: 'release/' }],
           },
         },
@@ -284,6 +284,22 @@ describe('Xcode Cloud build discovery', () => {
         },
       },
     });
+  });
+
+  test('rejects condition updates that would change existing all-match semantics', () => {
+    const allMatchCondition = {
+      source: {
+        isAllMatch: true,
+        patterns: [{ isPrefix: true, pattern: 'release/' }],
+      },
+    };
+
+    expect(() =>
+      createManualBranchConditionUpdatePayload('production-workflow', allMatchCondition, 'main'),
+    ).toThrow('without changing its existing all-match semantics');
+    expect(() =>
+      createManualTagConditionUpdatePayload('production-workflow', allMatchCondition, 'v0.9.0'),
+    ).toThrow('without changing its existing all-match semantics');
   });
 
   test('retries only while an updated workflow tag condition propagates', async () => {

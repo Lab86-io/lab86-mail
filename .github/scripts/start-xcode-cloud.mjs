@@ -60,6 +60,11 @@ export function manualTagConditionAllows(condition, tagName) {
 }
 
 function createManualSourceConditionUpdatePayload(workflowID, conditionAttribute, condition, sourceName) {
+  if (condition?.source?.isAllMatch === true) {
+    throw new Error(
+      `Cannot add "${sourceName}" to ${conditionAttribute} without changing its existing all-match semantics.`,
+    );
+  }
   const existingPatterns = Array.isArray(condition?.source?.patterns)
     ? condition.source.patterns.filter((pattern) => pattern && typeof pattern.pattern === 'string')
     : [];
