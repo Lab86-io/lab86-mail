@@ -5,10 +5,12 @@ import {
   assertExpectedBuildSource,
   collectAppStoreConnectPages,
   createBuildRunPayload,
+  createManualBranchConditionUpdatePayload,
   createManualTagConditionUpdatePayload,
   createProductionWorkflowPayload,
   hasExplicitBuildTarget,
   main,
+  manualBranchConditionAllows,
   manualTagConditionAllows,
   selectBranchRefID,
   selectWorkflowID,
@@ -193,13 +195,73 @@ describe('Xcode Cloud build discovery', () => {
     expect(manualTagConditionAllows(undefined, 'v0.9.0')).toBe(false);
   });
 
+  test('recognizes exact and prefix manual branch conditions', () => {
+    expect(
+      manualBranchConditionAllows(
+        {
+          source: {
+            isAllMatch: false,
+            patterns: [
+              { isPrefix: true, pattern: 'release/' },
+              { isPrefix: false, pattern: 'main' },
+            ],
+          },
+        },
+        'main',
+      ),
+    ).toBe(true);
+    expect(
+      manualBranchConditionAllows(
+        {
+          source: {
+            isAllMatch: false,
+            patterns: [{ isPrefix: true, pattern: 'release/' }],
+          },
+        },
+        'main',
+      ),
+    ).toBe(false);
+    expect(manualBranchConditionAllows(undefined, 'main')).toBe(false);
+  });
+
+  test('adds main without discarding existing manual branch patterns', () => {
+    expect(
+      createManualBranchConditionUpdatePayload(
+        'production-workflow',
+        {
+          source: {
+            isAllMatch: false,
+            patterns: [{ isPrefix: true, pattern: 'release/' }],
+          },
+        },
+        'main',
+      ),
+    ).toEqual({
+      data: {
+        type: 'ciWorkflows',
+        id: 'production-workflow',
+        attributes: {
+          manualBranchStartCondition: {
+            source: {
+              isAllMatch: false,
+              patterns: [
+                { isPrefix: true, pattern: 'release/' },
+                { isPrefix: false, pattern: 'main' },
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+
   test('adds the immutable release tag without discarding existing manual tag patterns', () => {
     expect(
       createManualTagConditionUpdatePayload(
         'production-workflow',
         {
           source: {
-            isAllMatch: true,
+            isAllMatch: false,
             patterns: [{ isPrefix: true, pattern: 'release/' }],
           },
         },
@@ -222,6 +284,22 @@ describe('Xcode Cloud build discovery', () => {
         },
       },
     });
+  });
+
+  test('rejects condition updates that would change existing all-match semantics', () => {
+    const allMatchCondition = {
+      source: {
+        isAllMatch: true,
+        patterns: [{ isPrefix: true, pattern: 'release/' }],
+      },
+    };
+
+    expect(() =>
+      createManualBranchConditionUpdatePayload('production-workflow', allMatchCondition, 'main'),
+    ).toThrow('without changing its existing all-match semantics');
+    expect(() =>
+      createManualTagConditionUpdatePayload('production-workflow', allMatchCondition, 'v0.9.0'),
+    ).toThrow('without changing its existing all-match semantics');
   });
 
   test('retries only while an updated workflow tag condition propagates', async () => {
@@ -485,7 +563,19 @@ describe('Xcode Cloud build discovery', () => {
       } else if (url.pathname === '/v1/ciWorkflows/staging-workflow') {
         response = template;
       } else if (url.pathname === '/v1/ciWorkflows' && method === 'POST') {
-        response = { data: { id: 'production-workflow' } };
+        response = {
+          data: {
+            id: 'production-workflow',
+            attributes: {
+              manualBranchStartCondition: {
+                source: {
+                  isAllMatch: false,
+                  patterns: [{ isPrefix: false, pattern: 'main' }],
+                },
+              },
+            },
+          },
+        };
       } else if (url.pathname === '/v1/ciWorkflows/production-workflow/repository') {
         response = { data: { id: 'repository' } };
       } else if (url.pathname === '/v1/scmRepositories/repository/gitReferences') {
@@ -521,6 +611,113 @@ describe('Xcode Cloud build discovery', () => {
     );
     expect(createWorkflow?.body.data.attributes.actions[0].buildDistributionAudience).toBe(
       'APP_STORE_ELIGIBLE',
+    );
+    expect(requests.at(-1)?.body).toEqual(createBuildRunPayload('production-workflow', 'main-ref'));
+  });
+
+  test('associates main with an existing production workflow before starting it', async () => {
+    const environmentNames = [
+      'ASC_ISSUER_ID',
+      'ASC_KEY_ID',
+      'ASC_PRIVATE_KEY',
+      'APP_STORE_APP_ID',
+      'XCODE_CLOUD_WORKFLOW_NAME',
+      'XCODE_CLOUD_BRANCH_NAME',
+      'XCODE_CLOUD_GIT_REF_NAME',
+      'XCODE_CLOUD_EXPECTED_COMMIT_SHA',
+      'XCODE_CLOUD_TEMPLATE_WORKFLOW_ID',
+      'XCODE_CLOUD_WORKFLOW_ID',
+      'XCODE_CLOUD_BRANCH_REF_ID',
+      'GITHUB_OUTPUT',
+    ];
+    const previousEnvironment = new Map(environmentNames.map((name) => [name, process.env[name]] as const));
+    const previousFetch = globalThis.fetch;
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+
+    Object.assign(process.env, {
+      ASC_ISSUER_ID: 'issuer',
+      ASC_KEY_ID: 'key',
+      ASC_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      APP_STORE_APP_ID: 'app',
+      XCODE_CLOUD_WORKFLOW_NAME: 'Production App Store',
+      XCODE_CLOUD_BRANCH_NAME: 'main',
+      XCODE_CLOUD_GIT_REF_NAME: 'refs/heads/main',
+      XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 'staging-workflow',
+    });
+    delete process.env.XCODE_CLOUD_WORKFLOW_ID;
+    delete process.env.XCODE_CLOUD_BRANCH_REF_ID;
+    delete process.env.GITHUB_OUTPUT;
+
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      requests.push({ path: `${url.pathname}${url.search}`, method, body });
+
+      if (url.pathname === '/v1/apps/app/ciProduct') {
+        return Response.json({ data: { id: 'product' } });
+      }
+      if (url.pathname === '/v1/ciProducts/product/workflows') {
+        return Response.json({
+          data: [
+            {
+              id: 'production-workflow',
+              attributes: {
+                name: 'Production App Store',
+                manualBranchStartCondition: null,
+              },
+            },
+          ],
+          links: { next: null },
+        });
+      }
+      if (url.pathname === '/v1/ciWorkflows/production-workflow/repository') {
+        return Response.json({ data: { id: 'repository' } });
+      }
+      if (url.pathname === '/v1/scmRepositories/repository/gitReferences') {
+        return Response.json({
+          data: [
+            {
+              id: 'main-ref',
+              attributes: { name: 'main', canonicalName: 'refs/heads/main' },
+            },
+          ],
+          links: { next: null },
+        });
+      }
+      if (url.pathname === '/v1/ciWorkflows/production-workflow' && method === 'PATCH') {
+        return Response.json({
+          data: {
+            id: 'production-workflow',
+            attributes: {
+              name: 'Production App Store',
+              manualBranchStartCondition: body.data.attributes.manualBranchStartCondition,
+            },
+          },
+        });
+      }
+      if (url.pathname === '/v1/ciBuildRuns' && method === 'POST') {
+        return Response.json({ data: { id: 'build-run', attributes: { number: 84 } } });
+      }
+      return new Response('not found', { status: 404 });
+    };
+
+    try {
+      await main();
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const [name, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+
+    const updateWorkflow = requests.find(
+      ({ path, method }) => path === '/v1/ciWorkflows/production-workflow' && method === 'PATCH',
+    );
+    expect(updateWorkflow?.body).toEqual(
+      createManualBranchConditionUpdatePayload('production-workflow', undefined, 'main'),
     );
     expect(requests.at(-1)?.body).toEqual(createBuildRunPayload('production-workflow', 'main-ref'));
   });
