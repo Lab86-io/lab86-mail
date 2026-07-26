@@ -64,7 +64,10 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /actions: read/);
   assert.match(contents, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
   assert.match(contents, /name: production-release-\$\{\{ steps\.deploy\.outputs\.run_id \}\}/);
-  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: \$\{\{ steps\.release\.outputs\.git_ref \}\}/);
+  assert.match(
+    contents,
+    /XCODE_CLOUD_GIT_REF_NAME: refs\/tags\/\$\{\{ steps\.release\.outputs\.git_ref \}\}/,
+  );
   assert.match(
     readFileSync(new URL('./start-xcode-cloud.mjs', import.meta.url), 'utf8'),
     /manualTagStartCondition/,

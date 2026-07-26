@@ -50,6 +50,24 @@ describe('Xcode Cloud build discovery', () => {
     );
     expect(hasExplicitBuildTarget(undefined, undefined)).toBe(false);
     expect(hasExplicitBuildTarget('workflow', 'branch')).toBe(true);
+    expect(() =>
+      selectBranchRefID(
+        [
+          { id: 'branch-ref', attributes: { name: 'release', canonicalName: 'refs/heads/release' } },
+          { id: 'tag-ref', attributes: { name: 'release', canonicalName: 'refs/tags/release' } },
+        ],
+        'release',
+      ),
+    ).toThrow('is ambiguous');
+    expect(
+      selectBranchRefID(
+        [
+          { id: 'branch-ref', attributes: { name: 'release', canonicalName: 'refs/heads/release' } },
+          { id: 'tag-ref', attributes: { name: 'release', canonicalName: 'refs/tags/release' } },
+        ],
+        'refs/tags/release',
+      ),
+    ).toBe('tag-ref');
   });
 
   test('explains that production workflow creation requires a configured template', async () => {
@@ -200,6 +218,25 @@ describe('Xcode Cloud build discovery', () => {
         { delayMilliseconds: 0 },
       ),
     ).rejects.toThrow('Daily build limit reached');
+
+    const persistentPropagationError = new AppStoreConnectRequestError(
+      'The tag is not associated with the workflow.',
+      { status: 409 },
+    );
+    let persistentCalls = 0;
+    try {
+      await startBuildRunWithConditionPropagation(
+        async () => {
+          persistentCalls += 1;
+          throw persistentPropagationError;
+        },
+        { attempts: 2, delayMilliseconds: 0 },
+      );
+      throw new Error('Expected the persistent propagation error to be rethrown.');
+    } catch (error) {
+      expect(error).toBe(persistentPropagationError);
+    }
+    expect(persistentCalls).toBe(2);
   });
 
   test('creates a main-only App Store workflow from the proven archive template', () => {
@@ -420,7 +457,12 @@ describe('Xcode Cloud build discovery', () => {
         response = { data: { id: 'repository' } };
       } else if (url.pathname === '/v1/scmRepositories/repository/gitReferences') {
         response = {
-          data: [{ id: 'main-ref', attributes: { name: 'main' } }],
+          data: [
+            {
+              id: 'main-ref',
+              attributes: { name: 'main', canonicalName: 'refs/heads/main' },
+            },
+          ],
           links: { next: null },
         };
       } else if (url.pathname === '/v1/ciBuildRuns' && method === 'POST') {
@@ -476,7 +518,7 @@ describe('Xcode Cloud build discovery', () => {
       APP_STORE_APP_ID: 'app',
       XCODE_CLOUD_WORKFLOW_NAME: 'Production App Store',
       XCODE_CLOUD_BRANCH_NAME: 'main',
-      XCODE_CLOUD_GIT_REF_NAME: 'v0.9.0',
+      XCODE_CLOUD_GIT_REF_NAME: 'refs/tags/v0.9.0',
       XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 'staging-workflow',
     });
     delete process.env.XCODE_CLOUD_WORKFLOW_ID;

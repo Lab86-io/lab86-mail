@@ -15,12 +15,18 @@ export function selectWorkflowID(workflows, workflowName) {
 }
 
 export function selectGitReference(references, refName) {
-  const reference = references.find(
-    ({ attributes }) =>
-      attributes.name === refName ||
-      attributes.canonicalName === `refs/heads/${refName}` ||
-      attributes.canonicalName === `refs/tags/${refName}`,
+  const canonicalNames = refName.startsWith('refs/')
+    ? [refName]
+    : [`refs/heads/${refName}`, `refs/tags/${refName}`];
+  const matchingReferences = references.filter(({ attributes }) =>
+    canonicalNames.includes(attributes.canonicalName),
   );
+  if (matchingReferences.length > 1) {
+    throw new Error(
+      `Xcode Cloud git reference "${refName}" is ambiguous; provide its canonical refs/heads or refs/tags name.`,
+    );
+  }
+  const [reference] = matchingReferences;
   if (!reference) {
     throw new Error(`Xcode Cloud git reference "${refName}" was not found.`);
   }
@@ -77,7 +83,12 @@ export async function startBuildRunWithConditionPropagation(
     sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   } = {},
 ) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new Error('Xcode Cloud build start attempts must be a positive integer.');
+  }
+
+  let attempt = 1;
+  while (true) {
     try {
       return await startBuildRun();
     } catch (error) {
@@ -85,11 +96,11 @@ export async function startBuildRunWithConditionPropagation(
         error instanceof AppStoreConnectRequestError &&
         error.status === 409 &&
         error.message.includes('not associated with the workflow');
-      if (!conditionIsPropagating || attempt === attempts) throw error;
+      if (!conditionIsPropagating || attempt >= attempts) throw error;
+      attempt += 1;
       await sleep(delayMilliseconds);
     }
   }
-  throw new Error('Xcode Cloud build start exhausted its retry budget.');
 }
 
 export function createBuildRunPayload(workflowID, branchRefID) {
@@ -305,10 +316,12 @@ export async function main() {
     );
     const gitReference = selectGitReference(references, gitRefName);
     branchRefID = gitReference.id;
+    const selectedRefName =
+      gitReference.attributes?.name ?? gitRefName.replace(/^refs\/(?:heads|tags)\//, '');
 
     if (
       gitReference.attributes?.canonicalName?.startsWith('refs/tags/') &&
-      !manualTagConditionAllows(workflow.attributes?.manualTagStartCondition, gitRefName)
+      !manualTagConditionAllows(workflow.attributes?.manualTagStartCondition, selectedRefName)
     ) {
       const updated = await appStoreConnect(`/v1/ciWorkflows/${workflowID}`, {
         method: 'PATCH',
@@ -316,13 +329,13 @@ export async function main() {
           createManualTagConditionUpdatePayload(
             workflowID,
             workflow.attributes?.manualTagStartCondition,
-            gitRefName,
+            selectedRefName,
           ),
         ),
       });
       workflow = updated.data;
       console.log(
-        `Associated release tag "${gitRefName}" with Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}".`,
+        `Associated release tag "${selectedRefName}" with Xcode Cloud workflow "${process.env.XCODE_CLOUD_WORKFLOW_NAME}".`,
       );
     }
   }
