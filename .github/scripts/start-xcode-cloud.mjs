@@ -152,11 +152,46 @@ export function createBuildRunPayload(workflowID, branchRefID) {
   };
 }
 
-export function assertExpectedBuildSource(buildRun, expectedCommitSHA) {
-  if (!expectedCommitSHA) return;
+function assertExpectedCommitSHA(expectedCommitSHA) {
   if (!/^[0-9a-f]{40}$/.test(expectedCommitSHA)) {
     throw new Error('XCODE_CLOUD_EXPECTED_COMMIT_SHA must be a full lowercase commit SHA.');
   }
+}
+
+export async function resolveBuildRunSource(
+  buildRun,
+  expectedCommitSHA,
+  appStoreConnect,
+  {
+    attempts = 6,
+    delayMilliseconds = 2_000,
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  if (!expectedCommitSHA || buildRun.attributes?.sourceCommit?.commitSha) return buildRun;
+  assertExpectedCommitSHA(expectedCommitSHA);
+  if (!buildRun.id) {
+    throw new Error('Xcode Cloud did not report the build run ID needed to verify its source commit.');
+  }
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new Error('Xcode Cloud source verification attempts must be a positive integer.');
+  }
+
+  let resolvedBuildRun = buildRun;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await appStoreConnect(
+      `/v1/ciBuildRuns/${encodeURIComponent(buildRun.id)}?fields[ciBuildRuns]=number,sourceCommit`,
+    );
+    resolvedBuildRun = response.data;
+    if (resolvedBuildRun.attributes?.sourceCommit?.commitSha) return resolvedBuildRun;
+    if (attempt < attempts) await sleep(delayMilliseconds);
+  }
+  return resolvedBuildRun;
+}
+
+export function assertExpectedBuildSource(buildRun, expectedCommitSHA) {
+  if (!expectedCommitSHA) return;
+  assertExpectedCommitSHA(expectedCommitSHA);
   const actualCommitSHA = buildRun.attributes?.sourceCommit?.commitSha;
   if (!actualCommitSHA) {
     throw new Error('Xcode Cloud did not report the source commit selected for the build.');
@@ -399,7 +434,11 @@ export async function main() {
     }),
   );
 
-  const buildRun = response.data;
+  const buildRun = await resolveBuildRunSource(
+    response.data,
+    process.env.XCODE_CLOUD_EXPECTED_COMMIT_SHA,
+    appStoreConnect,
+  );
   assertExpectedBuildSource(buildRun, process.env.XCODE_CLOUD_EXPECTED_COMMIT_SHA);
   console.log(
     `Started Xcode Cloud build #${buildRun.attributes.number} (${buildRun.id}) on ${

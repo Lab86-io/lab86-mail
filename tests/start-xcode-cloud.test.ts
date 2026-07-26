@@ -12,6 +12,7 @@ import {
   main,
   manualBranchConditionAllows,
   manualTagConditionAllows,
+  resolveBuildRunSource,
   selectBranchRefID,
   selectWorkflowID,
   startBuildRunWithConditionPropagation,
@@ -164,6 +165,58 @@ describe('Xcode Cloud build discovery', () => {
     expect(() => assertExpectedBuildSource({ attributes: {} }, 'short-sha')).toThrow(
       'must be a full lowercase commit SHA',
     );
+  });
+
+  test('hydrates a sparse build creation response before verifying its source commit', async () => {
+    const expectedCommit = 'a'.repeat(40);
+    const requests: string[] = [];
+    let reads = 0;
+    const buildRun = await resolveBuildRunSource(
+      { id: 'build/run', attributes: { number: 84 } },
+      expectedCommit,
+      async (path: string) => {
+        requests.push(path);
+        reads += 1;
+        return {
+          data: {
+            id: 'build/run',
+            attributes: {
+              number: 84,
+              ...(reads === 2 ? { sourceCommit: { commitSha: expectedCommit } } : {}),
+            },
+          },
+        };
+      },
+      { attempts: 2, delayMilliseconds: 0 },
+    );
+
+    expect(requests).toEqual([
+      '/v1/ciBuildRuns/build%2Frun?fields[ciBuildRuns]=number,sourceCommit',
+      '/v1/ciBuildRuns/build%2Frun?fields[ciBuildRuns]=number,sourceCommit',
+    ]);
+    expect(() => assertExpectedBuildSource(buildRun, expectedCommit)).not.toThrow();
+  });
+
+  test('fails closed when source commit hydration remains incomplete', async () => {
+    const expectedCommit = 'a'.repeat(40);
+    const buildRun = await resolveBuildRunSource(
+      { id: 'build-run', attributes: { number: 84 } },
+      expectedCommit,
+      async () => ({ data: { id: 'build-run', attributes: { number: 84 } } }),
+      { attempts: 2, delayMilliseconds: 0 },
+    );
+
+    expect(() => assertExpectedBuildSource(buildRun, expectedCommit)).toThrow(
+      'did not report the source commit',
+    );
+    await expect(
+      resolveBuildRunSource(
+        { id: 'build-run', attributes: {} },
+        expectedCommit,
+        async () => ({ data: { id: 'build-run', attributes: {} } }),
+        { attempts: 0 },
+      ),
+    ).rejects.toThrow('attempts must be a positive integer');
   });
 
   test('recognizes exact and prefix manual tag conditions', () => {
