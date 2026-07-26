@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { AppStoreConnectRequestError } from '../.github/scripts/app-store-connect.mjs';
 import {
+  assertExpectedBuildSource,
   collectAppStoreConnectPages,
   createBuildRunPayload,
   createManualTagConditionUpdatePayload,
@@ -78,6 +79,7 @@ describe('Xcode Cloud build discovery', () => {
       'APP_STORE_APP_ID',
       'XCODE_CLOUD_WORKFLOW_NAME',
       'XCODE_CLOUD_BRANCH_NAME',
+      'XCODE_CLOUD_EXPECTED_COMMIT_SHA',
       'XCODE_CLOUD_TEMPLATE_WORKFLOW_ID',
       'XCODE_CLOUD_WORKFLOW_ID',
       'XCODE_CLOUD_BRANCH_REF_ID',
@@ -130,6 +132,36 @@ describe('Xcode Cloud build discovery', () => {
         },
       },
     });
+  });
+
+  test('requires Xcode Cloud to report the expected immutable source commit', () => {
+    const expectedCommit = 'a'.repeat(40);
+    expect(() =>
+      assertExpectedBuildSource(
+        {
+          attributes: {
+            sourceCommit: { commitSha: expectedCommit },
+          },
+        },
+        expectedCommit,
+      ),
+    ).not.toThrow();
+    expect(() => assertExpectedBuildSource({ attributes: {} }, expectedCommit)).toThrow(
+      'did not report the source commit',
+    );
+    expect(() =>
+      assertExpectedBuildSource(
+        {
+          attributes: {
+            sourceCommit: { commitSha: 'b'.repeat(40) },
+          },
+        },
+        expectedCommit,
+      ),
+    ).toThrow(`expected ${expectedCommit}`);
+    expect(() => assertExpectedBuildSource({ attributes: {} }, 'short-sha')).toThrow(
+      'must be a full lowercase commit SHA',
+    );
   });
 
   test('recognizes exact and prefix manual tag conditions', () => {
@@ -396,6 +428,7 @@ describe('Xcode Cloud build discovery', () => {
       'APP_STORE_APP_ID',
       'XCODE_CLOUD_WORKFLOW_NAME',
       'XCODE_CLOUD_BRANCH_NAME',
+      'XCODE_CLOUD_EXPECTED_COMMIT_SHA',
       'XCODE_CLOUD_TEMPLATE_WORKFLOW_ID',
       'XCODE_CLOUD_WORKFLOW_ID',
       'XCODE_CLOUD_BRANCH_REF_ID',
@@ -501,6 +534,7 @@ describe('Xcode Cloud build discovery', () => {
       'XCODE_CLOUD_WORKFLOW_NAME',
       'XCODE_CLOUD_BRANCH_NAME',
       'XCODE_CLOUD_GIT_REF_NAME',
+      'XCODE_CLOUD_EXPECTED_COMMIT_SHA',
       'XCODE_CLOUD_TEMPLATE_WORKFLOW_ID',
       'XCODE_CLOUD_WORKFLOW_ID',
       'XCODE_CLOUD_BRANCH_REF_ID',

@@ -86,16 +86,22 @@ jobs:
           ref: ${{ steps.release.outputs.sha }}
 
       - name: Verify immutable production release
+        id: verify
         run: |
           set -euo pipefail
           release_repo="$GITHUB_WORKSPACE/release-source"
           release_sha="${{ steps.release.outputs.sha }}"
           release_ref="${{ steps.release.outputs.git_ref }}"
+          automation_sha="$(git rev-parse HEAD)"
+          git fetch --force origin main
+          test "$(git rev-parse origin/main)" = "$automation_sha"
           test "$(git -C "$release_repo" rev-parse HEAD)" = "$release_sha"
           git -C "$release_repo" fetch --force origin main "refs/tags/${release_ref}:refs/tags/${release_ref}"
           test "$(git -C "$release_repo" rev-list -n 1 "$release_ref")" = "$release_sha"
           git -C "$release_repo" merge-base --is-ancestor "$release_sha" origin/main
+          test "$(git rev-parse HEAD:apps/ios)" = "$(git -C "$release_repo" rev-parse "${release_sha}:apps/ios")"
           test "$(git -C "$release_repo" show "${release_sha}:package.json" | jq -r '.version')" = "${{ steps.release.outputs.version }}"
+          echo "build_sha=$automation_sha" >> "$GITHUB_OUTPUT"
 
       - name: Verify release automation
         run: |
@@ -116,7 +122,8 @@ jobs:
           APP_STORE_APP_ID: 6792830834
           XCODE_CLOUD_WORKFLOW_NAME: Production App Store
           XCODE_CLOUD_BRANCH_NAME: main
-          XCODE_CLOUD_GIT_REF_NAME: refs/tags/${{ steps.release.outputs.git_ref }}
+          XCODE_CLOUD_GIT_REF_NAME: refs/heads/main
+          XCODE_CLOUD_EXPECTED_COMMIT_SHA: ${{ steps.verify.outputs.build_sha }}
           XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 304D20E5-2087-4E0D-8A6E-5E6025DEED36
         run: node .github/scripts/start-xcode-cloud.mjs
 
