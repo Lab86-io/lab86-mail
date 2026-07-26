@@ -65,15 +65,17 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /actions: read/);
   assert.match(contents, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
   assert.match(contents, /name: production-release-\$\{\{ steps\.deploy\.outputs\.run_id \}\}/);
-  assert.match(
-    contents,
-    /XCODE_CLOUD_GIT_REF_NAME: refs\/tags\/\$\{\{ steps\.release\.outputs\.git_ref \}\}/,
-  );
+  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: refs\/heads\/main/);
+  assert.match(contents, /XCODE_CLOUD_EXPECTED_COMMIT_SHA: \$\{\{ steps\.verify\.outputs\.build_sha \}\}/);
   assert.match(
     readFileSync(new URL('./start-xcode-cloud.mjs', import.meta.url), 'utf8'),
     /manualTagStartCondition/,
   );
   assert.match(contents, /git -C "\$release_repo" merge-base --is-ancestor "\$release_sha" origin\/main/);
+  assert.match(
+    contents,
+    /test "\$\(git rev-parse HEAD:apps\/ios\)" = "\$\(git -C "\$release_repo" rev-parse "\$\{release_sha\}:apps\/ios"\)"/,
+  );
   assert.doesNotMatch(contents, /\$\{\{\s*github\.event\.workflow_run\.head_sha/);
   assert.match(deployContents, /name: Record immutable production release identity/);
   assert.match(deployContents, /release_sha="\$\(git rev-parse HEAD\)"/);

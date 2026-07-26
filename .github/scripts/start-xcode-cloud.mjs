@@ -126,6 +126,20 @@ export function createBuildRunPayload(workflowID, branchRefID) {
   };
 }
 
+export function assertExpectedBuildSource(buildRun, expectedCommitSHA) {
+  if (!expectedCommitSHA) return;
+  if (!/^[0-9a-f]{40}$/.test(expectedCommitSHA)) {
+    throw new Error('XCODE_CLOUD_EXPECTED_COMMIT_SHA must be a full lowercase commit SHA.');
+  }
+  const actualCommitSHA = buildRun.attributes?.sourceCommit?.commitSha;
+  if (!actualCommitSHA) {
+    throw new Error('Xcode Cloud did not report the source commit selected for the build.');
+  }
+  if (actualCommitSHA !== expectedCommitSHA) {
+    throw new Error(`Xcode Cloud selected commit ${actualCommitSHA}, expected ${expectedCommitSHA}.`);
+  }
+}
+
 function relationshipID(workflow, name, type) {
   const linked = workflow.data?.relationships?.[name]?.data;
   if (linked?.id) return linked.id;
@@ -348,6 +362,7 @@ export async function main() {
   );
 
   const buildRun = response.data;
+  assertExpectedBuildSource(buildRun, process.env.XCODE_CLOUD_EXPECTED_COMMIT_SHA);
   console.log(
     `Started Xcode Cloud build #${buildRun.attributes.number} (${buildRun.id}) on ${
       process.env.XCODE_CLOUD_GIT_REF_NAME ||
