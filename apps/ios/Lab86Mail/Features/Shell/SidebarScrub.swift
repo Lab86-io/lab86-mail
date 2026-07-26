@@ -87,6 +87,7 @@ enum SidebarScrubLogic {
     static let cancelSlop: CGFloat = 44
     static let edgeZone: CGFloat = 40
     static let maximumContentDrag: CGFloat = 96
+    static let scrollEndInset: CGFloat = 56
     // How long a stationary touch waits before the page preview appears.
     static let previewDelayMilliseconds = 250
 
@@ -142,6 +143,16 @@ enum SidebarScrubLogic {
         if y < bounds.minY + zone { return .top }
         if y > bounds.maxY - zone { return .bottom }
         return nil
+    }
+
+    // Scroll the newly advanced row back to the original touch slot. A
+    // ScrollViewProxy uses one unit point for both the row and viewport, so a
+    // bounded slot fraction is the closest stable alignment without changing
+    // the gesture's captured row geometry.
+    static func autoscrollAnchor(slotY: CGFloat?, in bounds: CGRect) -> UnitPoint {
+        guard let slotY, bounds.height > 0 else { return .center }
+        let fraction = (slotY - bounds.minY) / bounds.height
+        return UnitPoint(x: 0.5, y: max(0.08, min(0.92, fraction)))
     }
 
     static func autoscrollTarget(

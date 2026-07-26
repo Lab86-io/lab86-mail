@@ -40,6 +40,7 @@ import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
+import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import {
   createHitlAutoContinueGuard,
   isHitlToolName,
@@ -708,10 +709,11 @@ export function AssistantChat() {
                           subject: draft.subject,
                           body: draft.body,
                         }),
-                      openThread: ({ account, threadId }) => {
-                        setThreadAccount(account);
-                        setSelectedThread(threadId);
-                      },
+                      openThread: (target) =>
+                        routeEmailPreviewThread(target, {
+                          setThreadAccount,
+                          setSelectedThread,
+                        }),
                     }}
                   >
                     {messages.map((m, i) => (

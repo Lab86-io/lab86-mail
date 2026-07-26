@@ -92,6 +92,24 @@ describe('reflection reconciliation', () => {
     expect(matchReflectionCandidates('Nothing today', candidates)).toEqual([]);
   });
 
+  test('rejects negated and future work without hiding a completed item in another clause', () => {
+    for (const reflection of [
+      'I still need to ship the notification flow.',
+      "I haven't shipped the notification flow.",
+      "I didn't ship the notification flow.",
+      'The notification flow is not finished yet.',
+      "I won't ship the notification flow today.",
+    ]) {
+      expect(matchReflectionCandidates(reflection, candidates)).toEqual([]);
+    }
+    expect(
+      matchReflectionCandidates(
+        "I shipped the notification flow, but I haven't finished the investor deck.",
+        candidates,
+      ).map((item) => item.id),
+    ).toEqual(['notification']);
+  });
+
   test('leaves near-identical candidates unresolved instead of guessing', () => {
     expect(
       matchReflectionCandidates('Shipped the production notification flow.', [

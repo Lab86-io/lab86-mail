@@ -13,6 +13,7 @@
 import { Mail, Paperclip } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { Loader } from '@/components/ui/loader';
+import { emailPreviewThreadTarget } from '@/lib/ai/email-preview-routing';
 
 function LoadingCard() {
   return (
@@ -234,9 +235,7 @@ export function ToolUiDisplayPart({
         return (
           <button
             type="button"
-            onClick={() =>
-              onOpenThread?.({ account: String(payload.account), threadId: String(payload.threadId) })
-            }
+            onClick={() => onOpenThread?.(emailPreviewThreadTarget(payload))}
             disabled={!onOpenThread}
             className="group w-full max-w-[520px] overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-left shadow-[var(--shadow-soft)] transition hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-pop)] disabled:cursor-default"
           >

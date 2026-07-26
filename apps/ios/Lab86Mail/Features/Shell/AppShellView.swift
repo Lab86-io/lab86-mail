@@ -535,6 +535,11 @@ private struct SourceList: View {
                     .offset(y: scrubContentOffsetY)
                 }
                 .scrollIndicators(.hidden)
+                .contentMargins(
+                    .vertical,
+                    SidebarScrubLogic.scrollEndInset,
+                    for: .scrollContent
+                )
                 .scrollDisabled(true)
                 .onGeometryChange(for: CGRect.self) { proxy in
                     proxy.frame(in: .named(SidebarScrubCoordinateSpace.name))
@@ -543,8 +548,12 @@ private struct SourceList: View {
                 }
                 .onChange(of: autoscrollTarget) { _, destination in
                     guard let destination else { return }
+                    let anchor = SidebarScrubLogic.autoscrollAnchor(
+                        slotY: scrubAnchorLocation?.y,
+                        in: scrollBounds
+                    )
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.22, extraBounce: 0)) {
-                        proxy.scrollTo(destination, anchor: .center)
+                        proxy.scrollTo(destination, anchor: anchor)
                     }
                     autoscrollTarget = nil
                 }
@@ -588,7 +597,7 @@ private struct SourceList: View {
             previewDelayTask?.cancel()
         }
         // One drag owns the wheel-style scrub. The viewport is programmatically
-        // centered, so there is still no competing scroll pan; VoiceOver
+        // slot-aligned, so there is still no competing scroll pan; VoiceOver
         // continues to activate each real Button directly.
         .highPriorityGesture(scrubGesture, isEnabled: scrub != nil)
     }

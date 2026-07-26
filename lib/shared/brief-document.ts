@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isKnownBriefAction } from './brief-actions';
+import { normalizeBriefTimezone } from './brief-edition';
 
 export const BRIEF_DOCUMENT_VERSION = 2 as const;
 
@@ -352,6 +353,7 @@ export const BriefDocumentV2Schema = z.object({
   title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
   summary: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.summary),
   generatedAt: z.number().finite().nonnegative(),
+  timezone: z.string().trim().min(1).max(120).optional(),
   regions: z.array(BriefRegionSchema).max(BRIEF_DOCUMENT_LIMITS.regions),
 });
 
@@ -404,6 +406,7 @@ export function repairBriefDocument(value: unknown): unknown {
     clippedString(raw?.summary, BRIEF_DOCUMENT_LIMITS.summary) ||
     'This brief was created by a newer client and is available as a summary.';
   const generatedAt = finiteNumber(raw?.generatedAt) ?? Date.now();
+  const timezone = normalizeBriefTimezone(typeof raw?.timezone === 'string' ? raw.timezone : undefined);
 
   if (finiteNumber(raw?.version) !== BRIEF_DOCUMENT_VERSION) {
     return {
@@ -411,6 +414,7 @@ export function repairBriefDocument(value: unknown): unknown {
       title,
       summary,
       generatedAt,
+      timezone,
       regions: [
         {
           id: 'document-fallback',
@@ -446,6 +450,7 @@ export function repairBriefDocument(value: unknown): unknown {
     title,
     summary,
     generatedAt,
+    timezone,
     regions: regions.length
       ? regions
       : [{ id: 'brief-fallback', summary, tree: fallbackNode(summary, title) }],

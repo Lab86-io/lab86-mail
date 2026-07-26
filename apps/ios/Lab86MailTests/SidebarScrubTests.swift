@@ -173,6 +173,13 @@ struct SidebarScrubTests {
             ) == nil
         )
         #expect(
+            SidebarScrubLogic.autoscrollTarget(
+                from: .mail(.main),
+                in: ordered,
+                zone: .bottom
+            ) == .area(id: "area_2", name: "Work")
+        )
+        #expect(
             SidebarScrubLogic.autoscrollTargets(
                 from: .primary(.today),
                 in: ordered,
@@ -188,10 +195,27 @@ struct SidebarScrubTests {
             SidebarScrubLogic.autoscrollTargets(
                 from: .mail(.main),
                 in: ordered,
+                zone: .bottom,
+                steps: 2
+            ) == [
+                .area(id: "area_2", name: "Work"),
+                .area(id: "area_1", name: "House"),
+            ]
+        )
+        #expect(
+            SidebarScrubLogic.autoscrollTargets(
+                from: .mail(.main),
+                in: ordered,
                 zone: .top,
                 steps: 3
             ).isEmpty
         )
+        let slotAnchor = SidebarScrubLogic.autoscrollAnchor(
+            slotY: 180,
+            in: CGRect(x: 0, y: 20, width: 300, height: 400)
+        )
+        #expect(slotAnchor.x == 0.5)
+        #expect(slotAnchor.y == 0.4)
     }
 
     @Test

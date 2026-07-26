@@ -301,6 +301,65 @@ describe('native push Convex receipts', () => {
     }
   });
 
+  test('keeps an older card that was recently updated inside the bounded reflection corpus', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const targetCardId = await t.run(async (ctx) => {
+        const old = Date.parse('2026-05-01T12:00:00.000Z');
+        const recent = Date.parse('2026-07-25T18:00:00.000Z');
+        const boardId = await ctx.db.insert('boards', {
+          ownerUserId: 'recent_card_user',
+          title: 'Reflection candidates',
+          createdAt: old,
+          updatedAt: recent,
+        });
+        const columnId = await ctx.db.insert('boardColumns', {
+          boardId,
+          name: 'Doing',
+          order: 0,
+          createdAt: old,
+          updatedAt: recent,
+        });
+        const target = await ctx.db.insert('cards', {
+          boardId,
+          columnId,
+          userId: 'recent_card_user',
+          title: 'Recently updated old task',
+          order: 0,
+          createdAt: old,
+          updatedAt: recent,
+        });
+        for (let index = 0; index < 205; index += 1) {
+          await ctx.db.insert('cards', {
+            boardId,
+            columnId,
+            userId: 'recent_card_user',
+            title: `Older noise ${index}`,
+            order: index + 1,
+            createdAt: old + index,
+            updatedAt: old + index,
+          });
+        }
+        return target;
+      });
+
+      const created = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'recent_card_user',
+        localDate: '2026-07-25',
+        timezone: 'UTC',
+      });
+      expect(created.checkin.candidateItems).toContainEqual(
+        expect.objectContaining({ kind: 'task', id: String(targetCardId) }),
+      );
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
   test('queues one deduplicated brief-ready notification unless the morning preference is disabled', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';

@@ -979,7 +979,7 @@ export const ensureCheckin = mutation({
         .take(80),
       ctx.db
         .query('cards')
-        .withIndex('by_user', (q) => q.eq('userId', args.userId))
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', args.userId))
         .order('desc')
         .take(200),
     ]);

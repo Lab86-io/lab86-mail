@@ -114,6 +114,22 @@ function normalizedPhrase(text: string): string {
   );
 }
 
+const UNFINISHED_REFLECTION_CUE =
+  /\b(?:still\s+(?:need|have)\s+to|still\s+(?:working|work)\s+on|need(?:s)?\s+to|have\s+to|has\s+to|haven['’]?t|hasn['’]?t|didn['’]?t|don['’]?t|doesn['’]?t|did\s+not|do\s+not|does\s+not|not\s+yet|won['’]?t|will\s+not|not\s+(?:done|finished|complete)|unfinished|incomplete)\b/i;
+
+function reflectionSaysCandidateIsUnfinished(reflection: string, titleTerms: Set<string>): boolean {
+  const clauses = reflection
+    .split(/[.!?;,\n]+|\b(?:and|but|however|though)\b/gi)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+  return clauses.some((clause) => {
+    if (!UNFINISHED_REFLECTION_CUE.test(clause)) return false;
+    const clauseTerms = intentTerms(clause);
+    const overlap = [...titleTerms].filter((term) => clauseTerms.has(term)).length;
+    return overlap >= Math.min(2, titleTerms.size);
+  });
+}
+
 function requestedItemCount(text: string): number | undefined {
   const match = text
     .toLocaleLowerCase()
@@ -283,6 +299,7 @@ export function matchReflectionCandidates(
     const matched = [...titleTerms].filter((term) => reflectionTerms.has(term)).length;
     const coverage = matched / titleTerms.size;
     if (!exact && (matched < 2 || coverage < 0.75)) return [];
+    if (reflectionSaysCandidateIsUnfinished(reflection, titleTerms)) return [];
     return [{ candidate, titleTerms, score: (exact ? 100 : 0) + matched * 10 + coverage }];
   });
   return scored.flatMap((entry, index) => {

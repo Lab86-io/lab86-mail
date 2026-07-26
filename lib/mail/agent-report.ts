@@ -16,6 +16,7 @@ import {
   parseBriefDocument,
   repairBriefDocument,
 } from '../shared/brief-document';
+import { dailyBriefEditionTitleAt, normalizeBriefTimezone } from '../shared/brief-edition';
 import { withDeadline } from '../shared/deadline';
 import { emailFromHeader } from '../shared/format';
 import { parseTriageHandoffs } from '../shared/triage-handoff';
@@ -797,7 +798,8 @@ export async function composeDocumentV2(
   const regions: BriefRegion[] = [];
   const finalized: { title?: string; summary?: string } = {};
   const generatedAt = report.generatedAt || Date.now();
-  const editionTitle = dailyBriefEditionTitle(generatedAt);
+  const timezone = normalizeBriefTimezone(getAiRequestContext().userTimezone);
+  const editionTitle = dailyBriefEditionTitle(generatedAt, timezone);
 
   await withDeadline(
     generate({
@@ -816,6 +818,7 @@ export async function composeDocumentV2(
               title: editionTitle,
               summary: finalized.summary || report.narrative || 'Your composed Daily Brief.',
               generatedAt,
+              timezone,
               regions: [...regions, region],
             });
             const placed = candidate.regions[candidate.regions.length - 1];
@@ -828,6 +831,7 @@ export async function composeDocumentV2(
               title: editionTitle,
               summary: finalized.summary || report.narrative || placed.summary,
               generatedAt,
+              timezone,
               regions,
             });
             if (onRegion) await onRegion(partial);
@@ -861,6 +865,7 @@ export async function composeDocumentV2(
       title: editionTitle,
       summary: finalized.summary || report.narrative || regions.map((region) => region.summary).join(' '),
       generatedAt,
+      timezone,
       regions,
     }),
   );
@@ -871,11 +876,7 @@ export function dailyBriefEditionTitle(
   generatedAt: number,
   timeZone = getAiRequestContext().userTimezone || 'UTC',
 ): string {
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    weekday: 'long',
-  }).format(new Date(generatedAt));
-  return `The ${weekday} Brief`;
+  return dailyBriefEditionTitleAt(generatedAt, timeZone);
 }
 
 async function composeArtifactHtml(report: DailyReport, userId?: string | null): Promise<string> {
@@ -1106,7 +1107,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   );
   const hasSelectedRef = (kind: string, id: string, account?: string | null) =>
     selectedRefs.has(`${kind}:${account?.toLocaleLowerCase() || ''}:${id}`) ||
-    selectedRefs.has(`${kind}::${id}`);
+    (!account && selectedRefs.has(`${kind}::${id}`));
   const restrictSources = intentSelection.policy.suppressUnrelated;
   const tasks = restrictSources ? allTasks.filter((task) => hasSelectedRef('task', task.cardId)) : allTasks;
   const calendar = restrictSources

@@ -211,7 +211,7 @@ export function BriefCanvas({
       className="scrollable @container h-full overflow-y-auto bg-[var(--color-bg)] px-4 py-6 @[680px]:px-7 @[1200px]:px-10"
       data-brief-document-version={document.version}
     >
-      {masthead ? <BriefMasthead generatedAt={document.generatedAt} /> : null}
+      {masthead ? <BriefMasthead generatedAt={document.generatedAt} timezone={document.timezone} /> : null}
       <header className="mx-auto mb-7 max-w-[1760px] border-b border-[var(--color-border)] pb-5">
         {composing || hydration.isError ? (
           <div className="mb-3 flex items-center justify-end gap-2 text-[11px] font-medium text-[var(--color-text-muted)]">

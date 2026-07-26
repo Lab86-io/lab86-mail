@@ -61,6 +61,9 @@ enum AssistantToolCard: Equatable, Sendable {
         let attachmentCount: Int?
 
         var id: String { "\(account):\(threadID)" }
+        var threadRoute: ThreadRoute {
+            ThreadRoute(accountID: account, threadID: threadID)
+        }
     }
 
     struct ChartCard: Equatable, Sendable {
@@ -487,7 +490,7 @@ struct AssistantToolCardView: View {
         .sheet(item: $presentedEmail) { email in
             NavigationStack {
                 ThreadView(
-                    route: ThreadRoute(accountID: email.account, threadID: email.threadID),
+                    route: email.threadRoute,
                     summary: nil
                 )
                 .toolbar {

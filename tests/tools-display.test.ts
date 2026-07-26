@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { createElement } from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import './tools/harness';
+import { ToolUiDisplayPart } from '../components/ai-elements/tool-ui-part';
 import { SerializableAudioSchema } from '../components/tool-ui/audio/schema';
 import { SerializableChartSchema } from '../components/tool-ui/chart/schema';
 import { SerializableCitationSchema } from '../components/tool-ui/citation/schema';
@@ -23,6 +26,7 @@ import { SerializableStatsDisplaySchema } from '../components/tool-ui/stats-disp
 import { SerializableTerminalSchema } from '../components/tool-ui/terminal/schema';
 import { SerializableVideoSchema } from '../components/tool-ui/video/schema';
 import { SerializableXPostSchema } from '../components/tool-ui/x-post/schema';
+import { emailPreviewThreadTarget, routeEmailPreviewThread } from '../lib/ai/email-preview-routing';
 import {
   buildAudioPayload,
   buildCarouselPayload,
@@ -473,6 +477,38 @@ describe('display tool registration', () => {
     );
     expect(result.ok).toBe(false);
     expect(String(result.error)).toContain('No chartable rows');
+  });
+
+  test('email preview click hands exact account and thread identity to both routing setters', () => {
+    const opened: Array<{ account: string; threadId: string }> = [];
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        createElement(ToolUiDisplayPart, {
+          toolName: 'show_email_preview',
+          output: {
+            ok: true,
+            payload: {
+              account: 'account-1',
+              threadId: 'thread-9',
+              subject: 'Lake plans',
+              from: 'Sam',
+              snippet: 'Bring sunscreen.',
+            },
+          },
+          onOpenThread: (target) => opened.push(target),
+        }),
+      );
+    });
+    act(() => renderer.root.findByType('button').props.onClick());
+    expect(opened).toEqual([{ account: 'account-1', threadId: 'thread-9' }]);
+
+    const selected: string[] = [];
+    routeEmailPreviewThread(emailPreviewThreadTarget(opened[0]), {
+      setThreadAccount: (account) => selected.push(`account:${account}`),
+      setSelectedThread: (threadId) => selected.push(`thread:${threadId}`),
+    });
+    expect(selected).toEqual(['account:account-1', 'thread:thread-9']);
   });
 });
 

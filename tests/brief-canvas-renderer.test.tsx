@@ -50,10 +50,7 @@ describe('BriefCanvas degradation', () => {
       masthead: true,
       footer: <div>Footer slot content</div>,
     });
-    const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(
-      new Date(richBriefDocumentFixture.generatedAt),
-    );
-    expect(html).toContain(`The ${weekday} Brief`);
+    expect(html).toContain('The Monday Brief');
     expect(html).toContain('Footer slot content');
     // A stale/model-authored title never displaces the stable edition name.
     expect(html).not.toContain('Thursday Brief');

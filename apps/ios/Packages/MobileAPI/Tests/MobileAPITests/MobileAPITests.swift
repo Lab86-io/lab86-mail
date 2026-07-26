@@ -112,14 +112,16 @@ func briefDocumentPreservesBoundedEditorialFootprints() throws {
            {"kind":"group","title":"Big idea","footprint":"feature","children":[
              {"kind":"text","role":"body","text":"The dominant concept."}
            ]},
-           {"kind":"text","role":"body","text":"Supporting context.","footprint":"standard"}
+           {"kind":"text","role":"body","text":"Supporting context.","footprint":"standard"},
+           {"kind":"text","role":"body","text":"Invalid leaf.","footprint":"unbounded"}
          ]}}]}
         """.utf8
     )
     let document = try #require(BriefDocumentV2.decode(data))
     let children = try #require(document.regions.first?.tree.children)
     #expect(children.first?.footprint == "feature")
-    #expect(children.last?.footprint == "standard")
+    #expect(children[1].footprint == "standard")
+    #expect(children.last?.footprint == nil)
 }
 
 @Test

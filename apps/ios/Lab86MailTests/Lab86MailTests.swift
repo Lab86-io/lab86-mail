@@ -348,6 +348,7 @@ struct Lab86MailTests {
         #expect(email.threadID == "thread-9")
         #expect(email.subject == "Lake plans")
         #expect(email.messageCount == 4)
+        #expect(email.threadRoute == ThreadRoute(accountID: "account-1", threadID: "thread-9"))
     }
 
     @Test @MainActor

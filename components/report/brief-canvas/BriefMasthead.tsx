@@ -2,23 +2,19 @@
 
 import { useMemo, useState } from 'react';
 import { getDailyArt } from '@/lib/mail/daily-art';
+import { dailyBriefDatelineAt, dailyBriefEditionTitleAt } from '@/lib/shared/brief-edition';
 
 /* The document-v2 masthead: the same daily-art hero the HTML brief carried,
  * rendered natively. Bleeds edge-to-edge against BriefCanvas's padding. Text
  * sits over the artwork, so it stays white-on-scrim in every theme; the title
  * face follows the customizer via font-display. */
-export function BriefMasthead({ generatedAt }: { generatedAt: number }) {
+export function BriefMasthead({ generatedAt, timezone }: { generatedAt: number; timezone?: string }) {
   const art = useMemo(() => getDailyArt(generatedAt), [generatedAt]);
   const sources = useMemo(() => [art.imageUrl, ...art.fallbacks], [art]);
   const [sourceIndex, setSourceIndex] = useState(0);
   const src = sourceIndex < sources.length ? sources[sourceIndex] : null;
-  const dateline = new Intl.DateTimeFormat(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  }).format(new Date(generatedAt));
-  const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(new Date(generatedAt));
-  const title = `The ${weekday} Brief`;
+  const dateline = dailyBriefDatelineAt(generatedAt, timezone);
+  const title = dailyBriefEditionTitleAt(generatedAt, timezone);
 
   return (
     <div className="relative -mx-4 -mt-6 mb-7 @[680px]:-mx-7">
