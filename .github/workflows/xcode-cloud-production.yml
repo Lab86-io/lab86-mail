@@ -73,22 +73,29 @@ jobs:
           echo "git_ref=$release_ref" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Check out release automation
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
       - name: Check out the production commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          path: release-source
           ref: ${{ steps.release.outputs.sha }}
 
       - name: Verify immutable production release
         run: |
           set -euo pipefail
+          release_repo="$GITHUB_WORKSPACE/release-source"
           release_sha="${{ steps.release.outputs.sha }}"
           release_ref="${{ steps.release.outputs.git_ref }}"
-          test "$(git rev-parse HEAD)" = "$release_sha"
-          git fetch --force origin main "refs/tags/${release_ref}:refs/tags/${release_ref}"
-          test "$(git rev-list -n 1 "$release_ref")" = "$release_sha"
-          git merge-base --is-ancestor "$release_sha" origin/main
-          test "$(jq -r '.version' package.json)" = "${{ steps.release.outputs.version }}"
+          test "$(git -C "$release_repo" rev-parse HEAD)" = "$release_sha"
+          git -C "$release_repo" fetch --force origin main "refs/tags/${release_ref}:refs/tags/${release_ref}"
+          test "$(git -C "$release_repo" rev-list -n 1 "$release_ref")" = "$release_sha"
+          git -C "$release_repo" merge-base --is-ancestor "$release_sha" origin/main
+          test "$(git -C "$release_repo" show "${release_sha}:package.json" | jq -r '.version')" = "${{ steps.release.outputs.version }}"
 
       - name: Verify release automation
         run: |
