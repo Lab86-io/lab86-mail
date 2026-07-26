@@ -57,9 +57,10 @@ test('production preserves diagnostics with an immutable upload action', () => {
 
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, new RegExp(immutableCheckout));
+  assert.match(contents, /- name: Check out release automation\s+uses: actions\/checkout@/);
   assert.match(
     contents,
-    /- name: Check out the production commit(?:(?!\n\s+- name: )[\s\S])*?\n\s+ref: \$\{\{ steps\.release\.outputs\.sha \}\}/,
+    /- name: Check out the production commit(?:(?!\n\s+- name: )[\s\S])*?\n\s+path: release-source\s+ref: \$\{\{ steps\.release\.outputs\.sha \}\}/,
   );
   assert.match(contents, /actions: read/);
   assert.match(contents, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
@@ -72,7 +73,7 @@ test('production preserves diagnostics with an immutable upload action', () => {
     readFileSync(new URL('./start-xcode-cloud.mjs', import.meta.url), 'utf8'),
     /manualTagStartCondition/,
   );
-  assert.match(contents, /git merge-base --is-ancestor "\$release_sha" origin\/main/);
+  assert.match(contents, /git -C "\$release_repo" merge-base --is-ancestor "\$release_sha" origin\/main/);
   assert.doesNotMatch(contents, /\$\{\{\s*github\.event\.workflow_run\.head_sha/);
   assert.match(deployContents, /name: Record immutable production release identity/);
   assert.match(deployContents, /release_sha="\$\(git rev-parse HEAD\)"/);
