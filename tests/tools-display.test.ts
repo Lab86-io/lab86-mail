@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { createElement } from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import './tools/harness';
+import { ToolUiDisplayPart } from '../components/ai-elements/tool-ui-part';
 import { SerializableAudioSchema } from '../components/tool-ui/audio/schema';
 import { SerializableChartSchema } from '../components/tool-ui/chart/schema';
 import { SerializableCitationSchema } from '../components/tool-ui/citation/schema';
@@ -23,6 +26,7 @@ import { SerializableStatsDisplaySchema } from '../components/tool-ui/stats-disp
 import { SerializableTerminalSchema } from '../components/tool-ui/terminal/schema';
 import { SerializableVideoSchema } from '../components/tool-ui/video/schema';
 import { SerializableXPostSchema } from '../components/tool-ui/x-post/schema';
+import { emailPreviewThreadTarget, routeEmailPreviewThread } from '../lib/ai/email-preview-routing';
 import {
   buildAudioPayload,
   buildCarouselPayload,
@@ -30,6 +34,7 @@ import {
   buildCitationsPayload,
   buildCodeDiffPayload,
   buildCodePayload,
+  buildEmailPreviewPayload,
   buildImageGalleryPayload,
   buildImagePayload,
   buildLinkPreviewPayload,
@@ -201,6 +206,11 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
     );
     expect(citations[0].domain).toBe('example.com');
     for (const citation of citations) expectParses(SerializableCitationSchema, citation);
+    expect(
+      buildCitationsPayload({
+        citations: [{ url: 'not a valid url', title: 'Imported reference' }],
+      })[0].domain,
+    ).toBeUndefined();
   });
 
   test('link preview / image / gallery / video / audio', () => {
@@ -312,6 +322,49 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
     expectParses(SerializableMessageDraftSchema, payload);
     expect(() => buildMessageDraftPayload({ to: [], subject: 'x', body: 'y' }, 'draft-bad')).toThrow();
   });
+
+  test('email preview keeps exact routing identity and clamps body copy', () => {
+    const payload = buildEmailPreviewPayload(
+      {
+        account: ' account-1 ',
+        threadId: ' thread-9 ',
+        subject: 'Lake plans',
+        from: 'Sam',
+        date: 1_753_200_000,
+        snippet: 'A'.repeat(1_500),
+        messageCount: 4.4,
+        attachmentCount: 2,
+      },
+      'email-preview-test',
+    );
+    expect(payload).toMatchObject({
+      account: 'account-1',
+      threadId: 'thread-9',
+      subject: 'Lake plans',
+      messageCount: 4,
+      date: 1_753_200_000_000,
+    });
+    expect(payload.snippet.length).toBeLessThan(1_230);
+    expect(
+      buildEmailPreviewPayload({
+        account: 'account-1',
+        threadId: 'thread-10',
+        subject: 'Lake plans',
+        from: 'Sam',
+        date: 1_753_200_000_000,
+        snippet: 'See you there.',
+      }).date,
+    ).toBe(1_753_200_000_000);
+    expect(() =>
+      buildEmailPreviewPayload({
+        account: '',
+        threadId: 'thread-9',
+        subject: 'x',
+        from: 'Sam',
+        snippet: 'x',
+      }),
+    ).toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -320,7 +373,7 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
 
 describe('display tool registration', () => {
   test('every display tool is registered and named show_*', () => {
-    expect(DISPLAY_TOOL_NAMES.length).toBe(20);
+    expect(DISPLAY_TOOL_NAMES.length).toBe(21);
     for (const name of DISPLAY_TOOL_NAMES) {
       expect(name.startsWith('show_')).toBe(true);
       expect(getTool(name)?.name).toBe(name);
@@ -392,6 +445,17 @@ describe('display tool registration', () => {
       ['show_social_post', { network: 'x', authorName: 'Jane' }, 'social-post'],
       ['show_message_draft', { to: ['sam@example.com'], subject: 'Hi', body: 'Hello' }, 'message-draft'],
       [
+        'show_email_preview',
+        {
+          account: 'account-1',
+          threadId: 'thread-9',
+          subject: 'Lake plans',
+          from: 'Sam',
+          snippet: 'See you there.',
+        },
+        'email-preview',
+      ],
+      [
         'show_chart',
         { type: 'bar', xKey: 'x', series: [{ key: 'y', label: 'Y' }], data: [{ x: 'a', y: 1 }] },
         'chart',
@@ -413,6 +477,63 @@ describe('display tool registration', () => {
     );
     expect(result.ok).toBe(false);
     expect(String(result.error)).toContain('No chartable rows');
+  });
+
+  test('email preview click hands exact account and thread identity to both routing setters', () => {
+    const opened: Array<{ account: string; threadId: string }> = [];
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        createElement(ToolUiDisplayPart, {
+          toolName: 'show_email_preview',
+          output: {
+            ok: true,
+            payload: {
+              account: 'account-1',
+              threadId: 'thread-9',
+              subject: 'Lake plans',
+              from: 'Sam',
+              snippet: 'Bring sunscreen.',
+            },
+          },
+          onOpenThread: (target) => opened.push(target),
+        }),
+      );
+    });
+    act(() => renderer.root.findByType('button').props.onClick());
+    expect(opened).toEqual([{ account: 'account-1', threadId: 'thread-9' }]);
+
+    const selected: string[] = [];
+    const target = emailPreviewThreadTarget(opened[0]);
+    expect(target).toEqual({ account: 'account-1', threadId: 'thread-9' });
+    if (!target) throw new Error('Expected a valid email preview route.');
+    routeEmailPreviewThread(target, {
+      setThreadAccount: (account) => selected.push(`account:${account}`),
+      setSelectedThread: (threadId) => selected.push(`thread:${threadId}`),
+    });
+    expect(selected).toEqual(['account:account-1', 'thread:thread-9']);
+
+    let malformed!: ReactTestRenderer;
+    act(() => {
+      malformed = create(
+        createElement(ToolUiDisplayPart, {
+          toolName: 'show_email_preview',
+          output: {
+            ok: true,
+            payload: {
+              subject: 'Missing identity',
+              from: 'Unknown',
+              snippet: 'This persisted payload must not become a route.',
+            },
+          },
+          onOpenThread: () => {
+            throw new Error('Malformed previews must not route.');
+          },
+        }),
+      );
+    });
+    expect(malformed.toJSON()).toBeNull();
+    expect(emailPreviewThreadTarget({ account: 'account-1' })).toBeNull();
   });
 });
 
@@ -478,6 +599,25 @@ describe('show_weather', () => {
       const result: any = await invokeTool(showWeather, { place: 'Nowhereville' }, toolContext());
       expect(result.ok).toBe(false);
       expect(result.error).toContain('Could not resolve a location');
+    } finally {
+      setWeatherFetchForTests(undefined);
+    }
+  });
+
+  test('reports ok:false when the weather provider fails', async () => {
+    setWeatherFetchForTests(async () => {
+      throw new Error('Weather provider unavailable');
+    });
+    try {
+      const result: any = await invokeTool(
+        showWeather,
+        { latitude: 43.15, longitude: -77.62 },
+        toolContext(),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.component).toBe('weather-widget');
+      expect(result.payload).toBeNull();
+      expect(result.error).toBe('Weather provider unavailable');
     } finally {
       setWeatherFetchForTests(undefined);
     }

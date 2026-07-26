@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
-import { prioritizeHandoffsForIntent } from '../albatross/daily-report';
+import { selectHandoffsForIntent } from '../albatross/daily-report';
 import { briefDocumentV2Enabled } from '../brief/feature';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
@@ -16,6 +16,7 @@ import {
   parseBriefDocument,
   repairBriefDocument,
 } from '../shared/brief-document';
+import { dailyBriefEditionTitleAt, normalizeBriefTimezone } from '../shared/brief-edition';
 import { withDeadline } from '../shared/deadline';
 import { emailFromHeader } from '../shared/format';
 import { parseTriageHandoffs } from '../shared/triage-handoff';
@@ -797,6 +798,8 @@ export async function composeDocumentV2(
   const regions: BriefRegion[] = [];
   const finalized: { title?: string; summary?: string } = {};
   const generatedAt = report.generatedAt || Date.now();
+  const timezone = normalizeBriefTimezone(getAiRequestContext().userTimezone);
+  const editionTitle = dailyBriefEditionTitle(generatedAt, timezone);
 
   await withDeadline(
     generate({
@@ -812,9 +815,10 @@ export async function composeDocumentV2(
           execute: async ({ region }) => {
             const candidate = parseBriefDocument({
               version: 2,
-              title: finalized.title || report.title || 'Daily Brief',
+              title: editionTitle,
               summary: finalized.summary || report.narrative || 'Your composed Daily Brief.',
               generatedAt,
+              timezone,
               regions: [...regions, region],
             });
             const placed = candidate.regions[candidate.regions.length - 1];
@@ -824,9 +828,10 @@ export async function composeDocumentV2(
             else if (regions.length < 12) regions.push(placed);
             const partial = parseBriefDocument({
               version: 2,
-              title: finalized.title || report.title || 'Daily Brief',
+              title: editionTitle,
               summary: finalized.summary || report.narrative || placed.summary,
               generatedAt,
+              timezone,
               regions,
             });
             if (onRegion) await onRegion(partial);
@@ -857,13 +862,21 @@ export async function composeDocumentV2(
   const composed = parseBriefDocument(
     repairBriefDocument({
       version: 2,
-      title: finalized.title || report.title || 'Daily Brief',
+      title: editionTitle,
       summary: finalized.summary || report.narrative || regions.map((region) => region.summary).join(' '),
       generatedAt,
+      timezone,
       regions,
     }),
   );
   return enforceDailyBriefHandoffCoverage(composed, report);
+}
+
+export function dailyBriefEditionTitle(
+  generatedAt: number,
+  timeZone = getAiRequestContext().userTimezone || 'UTC',
+): string {
+  return dailyBriefEditionTitleAt(generatedAt, timeZone);
 }
 
 async function composeArtifactHtml(report: DailyReport, userId?: string | null): Promise<string> {
@@ -1061,11 +1074,11 @@ export function toBriefEvent(e: DailyReportCalendarItem) {
 
 export function buildDataPrompt(report: DailyReport, extras: BriefExtras): string {
   const s = report.sections;
-  const tasks = (s.tasks ?? [])
+  const allTasks = (s.tasks ?? [])
     .filter((t: DailyReportTaskItem) => !t.completedAt)
     .slice(0, MAX_TASKS)
     .map(toBriefTask);
-  const calendar = (s.calendar ?? []).slice(0, MAX_EVENTS).map(toBriefEvent);
+  const allCalendar = (s.calendar ?? []).slice(0, MAX_EVENTS).map(toBriefEvent);
 
   // Format the dateline in the USER's timezone (set on the request context) so
   // the masthead shows their local day/time, not the server's UTC clock.
@@ -1080,10 +1093,59 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   const art = getDailyArt(report.generatedAt);
   const storedHandoffs = parseTriageHandoffs(report.handoffs);
   const dailyAlignment = report.sections.albatross?.dailyAlignment ?? null;
-  const handoffs = prioritizeHandoffsForIntent(
+  const intentSelection = selectHandoffsForIntent(
     storedHandoffs.length ? storedHandoffs : buildTriageHandoffIndex(report),
     dailyAlignment?.tomorrowIntent,
   );
+  const handoffs = intentSelection.handoffs;
+  const selectedRefs = new Set(
+    handoffs.flatMap((handoff) =>
+      [handoff.primaryRef, ...handoff.relatedRefs, ...handoff.items.map((item) => item.ref)].map(
+        (ref) => `${ref.kind}:${ref.account?.toLocaleLowerCase() || ''}:${ref.id}`,
+      ),
+    ),
+  );
+  const hasSelectedRef = (kind: string, id: string, account?: string | null) =>
+    selectedRefs.has(`${kind}:${account?.toLocaleLowerCase() || ''}:${id}`) ||
+    (!account && selectedRefs.has(`${kind}::${id}`));
+  const restrictSources = intentSelection.policy.suppressUnrelated;
+  const tasks = restrictSources ? allTasks.filter((task) => hasSelectedRef('task', task.cardId)) : allTasks;
+  const calendar = restrictSources
+    ? allCalendar.filter((event) => hasSelectedRef('event', event.eventId, event.account))
+    : allCalendar;
+  const threads = restrictSources
+    ? extras.digests.filter((thread) => hasSelectedRef('thread', thread.threadId, thread.account))
+    : extras.digests;
+  const mcp = restrictSources
+    ? (report.sections.mcp ?? [])
+        .filter((item) => item.externalId && hasSelectedRef('mcp', item.externalId))
+        .slice(0, 20)
+    : (report.sections.mcp ?? []).slice(0, 20);
+  const albatross =
+    restrictSources && report.sections.albatross
+      ? {
+          ...report.sections.albatross,
+          includedAreas: (report.sections.albatross.includedAreas ?? []).filter((item) =>
+            hasSelectedRef('area', item.areaId),
+          ),
+          askBeforeCentering: (report.sections.albatross.askBeforeCentering ?? []).filter((item) =>
+            hasSelectedRef('area', item.areaId),
+          ),
+          activeIntents: (report.sections.albatross.activeIntents ?? []).filter((item) =>
+            hasSelectedRef('work', item.id),
+          ),
+          activeProjects: (report.sections.albatross.activeProjects ?? []).filter((item) =>
+            hasSelectedRef('work', item.id),
+          ),
+          contextReview: (report.sections.albatross.contextReview ?? []).filter((item) =>
+            hasSelectedRef('work', item.id),
+          ),
+          completions: (report.sections.albatross.completions ?? []).filter((item) =>
+            hasSelectedRef('work', item.id),
+          ),
+          monthlyPrompt: undefined,
+        }
+      : (report.sections.albatross ?? null);
 
   const serviceIds = [
     ...(report.services || []),
@@ -1105,27 +1167,29 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     // The user's own recent outbound prose — match this voice in any draft.
     voiceSamples: extras.voiceSamples,
     // RAW material to analyze yourself: real thread bodies (most recent last).
-    threads: extras.digests,
+    threads,
     // Canonical attention index: already source-grounded, deduplicated, and
     // explicitly merged where source links prove the items belong together.
     handoffs: handoffs.slice(0, 64),
     // The user's evening reflection and explicit plan for tomorrow. This is an
     // intent overlay, not evidence that a source-owned item was completed.
     dailyAlignment,
+    intentPolicy: intentSelection.policy,
     tasks,
     calendar,
     // Items from connected tools the user enabled for the
     // brief: open issues, PRs awaiting review, assigned tickets, mentions.
-    mcp: (report.sections.mcp ?? []).slice(0, 20),
+    mcp,
     // Structured area context. Render an Area briefs module when present.
-    albatross: report.sections.albatross ?? null,
+    albatross,
   };
 
   return [
     `It is ${data.weekday}, ${data.localDate}, ${data.localTime} (${data.timezone}) for ${data.firstName || 'the user'}.`,
     `This is the "${report.kind}" edition.`,
+    `The document title must be exactly "The ${data.weekday} Brief". Put the changing editorial statement in the summary so clients render it as the lede.`,
     'Compose the brief from data.handoffs, the canonical deduplicated attention index. Use the raw threads, calendar, tasks, Areas, and connected items as supporting evidence and draft context, not as a second triage pass.',
-    "When data.dailyAlignment.tomorrowIntent is present, treat it as the user's authoritative attention signal. Put matching handoffs and concrete next moves first, ground every recommendation and response draft in source evidence, and retain unrelated protected handoffs. Never treat the reflection as completion evidence by itself.",
+    "When data.dailyAlignment.tomorrowIntent is present, treat it as the user's authoritative attention budget. Compose only from the already-selected data.handoffs: retain every protected handoff, do not reintroduce suppressed optional work from raw arrays, and give the user's non-work plan useful space when it changes the shape of the day. Never treat the reflection as completion evidence by itself.",
     'Backend contract: use exact ids/accounts from this JSON verbatim. For action controls, use only valid data-action enum strings and valid data-payload JSON. Omit any action you cannot wire exactly.',
     'Design contract: be editorial and component-minded. Create the layout, visual comparisons, timelines, checklists, or compact dashboards that best fit the actual day.',
     '',

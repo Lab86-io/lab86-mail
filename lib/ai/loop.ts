@@ -160,6 +160,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'show_order_summary',
   'show_social_post',
   'show_message_draft',
+  'show_email_preview',
 ]);
 
 const AGENT_TOOL_TIMEOUT_MS = 75_000;

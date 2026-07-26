@@ -160,3 +160,25 @@ jobs:
           version="${{ steps.version.outputs.version }}"
           git push origin HEAD:main
           git push origin "v${version}"
+
+      - name: Record immutable production release identity
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          release_sha="$(git rev-parse HEAD)"
+          release_ref="v${version}"
+          test "$(git rev-list -n 1 "$release_ref")" = "$release_sha"
+          jq -n \
+            --arg version "$version" \
+            --arg release_sha "$release_sha" \
+            --arg release_ref "$release_ref" \
+            '{version: $version, releaseSha: $release_sha, releaseRef: $release_ref}' \
+            > production-release.json
+
+      - name: Preserve immutable production release identity
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-release-${{ github.run_id }}
+          path: production-release.json
+          if-no-files-found: error
+          retention-days: 14

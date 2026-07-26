@@ -50,10 +50,12 @@ describe('BriefCanvas degradation', () => {
       masthead: true,
       footer: <div>Footer slot content</div>,
     });
-    expect(html).toContain('The Daily Brief');
+    expect(html).toContain('The Monday Brief');
     expect(html).toContain('Footer slot content');
-    // The masthead owns the title; the plain header h1 must not duplicate it.
-    expect(html.split('Thursday Brief').length - 1).toBe(1);
+    // A stale/model-authored title never displaces the stable edition name.
+    expect(html).not.toContain('Thursday Brief');
+    expect(html).toContain('first-letter:text-5xl');
+    expect(html).not.toContain('Native live brief');
   });
 
   test('typography follows the customizer display face, not a fixed serif', () => {
@@ -62,15 +64,13 @@ describe('BriefCanvas degradation', () => {
     expect(html).not.toContain('font-serif');
   });
 
-  test('regions flow as newspaper columns of unbreakable, self-measuring blocks', () => {
+  test('regions use a responsive editorial grid with bounded feature spans', () => {
     const html = render(richBriefDocumentFixture);
-    // Wide containers get the 2- then 3-column flow; a rail-closed 16:9
-    // display lands past the 1200px threshold.
-    expect(html).toContain('@[840px]:columns-2');
-    expect(html).toContain('@[1200px]:columns-3');
-    // Column units never split mid-card and query their own column width.
-    expect(html).toContain('break-inside-avoid');
-    expect(html).toContain('@container mb-6 break-inside-avoid');
+    expect(html).toContain('@[840px]:grid-cols-2');
+    expect(html).toContain('@[1200px]:grid-cols-3');
+    expect(html).toContain('@[840px]:col-span-2');
+    expect(html).toContain('@[840px]:row-span-2');
+    expect(html).toContain('@container mb-6');
   });
 
   test('flattened stacks preserve their density and parent presentation', () => {
@@ -129,9 +129,9 @@ describe('BriefCanvas degradation', () => {
     };
 
     const html = render(document);
-    expect(html).toContain('@container mb-6 brief-emphasis-primary border-amber-500/30 break-inside-avoid');
-    expect(html).toContain('@container mb-4 break-inside-avoid');
-    expect(html).toContain('@container mb-2.5 opacity-75 border-destructive/35 break-inside-avoid');
+    expect(html).toContain('@container mb-6 brief-emphasis-primary border-amber-500/30');
+    expect(html).toContain('@container mb-4');
+    expect(html).toContain('@container mb-2.5 opacity-75 border-destructive/35');
   });
 
   test('the three voices and the depth ladder reach the rendered document', () => {

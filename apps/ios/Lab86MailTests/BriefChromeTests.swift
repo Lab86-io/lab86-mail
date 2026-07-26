@@ -116,6 +116,17 @@ struct BriefChromeTests {
         #expect(DailyBriefMasthead.height(forWidth: 1_024) == 360)
     }
 
+    @Test
+    func mastheadTitleUsesTheLocalWeekdayEditionName() {
+        let date = Date(timeIntervalSince1970: 1_774_521_600) // 2026-03-26 00:00 UTC
+        #expect(
+            DailyBriefMasthead.editionTitle(
+                for: date,
+                timeZone: TimeZone(secondsFromGMT: 0)!
+            ) == "The Thursday Brief"
+        )
+    }
+
     // MARK: - Document status precedence
 
     @Test

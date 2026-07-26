@@ -421,6 +421,9 @@ private struct SourceList: View {
     @State private var autoscrollTask: Task<Void, Never>?
     @State private var autoscrollZone: SidebarScrubLogic.EdgeZone?
     @State private var scrubDestinations: [SidebarDestination] = []
+    @State private var scrubAnchorLocation: CGPoint?
+    @State private var scrubAnchorFrames: [SidebarDestination: CGRect] = [:]
+    @State private var scrubContentOffsetY: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -433,10 +436,10 @@ private struct SourceList: View {
             .padding(.top, 10)
             .padding(.bottom, 14)
 
-            // Every Area stays in the hierarchy. The viewport itself never
-            // pans under the thumb: the direct scrub advances the centered
-            // destination, giving long Area lists the behavior of a system
-            // wheel without competing scroll and selection gestures.
+            // Every Area stays in the hierarchy. During a scrub the menu
+            // surface follows the finger beneath a fixed selection slot, like
+            // a system wheel; the viewport itself remains programmatic so
+            // scroll and selection gestures never compete.
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: 4) {
@@ -529,8 +532,14 @@ private struct SourceList: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.bottom, 16)
+                    .offset(y: scrubContentOffsetY)
                 }
                 .scrollIndicators(.hidden)
+                .contentMargins(
+                    .vertical,
+                    SidebarScrubLogic.scrollEndInset,
+                    for: .scrollContent
+                )
                 .scrollDisabled(true)
                 .onGeometryChange(for: CGRect.self) { proxy in
                     proxy.frame(in: .named(SidebarScrubCoordinateSpace.name))
@@ -539,8 +548,12 @@ private struct SourceList: View {
                 }
                 .onChange(of: autoscrollTarget) { _, destination in
                     guard let destination else { return }
+                    let anchor = SidebarScrubLogic.autoscrollAnchor(
+                        slotY: scrubAnchorLocation?.y,
+                        in: scrollBounds
+                    )
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.22, extraBounce: 0)) {
-                        proxy.scrollTo(destination, anchor: .center)
+                        proxy.scrollTo(destination, anchor: anchor)
                     }
                     autoscrollTarget = nil
                 }
@@ -584,7 +597,7 @@ private struct SourceList: View {
             previewDelayTask?.cancel()
         }
         // One drag owns the wheel-style scrub. The viewport is programmatically
-        // centered, so there is still no competing scroll pan; VoiceOver
+        // slot-aligned, so there is still no competing scroll pan; VoiceOver
         // continues to activate each real Button directly.
         .highPriorityGesture(scrubGesture, isEnabled: scrub != nil)
     }
@@ -619,10 +632,10 @@ private struct SourceList: View {
         return destinationIndex - selectedIndex
     }
 
-    // Menu-style touch handling: the session opens on touch-down, the
-    // highlight follows the finger, release commits whatever is under it. A
-    // plain tap is just the degenerate scrub (down and up on one row). No
-    // hold, no scroll — there is nothing left to arbitrate against.
+    // Menu-style touch handling: the session opens on touch-down and anchors
+    // a fixed selection slot. The list then follows the finger beneath it;
+    // release commits the row brought into that slot. A plain tap is the
+    // degenerate scrub (down and up on one row).
     private var scrubGesture: some Gesture {
         DragGesture(
             minimumDistance: 0,
@@ -646,10 +659,14 @@ private struct SourceList: View {
             }
             scrubCancelled = true
             stopAutoscroll()
+            resetScrubVisuals()
             return
         }
-        let destination = SidebarScrubLogic.destination(at: drag.location, rows: rowFrames)
         if !session.wrappedValue.isActive {
+            scrubAnchorLocation = drag.startLocation
+            scrubAnchorFrames = rowFrames
+            scrubContentOffsetY = 0
+            let destination = SidebarScrubLogic.destination(at: drag.startLocation, rows: rowFrames)
             session.wrappedValue.activate(over: destination, committed: currentDestination)
             // The page preview waits for a row crossing or the ready delay so
             // a plain tap never flashes it.
@@ -662,11 +679,24 @@ private struct SourceList: View {
             if let destination {
                 UIAccessibility.post(notification: .announcement, argument: "Previewing \(destination.title)")
             }
-        } else if session.wrappedValue.move(to: destination) {
-            // One selection tick per row crossed.
-            UISelectionFeedbackGenerator().selectionChanged()
-            if let destination {
-                UIAccessibility.post(notification: .announcement, argument: destination.title)
+        } else {
+            scrubContentOffsetY = SidebarScrubLogic.contentDragOffset(translation: drag.translation)
+            if let anchor = scrubAnchorLocation {
+                let selectionPoint = SidebarScrubLogic.anchoredSelectionPoint(
+                    anchor: anchor,
+                    translation: drag.translation
+                )
+                let destination = SidebarScrubLogic.destination(
+                    at: selectionPoint,
+                    rows: scrubAnchorFrames
+                )
+                if session.wrappedValue.move(to: destination) {
+                    // One selection tick per row crossed.
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    if let destination {
+                        UIAccessibility.post(notification: .announcement, argument: destination.title)
+                    }
+                }
             }
         }
         updateAutoscroll(forY: drag.location.y)
@@ -677,6 +707,7 @@ private struct SourceList: View {
         previewDelayTask?.cancel()
         previewDelayTask = nil
         defer { scrubCancelled = false }
+        defer { resetScrubVisuals() }
         guard let session = scrub, !scrubCancelled, session.wrappedValue.isActive else {
             scrub?.wrappedValue.cancel()
             return
@@ -723,6 +754,18 @@ private struct SourceList: View {
         autoscrollTask?.cancel()
         autoscrollTask = nil
         autoscrollZone = nil
+    }
+
+    private func resetScrubVisuals() {
+        scrubAnchorLocation = nil
+        scrubAnchorFrames = [:]
+        if reduceMotion {
+            scrubContentOffsetY = 0
+        } else {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                scrubContentOffsetY = 0
+            }
+        }
     }
 
     // Committing routes through the exact paths a tap uses — the preview never

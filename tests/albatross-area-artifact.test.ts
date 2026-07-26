@@ -133,6 +133,31 @@ describe('Area artifact data contract', () => {
     });
   });
 
+  test('scopes the next-day attention budget to the named Area', () => {
+    const focused = buildAreaArtifactContext({
+      ...home,
+      dailyAlignment: {
+        localDate: '2026-07-25',
+        tomorrowIntent: 'Tomorrow I will spend one hour on one Studio task, then enjoy the lake.',
+      },
+    });
+    expect(focused.nextDayIntent).toMatchObject({
+      appliesToArea: true,
+      mode: 'light',
+      requestedItems: 1,
+      requestedMinutes: 60,
+    });
+
+    const unrelated = buildAreaArtifactContext({
+      ...home,
+      dailyAlignment: {
+        localDate: '2026-07-25',
+        tomorrowIntent: 'Spend one hour on Card Hunt.',
+      },
+    });
+    expect(unrelated.nextDayIntent?.appliesToArea).toBe(false);
+  });
+
   test('revision changes with source state but not edition time', () => {
     const one = buildAreaArtifactContext(home, 1_000);
     const later = buildAreaArtifactContext(home, 9_000);
