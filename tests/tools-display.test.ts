@@ -504,11 +504,36 @@ describe('display tool registration', () => {
     expect(opened).toEqual([{ account: 'account-1', threadId: 'thread-9' }]);
 
     const selected: string[] = [];
-    routeEmailPreviewThread(emailPreviewThreadTarget(opened[0]), {
+    const target = emailPreviewThreadTarget(opened[0]);
+    expect(target).toEqual({ account: 'account-1', threadId: 'thread-9' });
+    if (!target) throw new Error('Expected a valid email preview route.');
+    routeEmailPreviewThread(target, {
       setThreadAccount: (account) => selected.push(`account:${account}`),
       setSelectedThread: (threadId) => selected.push(`thread:${threadId}`),
     });
     expect(selected).toEqual(['account:account-1', 'thread:thread-9']);
+
+    let malformed!: ReactTestRenderer;
+    act(() => {
+      malformed = create(
+        createElement(ToolUiDisplayPart, {
+          toolName: 'show_email_preview',
+          output: {
+            ok: true,
+            payload: {
+              subject: 'Missing identity',
+              from: 'Unknown',
+              snippet: 'This persisted payload must not become a route.',
+            },
+          },
+          onOpenThread: () => {
+            throw new Error('Malformed previews must not route.');
+          },
+        }),
+      );
+    });
+    expect(malformed.toJSON()).toBeNull();
+    expect(emailPreviewThreadTarget({ account: 'account-1' })).toBeNull();
   });
 });
 

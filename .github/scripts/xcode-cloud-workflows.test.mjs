@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { selectGitRefID } from './start-xcode-cloud.mjs';
 
 const immutableUploadArtifact = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02';
 const immutableCheckout = 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5';
@@ -52,14 +53,24 @@ test('staging preserves diagnostics and signed IPA with immutable upload actions
 
 test('production preserves diagnostics with an immutable upload action', () => {
   const contents = workflow('xcode-cloud-production.yml');
+  const deployContents = workflow('deploy-production.yml');
 
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, new RegExp(immutableCheckout));
   assert.match(
     contents,
-    /- name: Check out the production commit(?:(?!\n\s+- name: )[\s\S])*?\n\s+ref: main\b/,
+    /- name: Check out the production commit(?:(?!\n\s+- name: )[\s\S])*?\n\s+ref: \$\{\{ steps\.release\.outputs\.sha \}\}/,
   );
+  assert.match(contents, /actions: read/);
+  assert.match(contents, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
+  assert.match(contents, /name: production-release-\$\{\{ steps\.deploy\.outputs\.run_id \}\}/);
+  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: \$\{\{ steps\.release\.outputs\.git_ref \}\}/);
+  assert.match(contents, /git merge-base --is-ancestor "\$release_sha" origin\/main/);
   assert.doesNotMatch(contents, /\$\{\{\s*github\.event\.workflow_run\.head_sha/);
+  assert.match(deployContents, /name: Record immutable production release identity/);
+  assert.match(deployContents, /release_sha="\$\(git rev-parse HEAD\)"/);
+  assert.match(deployContents, /name: production-release-\$\{\{ github\.run_id \}\}/);
+  assert.match(deployContents, new RegExp(immutableUploadArtifact));
   assert.match(contents, /node --test \.github\/scripts\/app-store-connect\.test\.mjs/);
   assert.match(contents, /node --test \.github\/scripts\/upload-ios-export\.test\.mjs/);
   assert.match(contents, /BUILD_NUMBER: \$\{\{ steps\.start\.outputs\.build_number \}\}/);
@@ -76,6 +87,17 @@ test('production preserves diagnostics with an immutable upload action', () => {
     /name: Confirm production TestFlight processing and internal group assignment\s+env:\s+ASC_ISSUER_ID:/,
   );
   assert.equal(contents.split(immutableUploadArtifact).length - 1, 1);
+});
+
+test('Xcode Cloud resolves immutable branch and tag references', () => {
+  const references = [
+    { id: 'branch-main', attributes: { name: 'main', canonicalName: 'refs/heads/main' } },
+    { id: 'tag-release', attributes: { name: 'v0.9.0', canonicalName: 'refs/tags/v0.9.0' } },
+  ];
+
+  assert.equal(selectGitRefID(references, 'main'), 'branch-main');
+  assert.equal(selectGitRefID(references, 'v0.9.0'), 'tag-release');
+  assert.throws(() => selectGitRefID(references, 'v9.9.9'), /git reference "v9\.9\.9" was not found/);
 });
 
 test('TestFlight polling selects the newest matching upload deterministically', () => {

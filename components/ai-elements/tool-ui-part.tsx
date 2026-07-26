@@ -231,11 +231,13 @@ export function ToolUiDisplayPart({
             }
           />
         );
-      case 'show_email_preview':
+      case 'show_email_preview': {
+        const target = emailPreviewThreadTarget(payload);
+        if (!target) return null;
         return (
           <button
             type="button"
-            onClick={() => onOpenThread?.(emailPreviewThreadTarget(payload))}
+            onClick={() => onOpenThread?.(target)}
             disabled={!onOpenThread}
             className="group w-full max-w-[520px] overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-left shadow-[var(--shadow-soft)] transition hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-pop)] disabled:cursor-default"
           >
@@ -279,6 +281,7 @@ export function ToolUiDisplayPart({
             </span>
           </button>
         );
+      }
       default:
         return null;
     }

@@ -4,12 +4,20 @@ export interface EmailPreviewThreadTarget {
 }
 
 export function emailPreviewThreadTarget(payload: {
-  account: unknown;
-  threadId: unknown;
-}): EmailPreviewThreadTarget {
+  account?: unknown;
+  threadId?: unknown;
+}): EmailPreviewThreadTarget | null {
+  if (
+    typeof payload.account !== 'string' ||
+    !payload.account.trim() ||
+    typeof payload.threadId !== 'string' ||
+    !payload.threadId.trim()
+  ) {
+    return null;
+  }
   return {
-    account: String(payload.account),
-    threadId: String(payload.threadId),
+    account: payload.account,
+    threadId: payload.threadId,
   };
 }
 

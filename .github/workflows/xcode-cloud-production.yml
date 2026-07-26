@@ -7,6 +7,11 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful Deploy Production workflow run containing the immutable release identity
+        required: true
+        type: string
 
 concurrency:
   group: xcode-cloud-production-trigger
@@ -23,15 +28,67 @@ jobs:
     timeout-minutes: 90
     environment: production
     permissions:
+      actions: read
       contents: read
     steps:
+      - name: Resolve production deployment run
+        id: deploy
+        env:
+          AUTOMATIC_RUN_ID: ${{ github.event.workflow_run.id }}
+          MANUAL_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          set -euo pipefail
+          deploy_run_id="${AUTOMATIC_RUN_ID:-${MANUAL_RUN_ID:-}}"
+          if ! [[ "$deploy_run_id" =~ ^[0-9]+$ ]]; then
+            echo "A numeric successful Deploy Production run id is required." >&2
+            exit 1
+          fi
+          echo "run_id=$deploy_run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download immutable production release identity
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: production-release-${{ steps.deploy.outputs.run_id }}
+          path: ${{ runner.temp }}/production-release
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.deploy.outputs.run_id }}
+
+      - name: Resolve immutable production release
+        id: release
+        run: |
+          set -euo pipefail
+          identity="$RUNNER_TEMP/production-release/production-release.json"
+          release_sha="$(jq -er '.releaseSha' "$identity")"
+          release_ref="$(jq -er '.releaseRef' "$identity")"
+          version="$(jq -er '.version' "$identity")"
+          if ! [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The production release artifact contains an invalid commit SHA." >&2
+            exit 1
+          fi
+          if [ "$release_ref" != "v${version}" ]; then
+            echo "The production release tag does not match version ${version}." >&2
+            exit 1
+          fi
+          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "git_ref=$release_ref" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Check out the production commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # Deploy Production creates and pushes the versioned release commit.
-          # workflow_run.head_sha is its pre-release input, so always build the
-          # resulting commit at the protected production branch tip.
-          ref: main
+          fetch-depth: 0
+          ref: ${{ steps.release.outputs.sha }}
+
+      - name: Verify immutable production release
+        run: |
+          set -euo pipefail
+          release_sha="${{ steps.release.outputs.sha }}"
+          release_ref="${{ steps.release.outputs.git_ref }}"
+          test "$(git rev-parse HEAD)" = "$release_sha"
+          git fetch --force origin main "refs/tags/${release_ref}:refs/tags/${release_ref}"
+          test "$(git rev-list -n 1 "$release_ref")" = "$release_sha"
+          git merge-base --is-ancestor "$release_sha" origin/main
+          test "$(jq -r '.version' package.json)" = "${{ steps.release.outputs.version }}"
 
       - name: Verify release automation
         run: |
@@ -52,6 +109,7 @@ jobs:
           APP_STORE_APP_ID: 6792830834
           XCODE_CLOUD_WORKFLOW_NAME: Production App Store
           XCODE_CLOUD_BRANCH_NAME: main
+          XCODE_CLOUD_GIT_REF_NAME: ${{ steps.release.outputs.git_ref }}
           XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 304D20E5-2087-4E0D-8A6E-5E6025DEED36
         run: node .github/scripts/start-xcode-cloud.mjs
 

@@ -10,16 +10,20 @@ export function selectWorkflowID(workflows, workflowName) {
   return workflow.id;
 }
 
-export function selectBranchRefID(references, branchName) {
-  const branch = references.find(
+export function selectGitRefID(references, refName) {
+  const reference = references.find(
     ({ attributes }) =>
-      attributes.name === branchName || attributes.canonicalName === `refs/heads/${branchName}`,
+      attributes.name === refName ||
+      attributes.canonicalName === `refs/heads/${refName}` ||
+      attributes.canonicalName === `refs/tags/${refName}`,
   );
-  if (!branch) {
-    throw new Error(`Xcode Cloud branch "${branchName}" was not found.`);
+  if (!reference) {
+    throw new Error(`Xcode Cloud git reference "${refName}" was not found.`);
   }
-  return branch.id;
+  return reference.id;
 }
+
+export const selectBranchRefID = selectGitRefID;
 
 export function createBuildRunPayload(workflowID, branchRefID) {
   return {
@@ -178,12 +182,18 @@ export async function main() {
   let branchRefID = process.env.XCODE_CLOUD_BRANCH_REF_ID;
 
   if (!hasExplicitBuildTarget(workflowID, branchRefID)) {
-    for (const name of ['APP_STORE_APP_ID', 'XCODE_CLOUD_WORKFLOW_NAME', 'XCODE_CLOUD_BRANCH_NAME']) {
+    for (const name of ['APP_STORE_APP_ID', 'XCODE_CLOUD_WORKFLOW_NAME']) {
       if (!process.env[name]) {
         throw new Error(
           `Missing ${name}; provide discovery names or explicit XCODE_CLOUD_WORKFLOW_ID and XCODE_CLOUD_BRANCH_REF_ID.`,
         );
       }
+    }
+    const gitRefName = process.env.XCODE_CLOUD_GIT_REF_NAME || process.env.XCODE_CLOUD_BRANCH_NAME;
+    if (!gitRefName) {
+      throw new Error(
+        'Missing XCODE_CLOUD_GIT_REF_NAME or XCODE_CLOUD_BRANCH_NAME; provide the exact source ref to build.',
+      );
     }
 
     const product = await appStoreConnect(`/v1/apps/${process.env.APP_STORE_APP_ID}/ciProduct`);
@@ -212,7 +222,7 @@ export async function main() {
           createProductionWorkflowPayload(
             template,
             process.env.XCODE_CLOUD_WORKFLOW_NAME,
-            process.env.XCODE_CLOUD_BRANCH_NAME,
+            process.env.XCODE_CLOUD_BRANCH_NAME || gitRefName,
           ),
         ),
       });
@@ -225,7 +235,7 @@ export async function main() {
       `/v1/scmRepositories/${repository.data.id}/gitReferences?limit=200`,
       appStoreConnect,
     );
-    branchRefID = selectBranchRefID(references, process.env.XCODE_CLOUD_BRANCH_NAME);
+    branchRefID = selectGitRefID(references, gitRefName);
   }
 
   const response = await appStoreConnect('/v1/ciBuildRuns', {
@@ -236,7 +246,9 @@ export async function main() {
   const buildRun = response.data;
   console.log(
     `Started Xcode Cloud build #${buildRun.attributes.number} (${buildRun.id}) on ${
-      process.env.XCODE_CLOUD_BRANCH_NAME || 'the configured branch'
+      process.env.XCODE_CLOUD_GIT_REF_NAME ||
+      process.env.XCODE_CLOUD_BRANCH_NAME ||
+      'the configured git reference'
     }.`,
   );
 
