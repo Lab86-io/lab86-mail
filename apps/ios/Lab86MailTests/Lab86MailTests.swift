@@ -351,6 +351,28 @@ struct Lab86MailTests {
         #expect(email.threadRoute == ThreadRoute(accountID: "account-1", threadID: "thread-9"))
     }
 
+    @Test
+    func rejectsInlineEmailPreviewWithBlankThreadIdentity() {
+        for (account, threadID) in [("", "thread-9"), ("account-1", "   ")] {
+            let card = AssistantToolCard.parse(
+                toolName: "show_email_preview",
+                output: .object([
+                    "ok": .bool(true),
+                    "payload": .object([
+                        "account": .string(account),
+                        "threadId": .string(threadID),
+                        "subject": .string("Lake plans"),
+                        "from": .string("Sam"),
+                        "snippet": .string("Bring sunscreen."),
+                    ]),
+                ])
+            )
+            if case .email = card {
+                Issue.record("Blank email identity must not produce a routable card")
+            }
+        }
+    }
+
     @Test @MainActor
     func chatApprovalResumesThePausedToolCallWithARealToolResult() {
         let input: JSONValue = .object([

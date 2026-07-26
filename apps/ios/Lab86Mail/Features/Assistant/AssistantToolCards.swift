@@ -180,11 +180,15 @@ enum AssistantToolCard: Equatable, Sendable {
             return .draft(DraftCard(to: to, subject: subject, body: body))
 
         case "show_email_preview":
-            guard let account = payload["account"]?.stringValue,
-                  let threadID = payload["threadId"]?.stringValue,
+            guard let rawAccount = payload["account"]?.stringValue,
+                  let rawThreadID = payload["threadId"]?.stringValue,
+                  !rawAccount.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   let subject = payload["subject"]?.stringValue,
                   let sender = payload["from"]?.stringValue,
                   let snippet = payload["snippet"]?.stringValue else { break }
+            let account = rawAccount.trimmingCharacters(in: .whitespacesAndNewlines)
+            let threadID = rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
             var date: Date?
             if var timestamp = payload["date"]?.doubleValue {
                 if timestamp > 10_000_000_000 { timestamp /= 1_000 }
