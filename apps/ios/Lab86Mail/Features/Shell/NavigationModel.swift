@@ -269,12 +269,16 @@ final class NavigationModel {
     }
 
     func openPrimaryView(_ raw: String) {
-        switch raw.lowercased() {
+        let normalized = raw.lowercased()
+        if Self.isFilesRoute(normalized) {
+            selectPrimary(.files)
+            return
+        }
+        switch normalized {
         case "mail", "inbox": selectPrimary(.mail)
         case "calendar", "events": selectPrimary(.calendar)
         case "tasks", "board": selectPrimary(.tasks)
         case "work", "area", "areas": selectPrimary(.work)
-        case "files", "drive", "documents": selectPrimary(.files)
         default: selectPrimary(.today)
         }
     }
@@ -383,7 +387,7 @@ final class NavigationModel {
         } else if route.contains("document"),
                   let document = query["document"] ?? query["documentId"] ?? query["id"] {
             openDocument(id: document)
-        } else if route.contains("files") {
+        } else if Self.isFilesRoute(route) {
             selectPrimary(.files)
         } else if route.contains("calendar") {
             selectPrimary(.calendar)
@@ -404,5 +408,13 @@ final class NavigationModel {
         } else if let url = URL(string: "lab86://open\(route.hasPrefix("/") ? route : "/\(route)")") {
             open(url)
         }
+    }
+
+    private static let filesRouteAliases: Set<Substring> = ["files", "drive", "documents"]
+
+    private static func isFilesRoute(_ raw: String) -> Bool {
+        raw.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .contains(where: filesRouteAliases.contains)
     }
 }

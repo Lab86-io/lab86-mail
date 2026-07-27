@@ -942,6 +942,20 @@ struct Lab86MailTests {
         #expect(areaLink.areaRoute?.areaID == "area-1")
     }
 
+    @Test @MainActor
+    func everyFilesAliasOpensTheSamePrimaryAndDeepLinkDestination() throws {
+        for alias in ["files", "drive", "documents"] {
+            let primary = NavigationModel()
+            primary.openPrimaryView(alias)
+            #expect(primary.selectedTab == .files)
+
+            let deepLink = NavigationModel()
+            deepLink.open(try #require(URL(string: "lab86://\(alias)")))
+            #expect(deepLink.selectedTab == .files)
+            #expect(!deepLink.hasNestedDestination)
+        }
+    }
+
     @Test
     func dailyBriefArtifactStripsScriptsInjectsNonceBridgeAndPreservesActionData() {
         let raw = #"""
