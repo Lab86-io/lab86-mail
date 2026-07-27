@@ -67,6 +67,7 @@ export const documentCreate = defineTool({
     revision: z.number(),
     openPath: z.string(),
     googleUrl: z.string().optional(),
+    publishError: z.string().optional(),
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
@@ -96,13 +97,22 @@ export const documentCreate = defineTool({
       target: { kind: 'document', id: document.documentId },
       inverse: { kind: 'documents.archive', payload: { documentId: document.documentId } },
     });
-    const google = args.publishToGoogle
-      ? await dependencies.publishDocumentToGoogle({
+    let google: Awaited<ReturnType<typeof publishDocumentToGoogle>> | null = null;
+    let publishError: string | undefined;
+    if (args.publishToGoogle) {
+      try {
+        google = await dependencies.publishDocumentToGoogle({
           userId,
           document,
           connectionId: args.googleConnectionId,
-        })
-      : null;
+        });
+      } catch (error) {
+        publishError =
+          error instanceof Error
+            ? error.message.slice(0, 500)
+            : 'Google publish failed after the Albatross document was created.';
+      }
+    }
     return {
       ok: true,
       documentId: document.documentId,
@@ -111,6 +121,7 @@ export const documentCreate = defineTool({
       revision: document.currentRevision,
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
       googleUrl: google?.webUrl,
+      publishError,
     };
   },
 });

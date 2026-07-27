@@ -1,12 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { getCloudFileAccess } from '@/lib/files/connections';
-import type { AlbatrossDocumentModel, DeckElement, DocumentKind, SheetCell } from './model';
+import {
+  type AlbatrossDocumentModel,
+  type DeckElement,
+  type DocumentKind,
+  MAX_SHEET_COLUMNS,
+  MAX_SHEET_ROWS,
+  type SheetCell,
+} from './model';
 
-export const GOOGLE_NATIVE_MIME: Record<string, DocumentKind> = {
+export const GOOGLE_NATIVE_MIME = {
   'application/vnd.google-apps.document': 'doc',
   'application/vnd.google-apps.spreadsheet': 'sheet',
   'application/vnd.google-apps.presentation': 'deck',
-};
+} as const satisfies Record<string, DocumentKind>;
+export type GoogleNativeMime = keyof typeof GOOGLE_NATIVE_MIME;
+export const GOOGLE_NATIVE_MIME_TYPES = Object.keys(GOOGLE_NATIVE_MIME) as [
+  GoogleNativeMime,
+  ...GoogleNativeMime[],
+];
 
 const defaultDependencies = {
   getCloudFileAccess,
@@ -20,10 +32,19 @@ export function __setGoogleImportDepsForTest(overrides: Partial<typeof defaultDe
 }
 
 async function googleJson(accessToken: string, endpoint: string) {
-  const response = await dependencies.fetch(endpoint, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-  });
+  let response: Response;
+  try {
+    response = await dependencies.fetch(endpoint, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+      throw new Error('Google file request timed out. Try again.');
+    }
+    throw error;
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
@@ -99,9 +120,9 @@ async function importGoogleSheet(accessToken: string, fileId: string): Promise<A
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(fileId)}?fields=properties.title,sheets.properties`,
   );
   const sourceSheets = Array.isArray(metadata.sheets) ? metadata.sheets : [];
-  const ranges = sourceSheets
-    .map((sheet: any) => String(sheet?.properties?.title || ''))
-    .filter(Boolean)
+  const titles = sourceSheets.map((sheet: any) => String(sheet?.properties?.title || ''));
+  const requestedTitles = titles.filter(Boolean);
+  const ranges = requestedTitles
     .map((title: string) => `ranges=${encodeURIComponent(`'${title.replaceAll("'", "''")}'`)}`)
     .join('&');
   const values = await googleJson(
@@ -109,13 +130,31 @@ async function importGoogleSheet(accessToken: string, fileId: string): Promise<A
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(fileId)}/values:batchGet?majorDimension=ROWS&valueRenderOption=FORMULA&${ranges}`,
   );
   const byRange = Array.isArray(values.valueRanges) ? values.valueRanges : [];
+  const rowsByTitle = new Map<string, any[]>();
+  requestedTitles.forEach((title: string, index: number) => {
+    const rows = byRange[index]?.values;
+    rowsByTitle.set(title, Array.isArray(rows) ? rows : []);
+  });
   const sheets = sourceSheets.map((source: any, sheetIndex: number) => {
     const id = `google-sheet-${source?.properties?.sheetId ?? sheetIndex}`;
-    const rows = Array.isArray(byRange[sheetIndex]?.values) ? byRange[sheetIndex].values : [];
+    const rows = rowsByTitle.get(titles[sheetIndex]) || [];
+    const observedColumns = rows.reduce(
+      (maximum: number, row: any[]) => Math.max(maximum, Array.isArray(row) ? row.length : 0),
+      0,
+    );
+    const rowCount = Math.min(
+      MAX_SHEET_ROWS,
+      Math.max(Number(source?.properties?.gridProperties?.rowCount) || 100, rows.length, 1),
+    );
+    const columnCount = Math.min(
+      MAX_SHEET_COLUMNS,
+      Math.max(Number(source?.properties?.gridProperties?.columnCount) || 26, observedColumns, 1),
+    );
     const cells: Record<string, SheetCell> = {};
     rows.forEach((row: any[], rowIndex: number) => {
-      if (!Array.isArray(row)) return;
+      if (!Array.isArray(row) || rowIndex >= rowCount) return;
       row.forEach((raw, columnIndex) => {
+        if (columnIndex >= columnCount) return;
         if (raw === '' || raw === null || raw === undefined) return;
         const address = `${columnName(columnIndex + 1)}${rowIndex + 1}`;
         if (typeof raw === 'string' && raw.startsWith('=')) cells[address] = { formula: raw.slice(1) };
@@ -127,12 +166,8 @@ async function importGoogleSheet(accessToken: string, fileId: string): Promise<A
     return {
       id,
       name: String(source?.properties?.title || `Sheet ${sheetIndex + 1}`),
-      rowCount: Math.max(Number(source?.properties?.gridProperties?.rowCount) || 100, rows.length, 1),
-      columnCount: Math.max(
-        Number(source?.properties?.gridProperties?.columnCount) || 26,
-        ...rows.map((row: any[]) => (Array.isArray(row) ? row.length : 0)),
-        1,
-      ),
+      rowCount,
+      columnCount,
       cells,
     };
   });
@@ -191,7 +226,9 @@ function importGoogleDeck(payload: any): AlbatrossDocumentModel {
       const elements = (Array.isArray(source.pageElements) ? source.pageElements : [])
         .map((element: any, elementIndex: number) => importSlideElement(element, slideIndex, elementIndex))
         .filter(Boolean) as DeckElement[];
-      const title = elements.find((element) => element.role === 'title')?.text || `Slide ${slideIndex + 1}`;
+      const title = (
+        elements.find((element) => element.role === 'title')?.text || `Slide ${slideIndex + 1}`
+      ).slice(0, 500);
       return {
         id: String(source.objectId || `google-slide-${slideIndex + 1}`),
         title,
@@ -212,7 +249,7 @@ export async function importGoogleNativeFile(input: {
   userId: string;
   connectionId: string;
   fileId: string;
-  mimeType: string;
+  mimeType: GoogleNativeMime;
 }) {
   const kind = GOOGLE_NATIVE_MIME[input.mimeType];
   if (!kind) throw new Error('Only Google Docs, Sheets, and Slides can be edited inline.');

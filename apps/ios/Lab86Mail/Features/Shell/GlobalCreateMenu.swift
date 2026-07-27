@@ -7,6 +7,7 @@ import SwiftUI
 // stay identical in every placement; only the chrome differs.
 struct GlobalCreateMenu<MenuLabel: View>: View {
     @Environment(AppEnvironment.self) private var environment
+    @State private var errorMessage: String?
     @ViewBuilder var label: () -> MenuLabel
 
     var body: some View {
@@ -24,10 +25,12 @@ struct GlobalCreateMenu<MenuLabel: View>: View {
             ForEach(AlbatrossDocumentKind.allCases) { kind in
                 Button("New \(kind.title.lowercased())", systemImage: kind.symbol) {
                     Task {
-                        guard let document = try? await environment.documents.create(kind: kind) else {
-                            return
+                        do {
+                            let document = try await environment.documents.create(kind: kind)
+                            environment.navigation.openDocument(id: document.id)
+                        } catch {
+                            errorMessage = error.localizedDescription
                         }
-                        environment.navigation.openDocument(id: document.id)
                     }
                 }
             }
@@ -35,6 +38,14 @@ struct GlobalCreateMenu<MenuLabel: View>: View {
             label()
         }
         .accessibilityLabel("Create an intent, chat, email, or file")
+        .alert("Couldn’t create file", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "Try again.")
+        }
     }
 }
 

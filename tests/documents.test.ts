@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { exportDocument } from '../lib/documents/export';
+import { documentContentDisposition } from '../app/api/documents/[documentId]/export/route';
+import { documentDraftMatchesSave } from '../lib/documents/autosave';
+import { exportDocument, presentationColor, uniqueWorksheetName } from '../lib/documents/export';
 import { googleProviderVersionChanged } from '../lib/documents/google';
 import {
   type AlbatrossDocumentRecord,
@@ -64,6 +66,22 @@ describe('canonical Albatross documents', () => {
         ],
       }),
     ).toContain('B2: SUM(B3:B8)');
+    expect(
+      documentModelText({
+        kind: 'sheet',
+        version: 1,
+        activeSheetId: 'values',
+        sheets: [
+          {
+            id: 'values',
+            name: 'Falsy values',
+            rowCount: 2,
+            columnCount: 2,
+            cells: { A1: { value: 0 }, B1: { value: false } },
+          },
+        ],
+      }),
+    ).toContain('A1: 0\nB1: false');
     expect(
       documentModelText({
         kind: 'deck',
@@ -162,5 +180,44 @@ describe('canonical Albatross documents', () => {
     expect(googleProviderVersionChanged('17', '18')).toBe(true);
     expect(googleProviderVersionChanged('18', '18')).toBe(false);
     expect(googleProviderVersionChanged(undefined, '18')).toBe(false);
+  });
+
+  test('autosave only clears dirty state when the saved snapshot is still current', () => {
+    const savedModel = createDefaultDocumentModel('doc', 'saved');
+    const newerModel = createDefaultDocumentModel('doc', 'newer');
+    expect(
+      documentDraftMatchesSave(
+        { title: 'Decision memo', model: savedModel },
+        { title: 'Decision memo', model: savedModel },
+      ),
+    ).toBe(true);
+    expect(
+      documentDraftMatchesSave(
+        { title: 'Decision memo — latest', model: newerModel },
+        { title: 'Decision memo', model: savedModel },
+      ),
+    ).toBe(false);
+  });
+
+  test('sanitizes, bounds, and deduplicates worksheet names case-insensitively', () => {
+    const used = new Set<string>();
+    expect(uniqueWorksheetName("  'Forecast:*?[]/\\\\'  ", used)).toBe('Forecast');
+    expect(uniqueWorksheetName('forecast', used)).toBe('forecast (2)');
+    expect(uniqueWorksheetName('A'.repeat(50), used)).toHaveLength(31);
+    expect(uniqueWorksheetName('***', used)).toBe('Sheet');
+  });
+
+  test('normalizes presentation colors and rejects unsafe exporter values', () => {
+    expect(presentationColor('#a1b2c3', 'FFFFFF')).toBe('A1B2C3');
+    expect(presentationColor('rgb(0,0,0)', '17202A')).toBe('17202A');
+    expect(presentationColor('black', '17202A')).toBe('17202A');
+    expect(presentationColor('#12345678', 'FFFFFF')).toBe('FFFFFF');
+  });
+
+  test('builds an ASCII fallback plus RFC 5987 filename for Unicode exports', () => {
+    const header = documentContentDisposition('Résumé – 東京.docx');
+    expect(header).toContain('filename="Resume.docx"');
+    expect(header).toContain("filename*=UTF-8''R%C3%A9sum%C3%A9%20%E2%80%93%20%E6%9D%B1%E4%BA%AC.docx");
+    expect(() => new Headers({ 'content-disposition': header })).not.toThrow();
   });
 });

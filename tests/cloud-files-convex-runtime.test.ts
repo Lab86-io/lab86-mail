@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
-import { api } from '../convex/_generated/api';
+import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
 const convexModules = {
@@ -152,5 +152,83 @@ describe('cloud file Convex lifecycle', () => {
     });
     expect(await t.run((ctx) => ctx.db.query('cloudFileConnections').collect())).toHaveLength(0);
     expect(await t.run((ctx) => ctx.db.query('cloudFileCredentials').collect())).toHaveLength(0);
+  });
+
+  test('expired OAuth states cannot be consumed and are swept from storage', async () => {
+    const t = newHarness();
+    await t.mutation(api.cloudFiles.saveOAuthState, {
+      internalSecret: SECRET,
+      userId: USER,
+      state: 'expired-on-consume',
+      provider: 'google_drive',
+      expiresAt: Date.now() - 1,
+    });
+    expect(
+      await t.mutation(api.cloudFiles.consumeOAuthState, {
+        internalSecret: SECRET,
+        state: 'expired-on-consume',
+      }),
+    ).toBeNull();
+
+    await t.mutation(api.cloudFiles.saveOAuthState, {
+      internalSecret: SECRET,
+      userId: USER,
+      state: 'expired-for-sweep',
+      provider: 'onedrive',
+      expiresAt: Date.now() - 1,
+    });
+    await expect(t.mutation(internal.cloudFiles.sweepExpiredOAuthStates, {})).resolves.toEqual({
+      deleted: 1,
+    });
+    expect(await t.run((ctx) => ctx.db.query('cloudFileOAuthStates').collect())).toHaveLength(0);
+  });
+
+  test('native OAuth completions are user-bound, single-use, and expiry-aware', async () => {
+    const t = newHarness();
+    await t.mutation(api.cloudFiles.saveOAuthCompletion, {
+      internalSecret: SECRET,
+      userId: USER,
+      completionToken: 'native-completion',
+      provider: 'google_drive',
+      authorizationCodeEncrypted: 'encrypted-code',
+      expiresAt: Date.now() + 300_000,
+    });
+    expect(
+      await t.mutation(api.cloudFiles.consumeOAuthCompletion, {
+        internalSecret: SECRET,
+        userId: 'another-user',
+        completionToken: 'native-completion',
+      }),
+    ).toBeNull();
+    expect(
+      await t.mutation(api.cloudFiles.consumeOAuthCompletion, {
+        internalSecret: SECRET,
+        userId: USER,
+        completionToken: 'native-completion',
+      }),
+    ).toEqual({
+      provider: 'google_drive',
+      authorizationCodeEncrypted: 'encrypted-code',
+    });
+    expect(
+      await t.mutation(api.cloudFiles.consumeOAuthCompletion, {
+        internalSecret: SECRET,
+        userId: USER,
+        completionToken: 'native-completion',
+      }),
+    ).toBeNull();
+
+    await t.mutation(api.cloudFiles.saveOAuthCompletion, {
+      internalSecret: SECRET,
+      userId: USER,
+      completionToken: 'expired-completion',
+      provider: 'onedrive',
+      authorizationCodeEncrypted: 'expired-code',
+      expiresAt: Date.now() - 1,
+    });
+    await expect(t.mutation(internal.cloudFiles.sweepExpiredOAuthCompletions, {})).resolves.toEqual({
+      deleted: 1,
+    });
+    expect(await t.run((ctx) => ctx.db.query('cloudFileOAuthCompletions').collect())).toHaveLength(0);
   });
 });

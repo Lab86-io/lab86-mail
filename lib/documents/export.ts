@@ -68,13 +68,41 @@ function columnIndex(address: string) {
   return { row: Number(match[2]), column };
 }
 
+export function presentationColor(value: string | undefined, fallback: string) {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/^#/u, '')
+    .toUpperCase();
+  return /^[0-9A-F]{6}$/u.test(normalized) ? normalized : fallback;
+}
+
+export function uniqueWorksheetName(name: string, used: Set<string>) {
+  const cleaned =
+    name
+      .replace(/[*?:/\\[\]]/gu, '')
+      .trim()
+      .replace(/^'+|'+$/gu, '')
+      .trim() || 'Sheet';
+  const base = cleaned.slice(0, 31) || 'Sheet';
+  let candidate = base;
+  let suffix = 2;
+  while (used.has(candidate.toLocaleLowerCase('en-US'))) {
+    const marker = ` (${suffix})`;
+    candidate = `${base.slice(0, 31 - marker.length)}${marker}`;
+    suffix += 1;
+  }
+  used.add(candidate.toLocaleLowerCase('en-US'));
+  return candidate;
+}
+
 async function exportSheet(document: AlbatrossDocumentRecord): Promise<DocumentExport> {
   if (document.model.kind !== 'sheet') throw new Error('Spreadsheet model mismatch.');
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Albatross';
   workbook.created = new Date(document.createdAt);
+  const worksheetNames = new Set<string>();
   for (const tab of document.model.sheets) {
-    const worksheet = workbook.addWorksheet(tab.name.slice(0, 31) || 'Sheet');
+    const worksheet = workbook.addWorksheet(uniqueWorksheetName(tab.name, worksheetNames));
     for (const [address, cell] of Object.entries(tab.cells)) {
       const position = columnIndex(address);
       if (!position) continue;
@@ -103,7 +131,9 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
   presentation.layout = 'LAYOUT_WIDE';
   for (const source of document.model.slides) {
     const slide = presentation.addSlide();
-    if (source.background) slide.background = { color: source.background.replace('#', '') };
+    if (source.background) {
+      slide.background = { color: presentationColor(source.background, 'FFFFFF') };
+    }
     for (const element of source.elements) {
       const x = (element.x / 100) * 13.333;
       const y = (element.y / 100) * 7.5;
@@ -115,8 +145,8 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
           y,
           w,
           h,
-          fill: { color: (element.fill || '#E8EEF5').replace('#', '') },
-          line: { color: (element.color || '#94A3B8').replace('#', '') },
+          fill: { color: presentationColor(element.fill, 'E8EEF5') },
+          line: { color: presentationColor(element.color, '94A3B8') },
         });
       } else {
         slide.addText(element.text || '', {
@@ -127,7 +157,7 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
           fontFace: 'Aptos',
           fontSize: element.fontSize || (element.role === 'title' ? 28 : 16),
           bold: element.role === 'title',
-          color: (element.color || '#17202A').replace('#', ''),
+          color: presentationColor(element.color, '17202A'),
           margin: 0.08,
           valign: 'middle',
           breakLine: false,

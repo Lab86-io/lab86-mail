@@ -1,6 +1,12 @@
 import { z } from 'zod';
-import { GOOGLE_NATIVE_MIME, importGoogleNativeFile } from '@/lib/documents/google-import';
-import { createDocument, findDocumentByGoogleFile, linkGoogleDocument } from '@/lib/documents/service';
+import { GOOGLE_NATIVE_MIME_TYPES, importGoogleNativeFile } from '@/lib/documents/google-import';
+import { DOCUMENT_KINDS } from '@/lib/documents/model';
+import {
+  archiveDocument,
+  createDocument,
+  findDocumentByGoogleFile,
+  linkGoogleDocument,
+} from '@/lib/documents/service';
 import { browseCloudFiles } from '@/lib/files/browse';
 import { listCloudFileConnections } from '@/lib/files/connections';
 import { defineTool } from './registry';
@@ -10,13 +16,10 @@ function requireUserId(userId: string | null | undefined) {
   return userId;
 }
 
-const nativeMimeSchema = z.enum([
-  'application/vnd.google-apps.document',
-  'application/vnd.google-apps.spreadsheet',
-  'application/vnd.google-apps.presentation',
-]);
+const nativeMimeSchema = z.enum(GOOGLE_NATIVE_MIME_TYPES);
 
 const defaultDependencies = {
+  archiveDocument,
   browseCloudFiles,
   createDocument,
   findDocumentByGoogleFile,
@@ -55,6 +58,14 @@ export const cloudFileSearch = defineTool({
         isFolder: z.boolean(),
       }),
     ),
+    errors: z
+      .array(
+        z.object({
+          connectionId: z.string(),
+          error: z.string(),
+        }),
+      )
+      .optional(),
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
@@ -85,7 +96,23 @@ export const cloudFileSearch = defineTool({
         webUrl: file.webUrl,
         isFolder: file.isFolder,
       }));
-    return { files };
+    const errors = settled.flatMap((result, index) =>
+      result.status === 'rejected'
+        ? [
+            {
+              connectionId: targets[index].connectionId,
+              error:
+                result.reason instanceof Error
+                  ? result.reason.message.slice(0, 500)
+                  : 'The file connection could not be searched.',
+            },
+          ]
+        : [],
+    );
+    if (errors.length && errors.length === targets.length) {
+      throw new Error(errors.map((failure) => failure.error).join(' '));
+    }
+    return { files, ...(errors.length ? { errors } : {}) };
   },
 });
 
@@ -105,7 +132,7 @@ export const googleFileImport = defineTool({
     ok: z.boolean(),
     documentId: z.string(),
     title: z.string(),
-    kind: z.enum(['doc', 'sheet', 'deck']),
+    kind: z.enum(DOCUMENT_KINDS),
     revision: z.number(),
     openPath: z.string(),
     existing: z.boolean(),
@@ -150,21 +177,27 @@ export const googleFileImport = defineTool({
       ],
       reason: 'google_import',
     });
-    await dependencies.linkGoogleDocument({
-      userId,
-      documentId: document.documentId,
-      connectionId: args.connectionId,
-      fileId: args.fileId,
-      mimeType: args.mimeType,
-      webUrl,
-      providerVersion: imported.providerVersion,
-      syncedRevision: document.currentRevision,
-    });
+    try {
+      const linked = await dependencies.linkGoogleDocument({
+        userId,
+        documentId: document.documentId,
+        connectionId: args.connectionId,
+        fileId: args.fileId,
+        mimeType: args.mimeType,
+        webUrl,
+        providerVersion: imported.providerVersion,
+        syncedRevision: document.currentRevision,
+      });
+      if (!linked.ok) throw new Error('The imported Google file is already linked.');
+    } catch (error) {
+      await dependencies.archiveDocument(userId, document.documentId).catch(() => undefined);
+      throw error;
+    }
     return {
       ok: true,
       documentId: document.documentId,
       title: document.title,
-      kind: GOOGLE_NATIVE_MIME[args.mimeType],
+      kind: document.kind,
       revision: document.currentRevision,
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
       existing: false,

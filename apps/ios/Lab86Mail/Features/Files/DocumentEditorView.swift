@@ -8,6 +8,7 @@ struct DocumentEditorView: View {
     @State private var persisted: AlbatrossDocument?
     @State private var saveTask: Task<Void, Never>?
     @State private var isSaving = false
+    @State private var saveQueued = false
     @State private var isPublishing = false
     @State private var showsAI = false
     @State private var shareURL: URL?
@@ -171,24 +172,54 @@ struct DocumentEditorView: View {
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(900))
             guard !Task.isCancelled else { return }
+            saveTask = nil
             await saveNow()
         }
     }
 
     private func saveNow() async {
         saveTask?.cancel()
-        guard !isSaving, let draft, draft != persisted else { return }
+        guard let draft, draft != persisted else { return }
+        if isSaving {
+            saveQueued = true
+            return
+        }
+        let savingDraft = draft
         isSaving = true
-        defer { isSaving = false }
+        defer {
+            isSaving = false
+            if saveQueued {
+                saveQueued = false
+                scheduleSave()
+            }
+        }
         do {
-            let saved = try await environment.documents.save(draft)
-            self.draft = saved
+            let saved = try await environment.documents.save(savingDraft)
             persisted = saved
+            if self.draft == savingDraft {
+                self.draft = saved
+            } else if var latest = self.draft {
+                latest.revision = saved.revision
+                latest.google = saved.google
+                latest.suggestions = saved.suggestions
+                latest.updatedAt = saved.updatedAt
+                self.draft = latest
+                saveQueued = true
+            }
         } catch {
             errorMessage = error.localizedDescription
             if let fresh = try? await environment.documents.fetchDocument(id: documentID) {
-                draft = fresh
                 persisted = fresh
+                if self.draft == savingDraft {
+                    self.draft = fresh
+                } else if var latest = self.draft {
+                    latest.revision = fresh.revision
+                    latest.google = fresh.google
+                    latest.suggestions = fresh.suggestions
+                    latest.updatedAt = fresh.updatedAt
+                    self.draft = latest
+                    saveQueued = true
+                }
             }
         }
     }

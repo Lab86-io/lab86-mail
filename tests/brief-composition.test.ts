@@ -227,6 +227,56 @@ describe('BriefComposition', () => {
     ]);
   });
 
+  test('drops document actions with invalid kind, empty fields, or malformed provenance', () => {
+    const composition = parseBriefComposition({
+      version: 1,
+      title: 'Daily Brief',
+      services: ['albatross'],
+      blocks: [
+        {
+          type: 'needs_you',
+          title: 'Needs you',
+          items: [
+            {
+              account: 'me@example.test',
+              threadId: 'thread_1',
+              subject: 'Launch decision',
+              person: 'Alex',
+              reason: 'The review needs a written decision.',
+              sourceRefs: [{ kind: 'thread', id: 'thread_1' }],
+              actions: [
+                {
+                  action: 'create_document',
+                  label: 'Wrong kind',
+                  payload: { kind: 'pdf', title: 'Memo', instructions: 'Draft it.' },
+                },
+                {
+                  action: 'create_document',
+                  label: 'Empty fields',
+                  payload: { kind: 'doc', title: ' ', instructions: '' },
+                },
+                {
+                  action: 'create_document',
+                  label: 'Bad provenance',
+                  payload: {
+                    kind: 'sheet',
+                    title: 'Forecast',
+                    instructions: 'Build the forecast.',
+                    sourceRefs: [{ kind: '', id: '' }],
+                  },
+                },
+              ],
+            },
+          ],
+          sourceRefs: [{ kind: 'thread', id: 'thread_1' }],
+        },
+      ],
+    });
+    const needs = composition.blocks[0];
+    if (needs.type !== 'needs_you') throw new Error('missing needs-you block');
+    expect(needs.items[0].actions).toEqual([]);
+  });
+
   test('repairs overlong model-authored lede paragraphs', () => {
     const overlong = Array.from(
       { length: 80 },

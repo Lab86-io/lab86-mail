@@ -2,13 +2,16 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { __setCloudFileBrowseDepsForTest, browseCloudFiles } from '../lib/files/browse';
 import {
   __setCloudFileConnectionDepsForTest,
+  consumeCloudFileOAuthCompletion,
   consumeCloudFileOAuthState,
   disconnectCloudFileConnection,
   exchangeCloudFileAuthorizationCode,
+  fetchCloudFileProvider,
   getCloudFileAccess,
   listCloudFileConnections,
   markCloudFileConnectionAccess,
   saveCloudFileConnection,
+  saveCloudFileOAuthCompletion,
   saveCloudFileOAuthState,
 } from '../lib/files/connections';
 
@@ -69,6 +72,50 @@ describe('cloud file connection service', () => {
     const consumed = await consumeCloudFileOAuthState(state);
     expect(consumed).toMatchObject({ userId: 'user-1', nativeCallback: true });
     expect(mutation.mock.calls[1][1]).toEqual({ state });
+  });
+
+  test('encrypts and user-binds native OAuth completion codes', async () => {
+    const mutation = mock(async (_reference: unknown, input: any) =>
+      input.authorizationCodeEncrypted
+        ? { ok: true }
+        : {
+            provider: 'google_drive',
+            authorizationCodeEncrypted: 'encrypted-provider-code',
+          },
+    );
+    __setCloudFileConnectionDepsForTest({
+      convexMutation: mutation as any,
+      encryptSecret: (value: string) => `encrypted-${value}`,
+      decryptSecret: () => 'provider-code',
+      now: () => 2_000,
+    });
+
+    const completionToken = await saveCloudFileOAuthCompletion({
+      userId: 'user-1',
+      provider: 'google_drive',
+      authorizationCode: 'provider-code',
+    });
+    expect(completionToken).toHaveLength(43);
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      userId: 'user-1',
+      provider: 'google_drive',
+      authorizationCodeEncrypted: 'encrypted-provider-code',
+      expiresAt: 302_000,
+    });
+
+    await expect(
+      consumeCloudFileOAuthCompletion({
+        userId: 'user-1',
+        completionToken,
+      }),
+    ).resolves.toEqual({
+      provider: 'google_drive',
+      authorizationCode: 'provider-code',
+    });
+    expect(mutation.mock.calls[1][1]).toEqual({
+      userId: 'user-1',
+      completionToken,
+    });
   });
 
   test('exchanges provider codes and rejects missing or invalid credentials', async () => {
@@ -229,6 +276,78 @@ describe('cloud file connection service', () => {
       refreshTokenEncrypted: 'encrypted:rotated-refresh',
       expiresAt: 160_000,
     });
+  });
+
+  test('serializes concurrent refreshes and rejects a refresh that was not persisted', async () => {
+    const row = {
+      connection: {
+        connectionId: 'google-1',
+        provider: 'google_drive' as const,
+        status: 'connected' as const,
+        scopes: [],
+      },
+      credentials: {
+        accessTokenEncrypted: 'encrypted:expired',
+        refreshTokenEncrypted: 'encrypted:refresh',
+        expiresAt: 1,
+      },
+    };
+    const fetchMock = mock(async () =>
+      Response.json({ access_token: 'fresh-access', refresh_token: 'fresh-refresh', expires_in: 60 }),
+    );
+    const mutation = mock(async () => ({ ok: true }));
+    __setCloudFileConnectionDepsForTest({
+      convexMutation: mutation as any,
+      convexQuery: (async () => row) as any,
+      decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+      encryptSecret: ((value: string) => `encrypted:${value}`) as any,
+      fetch: fetchMock as any,
+      now: () => 100_000,
+    });
+
+    const [first, second] = await Promise.all([
+      getCloudFileAccess({ userId: 'user-1', connectionId: 'google-1' }),
+      getCloudFileAccess({ userId: 'user-1', connectionId: 'google-1' }),
+    ]);
+    expect(first?.accessToken).toBe('fresh-access');
+    expect(second?.accessToken).toBe('fresh-access');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mutation).toHaveBeenCalledTimes(1);
+
+    __setCloudFileConnectionDepsForTest({
+      convexMutation: (async () => ({ ok: false })) as any,
+      convexQuery: (async () => row) as any,
+      decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+      encryptSecret: ((value: string) => `encrypted:${value}`) as any,
+      fetch: fetchMock as any,
+      now: () => 100_000,
+    });
+    await expect(getCloudFileAccess({ userId: 'user-1', connectionId: 'google-1' })).rejects.toThrow(
+      'Reconnect this account',
+    );
+  });
+
+  test('adds provider timeouts without overriding a caller signal', async () => {
+    const fetchMock = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Response.json({ ok: true });
+    });
+    await fetchCloudFileProvider(fetchMock as any, 'https://provider.example.test');
+
+    const controller = new AbortController();
+    await fetchCloudFileProvider(fetchMock as any, 'https://provider.example.test', {
+      signal: controller.signal,
+    });
+    expect(fetchMock.mock.calls[1][1]?.signal).toBe(controller.signal);
+
+    await expect(
+      fetchCloudFileProvider(
+        (async () => {
+          throw Object.assign(new Error('aborted'), { name: 'TimeoutError' });
+        }) as any,
+        'https://provider.example.test',
+      ),
+    ).rejects.toThrow('provider request timed out');
   });
 
   test('fails expired credentials without a refresh token or after a rejected refresh', async () => {

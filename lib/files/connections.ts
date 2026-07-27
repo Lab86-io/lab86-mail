@@ -38,6 +38,10 @@ interface OAuthTokenResponse {
   token_type?: string;
 }
 
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+const PROVIDER_REQUEST_TIMEOUT_MS = 15_000;
+const tokenRefreshes = new Map<string, Promise<string>>();
+
 const defaultDependencies = {
   convexMutation,
   convexQuery,
@@ -51,6 +55,25 @@ let dependencies = defaultDependencies;
 
 export function __setCloudFileConnectionDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
   dependencies = { ...defaultDependencies, ...overrides };
+  tokenRefreshes.clear();
+}
+
+export async function fetchCloudFileProvider(
+  fetcher: FetchLike,
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+) {
+  try {
+    return await fetcher(input, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error: any) {
+    if (!init.signal && (error?.name === 'AbortError' || error?.name === 'TimeoutError')) {
+      throw new Error('The file provider request timed out. Try again.');
+    }
+    throw error;
+  }
 }
 
 function connectionIdFor(userId: string, provider: CloudFileProvider, accountKey: string) {
@@ -88,6 +111,34 @@ export async function consumeCloudFileOAuthState(state: string) {
   } | null>(cloudFilesApi.consumeOAuthState, { state });
 }
 
+export async function saveCloudFileOAuthCompletion(input: {
+  userId: string;
+  provider: CloudFileProvider;
+  authorizationCode: string;
+}) {
+  const completionToken = randomBytes(32).toString('base64url');
+  await dependencies.convexMutation(cloudFilesApi.saveOAuthCompletion, {
+    userId: input.userId,
+    completionToken,
+    provider: input.provider,
+    authorizationCodeEncrypted: dependencies.encryptSecret(input.authorizationCode),
+    expiresAt: dependencies.now() + 5 * 60_000,
+  });
+  return completionToken;
+}
+
+export async function consumeCloudFileOAuthCompletion(input: { userId: string; completionToken: string }) {
+  const stored = await dependencies.convexMutation<{
+    provider: CloudFileProvider;
+    authorizationCodeEncrypted: string;
+  } | null>(cloudFilesApi.consumeOAuthCompletion, input);
+  if (!stored) return null;
+  return {
+    provider: stored.provider,
+    authorizationCode: dependencies.decryptSecret(stored.authorizationCodeEncrypted),
+  };
+}
+
 export async function exchangeCloudFileAuthorizationCode(input: {
   provider: CloudFileProvider;
   code: string;
@@ -103,11 +154,15 @@ export async function exchangeCloudFileAuthorizationCode(input: {
     redirect_uri: cloudFileOAuthRedirectUri(),
     grant_type: 'authorization_code',
   });
-  const response = await dependencies.fetch(CLOUD_FILE_PROVIDER_DEFINITIONS[input.provider].tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
+  const response = await fetchCloudFileProvider(
+    dependencies.fetch,
+    CLOUD_FILE_PROVIDER_DEFINITIONS[input.provider].tokenUrl,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    },
+  );
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload?.access_token) {
     throw new Error('The provider did not issue file access credentials.');
@@ -120,7 +175,7 @@ async function cloudFileAccountProfile(provider: CloudFileProvider, accessToken:
     provider === 'google_drive'
       ? 'https://www.googleapis.com/oauth2/v2/userinfo'
       : 'https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName';
-  const response = await dependencies.fetch(endpoint, {
+  const response = await fetchCloudFileProvider(dependencies.fetch, endpoint, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const payload = await response.json().catch(() => ({}));
@@ -202,11 +257,15 @@ async function refreshCloudFileToken(input: {
   if (provider === 'onedrive') {
     body.set('scope', CLOUD_FILE_PROVIDER_DEFINITIONS.onedrive.scopes.join(' '));
   }
-  const response = await dependencies.fetch(CLOUD_FILE_PROVIDER_DEFINITIONS[provider].tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
+  const response = await fetchCloudFileProvider(
+    dependencies.fetch,
+    CLOUD_FILE_PROVIDER_DEFINITIONS[provider].tokenUrl,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    },
+  );
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload?.access_token) {
     throw new Error('File access expired. Reconnect this account.');
@@ -214,13 +273,16 @@ async function refreshCloudFileToken(input: {
   const next = payload as OAuthTokenResponse;
   const expiresAt =
     typeof next.expires_in === 'number' ? dependencies.now() + next.expires_in * 1_000 : undefined;
-  await dependencies.convexMutation(cloudFilesApi.updateCredentials, {
+  const persisted = await dependencies.convexMutation<{ ok: boolean }>(cloudFilesApi.updateCredentials, {
     userId: input.userId,
     connectionId: input.row.connection.connectionId,
     accessTokenEncrypted: dependencies.encryptSecret(next.access_token),
     refreshTokenEncrypted: next.refresh_token ? dependencies.encryptSecret(next.refresh_token) : undefined,
     expiresAt,
   });
+  if (!persisted?.ok) {
+    throw new Error('File access expired. Reconnect this account.');
+  }
   return next.access_token;
 }
 
@@ -235,11 +297,22 @@ export async function getCloudFileAccess(input: { userId: string; connectionId: 
     if (!row.credentials.refreshTokenEncrypted) {
       throw new Error('File access expired. Reconnect this account.');
     }
-    accessToken = await refreshCloudFileToken({
-      userId: input.userId,
-      row,
-      refreshToken: dependencies.decryptSecret(row.credentials.refreshTokenEncrypted),
-    });
+    const refreshKey = `${input.userId}:${input.connectionId}`;
+    let refresh = tokenRefreshes.get(refreshKey);
+    if (!refresh) {
+      refresh = refreshCloudFileToken({
+        userId: input.userId,
+        row,
+        refreshToken: dependencies.decryptSecret(row.credentials.refreshTokenEncrypted),
+      });
+      tokenRefreshes.set(refreshKey, refresh);
+      void refresh
+        .finally(() => {
+          if (tokenRefreshes.get(refreshKey) === refresh) tokenRefreshes.delete(refreshKey);
+        })
+        .catch(() => undefined);
+    }
+    accessToken = await refresh;
   }
   return { connection: row.connection, accessToken };
 }

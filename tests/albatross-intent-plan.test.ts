@@ -58,6 +58,41 @@ describe('parsePlanGeneration', () => {
     expect(plan.questions).toHaveLength(1);
   });
 
+  test('keeps grounded document actions and drops incomplete document proposals', () => {
+    const plan = parsePlanGeneration(
+      JSON.stringify({
+        ...validPlan,
+        digitalActions: [
+          {
+            kind: 'document',
+            title: 'Draft the decision memo',
+            documentKind: 'doc',
+            instructions: 'Use the cited vendor comparison to explain the recommendation.',
+            sourceRefIds: ['ref1'],
+          },
+          {
+            kind: 'document',
+            title: 'Missing the required file kind',
+            instructions: 'Draft something.',
+          },
+          {
+            kind: 'document',
+            title: 'Missing grounded instructions',
+            documentKind: 'sheet',
+          },
+        ],
+      }),
+    );
+
+    expect(plan.digitalActions).toEqual([
+      expect.objectContaining({
+        kind: 'document',
+        documentKind: 'doc',
+        title: 'Draft the decision memo',
+      }),
+    ]);
+  });
+
   test('coerces unknown kind to "unknown" rather than failing', () => {
     const plan = parsePlanGeneration(JSON.stringify({ ...validPlan, kind: 'chore' }));
     expect(plan.kind).toBe('unknown');

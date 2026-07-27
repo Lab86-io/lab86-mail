@@ -117,17 +117,21 @@ verify_aasa() {
   local label="$2"
   local source
 
-  source="$(curl \
-    --fail \
-    --silent \
-    --show-error \
-    --location \
-    --connect-timeout 30 \
-    --max-time 120 \
-    --retry 3 \
-    --retry-all-errors \
-    --retry-delay 2 \
-    "$url")"
+  if ! source="$(curl \
+      --fail \
+      --silent \
+      --show-error \
+      --location \
+      --connect-timeout 30 \
+      --max-time 120 \
+      --retry 3 \
+      --retry-all-errors \
+      --retry-delay 2 \
+      "$url" 2>&1)"; then
+    echo "$label could not be fetched: $source" >&2
+    echo "Register App ID Prefix $team_id and Bundle ID $bundle_id in Clerk Native applications." >&2
+    exit 1
+  fi
 
   if ! jq -e --arg application_id "$application_id" \
     '.webcredentials.apps | arrays | index($application_id) != null' \

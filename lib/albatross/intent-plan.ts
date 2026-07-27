@@ -60,22 +60,40 @@ const INTENT_KINDS = [
   'unknown',
 ] as const;
 
-const digitalActionSchema = z.object({
-  kind: z.enum(['task', 'calendar_event', 'email_draft', 'document']),
-  title: z.string().min(1).max(200),
-  description: z.string().max(2000).optional(),
-  priority: z.coerce.number().int().min(1).max(3).optional(),
-  durationMinutes: z.coerce.number().int().positive().optional(),
-  startIso: z.string().optional(),
-  endIso: z.string().optional(),
-  account: z.string().optional(),
-  to: z.string().optional(),
-  subject: z.string().max(300).optional(),
-  body: z.string().max(8000).optional(),
-  documentKind: z.enum(['doc', 'sheet', 'deck']).optional(),
-  instructions: z.string().max(20_000).optional(),
-  sourceRefIds: z.array(z.string()).optional(),
-});
+const digitalActionSchema = z
+  .object({
+    kind: z.enum(['task', 'calendar_event', 'email_draft', 'document']),
+    title: z.string().min(1).max(200),
+    description: z.string().max(2000).optional(),
+    priority: z.coerce.number().int().min(1).max(3).optional(),
+    durationMinutes: z.coerce.number().int().positive().optional(),
+    startIso: z.string().optional(),
+    endIso: z.string().optional(),
+    account: z.string().optional(),
+    to: z.string().optional(),
+    subject: z.string().max(300).optional(),
+    body: z.string().max(8000).optional(),
+    documentKind: z.enum(['doc', 'sheet', 'deck']).optional(),
+    instructions: z.string().max(20_000).optional(),
+    sourceRefIds: z.array(z.string()).optional(),
+  })
+  .superRefine((action, ctx) => {
+    if (action.kind !== 'document') return;
+    if (!action.documentKind) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['documentKind'],
+        message: 'Document actions require a document kind.',
+      });
+    }
+    if (!action.instructions?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instructions'],
+        message: 'Document actions require grounded instructions.',
+      });
+    }
+  });
 
 const questionOptionSchema = z.object({
   id: z.string().max(60).optional(),

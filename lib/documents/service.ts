@@ -111,7 +111,7 @@ export async function updateDocument(input: {
     userId: input.userId,
     documentId: input.documentId,
     expectedRevision: input.expectedRevision,
-    title: input.title?.trim().slice(0, 500),
+    title: input.title === undefined ? undefined : input.title.trim().slice(0, 500) || 'Untitled',
     model,
     sourceRefs: input.sourceRefs,
     reason: input.reason,
@@ -148,7 +148,26 @@ export async function resolveDocumentSuggestion(input: {
   suggestionId: string;
   status: 'applied' | 'dismissed';
 }) {
-  return dependencies.convexMutation<{ ok: boolean }>(documentsApi.resolveSuggestion, input);
+  return dependencies.convexMutation<{ ok: boolean; code?: 'ALREADY_RESOLVED' }>(
+    documentsApi.resolveSuggestion,
+    input,
+  );
+}
+
+export async function applyDocumentSuggestion(input: {
+  userId: string;
+  documentId: string;
+  suggestionId: string;
+  expectedRevision: number;
+}) {
+  return dependencies.convexMutation<
+    | { ok: true; document: AlbatrossDocumentRecord }
+    | {
+        ok: false;
+        code: 'NOT_FOUND' | 'ALREADY_RESOLVED' | 'REVISION_CONFLICT';
+        document?: AlbatrossDocumentRecord;
+      }
+  >(documentsApi.applySuggestion, input);
 }
 
 export async function linkGoogleDocument(input: {
@@ -163,6 +182,8 @@ export async function linkGoogleDocument(input: {
 }) {
   return dependencies.convexMutation<{
     ok: boolean;
+    code?: 'ALREADY_LINKED';
+    documentId?: string;
     google?: AlbatrossDocumentRecord['google'];
   }>(documentsApi.linkGoogleFile, input);
 }

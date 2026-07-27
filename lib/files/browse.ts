@@ -1,4 +1,4 @@
-import { getCloudFileAccess, markCloudFileConnectionAccess } from './connections';
+import { fetchCloudFileProvider, getCloudFileAccess, markCloudFileConnectionAccess } from './connections';
 import {
   type CloudFilePage,
   escapeGoogleDriveQuery,
@@ -79,7 +79,7 @@ export async function browseCloudFiles(input: {
   const endpoint =
     connection.provider === 'google_drive' ? googleDriveEndpoint(input) : oneDriveEndpoint(input);
   try {
-    const response = await dependencies.fetch(endpoint, {
+    const response = await fetchCloudFileProvider(dependencies.fetch, endpoint, {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',
     });

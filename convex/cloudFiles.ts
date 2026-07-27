@@ -82,6 +82,76 @@ export const sweepExpiredOAuthStates = internalMutation({
   },
 });
 
+export const saveOAuthCompletion = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    completionToken: v.string(),
+    provider: providerValidator,
+    authorizationCodeEncrypted: v.string(),
+    expiresAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const existing = await ctx.db
+      .query('cloudFileOAuthCompletions')
+      .withIndex('by_token', (q) => q.eq('completionToken', args.completionToken))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+    await ctx.db.insert('cloudFileOAuthCompletions', {
+      userId: args.userId,
+      completionToken: args.completionToken,
+      provider: args.provider,
+      authorizationCodeEncrypted: args.authorizationCodeEncrypted,
+      expiresAt: args.expiresAt,
+      createdAt: now(),
+    });
+    await ctx.scheduler.runAfter(
+      Math.max(0, args.expiresAt - now()),
+      internal.cloudFiles.sweepExpiredOAuthCompletions,
+      {},
+    );
+    return { ok: true };
+  },
+});
+
+export const consumeOAuthCompletion = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    completionToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('cloudFileOAuthCompletions')
+      .withIndex('by_token', (q) => q.eq('completionToken', args.completionToken))
+      .unique();
+    if (!row || row.userId !== args.userId) return null;
+    await ctx.db.delete(row._id);
+    if (row.expiresAt < now()) return null;
+    return {
+      provider: row.provider,
+      authorizationCodeEncrypted: row.authorizationCodeEncrypted,
+    };
+  },
+});
+
+export const sweepExpiredOAuthCompletions = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const expired = await ctx.db
+      .query('cloudFileOAuthCompletions')
+      .withIndex('by_expires', (q) => q.lte('expiresAt', now()))
+      .take(CLEANUP_BATCH_SIZE);
+    for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === CLEANUP_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.cloudFiles.sweepExpiredOAuthCompletions, {});
+    }
+    return { deleted: expired.length };
+  },
+});
+
 export const upsertConnection = mutation({
   args: {
     internalSecret: v.optional(v.string()),

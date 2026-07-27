@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { generateDocumentProposal } from '@/lib/documents/ai';
+import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
 import {
   createDefaultDocumentModel,
   DOCUMENT_KINDS,
@@ -43,11 +43,15 @@ function documentError(error: unknown) {
       { status: 400 },
     );
   }
+  if (error instanceof DocumentGenerationError) {
+    console.error('[documents] Invalid model output:', error);
+    return NextResponse.json(
+      { ok: false, error: 'Albatross returned an invalid document. Try again.' },
+      { status: 502 },
+    );
+  }
   console.error('[documents]', error);
-  return NextResponse.json(
-    { ok: false, error: error instanceof Error ? error.message : 'Document operation failed.' },
-    { status: 500 },
-  );
+  return NextResponse.json({ ok: false, error: 'Document operation failed.' }, { status: 500 });
 }
 
 export async function GET(req: NextRequest) {
@@ -71,7 +75,7 @@ export async function POST(req: NextRequest) {
       limit: 30,
       windowMs: 60_000,
     });
-    const input = createSchema.parse(await req.json());
+    const input = createSchema.parse(await req.json().catch(() => ({})));
     let title = input.title?.trim() || `Untitled ${documentKindLabel(input.kind)}`;
     let model = input.model
       ? parseDocumentModel(input.model, input.kind)

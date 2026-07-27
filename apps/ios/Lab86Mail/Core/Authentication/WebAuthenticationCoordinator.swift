@@ -51,10 +51,18 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         let response = try await backend.get(
             path: "/api/files/oauth/start?provider=\(encoded)&native=1&format=json"
         )
-        try await authorize(response: response, successKey: "files_connected")
+        try await authorize(
+            response: response,
+            successKey: "files_connected",
+            completionPath: "/api/files/oauth/finalize"
+        )
     }
 
-    private func authorize(response: JSONValue, successKey: String) async throws {
+    private func authorize(
+        response: JSONValue,
+        successKey: String,
+        completionPath: String? = nil
+    ) async throws {
         guard let value = response["authorizationUrl"]?.stringValue,
               let authorizationURL = URL(string: value) else {
             throw BackendError.invalidResponse
@@ -98,6 +106,13 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             } ?? []
         )
         if values[successKey] != nil { return }
+        if let completionToken = values["files_completion"], let completionPath {
+            _ = try await backend.post(
+                path: completionPath,
+                body: .object(["completionToken": .string(completionToken)])
+            )
+            return
+        }
         let message = values["nylas_error"]
             ?? values["mcp_error"]
             ?? values["files_error"]

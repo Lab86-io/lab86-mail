@@ -68,12 +68,15 @@ export const list = query({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const rows = await ctx.db
+    const limit = Math.min(Math.max(args.limit || 200, 1), 500);
+    const base = ctx.db
       .query('documents')
       .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
-      .order('desc')
-      .take(Math.min(Math.max(args.limit || 200, 1), 500));
-    return rows.filter((row) => !row.archivedAt && (!args.kind || row.kind === args.kind));
+      .order('desc');
+    const visible = args.kind
+      ? base.filter((q) => q.and(q.eq(q.field('archivedAt'), undefined), q.eq(q.field('kind'), args.kind)))
+      : base.filter((q) => q.eq(q.field('archivedAt'), undefined));
+    return visible.take(limit);
   },
 });
 
@@ -109,7 +112,7 @@ export const findByGoogleFile = query({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const document = await ctx.db
+    const documents = await ctx.db
       .query('documents')
       .withIndex('by_user_google_file', (q) =>
         q
@@ -117,7 +120,10 @@ export const findByGoogleFile = query({
           .eq('googleConnectionId', args.connectionId)
           .eq('googleFileId', args.fileId),
       )
-      .unique();
+      .filter((q) => q.eq(q.field('archivedAt'), undefined))
+      .order('desc')
+      .take(1);
+    const document = documents[0];
     return document && !document.archivedAt ? document : null;
   },
 });
@@ -223,6 +229,24 @@ export const linkGoogleFile = mutation({
     requireInternalSecret(args.internalSecret);
     const document = await ownedDocument(ctx, args.userId, args.documentId);
     if (!document || document.archivedAt) return { ok: false };
+    const linked = await ctx.db
+      .query('documents')
+      .withIndex('by_user_google_file', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('googleConnectionId', args.connectionId)
+          .eq('googleFileId', args.fileId),
+      )
+      .filter((q) => q.eq(q.field('archivedAt'), undefined))
+      .collect();
+    const conflict = linked.find((candidate) => candidate._id !== document._id);
+    if (conflict) {
+      return {
+        ok: false,
+        code: 'ALREADY_LINKED',
+        documentId: conflict.documentId,
+      };
+    }
     const google = {
       connectionId: args.connectionId,
       fileId: args.fileId,
@@ -257,6 +281,20 @@ export const createSuggestion = mutation({
     requireInternalSecret(args.internalSecret);
     const document = await ownedDocument(ctx, args.userId, args.documentId);
     if (!document || document.archivedAt) return { ok: false, code: 'NOT_FOUND' };
+    const existing = await ctx.db
+      .query('documentSuggestions')
+      .withIndex('by_user_suggestion', (q) =>
+        q.eq('userId', args.userId).eq('suggestionId', args.suggestionId),
+      )
+      .order('desc')
+      .take(1);
+    if (existing[0]) {
+      return {
+        ok: true,
+        suggestionId: existing[0].suggestionId,
+        createdAt: existing[0].createdAt,
+      };
+    }
     const ts = now();
     await ctx.db.insert('documentSuggestions', {
       userId: args.userId,
@@ -283,14 +321,78 @@ export const resolveSuggestion = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
+    const rows = await ctx.db
       .query('documentSuggestions')
       .withIndex('by_user_suggestion', (q) =>
         q.eq('userId', args.userId).eq('suggestionId', args.suggestionId),
       )
-      .unique();
+      .order('desc')
+      .take(1);
+    const row = rows[0];
     if (!row || row.documentId !== args.documentId) return { ok: false };
+    if (row.status !== 'proposed') return { ok: false, code: 'ALREADY_RESOLVED' };
     await ctx.db.patch(row._id, { status: args.status, resolvedAt: now() });
     return { ok: true };
+  },
+});
+
+export const applySuggestion = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    documentId: v.string(),
+    suggestionId: v.string(),
+    expectedRevision: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await ownedDocument(ctx, args.userId, args.documentId);
+    if (!document || document.archivedAt) return { ok: false, code: 'NOT_FOUND' };
+    const suggestions = await ctx.db
+      .query('documentSuggestions')
+      .withIndex('by_user_suggestion', (q) =>
+        q.eq('userId', args.userId).eq('suggestionId', args.suggestionId),
+      )
+      .order('desc')
+      .take(1);
+    const suggestion = suggestions[0];
+    if (!suggestion || suggestion.documentId !== args.documentId) {
+      return { ok: false, code: 'NOT_FOUND' };
+    }
+    if (suggestion.status !== 'proposed') {
+      return { ok: false, code: 'ALREADY_RESOLVED' };
+    }
+    if (document.currentRevision !== args.expectedRevision) {
+      return { ok: false, code: 'REVISION_CONFLICT', document };
+    }
+    const revision = document.currentRevision + 1;
+    const ts = now();
+    await ctx.db.patch(document._id, {
+      title: suggestion.title,
+      model: suggestion.proposedModel,
+      currentRevision: revision,
+      updatedAt: ts,
+    });
+    await ctx.db.insert('documentRevisions', {
+      userId: args.userId,
+      documentId: args.documentId,
+      revision,
+      title: suggestion.title,
+      model: suggestion.proposedModel,
+      reason: suggestion.description,
+      actor: 'ai',
+      createdAt: ts,
+    });
+    await ctx.db.patch(suggestion._id, { status: 'applied', resolvedAt: ts });
+    return {
+      ok: true,
+      document: {
+        ...document,
+        title: suggestion.title,
+        model: suggestion.proposedModel,
+        currentRevision: revision,
+        updatedAt: ts,
+      },
+    };
   },
 });

@@ -27,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { documentDraftMatchesSave } from '@/lib/documents/autosave';
 import type {
   AlbatrossDocumentModel,
   AlbatrossDocumentRecord,
@@ -72,6 +73,8 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   const queryClient = useQueryClient();
   const revisionRef = useRef(0);
   const saveQueuedRef = useRef(false);
+  const titleRef = useRef('');
+  const modelRef = useRef<AlbatrossDocumentModel | null>(null);
   const [title, setTitle] = useState('');
   const [model, setModel] = useState<AlbatrossDocumentModel | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -88,6 +91,8 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
     if (!document || dirty) return;
     setTitle(document.title);
     setModel(document.model);
+    titleRef.current = document.title;
+    modelRef.current = document.model;
     revisionRef.current = document.currentRevision;
   }, [dirty, document]);
 
@@ -103,9 +108,13 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
           reason: 'inline_edit',
         }),
       }),
-    onSuccess: (result) => {
+    onSuccess: (result, saved) => {
       revisionRef.current = result.document.currentRevision;
-      setDirty(false);
+      const latestMatchesSaved = documentDraftMatchesSave(
+        { title: titleRef.current, model: modelRef.current },
+        saved,
+      );
+      setDirty(!latestMatchesSaved);
       queryClient.setQueryData(['document', documentId], {
         ok: true,
         document: { ...document, ...result.document, suggestions: document?.suggestions || [] },
@@ -123,7 +132,9 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
     onSettled: () => {
       if (saveQueuedRef.current) {
         saveQueuedRef.current = false;
-        if (model) saveMutation.mutate({ title, model });
+        if (modelRef.current) {
+          saveMutation.mutate({ title: titleRef.current, model: modelRef.current });
+        }
       }
     },
   });
@@ -144,6 +155,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   }, [dirty, model, saveNow]);
 
   const editModel = useCallback((next: AlbatrossDocumentModel) => {
+    modelRef.current = next;
     setModel(next);
     setDirty(true);
   }, []);
@@ -194,17 +206,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
     onError: (error: Error) => toast.error(error.message),
   });
 
-  if (documentQuery.isLoading || !model) {
-    return (
-      <div className="grid h-full place-items-center text-[12.5px] text-[var(--color-text-muted)]">
-        <div className="flex items-center gap-2">
-          <Loader2 className="size-4 animate-spin" />
-          Opening file…
-        </div>
-      </div>
-    );
-  }
-  if (documentQuery.error || !document) {
+  if (documentQuery.error || (!documentQuery.isLoading && !document)) {
     return (
       <div className="grid h-full place-items-center p-8 text-center">
         <div>
@@ -218,6 +220,19 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         </div>
       </div>
     );
+  }
+  if (documentQuery.isLoading || !model) {
+    return (
+      <div className="grid h-full place-items-center text-[12.5px] text-[var(--color-text-muted)]">
+        <div className="flex items-center gap-2">
+          <Loader2 className="size-4 animate-spin" />
+          Opening file…
+        </div>
+      </div>
+    );
+  }
+  if (!document) {
+    return null;
   }
 
   const googleBehind =
@@ -237,6 +252,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
             aria-label="File name"
             value={title}
             onChange={(event) => {
+              titleRef.current = event.target.value;
               setTitle(event.target.value);
               setDirty(true);
             }}
@@ -283,7 +299,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
           </Button>
         ) : null}
         <Button asChild variant="outline" size="icon-sm" title={`Download ${kindName(document.kind)}`}>
-          <a href={`/api/documents/${documentId}/export`}>
+          <a href={`/api/documents/${documentId}/export`} aria-label={`Download ${kindName(document.kind)}`}>
             <Download className="size-3.5" />
           </a>
         </Button>

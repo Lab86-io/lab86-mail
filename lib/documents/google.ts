@@ -45,15 +45,24 @@ async function googleJson(
   endpoint: string,
   init: RequestInit = {},
 ): Promise<Record<string, any>> {
-  const response = await dependencies.fetch(endpoint, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...init.headers,
-    },
-    cache: 'no-store',
-  });
+  let response: Response;
+  try {
+    response = await dependencies.fetch(endpoint, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        ...init.headers,
+      },
+      cache: 'no-store',
+      signal: init.signal ?? AbortSignal.timeout(20_000),
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+      throw new Error('Google request timed out. Try again.');
+    }
+    throw error;
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = String(payload?.error?.message || '');
@@ -73,9 +82,10 @@ function googleObjectId(value: string, suffix = '') {
 }
 
 async function syncGoogleDoc(accessToken: string, fileId: string, document: AlbatrossDocumentRecord) {
+  if (document.model.kind !== 'doc') return;
   const current = await googleJson(
     accessToken,
-    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}?fields=body.content.endIndex`,
+    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}?fields=revisionId,body.content.endIndex`,
   );
   const endIndex = Math.max(
     1,
@@ -87,7 +97,6 @@ async function syncGoogleDoc(accessToken: string, fileId: string, document: Alba
   if (endIndex > 2) {
     requests.push({ deleteContentRange: { range: { startIndex: 1, endIndex: endIndex - 1 } } });
   }
-  if (document.model.kind !== 'doc') return;
   const segments = document.model.blocks.map((block) => ({
     block,
     text: `${block.text}\n`,
@@ -97,8 +106,8 @@ async function syncGoogleDoc(accessToken: string, fileId: string, document: Alba
     requests.push({ insertText: { location: { index: 1 }, text } });
     let startIndex = 1;
     for (const segment of segments) {
-      const endIndex = startIndex + segment.text.length;
-      const range = { startIndex, endIndex };
+      const segmentEndIndex = startIndex + segment.text.length;
+      const range = { startIndex, endIndex: segmentEndIndex };
       if (segment.block.type === 'heading') {
         requests.push({
           updateParagraphStyle: {
@@ -127,7 +136,7 @@ async function syncGoogleDoc(accessToken: string, fileId: string, document: Alba
       if (segment.block.type === 'quote' && segment.block.text) {
         requests.push({
           updateTextStyle: {
-            range: { startIndex, endIndex: endIndex - 1 },
+            range: { startIndex, endIndex: segmentEndIndex - 1 },
             textStyle: { italic: true, foregroundColor: { color: { rgbColor: hexToRgb('#52606D') } } },
             fields: 'italic,foregroundColor',
           },
@@ -142,14 +151,22 @@ async function syncGoogleDoc(accessToken: string, fileId: string, document: Alba
           },
         });
       }
-      startIndex = endIndex;
+      startIndex = segmentEndIndex;
     }
   }
   if (!requests.length) return;
   await googleJson(
     accessToken,
     `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}:batchUpdate`,
-    { method: 'POST', body: JSON.stringify({ requests, writeControl: {} }) },
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        requests,
+        ...(typeof current.revisionId === 'string' && current.revisionId
+          ? { writeControl: { requiredRevisionId: current.revisionId } }
+          : {}),
+      }),
+    },
   );
 }
 
@@ -185,15 +202,25 @@ function valuesForTab(tab: SheetTab) {
       if (!match) return null;
       let column = 0;
       for (const character of match[1].toUpperCase()) column = column * 26 + character.charCodeAt(0) - 64;
+      const row = Number(match[2]);
+      if (
+        !Number.isSafeInteger(row) ||
+        row < 1 ||
+        row > tab.rowCount ||
+        column < 1 ||
+        column > tab.columnCount
+      ) {
+        return null;
+      }
       return {
-        row: Number(match[2]),
+        row,
         column,
         value: cell.formula ? `=${cell.formula.replace(/^=/u, '')}` : (cell.value ?? ''),
       };
     })
     .filter(Boolean) as Array<{ row: number; column: number; value: string | number | boolean }>;
-  const maxRow = Math.max(1, ...entries.map((entry) => entry.row));
-  const maxColumn = Math.max(1, ...entries.map((entry) => entry.column));
+  const maxRow = entries.reduce((maximum, entry) => Math.max(maximum, entry.row), 1);
+  const maxColumn = entries.reduce((maximum, entry) => Math.max(maximum, entry.column), 1);
   const values: Array<Array<string | number | boolean>> = Array.from({ length: maxRow }, () =>
     Array.from({ length: maxColumn }, () => ''),
   );

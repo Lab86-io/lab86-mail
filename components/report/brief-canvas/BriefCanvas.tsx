@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
 import { useClientStore } from '@/lib/client-state';
+import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import {
   type BriefActionV2,
@@ -124,14 +125,7 @@ export function BriefCanvas({
       try {
         const result = await executeBriefAction(action.action, payload, setPendingOpenWorkId);
         if (action.action === 'create_document' && typeof result === 'string') {
-          const params = new URLSearchParams(window.location.search);
-          params.set('view', 'files');
-          params.set('document', result);
-          window.history.pushState(
-            { ...(window.history.state || {}), albatrossDocument: result },
-            '',
-            `?${params}`,
-          );
+          pushDocumentDeepLink(result);
           setPrimaryView('files');
         }
         if (action.action === 'draft_reply') {

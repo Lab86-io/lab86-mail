@@ -46,6 +46,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import type { AlbatrossDocumentRecord, DocumentKind } from '@/lib/documents/model';
 import type { CloudFileItem, CloudFileProvider } from '@/lib/files/providers';
 import { cn } from '@/lib/utils';
@@ -239,10 +240,7 @@ export function FilesSurface() {
   const [icloudItems, setIcloudItems] = useState<ICloudItem[]>([]);
   const [icloudBusy, setIcloudBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [openDocumentId, setOpenDocumentId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return new URLSearchParams(window.location.search).get('document');
-  });
+  const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['cloud-file-status'],
@@ -261,6 +259,7 @@ export function FilesSurface() {
   });
 
   useEffect(() => {
+    setOpenDocumentId(new URLSearchParams(window.location.search).get('document'));
     const onPopState = () => {
       setOpenDocumentId(new URLSearchParams(window.location.search).get('document'));
     };
@@ -269,14 +268,7 @@ export function FilesSurface() {
   }, []);
 
   const openDocument = (documentId: string) => {
-    const params = new URLSearchParams(window.location.search);
-    params.set('view', 'files');
-    params.set('document', documentId);
-    window.history.pushState(
-      { ...(window.history.state || {}), albatrossDocument: documentId },
-      '',
-      `?${params}`,
-    );
+    pushDocumentDeepLink(documentId);
     setOpenDocumentId(documentId);
   };
 
@@ -394,7 +386,7 @@ export function FilesSurface() {
   const uploadMutation = useMutation({
     mutationFn: async (files: File[]) => {
       const form = new FormData();
-      for (const file of files.slice(0, 5)) form.append('files', file);
+      for (const file of files) form.append('files', file);
       return fetchJson('/api/agent/uploads', {
         method: 'POST',
         body: form,
@@ -590,7 +582,10 @@ export function FilesSurface() {
 
   const handleFiles = (files: File[]) => {
     if (!files.length) return;
-    uploadMutation.mutate(files);
+    if (files.length > 5) {
+      toast.warning(`Only the first 5 of ${files.length} files will be uploaded.`);
+    }
+    uploadMutation.mutate(files.slice(0, 5));
   };
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
@@ -1011,6 +1006,11 @@ function FileList({
               onClick={() => {
                 if (item.isFolder) void onOpen(item);
               }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                void onOpen(item);
+              }}
               className="flex min-w-0 items-center gap-2.5 text-left"
             >
               <span
@@ -1066,6 +1066,11 @@ function FileGrid({ items, onOpen }: { items: CloudFileItem[]; onOpen: (item: Cl
             onDoubleClick={() => void onOpen(item)}
             onClick={() => {
               if (item.isFolder) void onOpen(item);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              void onOpen(item);
             }}
             className="group min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5 text-left shadow-[var(--shadow-soft)] transition-[border-color,transform,background-color] hover:-translate-y-0.5 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)]"
           >

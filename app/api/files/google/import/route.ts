@@ -4,6 +4,7 @@ import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { GOOGLE_NATIVE_MIME, importGoogleNativeFile } from '@/lib/documents/google-import';
 import type { AlbatrossDocumentRecord } from '@/lib/documents/model';
 import {
+  archiveDocument,
   createDocument,
   findDocumentByGoogleFile,
   linkGoogleDocument,
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
       limit: 30,
       windowMs: 60_000,
     });
-    const input = inputSchema.parse(await req.json());
+    const input = inputSchema.parse(await req.json().catch(() => ({})));
     const existing = await findDocumentByGoogleFile({
       userId: user.userId,
       connectionId: input.connectionId,
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
         expectedRevision: existing.currentRevision,
         title: imported.title,
         model: imported.model,
-        sourceRefs: uniqueSourceRefs([...existing.sourceRefs, ...sourceRefs]),
+        sourceRefs: uniqueSourceRefs([...sourceRefs, ...existing.sourceRefs]),
         reason: 'google_refresh',
         actor: 'system',
       });
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
         reason: 'google_import',
       });
     }
-    await linkGoogleDocument({
+    const linked = await linkGoogleDocument({
       userId: user.userId,
       documentId: document.documentId,
       connectionId: input.connectionId,
@@ -98,6 +99,19 @@ export async function POST(req: NextRequest) {
       providerVersion: imported.providerVersion,
       syncedRevision: document.currentRevision,
     });
+    if (!linked.ok) {
+      if (!existing) {
+        await archiveDocument(user.userId, document.documentId).catch(() => undefined);
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'This Google file is already linked to another Albatross file.',
+          documentId: linked.documentId,
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({
       ok: true,
       document: {

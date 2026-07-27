@@ -56,8 +56,11 @@ Official references:
 
 ## Railway variables
 
-Set the client credentials separately in the `development` and `production`
-environments on the `web` service:
+Set the client credentials separately in both Railway environments on the `web`
+service:
+
+- `development`, which serves the staging callback at `mail-staging.lab86.io`
+- `production`, which serves the production callback at `mail.lab86.io`
 
 ```text
 GOOGLE_DRIVE_CLIENT_ID
@@ -70,6 +73,12 @@ The callback defaults to `LAB86_MAIL_PUBLIC_URL + /api/files/oauth/callback`.
 Do not commit or print the client secret. Railway variable writes trigger a
 redeploy; verify `/api/files/status` reports Google Drive as configured after the
 new deployment is healthy.
+
+Web callbacks are accepted only when the Clerk session matches the user who
+started OAuth. On iOS, the HTTPS callback returns a short-lived completion token
+to `lab86://files`; the app then finalizes the exchange through the authenticated
+`POST /api/files/oauth/finalize` endpoint. Provider authorization codes are
+encrypted at rest during that handoff and never placed in the app callback URL.
 
 ## Functional acceptance
 

@@ -764,6 +764,7 @@ export default defineSchema({
       v.literal('areaFact'),
       v.literal('sprint'),
       v.literal('operationBatch'),
+      v.literal('document'),
     ),
     artifactId: v.string(),
     accountId: v.optional(v.string()),
@@ -1388,6 +1389,18 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
+
+  cloudFileOAuthCompletions: defineTable({
+    userId: v.string(),
+    completionToken: v.string(),
+    provider: v.union(v.literal('google_drive'), v.literal('onedrive')),
+    authorizationCodeEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_token', ['completionToken'])
     .index('by_expires', ['expiresAt']),
 
   // Provider-neutral, AI-editable office documents. The current snapshot is

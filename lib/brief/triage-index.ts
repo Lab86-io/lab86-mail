@@ -55,7 +55,7 @@ export function buildTriageHandoffIndex(report: DailyReport): TriageHandoffV1[] 
   );
 }
 
-function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1 {
+export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1 {
   if (record.actions.some((action) => action.action === 'create_document')) return record;
   const text = `${record.recommendation} ${record.assessment}`.toLowerCase();
   const hasDeliverable =
@@ -63,9 +63,9 @@ function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1 {
       text,
     );
   const hasCreationIntent =
-    /\b(create|prepare|build|draft|write|assemble|produce|model|outline|turn|convert|update|finish|send|share|present)\b/iu.test(
+    /\b(create|prepare|build|draft|write|assemble|produce|author|compose|develop|generate|model|outline)\b/iu.test(
       text,
-    );
+    ) || /\b(?:turn|convert)\b.{0,120}\b(?:into|to)\b/iu.test(text);
   if (!hasDeliverable || !hasCreationIntent) return record;
   const kind = /\b(deck|slides|presentation|present)\b/iu.test(text)
     ? 'deck'
@@ -84,23 +84,21 @@ function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1 {
     `Assessment: ${record.assessment}`,
     `Recommendation: ${record.recommendation}`,
   ].join('\n');
+  const createAction = {
+    action: 'create_document' as const,
+    label: `Create ${kindLabel}`,
+    payload: {
+      kind,
+      title,
+      instructions: `Create the ${kindLabel} required by this recommendation: ${record.recommendation}`,
+      sourceContext,
+      sourceRefs,
+    },
+    style: 'primary' as const,
+  };
   return {
     ...record,
-    actions: uniqueActions([
-      ...record.actions,
-      {
-        action: 'create_document',
-        label: `Create ${kindLabel}`,
-        payload: {
-          kind,
-          title,
-          instructions: `Create the ${kindLabel} required by this recommendation: ${record.recommendation}`,
-          sourceContext,
-          sourceRefs,
-        },
-        style: 'primary',
-      },
-    ]).slice(0, 8),
+    actions: uniqueActions([createAction, ...record.actions]).slice(0, 8),
   };
 }
 

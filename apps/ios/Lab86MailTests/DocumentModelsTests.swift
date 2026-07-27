@@ -38,7 +38,7 @@ struct DocumentModelsTests {
         }
     }
 
-    @Test
+    @Test @MainActor
     func documentRouteBecomesARealNestedFilesDestination() {
         let navigation = NavigationModel()
         navigation.openDocument(id: "document-1")
@@ -49,6 +49,24 @@ struct DocumentModelsTests {
 
         navigation.selectPrimary(.today)
         #expect(navigation.documentRoute == nil)
+    }
+
+    @Test
+    func spreadsheetNumbersAndDimensionsNeverTrapOnUntrustedMagnitudes() throws {
+        #expect(AlbatrossCellValue.number(1e21).display == "1e+21")
+        #expect(AlbatrossCellValue.number(.infinity).display == "inf")
+
+        let oversized = AlbatrossSheetTab(
+            json: .object([
+                "id": .string("oversized"),
+                "name": .string("Oversized"),
+                "rowCount": .number(1e21),
+                "columnCount": .number(-10),
+                "cells": .object([:]),
+            ])
+        )
+        #expect(oversized?.rowCount == 100)
+        #expect(oversized?.columnCount == 1)
     }
 
     @Test
@@ -66,5 +84,29 @@ struct DocumentModelsTests {
         #expect(request.supported)
         #expect(request.title.contains("editable spreadsheet"))
         #expect(!request.destructive)
+    }
+
+    @Test
+    func missingBriefDocumentKindFallsBackToDocButMissingTitleCannotBeApplied() {
+        let missingKind = ArtifactReviewRequest(
+            action: "create_document",
+            payload: BriefActionPayload(
+                title: "Vendor comparison",
+                instructions: "Compare the options."
+            ),
+            source: "Morning brief"
+        )
+        let missingTitle = ArtifactReviewRequest(
+            action: "create_document",
+            payload: BriefActionPayload(
+                kind: "doc",
+                instructions: "Draft the memo."
+            ),
+            source: "Morning brief"
+        )
+
+        #expect(missingKind.supported)
+        #expect(missingKind.title.contains("editable document"))
+        #expect(!missingTitle.supported)
     }
 }

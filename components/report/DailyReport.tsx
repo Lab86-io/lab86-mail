@@ -40,6 +40,7 @@ import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { confirmDailyReportAction } from '@/lib/daily-report-action-review';
 import { handleDailyReportNavigationAction } from '@/lib/daily-report-navigation';
+import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
@@ -703,14 +704,7 @@ function ReportArtifact({
             if (!response.ok || !body?.document?.documentId) {
               return ack(false, body?.error || 'file creation failed');
             }
-            const params = new URLSearchParams(window.location.search);
-            params.set('view', 'files');
-            params.set('document', String(body.document.documentId));
-            window.history.pushState(
-              { ...(window.history.state || {}), albatrossDocument: body.document.documentId },
-              '',
-              `?${params}`,
-            );
+            pushDocumentDeepLink(String(body.document.documentId));
             setPrimaryView('files');
             return ack(true);
           }

@@ -265,6 +265,7 @@ const USER_BULK_TABLES = [
   'mobileSyncChanges',
   'mobileSyncTombstones',
   'nativePushDeliveries',
+  'documentRevisions',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -455,8 +456,8 @@ export const deleteUserCascade = mutation({
       'cloudFileConnections',
       'cloudFileCredentials',
       'cloudFileOAuthStates',
+      'cloudFileOAuthCompletions',
       'documents',
-      'documentRevisions',
       'documentSuggestions',
     ] as const;
 

@@ -1,8 +1,10 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireCurrentUser } from '@/lib/auth/current-user';
 import {
   consumeCloudFileOAuthState,
   exchangeCloudFileAuthorizationCode,
   saveCloudFileConnection,
+  saveCloudFileOAuthCompletion,
 } from '@/lib/files/connections';
 import { CLOUD_FILE_PROVIDER_DEFINITIONS } from '@/lib/files/providers';
 import { hostedPublicUrl } from '@/lib/hosted/env';
@@ -12,14 +14,16 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const defaultDependencies = {
+  requireCurrentUser,
   consumeCloudFileOAuthState,
   exchangeCloudFileAuthorizationCode,
   saveCloudFileConnection,
+  saveCloudFileOAuthCompletion,
 };
 
 function filesRedirect(
   path: string | undefined,
-  key: 'files_connected' | 'files_error',
+  key: 'files_connected' | 'files_error' | 'files_completion',
   value: string,
   nativeCallback = false,
 ) {
@@ -60,6 +64,18 @@ export function createCloudFileOAuthCallback(dependencies: typeof defaultDepende
           'The provider did not return an authorization code.',
           nativeCallback,
         );
+      }
+      if (nativeCallback) {
+        const completionToken = await dependencies.saveCloudFileOAuthCompletion({
+          userId: stored.userId,
+          provider: stored.provider,
+          authorizationCode: code,
+        });
+        return filesRedirect(redirectTo, 'files_completion', completionToken, true);
+      }
+      const sessionUser = await dependencies.requireCurrentUser().catch(() => null);
+      if (!sessionUser || sessionUser.userId !== stored.userId) {
+        return filesRedirect(redirectTo, 'files_error', 'Sign in again and retry the connection.');
       }
       const tokens = await dependencies.exchangeCloudFileAuthorizationCode({
         provider: stored.provider,

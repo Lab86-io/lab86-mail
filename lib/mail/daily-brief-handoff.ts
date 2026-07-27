@@ -136,7 +136,9 @@ function validProposal(action: BriefActionV2, record: TriageHandoffV1): boolean 
         candidate.action === 'create_document' &&
         candidate.payload.kind === action.payload.kind &&
         candidate.payload.title === action.payload.title &&
-        candidate.payload.instructions === action.payload.instructions,
+        candidate.payload.instructions === action.payload.instructions &&
+        candidate.payload.sourceContext === action.payload.sourceContext &&
+        sameSourceRefs(candidate.payload.sourceRefs, action.payload.sourceRefs),
     );
   }
   if (action.action === 'draft_reply') {
@@ -192,6 +194,17 @@ function validProposal(action: BriefActionV2, record: TriageHandoffV1): boolean 
     );
   }
   return false;
+}
+
+function sameSourceRefs(left: unknown, right: unknown) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((candidate, index) => {
+    const other = right[index];
+    if (!candidate || typeof candidate !== 'object' || !other || typeof other !== 'object') return false;
+    const a = candidate as Record<string, unknown>;
+    const b = other as Record<string, unknown>;
+    return a.kind === b.kind && a.id === b.id && a.account === b.account && a.label === b.label;
+  });
 }
 
 function deterministicNeedsYouRegion(records: TriageHandoffV1[]): BriefRegion {

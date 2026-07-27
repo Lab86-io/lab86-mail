@@ -24,9 +24,15 @@ function errorResponse(err: any) {
 export async function GET() {
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'agent-uploads-list',
+      limit: 120,
+      windowMs: 60_000,
+    });
     const files = await convexQuery<any[]>(agentUploadsApi.listRecentFiles, {
       userId: user.userId,
-      limit: 200,
+      limit: 50,
     });
     return NextResponse.json({ ok: true, files });
   } catch (err: any) {

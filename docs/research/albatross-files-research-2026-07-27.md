@@ -48,10 +48,12 @@ Patterns used:
 
 - Google recommends choosing the narrowest Drive scope possible. Whole-drive
   browsing requires a restricted scope; this implementation requests
-  `drive.readonly` and performs no mutations:
+  `drive.readonly` for browsing plus `drive.file` for write-back to files the
+  user explicitly selects or Albatross creates:
   <https://developers.google.com/workspace/drive/api/guides/api-specific-auth>
-- OneDrive delegated `Files.Read` works for personal and work/school accounts
-  without granting write access:
+- OneDrive uses delegated `Files.ReadWrite` for personal and work/school
+  accounts so the connection is ready for provider write-back as that editor
+  adapter is added:
   <https://learn.microsoft.com/en-us/onedrive/developer/rest-api/concepts/permissions_reference?view=odsp-graph-online>
 - Apple supports iCloud Drive in Finder, Files, File Explorer, and iCloud.com,
   but CloudKit web APIs expose app containers rather than a general third-party
@@ -65,8 +67,9 @@ Patterns used:
 - The default is a compact list; grid is an explicit toggle.
 - "All files" merges Albatross uploads with the root/search results of connected
   providers. Each provider remains visible as a location for folder navigation.
-- Google Drive and OneDrive are read-only. Albatross opens provider-hosted URLs
-  and does not proxy file contents in this release.
+- Google Docs, Sheets, and Slides can be imported into Albatross, edited inline,
+  refreshed, and written back with revision-conflict protection. Other Google
+  Drive and OneDrive items remain browsable and open in their provider.
 - Direct uploads reuse encrypted-user-scoped Convex storage and are visible as
   the Albatross location.
 - iCloud Drive uses an explicit directory picker (or browser folder-input
@@ -74,6 +77,9 @@ Patterns used:
   is copied to the server until the user separately chooses Add files.
 - Connection display rows and encrypted credentials are separate Convex tables.
   OAuth state is high-entropy, short-lived, single-use, and server-secret-gated.
+  Web callbacks must match the live Clerk user; native callbacks hand an
+  encrypted provider code to the authenticated app through a separate,
+  user-bound, single-use completion token.
 
 ## Operational setup
 

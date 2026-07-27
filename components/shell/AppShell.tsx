@@ -123,9 +123,9 @@ export function AppShell({
 
   useEffect(() => {
     if (!deepLinkedView) return;
-    if (isAlbatrossPrimaryView(deepLinkedView) && !albatrossEnabled) return;
     initialViewAppliedRef.current = true;
     setBootView(null);
+    if (isAlbatrossPrimaryView(deepLinkedView) && !albatrossEnabled) return;
     setPrimaryView(deepLinkedView);
   }, [albatrossEnabled, deepLinkedView, setPrimaryView]);
 

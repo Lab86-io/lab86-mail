@@ -126,6 +126,29 @@ describe('document tools', () => {
     ).rejects.toThrow('Not authenticated');
   });
 
+  test('returns the created file when optional Google publishing fails', async () => {
+    __setDocumentToolDepsForTest({
+      createDocument: (async () => record()) as any,
+      publishDocumentToGoogle: (async () => {
+        throw new Error('Reconnect Google Drive.');
+      }) as any,
+      recordOperation: (async () => 'operation') as any,
+    });
+
+    const result = await runTool(documentCreate.handler, {
+      kind: 'doc',
+      title: 'Private fallback',
+      publishToGoogle: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      documentId: 'document-1',
+      googleUrl: undefined,
+      publishError: 'Reconnect Google Drive.',
+    });
+  });
+
   test('lists, reads, exports, and publishes user-owned documents', async () => {
     const listed = [
       record({
@@ -296,6 +319,7 @@ describe('cloud file tools', () => {
     expect(result.files).toEqual([
       expect.objectContaining({ id: 'file-1', provider: 'google_drive', isFolder: false }),
     ]);
+    expect(result.errors).toEqual([{ connectionId: 'onedrive-1', error: 'provider unavailable' }]);
     expect(browse).toHaveBeenCalledTimes(2);
 
     await expect(
@@ -376,5 +400,36 @@ describe('cloud file tools', () => {
       providerVersion: '8',
       syncedRevision: 1,
     });
+  });
+
+  test('archives a new Google import if the canonical provider link cannot be committed', async () => {
+    const archive = mock(async () => undefined);
+    __setCloudFileToolDepsForTest({
+      archiveDocument: archive as any,
+      createDocument: (async () =>
+        record({
+          documentId: 'orphan-candidate',
+          currentRevision: 1,
+          sourceRefs: [],
+        })) as any,
+      findDocumentByGoogleFile: (async () => null) as any,
+      importGoogleNativeFile: (async () => ({
+        kind: 'doc',
+        title: 'Imported document',
+        model: createDefaultDocumentModel('doc'),
+        providerVersion: '4',
+      })) as any,
+      linkGoogleDocument: (async () => ({ ok: false, code: 'ALREADY_LINKED' })) as any,
+    });
+
+    await expect(
+      runTool(googleFileImport.handler, {
+        connectionId: 'google-1',
+        fileId: 'already-linked',
+        mimeType: 'application/vnd.google-apps.document',
+        webUrl: undefined,
+      }),
+    ).rejects.toThrow('already linked');
+    expect(archive).toHaveBeenCalledWith('test_user_tools', 'orphan-candidate');
   });
 });

@@ -260,7 +260,13 @@ struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
     }
 
     var supported: Bool {
-        [
+        if action == "create_document" {
+            guard let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty else {
+                return false
+            }
+        }
+        return [
             "toggle_task", "dismiss_task", "resolve_thread", "dismiss_thread",
             "archive_thread", "rsvp_event", "create_task", "create_event",
             "draft_reply", "create_document", "capture_intent", "answer_question",
@@ -451,31 +457,19 @@ struct ArtifactActionReviewSheet: View {
                 environment.navigation.sheet = .compose
             }
         case "create_document":
-            guard let rawKind = payload.kind,
-                  let kind = AlbatrossDocumentKind(rawValue: rawKind),
-                  let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+            let kind = AlbatrossDocumentKind(rawValue: payload.kind ?? "doc") ?? .doc
+            guard let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !title.isEmpty else {
                 throw BackendError.server(status: 400, message: "The brief omitted valid file details.")
             }
-            var body: [String: JSONValue] = [
-                "kind": .string(kind.rawValue),
-                "title": .string(title),
-            ]
-            if let instructions = payload.instructions, !instructions.isEmpty {
-                body["instructions"] = .string(instructions)
-            }
-            if let sourceContext = payload.sourceContext, !sourceContext.isEmpty {
-                body["sourceContext"] = .string(sourceContext)
-            }
-            let result = try await environment.backend.post(
-                path: "/api/documents",
-                body: .object(body)
+            let document = try await environment.documents.create(
+                kind: kind,
+                title: title,
+                instructions: payload.instructions,
+                sourceContext: payload.sourceContext
             )
-            guard let documentID = result["document"]?["documentId"]?.stringValue else {
-                throw BackendError.invalidResponse
-            }
             await MainActor.run {
-                environment.navigation.openDocument(id: documentID)
+                environment.navigation.openDocument(id: document.id)
             }
         case "capture_intent":
             guard let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines),

@@ -20,6 +20,13 @@ export function __setDocumentAiDepsForTest(overrides: Partial<typeof defaultDepe
   dependencies = { ...defaultDependencies, ...overrides };
 }
 
+export class DocumentGenerationError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'DocumentGenerationError';
+  }
+}
+
 const schemas = {
   doc: docModelSchema,
   sheet: sheetModelSchema,
@@ -76,9 +83,15 @@ ${modelGuidance(input.kind)}
 Preserve accurate supplied facts, never invent citations or claim provider-side changes, and make the result useful without extra cleanup. Return the full model, a concise title, and a one-sentence summary of what changed.`,
     prompt: `${current}${sources}\n\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
   });
-  return schema.parse(object) as {
-    title: string;
-    summary: string;
-    model: AlbatrossDocumentModel;
-  };
+  try {
+    return schema.parse(object) as {
+      title: string;
+      summary: string;
+      model: AlbatrossDocumentModel;
+    };
+  } catch (error) {
+    throw new DocumentGenerationError(`The document model returned invalid ${input.kind} output.`, {
+      cause: error,
+    });
+  }
 }

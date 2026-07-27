@@ -26,10 +26,7 @@ function responseForError(error: unknown) {
     );
   }
   console.error('[document]', error);
-  return NextResponse.json(
-    { ok: false, error: error instanceof Error ? error.message : 'Document operation failed.' },
-    { status: 500 },
-  );
+  return NextResponse.json({ ok: false, error: 'Document operation failed.' }, { status: 500 });
 }
 
 export async function GET(_req: NextRequest, context: { params: Promise<{ documentId: string }> }) {

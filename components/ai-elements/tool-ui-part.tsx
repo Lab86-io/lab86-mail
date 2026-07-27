@@ -164,6 +164,12 @@ export function ToolUiDisplayPart({
   onOpenDraft?: (draft: DraftOpenRequest) => void;
   onOpenThread?: (target: { account: string; threadId: string }) => void;
 }) {
+  const internalOpenPath =
+    typeof output?.openPath === 'string' &&
+    output.openPath.startsWith('/') &&
+    !output.openPath.startsWith('//')
+      ? output.openPath
+      : null;
   if (
     output?.ok &&
     [
@@ -172,7 +178,7 @@ export function ToolUiDisplayPart({
       'document_apply_instruction',
       'google_file_import',
     ].includes(toolName) &&
-    typeof output.openPath === 'string'
+    internalOpenPath
   ) {
     const kind = String(output.kind || '');
     const Icon = kind === 'sheet' ? FileSpreadsheet : kind === 'deck' ? Presentation : FileText;
@@ -181,7 +187,7 @@ export function ToolUiDisplayPart({
     );
     return (
       <a
-        href={output.openPath}
+        href={internalOpenPath}
         className="group flex w-full max-w-[460px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-left shadow-[var(--shadow-soft)] transition hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-pop)]"
       >
         <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
@@ -204,7 +210,7 @@ export function ToolUiDisplayPart({
       <a
         href={output.webUrl}
         target="_blank"
-        rel="noreferrer"
+        rel="noopener noreferrer"
         className="flex w-full max-w-[460px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-[13px] font-medium text-[var(--color-text)]"
       >
         <ExternalLink className="size-4 text-[var(--color-accent)]" />

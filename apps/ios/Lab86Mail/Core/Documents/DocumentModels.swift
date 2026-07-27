@@ -1,6 +1,21 @@
 import Foundation
 import Observation
 
+private func exactInt(_ value: Double?) -> Int? {
+    guard let value, value.isFinite else { return nil }
+    return Int(exactly: value)
+}
+
+private func boundedInt(_ value: Double?, fallback: Int, range: ClosedRange<Int>) -> Int {
+    guard let converted = exactInt(value) else { return fallback }
+    return min(max(converted, range.lowerBound), range.upperBound)
+}
+
+private enum DocumentSectionLoadResult {
+    case success(JSONValue)
+    case failure(String)
+}
+
 enum AlbatrossDocumentKind: String, CaseIterable, Identifiable, Hashable, Sendable {
     case doc
     case sheet
@@ -45,7 +60,7 @@ struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
         self.id = id
         self.type = type
         text = json["text"]?.stringValue ?? ""
-        level = json["level"]?.doubleValue.map(Int.init)
+        level = exactInt(json["level"]?.doubleValue)
     }
 
     init(id: String = UUID().uuidString, type: String = "paragraph", text: String = "", level: Int? = nil) {
@@ -83,7 +98,11 @@ enum AlbatrossCellValue: Hashable, Sendable {
         switch self {
         case .text(let value): value
         case .number(let value):
-            value.rounded() == value ? String(Int(value)) : String(value)
+            if value.rounded() == value, let integer = exactInt(value) {
+                String(integer)
+            } else {
+                String(value)
+            }
         case .bool(let value): value ? "TRUE" : "FALSE"
         }
     }
@@ -137,8 +156,8 @@ struct AlbatrossSheetTab: Identifiable, Hashable, Sendable {
               let name = json["name"]?.stringValue else { return nil }
         self.id = id
         self.name = name
-        rowCount = max(1, Int(json["rowCount"]?.doubleValue ?? 100))
-        columnCount = max(1, Int(json["columnCount"]?.doubleValue ?? 26))
+        rowCount = boundedInt(json["rowCount"]?.doubleValue, fallback: 100, range: 1 ... 10_000)
+        columnCount = boundedInt(json["columnCount"]?.doubleValue, fallback: 26, range: 1 ... 500)
         cells = Dictionary(
             uniqueKeysWithValues: (json["cells"]?.objectValue ?? [:]).map {
                 ($0.key, AlbatrossSheetCell(json: $0.value))
@@ -361,7 +380,11 @@ struct AlbatrossGoogleDocumentLink: Hashable, Sendable {
         self.fileID = fileID
         mimeType = json["mimeType"]?.stringValue ?? ""
         webURL = json["webUrl"]?.stringValue.flatMap { URL(string: $0) }
-        syncedRevision = Int(json["syncedRevision"]?.doubleValue ?? 0)
+        syncedRevision = boundedInt(
+            json["syncedRevision"]?.doubleValue,
+            fallback: 0,
+            range: 0 ... Int.max
+        )
     }
 }
 
@@ -403,7 +426,11 @@ struct AlbatrossDocument: Identifiable, Hashable, Sendable {
         self.kind = kind
         title = json["title"]?.stringValue ?? "Untitled \(kind.title)"
         self.model = model
-        revision = max(1, Int(json["currentRevision"]?.doubleValue ?? 1))
+        revision = boundedInt(
+            json["currentRevision"]?.doubleValue,
+            fallback: 1,
+            range: 1 ... Int.max
+        )
         google = AlbatrossGoogleDocumentLink(json: json["google"])
         suggestions = (json["suggestions"]?.arrayValue ?? []).compactMap(AlbatrossDocumentSuggestion.init)
         createdAt = Self.date(json["createdAt"]?.doubleValue)
@@ -455,7 +482,7 @@ struct CloudFileItem: Identifiable, Hashable, Sendable {
         provider = json["provider"]?.stringValue ?? "albatross"
         self.name = name
         mimeType = json["mimeType"]?.stringValue
-        size = json["size"]?.doubleValue.map(Int.init)
+        size = exactInt(json["size"]?.doubleValue).map { max(0, $0) }
         if let timestamp = json["modifiedAt"]?.doubleValue ?? json["createdAt"]?.doubleValue {
             modifiedAt = Date(timeIntervalSince1970: timestamp > 10_000_000_000 ? timestamp / 1_000 : timestamp)
         } else {
@@ -490,23 +517,43 @@ final class DocumentStore {
     func loadFiles() async {
         isLoading = true
         defer { isLoading = false }
-        do {
-            async let documentEnvelope = backend.get(path: "/api/documents")
-            async let statusEnvelope = backend.get(path: "/api/files/status")
-            async let uploadEnvelope = backend.get(path: "/api/agent/uploads")
-            let (documentResult, statusResult, uploadResult) = try await (
-                documentEnvelope,
-                statusEnvelope,
-                uploadEnvelope
-            )
-            documents = (documentResult["documents"]?.arrayValue ?? [])
+        async let documentEnvelope = loadSection(path: "/api/documents")
+        async let statusEnvelope = loadSection(path: "/api/files/status")
+        async let uploadEnvelope = loadSection(path: "/api/agent/uploads")
+        let (documentResult, statusResult, uploadResult) = await (
+            documentEnvelope,
+            statusEnvelope,
+            uploadEnvelope
+        )
+        var failures: [String] = []
+        switch documentResult {
+        case .success(let result):
+            documents = (result["documents"]?.arrayValue ?? [])
                 .compactMap(AlbatrossDocument.init)
                 .sorted { $0.updatedAt > $1.updatedAt }
-            connections = (statusResult["connections"]?.arrayValue ?? []).compactMap(CloudFileConnection.init)
-            uploads = (uploadResult["files"]?.arrayValue ?? []).compactMap(CloudFileItem.init)
-            errorMessage = nil
+        case .failure(let message):
+            failures.append("Albatross files: \(message)")
+        }
+        switch statusResult {
+        case .success(let result):
+            connections = (result["connections"]?.arrayValue ?? []).compactMap(CloudFileConnection.init)
+        case .failure(let message):
+            failures.append("Connected drives: \(message)")
+        }
+        switch uploadResult {
+        case .success(let result):
+            uploads = (result["files"]?.arrayValue ?? []).compactMap(CloudFileItem.init)
+        case .failure(let message):
+            failures.append("Uploads: \(message)")
+        }
+        errorMessage = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
+    private func loadSection(path: String) async -> DocumentSectionLoadResult {
+        do {
+            return .success(try await backend.get(path: path))
         } catch {
-            errorMessage = error.localizedDescription
+            return .failure(error.localizedDescription)
         }
     }
 
@@ -522,11 +569,13 @@ final class DocumentStore {
     func create(
         kind: AlbatrossDocumentKind,
         title: String? = nil,
-        instructions: String? = nil
+        instructions: String? = nil,
+        sourceContext: String? = nil
     ) async throws -> AlbatrossDocument {
         var body: [String: JSONValue] = ["kind": .string(kind.rawValue)]
         if let title, !title.isEmpty { body["title"] = .string(title) }
         if let instructions, !instructions.isEmpty { body["instructions"] = .string(instructions) }
+        if let sourceContext, !sourceContext.isEmpty { body["sourceContext"] = .string(sourceContext) }
         let result = try await backend.post(path: "/api/documents", body: .object(body))
         guard let json = result["document"], let document = AlbatrossDocument(json: json) else {
             throw BackendError.invalidResponse
@@ -670,6 +719,9 @@ final class DocumentStore {
         let target = downloaded.url
             .deletingLastPathComponent()
             .appending(path: "\(document.title.sanitizedFilename).\(document.kind.fileExtension)")
+        if FileManager.default.fileExists(atPath: target.path) {
+            try FileManager.default.removeItem(at: target)
+        }
         try FileManager.default.moveItem(at: downloaded.url, to: target)
         return target
     }

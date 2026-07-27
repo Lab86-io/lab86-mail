@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { __setDocumentAiDepsForTest, generateDocumentProposal } from '../lib/documents/ai';
+import {
+  __setDocumentAiDepsForTest,
+  DocumentGenerationError,
+  generateDocumentProposal,
+} from '../lib/documents/ai';
 import {
   __setGoogleDocumentDepsForTest,
   GoogleDocumentConflictError,
@@ -14,6 +18,7 @@ import {
 } from '../lib/documents/model';
 import {
   __setDocumentServiceDepsForTest,
+  applyDocumentSuggestion,
   archiveDocument,
   createDocument,
   createDocumentSuggestion,
@@ -114,7 +119,7 @@ describe('document AI proposal service', () => {
         kind: 'doc',
         instruction: 'Write a memo',
       }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(DocumentGenerationError);
   });
 });
 
@@ -218,6 +223,13 @@ describe('document persistence service', () => {
         title: 'Title only',
       }),
     ).resolves.toMatchObject({ ok: true });
+    await updateDocument({
+      userId: 'user-1',
+      documentId: doc.documentId,
+      expectedRevision: 4,
+      title: '   ',
+    });
+    expect(mutation.mock.calls[2][1].title).toBe('Untitled');
     await expect(
       updateDocument({
         userId: 'user-1',
@@ -250,7 +262,7 @@ describe('document persistence service', () => {
       mimeType: 'application/vnd.google-apps.document',
       syncedRevision: 4,
     });
-    expect(mutation).toHaveBeenCalledTimes(6);
+    expect(mutation).toHaveBeenCalledTimes(7);
   });
 
   test('returns null for a missing document and provider file', async () => {
@@ -265,6 +277,36 @@ describe('document persistence service', () => {
         fileId: 'missing',
       }),
     ).resolves.toBeNull();
+  });
+
+  test('applies a suggestion through the single transactional service mutation', async () => {
+    const mutation = mock(async (_reference: unknown, input: any) => ({
+      ok: true,
+      document: {
+        ...documentRecord('doc'),
+        title: 'Applied title',
+        currentRevision: input.expectedRevision + 1,
+      },
+    }));
+    __setDocumentServiceDepsForTest({ convexMutation: mutation as any });
+
+    await expect(
+      applyDocumentSuggestion({
+        userId: 'user-1',
+        documentId: 'document-doc',
+        suggestionId: 'suggestion-1',
+        expectedRevision: 3,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      document: { title: 'Applied title', currentRevision: 4 },
+    });
+    expect(mutation.mock.calls[0][1]).toEqual({
+      userId: 'user-1',
+      documentId: 'document-doc',
+      suggestionId: 'suggestion-1',
+      expectedRevision: 3,
+    });
   });
 });
 
@@ -491,6 +533,170 @@ describe('Google native import', () => {
       }),
     ).rejects.toThrow('missing or expired');
   });
+
+  test('bounds oversized Google grids, drops excess cells, and truncates slide titles', async () => {
+    const oversizedRow = Array.from({ length: 501 }, (_, index) => `value-${index + 1}`);
+    __setGoogleImportDepsForTest({
+      getCloudFileAccess: (async () => ({
+        connection: {
+          connectionId: 'google-1',
+          provider: 'google_drive',
+          status: 'connected',
+          scopes: [],
+        },
+        accessToken: 'access',
+      })) as any,
+      fetch: (async (url: string | URL | Request) => {
+        const endpoint = String(url);
+        if (endpoint.includes('drive/v3/files/')) {
+          return Response.json({ name: 'Oversized', version: '1' });
+        }
+        if (endpoint.includes('values:batchGet')) {
+          return Response.json({ valueRanges: [{ values: [oversizedRow] }] });
+        }
+        if (endpoint.includes('sheets.googleapis.com')) {
+          return Response.json({
+            properties: { title: 'Oversized sheet' },
+            sheets: [
+              {
+                properties: {
+                  sheetId: 1,
+                  title: 'Large',
+                  gridProperties: { rowCount: 1_000_000, columnCount: 18_278 },
+                },
+              },
+            ],
+          });
+        }
+        if (endpoint.includes('slides.googleapis.com')) {
+          return Response.json({
+            title: 'Long deck',
+            slides: [
+              {
+                objectId: 'slide',
+                pageElements: [
+                  {
+                    objectId: 'title',
+                    shape: {
+                      placeholder: { type: 'TITLE' },
+                      text: { textElements: [{ textRun: { content: `${'T'.repeat(600)}\n` } }] },
+                    },
+                  },
+                ],
+              },
+            ],
+          });
+        }
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      }) as any,
+    });
+
+    const sheet = await importGoogleNativeFile({
+      userId: 'user-1',
+      connectionId: 'google-1',
+      fileId: 'sheet-file',
+      mimeType: 'application/vnd.google-apps.spreadsheet',
+    });
+    expect(sheet.model.kind).toBe('sheet');
+    if (sheet.model.kind !== 'sheet') throw new Error('Expected a sheet.');
+    expect(sheet.model.sheets[0]).toMatchObject({ rowCount: 10_000, columnCount: 500 });
+    expect(Object.keys(sheet.model.sheets[0].cells)).toHaveLength(500);
+    expect(sheet.model.sheets[0].cells.SG1).toBeUndefined();
+
+    const deck = await importGoogleNativeFile({
+      userId: 'user-1',
+      connectionId: 'google-1',
+      fileId: 'deck-file',
+      mimeType: 'application/vnd.google-apps.presentation',
+    });
+    expect(deck.model.kind).toBe('deck');
+    if (deck.model.kind !== 'deck') throw new Error('Expected a deck.');
+    expect(deck.model.slides[0].title).toHaveLength(500);
+  });
+
+  test('keeps sheet values aligned when metadata contains an untitled tab', async () => {
+    __setGoogleImportDepsForTest({
+      getCloudFileAccess: (async () => ({
+        connection: {
+          connectionId: 'google-1',
+          provider: 'google_drive',
+          status: 'connected',
+          scopes: [],
+        },
+        accessToken: 'access',
+      })) as any,
+      fetch: (async (url: string | URL | Request) => {
+        const endpoint = String(url);
+        if (endpoint.includes('drive/v3/files/')) {
+          return Response.json({ name: 'Mixed tabs', version: '1' });
+        }
+        if (endpoint.includes('values:batchGet')) {
+          return Response.json({ valueRanges: [{ values: [['Second tab value']] }] });
+        }
+        if (endpoint.includes('sheets.properties')) {
+          return Response.json({
+            properties: { title: 'Mixed tabs' },
+            sheets: [
+              {
+                properties: {
+                  sheetId: 1,
+                  title: '',
+                  gridProperties: { rowCount: 10, columnCount: 3 },
+                },
+              },
+              {
+                properties: {
+                  sheetId: 2,
+                  title: 'Second',
+                  gridProperties: { rowCount: 10, columnCount: 3 },
+                },
+              },
+            ],
+          });
+        }
+        if (endpoint.includes('sheets.googleapis.com')) {
+          return Response.json({ properties: { title: 'Mixed tabs' } });
+        }
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      }) as any,
+    });
+
+    const imported = await importGoogleNativeFile({
+      userId: 'user-1',
+      connectionId: 'google-1',
+      fileId: 'mixed-tabs',
+      mimeType: 'application/vnd.google-apps.spreadsheet',
+    });
+    expect(imported.model.kind).toBe('sheet');
+    if (imported.model.kind !== 'sheet') throw new Error('Expected a sheet.');
+    expect(imported.model.sheets[0].cells).toEqual({});
+    expect(imported.model.sheets[1].cells.A1).toEqual({ value: 'Second tab value' });
+  });
+
+  test('maps a timed-out Google import to a retryable failure', async () => {
+    __setGoogleImportDepsForTest({
+      getCloudFileAccess: (async () => ({
+        connection: {
+          connectionId: 'google-1',
+          provider: 'google_drive',
+          status: 'connected',
+          scopes: [],
+        },
+        accessToken: 'access',
+      })) as any,
+      fetch: (async () => {
+        throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+      }) as any,
+    });
+    await expect(
+      importGoogleNativeFile({
+        userId: 'user-1',
+        connectionId: 'google-1',
+        fileId: 'slow-doc',
+        mimeType: 'application/vnd.google-apps.document',
+      }),
+    ).rejects.toThrow('timed out');
+  });
 });
 
 describe('Google document publishing', () => {
@@ -509,8 +715,11 @@ describe('Google document publishing', () => {
       if (endpoint === 'https://slides.googleapis.com/v1/presentations' && init?.method === 'POST') {
         return Response.json({ presentationId: 'created-deck' });
       }
-      if (endpoint.includes('docs.googleapis.com') && endpoint.includes('fields=body')) {
-        return Response.json({ body: { content: [{ endIndex: 8 }] } });
+      if (endpoint.includes('docs.googleapis.com') && endpoint.includes('fields=')) {
+        return Response.json({
+          revisionId: 'docs-revision-7',
+          body: { content: [{ endIndex: 8 }] },
+        });
       }
       if (endpoint.includes('sheets.googleapis.com') && endpoint.includes('fields=sheets')) {
         return Response.json({
@@ -582,6 +791,8 @@ describe('Google document publishing', () => {
             B2: { value: 42 },
             C3: { formula: '=SUM(B2:B2)' },
             invalid: { value: 'ignored' },
+            A9999999: { value: 'oversized-row' },
+            ZZZ1: { value: 'oversized-column' },
           },
         },
         { id: 'two', name: 'Second', rowCount: 5, columnCount: 2, cells: {} },
@@ -646,8 +857,13 @@ describe('Google document publishing', () => {
     );
     const docBatch = requests.find((request) => request.url.includes('created-doc:batchUpdate'));
     expect(String(docBatch?.init?.body)).toContain('createParagraphBullets');
+    expect(JSON.parse(String(docBatch?.init?.body)).writeControl).toEqual({
+      requiredRevisionId: 'docs-revision-7',
+    });
     const sheetValues = requests.find((request) => request.url.includes('values:batchUpdate'));
     expect(String(sheetValues?.init?.body)).toContain('=SUM(B2:B2)');
+    expect(String(sheetValues?.init?.body)).not.toContain('oversized-row');
+    expect(String(sheetValues?.init?.body)).not.toContain('oversized-column');
   });
 
   test('protects provider versions and validates connection selection', async () => {

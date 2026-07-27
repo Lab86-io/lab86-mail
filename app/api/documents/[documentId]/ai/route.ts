@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { generateDocumentProposal } from '@/lib/documents/ai';
+import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
 import { createDocumentSuggestion, getDocument, updateDocument } from '@/lib/documents/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ docume
       windowMs: 60_000,
     });
     const { documentId } = await context.params;
-    const input = inputSchema.parse(await req.json());
+    const input = inputSchema.parse(await req.json().catch(() => ({})));
     const document = await getDocument(user.userId, documentId);
     if (!document) return NextResponse.json({ ok: false, error: 'Document not found.' }, { status: 404 });
     const proposal = await generateDocumentProposal({
@@ -93,12 +93,16 @@ export async function POST(req: NextRequest, context: { params: Promise<{ docume
         { status: 400 },
       );
     }
+    if (error instanceof DocumentGenerationError) {
+      console.error('[document-ai] Invalid model output:', error);
+      return NextResponse.json(
+        { ok: false, error: 'Albatross returned an invalid document edit. Try again.' },
+        { status: 502 },
+      );
+    }
     console.error('[document-ai]', error);
     return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Albatross could not edit this document.',
-      },
+      { ok: false, error: 'Albatross could not edit this document.' },
       { status: 500 },
     );
   }

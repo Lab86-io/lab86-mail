@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const DOCUMENT_KINDS = ['doc', 'sheet', 'deck'] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
+export const MAX_SHEET_ROWS = 10_000;
+export const MAX_SHEET_COLUMNS = 500;
 
 const sourceRefSchema = z.object({
   kind: z.string().min(1).max(80),
@@ -27,8 +29,8 @@ const sheetCellSchema = z.object({
 const sheetTabSchema = z.object({
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
-  rowCount: z.number().int().min(1).max(10_000),
-  columnCount: z.number().int().min(1).max(500),
+  rowCount: z.number().int().min(1).max(MAX_SHEET_ROWS),
+  columnCount: z.number().int().min(1).max(MAX_SHEET_COLUMNS),
   cells: z.record(z.string(), sheetCellSchema),
 });
 
@@ -193,7 +195,7 @@ export function documentModelText(model: AlbatrossDocumentModel): string {
         sheet.name,
         ...Object.entries(sheet.cells)
           .sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true }))
-          .map(([address, cell]) => `${address}: ${cell.formula || cell.value || ''}`),
+          .map(([address, cell]) => `${address}: ${cell.formula ?? cell.value ?? ''}`),
       ])
       .join('\n');
   }

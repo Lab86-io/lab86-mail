@@ -287,6 +287,17 @@ describe('Daily Brief handoff recommendations', () => {
                 ...exact,
                 payload: { ...exact.payload, instructions: 'Invent an unrelated memo.' },
               },
+              {
+                ...exact,
+                payload: { ...exact.payload, sourceContext: 'Replace the canonical SBAR context.' },
+              },
+              {
+                ...exact,
+                payload: {
+                  ...exact.payload,
+                  sourceRefs: [{ kind: 'thread', id: 'unrelated-thread' }],
+                },
+              },
             ]),
           ]),
         },

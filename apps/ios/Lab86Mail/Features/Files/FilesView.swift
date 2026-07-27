@@ -57,7 +57,7 @@ struct FilesView: View {
             await store.loadFiles()
         }
         .task(id: cloudLoadKey) {
-            await loadCloudItems()
+            await loadCloudItems(debounceSearch: true)
         }
         .refreshable {
             await store.loadFiles()
@@ -289,24 +289,62 @@ struct FilesView: View {
         }
     }
 
-    private func loadCloudItems() async {
+    private func loadCloudItems(debounceSearch: Bool = false) async {
         do {
+            if debounceSearch, !query.isEmpty {
+                try await Task.sleep(for: .milliseconds(350))
+                try Task.checkCancellation()
+            }
             if let connection = selectedConnection {
                 cloudItems = try await store.browse(
                     connectionID: connection.id,
                     query: query,
                     folderID: folderStack.last?.id
                 )
+                errorMessage = nil
             } else if locationID == "all" {
-                var result: [CloudFileItem] = []
-                for connection in store.connections {
-                    result.append(
-                        contentsOf: try await store.browse(connectionID: connection.id, query: query)
-                    )
+                let connections = store.connections
+                let documentStore = store
+                let searchQuery = query
+                let outcomes = await withTaskGroup(of: CloudBrowseOutcome.self) { group in
+                    for (index, connection) in connections.enumerated() {
+                        group.addTask {
+                            do {
+                                return .success(
+                                    index,
+                                    try await documentStore.browse(
+                                        connectionID: connection.id,
+                                        query: searchQuery
+                                    )
+                                )
+                            } catch {
+                                return .failure(connection.label, error.localizedDescription)
+                            }
+                        }
+                    }
+                    var collected: [CloudBrowseOutcome] = []
+                    for await outcome in group { collected.append(outcome) }
+                    return collected
                 }
-                cloudItems = result
+                cloudItems = outcomes
+                    .compactMap { outcome -> (Int, [CloudFileItem])? in
+                        if case .success(let index, let items) = outcome { return (index, items) }
+                        return nil
+                    }
+                    .sorted { $0.0 < $1.0 }
+                    .flatMap(\.1)
+                let failures = outcomes.compactMap { outcome -> String? in
+                    if case .failure(let label, let message) = outcome {
+                        return "\(label): \(message)"
+                    }
+                    return nil
+                }
+                errorMessage = failures.isEmpty
+                    ? nil
+                    : "Some drives could not be loaded.\n\(failures.joined(separator: "\n"))"
             } else {
                 cloudItems = []
+                errorMessage = nil
             }
         } catch is CancellationError {
             return
@@ -345,21 +383,65 @@ struct FilesView: View {
 
     private func importLocalFiles(_ result: Result<[URL], Error>) async {
         do {
-            for url in try result.get().prefix(5) {
-                let accessing = url.startAccessingSecurityScopedResource()
-                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                let values = try url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
-                let data = try Data(contentsOf: url, options: .mappedIfSafe)
-                try await store.upload(
-                    data: data,
-                    name: url.lastPathComponent,
-                    contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream"
+            let urls = try result.get()
+            let selected = Array(urls.prefix(5))
+            let metadata = try selected.map { url in
+                let values = try localFileMetadata(url)
+                return (url: url, size: values.size, contentType: values.contentType)
+            }
+            let totalBytes = metadata.reduce(0) { $0 + $1.size }
+            guard totalBytes <= 25 * 1_024 * 1_024 else {
+                throw BackendError.server(
+                    status: 413,
+                    message: "Choose up to 25 MB of files at a time."
                 )
             }
-            locationID = "albatross"
+            var uploaded = 0
+            var failures: [String] = []
+            for file in metadata {
+                do {
+                    try await uploadLocalFile(file.url, contentType: file.contentType)
+                    uploaded += 1
+                } catch {
+                    failures.append("\(file.url.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
+            if uploaded > 0 { locationID = "albatross" }
+            var notices: [String] = []
+            if urls.count > 5 {
+                notices.append("Uploaded only the first 5 of \(urls.count) selected files.")
+            }
+            if !failures.isEmpty {
+                notices.append("\(uploaded) uploaded; \(failures.count) failed.\n\(failures.joined(separator: "\n"))")
+            }
+            errorMessage = notices.isEmpty ? nil : notices.joined(separator: "\n")
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func localFileMetadata(_ url: URL) throws -> (size: Int, contentType: String) {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        let values = try url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
+        guard let size = values.fileSize, size >= 0 else {
+            throw BackendError.server(status: 400, message: "Could not read \(url.lastPathComponent).")
+        }
+        return (
+            size,
+            values.contentType?.preferredMIMEType ?? "application/octet-stream"
+        )
+    }
+
+    private func uploadLocalFile(_ url: URL, contentType: String) async throws {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        try await store.upload(
+            data: data,
+            name: url.lastPathComponent,
+            contentType: contentType
+        )
     }
 
     private func documentDetail(_ document: AlbatrossDocument) -> String {
@@ -405,6 +487,11 @@ struct FilesView: View {
 private struct CloudFolderRoute: Hashable {
     let id: String
     let name: String
+}
+
+private enum CloudBrowseOutcome: Sendable {
+    case success(Int, [CloudFileItem])
+    case failure(String, String)
 }
 
 private struct LocationChip: View {

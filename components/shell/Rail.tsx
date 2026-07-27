@@ -3,7 +3,7 @@
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown, FolderClosed } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { FileTextIcon } from '@/components/ui/file-text';
 import { FlameIcon } from '@/components/ui/flame';
+import { FolderIcon } from '@/components/ui/folder';
 import { GaugeIcon } from '@/components/ui/gauge';
 import { HistoryIcon } from '@/components/ui/history';
 import { KeyIcon } from '@/components/ui/key';
@@ -122,8 +123,6 @@ const SMART_LABEL_ICON_MAP: Record<string, any> = {
 
 // Top-level surfaces of the workspace. Mail itself is reached through the
 // Smart/Mailboxes groups below (those force primaryView back to 'mail').
-const FolderSurfaceIcon = () => <FolderClosed className="size-4" />;
-
 const SURFACES: Array<{
   view: 'daily_report' | 'calendar' | 'tasks' | 'files';
   label: string;
@@ -132,7 +131,7 @@ const SURFACES: Array<{
   { view: 'daily_report', label: 'Daily Report', Icon: rowIcon(FileTextIcon) },
   { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
   { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
-  { view: 'files', label: 'Files', Icon: FolderSurfaceIcon },
+  { view: 'files', label: 'Files', Icon: rowIcon(FolderIcon) },
 ];
 
 // One fixed entry (Plans) — the areas themselves render as live rows below it,
