@@ -4,6 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, Circle, CircleCheck, Clock3, ImageIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Chart } from '@/components/tool-ui/chart';
+import { type Column, DataTable, type DataTableRowData } from '@/components/tool-ui/data-table';
+import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
+import { StatsDisplay } from '@/components/tool-ui/stats-display';
 import { Button } from '@/components/ui/button';
 import { Markdown } from '@/components/ui/markdown';
 import { briefQueryKeys, briefRefKey } from '@/lib/brief/hydration';
@@ -37,12 +40,14 @@ export function BriefNodeView({
   node,
   context,
   regionSummary,
+  topLevel = false,
 }: {
   node: BriefNode;
   context: BriefNodeContext;
   regionSummary: string;
+  topLevel?: boolean;
 }) {
-  const common = nodeClass(node);
+  const common = topLevel ? '' : nodeClass(node);
   switch (node.kind) {
     case 'stack':
       return (
@@ -105,8 +110,8 @@ export function BriefNodeView({
       return (
         <section
           className={cn(
-            'overflow-hidden rounded-2xl border px-5 py-6 @[620px]:px-7 @[620px]:py-8',
-            heroSurfaceClass(node.surface),
+            topLevel ? 'min-w-0' : 'overflow-hidden rounded-2xl border px-5 py-6 @[620px]:px-7 @[620px]:py-8',
+            !topLevel && heroSurfaceClass(node.surface),
             common,
           )}
         >
@@ -123,9 +128,9 @@ export function BriefNodeView({
         </section>
       );
     case 'group':
-      return <BriefGroup node={node} context={context} regionSummary={regionSummary} />;
+      return <BriefGroup node={node} context={context} regionSummary={regionSummary} topLevel={topLevel} />;
     default:
-      return <BriefLeaf node={node} context={context} regionSummary={regionSummary} />;
+      return <BriefLeaf node={node} context={context} regionSummary={regionSummary} topLevel={topLevel} />;
   }
 }
 
@@ -133,15 +138,21 @@ function BriefGroup({
   node,
   context,
   regionSummary,
+  topLevel,
 }: {
   node: Extract<BriefNode, { kind: 'group' }>;
   context: BriefNodeContext;
   regionSummary: string;
+  topLevel: boolean;
 }) {
   const [open, setOpen] = useState(true);
   return (
     <section
-      className={cn('rounded-xl border px-4 py-4 @[520px]:px-5', surfaceClass(node.surface), nodeClass(node))}
+      className={cn(
+        topLevel ? 'min-w-0' : 'rounded-xl border px-4 py-4 @[520px]:px-5',
+        !topLevel && surfaceClass(node.surface),
+        !topLevel && nodeClass(node),
+      )}
     >
       <button
         type="button"
@@ -181,10 +192,12 @@ function BriefLeaf({
   node,
   context,
   regionSummary,
+  topLevel,
 }: {
   node: BriefContentLeaf;
   context: BriefNodeContext;
   regionSummary: string;
+  topLevel: boolean;
 }) {
   switch (node.kind) {
     case 'text':
@@ -242,7 +255,7 @@ function BriefLeaf({
     case 'query_list':
       return <BriefQueryList node={node} context={context} />;
     case 'stat':
-      return <BriefStat node={node} />;
+      return <BriefStat node={node} topLevel={topLevel} />;
     case 'chart':
       return (
         <Chart
@@ -254,8 +267,33 @@ function BriefLeaf({
           xKey="label"
           series={[{ key: 'value', label: node.title }]}
           showGrid={node.variant !== 'donut'}
-          className="min-w-0 gap-3 py-4 shadow-none [&_[data-slot=card-content]]:px-4 [&_[data-slot=card-header]]:px-4"
+          className={cn(
+            'min-w-0 max-w-none gap-3 py-4 shadow-none [&_[data-slot=card-content]]:px-4 [&_[data-slot=card-header]]:px-4',
+            topLevel &&
+              'border-0 bg-transparent py-0 [&_[data-slot=card-content]]:px-0 [&_[data-slot=card-header]]:px-0',
+          )}
         />
+      );
+    case 'data_table':
+      return <BriefDataTable node={node} topLevel={topLevel} />;
+    case 'progress':
+      return (
+        <section className={cn('space-y-3', !topLevel && nodeClass(node))}>
+          <div>
+            <h3 className="font-display text-lg font-semibold">{node.title}</h3>
+            {node.description ? (
+              <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">
+                {node.description}
+              </p>
+            ) : null}
+          </div>
+          <ProgressTracker
+            id={node.id ?? `brief-progress-${node.title}`}
+            steps={node.steps}
+            surface={topLevel ? 'bare' : 'card'}
+            className={cn('min-w-0 max-w-none', topLevel && '[&[data-slot=progress-tracker]]:max-w-none')}
+          />
+        </section>
       );
     case 'timeline':
       return (
@@ -632,26 +670,120 @@ function BriefQueryList({
   );
 }
 
-function BriefStat({ node }: { node: Extract<BriefContentLeaf, { kind: 'stat' }> }) {
+function BriefStat({
+  node,
+  topLevel,
+}: {
+  node: Extract<BriefContentLeaf, { kind: 'stat' }>;
+  topLevel: boolean;
+}) {
   const query = useBriefQuery(node.queryValue, 48);
   const value = node.queryValue ? (query.data?.count ?? '—') : node.value;
+  const normalizedValue = value ?? '—';
+  const displayValue = node.unit ? `${normalizedValue} ${node.unit}` : normalizedValue;
   return (
-    <div
+    <StatsDisplay
+      id={node.id ?? `brief-stat-${node.label}`}
+      description={node.delta}
+      stats={[
+        {
+          key: node.id ?? node.label,
+          label: node.label,
+          value: displayValue,
+          format: { kind: 'text' },
+        },
+      ]}
       className={cn(
-        'rounded-xl border bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]',
-        nodeClass(node),
+        'min-w-0 max-w-none',
+        topLevel &&
+          '[&>[data-slot=card]]:border-0 [&>[data-slot=card]]:bg-transparent [&>[data-slot=card]]:shadow-none',
+        !topLevel && nodeClass(node),
       )}
-    >
-      <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-        {node.label}
-      </p>
-      <div className="mt-2 flex items-baseline gap-2">
-        <strong className="font-display text-3xl font-semibold">{value}</strong>
-        {node.unit ? <span className="text-sm text-[var(--color-text-muted)]">{node.unit}</span> : null}
-      </div>
-      {node.delta ? <p className="mt-1 text-xs text-[var(--color-accent-3)]">{node.delta}</p> : null}
-    </div>
+    />
   );
+}
+
+function BriefDataTable({
+  node,
+  topLevel,
+}: {
+  node: Extract<BriefContentLeaf, { kind: 'data_table' }>;
+  topLevel: boolean;
+}) {
+  const rows = node.rows as DataTableRowData[];
+  const statusValues = new Set(
+    node.columns
+      .filter((column) => column.format === 'status')
+      .flatMap((column) => rows.map((row) => row[column.key]))
+      .filter((value): value is string => typeof value === 'string'),
+  );
+  const statusMap = Object.fromEntries(
+    [...statusValues].map((value) => [
+      value,
+      {
+        tone: briefStatusTone(value),
+        label: value,
+      },
+    ]),
+  );
+  const columns: Column<DataTableRowData>[] = node.columns.map((column, index) => ({
+    key: column.key,
+    label: column.label,
+    sortable: rows.length > 2,
+    priority: index < 2 ? 'primary' : index < 4 ? 'secondary' : 'tertiary',
+    format:
+      column.format === 'number'
+        ? { kind: 'number' }
+        : column.format === 'date'
+          ? { kind: 'date', dateFormat: 'short' }
+          : column.format === 'status'
+            ? { kind: 'status', statusMap }
+            : { kind: 'text' },
+  }));
+  const rowIdKey = tableRowIdKey(rows, node.columns[0]?.key);
+
+  return (
+    <section className={cn('min-w-0 space-y-3', !topLevel && nodeClass(node))}>
+      <div>
+        <h3 className="font-display text-lg font-semibold">{node.title}</h3>
+        {node.description ? (
+          <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">{node.description}</p>
+        ) : null}
+      </div>
+      <DataTable
+        id={node.id ?? `brief-table-${node.title}`}
+        columns={columns}
+        data={rows}
+        rowIdKey={rowIdKey}
+        className="min-w-0 [&_[data-slot=data-table-cards]]:shadow-none [&_[data-slot=data-table-container]]:shadow-none"
+      />
+    </section>
+  );
+}
+
+function tableRowIdKey(rows: DataTableRowData[], firstKey?: string) {
+  if (!firstKey) return undefined;
+  const values = rows.map((row) => row[firstKey]);
+  if (values.some((value) => !['string', 'number'].includes(typeof value))) return undefined;
+  return new Set(values.map(String)).size === values.length ? firstKey : undefined;
+}
+
+function briefStatusTone(value: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
+  const normalized = value.toLowerCase();
+  if (
+    /\b(not\s+(done|complete(?:d)?|ready|success(?:ful)?|passed|approved|shipped)|unapproved|incomplete|unsuccessful)\b/.test(
+      normalized,
+    )
+  ) {
+    return 'danger';
+  }
+  if (/\b(fail(?:ed|ure)?|error|blocked|rejected|overdue)\b/.test(normalized)) return 'danger';
+  if (/\b(done|complete(?:d)?|success(?:ful)?|ready|passed|approved|shipped)\b/.test(normalized)) {
+    return 'success';
+  }
+  if (/(wait|pending|warning|review|processing)/.test(normalized)) return 'warning';
+  if (/(active|open|running|scheduled|progress)/.test(normalized)) return 'info';
+  return 'neutral';
 }
 
 function BriefPrompt({

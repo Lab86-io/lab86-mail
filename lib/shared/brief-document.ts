@@ -16,6 +16,9 @@ export const BRIEF_DOCUMENT_LIMITS = {
   timelineItems: 24,
   checklistItems: 24,
   chartPoints: 48,
+  tableColumns: 8,
+  tableRows: 24,
+  progressSteps: 12,
   title: 160,
   summary: 1_200,
   regionSummary: 1_000,
@@ -130,6 +133,21 @@ const chartPointSchema = z.object({
   group: z.string().max(100).optional(),
 });
 
+const dataTablePrimitiveSchema = z.union([z.string().max(1_000), z.number().finite(), z.boolean(), z.null()]);
+
+const dataTableColumnSchema = z.object({
+  key: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(120),
+  format: z.enum(['text', 'number', 'date', 'status']).default('text'),
+});
+
+const progressStepSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  label: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
+  description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+  status: z.enum(['pending', 'in-progress', 'completed', 'failed']).default('pending'),
+});
+
 const timelineItemSchema = z.object({
   label: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
   at: z.number().finite().nullable().optional(),
@@ -220,6 +238,23 @@ const dataLeafSchemas = [
     title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
     description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
     data: z.array(chartPointSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.chartPoints),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('data_table'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+    columns: z.array(dataTableColumnSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.tableColumns),
+    rows: z.array(z.record(z.string(), dataTablePrimitiveSchema)).min(1).max(BRIEF_DOCUMENT_LIMITS.tableRows),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('progress'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+    steps: z.array(progressStepSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.progressSteps),
     sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
   }),
   z.object({
@@ -378,6 +413,8 @@ const leafKinds = new Set([
   'query_list',
   'stat',
   'chart',
+  'data_table',
+  'progress',
   'timeline',
   'checklist',
   'collection',
@@ -790,6 +827,85 @@ function repairLeaf(
         sourceRefs: refs.length ? refs : [{ kind: 'derived', id: 'brief-chart' }],
       };
     }
+    case 'data_table': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
+      const seenColumns = new Set<string>();
+      const columns = (Array.isArray(node.columns) ? node.columns : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.tableColumns)
+        .flatMap((entry) => {
+          const column = record(entry);
+          const key = clippedString(column?.key, 80);
+          if (!column || !key || seenColumns.has(key)) return [];
+          seenColumns.add(key);
+          return [
+            {
+              key,
+              label: clippedString(column.label, 120) || key,
+              format: oneOf(column.format, ['text', 'number', 'date', 'status'], 'text'),
+            },
+          ];
+        });
+      if (!columns.length) return fallbackNode(summary);
+      const rows = (Array.isArray(node.rows) ? node.rows : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.tableRows)
+        .flatMap((entry) => {
+          const row = record(entry);
+          if (!row) return [];
+          const cleanRow = Object.fromEntries(
+            columns.map(({ key }) => [key, repairTablePrimitive(row[key])]),
+          );
+          return Object.values(cleanRow).some((value) => value !== null) ? [cleanRow] : [];
+        });
+      if (!rows.length) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Details',
+        ...(clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText)
+          ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+          : {}),
+        columns,
+        rows,
+        sourceRefs,
+      };
+    }
+    case 'progress': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
+      const seenIds = new Set<string>();
+      const steps = (Array.isArray(node.steps) ? node.steps : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.progressSteps)
+        .flatMap((entry, index) => {
+          const step = record(entry);
+          const label = clippedString(step?.label, BRIEF_DOCUMENT_LIMITS.shortText);
+          if (!step || !label) return [];
+          const baseId = clippedString(step.id, 120) || `step-${index + 1}`;
+          const id = allocateUniqueBriefId(baseId, seenIds);
+          seenIds.add(id);
+          return [
+            {
+              id,
+              label,
+              ...(clippedString(step.description, BRIEF_DOCUMENT_LIMITS.shortText)
+                ? { description: clippedString(step.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+                : {}),
+              status: oneOf(step.status, ['pending', 'in-progress', 'completed', 'failed'], 'pending'),
+            },
+          ];
+        });
+      if (!steps.length) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Progress',
+        ...(clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText)
+          ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+          : {}),
+        steps,
+        sourceRefs,
+      };
+    }
     case 'timeline': {
       const items = repairTimelineItems(node.items, ref, cleanActions);
       return items.length
@@ -936,6 +1052,32 @@ function repairTimelineItems(
         },
       ];
     });
+}
+
+function repairSourceRefs(
+  value: unknown,
+  ref: (value: unknown) => Record<string, unknown> | null,
+): Record<string, unknown>[] {
+  return (Array.isArray(value) ? value : []).slice(0, BRIEF_DOCUMENT_LIMITS.entityItems).flatMap((entry) => {
+    const sourceRef = ref(entry);
+    return sourceRef ? [sourceRef] : [];
+  });
+}
+
+function repairTablePrimitive(value: unknown): string | number | boolean | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.slice(0, 1_000);
+  return null;
+}
+
+function allocateUniqueBriefId(baseId: string, seenIds: Set<string>) {
+  if (!seenIds.has(baseId)) return baseId;
+  for (let counter = 2; ; counter += 1) {
+    const suffix = `-${counter}`;
+    const candidate = `${baseId.slice(0, 120 - suffix.length)}${suffix}`;
+    if (!seenIds.has(candidate)) return candidate;
+  }
 }
 
 function repairRef(value: unknown): Record<string, unknown> | null {
