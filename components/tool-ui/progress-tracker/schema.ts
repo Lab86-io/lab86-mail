@@ -73,4 +73,6 @@ export const safeParseSerializableProgressTracker: (
 
 export interface ProgressTrackerProps extends SerializableProgressTracker {
   className?: string;
+  /** Uses the surrounding story surface instead of drawing a nested card. */
+  surface?: "card" | "bare";
 }

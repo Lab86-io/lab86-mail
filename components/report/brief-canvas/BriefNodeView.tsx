@@ -290,10 +290,8 @@ function BriefLeaf({
           <ProgressTracker
             id={node.id ?? `brief-progress-${node.title}`}
             steps={node.steps}
-            className={cn(
-              'min-w-0 max-w-none',
-              topLevel && '[&>div]:border-0 [&>div]:bg-transparent [&>div]:p-0 [&>div]:shadow-none',
-            )}
+            surface={topLevel ? 'bare' : 'card'}
+            className={cn('min-w-0 max-w-none', topLevel && '[&[data-slot=progress-tracker]]:max-w-none')}
           />
         </section>
       );
@@ -681,7 +679,8 @@ function BriefStat({
 }) {
   const query = useBriefQuery(node.queryValue, 48);
   const value = node.queryValue ? (query.data?.count ?? '—') : node.value;
-  const displayValue = node.unit ? `${value} ${node.unit}` : (value ?? '—');
+  const normalizedValue = value ?? '—';
+  const displayValue = node.unit ? `${normalizedValue} ${node.unit}` : normalizedValue;
   return (
     <StatsDisplay
       id={node.id ?? `brief-stat-${node.label}`}
@@ -756,7 +755,7 @@ function BriefDataTable({
         columns={columns}
         data={rows}
         rowIdKey={rowIdKey}
-        className="min-w-0 [&_[data-slot=table-container]]:shadow-none"
+        className="min-w-0 [&_[data-slot=data-table-cards]]:shadow-none [&_[data-slot=data-table-container]]:shadow-none"
       />
     </section>
   );
@@ -771,8 +770,15 @@ function tableRowIdKey(rows: DataTableRowData[], firstKey?: string) {
 
 function briefStatusTone(value: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   const normalized = value.toLowerCase();
-  if (/(done|complete|success|ready|passed|approved|shipped)/.test(normalized)) return 'success';
-  if (/(fail|error|blocked|rejected|overdue)/.test(normalized)) return 'danger';
+  if (
+    /\b(not\s+(approved|complete|ready|successful)|unapproved|incomplete|unsuccessful)\b/.test(normalized)
+  ) {
+    return 'danger';
+  }
+  if (/\b(fail(?:ed|ure)?|error|blocked|rejected|overdue)\b/.test(normalized)) return 'danger';
+  if (/\b(done|complete(?:d)?|success(?:ful)?|ready|passed|approved|shipped)\b/.test(normalized)) {
+    return 'success';
+  }
   if (/(wait|pending|warning|review|processing)/.test(normalized)) return 'warning';
   if (/(active|open|running|scheduled|progress)/.test(normalized)) return 'info';
   return 'neutral';

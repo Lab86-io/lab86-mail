@@ -173,6 +173,8 @@ describe('Brief Document v2', () => {
   });
 
   test('repairs bounded, source-backed table and progress Tool UI leaves', () => {
+    const maxId = 'x'.repeat(120);
+    const clippedSuffixId = `${'x'.repeat(118)}-2`;
     const repaired = parseBriefDocument({
       ...quietBriefDocumentFixture,
       regions: [
@@ -200,8 +202,9 @@ describe('Brief Document v2', () => {
                 kind: 'progress',
                 title: 'Release path',
                 steps: [
-                  { id: 'build', label: 'Build', status: 'completed' },
-                  { id: 'build', label: 'TestFlight', status: 'moving' },
+                  { id: maxId, label: 'Build', status: 'completed' },
+                  { id: maxId, label: 'TestFlight', status: 'moving' },
+                  { id: clippedSuffixId, label: 'Release', status: 'pending' },
                 ],
                 sourceRefs: [{ kind: 'mcp', id: 'release-path' }],
               },
@@ -222,8 +225,47 @@ describe('Brief Document v2', () => {
     expect(table.columns.map((column) => column.key)).toEqual(['build', 'state']);
     expect(table.rows[0]).toEqual({ build: 84, state: 'ready' });
     expect(table.rows[1]).toEqual({ build: null, state: 'processing' });
-    expect(progress.steps.map((step) => step.id)).toEqual(['build', 'build-2']);
+    expect(progress.steps.map((step) => step.id)).toEqual([
+      maxId,
+      `${'x'.repeat(118)}-2`,
+      `${'x'.repeat(118)}-3`,
+    ]);
     expect(progress.steps[1]?.status).toBe('pending');
+  });
+
+  test('degrades table and progress leaves that lack valid grounding references', () => {
+    const repaired = parseBriefDocument({
+      ...quietBriefDocumentFixture,
+      summary: 'Grounding fallback summary.',
+      regions: [
+        {
+          id: 'ungrounded-tools',
+          summary: 'No valid evidence.',
+          tree: {
+            kind: 'stack',
+            children: [
+              {
+                kind: 'data_table',
+                title: 'Ungrounded table',
+                columns: [{ key: 'value', label: 'Value' }],
+                rows: [{ value: 1 }],
+                sourceRefs: [],
+              },
+              {
+                kind: 'progress',
+                title: 'Ungrounded progress',
+                steps: [{ id: 'step', label: 'Step', status: 'pending' }],
+                sourceRefs: [{ kind: 'mcp', id: '' }],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const json = JSON.stringify(repaired);
+    expect(json).not.toContain('"kind":"data_table"');
+    expect(json).not.toContain('"kind":"progress"');
+    expect(json).toContain('No valid evidence.');
   });
 });
 

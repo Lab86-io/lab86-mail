@@ -829,6 +829,7 @@ function repairLeaf(
     }
     case 'data_table': {
       const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
       const seenColumns = new Set<string>();
       const columns = (Array.isArray(node.columns) ? node.columns : [])
         .slice(0, BRIEF_DOCUMENT_LIMITS.tableColumns)
@@ -866,11 +867,12 @@ function repairLeaf(
           : {}),
         columns,
         rows,
-        sourceRefs: sourceRefs.length ? sourceRefs : [{ kind: 'derived', id: 'brief-table' }],
+        sourceRefs,
       };
     }
     case 'progress': {
       const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
       const seenIds = new Set<string>();
       const steps = (Array.isArray(node.steps) ? node.steps : [])
         .slice(0, BRIEF_DOCUMENT_LIMITS.progressSteps)
@@ -879,7 +881,7 @@ function repairLeaf(
           const label = clippedString(step?.label, BRIEF_DOCUMENT_LIMITS.shortText);
           if (!step || !label) return [];
           const baseId = clippedString(step.id, 120) || `step-${index + 1}`;
-          const id = seenIds.has(baseId) ? `${baseId}-${index + 1}`.slice(0, 120) : baseId;
+          const id = allocateUniqueBriefId(baseId, seenIds);
           seenIds.add(id);
           return [
             {
@@ -901,7 +903,7 @@ function repairLeaf(
           ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
           : {}),
         steps,
-        sourceRefs: sourceRefs.length ? sourceRefs : [{ kind: 'derived', id: 'brief-progress' }],
+        sourceRefs,
       };
     }
     case 'timeline': {
@@ -1067,6 +1069,15 @@ function repairTablePrimitive(value: unknown): string | number | boolean | null 
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') return value.slice(0, 1_000);
   return null;
+}
+
+function allocateUniqueBriefId(baseId: string, seenIds: Set<string>) {
+  if (!seenIds.has(baseId)) return baseId;
+  for (let counter = 2; ; counter += 1) {
+    const suffix = `-${counter}`;
+    const candidate = `${baseId.slice(0, 120 - suffix.length)}${suffix}`;
+    if (!seenIds.has(candidate)) return candidate;
+  }
 }
 
 function repairRef(value: unknown): Record<string, unknown> | null {

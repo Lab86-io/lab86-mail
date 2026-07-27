@@ -160,6 +160,7 @@ interface ProgressTrackerBaseProps {
   steps: ProgressTrackerProps["steps"];
   elapsedTime?: ProgressTrackerProps["elapsedTime"];
   className?: ProgressTrackerProps["className"];
+  surface?: ProgressTrackerProps["surface"];
 }
 
 function ProgressTrackerReceipt({
@@ -167,6 +168,7 @@ function ProgressTrackerReceipt({
   steps,
   elapsedTime,
   className,
+  surface = "card",
   choice,
 }: ProgressTrackerBaseProps & { choice: ProgressTrackerChoice }) {
   const receiptState = getReceiptState(choice.outcome);
@@ -186,7 +188,14 @@ function ProgressTrackerReceipt({
       role="status"
       aria-label={choice.summary}
     >
-      <div className="bg-card/60 flex w-full flex-col gap-4 rounded-2xl border p-5 shadow-xs">
+      <div
+        data-slot="progress-card"
+        className={cn(
+          "flex w-full flex-col gap-4",
+          surface === "card" &&
+            "bg-card/60 rounded-2xl border p-5 shadow-xs",
+        )}
+      >
         <div className="flex items-center justify-between">
           <ElapsedTimeBadge elapsedTime={elapsedTime} />
           <span
@@ -241,6 +250,7 @@ function ProgressTrackerLive({
   steps,
   elapsedTime,
   className,
+  surface = "card",
 }: ProgressTrackerBaseProps) {
   const hasInProgress = steps.some((step) => step.status === "in-progress");
   const currentStepId = getCurrentStepId(steps);
@@ -258,7 +268,13 @@ function ProgressTrackerLive({
       aria-live="polite"
       aria-busy={hasInProgress}
     >
-      <div className="bg-card flex w-full flex-col gap-4 rounded-2xl border p-5 shadow-xs">
+      <div
+        data-slot="progress-card"
+        className={cn(
+          "flex w-full flex-col gap-4",
+          surface === "card" && "bg-card rounded-2xl border p-5 shadow-xs",
+        )}
+      >
         <ElapsedTimeBadge elapsedTime={elapsedTime} />
 
         <ol className="m-0 flex list-none flex-col gap-3 p-0">
@@ -345,6 +361,7 @@ function ProgressTrackerRoot({
   elapsedTime,
   className,
   choice,
+  surface,
 }: ProgressTrackerProps) {
   const viewKey = choice ? `receipt-${choice.outcome}` : "interactive";
 
@@ -356,6 +373,7 @@ function ProgressTrackerRoot({
           steps={steps}
           elapsedTime={elapsedTime}
           className={className}
+          surface={surface}
           choice={choice}
         />
       ) : (
@@ -364,6 +382,7 @@ function ProgressTrackerRoot({
           steps={steps}
           elapsedTime={elapsedTime}
           className={className}
+          surface={surface}
         />
       )}
     </div>

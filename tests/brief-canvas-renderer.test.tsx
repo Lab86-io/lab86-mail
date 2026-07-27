@@ -69,8 +69,11 @@ describe('BriefCanvas degradation', () => {
     expect(html).toContain('@[840px]:grid-cols-2');
     expect(html).toContain('@[1200px]:grid-cols-3');
     expect(html).toContain('@[840px]:col-span-2');
+    expect(html).toContain('@[1200px]:col-span-3');
+    expect(html).toContain('--brief-grid-row:8px');
     expect(html).toContain('data-brief-editorial-grid');
     expect(html).toContain('data-brief-story-card');
+    expect(html).not.toContain('grid-flow-dense');
     expect(html).not.toContain('@[840px]:row-span-2');
     expect(html).not.toContain('min-h-[420px]');
   });
@@ -81,6 +84,64 @@ describe('BriefCanvas degradation', () => {
     expect(briefGridRowSpan(9)).toBe(2);
     expect(briefGridRowSpan(420)).toBe(53);
     expect(briefGridRowSpan(Number.NaN)).toBe(1);
+  });
+
+  test('measures story rows after the client layout mounts', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const document: BriefDocumentV2 = {
+      version: 2,
+      title: 'Measured brief',
+      summary: 'One measured story.',
+      generatedAt: 1_790_000_000_000,
+      regions: [
+        {
+          id: 'measured',
+          summary: 'Measured.',
+          tree: {
+            kind: 'text',
+            emphasis: 'standard',
+            tone: 'neutral',
+            role: 'body',
+            text: 'Measured story',
+          },
+        },
+      ],
+    };
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class TestResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe() {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserver;
+
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <QueryClientProvider client={queryClient}>
+            <BriefCanvas value={document} />
+          </QueryClientProvider>,
+          {
+            createNodeMock: () => ({
+              getBoundingClientRect: () => ({ height: 80 }),
+            }),
+          },
+        );
+      });
+      const grid = renderer.root.find((node) => node.props['data-brief-editorial-grid'] === true);
+      const item = renderer.root.find((node) => node.props['data-brief-grid-span'] === 10);
+      expect(grid.props['data-packed']).toBe('true');
+      expect(grid.props.className).toContain('auto-rows-[var(--brief-grid-row)]');
+      expect(grid.props.className).not.toContain('grid-flow-dense');
+      expect(item.props.style).toEqual({ gridRowEnd: 'span 10' });
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+      renderer?.unmount();
+    }
   });
 
   test('flattened stacks preserve their density and parent presentation', () => {
@@ -187,6 +248,8 @@ describe('BriefCanvas degradation', () => {
                 rows: [
                   { build: 84, state: 'ready' },
                   { build: 85, state: 'processing' },
+                  { build: 86, state: 'unapproved' },
+                  { build: 87, state: 'incomplete' },
                 ],
                 sourceRefs: [{ kind: 'mcp', id: 'xcode-builds' }],
               },
@@ -206,7 +269,8 @@ describe('BriefCanvas degradation', () => {
                 emphasis: 'standard',
                 tone: 'neutral',
                 label: 'Builds',
-                value: 2,
+                queryValue: { name: 'tasks_due_today' },
+                unit: 'tasks',
               },
             ],
           },
@@ -218,8 +282,11 @@ describe('BriefCanvas degradation', () => {
     expect(html).toContain('data-slot="data-table"');
     expect(html).toContain('Xcode Cloud builds');
     expect(html).toContain('data-slot="progress-tracker"');
+    expect(html).toContain('data-slot="progress-card" class="flex w-full flex-col gap-4"');
     expect(html).toContain('Release path');
     expect(html).toContain('data-slot="stats-display"');
+    expect(html).toContain('— tasks');
+    expect(html).toContain('bg-red-100');
   });
 
   test('the masthead title is bold and carries the editorial accent', () => {

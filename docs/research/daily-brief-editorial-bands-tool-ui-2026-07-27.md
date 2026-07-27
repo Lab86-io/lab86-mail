@@ -58,8 +58,9 @@ Findings:
 
 ## Implementation consequences
 
-- Replace fixed `feature` row spans and minimum heights with a measured, dense editorial grid.
-  `wide` and `feature` still claim two columns, but their row span follows rendered content.
+- Replace fixed `feature` row spans and minimum heights with a measured, order-preserving editorial
+  grid. `wide` claims two columns and `feature` claims the full roomy band, while both follow rendered
+  content height.
 - Wrap every top-level brief story in one shared elevated surface. Root hero/group/tool cards shed
   duplicate outer chrome; nested wells and action surfaces keep their functional hierarchy.
 - Render existing `stat` leaves with Tool UI `StatsDisplay`.

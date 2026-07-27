@@ -8,8 +8,9 @@ Never emit CSS, class names, colors, spacing, font sizes, or arbitrary style val
 
 COMMON FIELDS
 - Every node: kind; optional emphasis primary|standard|muted; optional tone neutral|positive|warning|urgent;
-  optional footprint standard|wide|feature. standard is one column, wide and feature span two columns
-  on roomy clients, and all heights follow their actual content. Clients stack every footprint on phones.
+  optional footprint standard|wide|feature. standard is one column, wide spans two columns, and feature
+  claims the full available editorial band on roomy clients. All heights follow their actual content.
+  Clients stack every footprint on phones.
 - Each region: id, required plain-text summary, optional intent, and one tree.
 - Keep trees at depth <= 4 and <= 48 nodes. At most 12 regions in the document.
 

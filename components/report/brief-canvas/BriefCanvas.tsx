@@ -32,6 +32,7 @@ import type { BriefActionPayload } from './brief-action-runtime';
 
 const BRIEF_GRID_ROW_PX = 8;
 
+/** Converts a measured story height into the editorial grid's row span. */
 export function briefGridRowSpan(height: number, rowHeight = BRIEF_GRID_ROW_PX) {
   if (!Number.isFinite(height) || height <= 0 || !Number.isFinite(rowHeight) || rowHeight <= 0) return 1;
   return Math.max(1, Math.ceil(height / rowHeight));
@@ -270,7 +271,7 @@ export function BriefCanvas({
           </time>
         )}
       </header>
-      {/* Editorial masonry keeps the authored reading order while measuring
+      {/* Editorial masonry preserves authored visual order while measuring
           each story's real height. Wide concepts claim horizontal room, not
           a fixed vertical rectangle that leaves an empty hole beside them. */}
       <BriefEditorialGrid>
@@ -561,8 +562,9 @@ function BriefEditorialGrid({ children }: { children: ReactNode }) {
       data-packed={packed ? 'true' : 'false'}
       className={cn(
         'mx-auto grid max-w-[1760px] grid-cols-1 gap-x-9 @[840px]:grid-cols-2 @[1200px]:grid-cols-3',
-        packed ? 'grid-flow-dense auto-rows-[8px] gap-y-0' : 'gap-y-6',
+        packed ? 'auto-rows-[var(--brief-grid-row)] gap-y-0' : 'gap-y-6',
       )}
+      style={{ '--brief-grid-row': `${BRIEF_GRID_ROW_PX}px` } as CSSProperties}
     >
       {children}
     </div>
@@ -635,7 +637,7 @@ function columnBlocks(tree: BriefNode): Array<{
 }
 
 function footprintClass(node: BriefNode): string {
-  if (node.footprint === 'feature') return '@[840px]:col-span-2';
+  if (node.footprint === 'feature') return '@[840px]:col-span-2 @[1200px]:col-span-3';
   if (node.footprint === 'wide') return '@[840px]:col-span-2';
   return '';
 }

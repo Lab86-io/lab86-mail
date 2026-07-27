@@ -221,6 +221,7 @@ function DataTableLayout({
       >
         <div className="relative">
           <div
+            data-slot="data-table-container"
             className={cn(
               "bg-card relative w-full overflow-clip overflow-y-auto rounded-lg border",
               "touch-pan-x",
@@ -276,7 +277,10 @@ function DataTableLayout({
             {emptyMessage}
           </div>
         ) : (
-          <div className="bg-card flex flex-col overflow-hidden rounded-2xl border shadow-xs">
+          <div
+            data-slot="data-table-cards"
+            className="bg-card flex flex-col overflow-hidden rounded-2xl border shadow-xs"
+          >
             {data.map((row, i) => {
               const rowKey = rowKeys[i];
               return (
