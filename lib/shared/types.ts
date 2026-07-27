@@ -147,7 +147,7 @@ export interface LabelRecord {
 export type Priority = 1 | 2 | 3;
 export type TriageAction = 'reply' | 'read' | 'archive' | 'delegate' | 'wait';
 
-export const CORE_PRIMARY_VIEWS = ['daily_report', 'mail', 'calendar', 'tasks'] as const;
+export const CORE_PRIMARY_VIEWS = ['daily_report', 'mail', 'calendar', 'tasks', 'files'] as const;
 export const ALBATROSS_PRIMARY_VIEWS = ['areas', 'intents', 'unassigned'] as const;
 
 export type CorePrimaryView = (typeof CORE_PRIMARY_VIEWS)[number];
@@ -164,6 +164,11 @@ export function isAlbatrossPrimaryView(view: unknown): view is AlbatrossPrimaryV
 
 export function isAnyPrimaryView(view: unknown): view is PrimaryView {
   return isCorePrimaryView(view) || isAlbatrossPrimaryView(view);
+}
+
+export function primaryViewFromSearch(search: string): PrimaryView | null {
+  const requested = new URLSearchParams(search).get('view');
+  return isAnyPrimaryView(requested) ? requested : null;
 }
 
 export function persistedPrimaryViewFromStorage(raw: string | null): PrimaryView | null {

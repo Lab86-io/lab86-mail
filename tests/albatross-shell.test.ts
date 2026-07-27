@@ -6,6 +6,7 @@ import {
   isAlbatrossPrimaryView,
   normalizePrimaryView,
   persistedPrimaryViewFromStorage,
+  primaryViewFromSearch,
   resolveInitialPrimaryView,
 } from '../lib/shared/types';
 
@@ -44,6 +45,7 @@ describe('Albatross primary view guards', () => {
 
   test('normalizes persisted views when the flag is disabled', () => {
     expect(normalizePrimaryView('mail', false)).toBe('mail');
+    expect(normalizePrimaryView('files', false)).toBe('files');
     expect(normalizePrimaryView('areas', false)).toBe('daily_report');
     expect(normalizePrimaryView('intents', false)).toBe('daily_report');
     expect(normalizePrimaryView('unknown', false)).toBe('daily_report');
@@ -83,5 +85,12 @@ describe('Albatross primary view guards', () => {
     expect(persistedPrimaryViewFromStorage(raw)).toBe('areas');
     expect(resolveInitialPrimaryView('areas', true, 'mail', true)).toBe('areas');
     expect(resolveInitialPrimaryView('areas', false, 'mail', true)).toBe('daily_report');
+  });
+
+  test('accepts valid surface deep links and ignores unknown values', () => {
+    expect(primaryViewFromSearch('?view=files')).toBe('files');
+    expect(primaryViewFromSearch('?view=areas')).toBe('areas');
+    expect(primaryViewFromSearch('?view=missing_surface')).toBeNull();
+    expect(primaryViewFromSearch('?setup=areas')).toBeNull();
   });
 });

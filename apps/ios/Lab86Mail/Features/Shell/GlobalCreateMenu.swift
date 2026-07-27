@@ -20,10 +20,21 @@ struct GlobalCreateMenu<MenuLabel: View>: View {
             Button("Compose email") {
                 environment.navigation.sheet = .compose
             }
+            Divider()
+            ForEach(AlbatrossDocumentKind.allCases) { kind in
+                Button("New \(kind.title.lowercased())", systemImage: kind.symbol) {
+                    Task {
+                        guard let document = try? await environment.documents.create(kind: kind) else {
+                            return
+                        }
+                        environment.navigation.openDocument(id: document.id)
+                    }
+                }
+            }
         } label: {
             label()
         }
-        .accessibilityLabel("New intent, chat, or email")
+        .accessibilityLabel("Create an intent, chat, email, or file")
     }
 }
 
@@ -41,7 +52,7 @@ enum GlobalCreateMenuPolicy {
         case .chat:
             // The chat composer owns that corner.
             return false
-        case .today, .tasks, .calendar, .work:
+        case .today, .tasks, .calendar, .work, .files:
             return true
         }
     }

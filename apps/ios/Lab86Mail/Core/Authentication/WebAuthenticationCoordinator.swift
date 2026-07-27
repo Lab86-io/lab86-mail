@@ -46,6 +46,14 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         try await authorize(response: response, successKey: "mcp_connected")
     }
 
+    func connectCloudFiles(provider: String) async throws {
+        let encoded = provider.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? provider
+        let response = try await backend.get(
+            path: "/api/files/oauth/start?provider=\(encoded)&native=1&format=json"
+        )
+        try await authorize(response: response, successKey: "files_connected")
+    }
+
     private func authorize(response: JSONValue, successKey: String) async throws {
         guard let value = response["authorizationUrl"]?.stringValue,
               let authorizationURL = URL(string: value) else {
@@ -90,7 +98,10 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             } ?? []
         )
         if values[successKey] != nil { return }
-        let message = values["nylas_error"] ?? values["mcp_error"] ?? "Authorization was not completed."
+        let message = values["nylas_error"]
+            ?? values["mcp_error"]
+            ?? values["files_error"]
+            ?? "Authorization was not completed."
         throw WebAuthenticationError.provider(message)
     }
 

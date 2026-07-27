@@ -130,6 +130,15 @@ function validProposal(action: BriefActionV2, record: TriageHandoffV1): boolean 
   if (action.action === 'create_task') {
     return typeof action.payload.title === 'string' && action.payload.title.trim().length > 0;
   }
+  if (action.action === 'create_document') {
+    return record.actions.some(
+      (candidate) =>
+        candidate.action === 'create_document' &&
+        candidate.payload.kind === action.payload.kind &&
+        candidate.payload.title === action.payload.title &&
+        candidate.payload.instructions === action.payload.instructions,
+    );
+  }
   if (action.action === 'draft_reply') {
     return (
       typeof action.payload.body === 'string' &&

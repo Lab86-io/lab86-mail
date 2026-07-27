@@ -3,7 +3,7 @@
 import { UserButton } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, FolderClosed } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -122,10 +122,17 @@ const SMART_LABEL_ICON_MAP: Record<string, any> = {
 
 // Top-level surfaces of the workspace. Mail itself is reached through the
 // Smart/Mailboxes groups below (those force primaryView back to 'mail').
-const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: string; Icon: any }> = [
+const FolderSurfaceIcon = () => <FolderClosed className="size-4" />;
+
+const SURFACES: Array<{
+  view: 'daily_report' | 'calendar' | 'tasks' | 'files';
+  label: string;
+  Icon: any;
+}> = [
   { view: 'daily_report', label: 'Daily Report', Icon: rowIcon(FileTextIcon) },
   { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
   { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
+  { view: 'files', label: 'Files', Icon: FolderSurfaceIcon },
 ];
 
 // One fixed entry (Plans) — the areas themselves render as live rows below it,

@@ -5,7 +5,8 @@ export type AlbatrossArtifactKind =
   | 'email_draft'
   | 'email_send'
   | 'calendar_rsvp'
-  | 'area_fact';
+  | 'area_fact'
+  | 'document';
 
 export type AlbatrossProjectMode = 'auto' | 'project' | 'task_only' | 'ask';
 
@@ -43,6 +44,8 @@ export interface AlbatrossDigitalAction {
   eventId?: string;
   rsvpStatus?: 'yes' | 'no' | 'maybe';
   description?: string;
+  documentKind?: 'doc' | 'sheet' | 'deck';
+  instructions?: string;
   sourceRefs?: AlbatrossSourceRef[];
 }
 
@@ -230,6 +233,16 @@ function draftArgs(input: AlbatrossApplicationInput, action: AlbatrossDigitalAct
   };
 }
 
+function documentArgs(input: AlbatrossApplicationInput, action: AlbatrossDigitalAction) {
+  return {
+    kind: action.documentKind,
+    title: clean(action.title),
+    instructions: clean(action.instructions) || actionDescription(action) || input.plan.outcome,
+    sourceRefs: refsFor(input, action),
+    publishToGoogle: false,
+  };
+}
+
 function approvalTool(action: AlbatrossDigitalAction) {
   if (action.kind === 'email_send') return 'send_message';
   if (action.kind === 'calendar_rsvp') return 'calendar_rsvp_event';
@@ -271,6 +284,11 @@ function blockedReason(input: AlbatrossApplicationInput, action: AlbatrossDigita
     if (!args.to) return 'Draft recipient is required.';
     if (!args.body) return 'Draft body is required.';
   }
+  if (action.kind === 'document') {
+    const args = documentArgs(input, action);
+    if (!args.kind) return 'A document, spreadsheet, or presentation type is required.';
+    if (!args.instructions) return 'Document instructions are required.';
+  }
   if (action.kind === 'email_send') {
     const args = approvalArgs(input, action) as Record<string, unknown>;
     if (!args.account || !args.to || !args.body) return 'Send approval needs account, recipient, and body.';
@@ -311,6 +329,8 @@ function actionStep(
     return { ...base, toolName: 'calendar_create_event', toolArgs: calendarArgs(input, action) };
   if (action.kind === 'email_draft')
     return { ...base, toolName: 'save_draft', toolArgs: draftArgs(input, action) };
+  if (action.kind === 'document')
+    return { ...base, toolName: 'document_create', toolArgs: documentArgs(input, action) };
   return { ...base, blockedReason: 'This artifact kind is not directly executable yet.' };
 }
 
@@ -367,6 +387,7 @@ export interface AlbatrossAppliedStep {
   cardId?: string;
   eventId?: string;
   draftId?: string;
+  documentId?: string;
 }
 
 export function appliedStepsFromApplyResult(result: {
@@ -384,6 +405,7 @@ export function appliedStepsFromApplyResult(result: {
         ...(operation.tool === 'tasks_create_card' && artifactId ? { cardId: artifactId } : {}),
         ...(kind === 'calendar_event' && artifactId ? { eventId: artifactId } : {}),
         ...(kind === 'email_draft' && artifactId ? { draftId: artifactId } : {}),
+        ...(kind === 'document' && artifactId ? { documentId: artifactId } : {}),
       };
     });
   const fromApprovals = (result.approvals || [])

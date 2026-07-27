@@ -1,8 +1,10 @@
 # Files in the Corpus + Real Document Creation — Implementation Plan
 
-Status: planned 2026-07-15. Two tracks that meet in the middle: (A) file sources feed
-the context corpus; (B) Albatross authors real documents (decks, sheets, docs) grounded
-in that corpus and exports them as actual .pptx/.xlsx/.docx/.pdf files.
+Status: superseded in part and implemented as the 2026-07-27 Files + AI Office
+slice. This document remains useful background for future full-corpus extraction.
+The shipped architecture and UI decisions are recorded in
+`docs/research/albatross-ai-documents-research-2026-07-27.md` and
+`docs/research/albatross-files-research-2026-07-27.md`.
 
 ## Context
 
@@ -13,19 +15,19 @@ HTML artifacts (daily briefs, plan dossiers) — no real files.
 
 Locked decisions:
 
-- **Google Drive**: app-owned Google OAuth, full-drive sync via `drive.readonly`.
-  Google Cloud app stays in Testing mode initially (small user base); CASA before GA.
-  Note: Testing-mode refresh tokens expire after 7 days — settings must surface
-  "Reconnect" cleanly.
-- **iCloud Drive**: deferred (no public web API). The connector abstraction leaves a
-  provider slot (`'icloud'`) so the native macOS/iOS apps can feed it later.
+- **Google Drive**: app-owned Google OAuth with browse access and explicit
+  writable Docs, Sheets, and Slides workflows. Provider versions are checked
+  before sync so Google-side edits are not silently overwritten.
+- **iCloud Drive**: device-scoped access is implemented through the browser
+  directory picker and the native iOS document picker. Server-side iCloud
+  indexing remains out of scope because Apple exposes no Drive web API.
 - **Local files**: first-class upload source (drag/drop + picker) into the corpus.
 - **Retrieval**: lexical, but engineered to be *powerful* — multi-signal ranking,
   query expansion, windowed deep reads. Module boundaries chosen so a Convex
   `vectorIndex` upgrade is a drop-in later, not a rewrite.
-- **Document creation**: AI-native structured JSON models (deck | sheet | doc) with
-  live in-app preview, chat-driven iteration ("make slide 3 punchier"), and on-demand
-  export to real formats. No full WYSIWYG editor this phase (light tweaks only).
+- **Document creation**: AI-native, revisioned semantic models (deck | sheet |
+  doc) with inline human editing, reviewable AI suggestions, chat-driven
+  iteration, native Google write-back, and real Office exports on web and iOS.
 
 ---
 

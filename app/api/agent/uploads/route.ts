@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexMutation } from '@/lib/hosted/convex';
+import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { sanitizeFilename } from '@/lib/shared/files';
 
@@ -19,6 +19,19 @@ function errorResponse(err: any) {
   }
   console.error('[agent-uploads] Upload failed:', err);
   return NextResponse.json({ ok: false, error: 'Upload failed' }, { status: 500 });
+}
+
+export async function GET() {
+  try {
+    const user = await requireCurrentUser();
+    const files = await convexQuery<any[]>(agentUploadsApi.listRecentFiles, {
+      userId: user.userId,
+      limit: 200,
+    });
+    return NextResponse.json({ ok: true, files });
+  } catch (err: any) {
+    return errorResponse(err);
+  }
 }
 
 async function uploadToStorage(uploadUrl: string, file: File, contentType: string) {

@@ -406,6 +406,17 @@ struct SidebarDestinationPreview: View {
                     row(title: area.name, detail: area.overview?.statusLine ?? area.kind.capitalized)
                 }
             }
+        case .primary(.files):
+            if environment.documents.documents.isEmpty {
+                quiet("Documents, spreadsheets, presentations, and connected drives.")
+            } else {
+                ForEach(environment.documents.documents.prefix(5)) { document in
+                    row(
+                        title: document.title,
+                        detail: "\(document.kind.title) · \(document.updatedAt.formatted(.relative(presentation: .named)))"
+                    )
+                }
+            }
         case .primary:
             quiet("")
         case .mail(let scope):

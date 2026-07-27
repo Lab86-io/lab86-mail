@@ -34,6 +34,7 @@ const BRIEF_ACTION_TYPES = [
   'toggle_task',
   'dismiss_task',
   'create_task',
+  'create_document',
   'draft_reply',
   'archive_thread',
   'rsvp_event',
@@ -400,6 +401,8 @@ function defaultActionLabel(action: BriefAction['action']): string {
       return 'Complete';
     case 'create_task':
       return 'Create task';
+    case 'create_document':
+      return 'Create file';
     case 'draft_reply':
       return 'Draft reply';
     case 'archive_thread':

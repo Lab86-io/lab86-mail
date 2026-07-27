@@ -103,6 +103,8 @@ describe('native iOS authentication configuration', () => {
     expect(exportVerifier).toContain('codesign -d --entitlements :- "$app_path"');
     expect(exportVerifier).toContain('expected_clerk_host="clerk.mail.lab86.io"');
     expect(exportVerifier).toContain('[[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]]');
+    expect(exportVerifier).toContain('.webcredentials.apps | arrays | index($application_id) != null');
+    expect(exportVerifier).toContain('https://app-site-association.cdn-apple.com/a/v1/');
     expect(cloudWaiter).toContain(
       'Xcode Cloud distributed to TestFlight without a reviewable App Store export.',
     );
@@ -129,6 +131,8 @@ describe('native iOS authentication configuration', () => {
     expect(configuration).toContain('request.url?.path.hasSuffix("/v1/client/sign_ins")');
     expect(configuration).toContain('formValue(named: "strategy", in: form) == "passkey"');
     expect(configuration).toContain('throw CancellationError()');
+    expect(configuration).toContain('static let redirectURL = "io.lab86.mail://callback"');
+    expect(configuration).toContain('callbackUrlScheme: callbackURLScheme');
     expect(app).toContain('options: ClerkConfiguration.options(for: key)');
     expect(settings).toContain('options: ClerkConfiguration.options(for: publishableKey)');
   });

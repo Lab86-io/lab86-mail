@@ -452,6 +452,12 @@ export const deleteUserCascade = mutation({
       'mcpItems',
       'mcpSyncStates',
       'mcpTaskLinks',
+      'cloudFileConnections',
+      'cloudFileCredentials',
+      'cloudFileOAuthStates',
+      'documents',
+      'documentRevisions',
+      'documentSuggestions',
     ] as const;
 
     for (const table of userTables) {

@@ -73,4 +73,26 @@ export const listRecent = query({
   },
 });
 
+export const listRecentFiles = query({
+  args: { ...callerArgs, limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const rows = await ctx.db
+      .query('agentUploads')
+      .withIndex('by_user_created', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(Math.min(Math.max(args.limit ?? 100, 1), 200));
+    return Promise.all(
+      rows.map(async (row) => ({
+        id: row._id,
+        name: row.name,
+        mimeType: row.contentType,
+        size: row.size,
+        createdAt: row.createdAt,
+        url: await ctx.storage.getUrl(row.storageId),
+      })),
+    );
+  },
+});
+
 export type AgentUploadId = Id<'agentUploads'>;

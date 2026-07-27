@@ -1,6 +1,14 @@
 export const BRIEF_ACTION_TIERS = {
   immediate: ['toggle_task', 'dismiss_task', 'resolve_thread', 'dismiss_thread', 'archive_thread'],
-  review: ['rsvp_event', 'create_task', 'create_event', 'draft_reply', 'capture_intent', 'answer_question'],
+  review: [
+    'rsvp_event',
+    'create_task',
+    'create_event',
+    'create_document',
+    'draft_reply',
+    'capture_intent',
+    'answer_question',
+  ],
   navigation: [
     'open_thread',
     'open_view',

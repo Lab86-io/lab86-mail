@@ -89,6 +89,16 @@ import {
 } from './daily-report';
 import { DISPLAY_TOOLS } from './display';
 import {
+  documentApplyInstruction,
+  documentCreate,
+  documentExport,
+  documentGet,
+  documentList,
+  documentPublishGoogle,
+  documentSuggestChanges,
+} from './documents';
+import { cloudFileSearch, googleFileImport } from './files';
+import {
   getMessage,
   getSmartCategoryStats,
   getThread,
@@ -260,6 +270,15 @@ const allTools: AnyTool[] = [
   resolveTrackedThread,
   listTrackedThreadsTool,
   getTrackedThreadTool,
+  documentCreate,
+  documentList,
+  documentGet,
+  documentSuggestChanges,
+  documentApplyInstruction,
+  documentPublishGoogle,
+  documentExport,
+  cloudFileSearch,
+  googleFileImport,
   extractActionItems,
   translateThread,
   preSendCritique,

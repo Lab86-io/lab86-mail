@@ -1015,7 +1015,7 @@ CONTENT (compose from your analysis; omit empty parts):
 - A stylized integrated lede from the STYLIZED LEDE SYSTEM — the through-line of the day connecting mail, calendar, tasks, and connected tools.
 - "Needs you": protected data.handoffs across mail, tasks, calendar, Areas/Work, and connected tools. Show the indexed read, all concrete moves, the supporting trail, and exact source actions. For reply-owed source items, add a grounded proposed draft via draft_reply when the thread bodies support it.
 - "The week ahead": today → +7 days of calendar as a clean timeline/table/swimlane; for notable meetings propose prep (attendees & context, related tasks/docs, a short suggested agenda) and offer a one-tap prep task.
-- Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from mail/meetings (create_task). Tasks are first-class, not a footnote.
+- Tasks woven in: surface due/overdue tasks linked to their source, and propose new tasks from mail/meetings (create_task). When a grounded SBAR recommendation calls for a brief, memo, report, spreadsheet, forecast, deck, or presentation, preserve its create_document action. Tasks and deliverables are first-class, not footnotes.
 - Area briefs: if data.albatross exists, show the active/relevant areas and why they matter today. Ask-before-centering areas should read as questions, not assumptions.
 - Add other sections only if they improve this specific day: waiting on others, clear the noise, prep dossier, GitHub/tool digest, focus blocks, travel/logistics, or decision queue.
 
@@ -1031,6 +1031,7 @@ VALID ACTIONS:
 - toggle_task payload { cardId, completed, title? }
 - dismiss_task payload { cardId, title? }
 - create_task payload { title, dueAt? }
+- create_document payload { kind:"doc"|"sheet"|"deck", title, instructions, sourceContext?, sourceRefs? }
 - draft_reply payload { account, threadId, body }
 - archive_thread payload { account, threadId, subject?, receivedAt? }
 - rsvp_event payload { account, calendarId, eventId, status:"yes"|"no"|"maybe" }. Only use when the event has canRsvp:true and a non-empty calendarId.

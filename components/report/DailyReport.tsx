@@ -681,6 +681,39 @@ function ReportArtifact({
             onChanged?.();
             return ack(true);
           }
+          case 'create_document': {
+            const title = String(payload.title || '').trim();
+            const kind = String(payload.kind || '');
+            const instructions = String(payload.instructions || '').trim();
+            if (!title) return ack(false, 'missing title');
+            if (!['doc', 'sheet', 'deck'].includes(kind)) return ack(false, 'invalid file kind');
+            if (!instructions) return ack(false, 'missing instructions');
+            const response = await fetch('/api/documents', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                kind,
+                title,
+                instructions,
+                sourceContext: typeof payload.sourceContext === 'string' ? payload.sourceContext : undefined,
+                sourceRefs: Array.isArray(payload.sourceRefs) ? payload.sourceRefs : [],
+              }),
+            });
+            const body = await response.json();
+            if (!response.ok || !body?.document?.documentId) {
+              return ack(false, body?.error || 'file creation failed');
+            }
+            const params = new URLSearchParams(window.location.search);
+            params.set('view', 'files');
+            params.set('document', String(body.document.documentId));
+            window.history.pushState(
+              { ...(window.history.state || {}), albatrossDocument: body.document.documentId },
+              '',
+              `?${params}`,
+            );
+            setPrimaryView('files');
+            return ack(true);
+          }
           // These three actions mutate mail/calendar state. The artifact is
           // authored by the model from UNTRUSTED mailbox content, so a
           // prompt-injected script could post them on load with no user click.

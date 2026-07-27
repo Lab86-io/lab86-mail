@@ -154,6 +154,41 @@ describe('Albatross plan application model', () => {
     expect(plan.executableSteps[0].kind).toBe('project');
   });
 
+  test('document actions become executable private file creation steps', () => {
+    const plan = buildAlbatrossApplicationPlan({
+      intentId: 'intent_vendor_review',
+      projectMode: 'task_only',
+      plan: {
+        outcome: 'The vendor decision is ready for review.',
+        sourceRefs: [{ kind: 'mailThread', id: 'thread-1', label: 'Acme proposal' }],
+        digitalActions: [
+          {
+            kind: 'document',
+            key: 'step-1',
+            title: 'Vendor comparison',
+            documentKind: 'sheet',
+            instructions: 'Compare price, scope, timeline, and risk.',
+          },
+        ],
+      },
+    });
+
+    expect(plan.executableSteps).toHaveLength(1);
+    expect(plan.executableSteps[0]).toMatchObject({
+      kind: 'document',
+      toolName: 'document_create',
+      toolArgs: {
+        kind: 'sheet',
+        title: 'Vendor comparison',
+        instructions: 'Compare price, scope, timeline, and risk.',
+        publishToGoogle: false,
+      },
+    });
+    expect(plan.executableSteps[0].sourceRefs).toEqual([
+      { kind: 'mailThread', id: 'thread-1', label: 'Acme proposal' },
+    ]);
+  });
+
   test('undone operations reappear as unresolved artifacts', () => {
     const unresolved = unresolvedArtifactsAfterUndo(
       {
@@ -171,7 +206,7 @@ describe('Albatross plan application model', () => {
     expect(unresolved).toEqual([{ kind: 'task', id: 'card_1', title: 'List missing tax documents' }]);
   });
 
-  test('appliedSteps mapping records cardId for tasks, eventId for events, draftId for drafts, and bare keys for approvals', () => {
+  test('appliedSteps mapping records created artifact ids and bare keys for approvals', () => {
     const steps = appliedStepsFromApplyResult({
       operations: [
         {
@@ -187,6 +222,7 @@ describe('Albatross plan application model', () => {
           artifactId: 'evt_1',
         },
         { stepKey: 'step-3', kind: 'email_draft', tool: 'save_draft', artifactId: 'draft_1' },
+        { stepKey: 'step-doc', kind: 'document', tool: 'document_create', artifactId: 'document_1' },
         // Legacy operation without a stepKey never produces a mapping row.
         { kind: 'task', tool: 'tasks_create_card', artifactId: 'card_orphan' },
       ],
@@ -196,6 +232,7 @@ describe('Albatross plan application model', () => {
       { stepKey: 'step-1', kind: 'task', cardId: 'card_1' },
       { stepKey: 'step-2', kind: 'calendar_event', eventId: 'evt_1' },
       { stepKey: 'step-3', kind: 'email_draft', draftId: 'draft_1' },
+      { stepKey: 'step-doc', kind: 'document', documentId: 'document_1' },
       { stepKey: 'step-4', kind: 'email_send' },
     ]);
   });

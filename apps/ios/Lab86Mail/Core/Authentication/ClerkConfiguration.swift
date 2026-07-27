@@ -2,6 +2,9 @@ import ClerkKit
 import Foundation
 
 enum ClerkConfiguration {
+    static let redirectURL = "io.lab86.mail://callback"
+    static let callbackURLScheme = "io.lab86.mail"
+
     static func options(for publishableKey: String) -> Clerk.Options {
         let requestMiddleware: [any ClerkRequestMiddleware]
 
@@ -16,6 +19,10 @@ enum ClerkConfiguration {
         }
 
         return Clerk.Options(
+            redirectConfig: .init(
+                redirectUrl: redirectURL,
+                callbackUrlScheme: callbackURLScheme
+            ),
             middleware: .init(request: requestMiddleware)
         )
     }

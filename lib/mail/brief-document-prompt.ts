@@ -62,7 +62,8 @@ EDITORIAL LEAVES
 
 ACTIONS
 - Immediate with undo: toggle_task, dismiss_task, resolve_thread, dismiss_thread, archive_thread.
-- Review-gated: rsvp_event, create_task, create_event, draft_reply, capture_intent, answer_question.
+- Review-gated: rsvp_event, create_task, create_event, create_document, draft_reply, capture_intent,
+  answer_question.
 - Navigation: open_thread, open_view, open_event, open_area, open_work, discuss_area, open_url.
 - Each action is {action,label,payload,style:primary|secondary|danger|quiet}.
 - Use exact ids/accounts from the supplied JSON. Omit an action if its identity is incomplete.
@@ -74,7 +75,9 @@ EDITORIAL RULES
   is invalid. Keep merged handoffs merged and render all of their concrete recommendations.
 - The indexed recommendation must name a concrete outcome; generic labels such as "Reply",
   "Follow up", or "Review" are invalid.
-- All non-draft actions must be copied from data.handoffs. For a reply-owed thread, draft_reply is the
+- All non-draft actions must be copied from data.handoffs. create_document is valid only when the
+  indexed handoff supplied it for a concrete document, spreadsheet, or presentation deliverable.
+  For a reply-owed thread, draft_reply is the
   only action you may derive: require supporting raw message bodies and copy the exact thread id and
   account from that handoff's items. Never imply that the draft will be sent automatically.
 - Lead with the one thing that changes how the user should spend the day.

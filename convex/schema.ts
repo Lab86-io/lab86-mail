@@ -1342,6 +1342,116 @@ export default defineSchema({
     .index('by_user_created', ['userId', 'createdAt'])
     .index('by_storage', ['storageId']),
 
+  // Cloud file connections live apart from mail and MCP providers:
+  // the display row can safely reach the client, while OAuth credentials stay
+  // in a server-only table. iCloud Drive is intentionally absent — the web
+  // surface accesses only a user-selected local iCloud folder on their device.
+  cloudFileConnections: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    provider: v.union(v.literal('google_drive'), v.literal('onedrive')),
+    accountKey: v.string(),
+    accountEmail: v.optional(v.string()),
+    displayName: v.optional(v.string()),
+    status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
+    scopes: v.array(v.string()),
+    lastAccessedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_user_provider_account', ['userId', 'provider', 'accountKey']),
+
+  cloudFileCredentials: defineTable({
+    userId: v.string(),
+    connectionId: v.string(),
+    provider: v.union(v.literal('google_drive'), v.literal('onedrive')),
+    accessTokenEncrypted: v.string(),
+    refreshTokenEncrypted: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_connection', ['userId', 'connectionId']),
+
+  cloudFileOAuthStates: defineTable({
+    userId: v.string(),
+    state: v.string(),
+    provider: v.union(v.literal('google_drive'), v.literal('onedrive')),
+    redirectTo: v.optional(v.string()),
+    nativeCallback: v.optional(v.boolean()),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
+
+  // Provider-neutral, AI-editable office documents. The current snapshot is
+  // optimized for open/list reads; immutable revisions preserve every user,
+  // AI, restore, import, and provider-sync transition.
+  documents: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    kind: v.union(v.literal('doc'), v.literal('sheet'), v.literal('deck')),
+    title: v.string(),
+    model: v.any(),
+    currentRevision: v.number(),
+    sourceRefs: v.array(v.any()),
+    google: v.optional(
+      v.object({
+        connectionId: v.string(),
+        fileId: v.string(),
+        mimeType: v.string(),
+        webUrl: v.optional(v.string()),
+        providerVersion: v.optional(v.string()),
+        syncedRevision: v.number(),
+        lastSyncedAt: v.number(),
+      }),
+    ),
+    googleFileId: v.optional(v.string()),
+    googleConnectionId: v.optional(v.string()),
+    archivedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document', ['userId', 'documentId'])
+    .index('by_user_updated', ['userId', 'updatedAt'])
+    .index('by_user_google_file', ['userId', 'googleConnectionId', 'googleFileId']),
+
+  documentRevisions: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    revision: v.number(),
+    title: v.string(),
+    model: v.any(),
+    reason: v.string(),
+    actor: v.union(v.literal('user'), v.literal('ai'), v.literal('system')),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document_revision', ['userId', 'documentId', 'revision']),
+
+  documentSuggestions: defineTable({
+    userId: v.string(),
+    suggestionId: v.string(),
+    documentId: v.string(),
+    title: v.string(),
+    description: v.string(),
+    proposedModel: v.any(),
+    sourceRefs: v.array(v.any()),
+    status: v.union(v.literal('proposed'), v.literal('applied'), v.literal('dismissed')),
+    resolvedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document', ['userId', 'documentId'])
+    .index('by_user_suggestion', ['userId', 'suggestionId']),
+
   // Kanban (docs/productivity-platform-spec.md M2). Boards are shareable:
   // memberships carry roles, and a publicToken exposes a read-only view with
   // no account. Cards keep provenance back to the email/chat that spawned
