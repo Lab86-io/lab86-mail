@@ -140,6 +140,51 @@ describe('canonical SBAR triage index', () => {
     expect(builds[0]?.actions).toHaveLength(4);
   });
 
+  test('adds grounded document, spreadsheet, and presentation creation moves to deliverable handoffs', () => {
+    const cases = [
+      {
+        recommendation: 'Draft a launch memo for the review.',
+        kind: 'doc',
+        label: 'Create document',
+      },
+      {
+        recommendation: 'Build a budget forecast spreadsheet for the review.',
+        kind: 'sheet',
+        label: 'Create spreadsheet',
+      },
+      {
+        recommendation: 'Prepare a presentation deck for the review.',
+        kind: 'deck',
+        label: 'Create presentation',
+      },
+    ] as const;
+
+    for (const candidate of cases) {
+      const report = reportFixture();
+      report.sections.replyOwed[0].nextAction = candidate.recommendation;
+      report.sections.tracked = [];
+      const handoff = buildTriageHandoffIndex(report).find((record) =>
+        record.items.some((item) => item.sourceKey === 'mail:jakob@example.com:thread-1'),
+      );
+      const action = handoff?.actions.find((entry) => entry.action === 'create_document');
+
+      expect(action).toMatchObject({
+        action: 'create_document',
+        label: candidate.label,
+        payload: {
+          kind: candidate.kind,
+          instructions: expect.stringContaining(candidate.recommendation),
+          sourceContext: expect.stringContaining('Recommendation:'),
+          sourceRefs: expect.arrayContaining([expect.objectContaining({ kind: 'thread', id: 'thread-1' })]),
+        },
+        style: 'primary',
+      });
+      expect(action?.payload.title).toContain(
+        candidate.kind === 'doc' ? 'document' : candidate.kind === 'sheet' ? 'spreadsheet' : 'presentation',
+      );
+    }
+  });
+
   test('retains only exact connected and work navigation proposals', () => {
     const report = reportFixture();
     report.handoffs = buildTriageHandoffIndex(report);

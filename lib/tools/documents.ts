@@ -26,6 +26,24 @@ const sourceRefSchema = z.object({
   url: z.string().max(2_000).optional(),
 });
 
+const defaultDependencies = {
+  archiveDocument,
+  createDocument,
+  createDocumentSuggestion,
+  generateDocumentProposal,
+  getDocument,
+  listDocuments,
+  publishDocumentToGoogle,
+  recordOperation,
+  updateDocument,
+};
+
+let dependencies = defaultDependencies;
+
+export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 export const documentCreate = defineTool({
   name: 'document_create',
   description:
@@ -53,7 +71,7 @@ export const documentCreate = defineTool({
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const proposal = args.instructions
-      ? await generateDocumentProposal({
+      ? await dependencies.generateDocumentProposal({
           userId,
           userEmail: ctx.userEmail || undefined,
           userName: ctx.userName || undefined,
@@ -62,7 +80,7 @@ export const documentCreate = defineTool({
           sourceContext: args.sourceContext,
         })
       : null;
-    const document = await createDocument({
+    const document = await dependencies.createDocument({
       userId,
       kind: args.kind,
       title: args.title || proposal?.title,
@@ -70,7 +88,7 @@ export const documentCreate = defineTool({
       sourceRefs: args.sourceRefs,
       reason: proposal?.summary || 'agent_create',
     });
-    await recordOperation({
+    await dependencies.recordOperation({
       userId,
       tool: 'document_create',
       surface: 'albatross',
@@ -79,7 +97,7 @@ export const documentCreate = defineTool({
       inverse: { kind: 'documents.archive', payload: { documentId: document.documentId } },
     });
     const google = args.publishToGoogle
-      ? await publishDocumentToGoogle({
+      ? await dependencies.publishDocumentToGoogle({
           userId,
           document,
           connectionId: args.googleConnectionId,
@@ -119,7 +137,7 @@ export const documentList = defineTool({
     ),
   }),
   async handler(args, ctx) {
-    const documents = await listDocuments({
+    const documents = await dependencies.listDocuments({
       userId: requireUserId(ctx.userId),
       kind: args.kind,
       limit: args.limit,
@@ -149,7 +167,7 @@ export const documentGet = defineTool({
     text: z.string(),
   }),
   async handler(args, ctx) {
-    const document = await getDocument(requireUserId(ctx.userId), args.documentId);
+    const document = await dependencies.getDocument(requireUserId(ctx.userId), args.documentId);
     if (!document) throw new Error('Document not found.');
     return { document, text: documentModelText(document.model) };
   },
@@ -175,9 +193,9 @@ export const documentSuggestChanges = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const document = await getDocument(userId, args.documentId);
+    const document = await dependencies.getDocument(userId, args.documentId);
     if (!document) throw new Error('Document not found.');
-    const proposal = await generateDocumentProposal({
+    const proposal = await dependencies.generateDocumentProposal({
       userId,
       userEmail: ctx.userEmail || undefined,
       userName: ctx.userName || undefined,
@@ -186,7 +204,7 @@ export const documentSuggestChanges = defineTool({
       current: document,
       sourceContext: args.sourceContext,
     });
-    const suggestion = await createDocumentSuggestion({
+    const suggestion = await dependencies.createDocumentSuggestion({
       userId,
       documentId: document.documentId,
       title: proposal.title,
@@ -225,9 +243,9 @@ export const documentApplyInstruction = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const document = await getDocument(userId, args.documentId);
+    const document = await dependencies.getDocument(userId, args.documentId);
     if (!document) throw new Error('Document not found.');
-    const proposal = await generateDocumentProposal({
+    const proposal = await dependencies.generateDocumentProposal({
       userId,
       userEmail: ctx.userEmail || undefined,
       userName: ctx.userName || undefined,
@@ -236,7 +254,7 @@ export const documentApplyInstruction = defineTool({
       current: document,
       sourceContext: args.sourceContext,
     });
-    const result = await updateDocument({
+    const result = await dependencies.updateDocument({
       userId,
       documentId: document.documentId,
       expectedRevision: document.currentRevision,
@@ -275,9 +293,9 @@ export const documentPublishGoogle = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const document = await getDocument(userId, args.documentId);
+    const document = await dependencies.getDocument(userId, args.documentId);
     if (!document) throw new Error('Document not found.');
-    const google = await publishDocumentToGoogle({
+    const google = await dependencies.publishDocumentToGoogle({
       userId,
       document,
       connectionId: args.connectionId,
@@ -297,7 +315,7 @@ export const documentExport = defineTool({
     downloadPath: z.string(),
   }),
   async handler(args, ctx) {
-    const document = await getDocument(requireUserId(ctx.userId), args.documentId);
+    const document = await dependencies.getDocument(requireUserId(ctx.userId), args.documentId);
     if (!document) throw new Error('Document not found.');
     return { ok: true, downloadPath: `/api/documents/${encodeURIComponent(document.documentId)}/export` };
   },
@@ -305,5 +323,5 @@ export const documentExport = defineTool({
 
 registerUndoExecutor('documents.archive', async (payload, ctx) => {
   if (!payload?.documentId) throw new Error('Document undo target is missing.');
-  await archiveDocument(ctx.userId, String(payload.documentId));
+  await dependencies.archiveDocument(ctx.userId, String(payload.documentId));
 });

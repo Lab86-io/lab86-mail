@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { buildTriageHandoffIndex } from '../lib/brief/triage-index';
 import { enforceDailyBriefHandoffCoverage, handoffForReportItem } from '../lib/mail/daily-brief-handoff';
 import {
   deterministicRecommendation,
@@ -260,6 +261,42 @@ describe('Daily Brief handoff recommendations', () => {
     emptyReport.sections.tracked = [];
     const untouched = emptyDocument();
     expect(enforceDailyBriefHandoffCoverage(untouched, emptyReport)).toBe(untouched);
+  });
+
+  test('keeps only the exact grounded document proposal attached to the canonical handoff', () => {
+    const report = reportWithProtectedThreads();
+    report.sections.replyOwed[0].nextAction = 'Draft a launch memo for the decision review.';
+    report.sections.tracked = [];
+    report.handoffs = buildTriageHandoffIndex(report);
+    const record = report.handoffs.find((handoff) =>
+      handoff.items.some((item) => item.ref.kind === 'thread' && item.ref.id === 'thread-1'),
+    );
+    const exact = record?.actions.find((action) => action.action === 'create_document');
+    if (!exact || exact.action !== 'create_document') throw new Error('missing document action');
+    const item = report.sections.replyOwed[0];
+    const document: BriefDocumentV2 = {
+      ...emptyDocument(),
+      regions: [
+        {
+          id: 'authored',
+          summary: 'Authored',
+          tree: entityListNode([
+            protectedEntity(item, [
+              exact,
+              {
+                ...exact,
+                payload: { ...exact.payload, instructions: 'Invent an unrelated memo.' },
+              },
+            ]),
+          ]),
+        },
+      ],
+    };
+
+    const actions = entityItems(enforceDailyBriefHandoffCoverage(document, report))
+      .find((entity) => entity.ref.id === item.threadId)
+      ?.actions.filter((action) => action.action === 'create_document');
+    expect(actions).toEqual([exact]);
   });
 });
 

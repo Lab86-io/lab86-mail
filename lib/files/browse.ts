@@ -6,6 +6,18 @@ import {
   normalizeOneDrivePage,
 } from './providers';
 
+const defaultDependencies = {
+  getCloudFileAccess,
+  markCloudFileConnectionAccess,
+  fetch,
+};
+
+let dependencies = defaultDependencies;
+
+export function __setCloudFileBrowseDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 function boundedQuery(value: string | undefined) {
   return String(value || '')
     .trim()
@@ -61,13 +73,13 @@ export async function browseCloudFiles(input: {
   query?: string;
   cursor?: string;
 }): Promise<CloudFilePage> {
-  const access = await getCloudFileAccess(input);
+  const access = await dependencies.getCloudFileAccess(input);
   if (!access) throw new Error('File connection not found.');
   const { connection, accessToken } = access;
   const endpoint =
     connection.provider === 'google_drive' ? googleDriveEndpoint(input) : oneDriveEndpoint(input);
   try {
-    const response = await fetch(endpoint, {
+    const response = await dependencies.fetch(endpoint, {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',
     });
@@ -83,13 +95,15 @@ export async function browseCloudFiles(input: {
       connection.provider === 'google_drive'
         ? normalizeGoogleDrivePage(payload, connection.connectionId)
         : normalizeOneDrivePage(payload, connection.connectionId);
-    await markCloudFileConnectionAccess(input.userId, connection.connectionId).catch(() => undefined);
+    await dependencies
+      .markCloudFileConnectionAccess(input.userId, connection.connectionId)
+      .catch(() => undefined);
     return page;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'The file provider is unavailable.';
-    await markCloudFileConnectionAccess(input.userId, connection.connectionId, message).catch(
-      () => undefined,
-    );
+    await dependencies
+      .markCloudFileConnectionAccess(input.userId, connection.connectionId, message)
+      .catch(() => undefined);
     throw error;
   }
 }

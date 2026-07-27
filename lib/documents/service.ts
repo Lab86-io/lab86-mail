@@ -12,6 +12,18 @@ import {
 
 const documentsApi = (api as any).documents;
 
+const defaultDependencies = {
+  convexMutation,
+  convexQuery,
+  randomUUID,
+};
+
+let dependencies = defaultDependencies;
+
+export function __setDocumentServiceDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 export interface DocumentWithSuggestions extends AlbatrossDocumentRecord {
   suggestions: DocumentSuggestion[];
 }
@@ -24,11 +36,11 @@ export async function createDocument(input: {
   sourceRefs?: DocumentSourceRef[];
   reason?: string;
 }) {
-  const documentId = randomUUID();
+  const documentId = dependencies.randomUUID();
   const model = input.model
     ? parseDocumentModel(input.model, input.kind)
     : createDefaultDocumentModel(input.kind, documentId);
-  return convexMutation<AlbatrossDocumentRecord>(documentsApi.create, {
+  return dependencies.convexMutation<AlbatrossDocumentRecord>(documentsApi.create, {
     userId: input.userId,
     documentId,
     kind: input.kind,
@@ -43,12 +55,15 @@ export async function createDocument(input: {
 }
 
 export async function listDocuments(input: { userId: string; kind?: DocumentKind; limit?: number }) {
-  const rows = await convexQuery<AlbatrossDocumentRecord[]>(documentsApi.list, input);
+  const rows = await dependencies.convexQuery<AlbatrossDocumentRecord[]>(documentsApi.list, input);
   return rows.map((row) => ({ ...row, model: parseDocumentModel(row.model, row.kind) }));
 }
 
 export async function getDocument(userId: string, documentId: string) {
-  const row = await convexQuery<DocumentWithSuggestions | null>(documentsApi.get, { userId, documentId });
+  const row = await dependencies.convexQuery<DocumentWithSuggestions | null>(documentsApi.get, {
+    userId,
+    documentId,
+  });
   if (!row) return null;
   return {
     ...row,
@@ -65,7 +80,10 @@ export async function findDocumentByGoogleFile(input: {
   connectionId: string;
   fileId: string;
 }) {
-  const row = await convexQuery<AlbatrossDocumentRecord | null>(documentsApi.findByGoogleFile, input);
+  const row = await dependencies.convexQuery<AlbatrossDocumentRecord | null>(
+    documentsApi.findByGoogleFile,
+    input,
+  );
   return row ? { ...row, model: parseDocumentModel(row.model, row.kind) } : null;
 }
 
@@ -82,7 +100,7 @@ export async function updateDocument(input: {
   const current = input.model === undefined ? null : await getDocument(input.userId, input.documentId);
   if (input.model !== undefined && !current) return { ok: false as const, code: 'NOT_FOUND' as const };
   const model = input.model === undefined ? undefined : parseDocumentModel(input.model, current!.kind);
-  return convexMutation<
+  return dependencies.convexMutation<
     | { ok: true; document: AlbatrossDocumentRecord }
     | {
         ok: false;
@@ -102,7 +120,7 @@ export async function updateDocument(input: {
 }
 
 export async function archiveDocument(userId: string, documentId: string) {
-  return convexMutation<{ ok: boolean }>(documentsApi.archive, { userId, documentId });
+  return dependencies.convexMutation<{ ok: boolean }>(documentsApi.archive, { userId, documentId });
 }
 
 export async function createDocumentSuggestion(input: {
@@ -113,11 +131,14 @@ export async function createDocumentSuggestion(input: {
   proposedModel: AlbatrossDocumentModel;
   sourceRefs?: DocumentSourceRef[];
 }) {
-  const suggestionId = randomUUID();
-  const result = await convexMutation<{ ok: boolean; createdAt?: number }>(documentsApi.createSuggestion, {
-    ...input,
-    suggestionId,
-  });
+  const suggestionId = dependencies.randomUUID();
+  const result = await dependencies.convexMutation<{ ok: boolean; createdAt?: number }>(
+    documentsApi.createSuggestion,
+    {
+      ...input,
+      suggestionId,
+    },
+  );
   return { ...result, suggestionId };
 }
 
@@ -127,7 +148,7 @@ export async function resolveDocumentSuggestion(input: {
   suggestionId: string;
   status: 'applied' | 'dismissed';
 }) {
-  return convexMutation<{ ok: boolean }>(documentsApi.resolveSuggestion, input);
+  return dependencies.convexMutation<{ ok: boolean }>(documentsApi.resolveSuggestion, input);
 }
 
 export async function linkGoogleDocument(input: {
@@ -140,8 +161,8 @@ export async function linkGoogleDocument(input: {
   providerVersion?: string;
   syncedRevision: number;
 }) {
-  return convexMutation<{ ok: boolean; google?: AlbatrossDocumentRecord['google'] }>(
-    documentsApi.linkGoogleFile,
-    input,
-  );
+  return dependencies.convexMutation<{
+    ok: boolean;
+    google?: AlbatrossDocumentRecord['google'];
+  }>(documentsApi.linkGoogleFile, input);
 }

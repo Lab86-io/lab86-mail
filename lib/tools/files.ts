@@ -16,6 +16,21 @@ const nativeMimeSchema = z.enum([
   'application/vnd.google-apps.presentation',
 ]);
 
+const defaultDependencies = {
+  browseCloudFiles,
+  createDocument,
+  findDocumentByGoogleFile,
+  importGoogleNativeFile,
+  linkGoogleDocument,
+  listCloudFileConnections,
+};
+
+let dependencies = defaultDependencies;
+
+export function __setCloudFileToolDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 export const cloudFileSearch = defineTool({
   name: 'cloud_file_search',
   description:
@@ -43,14 +58,14 @@ export const cloudFileSearch = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const connections = await listCloudFileConnections(userId);
+    const connections = await dependencies.listCloudFileConnections(userId);
     const targets = args.connectionId
       ? connections.filter((connection) => connection.connectionId === args.connectionId)
       : connections;
     if (args.connectionId && !targets.length) throw new Error('File connection not found.');
     const settled = await Promise.allSettled(
       targets.map((connection) =>
-        browseCloudFiles({
+        dependencies.browseCloudFiles({
           userId,
           connectionId: connection.connectionId,
           query: args.query || undefined,
@@ -97,7 +112,7 @@ export const googleFileImport = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const existing = await findDocumentByGoogleFile({
+    const existing = await dependencies.findDocumentByGoogleFile({
       userId,
       connectionId: args.connectionId,
       fileId: args.fileId,
@@ -113,14 +128,14 @@ export const googleFileImport = defineTool({
         existing: true,
       };
     }
-    const imported = await importGoogleNativeFile({
+    const imported = await dependencies.importGoogleNativeFile({
       userId,
       connectionId: args.connectionId,
       fileId: args.fileId,
       mimeType: args.mimeType,
     });
     const webUrl = imported.webUrl || args.webUrl;
-    const document = await createDocument({
+    const document = await dependencies.createDocument({
       userId,
       kind: imported.kind,
       title: imported.title,
@@ -135,7 +150,7 @@ export const googleFileImport = defineTool({
       ],
       reason: 'google_import',
     });
-    await linkGoogleDocument({
+    await dependencies.linkGoogleDocument({
       userId,
       documentId: document.documentId,
       connectionId: args.connectionId,

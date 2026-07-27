@@ -8,8 +8,19 @@ export const GOOGLE_NATIVE_MIME: Record<string, DocumentKind> = {
   'application/vnd.google-apps.presentation': 'deck',
 };
 
+const defaultDependencies = {
+  getCloudFileAccess,
+  fetch,
+};
+
+let dependencies = defaultDependencies;
+
+export function __setGoogleImportDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 async function googleJson(accessToken: string, endpoint: string) {
-  const response = await fetch(endpoint, {
+  const response = await dependencies.fetch(endpoint, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: 'no-store',
   });
@@ -205,7 +216,10 @@ export async function importGoogleNativeFile(input: {
 }) {
   const kind = GOOGLE_NATIVE_MIME[input.mimeType];
   if (!kind) throw new Error('Only Google Docs, Sheets, and Slides can be edited inline.');
-  const access = await getCloudFileAccess({ userId: input.userId, connectionId: input.connectionId });
+  const access = await dependencies.getCloudFileAccess({
+    userId: input.userId,
+    connectionId: input.connectionId,
+  });
   if (!access || access.connection.provider !== 'google_drive') {
     throw new Error('Google Drive connection not found.');
   }

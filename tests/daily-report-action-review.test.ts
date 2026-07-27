@@ -36,6 +36,10 @@ describe('daily report action review policy', () => {
       message: 'Add “Prepare slides” to your tasks?',
       destructive: false,
     });
+    expect(dailyReportActionReview('create_document', { title: 'Launch brief' })).toEqual({
+      message: 'Create “Launch brief” in Albatross?',
+      destructive: false,
+    });
     expect(dailyReportActionReview('archive_thread', { subject: 'Old launch thread' })).toEqual({
       message: 'Archive “Old launch thread” and remove it from future briefs?',
       destructive: true,

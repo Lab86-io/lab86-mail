@@ -10,6 +10,16 @@ import {
   sheetModelSchema,
 } from './model';
 
+const defaultDependencies = {
+  generateObjectForCurrentUser,
+};
+
+let dependencies = defaultDependencies;
+
+export function __setDocumentAiDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 const schemas = {
   doc: docModelSchema,
   sheet: sheetModelSchema,
@@ -53,7 +63,7 @@ export async function generateDocumentProposal(input: {
   const sources = input.sourceContext?.trim()
     ? `\nGrounding material:\n${input.sourceContext.trim().slice(0, 40_000)}`
     : '';
-  const { object } = await generateObjectForCurrentUser<z.infer<typeof schema>>({
+  const { object } = await dependencies.generateObjectForCurrentUser<z.infer<typeof schema>>({
     userId: input.userId,
     userEmail: input.userEmail,
     userName: input.userName,

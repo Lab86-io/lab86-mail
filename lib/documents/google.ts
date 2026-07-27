@@ -14,6 +14,19 @@ const GOOGLE_CREATE_ENDPOINT: Record<DocumentKind, string> = {
   deck: 'https://slides.googleapis.com/v1/presentations',
 };
 
+const defaultDependencies = {
+  getCloudFileAccess,
+  listCloudFileConnections,
+  linkGoogleDocument,
+  fetch,
+};
+
+let dependencies = defaultDependencies;
+
+export function __setGoogleDocumentDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 export class GoogleDocumentConflictError extends Error {
   constructor() {
     super(
@@ -32,7 +45,7 @@ async function googleJson(
   endpoint: string,
   init: RequestInit = {},
 ): Promise<Record<string, any>> {
-  const response = await fetch(endpoint, {
+  const response = await dependencies.fetch(endpoint, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -353,11 +366,11 @@ export async function publishDocumentToGoogle(input: {
 }) {
   let connectionId = input.connectionId || input.document.google?.connectionId;
   if (!connectionId) {
-    const connections = await listCloudFileConnections(input.userId);
+    const connections = await dependencies.listCloudFileConnections(input.userId);
     connectionId = connections.find((connection) => connection.provider === 'google_drive')?.connectionId;
   }
   if (!connectionId) throw new Error('Connect Google Drive before publishing this file.');
-  const access = await getCloudFileAccess({ userId: input.userId, connectionId });
+  const access = await dependencies.getCloudFileAccess({ userId: input.userId, connectionId });
   if (!access || access.connection.provider !== 'google_drive') {
     throw new Error('The selected Google Drive connection was not found.');
   }
@@ -382,7 +395,7 @@ export async function publishDocumentToGoogle(input: {
   const syncedMetadata = await googleDriveMetadata(access.accessToken, fileId);
   webUrl = syncedMetadata.webUrl || webUrl;
   const mimeType = GOOGLE_MIME[input.document.kind];
-  await linkGoogleDocument({
+  await dependencies.linkGoogleDocument({
     userId: input.userId,
     documentId: input.document.documentId,
     connectionId,

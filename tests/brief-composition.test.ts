@@ -182,6 +182,51 @@ describe('BriefComposition', () => {
     });
   });
 
+  test('retains document creation as an allowed brief action with a safe default label', () => {
+    const composition = parseBriefComposition({
+      version: 1,
+      title: 'Daily Brief',
+      services: ['albatross'],
+      blocks: [
+        {
+          type: 'needs_you',
+          title: 'Needs you',
+          items: [
+            {
+              account: 'me@example.test',
+              threadId: 'thread_1',
+              subject: 'Launch decision',
+              person: 'Alex',
+              reason: 'The review needs a written decision.',
+              sourceRefs: [{ kind: 'thread', id: 'thread_1', account: 'me@example.test' }],
+              actions: [
+                {
+                  action: 'create_document',
+                  payload: {
+                    kind: 'doc',
+                    title: 'Launch decision memo',
+                    instructions: 'Draft the launch decision memo.',
+                  },
+                },
+              ],
+            },
+          ],
+          sourceRefs: [{ kind: 'thread', id: 'thread_1', account: 'me@example.test' }],
+        },
+      ],
+    });
+    const needs = composition.blocks[0];
+
+    if (needs.type !== 'needs_you') throw new Error('missing needs-you block');
+    expect(needs.items[0].actions).toEqual([
+      expect.objectContaining({
+        action: 'create_document',
+        label: 'Create file',
+        payload: expect.objectContaining({ kind: 'doc', title: 'Launch decision memo' }),
+      }),
+    ]);
+  });
+
   test('repairs overlong model-authored lede paragraphs', () => {
     const overlong = Array.from(
       { length: 80 },
