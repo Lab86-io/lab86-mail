@@ -60,4 +60,52 @@ describe('Brief handoff hydration', () => {
       { kind: 'work', id: 'work-1', label: 'SBAR backbone' },
     ]);
   });
+
+  test('collects live refs that ground table and progress tools', () => {
+    const document: BriefDocumentV2 = {
+      version: 2,
+      title: 'Daily Brief',
+      summary: 'Grounded tools.',
+      generatedAt: Date.parse('2026-07-27T12:00:00Z'),
+      regions: [
+        {
+          id: 'tools',
+          summary: 'A table and progress path.',
+          tree: {
+            kind: 'stack',
+            emphasis: 'standard',
+            tone: 'neutral',
+            density: 'standard',
+            children: [
+              {
+                kind: 'data_table',
+                emphasis: 'standard',
+                tone: 'neutral',
+                title: 'Tasks',
+                columns: [{ key: 'task', label: 'Task', format: 'text' }],
+                rows: [{ task: 'Finish the brief' }],
+                sourceRefs: [{ kind: 'task', id: 'task-2' }],
+              },
+              {
+                kind: 'progress',
+                emphasis: 'standard',
+                tone: 'neutral',
+                title: 'Release',
+                steps: [{ id: 'ship', label: 'Ship', status: 'pending' }],
+                sourceRefs: [
+                  { kind: 'work', id: 'work-2' },
+                  { kind: 'task', id: 'task-2' },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    expect(collectBriefRefs(document)).toEqual([
+      { kind: 'task', id: 'task-2' },
+      { kind: 'work', id: 'work-2' },
+    ]);
+  });
 });

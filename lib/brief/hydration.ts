@@ -33,6 +33,8 @@ export function collectBriefRefs(document: BriefDocumentV2): BriefSourceRefV2[] 
         });
         break;
       case 'chart':
+      case 'data_table':
+      case 'progress':
         node.sourceRefs.forEach((ref) => {
           add(ref);
         });

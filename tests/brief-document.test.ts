@@ -29,6 +29,10 @@ describe('Brief Document v2', () => {
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('draft_reply is the');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('only action you may derive');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('exact thread id and');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('data_table');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('progress');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('four Xcode Cloud builds');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('never a request for artificial empty height');
   });
   test('accepts the canonical rich and quiet documents', () => {
     expect(BriefDocumentV2Schema.parse(richBriefDocumentFixture)).toEqual(richBriefDocumentFixture);
@@ -166,6 +170,60 @@ describe('Brief Document v2', () => {
     expect(tree.items[0].handoff?.recommendations).toHaveLength(4);
     expect(tree.items[0].handoff?.evidence).toHaveLength(4);
     expect(tree.items[1].handoff).toBeUndefined();
+  });
+
+  test('repairs bounded, source-backed table and progress Tool UI leaves', () => {
+    const repaired = parseBriefDocument({
+      ...quietBriefDocumentFixture,
+      regions: [
+        {
+          id: 'release',
+          summary: 'A grouped release episode.',
+          tree: {
+            kind: 'stack',
+            children: [
+              {
+                kind: 'data_table',
+                title: 'Builds',
+                columns: [
+                  { key: 'build', label: 'Build', format: 'number' },
+                  { key: 'build', label: 'Duplicate', format: 'text' },
+                  { key: 'state', label: 'State', format: 'status' },
+                ],
+                rows: [
+                  { build: 84, state: 'ready', ignored: { unsafe: true } },
+                  { build: Number.POSITIVE_INFINITY, state: 'processing' },
+                ],
+                sourceRefs: [{ kind: 'mcp', id: 'xcode-builds' }],
+              },
+              {
+                kind: 'progress',
+                title: 'Release path',
+                steps: [
+                  { id: 'build', label: 'Build', status: 'completed' },
+                  { id: 'build', label: 'TestFlight', status: 'moving' },
+                ],
+                sourceRefs: [{ kind: 'mcp', id: 'release-path' }],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const tree = repaired.regions[0].tree;
+    expect(tree.kind).toBe('stack');
+    if (tree.kind !== 'stack') throw new Error('Expected stack');
+    const [table, progress] = tree.children;
+    expect(table?.kind).toBe('data_table');
+    expect(progress?.kind).toBe('progress');
+    if (table?.kind !== 'data_table' || progress?.kind !== 'progress') {
+      throw new Error('Expected Tool UI leaves');
+    }
+    expect(table.columns.map((column) => column.key)).toEqual(['build', 'state']);
+    expect(table.rows[0]).toEqual({ build: 84, state: 'ready' });
+    expect(table.rows[1]).toEqual({ build: null, state: 'processing' });
+    expect(progress.steps.map((step) => step.id)).toEqual(['build', 'build-2']);
+    expect(progress.steps[1]?.status).toBe('pending');
   });
 });
 

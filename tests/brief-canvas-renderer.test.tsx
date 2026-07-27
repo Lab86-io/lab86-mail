@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { BriefCanvas } from '../components/report/brief-canvas/BriefCanvas';
+import { BriefCanvas, briefGridRowSpan } from '../components/report/brief-canvas/BriefCanvas';
 import { type BriefNodeContext, BriefNodeView } from '../components/report/brief-canvas/BriefNodeView';
 import { briefRefKey } from '../lib/brief/hydration';
 import type {
@@ -64,13 +64,23 @@ describe('BriefCanvas degradation', () => {
     expect(html).not.toContain('font-serif');
   });
 
-  test('regions use a responsive editorial grid with bounded feature spans', () => {
+  test('regions use a responsive packed editorial grid without fixed feature height', () => {
     const html = render(richBriefDocumentFixture);
     expect(html).toContain('@[840px]:grid-cols-2');
     expect(html).toContain('@[1200px]:grid-cols-3');
     expect(html).toContain('@[840px]:col-span-2');
-    expect(html).toContain('@[840px]:row-span-2');
-    expect(html).toContain('@container mb-6');
+    expect(html).toContain('data-brief-editorial-grid');
+    expect(html).toContain('data-brief-story-card');
+    expect(html).not.toContain('@[840px]:row-span-2');
+    expect(html).not.toContain('min-h-[420px]');
+  });
+
+  test('packed row spans follow actual measured height', () => {
+    expect(briefGridRowSpan(0)).toBe(1);
+    expect(briefGridRowSpan(8)).toBe(1);
+    expect(briefGridRowSpan(9)).toBe(2);
+    expect(briefGridRowSpan(420)).toBe(53);
+    expect(briefGridRowSpan(Number.NaN)).toBe(1);
   });
 
   test('flattened stacks preserve their density and parent presentation', () => {
@@ -129,9 +139,11 @@ describe('BriefCanvas degradation', () => {
     };
 
     const html = render(document);
-    expect(html).toContain('@container mb-6 brief-emphasis-primary border-amber-500/30');
-    expect(html).toContain('@container mb-4');
-    expect(html).toContain('@container mb-2.5 opacity-75 border-destructive/35');
+    expect(html).toContain('brief-emphasis-primary border-amber-500/30');
+    expect(html).toContain('pb-6');
+    expect(html).toContain('pb-4');
+    expect(html).toContain('pb-2.5');
+    expect(html).toContain('opacity-75 border-destructive/35');
   });
 
   test('the three voices and the depth ladder reach the rendered document', () => {
@@ -139,9 +151,75 @@ describe('BriefCanvas degradation', () => {
     // Editorial voice on kickers, highlight voice on lanes/badges/deltas.
     expect(html).toContain('--color-accent-2');
     expect(html).toContain('--color-accent-3');
-    // The elevated hero climbs to the float rung; cards sit on the card rung.
+    // Every top-level story climbs to the shared float rung; nested cards keep
+    // the ordinary card rung.
     expect(html).toContain('--color-surface-float');
     expect(html).toContain('--color-bg-elevated');
+    expect(html.match(/data-brief-story-card/g)?.length).toBeGreaterThan(2);
+  });
+
+  test('renders grounded table and progress leaves through Tool UI', () => {
+    const document: BriefDocumentV2 = {
+      version: 2,
+      title: 'Release brief',
+      summary: 'One release episode.',
+      generatedAt: 1_790_000_000_000,
+      regions: [
+        {
+          id: 'release',
+          summary: 'Builds and release progress.',
+          tree: {
+            kind: 'stack',
+            emphasis: 'standard',
+            tone: 'neutral',
+            density: 'standard',
+            children: [
+              {
+                kind: 'data_table',
+                emphasis: 'primary',
+                tone: 'neutral',
+                footprint: 'wide',
+                title: 'Xcode Cloud builds',
+                columns: [
+                  { key: 'build', label: 'Build', format: 'number' },
+                  { key: 'state', label: 'State', format: 'status' },
+                ],
+                rows: [
+                  { build: 84, state: 'ready' },
+                  { build: 85, state: 'processing' },
+                ],
+                sourceRefs: [{ kind: 'mcp', id: 'xcode-builds' }],
+              },
+              {
+                kind: 'progress',
+                emphasis: 'standard',
+                tone: 'positive',
+                title: 'Release path',
+                steps: [
+                  { id: 'archive', label: 'Archive', status: 'completed' },
+                  { id: 'testflight', label: 'TestFlight', status: 'in-progress' },
+                ],
+                sourceRefs: [{ kind: 'mcp', id: 'xcode-release' }],
+              },
+              {
+                kind: 'stat',
+                emphasis: 'standard',
+                tone: 'neutral',
+                label: 'Builds',
+                value: 2,
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const html = render(document);
+    expect(html).toContain('data-slot="data-table"');
+    expect(html).toContain('Xcode Cloud builds');
+    expect(html).toContain('data-slot="progress-tracker"');
+    expect(html).toContain('Release path');
+    expect(html).toContain('data-slot="stats-display"');
   });
 
   test('the masthead title is bold and carries the editorial accent', () => {

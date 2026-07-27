@@ -2,7 +2,15 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
@@ -16,10 +24,18 @@ import {
 } from '@/lib/shared/brief-document';
 import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { safeExternalUrl } from '@/lib/shared/url';
+import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
 import { BriefMasthead } from './BriefMasthead';
 import { type BriefNodeContext, BriefNodeView, briefNodePresentationClass } from './BriefNodeView';
 import type { BriefActionPayload } from './brief-action-runtime';
+
+const BRIEF_GRID_ROW_PX = 8;
+
+export function briefGridRowSpan(height: number, rowHeight = BRIEF_GRID_ROW_PX) {
+  if (!Number.isFinite(height) || height <= 0 || !Number.isFinite(rowHeight) || rowHeight <= 0) return 1;
+  return Math.max(1, Math.ceil(height / rowHeight));
+}
 
 export function BriefCanvas({
   value,
@@ -254,23 +270,37 @@ export function BriefCanvas({
           </time>
         )}
       </header>
-      {/* Editorial grid: phone widths remain a single reading column; roomy
-          panes let authored wide/feature concepts claim a bounded 2×1 or 2×2
-          footprint. Each unit retains its own container-query context. */}
-      <div className="mx-auto grid max-w-[1760px] grid-cols-1 gap-x-9 @[840px]:grid-cols-2 @[1200px]:grid-cols-3">
+      {/* Editorial masonry keeps the authored reading order while measuring
+          each story's real height. Wide concepts claim horizontal room, not
+          a fixed vertical rectangle that leaves an empty hole beside them. */}
+      <BriefEditorialGrid>
         {document.regions.map((region) => (
           <section key={region.id} data-brief-region={region.id} className="contents">
             {columnBlocks(region.tree).map((block, index) => (
-              <div
+              <BriefEditorialGridItem
                 key={block.node.id ?? `${block.node.kind}-${index}`}
-                className={`@container ${block.wrapperClass}`}
+                className={cn('@container', block.wrapperClass)}
+                spacing={block.spacing}
               >
-                <BriefNodeView node={block.node} context={context} regionSummary={region.summary} />
-              </div>
+                <div
+                  data-brief-story-card
+                  className={cn(
+                    'min-w-0 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
+                    block.cardClass,
+                  )}
+                >
+                  <BriefNodeView
+                    node={block.node}
+                    context={context}
+                    regionSummary={region.summary}
+                    topLevel
+                  />
+                </div>
+              </BriefEditorialGridItem>
             ))}
           </section>
         ))}
-      </div>
+      </BriefEditorialGrid>
       {footer}
       {canvasReview ? (
         <div className="sticky bottom-3 z-20 mx-auto mt-4 flex max-w-xl items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 p-3 shadow-[var(--shadow-pop)] backdrop-blur">
@@ -521,25 +551,91 @@ function payloadRefKey(payload: BriefActionPayload) {
   return '';
 }
 
-/* Column units for the newspaper layout: region roots that are plain stacks
- * flatten so the columns balance at block granularity instead of treating a
- * whole region as one unbreakable slab. */
-function columnBlocks(tree: BriefNode): Array<{ node: BriefNode; wrapperClass: string }> {
+function BriefEditorialGrid({ children }: { children: ReactNode }) {
+  const [packed, setPacked] = useState(false);
+  useLayoutEffect(() => setPacked(true), []);
+
+  return (
+    <div
+      data-brief-editorial-grid
+      data-packed={packed ? 'true' : 'false'}
+      className={cn(
+        'mx-auto grid max-w-[1760px] grid-cols-1 gap-x-9 @[840px]:grid-cols-2 @[1200px]:grid-cols-3',
+        packed ? 'grid-flow-dense auto-rows-[8px] gap-y-0' : 'gap-y-6',
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function BriefEditorialGridItem({
+  children,
+  className,
+  spacing,
+}: {
+  children: ReactNode;
+  className?: string;
+  spacing: 'airy' | 'standard' | 'dense';
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [rowSpan, setRowSpan] = useState<number>();
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const measure = () => {
+      const next = briefGridRowSpan(content.getBoundingClientRect().height);
+      setRowSpan((current) => (current === next ? current : next));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
+  const style = rowSpan ? ({ gridRowEnd: `span ${rowSpan}` } satisfies CSSProperties) : undefined;
+  return (
+    <div className={className} style={style} data-brief-grid-span={rowSpan}>
+      <div
+        ref={contentRef}
+        className={cn(spacing === 'airy' ? 'pb-6' : spacing === 'dense' ? 'pb-2.5' : 'pb-4')}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Region roots that are plain stacks flatten so the packed grid can balance
+ * at story granularity instead of treating a whole region as one slab. */
+function columnBlocks(tree: BriefNode): Array<{
+  node: BriefNode;
+  wrapperClass: string;
+  cardClass: string;
+  spacing: 'airy' | 'standard' | 'dense';
+}> {
   if (tree.kind === 'stack' && tree.children.length) {
-    const spacing = tree.density === 'airy' ? 'mb-6' : tree.density === 'dense' ? 'mb-2.5' : 'mb-4';
-    const presentation = briefNodePresentationClass(tree);
     return tree.children.map((node) => ({
       node,
-      wrapperClass: [spacing, presentation, footprintClass(node)].filter(Boolean).join(' '),
+      wrapperClass: footprintClass(node),
+      cardClass: cn(briefNodePresentationClass(tree), briefNodePresentationClass(node)),
+      spacing: tree.density,
     }));
   }
-  return [{ node: tree, wrapperClass: ['mb-6', footprintClass(tree)].filter(Boolean).join(' ') }];
+  return [
+    {
+      node: tree,
+      wrapperClass: footprintClass(tree),
+      cardClass: briefNodePresentationClass(tree),
+      spacing: 'airy',
+    },
+  ];
 }
 
 function footprintClass(node: BriefNode): string {
-  if (node.footprint === 'feature') {
-    return '@[840px]:col-span-2 @[840px]:row-span-2 @[840px]:min-h-[420px] [&>*]:h-full';
-  }
+  if (node.footprint === 'feature') return '@[840px]:col-span-2';
   if (node.footprint === 'wide') return '@[840px]:col-span-2';
   return '';
 }
