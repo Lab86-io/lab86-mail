@@ -532,7 +532,9 @@ private struct NativeDeckEditor: View {
                                     .overlay {
                                         RoundedRectangle(cornerRadius: 5)
                                             .stroke(
-                                                slide.id == activeSlideID ? Color.accentColor : .quaternary,
+                                                slide.id == activeSlideID
+                                                    ? Color.accentColor
+                                                    : Color.secondary.opacity(0.25),
                                                 lineWidth: slide.id == activeSlideID ? 2 : 1
                                             )
                                     }
