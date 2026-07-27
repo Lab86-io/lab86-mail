@@ -30,6 +30,7 @@ describe('cloud file provider contracts', () => {
     expect(url.searchParams.get('scope')).toContain('/auth/documents');
     expect(url.searchParams.get('scope')).toContain('/auth/spreadsheets');
     expect(url.searchParams.get('scope')).toContain('/auth/presentations');
+    expect(url.searchParams.has('include_granted_scopes')).toBe(false);
   });
 
   test('OneDrive authorization asks for delegated read/write access', () => {

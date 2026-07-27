@@ -100,7 +100,6 @@ export function buildCloudFileAuthorizationUrl(input: {
   url.searchParams.set('scope', definition.scopes.join(' '));
   if (input.provider === 'google_drive') {
     url.searchParams.set('access_type', 'offline');
-    url.searchParams.set('include_granted_scopes', 'true');
     url.searchParams.set('prompt', 'consent');
   } else {
     url.searchParams.set('response_mode', 'query');
