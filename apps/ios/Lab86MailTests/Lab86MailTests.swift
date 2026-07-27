@@ -859,7 +859,7 @@ struct Lab86MailTests {
 
     @Test @MainActor
     func typedRoutesRespectTheVisibleHierarchyAndPreserveAreaContext() {
-        #expect(PrimaryTab.sourceList == [.today, .tasks, .calendar, .work, .files])
+        #expect(PrimaryTab.sourceList == [.today, .tasks, .calendar, .files, .work])
         #expect(!PrimaryTab.sourceList.contains(.mail))
         #expect(PrimaryTab.today.title == "Brief")
         #expect(PrimaryTab.work.title == "Areas")

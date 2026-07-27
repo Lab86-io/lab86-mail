@@ -40,7 +40,9 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    static let sourceList: [PrimaryTab] = [.today, .tasks, .calendar, .work, .files]
+    // Files belongs with the personal productivity destinations. Areas stays
+    // last as the handoff into the user's contextual workspace hierarchy.
+    static let sourceList: [PrimaryTab] = [.today, .tasks, .calendar, .files, .work]
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {
