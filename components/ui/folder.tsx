@@ -26,7 +26,7 @@ const FolderIcon = forwardRef<FolderIconHandle, FolderIconProps>(
         startAnimation: () => controls.start('animate'),
         stopAnimation: () => controls.start('normal'),
       };
-    });
+    }, [controls]);
 
     const handleMouseEnter = useCallback(
       (event: React.MouseEvent<HTMLDivElement>) => {

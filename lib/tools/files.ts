@@ -1,12 +1,7 @@
 import { z } from 'zod';
 import { GOOGLE_NATIVE_MIME_TYPES, importGoogleNativeFile } from '@/lib/documents/google-import';
 import { DOCUMENT_KINDS } from '@/lib/documents/model';
-import {
-  archiveDocument,
-  createDocument,
-  findDocumentByGoogleFile,
-  linkGoogleDocument,
-} from '@/lib/documents/service';
+import { createAndLinkGoogleDocument, findDocumentByGoogleFile } from '@/lib/documents/service';
 import { browseCloudFiles } from '@/lib/files/browse';
 import { listCloudFileConnections } from '@/lib/files/connections';
 import { defineTool } from './registry';
@@ -19,12 +14,10 @@ function requireUserId(userId: string | null | undefined) {
 const nativeMimeSchema = z.enum(GOOGLE_NATIVE_MIME_TYPES);
 
 const defaultDependencies = {
-  archiveDocument,
   browseCloudFiles,
-  createDocument,
+  createAndLinkGoogleDocument,
   findDocumentByGoogleFile,
   importGoogleNativeFile,
-  linkGoogleDocument,
   listCloudFileConnections,
 };
 
@@ -162,7 +155,7 @@ export const googleFileImport = defineTool({
       mimeType: args.mimeType,
     });
     const webUrl = imported.webUrl || args.webUrl;
-    const document = await dependencies.createDocument({
+    const { document, linked } = await dependencies.createAndLinkGoogleDocument({
       userId,
       kind: imported.kind,
       title: imported.title,
@@ -176,23 +169,13 @@ export const googleFileImport = defineTool({
         },
       ],
       reason: 'google_import',
+      connectionId: args.connectionId,
+      fileId: args.fileId,
+      mimeType: args.mimeType,
+      webUrl,
+      providerVersion: imported.providerVersion,
     });
-    try {
-      const linked = await dependencies.linkGoogleDocument({
-        userId,
-        documentId: document.documentId,
-        connectionId: args.connectionId,
-        fileId: args.fileId,
-        mimeType: args.mimeType,
-        webUrl,
-        providerVersion: imported.providerVersion,
-        syncedRevision: document.currentRevision,
-      });
-      if (!linked.ok) throw new Error('The imported Google file is already linked.');
-    } catch (error) {
-      await dependencies.archiveDocument(userId, document.documentId).catch(() => undefined);
-      throw error;
-    }
+    if (!linked.ok) throw new Error('The imported Google file is already linked.');
     return {
       ok: true,
       documentId: document.documentId,

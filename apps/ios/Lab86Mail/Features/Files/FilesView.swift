@@ -268,8 +268,7 @@ struct FilesView: View {
 
     private func create(_ kind: AlbatrossDocumentKind) async {
         do {
-            let document = try await store.create(kind: kind)
-            environment.navigation.openDocument(id: document.id)
+            try await environment.createAndOpenDocument(kind: kind)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -317,6 +316,8 @@ struct FilesView: View {
                                         query: searchQuery
                                     )
                                 )
+                            } catch is CancellationError {
+                                return .cancelled
                             } catch {
                                 return .failure(connection.label, error.localizedDescription)
                             }
@@ -326,6 +327,7 @@ struct FilesView: View {
                     for await outcome in group { collected.append(outcome) }
                     return collected
                 }
+                guard !Task.isCancelled else { return }
                 cloudItems = outcomes
                     .compactMap { outcome -> (Int, [CloudFileItem])? in
                         if case .success(let index, let items) = outcome { return (index, items) }
@@ -385,9 +387,15 @@ struct FilesView: View {
         do {
             let urls = try result.get()
             let selected = Array(urls.prefix(5))
-            let metadata = try selected.map { url in
-                let values = try localFileMetadata(url)
-                return (url: url, size: values.size, contentType: values.contentType)
+            var metadata: [(url: URL, size: Int, contentType: String)] = []
+            var failures: [String] = []
+            for url in selected {
+                do {
+                    let values = try localFileMetadata(url)
+                    metadata.append((url: url, size: values.size, contentType: values.contentType))
+                } catch {
+                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                }
             }
             let totalBytes = metadata.reduce(0) { $0 + $1.size }
             guard totalBytes <= 25 * 1_024 * 1_024 else {
@@ -397,7 +405,6 @@ struct FilesView: View {
                 )
             }
             var uploaded = 0
-            var failures: [String] = []
             for file in metadata {
                 do {
                     try await uploadLocalFile(file.url, contentType: file.contentType)
@@ -492,6 +499,7 @@ private struct CloudFolderRoute: Hashable {
 private enum CloudBrowseOutcome: Sendable {
     case success(Int, [CloudFileItem])
     case failure(String, String)
+    case cancelled
 }
 
 private struct LocationChip: View {

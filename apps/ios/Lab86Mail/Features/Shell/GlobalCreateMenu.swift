@@ -26,8 +26,7 @@ struct GlobalCreateMenu<MenuLabel: View>: View {
                 Button("New \(kind.title.lowercased())", systemImage: kind.symbol) {
                     Task {
                         do {
-                            let document = try await environment.documents.create(kind: kind)
-                            environment.navigation.openDocument(id: document.id)
+                            try await environment.createAndOpenDocument(kind: kind)
                         } catch {
                             errorMessage = error.localizedDescription
                         }

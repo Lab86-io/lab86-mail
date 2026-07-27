@@ -116,6 +116,7 @@ verify_aasa() {
   local url="$1"
   local label="$2"
   local source
+  local errors="$inspection_root/aasa-errors"
 
   if ! source="$(curl \
       --fail \
@@ -127,8 +128,8 @@ verify_aasa() {
       --retry 3 \
       --retry-all-errors \
       --retry-delay 2 \
-      "$url" 2>&1)"; then
-    echo "$label could not be fetched: $source" >&2
+      "$url" 2>"$errors")"; then
+    echo "$label could not be fetched: $(<"$errors")" >&2
     echo "Register App ID Prefix $team_id and Bundle ID $bundle_id in Clerk Native applications." >&2
     exit 1
   fi

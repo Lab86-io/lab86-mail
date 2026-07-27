@@ -143,6 +143,11 @@ final class AppEnvironment {
         navigation.selectPrimary(.chat)
     }
 
+    func createAndOpenDocument(kind: AlbatrossDocumentKind) async throws {
+        let document = try await documents.create(kind: kind)
+        navigation.openDocument(id: document.id)
+    }
+
     func flushCommandOutbox(ownerID: String?) async -> Bool {
         guard let ownerID else { return true }
         guard let outboxProcessor else { return false }

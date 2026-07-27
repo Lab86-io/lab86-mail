@@ -187,3 +187,60 @@ export async function linkGoogleDocument(input: {
     google?: AlbatrossDocumentRecord['google'];
   }>(documentsApi.linkGoogleFile, input);
 }
+
+export async function createAndLinkGoogleDocument(input: {
+  userId: string;
+  kind: DocumentKind;
+  title: string;
+  model: unknown;
+  sourceRefs: DocumentSourceRef[];
+  reason: string;
+  connectionId: string;
+  fileId: string;
+  mimeType: string;
+  webUrl?: string;
+  providerVersion?: string;
+}) {
+  const document = await createDocument({
+    userId: input.userId,
+    kind: input.kind,
+    title: input.title,
+    model: input.model,
+    sourceRefs: input.sourceRefs,
+    reason: input.reason,
+  });
+  try {
+    const linked = await linkGoogleDocument({
+      userId: input.userId,
+      documentId: document.documentId,
+      connectionId: input.connectionId,
+      fileId: input.fileId,
+      mimeType: input.mimeType,
+      webUrl: input.webUrl,
+      providerVersion: input.providerVersion,
+      syncedRevision: document.currentRevision,
+    });
+    if (!linked.ok) {
+      await archiveOrphanedGoogleImport(input.userId, document.documentId);
+    }
+    return { document, linked };
+  } catch (error) {
+    await archiveOrphanedGoogleImport(input.userId, document.documentId);
+    throw error;
+  }
+}
+
+async function archiveOrphanedGoogleImport(userId: string, documentId: string) {
+  try {
+    const archived = await archiveDocument(userId, documentId);
+    if (!archived.ok) {
+      console.warn(
+        '[google-file-import] failed to archive orphaned document',
+        documentId,
+        'archive returned ok:false',
+      );
+    }
+  } catch (error) {
+    console.warn('[google-file-import] failed to archive orphaned document', documentId, error);
+  }
+}

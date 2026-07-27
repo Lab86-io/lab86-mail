@@ -63,7 +63,7 @@ export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1
       text,
     );
   const hasCreationIntent =
-    /\b(create|prepare|build|draft|write|assemble|produce|author|compose|develop|generate|model|outline)\b/iu.test(
+    /\b(create|prepare|build|draft|write|assemble|produce|author|compose|develop|generate|outline)\b/iu.test(
       text,
     ) || /\b(?:turn|convert)\b.{0,120}\b(?:into|to)\b/iu.test(text);
   if (!hasDeliverable || !hasCreationIntent) return record;

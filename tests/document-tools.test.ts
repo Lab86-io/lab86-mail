@@ -357,8 +357,8 @@ describe('cloud file tools', () => {
       revision: 2,
     });
 
-    const create = mock(async (input: any) =>
-      record({
+    const createAndLink = mock(async (input: any) => ({
+      document: record({
         documentId: 'imported-document',
         kind: input.kind,
         title: input.title,
@@ -366,10 +366,10 @@ describe('cloud file tools', () => {
         currentRevision: 1,
         sourceRefs: input.sourceRefs,
       }),
-    );
-    const link = mock(async () => ({ ok: true }));
+      linked: { ok: true },
+    }));
     __setCloudFileToolDepsForTest({
-      createDocument: create as any,
+      createAndLinkGoogleDocument: createAndLink as any,
       findDocumentByGoogleFile: (async () => null) as any,
       importGoogleNativeFile: (async () => ({
         kind: 'sheet',
@@ -378,7 +378,6 @@ describe('cloud file tools', () => {
         webUrl: 'https://docs.google.com/spreadsheets/d/new/edit',
         providerVersion: '8',
       })) as any,
-      linkGoogleDocument: link as any,
     });
     const imported = await runTool(googleFileImport.handler, {
       connectionId: 'google-1',
@@ -392,26 +391,27 @@ describe('cloud file tools', () => {
       existing: false,
       revision: 1,
     });
-    expect(create.mock.calls[0][0].sourceRefs[0]).toMatchObject({
+    expect(createAndLink.mock.calls[0][0].sourceRefs[0]).toMatchObject({
       kind: 'google_drive',
       id: 'new-file',
     });
-    expect(link.mock.calls[0][0]).toMatchObject({
+    expect(createAndLink.mock.calls[0][0]).toMatchObject({
       providerVersion: '8',
-      syncedRevision: 1,
+      connectionId: 'google-1',
+      fileId: 'new-file',
     });
   });
 
-  test('archives a new Google import if the canonical provider link cannot be committed', async () => {
-    const archive = mock(async () => undefined);
+  test('rejects a new Google import if the canonical provider link cannot be committed', async () => {
     __setCloudFileToolDepsForTest({
-      archiveDocument: archive as any,
-      createDocument: (async () =>
-        record({
+      createAndLinkGoogleDocument: (async () => ({
+        document: record({
           documentId: 'orphan-candidate',
           currentRevision: 1,
           sourceRefs: [],
-        })) as any,
+        }),
+        linked: { ok: false, code: 'ALREADY_LINKED' },
+      })) as any,
       findDocumentByGoogleFile: (async () => null) as any,
       importGoogleNativeFile: (async () => ({
         kind: 'doc',
@@ -419,7 +419,6 @@ describe('cloud file tools', () => {
         model: createDefaultDocumentModel('doc'),
         providerVersion: '4',
       })) as any,
-      linkGoogleDocument: (async () => ({ ok: false, code: 'ALREADY_LINKED' })) as any,
     });
 
     await expect(
@@ -430,6 +429,5 @@ describe('cloud file tools', () => {
         webUrl: undefined,
       }),
     ).rejects.toThrow('already linked');
-    expect(archive).toHaveBeenCalledWith('test_user_tools', 'orphan-candidate');
   });
 });

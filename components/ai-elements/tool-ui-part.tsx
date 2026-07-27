@@ -151,6 +151,20 @@ export interface DraftOpenRequest {
   body?: string;
 }
 
+export function resolveInternalOpenPath(
+  value: unknown,
+  origin = typeof window === 'undefined' ? 'https://albatross.invalid' : window.location.origin,
+) {
+  if (typeof value !== 'string' || !value.startsWith('/')) return null;
+  try {
+    const resolved = new URL(value, origin);
+    if (resolved.origin !== origin) return null;
+    return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 // Renders one successful display-tool output. Returns null for anything it
 // cannot render — the caller falls back to the quiet activity row.
 export function ToolUiDisplayPart({
@@ -164,12 +178,7 @@ export function ToolUiDisplayPart({
   onOpenDraft?: (draft: DraftOpenRequest) => void;
   onOpenThread?: (target: { account: string; threadId: string }) => void;
 }) {
-  const internalOpenPath =
-    typeof output?.openPath === 'string' &&
-    output.openPath.startsWith('/') &&
-    !output.openPath.startsWith('//')
-      ? output.openPath
-      : null;
+  const internalOpenPath = resolveInternalOpenPath(output?.openPath);
   if (
     output?.ok &&
     [

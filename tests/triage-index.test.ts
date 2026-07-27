@@ -199,6 +199,12 @@ describe('canonical SBAR triage index', () => {
       assessment: 'The existing report is ready to share.',
     });
     expect(usageOnly.actions.some((action) => action.action === 'create_document')).toBe(false);
+    const existingFinancialModel = withDocumentSuggestion({
+      ...base,
+      recommendation: 'Share the financial model with the review group.',
+      assessment: 'The existing workbook is ready to use.',
+    });
+    expect(existingFinancialModel.actions.some((action) => action.action === 'create_document')).toBe(false);
 
     const full = withDocumentSuggestion({
       ...base,

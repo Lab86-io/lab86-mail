@@ -31,8 +31,9 @@ struct DocumentEditorView: View {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
                     Task {
-                        await saveNow()
-                        environment.navigation.documentRoute = nil
+                        if await saveNow() {
+                            environment.navigation.documentRoute = nil
+                        }
                     }
                 } label: {
                     Label("Files", systemImage: "chevron.left")
@@ -177,12 +178,13 @@ struct DocumentEditorView: View {
         }
     }
 
-    private func saveNow() async {
+    @discardableResult
+    private func saveNow() async -> Bool {
         saveTask?.cancel()
-        guard let draft, draft != persisted else { return }
+        guard let draft, draft != persisted else { return true }
         if isSaving {
             saveQueued = true
-            return
+            return false
         }
         let savingDraft = draft
         isSaving = true
@@ -206,26 +208,31 @@ struct DocumentEditorView: View {
                 self.draft = latest
                 saveQueued = true
             }
+            return self.draft == persisted
         } catch {
             errorMessage = error.localizedDescription
-            if let fresh = try? await environment.documents.fetchDocument(id: documentID) {
-                persisted = fresh
-                if self.draft == savingDraft {
-                    self.draft = fresh
-                } else if var latest = self.draft {
-                    latest.revision = fresh.revision
-                    latest.google = fresh.google
-                    latest.suggestions = fresh.suggestions
-                    latest.updatedAt = fresh.updatedAt
-                    self.draft = latest
-                    saveQueued = true
-                }
+            guard isRevisionConflict(error),
+                  let fresh = try? await environment.documents.fetchDocument(id: documentID) else {
+                saveQueued = true
+                return false
             }
+            persisted = fresh
+            if self.draft == savingDraft {
+                self.draft = fresh
+            } else if var latest = self.draft {
+                latest.revision = fresh.revision
+                latest.google = fresh.google
+                latest.suggestions = fresh.suggestions
+                latest.updatedAt = fresh.updatedAt
+                self.draft = latest
+                saveQueued = true
+            }
+            return false
         }
     }
 
     private func publish() async {
-        await saveNow()
+        guard await saveNow() else { return }
         isPublishing = true
         defer { isPublishing = false }
         do {
@@ -252,7 +259,7 @@ struct DocumentEditorView: View {
     }
 
     private func export() async {
-        await saveNow()
+        guard await saveNow() else { return }
         guard let draft else { return }
         do {
             shareURL = try await environment.documents.export(document: draft)
@@ -262,7 +269,7 @@ struct DocumentEditorView: View {
     }
 
     private func pullGoogle() async {
-        await saveNow()
+        guard await saveNow() else { return }
         guard let draft else { return }
         isPublishing = true
         defer { isPublishing = false }
@@ -273,6 +280,14 @@ struct DocumentEditorView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func isRevisionConflict(_ error: Error) -> Bool {
+        guard let backendError = error as? BackendError else { return false }
+        if case .server(let status, _) = backendError {
+            return status == 409
+        }
+        return false
     }
 
     private func kindTint(_ kind: AlbatrossDocumentKind) -> Color {

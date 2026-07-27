@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import {
   __setDocumentAiDepsForTest,
   DocumentGenerationError,
@@ -20,6 +20,7 @@ import {
   __setDocumentServiceDepsForTest,
   applyDocumentSuggestion,
   archiveDocument,
+  createAndLinkGoogleDocument,
   createDocument,
   createDocumentSuggestion,
   findDocumentByGoogleFile,
@@ -29,6 +30,9 @@ import {
   resolveDocumentSuggestion,
   updateDocument,
 } from '../lib/documents/service';
+import { api } from '../lib/hosted/convex';
+
+const documentsApi = (api as any).documents;
 
 function documentRecord(
   kind: DocumentKind,
@@ -262,7 +266,64 @@ describe('document persistence service', () => {
       mimeType: 'application/vnd.google-apps.document',
       syncedRevision: 4,
     });
-    expect(mutation).toHaveBeenCalledTimes(7);
+    expect(mutation.mock.calls.map(([reference]) => reference)).toEqual([
+      documentsApi.update,
+      documentsApi.update,
+      documentsApi.update,
+      documentsApi.createSuggestion,
+      documentsApi.archive,
+      documentsApi.resolveSuggestion,
+      documentsApi.linkGoogleFile,
+    ]);
+  });
+
+  test('archives a newly created Google import and reports failed compensation', async () => {
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    const document = documentRecord('doc');
+    const mutation = mock(async (_reference: unknown, input: any) => {
+      if (input.kind && input.model && input.sourceRefs) {
+        return { ...document, documentId: input.documentId, currentRevision: 1 };
+      }
+      if (input.connectionId && input.fileId) {
+        return { ok: false, code: 'ALREADY_LINKED', documentId: 'canonical-document' };
+      }
+      if (input.userId && input.documentId) throw new Error('archive unavailable');
+      throw new Error('Unexpected mutation.');
+    });
+    __setDocumentServiceDepsForTest({
+      convexMutation: mutation as any,
+      randomUUID: (() => 'orphan-document') as any,
+    });
+
+    const result = await createAndLinkGoogleDocument({
+      userId: 'user-1',
+      kind: 'doc',
+      title: 'Imported document',
+      model: document.model,
+      sourceRefs: [{ kind: 'google_drive', id: 'file-1' }],
+      reason: 'google_import',
+      connectionId: 'google-1',
+      fileId: 'file-1',
+      mimeType: 'application/vnd.google-apps.document',
+      providerVersion: '4',
+    });
+
+    expect(result.linked).toMatchObject({
+      ok: false,
+      code: 'ALREADY_LINKED',
+      documentId: 'canonical-document',
+    });
+    expect(mutation.mock.calls.map(([reference]) => reference)).toEqual([
+      documentsApi.create,
+      documentsApi.linkGoogleFile,
+      documentsApi.archive,
+    ]);
+    expect(warning).toHaveBeenCalledWith(
+      '[google-file-import] failed to archive orphaned document',
+      'orphan-document',
+      expect.any(Error),
+    );
+    warning.mockRestore();
   });
 
   test('returns null for a missing document and provider file', async () => {

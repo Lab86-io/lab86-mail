@@ -4,8 +4,7 @@ import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { GOOGLE_NATIVE_MIME, importGoogleNativeFile } from '@/lib/documents/google-import';
 import type { AlbatrossDocumentRecord } from '@/lib/documents/model';
 import {
-  archiveDocument,
-  createDocument,
+  createAndLinkGoogleDocument,
   findDocumentByGoogleFile,
   linkGoogleDocument,
   updateDocument,
@@ -61,6 +60,7 @@ export async function POST(req: NextRequest) {
       },
     ];
     let document: AlbatrossDocumentRecord;
+    let linked: Awaited<ReturnType<typeof linkGoogleDocument>>;
     if (existing) {
       const refreshed = await updateDocument({
         userId: user.userId,
@@ -79,30 +79,34 @@ export async function POST(req: NextRequest) {
         );
       }
       document = refreshed.document;
+      linked = await linkGoogleDocument({
+        userId: user.userId,
+        documentId: document.documentId,
+        connectionId: input.connectionId,
+        fileId: input.fileId,
+        mimeType: input.mimeType,
+        webUrl: imported.webUrl || input.webUrl,
+        providerVersion: imported.providerVersion,
+        syncedRevision: document.currentRevision,
+      });
     } else {
-      document = await createDocument({
+      const created = await createAndLinkGoogleDocument({
         userId: user.userId,
         kind: imported.kind,
         title: imported.title,
         model: imported.model,
         sourceRefs,
         reason: 'google_import',
+        connectionId: input.connectionId,
+        fileId: input.fileId,
+        mimeType: input.mimeType,
+        webUrl: imported.webUrl || input.webUrl,
+        providerVersion: imported.providerVersion,
       });
+      document = created.document;
+      linked = created.linked;
     }
-    const linked = await linkGoogleDocument({
-      userId: user.userId,
-      documentId: document.documentId,
-      connectionId: input.connectionId,
-      fileId: input.fileId,
-      mimeType: input.mimeType,
-      webUrl: imported.webUrl || input.webUrl,
-      providerVersion: imported.providerVersion,
-      syncedRevision: document.currentRevision,
-    });
     if (!linked.ok) {
-      if (!existing) {
-        await archiveDocument(user.userId, document.documentId).catch(() => undefined);
-      }
       return NextResponse.json(
         {
           ok: false,
