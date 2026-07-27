@@ -6,6 +6,7 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     case tasks
     case calendar
     case work
+    case files
     // Mail is intentionally not a peer in the visible source list. It remains
     // a routable root for Siri, search, notifications, and unfiled mail.
     case mail
@@ -22,6 +23,7 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .calendar: "Calendar"
         case .tasks: "Tasks"
         case .work: "Areas"
+        case .files: "Files"
         case .chat: "Chat"
         }
     }
@@ -33,11 +35,14 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .calendar: "calendar"
         case .tasks: "checklist"
         case .work: "square.stack.3d.up"
+        case .files: "folder"
         case .chat: "bubble"
         }
     }
 
-    static let sourceList: [PrimaryTab] = [.today, .tasks, .calendar, .work]
+    // Files belongs with the personal productivity destinations. Areas stays
+    // last as the handoff into the user's contextual workspace hierarchy.
+    static let sourceList: [PrimaryTab] = [.today, .tasks, .calendar, .files, .work]
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {
@@ -95,6 +100,11 @@ struct ProjectRoute: Identifiable, Hashable, Sendable {
     var id: String { project.id }
 }
 
+struct DocumentRoute: Identifiable, Hashable, Sendable {
+    let documentID: String
+    var id: String { documentID }
+}
+
 struct ComposePrefill: Hashable, Sendable {
     let recipient: String
     let cc: String
@@ -135,6 +145,7 @@ final class NavigationModel {
     var areaRoute: AreaRoute?
     var workRoute: WorkRoute?
     var projectRoute: ProjectRoute?
+    var documentRoute: DocumentRoute?
     var sheet: SheetDestination?
     var pendingCapture: String?
     var pendingMailSearch: String?
@@ -147,7 +158,8 @@ final class NavigationModel {
     var pendingCompose: ComposePrefill?
 
     var hasNestedDestination: Bool {
-        threadRoute != nil || eventRoute != nil || workRoute != nil || projectRoute != nil
+        threadRoute != nil || eventRoute != nil || workRoute != nil
+            || projectRoute != nil || documentRoute != nil
     }
 
     // The compact shell's leading-edge reveal must never compete with the
@@ -162,6 +174,7 @@ final class NavigationModel {
         eventRoute = nil
         workRoute = nil
         projectRoute = nil
+        documentRoute = nil
     }
 
     // When opened from an Area, mail remains inside that Area's back stack.
@@ -174,6 +187,7 @@ final class NavigationModel {
             eventRoute = nil
             workRoute = nil
             projectRoute = nil
+            documentRoute = nil
         }
         threadRoute = ThreadRoute(accountID: accountID, threadID: threadID)
     }
@@ -202,6 +216,7 @@ final class NavigationModel {
             threadRoute = nil
             workRoute = nil
             projectRoute = nil
+            documentRoute = nil
         }
         eventRoute = EventRoute(
             accountID: accountID,
@@ -218,6 +233,7 @@ final class NavigationModel {
         eventRoute = nil
         workRoute = nil
         projectRoute = nil
+        documentRoute = nil
         areaRoute = AreaRoute(areaID: id, name: name)
     }
 
@@ -227,6 +243,7 @@ final class NavigationModel {
         threadRoute = nil
         eventRoute = nil
         projectRoute = nil
+        documentRoute = nil
         workRoute = WorkRoute(workID: id, title: title)
     }
 
@@ -236,11 +253,28 @@ final class NavigationModel {
         eventRoute = nil
         workRoute = nil
         areaRoute = nil
+        documentRoute = nil
         projectRoute = ProjectRoute(project: project)
     }
 
+    func openDocument(id: String) {
+        guard !id.isEmpty else { return }
+        selectedTab = .files
+        threadRoute = nil
+        eventRoute = nil
+        workRoute = nil
+        areaRoute = nil
+        projectRoute = nil
+        documentRoute = DocumentRoute(documentID: id)
+    }
+
     func openPrimaryView(_ raw: String) {
-        switch raw.lowercased() {
+        let normalized = raw.lowercased()
+        if Self.isFilesRoute(normalized) {
+            selectPrimary(.files)
+            return
+        }
+        switch normalized {
         case "mail", "inbox": selectPrimary(.mail)
         case "calendar", "events": selectPrimary(.calendar)
         case "tasks", "board": selectPrimary(.tasks)
@@ -350,6 +384,11 @@ final class NavigationModel {
             openWork(id: work, title: nil)
         } else if route.contains("area"), let area = query["area"] ?? query["areaId"] ?? query["id"] {
             openArea(id: area, name: nil)
+        } else if route.contains("document"),
+                  let document = query["document"] ?? query["documentId"] ?? query["id"] {
+            openDocument(id: document)
+        } else if Self.isFilesRoute(route) {
+            selectPrimary(.files)
         } else if route.contains("calendar") {
             selectPrimary(.calendar)
         } else if route.contains("task") {
@@ -369,5 +408,13 @@ final class NavigationModel {
         } else if let url = URL(string: "lab86://open\(route.hasPrefix("/") ? route : "/\(route)")") {
             open(url)
         }
+    }
+
+    private static let filesRouteAliases: Set<Substring> = ["files", "drive", "documents"]
+
+    private static func isFilesRoute(_ raw: String) -> Bool {
+        raw.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .contains(where: filesRouteAliases.contains)
     }
 }

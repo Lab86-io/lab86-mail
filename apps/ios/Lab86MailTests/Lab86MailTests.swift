@@ -303,8 +303,14 @@ struct Lab86MailTests {
         #expect(ClerkDevelopmentPasskeySafetyMiddleware.shouldCancel(passkeyRequest))
         #expect(!ClerkDevelopmentPasskeySafetyMiddleware.shouldCancel(identifierRequest))
         #expect(!ClerkDevelopmentPasskeySafetyMiddleware.shouldCancel(otherEndpointRequest))
-        #expect(ClerkConfiguration.options(for: "pk_test_example").middleware.request.count == 1)
-        #expect(ClerkConfiguration.options(for: "pk_live_example").middleware.request.isEmpty)
+        let developmentOptions = ClerkConfiguration.options(for: "pk_test_example")
+        let productionOptions = ClerkConfiguration.options(for: "pk_live_example")
+        #expect(developmentOptions.middleware.request.count == 1)
+        #expect(productionOptions.middleware.request.isEmpty)
+        #expect(developmentOptions.redirectConfig.redirectUrl == "io.lab86.mail://callback")
+        #expect(developmentOptions.redirectConfig.callbackUrlScheme == "io.lab86.mail")
+        #expect(productionOptions.redirectConfig.redirectUrl == "io.lab86.mail://callback")
+        #expect(productionOptions.redirectConfig.callbackUrlScheme == "io.lab86.mail")
 
         await #expect(throws: CancellationError.self) {
             var request = passkeyRequest
@@ -853,10 +859,11 @@ struct Lab86MailTests {
 
     @Test @MainActor
     func typedRoutesRespectTheVisibleHierarchyAndPreserveAreaContext() {
-        #expect(PrimaryTab.sourceList == [.today, .tasks, .calendar, .work])
+        #expect(PrimaryTab.sourceList == [.today, .tasks, .calendar, .files, .work])
         #expect(!PrimaryTab.sourceList.contains(.mail))
         #expect(PrimaryTab.today.title == "Brief")
         #expect(PrimaryTab.work.title == "Areas")
+        #expect(PrimaryTab.files.title == "Files")
 
         let navigation = NavigationModel()
         navigation.openEvent(
@@ -933,6 +940,20 @@ struct Lab86MailTests {
         areaLink.open(route: "lab86://area?id=area-1")
         #expect(areaLink.selectedTab == .work)
         #expect(areaLink.areaRoute?.areaID == "area-1")
+    }
+
+    @Test @MainActor
+    func everyFilesAliasOpensTheSamePrimaryAndDeepLinkDestination() throws {
+        for alias in ["files", "drive", "documents"] {
+            let primary = NavigationModel()
+            primary.openPrimaryView(alias)
+            #expect(primary.selectedTab == .files)
+
+            let deepLink = NavigationModel()
+            deepLink.open(try #require(URL(string: "lab86://\(alias)")))
+            #expect(deepLink.selectedTab == .files)
+            #expect(!deepLink.hasNestedDestination)
+        }
     }
 
     @Test

@@ -17,6 +17,7 @@ import { AreaHome } from '@/components/albatross/AreaHome';
 import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
 import { WorkDetail } from '@/components/albatross/WorkDetail';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
+import { FilesSurface } from '@/components/files/FilesSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
@@ -32,6 +33,7 @@ import {
   isAlbatrossPrimaryView,
   normalizePrimaryView,
   type PrimaryView,
+  primaryViewFromSearch,
   resolveInitialPrimaryView,
 } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
@@ -84,6 +86,10 @@ export function AppShell({
     () =>
       typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('setup') === 'areas',
   );
+  const [deepLinkedView] = useState<PrimaryView | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return primaryViewFromSearch(window.location.search);
+  });
   const handleWorkCaptured = useCallback(
     (workId: string) => {
       setSelectedWorkId(workId);
@@ -115,6 +121,14 @@ export function AppShell({
     if (openAreaSetup && albatrossEnabled) setPrimaryView('areas');
   }, [openAreaSetup, albatrossEnabled, setPrimaryView]);
 
+  useEffect(() => {
+    if (!deepLinkedView) return;
+    initialViewAppliedRef.current = true;
+    setBootView(null);
+    if (isAlbatrossPrimaryView(deepLinkedView) && !albatrossEnabled) return;
+    setPrimaryView(deepLinkedView);
+  }, [albatrossEnabled, deepLinkedView, setPrimaryView]);
+
   // The thread reader rides along with the mail-ish surfaces; calendar and
   // tasks keep their pane to themselves. Compose stays available everywhere.
   // Areas count as mail-ish: opening a thread from an area home slides the
@@ -138,7 +152,7 @@ export function AppShell({
   }, [bootView, primaryView, setPrimaryView, visiblePrimaryView]);
 
   useEffect(() => {
-    if (!initialView || initialViewAppliedRef.current) return;
+    if (!initialView || initialViewAppliedRef.current || deepLinkedView) return;
 
     const retryMs = [0, 150, 600, 1500];
     const timers = retryMs.map((delay, index) =>
@@ -161,7 +175,7 @@ export function AppShell({
     return () => {
       for (const timer of timers) window.clearTimeout(timer);
     };
-  }, [albatrossEnabled, hasSavedPrimaryView, initialView]);
+  }, [albatrossEnabled, deepLinkedView, hasSavedPrimaryView, initialView]);
 
   useEffect(() => {
     if (!isMobile || !selectedThreadId || mobileHistoryThreadRef.current === selectedThreadId) return;
@@ -341,6 +355,8 @@ function PrimarySurface({
       return <CalendarSurface />;
     case 'tasks':
       return <TasksSurface />;
+    case 'files':
+      return <FilesSurface />;
     case 'intents':
       // Compatibility only: persisted Plans routes normalize to Areas.
       return albatrossEnabled ? <AreaHome /> : <DailyReport />;

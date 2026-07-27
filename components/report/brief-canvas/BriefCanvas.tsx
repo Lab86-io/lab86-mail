@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
 import { useClientStore } from '@/lib/client-state';
+import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import {
   type BriefActionV2,
@@ -122,7 +123,11 @@ export function BriefCanvas({
       }
 
       try {
-        await executeBriefAction(action.action, payload, setPendingOpenWorkId);
+        const result = await executeBriefAction(action.action, payload, setPendingOpenWorkId);
+        if (action.action === 'create_document' && typeof result === 'string') {
+          pushDocumentDeepLink(result);
+          setPrimaryView('files');
+        }
         if (action.action === 'draft_reply') {
           navigateBriefAction(action.action, payload, {
             setSelectedThread,
@@ -389,6 +394,28 @@ async function executeBriefAction(
         title: required(payload, 'title').slice(0, 500),
         dueIso: typeof payload.dueAt === 'number' ? new Date(payload.dueAt).toISOString() : undefined,
       });
+    case 'create_document': {
+      const kind = required(payload, 'kind');
+      if (!['doc', 'sheet', 'deck'].includes(kind)) {
+        throw new Error('The brief requested an unsupported file type.');
+      }
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind,
+          title: required(payload, 'title'),
+          instructions: required(payload, 'instructions'),
+          sourceContext: optional(payload, 'sourceContext'),
+          sourceRefs: Array.isArray(payload.sourceRefs) ? payload.sourceRefs : [],
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body?.document?.documentId) {
+        throw new Error(body?.error || 'File creation failed.');
+      }
+      return String(body.document.documentId);
+    }
     case 'create_event':
       return callTool('calendar_create_event', {
         account: required(payload, 'account'),
@@ -498,7 +525,7 @@ export function navigateBriefAction(
       break;
     case 'open_view': {
       const view = required(payload, 'view');
-      if (['mail', 'tasks', 'calendar', 'areas', 'plans'].includes(view)) {
+      if (['mail', 'tasks', 'calendar', 'areas', 'plans', 'files'].includes(view)) {
         navigation.setPrimaryView(view);
       }
       break;

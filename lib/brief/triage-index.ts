@@ -50,7 +50,56 @@ export function buildTriageHandoffIndex(report: DailyReport): TriageHandoffV1[] 
     ...areaAndWorkHandoffs(report, generatedAt),
     ...(report.sections.mcp || []).map((item) => connectedHandoff(item, generatedAt)),
   ];
-  return parseTriageHandoffs(mergeRelatedHandoffs(records).sort(compareHandoffs).slice(0, 96));
+  return parseTriageHandoffs(
+    mergeRelatedHandoffs(records).map(withDocumentSuggestion).sort(compareHandoffs).slice(0, 96),
+  );
+}
+
+export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1 {
+  if (record.actions.some((action) => action.action === 'create_document')) return record;
+  const text = `${record.recommendation} ${record.assessment}`.toLowerCase();
+  const hasDeliverable =
+    /\b(brief|memo|report|proposal|document|write[- ]?up|one[- ]?pager|spreadsheet|workbook|budget|forecast|tracker|financial model|deck|slides|presentation)\b/iu.test(
+      text,
+    );
+  const hasCreationIntent =
+    /\b(create|prepare|build|draft|write|assemble|produce|author|compose|develop|generate|outline)\b/iu.test(
+      text,
+    ) || /\b(?:turn|convert)\b.{0,120}\b(?:into|to)\b/iu.test(text);
+  if (!hasDeliverable || !hasCreationIntent) return record;
+  const kind = /\b(deck|slides|presentation|present)\b/iu.test(text)
+    ? 'deck'
+    : /\b(spreadsheet|workbook|budget|forecast|tracker|financial model)\b/iu.test(text)
+      ? 'sheet'
+      : 'doc';
+  const kindLabel = kind === 'deck' ? 'presentation' : kind === 'sheet' ? 'spreadsheet' : 'document';
+  const titleBase = clean(record.situation)
+    .replace(/[.!?]+$/u, '')
+    .slice(0, 120);
+  const title = `${titleBase || 'Untitled'} ${kindLabel}`.slice(0, 160);
+  const sourceRefs = uniqueRefs([record.primaryRef, ...record.relatedRefs]);
+  const sourceContext = [
+    `Situation: ${record.situation}`,
+    ...record.background.map((line) => `Background: ${line}`),
+    `Assessment: ${record.assessment}`,
+    `Recommendation: ${record.recommendation}`,
+  ].join('\n');
+  const createAction = {
+    action: 'create_document' as const,
+    label: `Create ${kindLabel}`,
+    payload: {
+      kind,
+      title,
+      instructions: `Create the ${kindLabel} required by this recommendation: ${record.recommendation}`,
+      sourceContext,
+      sourceRefs,
+    },
+    style: 'primary' as const,
+  };
+  return {
+    ...record,
+    actions: uniqueActions([createAction, ...record.actions]).slice(0, 8),
+  };
 }
 
 export function triageHandoffForMailItem(
@@ -724,6 +773,8 @@ function actionTargetKey(action: BriefActionV2): string {
       return `${action.action}:${payload.workId}`;
     case 'open_url':
       return `${action.action}:${payload.url}`;
+    case 'create_document':
+      return `${action.action}:${payload.kind}:${payload.title}`;
     default:
       return `${action.action}:${JSON.stringify(payload)}`;
   }

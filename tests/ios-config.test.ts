@@ -103,6 +103,10 @@ describe('native iOS authentication configuration', () => {
     expect(exportVerifier).toContain('codesign -d --entitlements :- "$app_path"');
     expect(exportVerifier).toContain('expected_clerk_host="clerk.mail.lab86.io"');
     expect(exportVerifier).toContain('[[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]]');
+    expect(exportVerifier).toContain('.webcredentials.apps | arrays | index($application_id) != null');
+    expect(exportVerifier).toContain('https://app-site-association.cdn-apple.com/a/v1/');
+    expect(exportVerifier).toContain('"$url" 2>"$errors"');
+    expect(exportVerifier).not.toContain('"$url" 2>&1');
     expect(cloudWaiter).toContain(
       'Xcode Cloud distributed to TestFlight without a reviewable App Store export.',
     );
@@ -129,6 +133,8 @@ describe('native iOS authentication configuration', () => {
     expect(configuration).toContain('request.url?.path.hasSuffix("/v1/client/sign_ins")');
     expect(configuration).toContain('formValue(named: "strategy", in: form) == "passkey"');
     expect(configuration).toContain('throw CancellationError()');
+    expect(configuration).toContain('static let redirectURL = "io.lab86.mail://callback"');
+    expect(configuration).toContain('callbackUrlScheme: callbackURLScheme');
     expect(app).toContain('options: ClerkConfiguration.options(for: key)');
     expect(settings).toContain('options: ClerkConfiguration.options(for: publishableKey)');
   });
@@ -181,6 +187,46 @@ describe('native iOS authentication configuration', () => {
     expect(shell).toContain('.visibilityPriority(.high)');
     expect(shell).toContain('.topBarPinnedTrailing');
     expect(shell).not.toContain('toolbarMinimizeBehavior');
+  });
+
+  test('shares file creation and navigation across iOS creation surfaces', () => {
+    const environment = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/App/AppEnvironment.swift'),
+      'utf8',
+    );
+    const files = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Files/FilesView.swift'),
+      'utf8',
+    );
+    const globalCreate = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Shell/GlobalCreateMenu.swift'),
+      'utf8',
+    );
+
+    expect(environment).toContain('func createAndOpenDocument(kind: AlbatrossDocumentKind)');
+    expect(environment).toContain('navigation.openDocument(id: document.id)');
+    expect(files).toContain('try await environment.createAndOpenDocument(kind: kind)');
+    expect(globalCreate).toContain('try await environment.createAndOpenDocument(kind: kind)');
+  });
+
+  test('preserves unsaved iOS files and isolates browse and upload failures', () => {
+    const editor = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Files/DocumentEditorView.swift'),
+      'utf8',
+    );
+    const files = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Files/FilesView.swift'),
+      'utf8',
+    );
+
+    expect(editor).toContain('guard isRevisionConflict(error)');
+    expect(editor).toContain('saveQueued = true');
+    expect(editor).toContain('if await saveNow()');
+    expect(editor).toContain('while isSaving');
+    expect(files).toContain('catch is CancellationError');
+    expect(files).toContain('guard !Task.isCancelled else { return }');
+    expect(files).toContain('for url in selected');
+    expect(files).toContain('metadata.append((url: url');
   });
 
   test('keeps Spotlight mail private, routable, and removable at sign-out', () => {

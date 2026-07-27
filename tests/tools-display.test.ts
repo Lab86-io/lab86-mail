@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import './tools/harness';
-import { ToolUiDisplayPart } from '../components/ai-elements/tool-ui-part';
+import { resolveInternalOpenPath, ToolUiDisplayPart } from '../components/ai-elements/tool-ui-part';
 import { SerializableAudioSchema } from '../components/tool-ui/audio/schema';
 import { SerializableChartSchema } from '../components/tool-ui/chart/schema';
 import { SerializableCitationSchema } from '../components/tool-ui/citation/schema';
@@ -372,6 +372,16 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
 // ---------------------------------------------------------------------------
 
 describe('display tool registration', () => {
+  test('accepts only same-origin model-derived file routes', () => {
+    const origin = 'https://mail.lab86.io';
+    expect(resolveInternalOpenPath('/?view=files&document=document-1', origin)).toBe(
+      '/?view=files&document=document-1',
+    );
+    expect(resolveInternalOpenPath('/\\evil.example/path', origin)).toBeNull();
+    expect(resolveInternalOpenPath('//evil.example/path', origin)).toBeNull();
+    expect(resolveInternalOpenPath('https://evil.example/path', origin)).toBeNull();
+  });
+
   test('every display tool is registered and named show_*', () => {
     expect(DISPLAY_TOOL_NAMES.length).toBe(21);
     for (const name of DISPLAY_TOOL_NAMES) {

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { buildTriageHandoffIndex, triageHandoffForMailItem } from '../lib/brief/triage-index';
+import {
+  buildTriageHandoffIndex,
+  triageHandoffForMailItem,
+  withDocumentSuggestion,
+} from '../lib/brief/triage-index';
 import { enforceDailyBriefHandoffCoverage } from '../lib/mail/daily-brief-handoff';
 import { compositionFromReport } from '../lib/shared/brief-composition';
 import type { BriefDocumentV2 } from '../lib/shared/brief-document';
@@ -138,6 +142,86 @@ describe('canonical SBAR triage index', () => {
     expect(builds[0]?.items).toHaveLength(4);
     expect(builds[0]?.relatedRefs).toHaveLength(3);
     expect(builds[0]?.actions).toHaveLength(4);
+  });
+
+  test.each([
+    {
+      recommendation: 'Draft a launch memo for the review.',
+      kind: 'doc',
+      label: 'Create document',
+      titleWord: 'document',
+    },
+    {
+      recommendation: 'Build a budget forecast spreadsheet for the review.',
+      kind: 'sheet',
+      label: 'Create spreadsheet',
+      titleWord: 'spreadsheet',
+    },
+    {
+      recommendation: 'Prepare a presentation deck for the review.',
+      kind: 'deck',
+      label: 'Create presentation',
+      titleWord: 'presentation',
+    },
+  ] as const)('adds a grounded $kind creation move to a deliverable handoff', ({
+    recommendation,
+    kind,
+    label,
+    titleWord,
+  }) => {
+    const report = reportFixture();
+    report.sections.replyOwed[0].nextAction = recommendation;
+    report.sections.tracked = [];
+    const handoff = buildTriageHandoffIndex(report).find((record) =>
+      record.items.some((item) => item.sourceKey === 'mail:jakob@example.com:thread-1'),
+    );
+    const action = handoff?.actions.find((entry) => entry.action === 'create_document');
+
+    expect(action).toMatchObject({
+      action: 'create_document',
+      label,
+      payload: {
+        kind,
+        instructions: expect.stringContaining(recommendation),
+        sourceContext: expect.stringContaining('Recommendation:'),
+        sourceRefs: expect.arrayContaining([expect.objectContaining({ kind: 'thread', id: 'thread-1' })]),
+      },
+      style: 'primary',
+    });
+    expect(action?.payload.title).toContain(titleWord);
+  });
+
+  test('requires explicit creation language and prioritizes creation in a full action list', () => {
+    const base = triageHandoffForMailItem(threadItem(), 'reply_owed', NOW);
+    const usageOnly = withDocumentSuggestion({
+      ...base,
+      recommendation: 'Send the report to the review group.',
+      assessment: 'The existing report is ready to share.',
+    });
+    expect(usageOnly.actions.some((action) => action.action === 'create_document')).toBe(false);
+    const existingFinancialModel = withDocumentSuggestion({
+      ...base,
+      recommendation: 'Share the financial model with the review group.',
+      assessment: 'The existing workbook is ready to use.',
+    });
+    expect(existingFinancialModel.actions.some((action) => action.action === 'create_document')).toBe(false);
+
+    const full = withDocumentSuggestion({
+      ...base,
+      recommendation: 'Draft a launch memo for the review group.',
+      assessment: 'A written decision is required.',
+      actions: Array.from({ length: 8 }, (_, index) => ({
+        action: 'open_url' as const,
+        label: `Open source ${index + 1}`,
+        payload: { url: `https://example.test/source/${index + 1}` },
+        style: 'secondary' as const,
+      })),
+    });
+    expect(full.actions).toHaveLength(8);
+    expect(full.actions[0]).toMatchObject({
+      action: 'create_document',
+      payload: { kind: 'doc' },
+    });
   });
 
   test('retains only exact connected and work navigation proposals', () => {

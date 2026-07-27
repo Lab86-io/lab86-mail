@@ -265,6 +265,7 @@ const USER_BULK_TABLES = [
   'mobileSyncChanges',
   'mobileSyncTombstones',
   'nativePushDeliveries',
+  'documentRevisions',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -452,6 +453,12 @@ export const deleteUserCascade = mutation({
       'mcpItems',
       'mcpSyncStates',
       'mcpTaskLinks',
+      'cloudFileConnections',
+      'cloudFileCredentials',
+      'cloudFileOAuthStates',
+      'cloudFileOAuthCompletions',
+      'documents',
+      'documentSuggestions',
     ] as const;
 
     for (const table of userTables) {

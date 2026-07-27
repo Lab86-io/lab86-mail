@@ -121,6 +121,17 @@ async function invokeToolMock(tool: any, args: any) {
       operationId: `operation_draft_${sequence}`,
     };
   }
+  if (tool.name === 'document_create') {
+    return {
+      ok: true,
+      documentId: `document_${sequence}`,
+      title: args.title,
+      kind: args.kind,
+      revision: 1,
+      openPath: `/?view=files&document=document_${sequence}`,
+      operationId: `operation_document_${sequence}`,
+    };
+  }
   if (tool.name === 'send_message') return { ok: true, messageId: `message_${sequence}` };
   if (tool.name === 'calendar_rsvp_event') {
     return {
@@ -350,6 +361,50 @@ describe('Albatross tools', () => {
       expect(link.args.sourceIntentId).toBe('intent_move');
     }
     expect(links.filter((call) => call.args.artifactKind === 'intent')).toHaveLength(1);
+  });
+
+  test('apply_intent_plan creates and links a private document artifact through the shared document tool', async () => {
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_brief',
+      intentText: 'Prepare the launch brief',
+      areaId: 'area_launch',
+      projectMode: 'project',
+      projectTitle: 'Launch readiness',
+      plan: {
+        id: 'plan_brief',
+        outcome: 'The team has an editable launch brief.',
+        digitalActions: [
+          {
+            kind: 'document',
+            key: 'step-document',
+            title: 'Launch decision brief',
+            documentKind: 'doc',
+            instructions: 'Draft the source-grounded launch decision brief.',
+            sourceRefs: [{ kind: 'intent', id: 'intent_brief' }],
+          },
+        ],
+      },
+    });
+
+    const invocation = toolInvocations.find((call) => call.tool === 'document_create');
+    expect(invocation?.args).toMatchObject({
+      kind: 'doc',
+      title: 'Launch decision brief',
+      instructions: 'Draft the source-grounded launch decision brief.',
+    });
+    const operation = result.operations.find((entry: any) => entry.kind === 'document');
+    expect(operation).toMatchObject({
+      stepKey: 'step-document',
+      artifactId: expect.stringMatching(/^document_/),
+    });
+    expect(
+      mutationCalls.find((call) => call.fn === apiMock.albatrossWork.recordPlanApplication)?.args.artifacts,
+    ).toContainEqual(expect.objectContaining({ kind: 'document', id: operation.artifactId }));
+    expect(
+      mutationCalls.find(
+        (call) => call.fn === apiMock.albatrossWork.linkArtifact && call.args.artifactKind === 'document',
+      )?.args,
+    ).toMatchObject({ artifactId: operation.artifactId, projectId: result.projectId });
   });
 
   test('apply_intent_plan falls back to the first connected account so calendar events and drafts execute instead of stalling unresolved', async () => {

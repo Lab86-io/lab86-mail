@@ -7,6 +7,7 @@ import SwiftUI
 // stay identical in every placement; only the chrome differs.
 struct GlobalCreateMenu<MenuLabel: View>: View {
     @Environment(AppEnvironment.self) private var environment
+    @State private var errorMessage: String?
     @ViewBuilder var label: () -> MenuLabel
 
     var body: some View {
@@ -20,10 +21,30 @@ struct GlobalCreateMenu<MenuLabel: View>: View {
             Button("Compose email") {
                 environment.navigation.sheet = .compose
             }
+            Divider()
+            ForEach(AlbatrossDocumentKind.allCases) { kind in
+                Button("New \(kind.title.lowercased())", systemImage: kind.symbol) {
+                    Task {
+                        do {
+                            try await environment.createAndOpenDocument(kind: kind)
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
+                    }
+                }
+            }
         } label: {
             label()
         }
-        .accessibilityLabel("New intent, chat, or email")
+        .accessibilityLabel("Create an intent, chat, email, or file")
+        .alert("Couldn’t create file", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "Try again.")
+        }
     }
 }
 
@@ -41,7 +62,7 @@ enum GlobalCreateMenuPolicy {
         case .chat:
             // The chat composer owns that corner.
             return false
-        case .today, .tasks, .calendar, .work:
+        case .today, .tasks, .calendar, .work, .files:
             return true
         }
     }

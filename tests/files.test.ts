@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { documentDeepLinkUrl } from '../lib/documents/deep-link';
 import { formatBytes, sanitizeFilename } from '../lib/shared/files';
 
 describe('sanitizeFilename', () => {
@@ -25,5 +26,16 @@ describe('formatBytes', () => {
   });
   test('returns empty for negative values', () => {
     expect(formatBytes(-1)).toBe('');
+  });
+});
+
+describe('document file deep links', () => {
+  test('preserves unrelated location state while selecting Files and one encoded document', () => {
+    expect(
+      documentDeepLinkUrl(
+        'document/with spaces',
+        'https://mail.example.test/?view=today&account=primary#inbox',
+      ),
+    ).toBe('/?view=files&account=primary&document=document%2Fwith+spaces#inbox');
   });
 });

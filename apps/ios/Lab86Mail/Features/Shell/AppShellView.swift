@@ -324,6 +324,12 @@ struct AppShellView: View {
             } else {
                 WorkView()
             }
+        case .files:
+            if let route = environment.navigation.documentRoute {
+                DocumentEditorView(documentID: route.documentID)
+            } else {
+                FilesView()
+            }
         case .mail:
             MailView()
         case .chat:

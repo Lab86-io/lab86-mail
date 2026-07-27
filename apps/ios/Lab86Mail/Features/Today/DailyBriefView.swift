@@ -107,6 +107,10 @@ struct BriefActionPayload: Hashable, Sendable {
     var allDay: Bool?
     var location: String?
     var description: String?
+    var kind: String?
+    var instructions: String?
+    var sourceContext: String?
+    var documentID: String?
 
     init(
         account: String? = nil,
@@ -134,7 +138,11 @@ struct BriefActionPayload: Hashable, Sendable {
         endAt: Double? = nil,
         allDay: Bool? = nil,
         location: String? = nil,
-        description: String? = nil
+        description: String? = nil,
+        kind: String? = nil,
+        instructions: String? = nil,
+        sourceContext: String? = nil,
+        documentID: String? = nil
     ) {
         self.account = account
         self.threadID = threadID
@@ -162,6 +170,10 @@ struct BriefActionPayload: Hashable, Sendable {
         self.allDay = allDay
         self.location = location
         self.description = description
+        self.kind = kind
+        self.instructions = instructions
+        self.sourceContext = sourceContext
+        self.documentID = documentID
     }
 
     init(rawMessageBody: Any?) {
@@ -207,6 +219,10 @@ struct BriefActionPayload: Hashable, Sendable {
         endAt = number("endAt")
         location = string("location")
         description = string("description")
+        kind = string("kind")
+        instructions = string("instructions", "brief")
+        sourceContext = string("sourceContext")
+        documentID = string("documentId")
     }
 }
 
@@ -230,6 +246,9 @@ struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
         case "create_task": return "Add “\(payload.title ?? "this task")”?"
         case "create_event": return "Add “\(payload.title ?? "this event")” to your calendar?"
         case "draft_reply": return "Open this reply for review?"
+        case "create_document":
+            let kind = AlbatrossDocumentKind(rawValue: payload.kind ?? "doc") ?? .doc
+            return "Create “\(payload.title ?? "Untitled \(kind.title)")” as an editable \(kind.title.lowercased())?"
         case "capture_intent": return "Capture “\(payload.text ?? "this thought")”?"
         case "answer_question": return "Submit “\(payload.text ?? "this answer")”?"
         default: return "Review \(action.replacingOccurrences(of: "_", with: " "))"
@@ -241,10 +260,16 @@ struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
     }
 
     var supported: Bool {
-        [
+        if action == "create_document" {
+            guard let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty else {
+                return false
+            }
+        }
+        return [
             "toggle_task", "dismiss_task", "resolve_thread", "dismiss_thread",
             "archive_thread", "rsvp_event", "create_task", "create_event",
-            "draft_reply", "capture_intent", "answer_question",
+            "draft_reply", "create_document", "capture_intent", "answer_question",
         ].contains(action)
     }
 }
@@ -430,6 +455,21 @@ struct ArtifactActionReviewSheet: View {
                     draftID: nil
                 )
                 environment.navigation.sheet = .compose
+            }
+        case "create_document":
+            let kind = AlbatrossDocumentKind(rawValue: payload.kind ?? "doc") ?? .doc
+            guard let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty else {
+                throw BackendError.server(status: 400, message: "The brief omitted valid file details.")
+            }
+            let document = try await environment.documents.create(
+                kind: kind,
+                title: title,
+                instructions: payload.instructions,
+                sourceContext: payload.sourceContext
+            )
+            await MainActor.run {
+                environment.navigation.openDocument(id: document.id)
             }
         case "capture_intent":
             guard let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines),

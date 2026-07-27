@@ -13,6 +13,7 @@ import {
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
 import { saveDraftTool, sendMessage } from './compose';
+import { documentCreate } from './documents';
 import { type AnyTool, defineTool, invokeTool, type ToolContext } from './registry';
 import { tasksCreateCard } from './tasks';
 
@@ -30,6 +31,7 @@ const defaultDeps = {
     calendarRsvpEvent,
     saveDraftTool,
     sendMessage,
+    documentCreate,
   },
 };
 
@@ -79,6 +81,7 @@ const digitalActionSchema = z
       'email_send',
       'calendar_rsvp',
       'area_fact',
+      'document',
     ]),
     key: z.string().optional(),
     title: z.string(),
@@ -99,6 +102,8 @@ const digitalActionSchema = z
     eventId: z.string().optional(),
     rsvpStatus: z.enum(['yes', 'no', 'maybe']).optional(),
     description: z.string().optional(),
+    documentKind: z.enum(['doc', 'sheet', 'deck']).optional(),
+    instructions: z.string().optional(),
     sourceRefs: z.array(sourceRefSchema).optional(),
   })
   .passthrough();
@@ -113,6 +118,7 @@ const proposedArtifactSchema = z
       'email_send',
       'calendar_rsvp',
       'area_fact',
+      'document',
     ]),
     title: z.string(),
     areaId: z.string().optional(),
@@ -233,6 +239,7 @@ async function executeToolStep(
   }
   if (step.kind === 'calendar_event') return deps.invokeTool(deps.tools.calendarCreateEvent, args, ctx);
   if (step.kind === 'email_draft') return deps.invokeTool(deps.tools.saveDraftTool, args, ctx);
+  if (step.kind === 'document') return deps.invokeTool(deps.tools.documentCreate, args, ctx);
   throw new Error(`Unsupported executable Albatross step: ${step.kind}`);
 }
 
@@ -361,6 +368,7 @@ export const albatrossApplyIntentPlan = defineTool({
         result.eventId ||
         result.draft?._id ||
         result.draft?.id ||
+        result.documentId ||
         result.operationId ||
         step.id;
       operations.push({
@@ -381,7 +389,9 @@ export const albatrossApplyIntentPlan = defineTool({
             ? 'calendarEvent'
             : step.kind === 'email_draft'
               ? 'emailDraft'
-              : step.kind,
+              : step.kind === 'document'
+                ? 'document'
+                : step.kind,
         id: artifactId,
         title: step.title,
         operationId: result.operationId,
@@ -394,7 +404,9 @@ export const albatrossApplyIntentPlan = defineTool({
             ? 'calendarEvent'
             : step.kind === 'email_draft'
               ? 'emailDraft'
-              : 'task',
+              : step.kind === 'document'
+                ? 'document'
+                : 'task',
         artifactId,
         title: step.title,
         areaId: step.areaId,

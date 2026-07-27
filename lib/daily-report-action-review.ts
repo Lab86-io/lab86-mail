@@ -42,6 +42,11 @@ export function dailyReportActionReview(
         message: `Add “${payload.title || 'this task'}” to your tasks?`,
         destructive: false,
       };
+    case 'create_document':
+      return {
+        message: `Create “${payload.title || 'this file'}” in Albatross?`,
+        destructive: false,
+      };
     case 'archive_thread':
       return {
         message: `Archive “${payload.subject || 'this conversation'}” and remove it from future briefs?`,
