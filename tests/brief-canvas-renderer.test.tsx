@@ -250,6 +250,10 @@ describe('BriefCanvas degradation', () => {
                   { build: 85, state: 'processing' },
                   { build: 86, state: 'unapproved' },
                   { build: 87, state: 'incomplete' },
+                  { build: 88, state: 'not completed' },
+                  { build: 89, state: 'not done' },
+                  { build: 90, state: 'not shipped' },
+                  { build: 91, state: 'not passed' },
                 ],
                 sourceRefs: [{ kind: 'mcp', id: 'xcode-builds' }],
               },
@@ -286,7 +290,16 @@ describe('BriefCanvas degradation', () => {
     expect(html).toContain('Release path');
     expect(html).toContain('data-slot="stats-display"');
     expect(html).toContain('— tasks');
-    expect(html).toContain('bg-red-100');
+    for (const status of [
+      'unapproved',
+      'incomplete',
+      'not completed',
+      'not done',
+      'not shipped',
+      'not passed',
+    ]) {
+      expect(html).toMatch(new RegExp(`bg-red-100[^>]*>${status}<`));
+    }
   });
 
   test('the masthead title is bold and carries the editorial accent', () => {

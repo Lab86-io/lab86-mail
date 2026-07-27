@@ -771,7 +771,9 @@ function tableRowIdKey(rows: DataTableRowData[], firstKey?: string) {
 function briefStatusTone(value: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   const normalized = value.toLowerCase();
   if (
-    /\b(not\s+(approved|complete|ready|successful)|unapproved|incomplete|unsuccessful)\b/.test(normalized)
+    /\b(not\s+(done|complete(?:d)?|ready|success(?:ful)?|passed|approved|shipped)|unapproved|incomplete|unsuccessful)\b/.test(
+      normalized,
+    )
   ) {
     return 'danger';
   }
