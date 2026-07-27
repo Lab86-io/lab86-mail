@@ -184,7 +184,10 @@ struct DocumentEditorView: View {
         guard let draft, draft != persisted else { return true }
         if isSaving {
             saveQueued = true
-            return false
+            while isSaving {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return await saveNow()
         }
         let savingDraft = draft
         isSaving = true

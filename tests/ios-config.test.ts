@@ -222,6 +222,7 @@ describe('native iOS authentication configuration', () => {
     expect(editor).toContain('guard isRevisionConflict(error)');
     expect(editor).toContain('saveQueued = true');
     expect(editor).toContain('if await saveNow()');
+    expect(editor).toContain('while isSaving');
     expect(files).toContain('catch is CancellationError');
     expect(files).toContain('guard !Task.isCancelled else { return }');
     expect(files).toContain('for url in selected');
