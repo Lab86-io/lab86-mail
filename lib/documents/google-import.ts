@@ -4,6 +4,7 @@ import {
   type AlbatrossDocumentModel,
   type DeckElement,
   type DocumentKind,
+  MAX_SHEET_CELLS,
   MAX_SHEET_COLUMNS,
   MAX_SHEET_ROWS,
   type SheetCell,
@@ -122,8 +123,15 @@ async function importGoogleSheet(accessToken: string, fileId: string): Promise<A
   const sourceSheets = Array.isArray(metadata.sheets) ? metadata.sheets : [];
   const titles = sourceSheets.map((sheet: any) => String(sheet?.properties?.title || ''));
   const requestedTitles = titles.filter(Boolean);
+  const importColumns = Math.min(MAX_SHEET_COLUMNS, 100);
+  const importRows = Math.min(MAX_SHEET_ROWS, Math.floor(MAX_SHEET_CELLS / importColumns));
   const ranges = requestedTitles
-    .map((title: string) => `ranges=${encodeURIComponent(`'${title.replaceAll("'", "''")}'`)}`)
+    .map(
+      (title: string) =>
+        `ranges=${encodeURIComponent(
+          `'${title.replaceAll("'", "''")}'!A1:${columnName(importColumns)}${importRows}`,
+        )}`,
+    )
     .join('&');
   const values = await googleJson(
     accessToken,
@@ -151,16 +159,20 @@ async function importGoogleSheet(accessToken: string, fileId: string): Promise<A
       Math.max(Number(source?.properties?.gridProperties?.columnCount) || 26, observedColumns, 1),
     );
     const cells: Record<string, SheetCell> = {};
+    let storedCellCount = 0;
     rows.forEach((row: any[], rowIndex: number) => {
-      if (!Array.isArray(row) || rowIndex >= rowCount) return;
+      if (!Array.isArray(row) || rowIndex >= rowCount || storedCellCount >= MAX_SHEET_CELLS) {
+        return;
+      }
       row.forEach((raw, columnIndex) => {
-        if (columnIndex >= columnCount) return;
+        if (columnIndex >= columnCount || storedCellCount >= MAX_SHEET_CELLS) return;
         if (raw === '' || raw === null || raw === undefined) return;
         const address = `${columnName(columnIndex + 1)}${rowIndex + 1}`;
         if (typeof raw === 'string' && raw.startsWith('=')) cells[address] = { formula: raw.slice(1) };
         else if (typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'string') {
           cells[address] = { value: raw };
         }
+        if (cells[address]) storedCellCount += 1;
       });
     });
     return {

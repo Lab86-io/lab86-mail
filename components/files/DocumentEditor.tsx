@@ -187,12 +187,18 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   });
 
   const saveNow = useCallback(async () => {
-    if (!dirty || !model) return;
+    if (!dirty || !model) return true;
     if (saveMutation.isPending) {
       saveQueuedRef.current = true;
-      return;
+      return false;
     }
-    await saveMutation.mutateAsync({ title, model }).catch(() => undefined);
+    const submitted = { title, model };
+    try {
+      await saveMutation.mutateAsync(submitted);
+      return documentDraftMatchesSave({ title: titleRef.current, model: modelRef.current }, submitted);
+    } catch {
+      return false;
+    }
   }, [dirty, model, saveMutation, title]);
 
   useEffect(() => {
@@ -209,7 +215,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
 
   const publishMutation = useMutation({
     mutationFn: async () => {
-      await saveNow();
+      if (!(await saveNow())) throw new Error('Save this file before publishing it.');
       return fetchJson<{ ok: true; google: { webUrl?: string } }>(`/api/documents/${documentId}/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -217,14 +223,18 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
       });
     },
     onSuccess: async ({ google }) => {
-      toast.success(document?.google ? 'Google file updated' : 'Published to Google Drive');
       await Promise.all([
         documentQuery.refetch(),
         queryClient.invalidateQueries({ queryKey: ['cloud-files'] }),
       ]);
-      if (google.webUrl && window.confirm('Open the Google version in a new tab?')) {
-        window.open(google.webUrl, '_blank', 'noopener,noreferrer');
-      }
+      toast.success(document?.google ? 'Google file updated' : 'Published to Google Drive', {
+        action: google.webUrl
+          ? {
+              label: 'Open in Google',
+              onClick: () => window.open(google.webUrl, '_blank', 'noopener,noreferrer'),
+            }
+          : undefined,
+      });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -288,7 +298,12 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   return (
     <section aria-label={`${kindName(document.kind)} editor`} className="flex h-full min-h-0 flex-col">
       <header className="flex min-h-14 items-center gap-2 border-b border-[var(--color-border)] px-3">
-        <Button variant="ghost" size="icon-sm" aria-label="Back to Files" onClick={onClose}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Back to Files"
+          onClick={() => void saveNow().then((saved) => saved && onClose())}
+        >
           <ArrowLeft className="size-4" />
         </Button>
         <span className="grid size-8 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
@@ -454,6 +469,8 @@ export function GoogleDocumentEditor({
     onError: async (error: Error & { status?: number }) => {
       if (error.status === 409) {
         toast.error('This file changed in Google Drive. Your unsaved edit was not overwritten.');
+        const refreshed = await fileQuery.refetch();
+        versionRef.current = refreshed.data?.file.providerVersion;
       } else {
         toast.error(error.message);
       }
@@ -472,9 +489,10 @@ export function GoogleDocumentEditor({
       saveQueuedRef.current = true;
       return false;
     }
+    const submitted = { title, model };
     try {
-      await saveMutation.mutateAsync({ title, model });
-      return true;
+      await saveMutation.mutateAsync(submitted);
+      return documentDraftMatchesSave({ title: titleRef.current, model: modelRef.current }, submitted);
     } catch {
       return false;
     }

@@ -1,7 +1,11 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { GOOGLE_NATIVE_MIME, importGoogleNativeFile } from '@/lib/documents/google-import';
+import {
+  GOOGLE_NATIVE_MIME,
+  GOOGLE_NATIVE_MIME_TYPES,
+  importGoogleNativeFile,
+} from '@/lib/documents/google-import';
 import type { AlbatrossDocumentRecord } from '@/lib/documents/model';
 import {
   createAndLinkGoogleDocument,
@@ -18,12 +22,8 @@ export const maxDuration = 120;
 const inputSchema = z.object({
   connectionId: z.string().min(1).max(500),
   fileId: z.string().min(1).max(500),
-  mimeType: z.enum([
-    'application/vnd.google-apps.document',
-    'application/vnd.google-apps.spreadsheet',
-    'application/vnd.google-apps.presentation',
-  ]),
-  webUrl: z.string().url().max(2_000).optional(),
+  mimeType: z.enum(GOOGLE_NATIVE_MIME_TYPES),
+  webUrl: z.url().max(2_000).optional(),
   mode: z.enum(['open', 'refresh']).default('open'),
 });
 
@@ -120,15 +120,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       document: {
         ...document,
-        google: {
-          connectionId: input.connectionId,
-          fileId: input.fileId,
-          mimeType: input.mimeType,
-          webUrl: imported.webUrl || input.webUrl,
-          providerVersion: imported.providerVersion,
-          syncedRevision: document.currentRevision,
-          lastSyncedAt: Date.now(),
-        },
+        google: linked.google,
       },
       existing: Boolean(existing),
       refreshed: Boolean(existing),
@@ -146,10 +138,7 @@ export async function POST(req: NextRequest) {
       );
     }
     console.error('[google-file-import]', error);
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : 'Google file import failed.' },
-      { status: 502 },
-    );
+    return NextResponse.json({ ok: false, error: 'Google file import failed.' }, { status: 502 });
   }
 }
 

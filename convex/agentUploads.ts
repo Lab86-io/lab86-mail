@@ -29,11 +29,12 @@ async function recentUploads(
   defaultLimit: number,
 ) {
   const userId = await resolveUserId(ctx, args);
+  const limit = Math.floor(Math.min(Math.max(args.limit ?? defaultLimit, 1), 50));
   const rows = await ctx.db
     .query('agentUploads')
     .withIndex('by_user_created', (q) => q.eq('userId', userId))
     .order('desc')
-    .take(Math.min(Math.max(args.limit ?? defaultLimit, 1), 50));
+    .take(limit);
   return rows;
 }
 

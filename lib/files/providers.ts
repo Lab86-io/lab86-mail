@@ -89,6 +89,7 @@ export function buildCloudFileAuthorizationUrl(input: {
   provider: CloudFileProvider;
   state: string;
   clientId: string;
+  codeChallenge?: string;
   redirectUri?: string;
 }) {
   const definition = CLOUD_FILE_PROVIDER_DEFINITIONS[input.provider];
@@ -98,6 +99,10 @@ export function buildCloudFileAuthorizationUrl(input: {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('state', input.state);
   url.searchParams.set('scope', definition.scopes.join(' '));
+  if (input.codeChallenge) {
+    url.searchParams.set('code_challenge', input.codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+  }
   if (input.provider === 'google_drive') {
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');

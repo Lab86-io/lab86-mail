@@ -39,7 +39,12 @@ function boundedQuery(value: string | undefined) {
 
 function oneDriveEndpoint(input: { folderId?: string; query?: string; cursor?: string }) {
   if (input.cursor) {
-    const cursor = new URL(input.cursor);
+    let cursor: URL;
+    try {
+      cursor = new URL(input.cursor);
+    } catch {
+      throw new Error('Invalid OneDrive page cursor.');
+    }
     if (cursor.origin !== 'https://graph.microsoft.com') {
       throw new Error('Invalid OneDrive page cursor.');
     }

@@ -184,10 +184,7 @@ struct DocumentEditorView: View {
         guard let draft, draft != persisted else { return true }
         if isSaving {
             saveQueued = true
-            while isSaving {
-                try? await Task.sleep(for: .milliseconds(50))
-            }
-            return await saveNow()
+            return false
         }
         let savingDraft = draft
         isSaving = true
@@ -213,15 +210,15 @@ struct DocumentEditorView: View {
             }
             return self.draft == persisted
         } catch {
-            errorMessage = error.localizedDescription
             guard isRevisionConflict(error),
                   let fresh = try? await environment.documents.fetchDocument(id: documentID) else {
-                saveQueued = true
+                errorMessage = error.localizedDescription
                 return false
             }
             persisted = fresh
             if self.draft == savingDraft {
                 self.draft = fresh
+                errorMessage = "This file changed elsewhere. Albatross reloaded the latest revision."
             } else if var latest = self.draft {
                 latest.revision = fresh.revision
                 latest.google = fresh.google
@@ -229,6 +226,7 @@ struct DocumentEditorView: View {
                 latest.updatedAt = fresh.updatedAt
                 self.draft = latest
                 saveQueued = true
+                errorMessage = "This file changed elsewhere. Albatross reloaded its latest revision before retrying your newer edits."
             }
             return false
         }
@@ -457,10 +455,7 @@ struct GoogleDocumentEditorView: View {
         guard let draft, draft != persisted else { return true }
         if isSaving {
             saveQueued = true
-            while isSaving {
-                try? await Task.sleep(for: .milliseconds(50))
-            }
-            return await saveNow()
+            return false
         }
         let savingDraft = draft
         isSaving = true
@@ -485,7 +480,6 @@ struct GoogleDocumentEditorView: View {
             return self.draft == persisted
         } catch {
             errorMessage = error.localizedDescription
-            saveQueued = true
             return false
         }
     }
@@ -754,6 +748,8 @@ private struct GrowingTextEditor: UIViewRepresentable {
             text.wrappedValue = textView.text
             textView.invalidateIntrinsicContentSize()
         }
+
+        deinit {}
     }
 }
 

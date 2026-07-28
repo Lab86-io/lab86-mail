@@ -115,6 +115,15 @@ enum DocumentRouteSource: Hashable, Sendable {
 struct DocumentRoute: Identifiable, Hashable, Sendable {
     let source: DocumentRouteSource
 
+    var documentID: String {
+        switch source {
+        case .albatross(let documentID):
+            return documentID
+        case .google(let google):
+            return google.fileID
+        }
+    }
+
     var id: String {
         switch source {
         case .albatross(let documentID):

@@ -177,7 +177,7 @@ describe('document persistence service', () => {
       status: 'proposed' as const,
       createdAt: 3_000,
     };
-    const queryResults = [{ ...doc, suggestions: [suggestion] }, doc, doc, null];
+    const queryResults = [{ ...doc, suggestions: [suggestion] }, doc, 'doc', null];
     const query = mock(async () => queryResults.shift() as any);
     const mutation = mock(async (_reference: unknown, input: any) => {
       if (input.expectedRevision !== undefined) {
@@ -619,7 +619,10 @@ describe('Google native import', () => {
           return Response.json({ name: 'Oversized', version: '1' });
         }
         if (endpoint.includes('values:batchGet')) {
-          return Response.json({ valueRanges: [{ values: [oversizedRow] }] });
+          expect(endpoint).toContain('A1%3ACV500');
+          return Response.json({
+            valueRanges: [{ values: Array.from({ length: 101 }, () => oversizedRow) }],
+          });
         }
         if (endpoint.includes('sheets.googleapis.com')) {
           return Response.json({
@@ -667,8 +670,9 @@ describe('Google native import', () => {
     expect(sheet.model.kind).toBe('sheet');
     if (sheet.model.kind !== 'sheet') throw new Error('Expected a sheet.');
     expect(sheet.model.sheets[0]).toMatchObject({ rowCount: 10_000, columnCount: 500 });
-    expect(Object.keys(sheet.model.sheets[0].cells)).toHaveLength(500);
+    expect(Object.keys(sheet.model.sheets[0].cells)).toHaveLength(50_000);
     expect(sheet.model.sheets[0].cells.SG1).toBeUndefined();
+    expect(sheet.model.sheets[0].cells.A101).toBeUndefined();
 
     const deck = await importGoogleNativeFile({
       userId: 'user-1',

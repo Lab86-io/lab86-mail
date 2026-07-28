@@ -52,7 +52,7 @@ export function createCloudFileOAuthStart(dependencies: typeof defaultDependenci
       }
       const redirectTo = sanitizeInternalPath(req.nextUrl.searchParams.get('redirectTo') || '/?view=files');
       const nativeCallback = req.nextUrl.searchParams.get('native') === '1';
-      const state = await dependencies.saveCloudFileOAuthState({
+      const transaction = await dependencies.saveCloudFileOAuthState({
         userId: user.userId,
         provider: provider as CloudFileProvider,
         redirectTo,
@@ -60,8 +60,9 @@ export function createCloudFileOAuthStart(dependencies: typeof defaultDependenci
       });
       const authorizationUrl = dependencies.buildCloudFileAuthorizationUrl({
         provider: provider as CloudFileProvider,
-        state,
+        state: transaction.state,
         clientId: credentials.clientId,
+        codeChallenge: transaction.codeChallenge,
       });
       if (nativeCallback && req.nextUrl.searchParams.get('format') === 'json') {
         return NextResponse.json({ ok: true, authorizationUrl });

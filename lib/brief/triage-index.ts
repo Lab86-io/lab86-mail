@@ -62,10 +62,18 @@ export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1
     /\b(brief|memo|report|proposal|document|write[- ]?up|one[- ]?pager|spreadsheet|workbook|budget|forecast|tracker|financial model|deck|slides|presentation)\b/iu.test(
       text,
     );
-  const hasCreationIntent =
-    /\b(create|prepare|build|draft|write|assemble|produce|author|compose|develop|generate|outline)\b/iu.test(
+  const creationMatch =
+    /\b(create|prepare|build|draft|write|assemble|produce|author|compose|develop|generate|outline)\b/iu.exec(
       text,
-    ) || /\b(?:turn|convert)\b.{0,120}\b(?:into|to)\b/iu.test(text);
+    ) || /\b(?:turn|convert)\b.{0,120}\b(?:into|to)\b/iu.exec(text);
+  const creationWindow = creationMatch
+    ? text.slice(Math.max(0, creationMatch.index - 24), creationMatch.index + creationMatch[0].length + 80)
+    : '';
+  const hasCreationIntent =
+    Boolean(creationMatch) &&
+    !/\b(no need to|do not|don't|already (?:sent|shared|circulated|completed|finished|prepared|drafted|written|created))\b/iu.test(
+      creationWindow,
+    );
   if (!hasDeliverable || !hasCreationIntent) return record;
   const kind = /\b(deck|slides|presentation|present)\b/iu.test(text)
     ? 'deck'
@@ -109,7 +117,7 @@ export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1
   };
   return {
     ...record,
-    actions: uniqueActions([createAction, ...record.actions]).slice(0, 8),
+    actions: uniqueActions([...record.actions, createAction]).slice(0, 8),
   };
 }
 

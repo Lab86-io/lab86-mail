@@ -259,9 +259,9 @@ async function syncGoogleSheet(
       fields: 'title',
     },
   });
-  model.sheets.slice(1).forEach((sheet, index) => {
+  model.sheets.slice(1).forEach((sheet) => {
     requests.push({
-      addSheet: { properties: { sheetId: 10_000 + index, title: sheet.name } },
+      addSheet: { properties: { title: sheet.name } },
     });
   });
   await googleJson(

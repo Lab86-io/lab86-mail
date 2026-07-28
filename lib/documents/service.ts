@@ -97,9 +97,15 @@ export async function updateDocument(input: {
   reason?: string;
   actor?: 'user' | 'ai' | 'system';
 }) {
-  const current = input.model === undefined ? null : await getDocument(input.userId, input.documentId);
-  if (input.model !== undefined && !current) return { ok: false as const, code: 'NOT_FOUND' as const };
-  const model = input.model === undefined ? undefined : parseDocumentModel(input.model, current!.kind);
+  const kind =
+    input.model === undefined
+      ? null
+      : await dependencies.convexQuery<DocumentKind | null>(documentsApi.getKind, {
+          userId: input.userId,
+          documentId: input.documentId,
+        });
+  if (input.model !== undefined && !kind) return { ok: false as const, code: 'NOT_FOUND' as const };
+  const model = input.model === undefined ? undefined : parseDocumentModel(input.model, kind!);
   return dependencies.convexMutation<
     | { ok: true; document: AlbatrossDocumentRecord }
     | {

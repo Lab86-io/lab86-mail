@@ -110,6 +110,11 @@ struct FilesView: View {
                 securityScopedPreviewURL = nil
             }
         }
+        .onDisappear {
+            securityScopedPreviewURL?.stopAccessingSecurityScopedResource()
+            securityScopedPreviewURL = nil
+            previewURL = nil
+        }
         .alert("Files", isPresented: Binding(
             get: { errorMessage != nil || store.errorMessage != nil },
             set: {
@@ -578,6 +583,8 @@ private struct OpenInPlaceDocumentPicker: UIViewControllerRepresentable {
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             onPick([])
         }
+
+        deinit {}
     }
 }
 

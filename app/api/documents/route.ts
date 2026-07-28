@@ -57,9 +57,21 @@ function documentError(error: unknown) {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'document-list',
+      limit: 60,
+      windowMs: 60_000,
+    });
     const rawKind = req.nextUrl.searchParams.get('kind');
     const kind = rawKind && DOCUMENT_KINDS.includes(rawKind as any) ? (rawKind as any) : undefined;
-    const documents = await listDocuments({ userId: user.userId, kind, limit: 500 });
+    const rawLimit = req.nextUrl.searchParams.get('limit');
+    if (rawLimit !== null && !/^\d+$/u.test(rawLimit)) {
+      return NextResponse.json({ ok: false, error: 'limit must be a whole number.' }, { status: 400 });
+    }
+    const requestedLimit = rawLimit === null ? 200 : Number(rawLimit);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 200)) : 200;
+    const documents = await listDocuments({ userId: user.userId, kind, limit });
     return NextResponse.json({ ok: true, documents });
   } catch (error) {
     return documentError(error);
