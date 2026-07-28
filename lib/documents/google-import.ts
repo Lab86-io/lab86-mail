@@ -123,11 +123,13 @@ async function importGoogleSheet(accessToken: string, fileId: string): Promise<A
   const sourceSheets = Array.isArray(metadata.sheets) ? metadata.sheets : [];
   const titles = sourceSheets.map((sheet: any) => String(sheet?.properties?.title || ''));
   const requestedTitles = titles.filter(Boolean);
+  const importColumns = Math.min(MAX_SHEET_COLUMNS, 100);
+  const importRows = Math.min(MAX_SHEET_ROWS, Math.floor(MAX_SHEET_CELLS / importColumns));
   const ranges = requestedTitles
     .map(
       (title: string) =>
         `ranges=${encodeURIComponent(
-          `'${title.replaceAll("'", "''")}'!A1:${columnName(MAX_SHEET_COLUMNS)}${MAX_SHEET_ROWS}`,
+          `'${title.replaceAll("'", "''")}'!A1:${columnName(importColumns)}${importRows}`,
         )}`,
     )
     .join('&');

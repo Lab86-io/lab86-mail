@@ -126,6 +126,7 @@ export function BriefCanvas({
 
       try {
         const result = await executeBriefAction(action.action, payload, setPendingOpenWorkId);
+        let replyAttachFailed = false;
         if (
           action.action === 'create_document' &&
           result &&
@@ -142,6 +143,7 @@ export function BriefCanvas({
                 setThreadAccount,
               });
             } catch (error) {
+              replyAttachFailed = true;
               pushDocumentDeepLink(result.documentId);
               setPrimaryView('files');
               toast.warning('The file was created, but its reply attachment needs another try.', {
@@ -167,7 +169,9 @@ export function BriefCanvas({
           });
         }
         refresh();
-        if (briefActionTier(action.action) === 'immediate') {
+        if (replyAttachFailed) {
+          // The warning above is the complete result for this partial failure.
+        } else if (briefActionTier(action.action) === 'immediate') {
           toast.success(action.label, {
             description: 'Applied to the live item.',
             action: {

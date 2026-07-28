@@ -619,6 +619,7 @@ describe('Google native import', () => {
           return Response.json({ name: 'Oversized', version: '1' });
         }
         if (endpoint.includes('values:batchGet')) {
+          expect(endpoint).toContain('A1%3ACV500');
           return Response.json({
             valueRanges: [{ values: Array.from({ length: 101 }, () => oversizedRow) }],
           });

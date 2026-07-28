@@ -192,9 +192,10 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
       saveQueuedRef.current = true;
       return false;
     }
+    const submitted = { title, model };
     try {
-      await saveMutation.mutateAsync({ title, model });
-      return true;
+      await saveMutation.mutateAsync(submitted);
+      return documentDraftMatchesSave({ title: titleRef.current, model: modelRef.current }, submitted);
     } catch {
       return false;
     }
@@ -488,9 +489,10 @@ export function GoogleDocumentEditor({
       saveQueuedRef.current = true;
       return false;
     }
+    const submitted = { title, model };
     try {
-      await saveMutation.mutateAsync({ title, model });
-      return true;
+      await saveMutation.mutateAsync(submitted);
+      return documentDraftMatchesSave({ title: titleRef.current, model: modelRef.current }, submitted);
     } catch {
       return false;
     }

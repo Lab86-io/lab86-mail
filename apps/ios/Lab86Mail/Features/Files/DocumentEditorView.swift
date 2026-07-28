@@ -218,6 +218,7 @@ struct DocumentEditorView: View {
             persisted = fresh
             if self.draft == savingDraft {
                 self.draft = fresh
+                errorMessage = "This file changed elsewhere. Albatross reloaded the latest revision."
             } else if var latest = self.draft {
                 latest.revision = fresh.revision
                 latest.google = fresh.google
@@ -225,8 +226,8 @@ struct DocumentEditorView: View {
                 latest.updatedAt = fresh.updatedAt
                 self.draft = latest
                 saveQueued = true
+                errorMessage = "This file changed elsewhere. Albatross reloaded its latest revision before retrying your newer edits."
             }
-            errorMessage = "This file changed elsewhere. Albatross reloaded its latest revision before retrying your newer edits."
             return false
         }
     }

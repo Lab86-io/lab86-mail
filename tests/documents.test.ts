@@ -39,6 +39,23 @@ describe('canonical Albatross documents', () => {
     );
   });
 
+  test('rejects worksheets that exceed the stored-cell budget', () => {
+    const cells = Object.fromEntries(
+      Array.from({ length: 50_001 }, (_, index) => [`cell-${index}`, { value: index }]),
+    );
+    expect(() =>
+      parseDocumentModel(
+        {
+          kind: 'sheet',
+          version: 1,
+          activeSheetId: 'sheet-1',
+          sheets: [{ id: 'sheet-1', name: 'Sheet 1', rowCount: 10_000, columnCount: 500, cells }],
+        },
+        'sheet',
+      ),
+    ).toThrow('more than 50000 cells');
+  });
+
   test('projects each editor model into grounded text for AI context', () => {
     expect(
       documentModelText({

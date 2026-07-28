@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
   __setCloudFileBrowseDepsForTest,
   browseCloudFiles,
@@ -70,7 +71,9 @@ describe('cloud file connection service', () => {
     });
     expect(transaction.state).toHaveLength(43);
     expect(transaction.codeVerifier.length).toBeGreaterThanOrEqual(43);
-    expect(transaction.codeChallenge).toHaveLength(43);
+    expect(transaction.codeChallenge).toBe(
+      createHash('sha256').update(transaction.codeVerifier).digest('base64url'),
+    );
     expect(mutation.mock.calls[0][1]).toMatchObject({
       userId: 'user-1',
       state: transaction.state,
