@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { FileTextIcon } from '@/components/ui/file-text';
 import { FlameIcon } from '@/components/ui/flame';
+import { FolderIcon } from '@/components/ui/folder';
 import { GaugeIcon } from '@/components/ui/gauge';
 import { HistoryIcon } from '@/components/ui/history';
 import { KeyIcon } from '@/components/ui/key';
@@ -122,10 +123,15 @@ const SMART_LABEL_ICON_MAP: Record<string, any> = {
 
 // Top-level surfaces of the workspace. Mail itself is reached through the
 // Smart/Mailboxes groups below (those force primaryView back to 'mail').
-const SURFACES: Array<{ view: 'daily_report' | 'calendar' | 'tasks'; label: string; Icon: any }> = [
+const SURFACES: Array<{
+  view: 'daily_report' | 'calendar' | 'tasks' | 'files';
+  label: string;
+  Icon: any;
+}> = [
   { view: 'daily_report', label: 'Daily Report', Icon: rowIcon(FileTextIcon) },
   { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
   { view: 'tasks', label: 'Tasks', Icon: rowIcon(CircleCheckIcon) },
+  { view: 'files', label: 'Files', Icon: rowIcon(FolderIcon) },
 ];
 
 // One fixed entry (Plans) — the areas themselves render as live rows below it,

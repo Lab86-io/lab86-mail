@@ -34,6 +34,7 @@ const BRIEF_ACTION_TYPES = [
   'toggle_task',
   'dismiss_task',
   'create_task',
+  'create_document',
   'draft_reply',
   'archive_thread',
   'rsvp_event',
@@ -60,13 +61,32 @@ const BriefActionBaseSchema = z.object({
 });
 
 export const BriefActionSchema = BriefActionBaseSchema.superRefine((action, ctx) => {
-  if (action.action !== 'rsvp_event') return;
-  if (isValidRsvpPayload(action.payload)) return;
-  ctx.addIssue({
-    code: 'custom',
-    path: ['payload'],
-    message: 'rsvp_event payload requires account, calendarId, eventId, and status',
-  });
+  if (action.action === 'rsvp_event' && !isValidRsvpPayload(action.payload)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['payload'],
+      message: 'rsvp_event payload requires account, calendarId, eventId, and status',
+    });
+  }
+  if (action.action === 'create_document') {
+    const parsed = z
+      .object({
+        kind: z.enum(['doc', 'sheet', 'deck']),
+        title: z.string().trim().min(1).max(500),
+        instructions: z.string().trim().min(1).max(20_000),
+        sourceContext: z.string().max(40_000).optional(),
+        sourceRefs: z.array(BriefSourceRefSchema).max(100).optional(),
+      })
+      .safeParse(action.payload);
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['payload'],
+        message:
+          'create_document payload requires a valid kind, title, instructions, and optional source provenance',
+      });
+    }
+  }
 });
 
 export const BriefBlockSchema = z.discriminatedUnion('type', [
@@ -353,16 +373,14 @@ function sanitizeActions(value: unknown): BriefAction[] {
     if (!isRecord(entry) || !isOneOf(entry.action, BRIEF_ACTION_TYPES)) return [];
     const label = firstString(entry.label) || defaultActionLabel(entry.action);
     const payload = isRecord(entry.payload) ? entry.payload : {};
-    if (entry.action === 'rsvp_event' && !isValidRsvpPayload(payload)) return [];
     const style = isOneOf(entry.style, BRIEF_ACTION_STYLES) ? entry.style : 'secondary';
-    return [
-      {
-        action: entry.action,
-        label: label.slice(0, 80),
-        payload,
-        style,
-      },
-    ];
+    const parsed = BriefActionSchema.safeParse({
+      action: entry.action,
+      label: label.slice(0, 80),
+      payload,
+      style,
+    });
+    return parsed.success ? [parsed.data] : [];
   });
 }
 
@@ -400,6 +418,8 @@ function defaultActionLabel(action: BriefAction['action']): string {
       return 'Complete';
     case 'create_task':
       return 'Create task';
+    case 'create_document':
+      return 'Create file';
     case 'draft_reply':
       return 'Draft reply';
     case 'archive_thread':

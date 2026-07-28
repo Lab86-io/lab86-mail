@@ -324,6 +324,17 @@ struct AppShellView: View {
             } else {
                 WorkView()
             }
+        case .files:
+            if let route = environment.navigation.documentRoute {
+                switch route.source {
+                case .albatross(let documentID):
+                    DocumentEditorView(documentID: documentID)
+                case .google(let google):
+                    GoogleDocumentEditorView(route: google)
+                }
+            } else {
+                FilesView()
+            }
         case .mail:
             MailView()
         case .chat:

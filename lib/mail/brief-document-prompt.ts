@@ -8,8 +8,9 @@ Never emit CSS, class names, colors, spacing, font sizes, or arbitrary style val
 
 COMMON FIELDS
 - Every node: kind; optional emphasis primary|standard|muted; optional tone neutral|positive|warning|urgent;
-  optional footprint standard|wide|feature. standard is one column/row, wide spans two columns,
-  feature spans two columns and two rows on roomy clients. Clients stack every footprint on phones.
+  optional footprint standard|wide|feature. standard is one column, wide spans two columns, and feature
+  claims the full available editorial band on roomy clients. All heights follow their actual content.
+  Clients stack every footprint on phones.
 - Each region: id, required plain-text summary, optional intent, and one tree.
 - Keep trees at depth <= 4 and <= 48 nodes. At most 12 regions in the document.
 
@@ -42,6 +43,10 @@ LIVE DATA LEAVES
 - stat: label and either frozen value or queryValue from the same query catalog; optional delta/unit.
 - chart: variant bar|stacked_bar|donut|line, title, optional description,
   data:[{label,value,group?}], sourceRefs required.
+- data_table: title, optional description, columns:[{key,label,format:text|number|date|status}],
+  rows:[{[key]:string|number|boolean|null}], sourceRefs required. Use for 3+ comparable records.
+- progress: title, optional description,
+  steps:[{id,label,description?,status:pending|in-progress|completed|failed}], sourceRefs required.
 - timeline: title, items:[{label,at?,detail?,ref?,actions:[]}].
 - checklist: title, items:[{label,detail?,checked?,ref?,action?}]. Use toggle_task only with a real task/card ref.
 - collection: optional title, variant shelf|grid|list,
@@ -57,7 +62,8 @@ EDITORIAL LEAVES
 
 ACTIONS
 - Immediate with undo: toggle_task, dismiss_task, resolve_thread, dismiss_thread, archive_thread.
-- Review-gated: rsvp_event, create_task, create_event, draft_reply, capture_intent, answer_question.
+- Review-gated: rsvp_event, create_task, create_event, create_document, draft_reply, capture_intent,
+  answer_question.
 - Navigation: open_thread, open_view, open_event, open_area, open_work, discuss_area, open_url.
 - Each action is {action,label,payload,style:primary|secondary|danger|quiet}.
 - Use exact ids/accounts from the supplied JSON. Omit an action if its identity is incomplete.
@@ -69,16 +75,24 @@ EDITORIAL RULES
   is invalid. Keep merged handoffs merged and render all of their concrete recommendations.
 - The indexed recommendation must name a concrete outcome; generic labels such as "Reply",
   "Follow up", or "Review" are invalid.
-- All non-draft actions must be copied from data.handoffs. For a reply-owed thread, draft_reply is the
+- All non-draft actions must be copied from data.handoffs. create_document is valid only when the
+  indexed handoff supplied it for a concrete document, spreadsheet, or presentation deliverable.
+  For a reply-owed thread, draft_reply is the
   only action you may derive: require supporting raw message bodies and copy the exact thread id and
   account from that handoff's items. Never imply that the draft will be sent automatically.
 - Lead with the one thing that changes how the user should spend the day.
 - Give at most two genuinely dominant concepts footprint:"feature"; use "wide" for a related cluster or
   a comparison that needs horizontal room. Most nodes stay "standard". Footprint is editorial meaning,
-  not decoration.
+  not decoration, and never a request for artificial empty height.
 - Use pinned entity_list refs for editorial picks; use query_list when the set should remain live.
 - Adaptive density: calm days stay short. Busy days remain scannable.
-- At least one temporal structure when events/tasks exist. Avoid fake statistics and decorative charts.
+- Use the semantic Tool UI vocabulary deliberately: chart for a grounded comparison or trend, stat for a
+  single meaningful number, data_table for comparable records, progress for a real multi-stage state,
+  timeline for time anchors, and checklist for actionable completion. Avoid fake statistics and decorative
+  charts. Every chart/table/progress sourceRefs entry must point to supplied evidence.
+- Combine repeated notifications about the same episode. For example, four Xcode Cloud builds become one
+  wide data_table or progress story with four rows/steps, never four nearly identical cards.
+- At least one temporal structure when events/tasks exist.
 - The result must read correctly in light/dark/custom themes and at phone widths.
 - Every region summary must honestly stand alone if an old client cannot render its tree.
 - Use canvas only when no native shape expresses the idea.`;

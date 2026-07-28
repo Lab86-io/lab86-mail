@@ -28,11 +28,8 @@ normalize_cloud_value() {
 cloud_branch="${CI_BRANCH:-}"
 requested_build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-}")"
 case "$cloud_branch" in
-  main)
+  main|staging)
     branch_build_channel=production
-    ;;
-  staging)
-    branch_build_channel=staging
     ;;
   "")
     branch_build_channel=
@@ -50,25 +47,11 @@ if [[ -n "$branch_build_channel" \
   exit 1
 fi
 
-build_channel="${branch_build_channel:-${requested_build_channel:-staging}}"
+build_channel="${branch_build_channel:-${requested_build_channel:-production}}"
 
 echo "Verifying release configuration: channel=$build_channel api=$api_base_url convex=$convex_url"
 
 case "$build_channel" in
-  staging)
-    [[ "$api_base_url" == "https://mail-staging.lab86.io" ]] || {
-      echo "Refusing to archive a staging app with an invalid API base URL." >&2
-      exit 1
-    }
-    [[ "$convex_url" == "https://precise-skunk-847.convex.cloud" ]] || {
-      echo "Refusing to archive a staging app with an invalid Convex deployment." >&2
-      exit 1
-    }
-    [[ "$clerk_key" == pk_test_* ]] || {
-      echo "Refusing to archive a staging app without a Clerk test key." >&2
-      exit 1
-    }
-    ;;
   production)
     [[ "$api_base_url" == "https://mail.lab86.io" ]] || {
       echo "Refusing to archive a production app with an invalid API base URL." >&2

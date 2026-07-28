@@ -40,6 +40,7 @@ import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { confirmDailyReportAction } from '@/lib/daily-report-action-review';
 import { handleDailyReportNavigationAction } from '@/lib/daily-report-navigation';
+import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
@@ -679,6 +680,32 @@ function ReportArtifact({
               dueIso: typeof payload.dueAt === 'number' ? new Date(payload.dueAt).toISOString() : undefined,
             });
             onChanged?.();
+            return ack(true);
+          }
+          case 'create_document': {
+            const title = String(payload.title || '').trim();
+            const kind = String(payload.kind || '');
+            const instructions = String(payload.instructions || '').trim();
+            if (!title) return ack(false, 'missing title');
+            if (!['doc', 'sheet', 'deck'].includes(kind)) return ack(false, 'invalid file kind');
+            if (!instructions) return ack(false, 'missing instructions');
+            const response = await fetch('/api/documents', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                kind,
+                title,
+                instructions,
+                sourceContext: typeof payload.sourceContext === 'string' ? payload.sourceContext : undefined,
+                sourceRefs: Array.isArray(payload.sourceRefs) ? payload.sourceRefs : [],
+              }),
+            });
+            const body = await response.json();
+            if (!response.ok || !body?.document?.documentId) {
+              return ack(false, body?.error || 'file creation failed');
+            }
+            pushDocumentDeepLink(String(body.document.documentId));
+            setPrimaryView('files');
             return ack(true);
           }
           // These three actions mutate mail/calendar state. The artifact is

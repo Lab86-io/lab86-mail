@@ -24,6 +24,7 @@ describe('tool registry', () => {
         'audit',
         'mcp',
         'meta',
+        'documents',
       ]).toContain(tool.category);
     }
   });

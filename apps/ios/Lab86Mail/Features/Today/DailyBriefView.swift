@@ -107,6 +107,11 @@ struct BriefActionPayload: Hashable, Sendable {
     var allDay: Bool?
     var location: String?
     var description: String?
+    var kind: String?
+    var instructions: String?
+    var sourceContext: String?
+    var documentID: String?
+    var attachToReply: Bool?
 
     init(
         account: String? = nil,
@@ -134,7 +139,12 @@ struct BriefActionPayload: Hashable, Sendable {
         endAt: Double? = nil,
         allDay: Bool? = nil,
         location: String? = nil,
-        description: String? = nil
+        description: String? = nil,
+        kind: String? = nil,
+        instructions: String? = nil,
+        sourceContext: String? = nil,
+        documentID: String? = nil,
+        attachToReply: Bool? = nil
     ) {
         self.account = account
         self.threadID = threadID
@@ -162,6 +172,11 @@ struct BriefActionPayload: Hashable, Sendable {
         self.allDay = allDay
         self.location = location
         self.description = description
+        self.kind = kind
+        self.instructions = instructions
+        self.sourceContext = sourceContext
+        self.documentID = documentID
+        self.attachToReply = attachToReply
     }
 
     init(rawMessageBody: Any?) {
@@ -207,6 +222,11 @@ struct BriefActionPayload: Hashable, Sendable {
         endAt = number("endAt")
         location = string("location")
         description = string("description")
+        kind = string("kind")
+        instructions = string("instructions", "brief")
+        sourceContext = string("sourceContext")
+        documentID = string("documentId")
+        attachToReply = boolean("attachToReply")
     }
 }
 
@@ -230,6 +250,12 @@ struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
         case "create_task": return "Add “\(payload.title ?? "this task")”?"
         case "create_event": return "Add “\(payload.title ?? "this event")” to your calendar?"
         case "draft_reply": return "Open this reply for review?"
+        case "create_document":
+            let kind = AlbatrossDocumentKind(rawValue: payload.kind ?? "doc") ?? .doc
+            if payload.attachToReply == true {
+                return "Create “\(payload.title ?? "Untitled \(kind.title)")”, attach it, and prepare the reply for review?"
+            }
+            return "Create “\(payload.title ?? "Untitled \(kind.title)")” as an editable \(kind.title.lowercased())?"
         case "capture_intent": return "Capture “\(payload.text ?? "this thought")”?"
         case "answer_question": return "Submit “\(payload.text ?? "this answer")”?"
         default: return "Review \(action.replacingOccurrences(of: "_", with: " "))"
@@ -241,10 +267,16 @@ struct ArtifactReviewRequest: Identifiable, Hashable, Sendable {
     }
 
     var supported: Bool {
-        [
+        if action == "create_document" {
+            guard let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty else {
+                return false
+            }
+        }
+        return [
             "toggle_task", "dismiss_task", "resolve_thread", "dismiss_thread",
             "archive_thread", "rsvp_event", "create_task", "create_event",
-            "draft_reply", "capture_intent", "answer_question",
+            "draft_reply", "create_document", "capture_intent", "answer_question",
         ].contains(action)
     }
 }
@@ -431,6 +463,77 @@ struct ArtifactActionReviewSheet: View {
                 )
                 environment.navigation.sheet = .compose
             }
+        case "create_document":
+            let kind = AlbatrossDocumentKind(rawValue: payload.kind ?? "doc") ?? .doc
+            guard let title = payload.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty else {
+                throw BackendError.server(status: 400, message: "The brief omitted valid file details.")
+            }
+            let document = try await environment.documents.create(
+                kind: kind,
+                title: title,
+                instructions: payload.instructions,
+                sourceContext: payload.sourceContext
+            )
+            if payload.attachToReply == true {
+                guard let account = payload.account, let threadID = payload.threadID else {
+                    throw BackendError.server(
+                        status: 400,
+                        message: "The brief omitted the reply context for this attachment."
+                    )
+                }
+                let exportedURL = try await environment.documents.export(document: document)
+                let attachment = ComposeAttachment(
+                    filename: exportedURL.lastPathComponent,
+                    contentType: Self.officeContentType(kind),
+                    data: try Data(contentsOf: exportedURL)
+                )
+                let attachmentsKey = "brief-\(UUID().uuidString)"
+                try await MailIntentAttachmentStore.shared.saveComposeAttachments(
+                    [attachment],
+                    draftID: attachmentsKey
+                )
+                var draftBody = payload.body
+                    ?? "I've attached the requested \(kind.title.lowercased()) for your review."
+                var draftRequest: [String: JSONValue] = [
+                    "instructions": .string(
+                        "Draft a concise reviewable reply saying “\(title)” is attached. "
+                            + (payload.sourceContext ?? "")
+                    ),
+                ]
+                if let subject = payload.subject {
+                    draftRequest["subject"] = .string(subject)
+                }
+                let generatedResponse = try? await environment.backend.post(
+                    path: "/api/compose/draft",
+                    body: .object(draftRequest)
+                )
+                if let generated = generatedResponse?["draft"]?.stringValue,
+                   !generated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    draftBody = generated
+                }
+                await MainActor.run {
+                    environment.navigation.pendingCompose = ComposePrefill(
+                        recipient: "",
+                        cc: "",
+                        bcc: "",
+                        subject: payload.subject ?? "",
+                        body: draftBody,
+                        mode: "reply",
+                        accountID: account,
+                        threadID: threadID,
+                        messageID: nil,
+                        replyAll: false,
+                        attachmentsKey: attachmentsKey,
+                        draftID: nil
+                    )
+                    environment.navigation.sheet = .compose
+                }
+            } else {
+                await MainActor.run {
+                    environment.navigation.openDocument(id: document.id)
+                }
+            }
         case "capture_intent":
             guard let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else {
@@ -461,6 +564,17 @@ struct ArtifactActionReviewSheet: View {
             )
         default:
             throw BackendError.server(status: 400, message: "Unsupported report action.")
+        }
+    }
+
+    private static func officeContentType(_ kind: AlbatrossDocumentKind) -> String {
+        switch kind {
+        case .doc:
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case .sheet:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case .deck:
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         }
     }
 

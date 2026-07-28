@@ -429,7 +429,8 @@ private enum BriefActionPolicy {
         "toggle_task", "dismiss_task", "resolve_thread", "dismiss_thread", "archive_thread",
     ]
     static let review: Set<String> = [
-        "rsvp_event", "create_task", "create_event", "draft_reply", "capture_intent", "answer_question",
+        "rsvp_event", "create_task", "create_event", "draft_reply", "create_document",
+        "capture_intent", "answer_question",
     ]
     static let navigation: Set<String> = [
         "open_thread", "open_view", "open_event", "open_area", "open_work", "discuss_area", "open_url",
@@ -1355,7 +1356,12 @@ private extension BriefActionPayload {
             endAt: number("endAt"),
             allDay: bool("allDay"),
             location: string("location"),
-            description: string("description")
+            description: string("description"),
+            kind: string("kind"),
+            instructions: string("instructions") ?? string("brief"),
+            sourceContext: string("sourceContext"),
+            documentID: string("documentId"),
+            attachToReply: bool("attachToReply")
         )
     }
 
@@ -1382,6 +1388,11 @@ private extension BriefActionPayload {
         set("subject", subject)
         set("body", body)
         set("status", status)
+        set("kind", kind)
+        set("instructions", instructions)
+        set("sourceContext", sourceContext)
+        set("documentId", documentID)
+        if let attachToReply { value["attachToReply"] = .bool(attachToReply) }
         if let completed { value["completed"] = .bool(completed) }
         if let startAt { value["startAt"] = .number(startAt) }
         if let endAt { value["endAt"] = .number(endAt) }

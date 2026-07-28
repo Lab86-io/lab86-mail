@@ -33,6 +33,7 @@ export interface ToolDefinition<
     | 'web'
     | 'audit'
     | 'mcp'
+    | 'documents'
     | 'meta';
   mutating: boolean;
   input: TArgs;

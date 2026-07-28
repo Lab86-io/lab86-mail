@@ -42,6 +42,15 @@ export function briefActionReviewCopy(action: BriefActionV2, payload: BriefActio
         detail: 'The task will be added to your task list.',
         confirm: 'Add task',
       };
+    case 'create_document':
+      return {
+        title: `Create${named ? ` “${named}”` : ' this file'}?`,
+        detail:
+          payload.attachToReply === true
+            ? 'Albatross will generate the file, attach an exported copy to a reply draft, and wait for your review.'
+            : 'Albatross will generate an editable file from the grounded brief context.',
+        confirm: payload.attachToReply === true ? 'Prepare file + draft' : 'Create file',
+      };
     case 'create_event':
       return {
         title: `Add${named ? ` “${named}”` : ' this event'}?`,

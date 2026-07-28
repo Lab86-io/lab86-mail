@@ -471,6 +471,31 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     failed: 'Triaging the thread failed',
   }),
   draft_reply: fixed('Drafting a reply', 'Drafted a reply for your review', 'Drafting the reply failed'),
+  document_create: fixed('Creating the file', 'Created the editable file', 'Creating the file failed'),
+  document_list: fixed('Listing your files', 'Listed your files', 'Listing files failed'),
+  document_get: fixed('Opening the file', 'Opened the file', 'Opening the file failed'),
+  document_suggest_changes: fixed(
+    'Preparing file suggestions',
+    'Added suggestions for review',
+    'Preparing suggestions failed',
+  ),
+  document_apply_instruction: fixed(
+    'Editing the file',
+    'Saved a new file revision',
+    'Editing the file failed',
+  ),
+  document_publish_google: fixed(
+    'Syncing the Google file',
+    'Synced the Google file',
+    'Syncing the Google file failed',
+  ),
+  document_export: fixed('Preparing the export', 'Prepared the export', 'Preparing the export failed'),
+  cloud_file_search: fixed('Searching connected drives', 'Searched connected drives', 'Drive search failed'),
+  google_file_import: fixed(
+    'Opening the Google file',
+    'Opened the Google file in Albatross',
+    'Google file import failed',
+  ),
   bulk_triage: fixed('Triaging the batch', 'Triaged the batch', 'Triaging the batch failed'),
   extract_action_items: fixed(
     'Pulling out action items',

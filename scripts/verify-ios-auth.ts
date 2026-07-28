@@ -9,13 +9,12 @@ import {
 
 const root = process.cwd();
 const envPath = path.join(root, '.env.local');
-if (!existsSync(envPath)) throw new Error(`Missing ${envPath}`);
-
-const env = parseEnv(readFileSync(envPath, 'utf8'));
+const env = existsSync(envPath) ? parseEnv(readFileSync(envPath, 'utf8')) : new Map<string, string>();
 const clerkHost = clerkFrontendAPIHostFromValues({
-  explicitHost: env.get('CLERK_FRONTEND_API_HOST'),
-  proxyURL: env.get('NEXT_PUBLIC_CLERK_PROXY_URL'),
-  publishableKey: env.get('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'),
+  explicitHost: process.env.CLERK_FRONTEND_API_HOST || env.get('CLERK_FRONTEND_API_HOST'),
+  proxyURL: process.env.NEXT_PUBLIC_CLERK_PROXY_URL || env.get('NEXT_PUBLIC_CLERK_PROXY_URL'),
+  publishableKey:
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || env.get('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'),
 });
 if (!clerkHost) {
   throw new Error('Could not determine the Clerk Frontend API host for the iOS associated domain.');

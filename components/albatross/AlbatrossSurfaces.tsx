@@ -2233,6 +2233,7 @@ const STEP_KIND_META: Record<AlbatrossArtifactKind, { label: string; icon: Lucid
   email_send: { label: 'Send email', icon: Mail },
   calendar_rsvp: { label: 'RSVP', icon: CalendarDays },
   area_fact: { label: 'Area fact', icon: AtSign },
+  document: { label: 'File', icon: FolderPlus },
 };
 
 function stepKindMeta(kind: string) {

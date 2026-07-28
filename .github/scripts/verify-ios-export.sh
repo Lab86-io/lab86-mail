@@ -111,4 +111,43 @@ if [[ "$associated_domains" != *"webcredentials:$expected_clerk_host"* ]]; then
   exit 1
 fi
 
-echo "Verified signed $channel IPA configuration, identity, and entitlements."
+application_id="${team_id}.${bundle_id}"
+verify_aasa() {
+  local url="$1"
+  local label="$2"
+  local source
+  local errors="$inspection_root/aasa-errors"
+
+  if ! source="$(curl \
+      --fail \
+      --silent \
+      --show-error \
+      --location \
+      --connect-timeout 30 \
+      --max-time 120 \
+      --retry 3 \
+      --retry-all-errors \
+      --retry-delay 2 \
+      "$url" 2>"$errors")"; then
+    echo "$label could not be fetched: $(<"$errors")" >&2
+    echo "Register App ID Prefix $team_id and Bundle ID $bundle_id in Clerk Native applications." >&2
+    exit 1
+  fi
+
+  if ! jq -e --arg application_id "$application_id" \
+    '.webcredentials.apps | arrays | index($application_id) != null' \
+    <<<"$source" >/dev/null; then
+    echo "$label does not associate $application_id for passkeys." >&2
+    echo "Register App ID Prefix $team_id and Bundle ID $bundle_id in Clerk Native applications." >&2
+    exit 1
+  fi
+}
+
+verify_aasa \
+  "https://${expected_clerk_host}/.well-known/apple-app-site-association" \
+  "Clerk AASA"
+verify_aasa \
+  "https://app-site-association.cdn-apple.com/a/v1/${expected_clerk_host}" \
+  "Apple associated-domains CDN"
+
+echo "Verified signed $channel IPA configuration, identity, entitlements, and passkey association."

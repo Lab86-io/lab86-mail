@@ -60,20 +60,40 @@ const INTENT_KINDS = [
   'unknown',
 ] as const;
 
-const digitalActionSchema = z.object({
-  kind: z.enum(['task', 'calendar_event', 'email_draft']),
-  title: z.string().min(1).max(200),
-  description: z.string().max(2000).optional(),
-  priority: z.coerce.number().int().min(1).max(3).optional(),
-  durationMinutes: z.coerce.number().int().positive().optional(),
-  startIso: z.string().optional(),
-  endIso: z.string().optional(),
-  account: z.string().optional(),
-  to: z.string().optional(),
-  subject: z.string().max(300).optional(),
-  body: z.string().max(8000).optional(),
-  sourceRefIds: z.array(z.string()).optional(),
-});
+const digitalActionSchema = z
+  .object({
+    kind: z.enum(['task', 'calendar_event', 'email_draft', 'document']),
+    title: z.string().min(1).max(200),
+    description: z.string().max(2000).optional(),
+    priority: z.coerce.number().int().min(1).max(3).optional(),
+    durationMinutes: z.coerce.number().int().positive().optional(),
+    startIso: z.string().optional(),
+    endIso: z.string().optional(),
+    account: z.string().optional(),
+    to: z.string().optional(),
+    subject: z.string().max(300).optional(),
+    body: z.string().max(8000).optional(),
+    documentKind: z.enum(['doc', 'sheet', 'deck']).optional(),
+    instructions: z.string().max(20_000).optional(),
+    sourceRefIds: z.array(z.string()).optional(),
+  })
+  .superRefine((action, ctx) => {
+    if (action.kind !== 'document') return;
+    if (!action.documentKind) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['documentKind'],
+        message: 'Document actions require a document kind.',
+      });
+    }
+    if (!action.instructions?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instructions'],
+        message: 'Document actions require grounded instructions.',
+      });
+    }
+  });
 
 const questionOptionSchema = z.object({
   id: z.string().max(60).optional(),
@@ -284,7 +304,7 @@ Non-negotiables:
 - Better to ask than be wrong. If location, deadline, current progress, eligibility, or which-route-applies is unknown AND it materially changes the plan, add a question instead of assuming. Do not ask about things that don't change the plan.
 - Artifacts are evidence, not intent. Verified area facts outrank inferred context.
 - Never fabricate people, dates, accounts, or progress. List uncertain premises under "assumptions".
-- Digital actions must be immediately executable: tasks always work; calendar_event needs startIso+endIso (only propose one when timing is known or clearly proposable — no attendees unless the user named them); email_draft needs to+subject+body and is a DRAFT, never a send.
+- Digital actions must be immediately executable: tasks always work; calendar_event needs startIso+endIso (only propose one when timing is known or clearly proposable — no attendees unless the user named them); email_draft needs to+subject+body and is a DRAFT, never a send; document needs documentKind plus instructions grounded in the supplied evidence and creates a private editable draft.
 - Physical actions are real-world steps the user does themselves (go somewhere, sign something, gather documents). Include official URLs when you are confident they are canonical (government sites, well-known services). Never invent deep links.
 - Bias small: 2-6 concrete actions beat a 15-step program. The user is lazy, impatient, and smart — respect all three.
 - Projects are epics that contain multiple tasks. When the plan is genuinely multi-step — 3 or more task actions, or work stretching beyond a week — declare "projectTitle" (a short name for the whole effort); every digitalAction then belongs to that project. A single errand or one-off task keeps "projectTitle": null.
@@ -300,7 +320,7 @@ Respond with ONE JSON object, no prose, matching:
   "outcome": string,                  // one sentence: what done looks like
   "summary": string,                  // 2-4 sentences, user-facing. Plain and factual. NEVER first person ("I've set...", "I'll...") — describe the plan, not yourself: "A task and a reminder cover the deadline." No exclamation marks, no filler.
   "questions": [{"id": string, "prompt": string, "options"?: [{"id": string, "title": string, "detail"?: string, "address"?: string, "hoursText"?: string, "website"?: string}]}],
-  "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "sourceRefIds"?: string[]}],
+  "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft"|"document", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "documentKind"?: "doc"|"sheet"|"deck", "instructions"?: string, "sourceRefIds"?: string[]}],
   "physicalActions": [{"title": string, "detail"?: string, "url"?: string}],
   "assumptions": [string],
   "sourceRefIds": [string],           // refIds from the provided evidence you actually used
@@ -691,6 +711,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         to: action.to,
         subject: action.subject,
         body: action.body,
+        documentKind: action.documentKind,
+        instructions: action.instructions,
         areaId,
         sourceRefs: resolveSourceRefs(action.sourceRefIds, refs),
       }),
@@ -721,6 +743,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
           to: action.to,
           subject: action.subject,
           body: action.body,
+          documentKind: action.documentKind,
+          instructions: action.instructions,
         })),
         physicalActions: generation.physicalActions,
         places: generation.places,
@@ -799,7 +823,7 @@ const PLAN_DOCUMENT_SYSTEM = `${BRIEF_DOCUMENT_V2_SYSTEM_PROMPT}
 You are composing a Work plan dossier.
 - Make the desired outcome and the next useful move unmistakable.
 - Group proposed digital and physical actions by sequence or decision, not by source JSON keys.
-- Use checklist for grounded steps. A checklist action may use create_task, create_event, or draft_reply only when its payload is complete; these remain review-gated.
+- Use checklist for grounded steps. A checklist action may use create_task, create_event, draft_reply, or create_document only when its payload is complete; these remain review-gated. A create_document payload needs kind, title, and instructions.
 - Assumptions are not facts. Label them quietly and keep source provenance visible.
 - The host supplies Apply plan / Done controls outside this document. Do not invent apply_plan or toggle_step actions.
 - Omit empty ideas. The dossier should read clearly before the plan is applied and after provider state changes.`;

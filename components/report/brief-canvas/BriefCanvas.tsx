@@ -2,11 +2,20 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
 import { useClientStore } from '@/lib/client-state';
+import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import {
   type BriefActionV2,
@@ -16,10 +25,19 @@ import {
 } from '@/lib/shared/brief-document';
 import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { safeExternalUrl } from '@/lib/shared/url';
+import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
 import { BriefMasthead } from './BriefMasthead';
 import { type BriefNodeContext, BriefNodeView, briefNodePresentationClass } from './BriefNodeView';
 import type { BriefActionPayload } from './brief-action-runtime';
+
+const BRIEF_GRID_ROW_PX = 8;
+
+/** Converts a measured story height into the editorial grid's row span. */
+export function briefGridRowSpan(height: number, rowHeight = BRIEF_GRID_ROW_PX) {
+  if (!Number.isFinite(height) || height <= 0 || !Number.isFinite(rowHeight) || rowHeight <= 0) return 1;
+  return Math.max(1, Math.ceil(height / rowHeight));
+}
 
 export function BriefCanvas({
   value,
@@ -47,6 +65,7 @@ export function BriefCanvas({
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const setPendingOpenWorkId = useClientStore((state) => state.setPendingOpenWorkId);
   const setPendingReplyBody = useClientStore((state) => state.setPendingReplyBody);
+  const setComposeRecoveredFiles = useClientStore((state) => state.setComposeRecoveredFiles);
   const setChatScope = useClientStore((state) => state.setChatScope);
   const setAiBarOpen = useClientStore((state) => state.setAiBarOpen);
 
@@ -105,7 +124,21 @@ export function BriefCanvas({
       }
 
       try {
-        await executeBriefAction(action.action, payload, setPendingOpenWorkId);
+        const result = await executeBriefAction(action.action, payload, setPendingOpenWorkId);
+        if (action.action === 'create_document' && typeof result === 'string') {
+          if (payload.attachToReply === true) {
+            await prepareDocumentReply(result, payload, {
+              setComposeRecoveredFiles,
+              setPendingReplyBody,
+              setPrimaryView,
+              setSelectedThread,
+              setThreadAccount,
+            });
+          } else {
+            pushDocumentDeepLink(result);
+            setPrimaryView('files');
+          }
+        }
         if (action.action === 'draft_reply') {
           navigateBriefAction(action.action, payload, {
             setSelectedThread,
@@ -175,6 +208,7 @@ export function BriefCanvas({
       refresh,
       setAiBarOpen,
       setChatScope,
+      setComposeRecoveredFiles,
       setPendingOpenWorkId,
       setPendingReplyBody,
       setPrimaryView,
@@ -254,23 +288,37 @@ export function BriefCanvas({
           </time>
         )}
       </header>
-      {/* Editorial grid: phone widths remain a single reading column; roomy
-          panes let authored wide/feature concepts claim a bounded 2×1 or 2×2
-          footprint. Each unit retains its own container-query context. */}
-      <div className="mx-auto grid max-w-[1760px] grid-cols-1 gap-x-9 @[840px]:grid-cols-2 @[1200px]:grid-cols-3">
+      {/* Editorial masonry preserves authored visual order while measuring
+          each story's real height. Wide concepts claim horizontal room, not
+          a fixed vertical rectangle that leaves an empty hole beside them. */}
+      <BriefEditorialGrid>
         {document.regions.map((region) => (
           <section key={region.id} data-brief-region={region.id} className="contents">
             {columnBlocks(region.tree).map((block, index) => (
-              <div
+              <BriefEditorialGridItem
                 key={block.node.id ?? `${block.node.kind}-${index}`}
-                className={`@container ${block.wrapperClass}`}
+                className={cn('@container', block.wrapperClass)}
+                spacing={block.spacing}
               >
-                <BriefNodeView node={block.node} context={context} regionSummary={region.summary} />
-              </div>
+                <div
+                  data-brief-story-card
+                  className={cn(
+                    'min-w-0 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
+                    block.cardClass,
+                  )}
+                >
+                  <BriefNodeView
+                    node={block.node}
+                    context={context}
+                    regionSummary={region.summary}
+                    topLevel
+                  />
+                </div>
+              </BriefEditorialGridItem>
             ))}
           </section>
         ))}
-      </div>
+      </BriefEditorialGrid>
       {footer}
       {canvasReview ? (
         <div className="sticky bottom-3 z-20 mx-auto mt-4 flex max-w-xl items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 p-3 shadow-[var(--shadow-pop)] backdrop-blur">
@@ -296,6 +344,74 @@ export function BriefCanvas({
       ) : null}
     </article>
   );
+}
+
+async function prepareDocumentReply(
+  documentId: string,
+  payload: BriefActionPayload,
+  navigation: {
+    setComposeRecoveredFiles: (files: File[]) => void;
+    setPendingReplyBody: (body: string | null) => void;
+    setPrimaryView: (view: any) => void;
+    setSelectedThread: (threadId: string | null) => void;
+    setThreadAccount: (account: string | null) => void;
+  },
+) {
+  const account = required(payload, 'account');
+  const threadId = required(payload, 'threadId');
+  const kind = required(payload, 'kind') as 'doc' | 'sheet' | 'deck';
+  const title = required(payload, 'title');
+  const exportResponse = await fetch(`/api/documents/${encodeURIComponent(documentId)}/export`, {
+    cache: 'no-store',
+  });
+  if (!exportResponse.ok) {
+    const error = await exportResponse.json().catch(() => ({}));
+    throw new Error(error?.error || 'The file was created, but its attachment could not be prepared.');
+  }
+  const extension = kind === 'sheet' ? 'xlsx' : kind === 'deck' ? 'pptx' : 'docx';
+  const contentType =
+    exportResponse.headers.get('content-type') ||
+    (kind === 'sheet'
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : kind === 'deck'
+        ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  const filename = `${title.replace(/[\\/:*?"<>|]/gu, '-').trim() || 'Untitled'}.${extension}`;
+  const attachment = new File([await exportResponse.blob()], filename, { type: contentType });
+  let body =
+    optional(payload, 'body') || `I've attached the requested ${kindNameForReply(kind)} for your review.`;
+  try {
+    const draftResponse = await fetch('/api/compose/draft', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        subject: optional(payload, 'subject'),
+        instructions: [
+          `Draft a concise reply that says the requested ${kindNameForReply(kind)} “${title}” is attached for review.`,
+          optional(payload, 'sourceContext'),
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      }),
+    });
+    const draft = await draftResponse.json().catch(() => ({}));
+    if (draftResponse.ok && typeof draft?.draft === 'string' && draft.draft.trim()) {
+      body = draft.draft.trim();
+    }
+  } catch {
+    // The grounded fallback still opens a complete reviewable reply.
+  }
+  navigation.setComposeRecoveredFiles([attachment]);
+  navigation.setPendingReplyBody(body);
+  navigation.setThreadAccount(account);
+  navigation.setSelectedThread(threadId);
+  navigation.setPrimaryView('mail');
+}
+
+function kindNameForReply(kind: 'doc' | 'sheet' | 'deck') {
+  if (kind === 'sheet') return 'spreadsheet';
+  if (kind === 'deck') return 'presentation';
+  return 'document';
 }
 
 async function executeBriefAction(
@@ -358,6 +474,28 @@ async function executeBriefAction(
         title: required(payload, 'title').slice(0, 500),
         dueIso: typeof payload.dueAt === 'number' ? new Date(payload.dueAt).toISOString() : undefined,
       });
+    case 'create_document': {
+      const kind = required(payload, 'kind');
+      if (!['doc', 'sheet', 'deck'].includes(kind)) {
+        throw new Error('The brief requested an unsupported file type.');
+      }
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind,
+          title: required(payload, 'title'),
+          instructions: required(payload, 'instructions'),
+          sourceContext: optional(payload, 'sourceContext'),
+          sourceRefs: Array.isArray(payload.sourceRefs) ? payload.sourceRefs : [],
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body?.document?.documentId) {
+        throw new Error(body?.error || 'File creation failed.');
+      }
+      return String(body.document.documentId);
+    }
     case 'create_event':
       return callTool('calendar_create_event', {
         account: required(payload, 'account'),
@@ -467,7 +605,7 @@ export function navigateBriefAction(
       break;
     case 'open_view': {
       const view = required(payload, 'view');
-      if (['mail', 'tasks', 'calendar', 'areas', 'plans'].includes(view)) {
+      if (['mail', 'tasks', 'calendar', 'areas', 'plans', 'files'].includes(view)) {
         navigation.setPrimaryView(view);
       }
       break;
@@ -521,25 +659,92 @@ function payloadRefKey(payload: BriefActionPayload) {
   return '';
 }
 
-/* Column units for the newspaper layout: region roots that are plain stacks
- * flatten so the columns balance at block granularity instead of treating a
- * whole region as one unbreakable slab. */
-function columnBlocks(tree: BriefNode): Array<{ node: BriefNode; wrapperClass: string }> {
+function BriefEditorialGrid({ children }: { children: ReactNode }) {
+  const [packed, setPacked] = useState(false);
+  useLayoutEffect(() => setPacked(true), []);
+
+  return (
+    <div
+      data-brief-editorial-grid
+      data-packed={packed ? 'true' : 'false'}
+      className={cn(
+        'mx-auto grid max-w-[1760px] grid-cols-1 gap-x-9 @[840px]:grid-cols-2 @[1200px]:grid-cols-3',
+        packed ? 'auto-rows-[var(--brief-grid-row)] gap-y-0' : 'gap-y-6',
+      )}
+      style={{ '--brief-grid-row': `${BRIEF_GRID_ROW_PX}px` } as CSSProperties}
+    >
+      {children}
+    </div>
+  );
+}
+
+function BriefEditorialGridItem({
+  children,
+  className,
+  spacing,
+}: {
+  children: ReactNode;
+  className?: string;
+  spacing: 'airy' | 'standard' | 'dense';
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [rowSpan, setRowSpan] = useState<number>();
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const measure = () => {
+      const next = briefGridRowSpan(content.getBoundingClientRect().height);
+      setRowSpan((current) => (current === next ? current : next));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
+  const style = rowSpan ? ({ gridRowEnd: `span ${rowSpan}` } satisfies CSSProperties) : undefined;
+  return (
+    <div className={className} style={style} data-brief-grid-span={rowSpan}>
+      <div
+        ref={contentRef}
+        className={cn(spacing === 'airy' ? 'pb-6' : spacing === 'dense' ? 'pb-2.5' : 'pb-4')}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Region roots that are plain stacks flatten so the packed grid can balance
+ * at story granularity instead of treating a whole region as one slab. */
+function columnBlocks(tree: BriefNode): Array<{
+  node: BriefNode;
+  wrapperClass: string;
+  cardClass: string;
+  spacing: 'airy' | 'standard' | 'dense';
+}> {
   if (tree.kind === 'stack' && tree.children.length) {
-    const spacing = tree.density === 'airy' ? 'mb-6' : tree.density === 'dense' ? 'mb-2.5' : 'mb-4';
-    const presentation = briefNodePresentationClass(tree);
     return tree.children.map((node) => ({
       node,
-      wrapperClass: [spacing, presentation, footprintClass(node)].filter(Boolean).join(' '),
+      wrapperClass: footprintClass(node),
+      cardClass: cn(briefNodePresentationClass(tree), briefNodePresentationClass(node)),
+      spacing: tree.density,
     }));
   }
-  return [{ node: tree, wrapperClass: ['mb-6', footprintClass(tree)].filter(Boolean).join(' ') }];
+  return [
+    {
+      node: tree,
+      wrapperClass: footprintClass(tree),
+      cardClass: briefNodePresentationClass(tree),
+      spacing: 'airy',
+    },
+  ];
 }
 
 function footprintClass(node: BriefNode): string {
-  if (node.footprint === 'feature') {
-    return '@[840px]:col-span-2 @[840px]:row-span-2 @[840px]:min-h-[420px] [&>*]:h-full';
-  }
+  if (node.footprint === 'feature') return '@[840px]:col-span-2 @[1200px]:col-span-3';
   if (node.footprint === 'wide') return '@[840px]:col-span-2';
   return '';
 }

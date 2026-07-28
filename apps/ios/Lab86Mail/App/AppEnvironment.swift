@@ -13,6 +13,7 @@ final class AppEnvironment {
     let backend: BackendClient
     let tools: ToolClient
     let store: ProductStore
+    let documents: DocumentStore
     let mailIdentity: MailIdentityStore
     let sessionStore = SessionStore()
     let navigation = NavigationModel()
@@ -57,6 +58,7 @@ final class AppEnvironment {
         }
         self.backend = backend
         self.tools = tools
+        documents = DocumentStore(backend: backend)
         webAuthentication = WebAuthenticationCoordinator(backend: backend)
         pendingSends = PendingSendCoordinator(backend: backend, tools: tools)
         self.mobileContainer = mobileContainer
@@ -139,6 +141,11 @@ final class AppEnvironment {
             scope: scope
         )
         navigation.selectPrimary(.chat)
+    }
+
+    func createAndOpenDocument(kind: AlbatrossDocumentKind) async throws {
+        let document = try await documents.create(kind: kind)
+        navigation.openDocument(id: document.id)
     }
 
     func flushCommandOutbox(ownerID: String?) async -> Bool {

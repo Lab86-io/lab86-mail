@@ -59,6 +59,7 @@ const artifactKindValidator = v.union(
   v.literal('areaFact'),
   v.literal('sprint'),
   v.literal('operationBatch'),
+  v.literal('document'),
 );
 
 async function resolveUserId(
