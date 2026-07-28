@@ -91,6 +91,16 @@ fi
 write_plist \
   "$test_root/Info.plist" \
   'https://mail.lab86.io' \
+  'https://proficient-viper-594.convex.cloud' \
+  'pk_test_example'
+if run_verifier production 2>/dev/null; then
+  echo 'Production verification must reject a Clerk test key.' >&2
+  exit 1
+fi
+
+write_plist \
+  "$test_root/Info.plist" \
+  'https://mail.lab86.io' \
   'https://unrelated-production.convex.cloud' \
   'pk_live_example'
 if run_verifier production 2>/dev/null; then

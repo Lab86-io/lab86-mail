@@ -694,13 +694,16 @@ function ReportArtifact({
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({
                 kind,
-                title,
-                instructions,
-                sourceContext: typeof payload.sourceContext === 'string' ? payload.sourceContext : undefined,
+                title: title.slice(0, 300),
+                instructions: instructions.slice(0, 4_000),
+                sourceContext:
+                  typeof payload.sourceContext === 'string'
+                    ? payload.sourceContext.slice(0, 20_000)
+                    : undefined,
                 sourceRefs: Array.isArray(payload.sourceRefs) ? payload.sourceRefs : [],
               }),
             });
-            const body = await response.json();
+            const body = await response.json().catch(() => ({}));
             if (!response.ok || !body?.document?.documentId) {
               return ack(false, body?.error || 'file creation failed');
             }

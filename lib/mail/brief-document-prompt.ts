@@ -89,7 +89,7 @@ EDITORIAL RULES
 - Use the semantic Tool UI vocabulary deliberately: chart for a grounded comparison or trend, stat for a
   single meaningful number, data_table for comparable records, progress for a real multi-stage state,
   timeline for time anchors, and checklist for actionable completion. Avoid fake statistics and decorative
-  charts. Every chart/table/progress sourceRefs entry must point to supplied evidence.
+  charts. Every chart/data_table/progress sourceRefs entry must point to supplied evidence.
 - Combine repeated notifications about the same episode. For example, four Xcode Cloud builds become one
   wide data_table or progress story with four rows/steps, never four nearly identical cards.
 - At least one temporal structure when events/tasks exist.

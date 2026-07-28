@@ -96,7 +96,8 @@ struct MailPresentationTests {
         // not double it. Chat's composer owns the corner.
         #expect(!GlobalCreateMenuPolicy.showsFloatingButton(selectedTab: .mail, hasNestedDestination: false))
         #expect(!GlobalCreateMenuPolicy.showsFloatingButton(selectedTab: .chat, hasNestedDestination: false))
-        for tab: PrimaryTab in [.today, .tasks, .calendar, .work, .files] {
+        #expect(!GlobalCreateMenuPolicy.showsFloatingButton(selectedTab: .files, hasNestedDestination: false))
+        for tab: PrimaryTab in [.today, .tasks, .calendar, .work] {
             #expect(GlobalCreateMenuPolicy.showsFloatingButton(selectedTab: tab, hasNestedDestination: false))
             #expect(!GlobalCreateMenuPolicy.showsFloatingButton(selectedTab: tab, hasNestedDestination: true))
         }

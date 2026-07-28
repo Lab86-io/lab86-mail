@@ -63,10 +63,7 @@ function errorResponse(error: unknown) {
     );
   }
   console.error('[google-file-editor]', error);
-  return NextResponse.json(
-    { ok: false, error: error instanceof Error ? error.message : 'Google file operation failed.' },
-    { status: 502 },
-  );
+  return NextResponse.json({ ok: false, error: 'Google file operation failed.' }, { status: 502 });
 }
 
 export async function GET(req: NextRequest) {

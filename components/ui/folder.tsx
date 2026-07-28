@@ -1,6 +1,6 @@
 'use client';
 
-import { motion, useAnimation } from 'motion/react';
+import { motion, useAnimation, useReducedMotion } from 'motion/react';
 import type React from 'react';
 import type { HTMLAttributes } from 'react';
 import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
@@ -18,22 +18,23 @@ interface FolderIconProps extends HTMLAttributes<HTMLDivElement> {
 const FolderIcon = forwardRef<FolderIconHandle, FolderIconProps>(
   ({ onMouseEnter, onMouseLeave, className, size = 28, ...props }, ref) => {
     const controls = useAnimation();
+    const reducedMotion = useReducedMotion();
     const isControlledRef = useRef(false);
 
     useImperativeHandle(ref, () => {
       isControlledRef.current = true;
       return {
-        startAnimation: () => controls.start('animate'),
+        startAnimation: () => (reducedMotion ? Promise.resolve() : controls.start('animate')),
         stopAnimation: () => controls.start('normal'),
       };
-    }, [controls]);
+    }, [controls, reducedMotion]);
 
     const handleMouseEnter = useCallback(
       (event: React.MouseEvent<HTMLDivElement>) => {
         if (isControlledRef.current) onMouseEnter?.(event);
-        else controls.start('animate');
+        else if (!reducedMotion) controls.start('animate');
       },
-      [controls, onMouseEnter],
+      [controls, onMouseEnter, reducedMotion],
     );
     const handleMouseLeave = useCallback(
       (event: React.MouseEvent<HTMLDivElement>) => {
@@ -51,8 +52,10 @@ const FolderIcon = forwardRef<FolderIconHandle, FolderIconProps>(
         {...props}
       >
         <motion.svg
+          aria-hidden="true"
           animate={controls}
           fill="none"
+          focusable="false"
           height={size}
           initial="normal"
           stroke="currentColor"

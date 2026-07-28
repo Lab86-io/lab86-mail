@@ -12,13 +12,13 @@ const MAX_FILES = 5;
 const STORAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const agentUploadsApi = (api as any).agentUploads;
 
-function errorResponse(err: any) {
+function errorResponse(err: any, fallback = 'Upload failed') {
   if (err instanceof RateLimitError) return rateLimitJson(err);
   if (err instanceof AuthRequiredError) {
     return NextResponse.json({ ok: false, error: err.message || 'Authentication required' }, { status: 401 });
   }
   console.error('[agent-uploads] Upload failed:', err);
-  return NextResponse.json({ ok: false, error: 'Upload failed' }, { status: 500 });
+  return NextResponse.json({ ok: false, error: fallback }, { status: 500 });
 }
 
 export async function GET() {
@@ -36,7 +36,7 @@ export async function GET() {
     });
     return NextResponse.json({ ok: true, files });
   } catch (err: any) {
-    return errorResponse(err);
+    return errorResponse(err, 'Could not load uploads');
   }
 }
 

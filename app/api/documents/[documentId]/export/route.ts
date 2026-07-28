@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { requireCurrentUser } from '@/lib/auth/current-user';
+import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { exportDocument } from '@/lib/documents/export';
 import { getDocument } from '@/lib/documents/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -51,6 +51,9 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ docume
     });
   } catch (error) {
     if (error instanceof RateLimitError) return rateLimitJson(error);
+    if (error instanceof AuthRequiredError) {
+      return Response.json({ ok: false, error: error.message }, { status: 401 });
+    }
     console.error('[document-export]', error);
     return Response.json({ ok: false, error: 'Export failed.' }, { status: 500 });
   }

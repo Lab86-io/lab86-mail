@@ -18,12 +18,15 @@ describe('cloud file provider contracts', () => {
         provider: 'google_drive',
         state: 'state_123',
         clientId: 'google_client',
+        codeChallenge: 'pkce_challenge',
         redirectUri: 'https://mail.example.test/api/files/oauth/callback',
       }),
     );
 
     expect(url.origin).toBe('https://accounts.google.com');
     expect(url.searchParams.get('state')).toBe('state_123');
+    expect(url.searchParams.get('code_challenge')).toBe('pkce_challenge');
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('access_type')).toBe('offline');
     expect(url.searchParams.get('scope')).toContain('drive.readonly');
     expect(url.searchParams.get('scope')).toContain('drive.file');
@@ -158,7 +161,7 @@ describe('cloud file OAuth routes', () => {
       }),
       saveCloudFileOAuthState: async (input: any) => {
         calls.push(input);
-        return 'state_1';
+        return { state: 'state_1', codeChallenge: 'challenge_1' };
       },
       buildCloudFileAuthorizationUrl: () => 'https://accounts.google.com/authorize',
     } as any);
@@ -254,7 +257,7 @@ describe('cloud file OAuth routes', () => {
       cloudFileProviderCredentials: () => ({ clientId: 'client', clientSecret: 'secret' }),
       saveCloudFileOAuthState: async (input: any) => {
         calls.push(input);
-        return 'state_native';
+        return { state: 'state_native', codeChallenge: 'challenge_native' };
       },
       buildCloudFileAuthorizationUrl: () => 'https://accounts.google.com/authorize',
     } as any);

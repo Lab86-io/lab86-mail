@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { internalMutation, mutation, query } from './_generated/server';
@@ -15,6 +14,7 @@ export const saveOAuthState = mutation({
     provider: providerValidator,
     redirectTo: v.optional(v.string()),
     nativeCallback: v.optional(v.boolean()),
+    codeVerifierEncrypted: v.optional(v.string()),
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -30,6 +30,7 @@ export const saveOAuthState = mutation({
       provider: args.provider,
       redirectTo: args.redirectTo,
       nativeCallback: args.nativeCallback,
+      codeVerifierEncrypted: args.codeVerifierEncrypted,
       expiresAt: args.expiresAt,
       createdAt: now(),
     });
@@ -63,6 +64,7 @@ export const consumeOAuthState = mutation({
       provider: row.provider,
       redirectTo: row.redirectTo,
       nativeCallback: row.nativeCallback,
+      codeVerifierEncrypted: row.codeVerifierEncrypted,
     };
   },
 });
@@ -89,6 +91,7 @@ export const saveOAuthCompletion = mutation({
     completionToken: v.string(),
     provider: providerValidator,
     authorizationCodeEncrypted: v.string(),
+    codeVerifierEncrypted: v.optional(v.string()),
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -103,6 +106,7 @@ export const saveOAuthCompletion = mutation({
       completionToken: args.completionToken,
       provider: args.provider,
       authorizationCodeEncrypted: args.authorizationCodeEncrypted,
+      codeVerifierEncrypted: args.codeVerifierEncrypted,
       expiresAt: args.expiresAt,
       createdAt: now(),
     });
@@ -133,6 +137,7 @@ export const consumeOAuthCompletion = mutation({
     return {
       provider: row.provider,
       authorizationCodeEncrypted: row.authorizationCodeEncrypted,
+      codeVerifierEncrypted: row.codeVerifierEncrypted,
     };
   },
 });
@@ -183,7 +188,7 @@ export const upsertConnection = mutation({
       accountKey: args.accountKey,
       accountEmail: args.accountEmail,
       displayName: args.displayName,
-      status: 'connected',
+      status: 'connected' as const,
       scopes: args.scopes,
       error: undefined,
       updatedAt: ts,

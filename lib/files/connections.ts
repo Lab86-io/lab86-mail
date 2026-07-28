@@ -91,30 +91,45 @@ export async function saveCloudFileOAuthState(input: {
   nativeCallback?: boolean;
 }) {
   const state = randomBytes(32).toString('base64url');
+  const codeVerifier = randomBytes(64).toString('base64url');
   await dependencies.convexMutation(cloudFilesApi.saveOAuthState, {
     userId: input.userId,
     state,
     provider: input.provider,
     redirectTo: input.redirectTo,
     nativeCallback: input.nativeCallback,
+    codeVerifierEncrypted: dependencies.encryptSecret(codeVerifier),
     expiresAt: dependencies.now() + 10 * 60_000,
   });
-  return state;
+  return {
+    state,
+    codeVerifier,
+    codeChallenge: createHash('sha256').update(codeVerifier).digest('base64url'),
+  };
 }
 
 export async function consumeCloudFileOAuthState(state: string) {
-  return dependencies.convexMutation<{
+  const stored = await dependencies.convexMutation<{
     userId: string;
     provider: CloudFileProvider;
     redirectTo?: string;
     nativeCallback?: boolean;
+    codeVerifierEncrypted?: string;
   } | null>(cloudFilesApi.consumeOAuthState, { state });
+  if (!stored) return null;
+  return {
+    ...stored,
+    codeVerifier: stored.codeVerifierEncrypted
+      ? dependencies.decryptSecret(stored.codeVerifierEncrypted)
+      : undefined,
+  };
 }
 
 export async function saveCloudFileOAuthCompletion(input: {
   userId: string;
   provider: CloudFileProvider;
   authorizationCode: string;
+  codeVerifier?: string;
 }) {
   const completionToken = randomBytes(32).toString('base64url');
   await dependencies.convexMutation(cloudFilesApi.saveOAuthCompletion, {
@@ -122,6 +137,7 @@ export async function saveCloudFileOAuthCompletion(input: {
     completionToken,
     provider: input.provider,
     authorizationCodeEncrypted: dependencies.encryptSecret(input.authorizationCode),
+    codeVerifierEncrypted: input.codeVerifier ? dependencies.encryptSecret(input.codeVerifier) : undefined,
     expiresAt: dependencies.now() + 5 * 60_000,
   });
   return completionToken;
@@ -131,17 +147,22 @@ export async function consumeCloudFileOAuthCompletion(input: { userId: string; c
   const stored = await dependencies.convexMutation<{
     provider: CloudFileProvider;
     authorizationCodeEncrypted: string;
+    codeVerifierEncrypted?: string;
   } | null>(cloudFilesApi.consumeOAuthCompletion, input);
   if (!stored) return null;
   return {
     provider: stored.provider,
     authorizationCode: dependencies.decryptSecret(stored.authorizationCodeEncrypted),
+    codeVerifier: stored.codeVerifierEncrypted
+      ? dependencies.decryptSecret(stored.codeVerifierEncrypted)
+      : undefined,
   };
 }
 
 export async function exchangeCloudFileAuthorizationCode(input: {
   provider: CloudFileProvider;
   code: string;
+  codeVerifier?: string;
 }): Promise<OAuthTokenResponse> {
   const credentials = cloudFileProviderCredentials(input.provider);
   if (!credentials) {
@@ -154,6 +175,7 @@ export async function exchangeCloudFileAuthorizationCode(input: {
     redirect_uri: cloudFileOAuthRedirectUri(),
     grant_type: 'authorization_code',
   });
+  if (input.codeVerifier) body.set('code_verifier', input.codeVerifier);
   const response = await fetchCloudFileProvider(
     dependencies.fetch,
     CLOUD_FILE_PROVIDER_DEFINITIONS[input.provider].tokenUrl,

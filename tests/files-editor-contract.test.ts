@@ -76,7 +76,9 @@ describe('provider-faithful file editing contracts', () => {
     const iosBrief = source('apps/ios/Lab86Mail/Features/Today/DailyBriefView.swift');
 
     expect(triage).toContain('attachToReply: true');
-    expect(webBrief).toContain('await prepareDocumentReply(result, payload');
+    expect(webBrief).toContain(
+      'await prepareDocumentReply(result.documentId, result.title, result.kind, payload',
+    );
     expect(webBrief).toContain('setComposeRecoveredFiles([attachment])');
     expect(webBrief).toContain("fetch('/api/compose/draft'");
     expect(iosBrief).toContain('MailIntentAttachmentStore.shared.saveComposeAttachments');

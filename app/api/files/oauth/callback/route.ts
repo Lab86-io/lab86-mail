@@ -70,6 +70,7 @@ export function createCloudFileOAuthCallback(dependencies: typeof defaultDepende
           userId: stored.userId,
           provider: stored.provider,
           authorizationCode: code,
+          codeVerifier: stored.codeVerifier,
         });
         return filesRedirect(redirectTo, 'files_completion', completionToken, true);
       }
@@ -80,6 +81,7 @@ export function createCloudFileOAuthCallback(dependencies: typeof defaultDepende
       const tokens = await dependencies.exchangeCloudFileAuthorizationCode({
         provider: stored.provider,
         code,
+        codeVerifier: stored.codeVerifier,
       });
       await dependencies.saveCloudFileConnection({
         userId: stored.userId,

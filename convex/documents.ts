@@ -1,19 +1,14 @@
-// @ts-nocheck
 import { v } from 'convex/values';
+import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 const kindValidator = v.union(v.literal('doc'), v.literal('sheet'), v.literal('deck'));
-const suggestionStatusValidator = v.union(
-  v.literal('proposed'),
-  v.literal('applied'),
-  v.literal('dismissed'),
-);
 
-async function ownedDocument(ctx: any, userId: string, documentId: string) {
+async function ownedDocument(ctx: QueryCtx | MutationCtx, userId: string, documentId: string) {
   return ctx.db
     .query('documents')
-    .withIndex('by_user_document', (q: any) => q.eq('userId', userId).eq('documentId', documentId))
+    .withIndex('by_user_document', (q) => q.eq('userId', userId).eq('documentId', documentId))
     .unique();
 }
 
@@ -92,14 +87,28 @@ export const get = query({
     if (!document || document.archivedAt) return null;
     const suggestions = await ctx.db
       .query('documentSuggestions')
-      .withIndex('by_user_document', (q) => q.eq('userId', args.userId).eq('documentId', args.documentId))
-      .collect();
+      .withIndex('by_user_document_status', (q) =>
+        q.eq('userId', args.userId).eq('documentId', args.documentId).eq('status', 'proposed'),
+      )
+      .order('desc')
+      .take(50);
     return {
       ...document,
-      suggestions: suggestions
-        .filter((row) => row.status === 'proposed')
-        .sort((left, right) => right.createdAt - left.createdAt),
+      suggestions,
     };
+  },
+});
+
+export const getKind = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    documentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await ownedDocument(ctx, args.userId, args.documentId);
+    return document && !document.archivedAt ? document.kind : null;
   },
 });
 
@@ -317,7 +326,7 @@ export const resolveSuggestion = mutation({
     userId: v.string(),
     documentId: v.string(),
     suggestionId: v.string(),
-    status: suggestionStatusValidator,
+    status: v.union(v.literal('applied'), v.literal('dismissed')),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);

@@ -24,6 +24,7 @@ import {
   parseBriefDocument,
 } from '@/lib/shared/brief-document';
 import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
+import type { PrimaryView } from '@/lib/shared/types';
 import { safeExternalUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
@@ -125,17 +126,30 @@ export function BriefCanvas({
 
       try {
         const result = await executeBriefAction(action.action, payload, setPendingOpenWorkId);
-        if (action.action === 'create_document' && typeof result === 'string') {
+        if (
+          action.action === 'create_document' &&
+          result &&
+          typeof result === 'object' &&
+          'documentId' in result
+        ) {
           if (payload.attachToReply === true) {
-            await prepareDocumentReply(result, payload, {
-              setComposeRecoveredFiles,
-              setPendingReplyBody,
-              setPrimaryView,
-              setSelectedThread,
-              setThreadAccount,
-            });
+            try {
+              await prepareDocumentReply(result.documentId, result.title, result.kind, payload, {
+                setComposeRecoveredFiles,
+                setPendingReplyBody,
+                setPrimaryView,
+                setSelectedThread,
+                setThreadAccount,
+              });
+            } catch (error) {
+              pushDocumentDeepLink(result.documentId);
+              setPrimaryView('files');
+              toast.warning('The file was created, but its reply attachment needs another try.', {
+                description: error instanceof Error ? error.message : 'The created file is open in Files.',
+              });
+            }
           } else {
-            pushDocumentDeepLink(result);
+            pushDocumentDeepLink(result.documentId);
             setPrimaryView('files');
           }
         }
@@ -348,19 +362,19 @@ export function BriefCanvas({
 
 async function prepareDocumentReply(
   documentId: string,
+  title: string,
+  kind: 'doc' | 'sheet' | 'deck',
   payload: BriefActionPayload,
   navigation: {
     setComposeRecoveredFiles: (files: File[]) => void;
     setPendingReplyBody: (body: string | null) => void;
-    setPrimaryView: (view: any) => void;
+    setPrimaryView: (view: PrimaryView) => void;
     setSelectedThread: (threadId: string | null) => void;
     setThreadAccount: (account: string | null) => void;
   },
 ) {
   const account = required(payload, 'account');
   const threadId = required(payload, 'threadId');
-  const kind = required(payload, 'kind') as 'doc' | 'sheet' | 'deck';
-  const title = required(payload, 'title');
   const exportResponse = await fetch(`/api/documents/${encodeURIComponent(documentId)}/export`, {
     cache: 'no-store',
   });
@@ -494,7 +508,11 @@ async function executeBriefAction(
       if (!response.ok || !body?.document?.documentId) {
         throw new Error(body?.error || 'File creation failed.');
       }
-      return String(body.document.documentId);
+      return {
+        documentId: String(body.document.documentId),
+        title: String(body.document.title || required(payload, 'title')),
+        kind: kind as 'doc' | 'sheet' | 'deck',
+      };
     }
     case 'create_event':
       return callTool('calendar_create_event', {

@@ -13,7 +13,15 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const user = await requireCurrentUser();
-    const connections = await listCloudFileConnections(user.userId);
+    const connections = (await listCloudFileConnections(user.userId)).map((connection) => ({
+      connectionId: connection.connectionId,
+      provider: connection.provider,
+      accountEmail: connection.accountEmail,
+      displayName: connection.displayName,
+      status: connection.status,
+      lastAccessedAt: connection.lastAccessedAt,
+      error: connection.error,
+    }));
     return NextResponse.json({
       ok: true,
       connections,

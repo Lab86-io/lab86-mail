@@ -48,9 +48,6 @@ export async function POST(req: NextRequest, context: { params: Promise<{ docume
       );
     }
     console.error('[document-google]', error);
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : 'Google publish failed.' },
-      { status: 502 },
-    );
+    return NextResponse.json({ ok: false, error: 'Google publish failed.' }, { status: 502 });
   }
 }

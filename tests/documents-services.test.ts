@@ -177,7 +177,7 @@ describe('document persistence service', () => {
       status: 'proposed' as const,
       createdAt: 3_000,
     };
-    const queryResults = [{ ...doc, suggestions: [suggestion] }, doc, doc, null];
+    const queryResults = [{ ...doc, suggestions: [suggestion] }, doc, 'doc', null];
     const query = mock(async () => queryResults.shift() as any);
     const mutation = mock(async (_reference: unknown, input: any) => {
       if (input.expectedRevision !== undefined) {

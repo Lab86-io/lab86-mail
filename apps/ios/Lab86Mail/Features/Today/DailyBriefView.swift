@@ -469,6 +469,13 @@ struct ArtifactActionReviewSheet: View {
                   !title.isEmpty else {
                 throw BackendError.server(status: 400, message: "The brief omitted valid file details.")
             }
+            if payload.attachToReply == true,
+               (payload.account == nil || payload.threadID == nil) {
+                throw BackendError.server(
+                    status: 400,
+                    message: "The brief omitted the reply context for this attachment."
+                )
+            }
             let document = try await environment.documents.create(
                 kind: kind,
                 title: title,
@@ -476,13 +483,16 @@ struct ArtifactActionReviewSheet: View {
                 sourceContext: payload.sourceContext
             )
             if payload.attachToReply == true {
-                guard let account = payload.account, let threadID = payload.threadID else {
-                    throw BackendError.server(
-                        status: 400,
-                        message: "The brief omitted the reply context for this attachment."
-                    )
+                guard let account = payload.account, let threadID = payload.threadID else { return }
+                let exportedURL: URL
+                do {
+                    exportedURL = try await environment.documents.export(document: document)
+                } catch {
+                    await MainActor.run {
+                        environment.navigation.openDocument(id: document.id)
+                    }
+                    throw error
                 }
-                let exportedURL = try await environment.documents.export(document: document)
                 let attachment = ComposeAttachment(
                     filename: exportedURL.lastPathComponent,
                     contentType: Self.officeContentType(kind),

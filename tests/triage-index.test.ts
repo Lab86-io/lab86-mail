@@ -194,7 +194,7 @@ describe('canonical SBAR triage index', () => {
     expect(action?.payload.title).toContain(titleWord);
   });
 
-  test('requires explicit creation language and prioritizes creation in a full action list', () => {
+  test('requires explicit creation language without evicting grounded actions from a full list', () => {
     const base = triageHandoffForMailItem(threadItem(), 'reply_owed', NOW);
     const usageOnly = withDocumentSuggestion({
       ...base,
@@ -222,9 +222,10 @@ describe('canonical SBAR triage index', () => {
     });
     expect(full.actions).toHaveLength(8);
     expect(full.actions[0]).toMatchObject({
-      action: 'create_document',
-      payload: { kind: 'doc' },
+      action: 'open_url',
+      payload: { url: 'https://example.test/source/1' },
     });
+    expect(full.actions.some((action) => action.action === 'create_document')).toBe(false);
   });
 
   test('retains only exact connected and work navigation proposals', () => {

@@ -48,6 +48,7 @@ export function createCloudFileOAuthFinalize(dependencies: typeof defaultDepende
       const tokens = await dependencies.exchangeCloudFileAuthorizationCode({
         provider: stored.provider,
         code: stored.authorizationCode,
+        codeVerifier: stored.codeVerifier,
       });
       const connection = await dependencies.saveCloudFileConnection({
         userId: user.userId,

@@ -1384,6 +1384,7 @@ export default defineSchema({
     provider: v.union(v.literal('google_drive'), v.literal('onedrive')),
     redirectTo: v.optional(v.string()),
     nativeCallback: v.optional(v.boolean()),
+    codeVerifierEncrypted: v.optional(v.string()),
     expiresAt: v.number(),
     createdAt: v.number(),
   })
@@ -1396,6 +1397,7 @@ export default defineSchema({
     completionToken: v.string(),
     provider: v.union(v.literal('google_drive'), v.literal('onedrive')),
     authorizationCodeEncrypted: v.string(),
+    codeVerifierEncrypted: v.optional(v.string()),
     expiresAt: v.number(),
     createdAt: v.number(),
   })
@@ -1463,6 +1465,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_document', ['userId', 'documentId'])
+    .index('by_user_document_status', ['userId', 'documentId', 'status', 'createdAt'])
     .index('by_user_suggestion', ['userId', 'suggestionId']),
 
   // Kanban (docs/productivity-platform-spec.md M2). Boards are shareable:

@@ -32,6 +32,12 @@ function responseForError(error: unknown) {
 export async function GET(_req: NextRequest, context: { params: Promise<{ documentId: string }> }) {
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'document-read',
+      limit: 120,
+      windowMs: 60_000,
+    });
     const { documentId } = await context.params;
     const document = await getDocument(user.userId, documentId);
     if (!document) return NextResponse.json({ ok: false, error: 'Document not found.' }, { status: 404 });
@@ -51,7 +57,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ docum
       windowMs: 60_000,
     });
     const { documentId } = await context.params;
-    const input = patchSchema.parse(await req.json());
+    const input = patchSchema.parse(await req.json().catch(() => ({})));
     const result = await updateDocument({
       userId: user.userId,
       documentId,
@@ -81,6 +87,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ docum
 export async function DELETE(_req: NextRequest, context: { params: Promise<{ documentId: string }> }) {
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'document-archive',
+      limit: 30,
+      windowMs: 60_000,
+    });
     const { documentId } = await context.params;
     const result = await archiveDocument(user.userId, documentId);
     if (!result.ok) return NextResponse.json({ ok: false, error: 'Document not found.' }, { status: 404 });

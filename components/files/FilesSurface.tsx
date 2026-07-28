@@ -213,10 +213,11 @@ function formatBytes(size?: number) {
 
 function formatDate(value?: number) {
   if (!value) return '—';
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
-    year: new Date(value).getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    year: new Date(value).getUTCFullYear() === new Date().getUTCFullYear() ? undefined : 'numeric',
+    timeZone: 'UTC',
   }).format(value);
 }
 
@@ -1064,10 +1065,7 @@ function FileList({
           >
             <button
               type="button"
-              onDoubleClick={() => void onOpen(item)}
-              onClick={() => {
-                if (item.isFolder) void onOpen(item);
-              }}
+              onClick={() => void onOpen(item)}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
@@ -1125,10 +1123,7 @@ function FileGrid({ items, onOpen }: { items: CloudFileItem[]; onOpen: (item: Cl
           <button
             type="button"
             key={`${item.provider}:${item.connectionId || ''}:${item.id}`}
-            onDoubleClick={() => void onOpen(item)}
-            onClick={() => {
-              if (item.isFolder) void onOpen(item);
-            }}
+            onClick={() => void onOpen(item)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' && event.key !== ' ') return;
               event.preventDefault();

@@ -122,6 +122,56 @@ describe('document Convex transactions', () => {
     ).resolves.toEqual({ ok: false, code: 'ALREADY_RESOLVED' });
   });
 
+  test('bounds active suggestion reads and only accepts terminal resolution states', async () => {
+    const t = newHarness();
+    await createDocument(t, 'bounded-suggestions');
+    const proposedModel = createDefaultDocumentModel('doc', 'bounded-suggestions');
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 52; index += 1) {
+        await ctx.db.insert('documentSuggestions', {
+          userId: USER,
+          suggestionId: `proposal-${index}`,
+          documentId: 'bounded-suggestions',
+          title: `Proposal ${index}`,
+          description: 'Bounded proposal',
+          proposedModel,
+          sourceRefs: [],
+          status: 'proposed',
+          createdAt: index,
+        });
+      }
+      await ctx.db.insert('documentSuggestions', {
+        userId: USER,
+        suggestionId: 'resolved-proposal',
+        documentId: 'bounded-suggestions',
+        title: 'Resolved proposal',
+        description: 'Already dismissed',
+        proposedModel,
+        sourceRefs: [],
+        status: 'dismissed',
+        resolvedAt: 100,
+        createdAt: 100,
+      });
+    });
+
+    const document = await t.query(api.documents.get, {
+      internalSecret: SECRET,
+      userId: USER,
+      documentId: 'bounded-suggestions',
+    });
+    expect(document?.suggestions).toHaveLength(50);
+    expect(document?.suggestions.every((suggestion) => suggestion.status === 'proposed')).toBe(true);
+    await expect(
+      t.mutation(api.documents.resolveSuggestion, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'bounded-suggestions',
+        suggestionId: 'proposal-1',
+        status: 'proposed' as 'dismissed',
+      }),
+    ).rejects.toThrow('Validator error');
+  });
+
   test('prevents two active documents from claiming the same Google file', async () => {
     const t = newHarness();
     await createDocument(t, 'first');

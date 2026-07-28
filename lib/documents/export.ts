@@ -106,6 +106,14 @@ async function exportSheet(document: AlbatrossDocumentRecord): Promise<DocumentE
     for (const [address, cell] of Object.entries(tab.cells)) {
       const position = columnIndex(address);
       if (!position) continue;
+      if (
+        position.row < 1 ||
+        position.row > tab.rowCount ||
+        position.column < 1 ||
+        position.column > tab.columnCount
+      ) {
+        continue;
+      }
       const target = worksheet.getCell(position.row, position.column);
       target.value = cell.formula ? { formula: cell.formula.replace(/^=/u, '') } : (cell.value ?? '');
       if (cell.format === 'currency') target.numFmt = '$#,##0.00';

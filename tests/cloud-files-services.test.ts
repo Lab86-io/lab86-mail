@@ -52,30 +52,40 @@ describe('cloud file connection service', () => {
             provider: 'google_drive',
             redirectTo: '/?view=files',
             nativeCallback: true,
+            codeVerifierEncrypted: 'encrypted-pkce-verifier',
           },
     );
     __setCloudFileConnectionDepsForTest({
       convexMutation: mutation as any,
+      encryptSecret: (value: string) => `encrypted-${value}`,
+      decryptSecret: () => 'pkce-verifier',
       now: () => 1_000,
     });
 
-    const state = await saveCloudFileOAuthState({
+    const transaction = await saveCloudFileOAuthState({
       userId: 'user-1',
       provider: 'google_drive',
       redirectTo: '/?view=files',
       nativeCallback: true,
     });
-    expect(state).toHaveLength(43);
+    expect(transaction.state).toHaveLength(43);
+    expect(transaction.codeVerifier.length).toBeGreaterThanOrEqual(43);
+    expect(transaction.codeChallenge).toHaveLength(43);
     expect(mutation.mock.calls[0][1]).toMatchObject({
       userId: 'user-1',
-      state,
+      state: transaction.state,
       provider: 'google_drive',
+      codeVerifierEncrypted: `encrypted-${transaction.codeVerifier}`,
       expiresAt: 601_000,
     });
 
-    const consumed = await consumeCloudFileOAuthState(state);
-    expect(consumed).toMatchObject({ userId: 'user-1', nativeCallback: true });
-    expect(mutation.mock.calls[1][1]).toEqual({ state });
+    const consumed = await consumeCloudFileOAuthState(transaction.state);
+    expect(consumed).toMatchObject({
+      userId: 'user-1',
+      nativeCallback: true,
+      codeVerifier: 'pkce-verifier',
+    });
+    expect(mutation.mock.calls[1][1]).toEqual({ state: transaction.state });
   });
 
   test('encrypts and user-binds native OAuth completion codes', async () => {
@@ -85,6 +95,7 @@ describe('cloud file connection service', () => {
         : {
             provider: 'google_drive',
             authorizationCodeEncrypted: 'encrypted-provider-code',
+            codeVerifierEncrypted: 'encrypted-pkce-verifier',
           },
     );
     __setCloudFileConnectionDepsForTest({
@@ -98,12 +109,14 @@ describe('cloud file connection service', () => {
       userId: 'user-1',
       provider: 'google_drive',
       authorizationCode: 'provider-code',
+      codeVerifier: 'pkce-verifier',
     });
     expect(completionToken).toHaveLength(43);
     expect(mutation.mock.calls[0][1]).toMatchObject({
       userId: 'user-1',
       provider: 'google_drive',
       authorizationCodeEncrypted: 'encrypted-provider-code',
+      codeVerifierEncrypted: 'encrypted-pkce-verifier',
       expiresAt: 302_000,
     });
 
@@ -115,6 +128,7 @@ describe('cloud file connection service', () => {
     ).resolves.toEqual({
       provider: 'google_drive',
       authorizationCode: 'provider-code',
+      codeVerifier: 'provider-code',
     });
     expect(mutation.mock.calls[1][1]).toEqual({
       userId: 'user-1',
@@ -128,6 +142,7 @@ describe('cloud file connection service', () => {
       expect(body.get('client_id')).toBe('google-client');
       expect(body.get('code')).toBe('authorization-code');
       expect(body.get('grant_type')).toBe('authorization_code');
+      expect(body.get('code_verifier')).toBe('pkce-verifier');
       return Response.json({
         access_token: 'access-token',
         refresh_token: 'refresh-token',
@@ -140,6 +155,7 @@ describe('cloud file connection service', () => {
       exchangeCloudFileAuthorizationCode({
         provider: 'google_drive',
         code: 'authorization-code',
+        codeVerifier: 'pkce-verifier',
       }),
     ).resolves.toMatchObject({ access_token: 'access-token' });
 

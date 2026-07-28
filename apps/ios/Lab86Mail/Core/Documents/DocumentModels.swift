@@ -841,7 +841,10 @@ final class DocumentStore {
 
 private extension String {
     var pathEncoded: String {
-        addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
+        let allowed = CharacterSet.urlPathAllowed.subtracting(
+            CharacterSet(charactersIn: "/;")
+        )
+        return addingPercentEncoding(withAllowedCharacters: allowed) ?? self
     }
 
     var sanitizedFilename: String {

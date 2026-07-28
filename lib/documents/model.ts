@@ -4,6 +4,7 @@ export const DOCUMENT_KINDS = ['doc', 'sheet', 'deck'] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 export const MAX_SHEET_ROWS = 10_000;
 export const MAX_SHEET_COLUMNS = 500;
+export const MAX_SHEET_CELLS = 50_000;
 
 const sourceRefSchema = z.object({
   kind: z.string().min(1).max(80),
@@ -31,7 +32,11 @@ const sheetTabSchema = z.object({
   name: z.string().min(1).max(120),
   rowCount: z.number().int().min(1).max(MAX_SHEET_ROWS),
   columnCount: z.number().int().min(1).max(MAX_SHEET_COLUMNS),
-  cells: z.record(z.string(), sheetCellSchema),
+  cells: z
+    .record(z.string().max(16), sheetCellSchema)
+    .refine((cells) => Object.keys(cells).length <= MAX_SHEET_CELLS, {
+      message: `A sheet cannot hold more than ${MAX_SHEET_CELLS} cells.`,
+    }),
 });
 
 const deckElementSchema = z.object({
