@@ -142,6 +142,8 @@ extension BriefDocumentView {
             node.checklistItems?.forEach { add($0.ref) }
             node.collectionItems?.forEach { add($0.ref) }
             node.sourceRefs?.forEach(add)
+            node.planItems?.forEach { add($0.ref) }
+            add(node.previewRef)
             node.children?.forEach(visit)
         }
         document.regions.forEach { visit($0.tree) }
@@ -505,6 +507,26 @@ private struct BriefNodeView: View {
             BriefStatView(node: node)
         case "chart":
             BriefChartView(node: node)
+        case "data_table":
+            BriefDataTableNodeView(node: node)
+        case "progress":
+            BriefProgressNodeView(node: node)
+        case "weather":
+            BriefWeatherNodeView(node: node)
+        case "plan":
+            BriefPlanNodeView(node: node, onAction: onAction)
+        case "email_preview":
+            BriefEmailPreviewNodeView(node: node, onAction: onAction)
+        case "decision":
+            BriefDecisionNodeView(node: node, onAction: onAction)
+        case "citations":
+            BriefCitationsNodeView(node: node)
+        case "geo_map":
+            BriefGeoMapNodeView(node: node)
+        case "code_diff":
+            BriefCodeDiffNodeView(node: node)
+        case "terminal":
+            BriefTerminalNodeView(node: node)
         case "timeline":
             BriefTimelineView(node: node, onAction: onAction)
         case "checklist":
@@ -687,7 +709,7 @@ private struct BriefTextView: View {
     }
 }
 
-private struct BriefActionFlow: View {
+struct BriefActionFlow: View {
     let actions: [BriefDocumentAction]
     let sourceRef: BriefSourceRef?
     let onAction: (BriefDocumentAction, BriefSourceRef?) async -> Void
@@ -1038,24 +1060,48 @@ private struct BriefChartView: View {
             if let description = node.description {
                 Text(description).font(.caption).foregroundStyle(.secondary)
             }
-            Chart(node.data ?? [], id: \.label) { point in
-                if node.variant == "line" {
+            Chart(node.data ?? []) { point in
+                if node.variant == "donut" {
+                    SectorMark(
+                        angle: .value("Value", point.value),
+                        innerRadius: .ratio(0.54),
+                        angularInset: 2
+                    )
+                    .foregroundStyle(by: .value("Category", point.label))
+                    .cornerRadius(4)
+                } else if node.variant == "line" {
                     LineMark(
                         x: .value("Label", point.label),
                         y: .value("Value", point.value)
                     )
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
                     PointMark(
                         x: .value("Label", point.label),
                         y: .value("Value", point.value)
                     )
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
+                } else if node.variant == "area" {
+                    AreaMark(
+                        x: .value("Label", point.label),
+                        y: .value("Value", point.value)
+                    )
+                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
+                    .opacity(0.3)
+                    LineMark(
+                        x: .value("Label", point.label),
+                        y: .value("Value", point.value)
+                    )
+                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
                 } else {
                     BarMark(
                         x: .value("Label", point.label),
                         y: .value("Value", point.value)
                     )
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(by: .value("Series", point.group ?? point.label))
+                    .position(by: .value(
+                        "Series",
+                        node.variant == "stacked_bar" ? "Stack" : point.group ?? point.label
+                    ))
                     .cornerRadius(4)
                 }
             }

@@ -146,12 +146,17 @@ interface BriefExtras {
 // The compact, prompt-ready weather shape handed to the artifact model.
 export interface BriefWeatherPack {
   location: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
   unit: '°F' | '°C';
+  temperatureUnit: 'fahrenheit' | 'celsius';
   source?: string;
   attributionURL?: string;
   current: {
     temp: number;
     condition: string;
+    conditionCode: string;
     high: number;
     low: number;
     windSpeed?: number;
@@ -175,12 +180,17 @@ function hourLabel(timeIso: string): string {
 export function toBriefWeather(weather: BriefWeather): BriefWeatherPack {
   return {
     location: weather.locationName,
+    latitude: weather.latitude,
+    longitude: weather.longitude,
+    timezone: weather.timezone,
     unit: weather.unit === 'fahrenheit' ? '°F' : '°C',
+    temperatureUnit: weather.unit,
     source: weather.source,
     attributionURL: weather.attributionURL,
     current: {
       temp: Math.round(weather.current.temperature),
       condition: weather.current.conditionLabel,
+      conditionCode: weather.current.conditionCode,
       high: weather.current.tempMax,
       low: weather.current.tempMin,
       windSpeed: weather.current.windSpeed !== undefined ? Math.round(weather.current.windSpeed) : undefined,

@@ -165,6 +165,42 @@ public struct BriefNode: Codable, Hashable, Sendable {
     public let description: String?
     public let data: [BriefChartPoint]?
     public let sourceRefs: [BriefSourceRef]?
+    public let tableColumns: [BriefTableColumn]?
+    public let tableRows: [[String: BriefJSONValue]]?
+    public let progressSteps: [BriefProgressStep]?
+    public let weatherLocation: String?
+    public let latitude: Double?
+    public let longitude: Double?
+    public let weatherTimezone: String?
+    public let weatherCurrent: BriefWeatherCurrent?
+    public let weatherHourly: [BriefWeatherHour]?
+    public let weatherDaily: [BriefWeatherDay]?
+    public let source: String?
+    public let attributionURL: URL?
+    public let planItems: [BriefPlanItem]?
+    public let channel: String?
+    public let sender: String?
+    public let recipients: [String]?
+    public let sentAt: Double?
+    public let snippet: String?
+    public let attachmentCount: Int?
+    public let messageCount: Int?
+    public let previewRef: BriefSourceRef?
+    public let decisionOptions: [BriefDecisionOption]?
+    public let citations: [BriefCitation]?
+    public let mapMarkers: [BriefMapMarker]?
+    public let mapRoutes: [BriefMapRoute]?
+    public let filename: String?
+    public let language: String?
+    public let oldCode: String?
+    public let newCode: String?
+    public let command: String?
+    public let stdout: String?
+    public let stderr: String?
+    public let exitCode: Int?
+    public let durationMs: Double?
+    public let cwd: String?
+    public let truncated: Bool?
     public let timelineItems: [BriefTimelineItem]?
     public let checklistItems: [BriefChecklistItem]?
     public let collectionItems: [BriefCollectionItem]?
@@ -173,7 +209,10 @@ public struct BriefNode: Codable, Hashable, Sendable {
         case kind, id, emphasis, tone, footprint, density, columns, ratio, surface, title, kicker, collapsible, children
         case role, text, actions, variant, placeholder, questionId, canvasId, html, fallbackText
         case allowedActions, height, items, query, limit, emptyText, label, value, queryValue, delta
-        case unit, description, data, sourceRefs
+        case unit, description, data, sourceRefs, rows, steps, location, latitude, longitude, timezone
+        case current, hourly, daily, source, attributionURL, channel, sender, recipients, sentAt, snippet
+        case attachmentCount, messageCount, ref, options, citations, markers, routes
+        case filename, language, oldCode, newCode, command, stdout, stderr, exitCode, durationMs, cwd, truncated
     }
 
     public init(from decoder: Decoder) throws {
@@ -187,7 +226,11 @@ public struct BriefNode: Codable, Hashable, Sendable {
             ? decodedFootprint
             : nil
         density = try values.decodeIfPresent(String.self, forKey: .density)
-        columns = try values.decodeIfPresent(Int.self, forKey: .columns)
+        if kind == "data_table" {
+            columns = nil
+        } else {
+            columns = try values.decodeIfPresent(Int.self, forKey: .columns)
+        }
         ratio = try values.decodeIfPresent(String.self, forKey: .ratio)
         surface = try values.decodeIfPresent(String.self, forKey: .surface)
         title = try values.decodeIfPresent(String.self, forKey: .title)
@@ -216,6 +259,55 @@ public struct BriefNode: Codable, Hashable, Sendable {
         description = try values.decodeIfPresent(String.self, forKey: .description)
         data = try values.decodeIfPresent([BriefChartPoint].self, forKey: .data)
         sourceRefs = try values.decodeIfPresent([BriefSourceRef].self, forKey: .sourceRefs)
+        if kind == "data_table" {
+            tableColumns = try values.decodeIfPresent([BriefTableColumn].self, forKey: .columns)
+            tableRows = try values.decodeIfPresent([[String: BriefJSONValue]].self, forKey: .rows)
+        } else {
+            tableColumns = nil
+            tableRows = nil
+        }
+        if kind == "progress" {
+            progressSteps = try values.decodeIfPresent([BriefProgressStep].self, forKey: .steps)
+        } else {
+            progressSteps = nil
+        }
+        weatherLocation = try values.decodeIfPresent(String.self, forKey: .location)
+        latitude = try values.decodeIfPresent(Double.self, forKey: .latitude)
+        longitude = try values.decodeIfPresent(Double.self, forKey: .longitude)
+        weatherTimezone = try values.decodeIfPresent(String.self, forKey: .timezone)
+        weatherCurrent = try values.decodeIfPresent(BriefWeatherCurrent.self, forKey: .current)
+        weatherHourly = try values.decodeIfPresent([BriefWeatherHour].self, forKey: .hourly)
+        weatherDaily = try values.decodeIfPresent([BriefWeatherDay].self, forKey: .daily)
+        source = try values.decodeIfPresent(String.self, forKey: .source)
+        attributionURL = try values.decodeIfPresent(URL.self, forKey: .attributionURL)
+        channel = try values.decodeIfPresent(String.self, forKey: .channel)
+        sender = try values.decodeIfPresent(String.self, forKey: .sender)
+        recipients = try values.decodeIfPresent([String].self, forKey: .recipients)
+        sentAt = try values.decodeIfPresent(Double.self, forKey: .sentAt)
+        snippet = try values.decodeIfPresent(String.self, forKey: .snippet)
+        attachmentCount = try values.decodeIfPresent(Int.self, forKey: .attachmentCount)
+        messageCount = try values.decodeIfPresent(Int.self, forKey: .messageCount)
+        previewRef = try values.decodeIfPresent(BriefSourceRef.self, forKey: .ref)
+        decisionOptions = try values.decodeIfPresent([BriefDecisionOption].self, forKey: .options)
+        citations = try values.decodeIfPresent([BriefCitation].self, forKey: .citations)
+        mapMarkers = try values.decodeIfPresent([BriefMapMarker].self, forKey: .markers)
+        mapRoutes = try values.decodeIfPresent([BriefMapRoute].self, forKey: .routes)
+        filename = try values.decodeIfPresent(String.self, forKey: .filename)
+        language = try values.decodeIfPresent(String.self, forKey: .language)
+        oldCode = try values.decodeIfPresent(String.self, forKey: .oldCode)
+        newCode = try values.decodeIfPresent(String.self, forKey: .newCode)
+        command = try values.decodeIfPresent(String.self, forKey: .command)
+        stdout = try values.decodeIfPresent(String.self, forKey: .stdout)
+        stderr = try values.decodeIfPresent(String.self, forKey: .stderr)
+        exitCode = try values.decodeIfPresent(Int.self, forKey: .exitCode)
+        durationMs = try values.decodeIfPresent(Double.self, forKey: .durationMs)
+        cwd = try values.decodeIfPresent(String.self, forKey: .cwd)
+        truncated = try values.decodeIfPresent(Bool.self, forKey: .truncated)
+        if kind == "plan" {
+            planItems = try values.decodeIfPresent([BriefPlanItem].self, forKey: .items)
+        } else {
+            planItems = nil
+        }
 
         switch kind {
         case "timeline":
@@ -283,6 +375,42 @@ public struct BriefNode: Codable, Hashable, Sendable {
         try values.encodeIfPresent(description, forKey: .description)
         try values.encodeIfPresent(data, forKey: .data)
         try values.encodeIfPresent(sourceRefs, forKey: .sourceRefs)
+        try values.encodeIfPresent(tableColumns, forKey: .columns)
+        try values.encodeIfPresent(tableRows, forKey: .rows)
+        try values.encodeIfPresent(progressSteps, forKey: .steps)
+        try values.encodeIfPresent(weatherLocation, forKey: .location)
+        try values.encodeIfPresent(latitude, forKey: .latitude)
+        try values.encodeIfPresent(longitude, forKey: .longitude)
+        try values.encodeIfPresent(weatherTimezone, forKey: .timezone)
+        try values.encodeIfPresent(weatherCurrent, forKey: .current)
+        try values.encodeIfPresent(weatherHourly, forKey: .hourly)
+        try values.encodeIfPresent(weatherDaily, forKey: .daily)
+        try values.encodeIfPresent(source, forKey: .source)
+        try values.encodeIfPresent(attributionURL, forKey: .attributionURL)
+        try values.encodeIfPresent(channel, forKey: .channel)
+        try values.encodeIfPresent(sender, forKey: .sender)
+        try values.encodeIfPresent(recipients, forKey: .recipients)
+        try values.encodeIfPresent(sentAt, forKey: .sentAt)
+        try values.encodeIfPresent(snippet, forKey: .snippet)
+        try values.encodeIfPresent(attachmentCount, forKey: .attachmentCount)
+        try values.encodeIfPresent(messageCount, forKey: .messageCount)
+        try values.encodeIfPresent(previewRef, forKey: .ref)
+        try values.encodeIfPresent(decisionOptions, forKey: .options)
+        try values.encodeIfPresent(citations, forKey: .citations)
+        try values.encodeIfPresent(mapMarkers, forKey: .markers)
+        try values.encodeIfPresent(mapRoutes, forKey: .routes)
+        try values.encodeIfPresent(filename, forKey: .filename)
+        try values.encodeIfPresent(language, forKey: .language)
+        try values.encodeIfPresent(oldCode, forKey: .oldCode)
+        try values.encodeIfPresent(newCode, forKey: .newCode)
+        try values.encodeIfPresent(command, forKey: .command)
+        try values.encodeIfPresent(stdout, forKey: .stdout)
+        try values.encodeIfPresent(stderr, forKey: .stderr)
+        try values.encodeIfPresent(exitCode, forKey: .exitCode)
+        try values.encodeIfPresent(durationMs, forKey: .durationMs)
+        try values.encodeIfPresent(cwd, forKey: .cwd)
+        try values.encodeIfPresent(truncated, forKey: .truncated)
+        if let planItems { try values.encode(planItems, forKey: .items) }
         if let timelineItems { try values.encode(timelineItems, forKey: .items) }
         if let checklistItems { try values.encode(checklistItems, forKey: .items) }
         if let collectionItems { try values.encode(collectionItems, forKey: .items) }
@@ -335,6 +463,42 @@ public struct BriefNode: Codable, Hashable, Sendable {
         description: String? = nil,
         data: [BriefChartPoint]? = nil,
         sourceRefs: [BriefSourceRef]? = nil,
+        tableColumns: [BriefTableColumn]? = nil,
+        tableRows: [[String: BriefJSONValue]]? = nil,
+        progressSteps: [BriefProgressStep]? = nil,
+        weatherLocation: String? = nil,
+        latitude: Double? = nil,
+        longitude: Double? = nil,
+        weatherTimezone: String? = nil,
+        weatherCurrent: BriefWeatherCurrent? = nil,
+        weatherHourly: [BriefWeatherHour]? = nil,
+        weatherDaily: [BriefWeatherDay]? = nil,
+        source: String? = nil,
+        attributionURL: URL? = nil,
+        planItems: [BriefPlanItem]? = nil,
+        channel: String? = nil,
+        sender: String? = nil,
+        recipients: [String]? = nil,
+        sentAt: Double? = nil,
+        snippet: String? = nil,
+        attachmentCount: Int? = nil,
+        messageCount: Int? = nil,
+        previewRef: BriefSourceRef? = nil,
+        decisionOptions: [BriefDecisionOption]? = nil,
+        citations: [BriefCitation]? = nil,
+        mapMarkers: [BriefMapMarker]? = nil,
+        mapRoutes: [BriefMapRoute]? = nil,
+        filename: String? = nil,
+        language: String? = nil,
+        oldCode: String? = nil,
+        newCode: String? = nil,
+        command: String? = nil,
+        stdout: String? = nil,
+        stderr: String? = nil,
+        exitCode: Int? = nil,
+        durationMs: Double? = nil,
+        cwd: String? = nil,
+        truncated: Bool? = nil,
         timelineItems: [BriefTimelineItem]? = nil,
         checklistItems: [BriefChecklistItem]? = nil,
         collectionItems: [BriefCollectionItem]? = nil
@@ -375,6 +539,42 @@ public struct BriefNode: Codable, Hashable, Sendable {
         self.description = description
         self.data = data
         self.sourceRefs = sourceRefs
+        self.tableColumns = tableColumns
+        self.tableRows = tableRows
+        self.progressSteps = progressSteps
+        self.weatherLocation = weatherLocation
+        self.latitude = latitude
+        self.longitude = longitude
+        self.weatherTimezone = weatherTimezone
+        self.weatherCurrent = weatherCurrent
+        self.weatherHourly = weatherHourly
+        self.weatherDaily = weatherDaily
+        self.source = source
+        self.attributionURL = attributionURL
+        self.planItems = planItems
+        self.channel = channel
+        self.sender = sender
+        self.recipients = recipients
+        self.sentAt = sentAt
+        self.snippet = snippet
+        self.attachmentCount = attachmentCount
+        self.messageCount = messageCount
+        self.previewRef = previewRef
+        self.decisionOptions = decisionOptions
+        self.citations = citations
+        self.mapMarkers = mapMarkers
+        self.mapRoutes = mapRoutes
+        self.filename = filename
+        self.language = language
+        self.oldCode = oldCode
+        self.newCode = newCode
+        self.command = command
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+        self.durationMs = durationMs
+        self.cwd = cwd
+        self.truncated = truncated
         self.timelineItems = timelineItems
         self.checklistItems = checklistItems
         self.collectionItems = collectionItems
@@ -383,7 +583,9 @@ public struct BriefNode: Codable, Hashable, Sendable {
     fileprivate func normalized(summary: String, depth: Int, nodeCount: inout Int) -> BriefNode {
         let layouts = Set(["stack", "grid", "split", "hero", "group"])
         let leaves = Set([
-            "entity_list", "query_list", "stat", "chart", "timeline", "checklist", "collection",
+            "entity_list", "query_list", "stat", "chart", "data_table", "progress", "weather", "plan",
+            "email_preview", "decision", "citations", "geo_map", "code_diff", "terminal",
+            "timeline", "checklist", "collection",
             "text", "actions", "prompt", "divider", "canvas",
         ])
         guard depth <= 4, nodeCount < 48 else {
@@ -622,6 +824,89 @@ public struct BriefChartPoint: Codable, Hashable, Sendable {
     public let label: String
     public let value: Double
     public let group: String?
+}
+
+public struct BriefTableColumn: Codable, Hashable, Sendable {
+    public let key: String
+    public let label: String
+    public let format: String
+}
+
+public struct BriefProgressStep: Codable, Hashable, Sendable {
+    public let id: String
+    public let label: String
+    public let description: String?
+    public let status: String
+}
+
+public struct BriefWeatherCurrent: Codable, Hashable, Sendable {
+    public let conditionCode: String
+    public let temperature: Double
+    public let tempMin: Double
+    public let tempMax: Double
+    public let windSpeed: Double?
+    public let humidity: Double?
+    public let precipitationChance: Double?
+    public let visibility: Double?
+}
+
+public struct BriefWeatherHour: Codable, Hashable, Sendable {
+    public let label: String
+    public let conditionCode: String
+    public let temperature: Double
+    public let precipitationChance: Double?
+}
+
+public struct BriefWeatherDay: Codable, Hashable, Sendable {
+    public let label: String
+    public let conditionCode: String
+    public let tempMin: Double
+    public let tempMax: Double
+    public let precipitationChance: Double?
+}
+
+public struct BriefPlanItem: Codable, Hashable, Sendable {
+    public let id: String
+    public let label: String
+    public let description: String?
+    public let status: String
+    public let ref: BriefSourceRef?
+    public let action: BriefDocumentAction?
+}
+
+public struct BriefDecisionOption: Codable, Hashable, Sendable {
+    public let id: String
+    public let label: String
+    public let description: String?
+    public let action: BriefDocumentAction
+}
+
+public struct BriefCitation: Codable, Hashable, Sendable {
+    public let id: String
+    public let href: URL
+    public let title: String
+    public let snippet: String?
+    public let domain: String?
+    public let type: String?
+}
+
+public struct BriefMapMarker: Codable, Hashable, Sendable {
+    public let id: String
+    public let lat: Double
+    public let lng: Double
+    public let label: String?
+    public let description: String?
+}
+
+public struct BriefMapPoint: Codable, Hashable, Sendable {
+    public let lat: Double
+    public let lng: Double
+}
+
+public struct BriefMapRoute: Codable, Hashable, Sendable {
+    public let id: String
+    public let label: String?
+    public let points: [BriefMapPoint]
 }
 
 public struct BriefTimelineItem: Codable, Hashable, Sendable {

@@ -80,10 +80,15 @@ describe('toBriefWeather', () => {
   test('produces the compact prompt pack', () => {
     const pack = toBriefWeather(WEATHER);
     expect(pack.location).toBe('Rochester, New York');
+    expect(pack.latitude).toBe(43.15);
+    expect(pack.longitude).toBe(-77.62);
+    expect(pack.timezone).toBe('America/New_York');
     expect(pack.unit).toBe('°F');
+    expect(pack.temperatureUnit).toBe('fahrenheit');
     expect(pack.current).toEqual({
       temp: 71,
       condition: 'Rain',
+      conditionCode: 'rain',
       high: 78,
       low: 61,
       windSpeed: 8,

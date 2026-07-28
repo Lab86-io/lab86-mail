@@ -106,6 +106,18 @@ describe('display payload builders satisfy the tool-ui component contracts', () 
     ).toThrow('No chartable rows');
   });
 
+  test('chart contract accepts editorial area, stacked, and donut variants', () => {
+    for (const type of ['area', 'stacked_bar', 'donut'] as const) {
+      expectParses(SerializableChartSchema, {
+        id: `chart-${type}`,
+        type,
+        xKey: 'label',
+        series: [{ key: 'value', label: 'Value' }],
+        data: [{ label: 'One', value: 1 }],
+      });
+    }
+  });
+
   test('table clamps rows and coerces cell types', () => {
     const rows = Array.from({ length: DISPLAY_LIMITS.tableRows + 40 }, (_, i) => ({
       name: `Row ${i}`,

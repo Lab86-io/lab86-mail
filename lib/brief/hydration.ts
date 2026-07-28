@@ -35,9 +35,27 @@ export function collectBriefRefs(document: BriefDocumentV2): BriefSourceRefV2[] 
       case 'chart':
       case 'data_table':
       case 'progress':
+      case 'weather':
+      case 'citations':
+      case 'geo_map':
+      case 'code_diff':
+      case 'terminal':
         node.sourceRefs.forEach((ref) => {
           add(ref);
         });
+        break;
+      case 'plan':
+        node.sourceRefs.forEach(add);
+        node.items.forEach((item) => {
+          add(item.ref);
+        });
+        break;
+      case 'email_preview':
+        node.sourceRefs.forEach(add);
+        add(node.ref);
+        break;
+      case 'decision':
+        node.sourceRefs.forEach(add);
         break;
       case 'timeline':
         node.items.forEach((item) => {
