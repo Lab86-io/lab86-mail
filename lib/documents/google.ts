@@ -1,5 +1,12 @@
 import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connections';
-import type { AlbatrossDocumentRecord, DeckElement, DocumentKind, SheetTab } from './model';
+import {
+  type AlbatrossDocumentModel,
+  type AlbatrossDocumentRecord,
+  type DeckElement,
+  type DocumentKind,
+  parseDocumentModel,
+  type SheetTab,
+} from './model';
 import { linkGoogleDocument } from './service';
 
 const GOOGLE_MIME: Record<DocumentKind, string> = {
@@ -81,8 +88,11 @@ function googleObjectId(value: string, suffix = '') {
   return /^[a-zA-Z_]/u.test(safe) ? safe : `a_${safe}`;
 }
 
-async function syncGoogleDoc(accessToken: string, fileId: string, document: AlbatrossDocumentRecord) {
-  if (document.model.kind !== 'doc') return;
+async function syncGoogleDoc(
+  accessToken: string,
+  fileId: string,
+  model: Extract<AlbatrossDocumentModel, { kind: 'doc' }>,
+) {
   const current = await googleJson(
     accessToken,
     `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}?fields=revisionId,body.content.endIndex`,
@@ -97,7 +107,7 @@ async function syncGoogleDoc(accessToken: string, fileId: string, document: Alba
   if (endIndex > 2) {
     requests.push({ deleteContentRange: { range: { startIndex: 1, endIndex: endIndex - 1 } } });
   }
-  const segments = document.model.blocks.map((block) => ({
+  const segments = model.blocks.map((block) => ({
     block,
     text: `${block.text}\n`,
   }));
@@ -228,8 +238,11 @@ function valuesForTab(tab: SheetTab) {
   return { values, maxRow, maxColumn };
 }
 
-async function syncGoogleSheet(accessToken: string, fileId: string, document: AlbatrossDocumentRecord) {
-  if (document.model.kind !== 'sheet') return;
+async function syncGoogleSheet(
+  accessToken: string,
+  fileId: string,
+  model: Extract<AlbatrossDocumentModel, { kind: 'sheet' }>,
+) {
   const current = await googleJson(
     accessToken,
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(fileId)}?fields=sheets.properties`,
@@ -242,11 +255,11 @@ async function syncGoogleSheet(accessToken: string, fileId: string, document: Al
   });
   requests.push({
     updateSheetProperties: {
-      properties: { sheetId: firstSheetId, title: document.model.sheets[0].name },
+      properties: { sheetId: firstSheetId, title: model.sheets[0].name },
       fields: 'title',
     },
   });
-  document.model.sheets.slice(1).forEach((sheet, index) => {
+  model.sheets.slice(1).forEach((sheet, index) => {
     requests.push({
       addSheet: { properties: { sheetId: 10_000 + index, title: sheet.name } },
     });
@@ -262,11 +275,11 @@ async function syncGoogleSheet(accessToken: string, fileId: string, document: Al
     {
       method: 'POST',
       body: JSON.stringify({
-        ranges: document.model.sheets.map((sheet) => `'${sheet.name.replaceAll("'", "''")}'`),
+        ranges: model.sheets.map((sheet) => `'${sheet.name.replaceAll("'", "''")}'`),
       }),
     },
   );
-  const data = document.model.sheets.map((sheet) => {
+  const data = model.sheets.map((sheet) => {
     const { values, maxRow, maxColumn } = valuesForTab(sheet);
     return {
       range: `'${sheet.name.replaceAll("'", "''")}'!A1:${columnName(maxColumn)}${maxRow}`,
@@ -335,8 +348,11 @@ function hexToRgb(value: string) {
   };
 }
 
-async function syncGoogleDeck(accessToken: string, fileId: string, document: AlbatrossDocumentRecord) {
-  if (document.model.kind !== 'deck') return;
+async function syncGoogleDeck(
+  accessToken: string,
+  fileId: string,
+  model: Extract<AlbatrossDocumentModel, { kind: 'deck' }>,
+) {
   const current = await googleJson(
     accessToken,
     `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(fileId)}?fields=slides.objectId`,
@@ -344,7 +360,7 @@ async function syncGoogleDeck(accessToken: string, fileId: string, document: Alb
   const requests: Record<string, any>[] = (current.slides || []).map((slide: any) => ({
     deleteObject: { objectId: slide.objectId },
   }));
-  document.model.slides.forEach((slide, slideIndex) => {
+  model.slides.forEach((slide, slideIndex) => {
     const slideId = googleObjectId(slide.id, `_${slideIndex}`);
     requests.push({
       createSlide: { objectId: slideId, slideLayoutReference: { predefinedLayout: 'BLANK' } },
@@ -416,9 +432,15 @@ export async function publishDocumentToGoogle(input: {
     fileId = created.fileId;
     webUrl = created.webUrl;
   }
-  if (input.document.kind === 'doc') await syncGoogleDoc(access.accessToken, fileId, input.document);
-  if (input.document.kind === 'sheet') await syncGoogleSheet(access.accessToken, fileId, input.document);
-  if (input.document.kind === 'deck') await syncGoogleDeck(access.accessToken, fileId, input.document);
+  if (input.document.model.kind === 'doc') {
+    await syncGoogleDoc(access.accessToken, fileId, input.document.model);
+  }
+  if (input.document.model.kind === 'sheet') {
+    await syncGoogleSheet(access.accessToken, fileId, input.document.model);
+  }
+  if (input.document.model.kind === 'deck') {
+    await syncGoogleDeck(access.accessToken, fileId, input.document.model);
+  }
   const syncedMetadata = await googleDriveMetadata(access.accessToken, fileId);
   webUrl = syncedMetadata.webUrl || webUrl;
   const mimeType = GOOGLE_MIME[input.document.kind];
@@ -439,5 +461,47 @@ export async function publishDocumentToGoogle(input: {
     webUrl,
     providerVersion: syncedMetadata.providerVersion,
     syncedRevision: input.document.currentRevision,
+  };
+}
+
+export async function updateGoogleNativeFile(input: {
+  userId: string;
+  connectionId: string;
+  fileId: string;
+  kind: DocumentKind;
+  title: string;
+  model: unknown;
+  expectedProviderVersion?: string;
+}) {
+  const access = await dependencies.getCloudFileAccess({
+    userId: input.userId,
+    connectionId: input.connectionId,
+  });
+  if (!access || access.connection.provider !== 'google_drive') {
+    throw new Error('The selected Google Drive connection was not found.');
+  }
+  const current = await googleDriveMetadata(access.accessToken, input.fileId);
+  if (googleProviderVersionChanged(input.expectedProviderVersion, current.providerVersion)) {
+    throw new GoogleDocumentConflictError();
+  }
+  const model = parseDocumentModel(input.model, input.kind);
+  if (model.kind === 'doc') await syncGoogleDoc(access.accessToken, input.fileId, model);
+  if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, model);
+  if (model.kind === 'deck') await syncGoogleDeck(access.accessToken, input.fileId, model);
+  const title = input.title.trim().slice(0, 500) || 'Untitled';
+  await googleJson(
+    access.accessToken,
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?supportsAllDrives=true&fields=id`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ name: title }),
+    },
+  );
+  const updated = await googleDriveMetadata(access.accessToken, input.fileId);
+  return {
+    title,
+    model,
+    webUrl: updated.webUrl || current.webUrl,
+    providerVersion: updated.providerVersion,
   };
 }

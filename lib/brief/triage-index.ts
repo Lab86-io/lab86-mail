@@ -78,6 +78,16 @@ export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1
     .slice(0, 120);
   const title = `${titleBase || 'Untitled'} ${kindLabel}`.slice(0, 160);
   const sourceRefs = uniqueRefs([record.primaryRef, ...record.relatedRefs]);
+  const replyRef = sourceRefs.find((ref) => ref.kind === 'thread' && ref.account);
+  const replyContext = replyRef?.account
+    ? {
+        attachToReply: true,
+        account: replyRef.account,
+        threadId: replyRef.id,
+        subject: replyRef.label,
+        body: `I've attached the requested ${kindLabel} for your review.`,
+      }
+    : {};
   const sourceContext = [
     `Situation: ${record.situation}`,
     ...record.background.map((line) => `Background: ${line}`),
@@ -93,6 +103,7 @@ export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1
       instructions: `Create the ${kindLabel} required by this recommendation: ${record.recommendation}`,
       sourceContext,
       sourceRefs,
+      ...replyContext,
     },
     style: 'primary' as const,
   };

@@ -1360,7 +1360,8 @@ private extension BriefActionPayload {
             kind: string("kind"),
             instructions: string("instructions") ?? string("brief"),
             sourceContext: string("sourceContext"),
-            documentID: string("documentId")
+            documentID: string("documentId"),
+            attachToReply: bool("attachToReply")
         )
     }
 
@@ -1391,6 +1392,7 @@ private extension BriefActionPayload {
         set("instructions", instructions)
         set("sourceContext", sourceContext)
         set("documentId", documentID)
+        if let attachToReply { value["attachToReply"] = .bool(attachToReply) }
         if let completed { value["completed"] = .bool(completed) }
         if let startAt { value["startAt"] = .number(startAt) }
         if let endAt { value["endAt"] = .number(endAt) }

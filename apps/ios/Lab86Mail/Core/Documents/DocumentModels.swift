@@ -472,6 +472,8 @@ struct CloudFileItem: Identifiable, Hashable, Sendable {
     let size: Int?
     let modifiedAt: Date?
     let webURL: URL?
+    let thumbnailURL: URL?
+    let owner: String?
     let isFolder: Bool
 
     init?(json: JSONValue) {
@@ -491,7 +493,38 @@ struct CloudFileItem: Identifiable, Hashable, Sendable {
         webURL = (json["webUrl"]?.stringValue ?? json["url"]?.stringValue).flatMap {
             URL(string: $0)
         }
+        thumbnailURL = json["thumbnailUrl"]?.stringValue.flatMap { URL(string: $0) }
+        owner = json["owner"]?.stringValue
         isFolder = json["isFolder"]?.boolValue ?? false
+    }
+}
+
+struct GoogleProviderDocument: Hashable, Sendable {
+    let connectionID: String
+    let fileID: String
+    let mimeType: String
+    var kind: AlbatrossDocumentKind
+    var title: String
+    var model: AlbatrossDocumentModel
+    var webURL: URL?
+    var providerVersion: String?
+
+    init?(json: JSONValue) {
+        guard let connectionID = json["connectionId"]?.stringValue,
+              let fileID = json["fileId"]?.stringValue,
+              let mimeType = json["mimeType"]?.stringValue,
+              let rawKind = json["kind"]?.stringValue,
+              let kind = AlbatrossDocumentKind(rawValue: rawKind),
+              let modelJSON = json["model"],
+              let model = AlbatrossDocumentModel(json: modelJSON) else { return nil }
+        self.connectionID = connectionID
+        self.fileID = fileID
+        self.mimeType = mimeType
+        self.kind = kind
+        title = json["title"]?.stringValue ?? "Untitled \(kind.title)"
+        self.model = model
+        webURL = json["webUrl"]?.stringValue.flatMap { URL(string: $0) }
+        providerVersion = json["providerVersion"]?.stringValue
     }
 }
 
@@ -564,6 +597,68 @@ final class DocumentStore {
         }
         replace(document)
         return document
+    }
+
+    func openGoogleDocument(_ route: GoogleDocumentRoute) async throws -> GoogleProviderDocument {
+        var components = URLComponents()
+        components.path = "/api/files/google/editor"
+        components.queryItems = [
+            URLQueryItem(name: "connectionId", value: route.connectionID),
+            URLQueryItem(name: "fileId", value: route.fileID),
+            URLQueryItem(name: "mimeType", value: route.mimeType),
+        ]
+        let result = try await backend.get(path: components.string ?? "/api/files/google/editor")
+        guard let json = result["file"], var document = GoogleProviderDocument(json: json) else {
+            throw BackendError.invalidResponse
+        }
+        if document.webURL == nil {
+            document.webURL = route.webURL
+        }
+        return document
+    }
+
+    func saveGoogleDocument(_ document: GoogleProviderDocument) async throws -> GoogleProviderDocument {
+        var body: [String: JSONValue] = [
+            "connectionId": .string(document.connectionID),
+            "fileId": .string(document.fileID),
+            "mimeType": .string(document.mimeType),
+            "title": .string(document.title),
+            "model": document.model.json,
+        ]
+        if let providerVersion = document.providerVersion {
+            body["expectedProviderVersion"] = .string(providerVersion)
+        }
+        let result = try await backend.patch(
+            path: "/api/files/google/editor",
+            body: .object(body)
+        )
+        guard let json = result["file"],
+              let saved = GoogleProviderDocument(json: json) else {
+            throw BackendError.invalidResponse
+        }
+        return saved
+    }
+
+    func suggestGoogleDocument(
+        _ document: GoogleProviderDocument,
+        instruction: String
+    ) async throws -> AlbatrossDocumentSuggestion {
+        let result = try await backend.post(
+            path: "/api/files/google/editor",
+            body: .object([
+                "connectionId": .string(document.connectionID),
+                "fileId": .string(document.fileID),
+                "mimeType": .string(document.mimeType),
+                "title": .string(document.title),
+                "model": document.model.json,
+                "instruction": .string(instruction),
+            ])
+        )
+        guard let json = result["suggestion"],
+              let suggestion = AlbatrossDocumentSuggestion(json: json) else {
+            throw BackendError.invalidResponse
+        }
+        return suggestion
     }
 
     func create(

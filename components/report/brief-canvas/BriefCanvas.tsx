@@ -65,6 +65,7 @@ export function BriefCanvas({
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const setPendingOpenWorkId = useClientStore((state) => state.setPendingOpenWorkId);
   const setPendingReplyBody = useClientStore((state) => state.setPendingReplyBody);
+  const setComposeRecoveredFiles = useClientStore((state) => state.setComposeRecoveredFiles);
   const setChatScope = useClientStore((state) => state.setChatScope);
   const setAiBarOpen = useClientStore((state) => state.setAiBarOpen);
 
@@ -125,8 +126,18 @@ export function BriefCanvas({
       try {
         const result = await executeBriefAction(action.action, payload, setPendingOpenWorkId);
         if (action.action === 'create_document' && typeof result === 'string') {
-          pushDocumentDeepLink(result);
-          setPrimaryView('files');
+          if (payload.attachToReply === true) {
+            await prepareDocumentReply(result, payload, {
+              setComposeRecoveredFiles,
+              setPendingReplyBody,
+              setPrimaryView,
+              setSelectedThread,
+              setThreadAccount,
+            });
+          } else {
+            pushDocumentDeepLink(result);
+            setPrimaryView('files');
+          }
         }
         if (action.action === 'draft_reply') {
           navigateBriefAction(action.action, payload, {
@@ -197,6 +208,7 @@ export function BriefCanvas({
       refresh,
       setAiBarOpen,
       setChatScope,
+      setComposeRecoveredFiles,
       setPendingOpenWorkId,
       setPendingReplyBody,
       setPrimaryView,
@@ -332,6 +344,74 @@ export function BriefCanvas({
       ) : null}
     </article>
   );
+}
+
+async function prepareDocumentReply(
+  documentId: string,
+  payload: BriefActionPayload,
+  navigation: {
+    setComposeRecoveredFiles: (files: File[]) => void;
+    setPendingReplyBody: (body: string | null) => void;
+    setPrimaryView: (view: any) => void;
+    setSelectedThread: (threadId: string | null) => void;
+    setThreadAccount: (account: string | null) => void;
+  },
+) {
+  const account = required(payload, 'account');
+  const threadId = required(payload, 'threadId');
+  const kind = required(payload, 'kind') as 'doc' | 'sheet' | 'deck';
+  const title = required(payload, 'title');
+  const exportResponse = await fetch(`/api/documents/${encodeURIComponent(documentId)}/export`, {
+    cache: 'no-store',
+  });
+  if (!exportResponse.ok) {
+    const error = await exportResponse.json().catch(() => ({}));
+    throw new Error(error?.error || 'The file was created, but its attachment could not be prepared.');
+  }
+  const extension = kind === 'sheet' ? 'xlsx' : kind === 'deck' ? 'pptx' : 'docx';
+  const contentType =
+    exportResponse.headers.get('content-type') ||
+    (kind === 'sheet'
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : kind === 'deck'
+        ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  const filename = `${title.replace(/[\\/:*?"<>|]/gu, '-').trim() || 'Untitled'}.${extension}`;
+  const attachment = new File([await exportResponse.blob()], filename, { type: contentType });
+  let body =
+    optional(payload, 'body') || `I've attached the requested ${kindNameForReply(kind)} for your review.`;
+  try {
+    const draftResponse = await fetch('/api/compose/draft', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        subject: optional(payload, 'subject'),
+        instructions: [
+          `Draft a concise reply that says the requested ${kindNameForReply(kind)} “${title}” is attached for review.`,
+          optional(payload, 'sourceContext'),
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      }),
+    });
+    const draft = await draftResponse.json().catch(() => ({}));
+    if (draftResponse.ok && typeof draft?.draft === 'string' && draft.draft.trim()) {
+      body = draft.draft.trim();
+    }
+  } catch {
+    // The grounded fallback still opens a complete reviewable reply.
+  }
+  navigation.setComposeRecoveredFiles([attachment]);
+  navigation.setPendingReplyBody(body);
+  navigation.setThreadAccount(account);
+  navigation.setSelectedThread(threadId);
+  navigation.setPrimaryView('mail');
+}
+
+function kindNameForReply(kind: 'doc' | 'sheet' | 'deck') {
+  if (kind === 'sheet') return 'spreadsheet';
+  if (kind === 'deck') return 'presentation';
+  return 'document';
 }
 
 async function executeBriefAction(

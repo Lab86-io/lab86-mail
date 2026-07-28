@@ -302,69 +302,375 @@ struct DocumentEditorView: View {
     }
 }
 
+struct GoogleDocumentEditorView: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.openURL) private var openURL
+    @State private var draft: GoogleProviderDocument?
+    @State private var persisted: GoogleProviderDocument?
+    @State private var saveTask: Task<Void, Never>?
+    @State private var isSaving = false
+    @State private var saveQueued = false
+    @State private var showsAI = false
+    @State private var errorMessage: String?
+
+    let route: GoogleDocumentRoute
+
+    var body: some View {
+        Group {
+            if let draft {
+                editor(draft)
+            } else {
+                ProgressView("Opening from Google Drive…")
+            }
+        }
+        .navigationBarBackButtonHidden(true)
+        .navigationTitle(draft?.kind.title ?? "Google Drive")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    Task {
+                        if await saveNow() {
+                            environment.navigation.documentRoute = nil
+                        }
+                    }
+                } label: {
+                    Label("Files", systemImage: "chevron.left")
+                }
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Saving to Google Drive")
+                }
+                if let url = draft?.webURL ?? route.webURL {
+                    Button {
+                        openURL(url)
+                    } label: {
+                        Label("Open in Google", systemImage: "arrow.up.right.square")
+                    }
+                }
+                Button {
+                    showsAI = true
+                } label: {
+                    Label("Albatross", systemImage: "sparkles")
+                }
+            }
+        }
+        .task(id: route.fileID) {
+            await load()
+        }
+        .onChange(of: draft) { oldValue, newValue in
+            guard oldValue != nil, newValue != nil, newValue != persisted else { return }
+            scheduleSave()
+        }
+        .sheet(isPresented: $showsAI) {
+            if let draft {
+                GoogleDocumentAISheet(document: draft) { suggestion in
+                    self.draft?.title = suggestion.title
+                    self.draft?.model = suggestion.proposedModel
+                }
+            }
+        }
+        .alert("Google Drive", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "Try again.")
+        }
+    }
+
+    @ViewBuilder
+    private func editor(_ document: GoogleProviderDocument) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: document.kind.symbol)
+                    .foregroundStyle(kindTint(document.kind))
+                TextField("File name", text: titleBinding)
+                    .font(.headline)
+                    .textInputAutocapitalization(.sentences)
+                Spacer(minLength: 0)
+                Label(
+                    isSaving ? "Saving" : "Google Drive",
+                    systemImage: isSaving ? "arrow.triangle.2.circlepath" : "checkmark.icloud"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal)
+            .frame(minHeight: 48)
+            .background(.bar)
+
+            switch document.model {
+            case .doc(let blocks):
+                NativeDocEditor(blocks: blocks) { updateModel(.doc(blocks: $0)) }
+            case .sheet(let activeSheetID, let sheets):
+                NativeSheetEditor(activeSheetID: activeSheetID, sheets: sheets) {
+                    updateModel(.sheet(activeSheetID: $0, sheets: $1))
+                }
+            case .deck(let activeSlideID, let slides):
+                NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) {
+                    updateModel(.deck(activeSlideID: $0, slides: $1))
+                }
+            }
+        }
+    }
+
+    private var titleBinding: Binding<String> {
+        Binding {
+            draft?.title ?? ""
+        } set: {
+            draft?.title = $0
+        }
+    }
+
+    private func updateModel(_ model: AlbatrossDocumentModel) {
+        draft?.model = model
+    }
+
+    private func load() async {
+        do {
+            let document = try await environment.documents.openGoogleDocument(route)
+            draft = document
+            persisted = document
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled else { return }
+            saveTask = nil
+            await saveNow()
+        }
+    }
+
+    @discardableResult
+    private func saveNow() async -> Bool {
+        saveTask?.cancel()
+        guard let draft, draft != persisted else { return true }
+        if isSaving {
+            saveQueued = true
+            while isSaving {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return await saveNow()
+        }
+        let savingDraft = draft
+        isSaving = true
+        defer {
+            isSaving = false
+            if saveQueued {
+                saveQueued = false
+                scheduleSave()
+            }
+        }
+        do {
+            let saved = try await environment.documents.saveGoogleDocument(savingDraft)
+            persisted = saved
+            if self.draft == savingDraft {
+                self.draft = saved
+            } else if var latest = self.draft {
+                latest.providerVersion = saved.providerVersion
+                latest.webURL = saved.webURL
+                self.draft = latest
+                saveQueued = true
+            }
+            return self.draft == persisted
+        } catch {
+            errorMessage = error.localizedDescription
+            saveQueued = true
+            return false
+        }
+    }
+
+    private func kindTint(_ kind: AlbatrossDocumentKind) -> Color {
+        switch kind {
+        case .doc: .blue
+        case .sheet: .green
+        case .deck: .orange
+        }
+    }
+}
+
+private struct GoogleDocumentAISheet: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dismiss) private var dismiss
+    @State private var instruction = ""
+    @State private var suggestion: AlbatrossDocumentSuggestion?
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+
+    let document: GoogleProviderDocument
+    let onApply: (AlbatrossDocumentSuggestion) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Describe the change", text: $instruction, axis: .vertical)
+                        .lineLimit(3 ... 8)
+                    Button("Propose changes", systemImage: "sparkles") {
+                        Task { await propose() }
+                    }
+                    .disabled(instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
+                } footer: {
+                    Text("Nothing changes in Google Drive until you apply the proposal.")
+                }
+                if let suggestion {
+                    Section("Review") {
+                        Text(suggestion.title)
+                            .font(.headline)
+                        Text(suggestion.description)
+                            .foregroundStyle(.secondary)
+                        Button("Apply and save to Google Drive", systemImage: "checkmark") {
+                            onApply(suggestion)
+                            dismiss()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Albatross editor")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .overlay {
+                if isWorking { ProgressView("Preparing proposal…") }
+            }
+            .alert("Couldn’t prepare changes", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK") { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "Try again.")
+            }
+        }
+    }
+
+    private func propose() async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            suggestion = try await environment.documents.suggestGoogleDocument(
+                document,
+                instruction: instruction
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
 private struct NativeDocEditor: View {
     let blocks: [AlbatrossDocBlock]
     let onChange: ([AlbatrossDocBlock]) -> Void
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Menu {
-                                ForEach(["paragraph", "heading", "bullet", "numbered", "quote"], id: \.self) { type in
-                                    Button(type.capitalized) {
-                                        update(index) { $0.type = type }
+            LazyVStack(spacing: 18) {
+                ForEach(Array(pages.enumerated()), id: \.offset) { pageIndex, page in
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(page) { entry in
+                            let index = entry.index
+                            let block = entry.block
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Menu {
+                                        ForEach(
+                                            ["paragraph", "heading", "bullet", "numbered", "quote"],
+                                            id: \.self
+                                        ) { type in
+                                            Button(type.capitalized) {
+                                                update(index) { $0.type = type }
+                                            }
+                                        }
+                                        if blocks.count > 1 {
+                                            Button("Delete block", role: .destructive) {
+                                                var next = blocks
+                                                next.remove(at: index)
+                                                onChange(next)
+                                            }
+                                        }
+                                    } label: {
+                                        Label(block.type.capitalized, systemImage: "textformat")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                }
+                                GrowingTextEditor(
+                                    text: Binding(
+                                        get: { block.text },
+                                        set: { value in update(index) { $0.text = value } }
+                                    ),
+                                    font: blockUIFont(block),
+                                    minimumHeight: block.type == "heading" ? 54 : 44
+                                )
+                                .padding(.horizontal, block.type == "quote" ? 10 : 0)
+                                .overlay(alignment: .leading) {
+                                    if block.type == "quote" {
+                                        Rectangle().fill(.secondary).frame(width: 2)
                                     }
                                 }
-                                if blocks.count > 1 {
-                                    Button("Delete block", role: .destructive) {
-                                        var next = blocks
-                                        next.remove(at: index)
-                                        onChange(next)
-                                    }
-                                }
-                            } label: {
-                                Label(block.type.capitalized, systemImage: "textformat")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
                             }
-                            Spacer()
                         }
-                        TextEditor(text: Binding(
-                            get: { block.text },
-                            set: { value in update(index) { $0.text = value } }
-                        ))
-                        .font(blockFont(block))
-                        .frame(minHeight: block.type == "heading" ? 54 : 82)
-                        .scrollContentBackground(.hidden)
-                        .padding(.horizontal, block.type == "quote" ? 10 : 0)
-                        .overlay(alignment: .leading) {
-                            if block.type == "quote" {
-                                Rectangle().fill(.secondary).frame(width: 2)
+                        if pageIndex == pages.count - 1 {
+                            Button("Add block", systemImage: "plus") {
+                                onChange(blocks + [AlbatrossDocBlock()])
                             }
+                            .buttonStyle(.bordered)
                         }
                     }
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, 28)
+                    .frame(maxWidth: 760, minHeight: pageMinimumHeight, alignment: .topLeading)
+                    .background(Color(uiColor: .systemBackground))
+                    .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 12)
                 }
-                Button("Add block", systemImage: "plus") {
-                    onChange(blocks + [AlbatrossDocBlock()])
-                }
-                .buttonStyle(.bordered)
             }
-            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 28)
-            .frame(maxWidth: 760)
-            .background(Color(uiColor: .systemBackground))
-            .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 12)
         }
         .background(Color(uiColor: .secondarySystemBackground))
     }
 
+    private var pages: [[IndexedDocBlock]] {
+        var result: [[IndexedDocBlock]] = []
+        var page: [IndexedDocBlock] = []
+        var usedLines = 0
+        for (index, block) in blocks.enumerated() {
+            let explicitLines = max(1, block.text.components(separatedBy: "\n").count)
+            let wrappedLines = max(1, Int(ceil(Double(block.text.count) / 58.0)))
+            let headingWeight = block.type == "heading" ? ((block.level ?? 2) == 1 ? 3 : 2) : 1
+            let estimatedLines = max(explicitLines, wrappedLines) + headingWeight
+            if !page.isEmpty, usedLines + estimatedLines > 38 {
+                result.append(page)
+                page = []
+                usedLines = 0
+            }
+            page.append(IndexedDocBlock(index: index, block: block))
+            usedLines += estimatedLines
+        }
+        if !page.isEmpty || result.isEmpty { result.append(page) }
+        return result
+    }
+
     private var horizontalPadding: CGFloat {
         UIDevice.current.userInterfaceIdiom == .pad ? 56 : 20
+    }
+
+    private var pageMinimumHeight: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 920 : 680
     }
 
     private func update(_ index: Int, mutation: (inout AlbatrossDocBlock) -> Void) {
@@ -374,15 +680,87 @@ private struct NativeDocEditor: View {
         onChange(next)
     }
 
-    private func blockFont(_ block: AlbatrossDocBlock) -> Font {
+    private func blockUIFont(_ block: AlbatrossDocBlock) -> UIFont {
         if block.type == "heading" {
             switch block.level ?? 2 {
-            case 1: return .largeTitle.bold()
-            case 3: return .title3.bold()
-            default: return .title.bold()
+            case 1: return .preferredFont(forTextStyle: .largeTitle).withTraits(.traitBold)
+            case 3: return .preferredFont(forTextStyle: .title3).withTraits(.traitBold)
+            default: return .preferredFont(forTextStyle: .title1).withTraits(.traitBold)
             }
         }
-        return block.type == "quote" ? .body.italic() : .body
+        let body = UIFont.preferredFont(forTextStyle: .body)
+        return block.type == "quote" ? body.withTraits(.traitItalic) : body
+    }
+}
+
+private struct IndexedDocBlock: Identifiable {
+    let index: Int
+    let block: AlbatrossDocBlock
+
+    var id: String { block.id }
+}
+
+private struct GrowingTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    let font: UIFont
+    let minimumHeight: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.delegate = context.coordinator
+        view.backgroundColor = .clear
+        view.isScrollEnabled = false
+        view.adjustsFontForContentSizeCategory = true
+        view.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        view.textContainer.lineFragmentPadding = 0
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        if view.text != text {
+            view.text = text
+        }
+        if view.font != font {
+            view.font = font
+        }
+        view.invalidateIntrinsicContentSize()
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let fitted = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        return CGSize(width: width, height: max(minimumHeight, fitted.height))
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        private var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            text.wrappedValue = textView.text
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+private extension UIFont {
+    func withTraits(_ traits: UIFontDescriptor.SymbolicTraits) -> UIFont {
+        guard let descriptor = fontDescriptor.withSymbolicTraits(traits) else { return self }
+        return UIFont(descriptor: descriptor, size: 0)
     }
 }
 

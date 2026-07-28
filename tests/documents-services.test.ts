@@ -9,6 +9,7 @@ import {
   __setGoogleDocumentDepsForTest,
   GoogleDocumentConflictError,
   publishDocumentToGoogle,
+  updateGoogleNativeFile,
 } from '../lib/documents/google';
 import { __setGoogleImportDepsForTest, importGoogleNativeFile } from '../lib/documents/google-import';
 import {
@@ -986,6 +987,45 @@ describe('Google document publishing', () => {
         connectionId: 'onedrive-1',
       }),
     ).rejects.toThrow('selected Google Drive connection was not found');
+  });
+
+  test('updates a provider-owned Google file in place without linking an Albatross copy', async () => {
+    const { linked, requests } = installPublisher();
+    const model = createDefaultDocumentModel('doc', 'provider-file');
+    const updated = await updateGoogleNativeFile({
+      userId: 'user-1',
+      connectionId: 'google-1',
+      fileId: 'provider-file',
+      kind: 'doc',
+      title: 'Renamed in place',
+      model,
+      expectedProviderVersion: '9',
+    });
+
+    expect(updated).toMatchObject({
+      title: 'Renamed in place',
+      providerVersion: '9',
+    });
+    expect(linked).not.toHaveBeenCalled();
+    expect(requests.some((request) => request.url.includes('documents/provider-file:batchUpdate'))).toBe(
+      true,
+    );
+    const rename = requests.find(
+      (request) => request.url.includes('/drive/v3/files/provider-file?') && request.init?.method === 'PATCH',
+    );
+    expect(JSON.parse(String(rename?.init?.body))).toEqual({ name: 'Renamed in place' });
+
+    await expect(
+      updateGoogleNativeFile({
+        userId: 'user-1',
+        connectionId: 'google-1',
+        fileId: 'provider-file',
+        kind: 'doc',
+        title: 'Stale',
+        model,
+        expectedProviderVersion: '8',
+      }),
+    ).rejects.toBeInstanceOf(GoogleDocumentConflictError);
   });
 
   test('maps Google API errors and missing create identifiers', async () => {

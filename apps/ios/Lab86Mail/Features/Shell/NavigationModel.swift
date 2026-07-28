@@ -100,9 +100,29 @@ struct ProjectRoute: Identifiable, Hashable, Sendable {
     var id: String { project.id }
 }
 
+struct GoogleDocumentRoute: Hashable, Sendable {
+    let connectionID: String
+    let fileID: String
+    let mimeType: String
+    let webURL: URL?
+}
+
+enum DocumentRouteSource: Hashable, Sendable {
+    case albatross(documentID: String)
+    case google(GoogleDocumentRoute)
+}
+
 struct DocumentRoute: Identifiable, Hashable, Sendable {
-    let documentID: String
-    var id: String { documentID }
+    let source: DocumentRouteSource
+
+    var id: String {
+        switch source {
+        case .albatross(let documentID):
+            return "albatross:\(documentID)"
+        case .google(let google):
+            return "google:\(google.connectionID):\(google.fileID)"
+        }
+    }
 }
 
 struct ComposePrefill: Hashable, Sendable {
@@ -265,7 +285,28 @@ final class NavigationModel {
         workRoute = nil
         areaRoute = nil
         projectRoute = nil
-        documentRoute = DocumentRoute(documentID: id)
+        documentRoute = DocumentRoute(source: .albatross(documentID: id))
+    }
+
+    func openGoogleDocument(_ item: CloudFileItem) {
+        guard let connectionID = item.connectionID,
+              let mimeType = item.mimeType else { return }
+        selectedTab = .files
+        threadRoute = nil
+        eventRoute = nil
+        workRoute = nil
+        areaRoute = nil
+        projectRoute = nil
+        documentRoute = DocumentRoute(
+            source: .google(
+                GoogleDocumentRoute(
+                    connectionID: connectionID,
+                    fileID: item.id,
+                    mimeType: mimeType,
+                    webURL: item.webURL
+                )
+            )
+        )
     }
 
     func openPrimaryView(_ raw: String) {

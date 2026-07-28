@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   ArrowLeft,
   ChevronDown,
   ChevronRight,
@@ -35,7 +36,11 @@ import {
   useState,
 } from 'react';
 import { toast } from 'sonner';
-import { DocumentEditor } from '@/components/files/DocumentEditor';
+import {
+  DocumentEditor,
+  GoogleDocumentEditor,
+  type GoogleEditorSource,
+} from '@/components/files/DocumentEditor';
 import { AppleLogo, GoogleLogo, MicrosoftLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
@@ -89,6 +94,11 @@ interface BrowseResponse {
   nextCursor?: string;
 }
 
+interface CloudBrowseResult {
+  items: CloudFileItem[];
+  failures: Array<{ connection: string; message: string }>;
+}
+
 interface Location {
   kind: 'all' | 'albatross' | 'icloud' | 'connection';
   id: string;
@@ -128,6 +138,14 @@ function providerLabel(provider: CloudFileItem['provider']) {
   if (provider === 'onedrive') return 'OneDrive';
   if (provider === 'icloud') return 'iCloud Drive';
   return 'Albatross';
+}
+
+function isGoogleNativeMime(value: string | null | undefined): value is GoogleEditorSource['mimeType'] {
+  return (
+    value === 'application/vnd.google-apps.document' ||
+    value === 'application/vnd.google-apps.spreadsheet' ||
+    value === 'application/vnd.google-apps.presentation'
+  );
 }
 
 function ProviderMark({ provider, className }: { provider: CloudFileItem['provider']; className?: string }) {
@@ -241,6 +259,7 @@ export function FilesSurface() {
   const [icloudBusy, setIcloudBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
+  const [openGoogleFile, setOpenGoogleFile] = useState<GoogleEditorSource | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['cloud-file-status'],
@@ -259,9 +278,21 @@ export function FilesSurface() {
   });
 
   useEffect(() => {
-    setOpenDocumentId(new URLSearchParams(window.location.search).get('document'));
+    const readOpenFile = () => {
+      const params = new URLSearchParams(window.location.search);
+      setOpenDocumentId(params.get('document'));
+      const connectionId = params.get('connection');
+      const fileId = params.get('file');
+      const mimeType = params.get('mime');
+      setOpenGoogleFile(
+        params.get('provider') === 'google_drive' && connectionId && fileId && isGoogleNativeMime(mimeType)
+          ? { connectionId, fileId, mimeType }
+          : null,
+      );
+    };
+    readOpenFile();
     const onPopState = () => {
-      setOpenDocumentId(new URLSearchParams(window.location.search).get('document'));
+      readOpenFile();
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -269,15 +300,34 @@ export function FilesSurface() {
 
   const openDocument = (documentId: string) => {
     pushDocumentDeepLink(documentId);
+    setOpenGoogleFile(null);
     setOpenDocumentId(documentId);
+  };
+
+  const openGoogleDocument = (source: GoogleEditorSource) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('view', 'files');
+    params.delete('document');
+    params.set('provider', 'google_drive');
+    params.set('connection', source.connectionId);
+    params.set('file', source.fileId);
+    params.set('mime', source.mimeType);
+    window.history.pushState(null, '', `${window.location.pathname}?${params}`);
+    setOpenDocumentId(null);
+    setOpenGoogleFile(source);
   };
 
   const closeDocument = () => {
     const params = new URLSearchParams(window.location.search);
     params.delete('document');
+    params.delete('provider');
+    params.delete('connection');
+    params.delete('file');
+    params.delete('mime');
     const query = params.toString();
     window.history.pushState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
     setOpenDocumentId(null);
+    setOpenGoogleFile(null);
     void documentsQuery.refetch();
   };
 
@@ -347,14 +397,25 @@ export function FilesSurface() {
           }
           if (deferredSearch) params.set('q', deferredSearch);
           try {
-            return await fetchJson<BrowseResponse>(`/api/files/browse?${params}`);
+            const page = await fetchJson<BrowseResponse>(`/api/files/browse?${params}`);
+            return { page, failure: null };
           } catch (error) {
             if (location.kind === 'connection') throw error;
-            return { ok: false, items: [] } as BrowseResponse;
+            return {
+              page: { ok: false, items: [] } as BrowseResponse,
+              failure: {
+                connection:
+                  connection.accountEmail || connection.displayName || providerLabel(connection.provider),
+                message: error instanceof Error ? error.message : 'Drive unavailable',
+              },
+            };
           }
         }),
       );
-      return pages.flatMap((page) => page.items);
+      return {
+        items: pages.flatMap(({ page }) => page.items),
+        failures: pages.flatMap(({ failure }) => (failure ? [failure] : [])),
+      } satisfies CloudBrowseResult;
     },
   });
 
@@ -372,16 +433,16 @@ export function FilesSurface() {
     if (location.kind === 'albatross') items = localItems;
     else if (location.kind === 'icloud') items = icloudItems;
     else if (location.kind === 'connection') {
-      items = cloudQuery.data || [];
+      items = cloudQuery.data?.items || [];
     } else {
-      items = [...localItems, ...(cloudQuery.data || []), ...icloudItems];
+      items = [...localItems, ...(cloudQuery.data?.items || []), ...icloudItems];
     }
     if (deferredSearch && location.kind !== 'connection') {
       const needle = deferredSearch.toLowerCase();
       items = items.filter((item) => item.name.toLowerCase().includes(needle));
     }
     return sortItems(items);
-  }, [cloudQuery.data, deferredSearch, icloudItems, localItems, location.kind]);
+  }, [cloudQuery.data?.items, deferredSearch, icloudItems, localItems, location.kind]);
 
   const uploadMutation = useMutation({
     mutationFn: async (files: File[]) => {
@@ -412,26 +473,6 @@ export function FilesSurface() {
     onSuccess: async ({ document }) => {
       await queryClient.invalidateQueries({ queryKey: ['documents'] });
       setLocationId('albatross');
-      openDocument(document.documentId);
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const importGoogleMutation = useMutation({
-    mutationFn: (item: CloudFileItem) =>
-      fetchJson<{ ok: true; document: AlbatrossDocumentRecord }>('/api/files/google/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          connectionId: item.connectionId,
-          fileId: item.id,
-          mimeType: item.mimeType,
-          webUrl: item.webUrl,
-        }),
-      }),
-    onSuccess: async ({ document }) => {
-      toast.success('Opened in the Albatross editor');
-      await queryClient.invalidateQueries({ queryKey: ['documents'] });
       openDocument(document.documentId);
     },
     onError: (error: Error) => toast.error(error.message),
@@ -554,16 +595,13 @@ export function FilesSurface() {
       openDocument(documentId);
       return;
     }
-    if (
-      item.provider === 'google_drive' &&
-      item.connectionId &&
-      [
-        'application/vnd.google-apps.document',
-        'application/vnd.google-apps.spreadsheet',
-        'application/vnd.google-apps.presentation',
-      ].includes(item.mimeType || '')
-    ) {
-      importGoogleMutation.mutate(item);
+    if (item.provider === 'google_drive' && item.connectionId && isGoogleNativeMime(item.mimeType)) {
+      openGoogleDocument({
+        connectionId: item.connectionId,
+        fileId: item.id,
+        mimeType: item.mimeType,
+        webUrl: item.webUrl,
+      });
       return;
     }
     if (item.provider === 'icloud') {
@@ -598,8 +636,7 @@ export function FilesSurface() {
     documentsQuery.isLoading ||
     statusQuery.isLoading ||
     cloudQuery.isFetching ||
-    icloudBusy ||
-    importGoogleMutation.isPending;
+    icloudBusy;
   const loadError =
     statusQuery.error ||
     uploadsQuery.error ||
@@ -608,6 +645,9 @@ export function FilesSurface() {
 
   if (openDocumentId) {
     return <DocumentEditor documentId={openDocumentId} onClose={closeDocument} />;
+  }
+  if (openGoogleFile) {
+    return <GoogleDocumentEditor source={openGoogleFile} onClose={closeDocument} />;
   }
 
   return (
@@ -854,6 +894,28 @@ export function FilesSurface() {
               </button>
             </div>
           </div>
+
+          {location.kind === 'all' && cloudQuery.data?.failures.length ? (
+            <div
+              role="status"
+              className="flex items-start gap-2 border-b border-amber-300/60 bg-amber-50 px-4 py-2 text-[11.5px] text-amber-950"
+            >
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">
+                Some drives could not refresh:{' '}
+                {cloudQuery.data.failures
+                  .map((failure) => `${failure.connection} — ${failure.message}`)
+                  .join('; ')}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 font-medium underline underline-offset-2"
+                onClick={() => void cloudQuery.refetch()}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
 
           <div className="relative min-h-0 flex-1 overflow-y-auto">
             {loadError ? (
@@ -1196,19 +1258,19 @@ function EmptyFiles({
             ? 'Add your first file'
             : hasConnections
               ? 'This folder is empty'
-              : 'Bring your files into Albatross'}
+              : 'Connect your files'}
         </h2>
         <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
           {location.kind === 'albatross'
             ? 'Upload documents, images, and project material you want close to your work.'
             : hasConnections
               ? 'Add a file here or switch to another connected location.'
-              : 'Connect Google Drive or OneDrive, choose iCloud Drive on this device, or upload directly.'}
+              : 'Browse files where they already live. Connect Google Drive or OneDrive, or open iCloud Drive on this device.'}
         </p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           <Button size="sm" onClick={onUpload}>
             <Upload className="size-3.5" />
-            Add files
+            Upload to Albatross
           </Button>
           {location.kind !== 'albatross' ? (
             <Button variant="outline" size="sm" onClick={onConnect}>
@@ -1300,8 +1362,8 @@ function DriveConnectionsDialog({
           </div>
         </div>
         <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-5 py-3 text-[10.5px] leading-relaxed text-[var(--color-text-faint)]">
-          Google Drive and OneDrive are writable connections. Albatross edits supported office files inline
-          and syncs Albatross documents back to Google.
+          Google Drive and OneDrive remain the source of truth. Supported Google office files edit inline
+          without creating an Albatross copy; uploads are stored in Albatross only when you choose them.
         </div>
       </DialogContent>
     </Dialog>

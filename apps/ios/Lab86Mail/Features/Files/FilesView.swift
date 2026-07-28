@@ -1,4 +1,6 @@
 import SwiftUI
+import QuickLook
+import UIKit
 import UniformTypeIdentifiers
 
 struct FilesView: View {
@@ -8,10 +10,12 @@ struct FilesView: View {
     @State private var locationID = "all"
     @State private var cloudItems: [CloudFileItem] = []
     @State private var folderStack: [CloudFolderRoute] = []
-    @State private var isImporting = false
     @State private var isConnecting = false
     @State private var showsDriveMenu = false
     @State private var showsFileImporter = false
+    @State private var showsGrid = false
+    @State private var previewURL: URL?
+    @State private var securityScopedPreviewURL: URL?
     @State private var errorMessage: String?
 
     private var store: DocumentStore { environment.documents }
@@ -40,13 +44,27 @@ struct FilesView: View {
             }
         }
         .navigationTitle("Files")
+        .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, prompt: "Search files")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
                     showsDriveMenu = true
                 } label: {
                     Label("Drives", systemImage: "externaldrive")
+                }
+                Button {
+                    showsGrid.toggle()
+                } label: {
+                    Label(
+                        showsGrid ? "List view" : "Grid view",
+                        systemImage: showsGrid ? "list.bullet" : "square.grid.2x2"
+                    )
+                }
+                Menu {
+                    creationButtons
+                } label: {
+                    Label("New file", systemImage: "plus")
                 }
             }
         }
@@ -77,12 +95,20 @@ struct FilesView: View {
         } message: {
             Text("Connected drives stay private to your account. Albatross requests write access so you can publish and sync edits.")
         }
-        .fileImporter(
-            isPresented: $showsFileImporter,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: true
-        ) { result in
-            Task { await importLocalFiles(result) }
+        .sheet(isPresented: $showsFileImporter) {
+            OpenInPlaceDocumentPicker { urls in
+                showsFileImporter = false
+                openLocalFile(urls.first)
+            }
+        }
+        .quickLookPreview($previewURL)
+        .onChange(of: previewURL) { oldValue, newValue in
+            if oldValue != newValue,
+               let scoped = securityScopedPreviewURL,
+               newValue != scoped {
+                scoped.stopAccessingSecurityScopedResource()
+                securityScopedPreviewURL = nil
+            }
         }
         .alert("Files", isPresented: Binding(
             get: { errorMessage != nil || store.errorMessage != nil },
@@ -101,10 +127,10 @@ struct FilesView: View {
             Text(errorMessage ?? store.errorMessage ?? "Try again.")
         }
         .overlay {
-            if isImporting || isConnecting {
+            if isConnecting {
                 ZStack {
                     Color.black.opacity(0.08).ignoresSafeArea()
-                    ProgressView(isConnecting ? "Connecting…" : "Opening file…")
+                    ProgressView("Connecting…")
                         .padding(20)
                         .background(.regularMaterial, in: .rect(cornerRadius: 18))
                 }
@@ -113,6 +139,16 @@ struct FilesView: View {
     }
 
     private var fileList: some View {
+        Group {
+            if showsGrid {
+                fileGrid
+            } else {
+                fileListRows
+            }
+        }
+    }
+
+    private var fileListRows: some View {
         List {
             if folderStack.count > 1 {
                 Button {
@@ -177,7 +213,81 @@ struct FilesView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
+    }
+
+    private var fileGrid: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 18) {
+                if folderStack.count > 1 {
+                    Button {
+                        folderStack.removeLast()
+                    } label: {
+                        Label(
+                            "Back to \(folderStack.dropLast().last?.name ?? "Drive")",
+                            systemImage: "chevron.left"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                }
+                if !visibleDocuments.isEmpty {
+                    FileGridSection(title: "Albatross") {
+                        ForEach(visibleDocuments) { document in
+                            Button {
+                                environment.navigation.openDocument(id: document.id)
+                            } label: {
+                                FileGridTile(
+                                    symbol: document.kind.symbol,
+                                    title: document.title,
+                                    detail: documentDetail(document),
+                                    tint: tint(document.kind),
+                                    isFolder: false
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                if !visibleUploads.isEmpty {
+                    FileGridSection(title: "Uploads") {
+                        ForEach(visibleUploads) { item in
+                            Button {
+                                if let url = item.webURL { openURL(url) }
+                            } label: {
+                                FileGridTile(
+                                    symbol: "doc",
+                                    title: item.name,
+                                    detail: fileDetail(item),
+                                    tint: .secondary,
+                                    isFolder: false
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                if !visibleCloudItems.isEmpty {
+                    FileGridSection(title: locationTitle) {
+                        ForEach(visibleCloudItems) { item in
+                            Button {
+                                Task { await openCloudItem(item) }
+                            } label: {
+                                FileGridTile(
+                                    symbol: item.isFolder ? "folder.fill" : cloudSymbol(item),
+                                    title: item.name,
+                                    detail: fileDetail(item),
+                                    tint: item.provider == "google_drive" ? .blue : .cyan,
+                                    isFolder: item.isFolder,
+                                    thumbnailURL: item.thumbnailURL
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
     }
 
     private var locationPicker: some View {
@@ -370,85 +480,18 @@ struct FilesView: View {
             return
         }
         if item.provider == "google_drive", Self.googleNativeTypes.contains(item.mimeType ?? "") {
-            isImporting = true
-            defer { isImporting = false }
-            do {
-                let document = try await store.importGoogle(item)
-                environment.navigation.openDocument(id: document.id)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
+            environment.navigation.openGoogleDocument(item)
         } else if let url = item.webURL {
             openURL(url)
         }
     }
 
-    private func importLocalFiles(_ result: Result<[URL], Error>) async {
-        do {
-            let urls = try result.get()
-            let selected = Array(urls.prefix(5))
-            var metadata: [(url: URL, size: Int, contentType: String)] = []
-            var failures: [String] = []
-            for url in selected {
-                do {
-                    let values = try localFileMetadata(url)
-                    metadata.append((url: url, size: values.size, contentType: values.contentType))
-                } catch {
-                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
-                }
-            }
-            let totalBytes = metadata.reduce(0) { $0 + $1.size }
-            guard totalBytes <= 25 * 1_024 * 1_024 else {
-                throw BackendError.server(
-                    status: 413,
-                    message: "Choose up to 25 MB of files at a time."
-                )
-            }
-            var uploaded = 0
-            for file in metadata {
-                do {
-                    try await uploadLocalFile(file.url, contentType: file.contentType)
-                    uploaded += 1
-                } catch {
-                    failures.append("\(file.url.lastPathComponent): \(error.localizedDescription)")
-                }
-            }
-            if uploaded > 0 { locationID = "albatross" }
-            var notices: [String] = []
-            if urls.count > 5 {
-                notices.append("Uploaded only the first 5 of \(urls.count) selected files.")
-            }
-            if !failures.isEmpty {
-                notices.append("\(uploaded) uploaded; \(failures.count) failed.\n\(failures.joined(separator: "\n"))")
-            }
-            errorMessage = notices.isEmpty ? nil : notices.joined(separator: "\n")
-        } catch {
-            errorMessage = error.localizedDescription
+    private func openLocalFile(_ url: URL?) {
+        guard let url else { return }
+        if url.startAccessingSecurityScopedResource() {
+            securityScopedPreviewURL = url
         }
-    }
-
-    private func localFileMetadata(_ url: URL) throws -> (size: Int, contentType: String) {
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        let values = try url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
-        guard let size = values.fileSize, size >= 0 else {
-            throw BackendError.server(status: 400, message: "Could not read \(url.lastPathComponent).")
-        }
-        return (
-            size,
-            values.contentType?.preferredMIMEType ?? "application/octet-stream"
-        )
-    }
-
-    private func uploadLocalFile(_ url: URL, contentType: String) async throws {
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        try await store.upload(
-            data: data,
-            name: url.lastPathComponent,
-            contentType: contentType
-        )
+        previewURL = url
     }
 
     private func documentDetail(_ document: AlbatrossDocument) -> String {
@@ -494,6 +537,48 @@ struct FilesView: View {
 private struct CloudFolderRoute: Hashable {
     let id: String
     let name: String
+}
+
+private struct OpenInPlaceDocumentPicker: UIViewControllerRepresentable {
+    let onPick: ([URL]) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.item],
+            asCopy: false
+        )
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(
+        _ uiViewController: UIDocumentPickerViewController,
+        context: Context
+    ) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: ([URL]) -> Void
+
+        init(onPick: @escaping ([URL]) -> Void) {
+            self.onPick = onPick
+        }
+
+        func documentPicker(
+            _ controller: UIDocumentPickerViewController,
+            didPickDocumentsAt urls: [URL]
+        ) {
+            onPick(urls)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onPick([])
+        }
+    }
 }
 
 private enum CloudBrowseOutcome: Sendable {
@@ -554,5 +639,74 @@ private struct FileRow: View {
         }
         .contentShape(.rect)
         .frame(minHeight: 48)
+    }
+}
+
+private struct FileGridSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            LazyVGrid(
+                columns: [
+                    GridItem(.adaptive(minimum: 144, maximum: 220), spacing: 12),
+                ],
+                spacing: 12
+            ) {
+                content
+            }
+        }
+    }
+}
+
+private struct FileGridTile: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    let tint: Color
+    let isFolder: Bool
+    var thumbnailURL: URL? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(tint.opacity(isFolder ? 0.16 : 0.08))
+                if let thumbnailURL {
+                    AsyncImage(url: thumbnailURL) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } placeholder: {
+                        ProgressView()
+                    }
+                    .clipShape(.rect(cornerRadius: 12))
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: isFolder ? 34 : 30, weight: .regular))
+                        .foregroundStyle(tint)
+                }
+            }
+            .aspectRatio(1.45, contentMode: .fit)
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
     }
 }

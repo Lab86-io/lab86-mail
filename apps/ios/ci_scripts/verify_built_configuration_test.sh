@@ -37,19 +37,19 @@ run_branch_verifier() {
 
 write_plist \
   "$test_root/Info.plist" \
-  'https://mail-staging.lab86.io' \
-  'https://precise-skunk-847.convex.cloud' \
-  'pk_test_example'
-run_verifier $'```staging```\r\n'
+  'https://mail.lab86.io' \
+  'https://proficient-viper-594.convex.cloud' \
+  'pk_live_example'
+run_verifier $'```production```\r\n'
 run_branch_verifier staging
 
 write_plist \
   "$test_root/Info.plist" \
-  'https://mail-staging.lab86.iohttps://mail-staging.lab86.io' \
-  'https://precise-skunk-847.convex.cloud' \
-  'pk_test_example'
-if run_verifier staging 2>/dev/null; then
-  echo 'Staging verification must reject a recursively expanded API URL.' >&2
+  'https://mail.lab86.iohttps://mail.lab86.io' \
+  'https://proficient-viper-594.convex.cloud' \
+  'pk_live_example'
+if run_verifier production 2>/dev/null; then
+  echo 'Release verification must reject a recursively expanded API URL.' >&2
   exit 1
 fi
 

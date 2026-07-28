@@ -91,13 +91,16 @@ describe('native iOS authentication configuration', () => {
     expect(info).not.toContain('<string>$(LAB86_API_BASE_URL)</string>');
     expect(entitlements).toContain('webcredentials:$(LAB86_INFO_CLERK_FRONTEND_API_HOST)');
     expect(baseConfig).toContain('LAB86_INFO_API_BASE_URL = https:/$()/mail.lab86.io');
-    expect(postClone).toContain('api_input="https://mail-staging.lab86.io"');
+    expect(postClone).not.toContain('mail-staging.lab86.io');
+    expect(postClone).not.toContain('pk_test_');
+    expect(postClone).toContain('main|staging)');
     expect(postClone).toContain('LAB86_INFO_API_BASE_URL = $' + '{api_base_url}');
     expect(project).toContain('Verify embedded release configuration');
     expect(project).toContain('basedOnDependencyAnalysis: false');
     expect(project).toContain('$(SRCROOT)/ci_scripts/verify_built_configuration.sh');
     expect(project).toContain('$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)');
-    expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail-staging.lab86.io" ]]');
+    expect(builtVerifier).not.toContain('mail-staging.lab86.io');
+    expect(builtVerifier).not.toContain('pk_test_');
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail.lab86.io" ]]');
     expect(builtVerifier).toContain('[[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]]');
     expect(exportVerifier).toContain('codesign -d --entitlements :- "$app_path"');
@@ -209,7 +212,7 @@ describe('native iOS authentication configuration', () => {
     expect(globalCreate).toContain('try await environment.createAndOpenDocument(kind: kind)');
   });
 
-  test('preserves unsaved iOS files and isolates browse and upload failures', () => {
+  test('preserves unsaved iOS files and opens provider files without hidden copies', () => {
     const editor = readFileSync(
       path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Files/DocumentEditorView.swift'),
       'utf8',
@@ -226,8 +229,11 @@ describe('native iOS authentication configuration', () => {
     expect(editor).not.toContain('? Color.accentColor : .quaternary');
     expect(files).toContain('catch is CancellationError');
     expect(files).toContain('guard !Task.isCancelled else { return }');
-    expect(files).toContain('for url in selected');
-    expect(files).toContain('metadata.append((url: url');
+    expect(files).toContain('asCopy: false');
+    expect(files).toContain('.quickLookPreview($previewURL)');
+    expect(files).toContain('environment.navigation.openGoogleDocument(item)');
+    expect(files).not.toContain('store.importGoogle(item)');
+    expect(files).not.toContain('uploadLocalFile(');
   });
 
   test('keeps Spotlight mail private, routable, and removable at sign-out', () => {

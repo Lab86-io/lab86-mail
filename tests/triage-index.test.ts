@@ -182,6 +182,9 @@ describe('canonical SBAR triage index', () => {
       label,
       payload: {
         kind,
+        attachToReply: true,
+        account: 'jakob@example.com',
+        threadId: 'thread-1',
         instructions: expect.stringContaining(recommendation),
         sourceContext: expect.stringContaining('Recommendation:'),
         sourceRefs: expect.arrayContaining([expect.objectContaining({ kind: 'thread', id: 'thread-1' })]),

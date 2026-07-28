@@ -157,5 +157,11 @@ The same handoff carries a review-gated action:
 ```
 
 The created document persists the handoff, Area/Work context, and source
-references. File creation is reversible by archiving the document and is never
-treated as sending or publishing.
+references. When the originating handoff is a reply that requires a deliverable,
+the grounded action also carries that thread context. Web and iOS generate the
+artifact, export it, stage it as a compose attachment, and open the exact reply
+draft for review. Nothing is sent without the person's explicit send action.
+
+Google-provider files follow a separate provider-owned route: opening or
+AI-editing one saves back to the same Google file ID. Albatross does not create
+an internal document simply because a provider file was opened.

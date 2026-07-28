@@ -7,6 +7,7 @@ import {
   ChevronDown,
   CloudUpload,
   Download,
+  ExternalLink,
   Presentation as FilePresentation,
   FileSpreadsheet,
   FileText,
@@ -19,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -40,6 +42,25 @@ import { cn } from '@/lib/utils';
 
 interface EditorDocument extends AlbatrossDocumentRecord {
   suggestions: DocumentSuggestion[];
+}
+
+export interface GoogleEditorSource {
+  connectionId: string;
+  fileId: string;
+  mimeType:
+    | 'application/vnd.google-apps.document'
+    | 'application/vnd.google-apps.spreadsheet'
+    | 'application/vnd.google-apps.presentation';
+  webUrl?: string;
+}
+
+interface GoogleEditorFile extends GoogleEditorSource {
+  source: 'google_drive';
+  kind: DocumentKind;
+  title: string;
+  model: AlbatrossDocumentModel;
+  webUrl?: string;
+  providerVersion?: string;
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -67,6 +88,32 @@ function kindName(kind: DocumentKind) {
   if (kind === 'sheet') return 'Spreadsheet';
   if (kind === 'deck') return 'Presentation';
   return 'Document';
+}
+
+export function paginateDocBlocks(
+  blocks: DocBlock[],
+  options: { charactersPerLine?: number; linesPerPage?: number } = {},
+) {
+  const charactersPerLine = options.charactersPerLine ?? 82;
+  const linesPerPage = options.linesPerPage ?? 44;
+  const pages: Array<Array<{ block: DocBlock; index: number }>> = [];
+  let page: Array<{ block: DocBlock; index: number }> = [];
+  let usedLines = 0;
+  blocks.forEach((block, index) => {
+    const explicitLines = Math.max(1, block.text.split('\n').length);
+    const wrappedLines = Math.max(1, Math.ceil(block.text.length / charactersPerLine));
+    const headingWeight = block.type === 'heading' ? (block.level === 1 ? 3 : 2) : 1;
+    const estimatedLines = Math.max(explicitLines, wrappedLines) + headingWeight;
+    if (page.length && usedLines + estimatedLines > linesPerPage) {
+      pages.push(page);
+      page = [];
+      usedLines = 0;
+    }
+    page.push({ block, index });
+    usedLines += estimatedLines;
+  });
+  if (page.length || !pages.length) pages.push(page);
+  return pages;
 }
 
 export function DocumentEditor({ documentId, onClose }: { documentId: string; onClose: () => void }) {
@@ -341,6 +388,222 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   );
 }
 
+export function GoogleDocumentEditor({
+  source,
+  onClose,
+}: {
+  source: GoogleEditorSource;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const saveQueuedRef = useRef(false);
+  const titleRef = useRef('');
+  const modelRef = useRef<AlbatrossDocumentModel | null>(null);
+  const versionRef = useRef<string | undefined>(undefined);
+  const [title, setTitle] = useState('');
+  const [model, setModel] = useState<AlbatrossDocumentModel | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [aiOpen, setAiOpen] = useState(true);
+
+  const queryKey = ['google-document', source.connectionId, source.fileId] as const;
+  const fileQuery = useQuery({
+    queryKey,
+    queryFn: () => {
+      const params = new URLSearchParams({
+        connectionId: source.connectionId,
+        fileId: source.fileId,
+        mimeType: source.mimeType,
+      });
+      return fetchJson<{ ok: true; file: GoogleEditorFile }>(`/api/files/google/editor?${params}`);
+    },
+    staleTime: 10_000,
+  });
+  const file = fileQuery.data?.file;
+
+  useEffect(() => {
+    if (!file || dirty) return;
+    setTitle(file.title);
+    setModel(file.model);
+    titleRef.current = file.title;
+    modelRef.current = file.model;
+    versionRef.current = file.providerVersion;
+  }, [dirty, file]);
+
+  const saveMutation = useMutation({
+    mutationFn: (input: { title: string; model: AlbatrossDocumentModel }) =>
+      fetchJson<{ ok: true; file: GoogleEditorFile }>('/api/files/google/editor', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...source,
+          title: input.title,
+          model: input.model,
+          expectedProviderVersion: versionRef.current,
+        }),
+      }),
+    onSuccess: ({ file: saved }, submitted) => {
+      versionRef.current = saved.providerVersion;
+      const latestMatchesSaved = documentDraftMatchesSave(
+        { title: titleRef.current, model: modelRef.current },
+        submitted,
+      );
+      setDirty(!latestMatchesSaved);
+      queryClient.setQueryData(queryKey, { ok: true, file: saved });
+      void queryClient.invalidateQueries({ queryKey: ['cloud-files'] });
+    },
+    onError: async (error: Error & { status?: number }) => {
+      if (error.status === 409) {
+        toast.error('This file changed in Google Drive. Your unsaved edit was not overwritten.');
+      } else {
+        toast.error(error.message);
+      }
+    },
+    onSettled: () => {
+      if (saveQueuedRef.current && modelRef.current) {
+        saveQueuedRef.current = false;
+        saveMutation.mutate({ title: titleRef.current, model: modelRef.current });
+      }
+    },
+  });
+
+  const saveNow = useCallback(async () => {
+    if (!dirty || !model) return true;
+    if (saveMutation.isPending) {
+      saveQueuedRef.current = true;
+      return false;
+    }
+    try {
+      await saveMutation.mutateAsync({ title, model });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [dirty, model, saveMutation, title]);
+
+  useEffect(() => {
+    if (!dirty || !model) return;
+    const timer = window.setTimeout(() => void saveNow(), 900);
+    return () => window.clearTimeout(timer);
+  }, [dirty, model, saveNow]);
+
+  const editModel = useCallback((next: AlbatrossDocumentModel) => {
+    modelRef.current = next;
+    setModel(next);
+    setDirty(true);
+  }, []);
+
+  if (fileQuery.error || (!fileQuery.isLoading && !file)) {
+    return (
+      <div className="grid h-full place-items-center p-8 text-center">
+        <div>
+          <p className="text-[14px] font-medium">This Google file could not be opened.</p>
+          <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+            {(fileQuery.error as Error)?.message || 'The file may no longer be shared with you.'}
+          </p>
+          <Button className="mt-4" variant="outline" size="sm" onClick={onClose}>
+            Back to Files
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  if (fileQuery.isLoading || !file || !model) {
+    return (
+      <div className="grid h-full place-items-center text-[12.5px] text-[var(--color-text-muted)]">
+        <div className="flex items-center gap-2">
+          <Loader2 className="size-4 animate-spin" />
+          Opening from Google Drive…
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <section aria-label={`${kindName(file.kind)} editor`} className="flex h-full min-h-0 flex-col">
+      <header className="flex min-h-14 items-center gap-2 border-b border-[var(--color-border)] px-3">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Back to Files"
+          onClick={() => void saveNow().then((saved) => saved && onClose())}
+        >
+          <ArrowLeft className="size-4" />
+        </Button>
+        <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
+          <KindIcon kind={file.kind} className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <input
+            aria-label="File name"
+            value={title}
+            onChange={(event) => {
+              titleRef.current = event.target.value;
+              setTitle(event.target.value);
+              setDirty(true);
+            }}
+            className="block h-6 w-full truncate bg-transparent text-[13.5px] font-medium outline-none"
+          />
+          <div className="flex items-center gap-1.5 text-[10.5px] text-[var(--color-text-faint)]">
+            {saveMutation.isPending ? (
+              <>
+                <Loader2 className="size-2.5 animate-spin" /> Saving to Google Drive
+              </>
+            ) : dirty ? (
+              'Unsaved changes'
+            ) : (
+              <>
+                <Check className="size-2.5" /> Saved to Google Drive
+              </>
+            )}
+          </div>
+        </div>
+        {file.webUrl || source.webUrl ? (
+          <Button asChild variant="outline" size="sm">
+            <a href={file.webUrl || source.webUrl} target="_blank" rel="noreferrer">
+              <ExternalLink className="size-3.5" />
+              <span className="hidden sm:inline">Open in Google</span>
+            </a>
+          </Button>
+        ) : null}
+        <Button
+          variant={aiOpen ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setAiOpen((current) => !current)}
+          aria-pressed={aiOpen}
+        >
+          <Sparkles className="size-3.5" />
+          <span className="hidden sm:inline">Albatross</span>
+        </Button>
+      </header>
+      <div
+        className={cn(
+          'grid min-h-0 flex-1',
+          aiOpen ? 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px]' : 'grid-cols-1',
+        )}
+      >
+        <div className="min-h-0 overflow-hidden bg-[var(--color-bg-subtle)]">
+          {model.kind === 'doc' ? <DocEditor model={model} onChange={editModel} /> : null}
+          {model.kind === 'sheet' ? <SheetEditor model={model} onChange={editModel} /> : null}
+          {model.kind === 'deck' ? <DeckEditor model={model} onChange={editModel} /> : null}
+        </div>
+        {aiOpen ? (
+          <GoogleDocumentAiRail
+            source={source}
+            title={title}
+            model={model}
+            onApply={(suggestion) => {
+              titleRef.current = suggestion.title;
+              setTitle(suggestion.title);
+              editModel(suggestion.proposedModel);
+            }}
+            onClose={() => setAiOpen(false)}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function DocEditor({
   model,
   onChange,
@@ -359,79 +622,91 @@ function DocEditor({
     blocks.splice(afterIndex + 1, 0, { id: crypto.randomUUID(), type, text: '' });
     onChange({ ...model, blocks });
   };
+  const pages = useMemo(() => paginateDocBlocks(model.blocks), [model.blocks]);
   return (
     <div className="h-full overflow-y-auto px-3 py-8 sm:px-8">
-      <article className="mx-auto min-h-full max-w-[820px] bg-white px-8 py-12 text-slate-900 shadow-sm sm:px-16 sm:py-16">
-        {model.blocks.map((block, index) => (
-          <div key={block.id} className="group relative">
-            <div className="absolute -left-8 top-0 hidden items-center gap-0.5 opacity-0 group-hover:opacity-100 sm:flex">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label={`Change block ${index + 1} type`}
-                    className="rounded p-1 text-slate-400 hover:bg-slate-100"
-                  >
-                    <ChevronDown className="size-3" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {(['paragraph', 'heading', 'bullet', 'numbered', 'quote'] as const).map((type) => (
-                    <DropdownMenuItem key={type} onSelect={() => updateBlock(block.id, { type })}>
-                      {type[0].toUpperCase() + type.slice(1)}
-                    </DropdownMenuItem>
-                  ))}
-                  {model.blocks.length > 1 ? (
-                    <DropdownMenuItem
-                      className="text-[var(--color-danger)]"
-                      onSelect={() =>
-                        onChange({ ...model, blocks: model.blocks.filter((item) => item.id !== block.id) })
-                      }
-                    >
-                      <Trash2 className="size-3.5" /> Delete block
-                    </DropdownMenuItem>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-            <textarea
-              value={block.text}
-              rows={Math.max(1, block.text.split('\n').length)}
-              placeholder={
-                block.type === 'heading' ? 'Heading' : block.type === 'quote' ? 'Quote' : 'Start writing…'
-              }
-              onChange={(event) => updateBlock(block.id, { text: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && block.type !== 'paragraph') {
-                  event.preventDefault();
-                  addBlock(index);
-                }
-              }}
-              className={cn(
-                'mb-2 w-full resize-none overflow-hidden bg-transparent leading-relaxed outline-none placeholder:text-slate-300',
-                block.type === 'heading' &&
-                  (block.level === 1
-                    ? 'mt-5 text-3xl font-bold'
-                    : block.level === 3
-                      ? 'mt-3 text-lg font-semibold'
-                      : 'mt-4 text-2xl font-semibold'),
-                block.type === 'bullet' && 'pl-5 before:content-["•"]',
-                block.type === 'numbered' && 'pl-5',
-                block.type === 'quote' && 'border-l-2 border-slate-300 pl-4 italic text-slate-600',
-                block.type === 'paragraph' && 'text-[15px]',
-              )}
-              aria-label={`${block.type} block ${index + 1}`}
-            />
-          </div>
-        ))}
-        <button
-          type="button"
-          onClick={() => addBlock(model.blocks.length - 1)}
-          className="mt-4 flex items-center gap-1.5 rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+      {pages.map((page, pageIndex) => (
+        <article
+          key={`page-${page[0]?.block.id || pageIndex}`}
+          aria-label={`Page ${pageIndex + 1}`}
+          className="mx-auto mb-6 min-h-[1056px] max-w-[820px] bg-white px-8 py-12 text-slate-900 shadow-sm last:mb-8 sm:px-16 sm:py-16"
         >
-          <Plus className="size-3" /> Add block
-        </button>
-      </article>
+          {page.map(({ block, index }) => (
+            <div key={block.id} className="group relative">
+              <div className="absolute -left-8 top-0 hidden items-center gap-0.5 opacity-0 group-hover:opacity-100 sm:flex">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={`Change block ${index + 1} type`}
+                      className="rounded p-1 text-slate-400 hover:bg-slate-100"
+                    >
+                      <ChevronDown className="size-3" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {(['paragraph', 'heading', 'bullet', 'numbered', 'quote'] as const).map((type) => (
+                      <DropdownMenuItem key={type} onSelect={() => updateBlock(block.id, { type })}>
+                        {type[0].toUpperCase() + type.slice(1)}
+                      </DropdownMenuItem>
+                    ))}
+                    {model.blocks.length > 1 ? (
+                      <DropdownMenuItem
+                        className="text-[var(--color-danger)]"
+                        onSelect={() =>
+                          onChange({
+                            ...model,
+                            blocks: model.blocks.filter((item) => item.id !== block.id),
+                          })
+                        }
+                      >
+                        <Trash2 className="size-3.5" /> Delete block
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <TextareaAutosize
+                value={block.text}
+                minRows={1}
+                placeholder={
+                  block.type === 'heading' ? 'Heading' : block.type === 'quote' ? 'Quote' : 'Start writing…'
+                }
+                onChange={(event) => updateBlock(block.id, { text: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey && block.type !== 'paragraph') {
+                    event.preventDefault();
+                    addBlock(index);
+                  }
+                }}
+                className={cn(
+                  'mb-2 w-full resize-none overflow-hidden bg-transparent leading-relaxed outline-none placeholder:text-slate-300',
+                  block.type === 'heading' &&
+                    (block.level === 1
+                      ? 'mt-5 text-3xl font-bold'
+                      : block.level === 3
+                        ? 'mt-3 text-lg font-semibold'
+                        : 'mt-4 text-2xl font-semibold'),
+                  block.type === 'bullet' && 'pl-5 before:content-["•"]',
+                  block.type === 'numbered' && 'pl-5',
+                  block.type === 'quote' && 'border-l-2 border-slate-300 pl-4 italic text-slate-600',
+                  block.type === 'paragraph' && 'text-[15px]',
+                )}
+                aria-label={`${block.type} block ${index + 1}`}
+              />
+            </div>
+          ))}
+          {pageIndex === pages.length - 1 ? (
+            <button
+              type="button"
+              onClick={() => addBlock(model.blocks.length - 1)}
+              className="mt-4 flex items-center gap-1.5 rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+            >
+              <Plus className="size-3" /> Add block
+            </button>
+          ) : null}
+        </article>
+      ))}
     </div>
   );
 }
@@ -886,6 +1161,145 @@ function DocumentAiRail({
                       decisionMutation.mutate({ suggestionId: suggestion.suggestionId, decision: 'dismiss' })
                     }
                     disabled={decisionMutation.isPending}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-xl border border-dashed border-[var(--color-border)] px-3 py-5 text-center text-[11px] text-[var(--color-text-faint)]">
+              No pending suggestions
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+interface GoogleDocumentSuggestion {
+  suggestionId: string;
+  title: string;
+  description: string;
+  proposedModel: AlbatrossDocumentModel;
+}
+
+function GoogleDocumentAiRail({
+  source,
+  title,
+  model,
+  onApply,
+  onClose,
+}: {
+  source: GoogleEditorSource;
+  title: string;
+  model: AlbatrossDocumentModel;
+  onApply: (suggestion: GoogleDocumentSuggestion) => void;
+  onClose: () => void;
+}) {
+  const [instruction, setInstruction] = useState('');
+  const [suggestions, setSuggestions] = useState<GoogleDocumentSuggestion[]>([]);
+  const suggestMutation = useMutation({
+    mutationFn: () =>
+      fetchJson<{ ok: true; suggestion: GoogleDocumentSuggestion }>('/api/files/google/editor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...source, title, model, instruction }),
+      }),
+    onSuccess: ({ suggestion }) => {
+      setSuggestions((current) => [suggestion, ...current]);
+      setInstruction('');
+      toast.success('Suggestion ready to review');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <aside className="flex min-h-0 flex-col border-t border-[var(--color-border)] bg-[var(--color-bg)] lg:border-l lg:border-t-0">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
+        <Sparkles className="size-3.5 text-[var(--color-accent)]" />
+        <span className="text-[12.5px] font-medium">Albatross editor</span>
+        <Button
+          className="ml-auto"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Close AI editor"
+          onClick={onClose}
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <p className="text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
+          Proposed changes stay local until you apply them. Applied edits save back to this same Google file.
+        </p>
+        <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2">
+          <textarea
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            placeholder={
+              model.kind === 'sheet'
+                ? 'e.g. Add a forecast tab with formulas'
+                : model.kind === 'deck'
+                  ? 'e.g. Turn this into a 6-slide client narrative'
+                  : 'e.g. Make this concise and add an executive summary'
+            }
+            rows={4}
+            className="w-full resize-none bg-transparent text-[12px] leading-relaxed outline-none placeholder:text-[var(--color-text-faint)]"
+          />
+          <Button
+            size="sm"
+            className="mt-2 w-full"
+            onClick={() => suggestMutation.mutate()}
+            disabled={!instruction.trim() || suggestMutation.isPending}
+          >
+            {suggestMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            Propose changes
+          </Button>
+        </div>
+        <div className="mt-5 flex items-center gap-2">
+          <PanelRight className="size-3.5 text-[var(--color-text-faint)]" />
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
+            Suggestions
+          </h2>
+        </div>
+        <div className="mt-2 space-y-2">
+          {suggestions.length ? (
+            suggestions.map((suggestion) => (
+              <div
+                key={suggestion.suggestionId}
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
+              >
+                <div className="text-[12px] font-medium">{suggestion.title}</div>
+                <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                  {suggestion.description}
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    size="xs"
+                    onClick={() => {
+                      onApply(suggestion);
+                      setSuggestions((current) =>
+                        current.filter((candidate) => candidate.suggestionId !== suggestion.suggestionId),
+                      );
+                      toast.success('Suggestion applied; saving to Google Drive');
+                    }}
+                  >
+                    <Check className="size-3" /> Apply
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() =>
+                      setSuggestions((current) =>
+                        current.filter((candidate) => candidate.suggestionId !== suggestion.suggestionId),
+                      )
+                    }
                   >
                     Dismiss
                   </Button>

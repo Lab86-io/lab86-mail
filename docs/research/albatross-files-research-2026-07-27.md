@@ -43,6 +43,18 @@ Patterns used:
 - [Langdock Google Drive flow](https://mobbin.com/flows/7abd3f9f-830f-430d-a30e-ea0408069945):
   OAuth returns directly to a visible connected state instead of a detached
   success page.
+- [Google Drive iOS list](https://mobbin.com/screens/62f3913a-4115-4109-a77a-61e27c6255f3):
+  the native hierarchy stays compact, exposes folders and files in one scan,
+  and uses familiar file-type and overflow affordances.
+- [Google Drive iOS grid](https://mobbin.com/screens/73d01870-ab90-48f1-8e13-b4024c8a9e8d):
+  the alternate grid keeps filenames and provider metadata readable below
+  previews instead of turning the surface into decorative cards.
+- [Dropbox iOS recents](https://mobbin.com/screens/3e89c9d6-9d77-4ec5-9097-96be0b673acc):
+  location, sort, search, and creation remain native navigation controls rather
+  than floating over a large empty header.
+- [Dropbox iOS file navigation](https://mobbin.com/flows/4fc385a8-694b-463e-b811-c3839c5c8309):
+  folder traversal preserves place and source while file opening remains a
+  direct continuation of the browser.
 
 ## Provider research
 
@@ -67,14 +79,17 @@ Patterns used:
 - The default is a compact list; grid is an explicit toggle.
 - "All files" merges Albatross uploads with the root/search results of connected
   providers. Each provider remains visible as a location for folder navigation.
-- Google Docs, Sheets, and Slides can be imported into Albatross, edited inline,
-  refreshed, and written back with revision-conflict protection. Other Google
-  Drive and OneDrive items remain browsable and open in their provider.
+- Google Docs, Sheets, and Slides open through a provider-owned editor route.
+  Edits write to the same Google file identifier with version-conflict
+  protection; opening a file never creates a hidden Albatross copy.
+- Import/publish remains an explicit operation only for a person who wants an
+  Albatross-owned document. Provider ownership and the save destination are
+  visible in the editor.
 - Direct uploads reuse encrypted-user-scoped Convex storage and are visible as
   the Albatross location.
-- iCloud Drive uses an explicit directory picker (or browser folder-input
-  fallback). The directory handle/files remain in the browser session. Nothing
-  is copied to the server until the user separately chooses Add files.
+- iCloud Drive uses the system Files document picker on iOS with open-in-place
+  semantics and Quick Look. Web uses an explicit directory picker (or browser
+  folder-input fallback). Nothing is copied merely because it was opened.
 - Connection display rows and encrypted credentials are separate Convex tables.
   OAuth state is high-entropy, short-lived, single-use, and server-secret-gated.
   Web callbacks must match the live Clerk user; native callbacks hand an
@@ -110,6 +125,16 @@ Docs/Sheets/Slides write-back with provider-version conflict protection.
 
 iOS uses the system document picker for iCloud Drive, the same authenticated
 provider browser for Google Drive and OneDrive, and a native OAuth callback.
+The browser now uses an inline-title `NavigationStack`, a compact native list as
+the default, a real list/grid toolbar toggle, thumbnail-aware grid cells, and a
+single native creation affordance. The prior oversized empty header, grouped
+upload card, and overlapping floating controls did not match the surrounding
+app or the researched file-manager patterns.
+
+Long document content is measured at its intrinsic height and paginated into
+multiple editable page surfaces on both web and iOS. Pagination is a visual
+layout over the complete block collection; it does not truncate or discard
+middle content.
 Server-side iCloud corpus sync remains deferred because Apple exposes no Drive
 web API. Full binary extraction/chunk indexing across every upload and OneDrive
 file remains a separate corpus expansion; Google-native files can already be

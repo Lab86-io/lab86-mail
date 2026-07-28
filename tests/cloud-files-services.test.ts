@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { __setCloudFileBrowseDepsForTest, browseCloudFiles } from '../lib/files/browse';
+import {
+  __setCloudFileBrowseDepsForTest,
+  browseCloudFiles,
+  CloudFileProviderError,
+} from '../lib/files/browse';
 import {
   __setCloudFileConnectionDepsForTest,
   consumeCloudFileOAuthCompletion,
@@ -519,5 +523,83 @@ describe('cloud file browsing service', () => {
       query: 'quarterly plan',
     });
     expect(result.items[0]).toMatchObject({ provider: 'onedrive', name: 'Quarterly plan' });
+  });
+
+  test('resolves shared-drive folder shortcuts before listing their children', async () => {
+    const requests: string[] = [];
+    __setCloudFileBrowseDepsForTest({
+      getCloudFileAccess: (async () => ({
+        connection: {
+          connectionId: 'google-1',
+          provider: 'google_drive',
+          status: 'connected',
+          scopes: [],
+        },
+        accessToken: 'access',
+      })) as any,
+      markCloudFileConnectionAccess: (async () => undefined) as any,
+      fetch: (async (url: string | URL | Request) => {
+        const endpoint = String(url);
+        requests.push(endpoint);
+        if (endpoint.includes('/drive/v3/files/shortcut-folder?')) {
+          return Response.json({
+            id: 'shortcut-folder',
+            mimeType: 'application/vnd.google-apps.shortcut',
+            driveId: 'shared-drive-1',
+            shortcutDetails: {
+              targetId: 'real-folder',
+              targetMimeType: 'application/vnd.google-apps.folder',
+            },
+          });
+        }
+        return Response.json({
+          files: [{ id: 'file-1', name: 'Shared plan', mimeType: 'application/pdf' }],
+        });
+      }) as any,
+    });
+
+    const page = await browseCloudFiles({
+      userId: 'user-1',
+      connectionId: 'google-1',
+      folderId: 'shortcut-folder',
+    });
+    const listURL = new URL(requests[1]);
+    expect(listURL.searchParams.get('q')).toContain("'real-folder' in parents");
+    expect(listURL.searchParams.get('corpora')).toBe('drive');
+    expect(listURL.searchParams.get('driveId')).toBe('shared-drive-1');
+    expect(page.items[0]?.name).toBe('Shared plan');
+  });
+
+  test('preserves actionable Google provider failures', async () => {
+    __setCloudFileBrowseDepsForTest({
+      getCloudFileAccess: (async () => ({
+        connection: {
+          connectionId: 'google-1',
+          provider: 'google_drive',
+          status: 'connected',
+          scopes: [],
+        },
+        accessToken: 'access',
+      })) as any,
+      markCloudFileConnectionAccess: (async () => undefined) as any,
+      fetch: (async () =>
+        Response.json(
+          { error: { message: 'Invalid folder query', errors: [{ reason: 'invalidParameter' }] } },
+          { status: 400 },
+        )) as any,
+    });
+
+    const error = await browseCloudFiles({
+      userId: 'user-1',
+      connectionId: 'google-1',
+      query: 'plan',
+    }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(CloudFileProviderError);
+    expect(error).toMatchObject({
+      status: 400,
+      code: 'INVALID_REQUEST',
+      providerStatus: 400,
+      providerReason: 'invalidParameter',
+    });
   });
 });

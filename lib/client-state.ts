@@ -62,8 +62,9 @@ export interface ClientState {
   selectedIds: string[];
   paletteOpen: boolean;
   compose: ComposeState;
-  // Exact attachment blobs restored after Undo Send. Transient by design;
-  // the durable copy lives in IndexedDB until the pending send is resolved.
+  // Exact attachment blobs staged for the next composer (Undo Send or a
+  // brief-generated deliverable). Transient by design; the composer persists
+  // them with the draft as soon as it opens.
   composeRecoveredFiles: File[];
   shortcutsOpen: boolean;
   rightRailOpen: boolean;

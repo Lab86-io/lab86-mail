@@ -1,12 +1,24 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { browseCloudFiles } from '@/lib/files/browse';
+import { browseCloudFiles, CloudFileProviderError } from '@/lib/files/browse';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export function cloudFileBrowseErrorResponse(error: unknown) {
+  if (error instanceof CloudFileProviderError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error.message.slice(0, 300),
+        code: error.code,
+        reconnect: error.code === 'RECONNECT_REQUIRED',
+        retryable: error.code === 'RATE_LIMITED' || error.code === 'UNAVAILABLE',
+      },
+      { status: error.status },
+    );
+  }
   const message = error instanceof Error ? error.message : 'Could not load cloud files.';
   if (/invalid onedrive page cursor/iu.test(message)) {
     return NextResponse.json({ ok: false, error: message }, { status: 400 });

@@ -1,8 +1,8 @@
 #!/bin/zsh
 # Xcode Cloud post-clone: the .xcodeproj is generated, not committed, so CI
 # must produce it, and Local.xcconfig (gitignored) must be synthesized for the
-# staging TestFlight build. The production workflow builds only main and the
-# script derives its public production configuration from that immutable branch.
+# TestFlight build. Every distributed app talks to production; source branches
+# select workflow behavior, never a different user-data environment.
 # Xcode Cloud environment variables may override:
 #   LAB86_API_BASE_URL, CLERK_PUBLISHABLE_KEY, CONVEX_DEPLOYMENT_URL,
 #   CLERK_FRONTEND_API_HOST, LAB86_BUILD_CHANNEL
@@ -35,11 +35,8 @@ xcconfig_url() {
 # an exact authorization boundary rather than repairing a malformed value.
 cloud_branch="${CI_BRANCH:-}"
 case "$cloud_branch" in
-  main)
+  main|staging)
     expected_build_channel=production
-    ;;
-  staging)
-    expected_build_channel=staging
     ;;
   *)
     echo "Xcode Cloud builds must originate from main or staging." >&2
@@ -53,16 +50,6 @@ if [[ -n "$requested_build_channel" && "$requested_build_channel" != "$expected_
 fi
 build_channel="$expected_build_channel"
 case "$build_channel" in
-  staging)
-    # Staging is a named release environment, not a caller-selectable endpoint.
-    # Keep its public configuration canonical even if stale workflow variables
-    # remain in Xcode Cloud.
-    api_input="https://mail-staging.lab86.io"
-    convex_input="https://precise-skunk-847.convex.cloud"
-    clerk_host="together-sawfish-53.clerk.accounts.dev"
-    default_clerk_key="pk_test_$(printf '%s$' "$clerk_host" | base64 | tr -d '\n')"
-    clerk_key="$default_clerk_key"
-    ;;
   production)
     api_input="https://mail.lab86.io"
     convex_input="https://proficient-viper-594.convex.cloud"
