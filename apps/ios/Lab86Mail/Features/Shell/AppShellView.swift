@@ -7,9 +7,6 @@ struct AppShellView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsSourceList = false
     @GestureState private var sourceListDragOffset: CGFloat = 0
-    // Hold-and-drag sidebar scrub session; previews render over the page
-    // (compact) or detail pane (regular) without touching real navigation.
-    @State private var scrub = SidebarScrubState()
 
     var body: some View {
         @Bindable var navigation = environment.navigation
@@ -130,25 +127,16 @@ struct AppShellView: View {
 
     private var regularWidthShell: some View {
         NavigationSplitView {
-            SourceList(
-                onSelect: {
-                    // Selection updates the detail immediately; the
-                    // regular-width source list remains visible.
-                },
-                scrub: $scrub
-            )
+            SourceList(isActive: true, onSelect: {
+                // Selection updates the detail immediately; the regular-width
+                // source list remains visible.
+            })
             .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 360)
         } detail: {
+            // The destination renders on commit and not before. Building a
+            // preview per crossing meant a full view teardown and a synchronous
+            // store query inside the gesture, several times a second.
             destinationStack(showsNavigationButton: false)
-                .overlay {
-                    if scrub.isActive, scrub.previewReady, let previewed = scrub.previewed {
-                        SidebarDestinationPreview(destination: previewed)
-                            .id(previewed)
-                            .transition(.opacity)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: scrub.previewed)
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -160,10 +148,14 @@ struct AppShellView: View {
             let pageOffset = min(max(baseOffset + sourceListDragOffset, 0), revealWidth)
             let revealProgress = revealWidth > 0 ? pageOffset / revealWidth : 0
 
-            ZStack(alignment: .leading) {
+            // Pinned to the top as well as the leading edge: every child here is
+            // full height, so this changes nothing in the normal case — but a
+            // child that ever overflows now hangs off the bottom instead of
+            // silently recentring the page.
+            ZStack(alignment: .topLeading) {
                 environment.theme.railColor
 
-                SourceList(onSelect: dismissSourceList, scrub: $scrub)
+                SourceList(isActive: showsSourceList, onSelect: dismissSourceList)
                     .padding(.top, windowSafeAreaInsets.top)
                     .padding(.bottom, windowSafeAreaInsets.bottom)
                     .frame(width: revealWidth)
@@ -193,18 +185,6 @@ struct AppShellView: View {
                                 .accessibilityHidden(true)
                         }
                     }
-                    .overlay {
-                        // While scrubbing, the visible page strip crossfades
-                        // between read-only previews of the highlighted row.
-                        if showsSourceList, scrub.isActive, scrub.previewReady, let previewed = scrub.previewed {
-                            SidebarDestinationPreview(destination: previewed)
-                                .clipShape(pageShape)
-                                .id(previewed)
-                                .transition(.opacity)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: scrub.previewed)
                     .shadow(color: .black.opacity(0.18 * revealProgress), radius: 24, x: -8)
                     .offset(x: pageOffset)
                     .accessibilityHidden(showsSourceList)
@@ -419,25 +399,23 @@ private struct PendingSendToast: View {
 private struct SourceList: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // The wheel's recognizer lives on the window, so the sidebar being merely
+    // laid out is not enough — while the page covers it, vertical drags on the
+    // page sit inside the sidebar's rectangle and are not the wheel's.
+    let isActive: Bool
     let onSelect: () -> Void
-    // Scrub session owned by the shell so it can drive the page preview.
-    var scrub: Binding<SidebarScrubState>?
 
-    @State private var rowFrames: [SidebarDestination: CGRect] = [:]
-    @State private var containerBounds: CGRect = .zero
-    @State private var scrollBounds: CGRect = .zero
-    @State private var scrubCancelled = false
-    @State private var previewDelayTask: Task<Void, Never>?
-    @State private var autoscrollTarget: SidebarDestination?
-    @State private var autoscrollTask: Task<Void, Never>?
-    @State private var autoscrollZone: SidebarScrubLogic.EdgeZone?
-    @State private var scrubDestinations: [SidebarDestination] = []
-    @State private var scrubAnchorLocation: CGPoint?
-    @State private var scrubAnchorFrames: [SidebarDestination: CGRect] = [:]
-    @State private var scrubContentOffsetY: CGFloat = 0
+    @State private var model = SidebarWheelModel()
+    @State private var wheelFrame: CGRect = .zero
+
+    private var primaries: [PrimaryTab] { PrimaryTab.sourceList }
+    private var areas: [AreaSummary] { environment.store.areas }
+    private var scopes: [MailCategoryScope] { MailCategoryScope.allCases }
 
     var body: some View {
         VStack(spacing: 0) {
+            // The masthead sits outside the wheel: it is the sidebar's title,
+            // not a place you can go, so it neither turns nor fans.
             HStack {
                 Text("Albatross")
                     .font(environment.theme.displayType.displayFont(size: 23))
@@ -447,131 +425,11 @@ private struct SourceList: View {
             .padding(.top, 10)
             .padding(.bottom, 14)
 
-            // Every Area stays in the hierarchy. During a scrub the menu
-            // surface follows the finger beneath a fixed selection slot, like
-            // a system wheel; the viewport itself remains programmatic so
-            // scroll and selection gestures never compete.
-            ScrollViewReader { proxy in
-                ScrollView(.vertical) {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(PrimaryTab.sourceList) { destination in
-                        sourceButton(destination)
-                    }
-
-                    Divider()
-                        .padding(.vertical, 12)
-
-                    Text("Your areas")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 2)
-                        .accessibilityAddTraits(.isHeader)
-
-                    if environment.store.areas.isEmpty {
-                        areaState
-                    } else {
-                        ForEach(environment.store.areas) { area in
-                            let destination = SidebarDestination.area(id: area.id, name: area.name)
-                            Button {
-                                environment.navigation.openArea(id: area.id, name: area.name)
-                                onSelect()
-                            } label: {
-                                HStack(spacing: 10) {
-                                    AreaIdentityMark(
-                                        name: area.name,
-                                        seed: area.id,
-                                        imageURL: area.imageURL,
-                                        faviconURL: area.faviconURL,
-                                        size: 30
-                                    )
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(area.name)
-                                            .font(.body)
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                        if let line = area.overview?.statusLine ?? area.detail {
-                                            Text(line)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                    }
-                                    Spacer(minLength: 4)
-                                    if area.overview?.needsAttention == true {
-                                        Circle()
-                                            .fill(environment.theme.accent2Color)
-                                            .frame(width: 7, height: 7)
-                                            .accessibilityLabel("Needs attention")
-                                    }
-                                }
-                                .padding(.horizontal, 10)
-                                .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
-                                .contentShape(.rect)
-                                .background {
-                                    if isSelected(area) {
-                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .fill(Color.primary.opacity(0.075))
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(areaAccessibilityLabel(area))
-                            .accessibilityAddTraits(isSelected(area) ? [.isButton, .isSelected] : .isButton)
-                            .id(destination)
-                            .sidebarScrubRow(destination, frames: $rowFrames)
-                            .sidebarScrubHighlight(isScrubbing(destination))
-                            .sidebarScrubWheel(distance: wheelDistance(to: destination))
-                        }
-                    }
-
-                    Divider()
-                        .padding(.vertical, 12)
-
-                    Text("Mail")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 2)
-                        .accessibilityAddTraits(.isHeader)
-
-                    ForEach(MailCategoryScope.allCases) { category in
-                        mailFilterButton(category)
-                    }
-
-                    Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 16)
-                    .offset(y: scrubContentOffsetY)
-                }
-                .scrollIndicators(.hidden)
-                .contentMargins(
-                    .vertical,
-                    SidebarScrubLogic.scrollEndInset,
-                    for: .scrollContent
-                )
-                .scrollDisabled(true)
-                .onGeometryChange(for: CGRect.self) { proxy in
-                    proxy.frame(in: .named(SidebarScrubCoordinateSpace.name))
-                } action: { bounds in
-                    scrollBounds = bounds
-                }
-                .onChange(of: autoscrollTarget) { _, destination in
-                    guard let destination else { return }
-                    let anchor = SidebarScrubLogic.autoscrollAnchor(
-                        slotY: scrubAnchorLocation?.y,
-                        in: scrollBounds
-                    )
-                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.22, extraBounce: 0)) {
-                        proxy.scrollTo(destination, anchor: anchor)
-                    }
-                    autoscrollTarget = nil
-                }
-            }
+            wheel
 
             Divider()
 
+            // Settings is outside the wheel deliberately — see SidebarDestination.
             Button {
                 environment.navigation.sheet = .settings
                 onSelect()
@@ -586,202 +444,145 @@ private struct SourceList: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens account and app settings")
-            .sidebarScrubRow(.settings, frames: $rowFrames)
-            .sidebarScrubHighlight(isScrubbing(.settings))
-            .sidebarScrubWheel(distance: wheelDistance(to: .settings))
         }
         .background(environment.theme.railColor)
-        .coordinateSpace(name: SidebarScrubCoordinateSpace.name)
-        .onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .named(SidebarScrubCoordinateSpace.name))
-        } action: { bounds in
-            containerBounds = bounds
-        }
-        .onAppear {
-            refreshScrubDestinations()
-        }
-        .onChange(of: environment.store.areas.map { "\($0.id):\($0.name)" }) { _, _ in
-            refreshScrubDestinations()
-        }
-        .onDisappear {
-            stopAutoscroll()
-            previewDelayTask?.cancel()
-        }
-        // One drag owns the wheel-style scrub. The viewport is programmatically
-        // slot-aligned, so there is still no competing scroll pan; VoiceOver
-        // continues to activate each real Button directly.
-        .highPriorityGesture(scrubGesture, isEnabled: scrub != nil)
+        .onAppear { refresh() }
+        .onChange(of: areaIdentity) { _, _ in refresh() }
+        .onChange(of: reduceMotion) { _, value in model.reduceMotion = value }
+        .onDisappear { model.stop() }
     }
 
-    // MARK: - Scrub session
+    // MARK: - The wheel
 
-    private func refreshScrubDestinations() {
-        scrubDestinations = PrimaryTab.sourceList.map(SidebarDestination.primary)
-            + environment.store.areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
-            + MailCategoryScope.allCases.map(SidebarDestination.mail)
-            + [.settings]
+    private var wheel: some View {
+        SidebarWheelLayout(
+            position: model.position,
+            slotY: model.slotY,
+            engagement: model.engagement,
+            spacing: 4,
+            onMeasure: { model.setMeasurement(centers: $0, total: $1) }
+        ) {
+            rows
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 8)
+        .clipped()
+        .coordinateSpace(name: SidebarWheelSpace.name)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: { frame in
+            wheelFrame = frame
+            model.activeRect = frame
+            model.viewportHeight = frame.height
+        }
+        .background {
+            SidebarWheelGestureAttachment(
+                isEnabled: isActive,
+                activeRect: wheelFrame,
+                onChange: { start, translation, velocity in
+                    model.handleChange(start: start, translation: translation, velocity: velocity)
+                },
+                onEnd: { velocity, completed in
+                    model.handleEnd(velocity: velocity, completed: completed)
+                }
+            )
+            .allowsHitTesting(false)
+        }
+        // The wheel replaces scrolling, so the whole hierarchy is realised up
+        // front. Twenty rows do not need laziness, and lazy instantiation
+        // mid-fling is its own source of pop-in.
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private var rows: some View {
+        let engagement = model.engagement
+        let focus = model.focusY
+
+        ForEach(Array(primaries.enumerated()), id: \.element) { offset, destination in
+            sourceButton(destination)
+                .sidebarWheelDetent(offset)
+                .sidebarPage(engagement: engagement, focusY: focus)
+        }
+
+        Divider()
+            .padding(.vertical, 12)
+            .sidebarPage(engagement: engagement, focusY: focus)
+
+        sectionHeader("Your areas")
+            .sidebarPage(engagement: engagement, focusY: focus)
+
+        if areas.isEmpty {
+            areaState
+                .sidebarPage(engagement: engagement, focusY: focus)
+        } else {
+            ForEach(Array(areas.enumerated()), id: \.element.id) { offset, area in
+                areaButton(area)
+                    .sidebarWheelDetent(primaries.count + offset)
+                    .sidebarPage(engagement: engagement, focusY: focus)
+            }
+        }
+
+        Divider()
+            .padding(.vertical, 12)
+            .sidebarPage(engagement: engagement, focusY: focus)
+
+        sectionHeader("Mail")
+            .sidebarPage(engagement: engagement, focusY: focus)
+
+        ForEach(Array(scopes.enumerated()), id: \.element) { offset, category in
+            mailFilterButton(category)
+                .sidebarWheelDetent(primaries.count + areas.count + offset)
+                .sidebarPage(engagement: engagement, focusY: focus)
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    // MARK: - Wiring
+
+    private var areaIdentity: [String] {
+        areas.map { "\($0.id):\($0.name)" }
+    }
+
+    private func refresh() {
+        model.destinations = primaries.map(SidebarDestination.primary)
+            + areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
+            + scopes.map(SidebarDestination.mail)
+        // The seams: first area, and first mail scope.
+        model.boundaryIndices = [primaries.count, primaries.count + areas.count]
+        model.reduceMotion = reduceMotion
+        model.currentIndex = { [weak model] in
+            guard let model else { return nil }
+            return SidebarDestination.index(of: currentDestination, in: model.destinations)
+        }
+        model.onCommit = { destination in
+            commit(destination)
+        }
     }
 
     private var currentDestination: SidebarDestination? {
         if let route = environment.navigation.areaRoute {
             return .area(id: route.areaID, name: route.name ?? "")
         }
-        return .primary(environment.navigation.selectedTab)
-    }
-
-    private func isScrubbing(_ destination: SidebarDestination) -> Bool {
-        scrub?.wrappedValue.isActive == true && scrub?.wrappedValue.previewed == destination
-    }
-
-    private func wheelDistance(to destination: SidebarDestination) -> Int? {
-        guard scrub?.wrappedValue.isActive == true,
-              let previewed = scrub?.wrappedValue.previewed,
-              let selectedIndex = scrubDestinations.firstIndex(of: previewed),
-              let destinationIndex = scrubDestinations.firstIndex(of: destination) else {
-            return nil
-        }
-        return destinationIndex - selectedIndex
-    }
-
-    // Menu-style touch handling: the session opens on touch-down and anchors
-    // a fixed selection slot. The list then follows the finger beneath it;
-    // release commits the row brought into that slot. A plain tap is the
-    // degenerate scrub (down and up on one row).
-    private var scrubGesture: some Gesture {
-        DragGesture(
-            minimumDistance: 0,
-            coordinateSpace: .named(SidebarScrubCoordinateSpace.name)
-        )
-        .onChanged { drag in
-            handleScrubChange(drag)
-        }
-        .onEnded { _ in
-            endScrub()
+        switch environment.navigation.selectedTab {
+        // Mail is not a peer row; its scopes are. Chat has no row at all, so
+        // the wheel falls back to the top of the hierarchy.
+        case .mail: return .mail(.main)
+        case .chat: return nil
+        case let tab: return .primary(tab)
         }
     }
 
-    private func handleScrubChange(_ drag: DragGesture.Value) {
-        guard let session = scrub, !scrubCancelled else { return }
-        if SidebarScrubLogic.isHorizontalDismissal(translation: drag.translation)
-            || SidebarScrubLogic.isOutside(location: drag.location, sidebarBounds: containerBounds) {
-            if session.wrappedValue.isActive {
-                session.wrappedValue.cancel()
-                UIAccessibility.post(notification: .announcement, argument: "Navigation preview cancelled")
-            }
-            scrubCancelled = true
-            stopAutoscroll()
-            resetScrubVisuals()
-            return
-        }
-        if !session.wrappedValue.isActive {
-            scrubAnchorLocation = drag.startLocation
-            scrubAnchorFrames = rowFrames
-            scrubContentOffsetY = 0
-            let destination = SidebarScrubLogic.destination(at: drag.startLocation, rows: rowFrames)
-            session.wrappedValue.activate(over: destination, committed: currentDestination)
-            // The page preview waits for a row crossing or the ready delay so
-            // a plain tap never flashes it.
-            previewDelayTask?.cancel()
-            previewDelayTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(SidebarScrubLogic.previewDelayMilliseconds))
-                guard !Task.isCancelled else { return }
-                scrub?.wrappedValue.markPreviewReady()
-            }
-            if let destination {
-                UIAccessibility.post(notification: .announcement, argument: "Previewing \(destination.title)")
-            }
-        } else {
-            scrubContentOffsetY = SidebarScrubLogic.contentDragOffset(translation: drag.translation)
-            if let anchor = scrubAnchorLocation {
-                let selectionPoint = SidebarScrubLogic.anchoredSelectionPoint(
-                    anchor: anchor,
-                    translation: drag.translation
-                )
-                let destination = SidebarScrubLogic.destination(
-                    at: selectionPoint,
-                    rows: scrubAnchorFrames
-                )
-                if session.wrappedValue.move(to: destination) {
-                    // One selection tick per row crossed.
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    if let destination {
-                        UIAccessibility.post(notification: .announcement, argument: destination.title)
-                    }
-                }
-            }
-        }
-        updateAutoscroll(forY: drag.location.y)
-    }
-
-    private func endScrub() {
-        stopAutoscroll()
-        previewDelayTask?.cancel()
-        previewDelayTask = nil
-        defer { scrubCancelled = false }
-        defer { resetScrubVisuals() }
-        guard let session = scrub, !scrubCancelled, session.wrappedValue.isActive else {
-            scrub?.wrappedValue.cancel()
-            return
-        }
-        guard let destination = session.wrappedValue.commit() else { return }
-        commitScrub(destination)
-    }
-
-    private func updateAutoscroll(forY y: CGFloat) {
-        guard scrub?.wrappedValue.isActive == true,
-              let zone = SidebarScrubLogic.autoscrollZone(forY: y, in: scrollBounds) else {
-            stopAutoscroll()
-            return
-        }
-        guard zone != autoscrollZone else { return }
-        stopAutoscroll()
-        autoscrollZone = zone
-        advanceAutoscroll(zone)
-        autoscrollTask = Task { @MainActor in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(240))
-                guard !Task.isCancelled, autoscrollZone == zone else { return }
-                advanceAutoscroll(zone)
-            }
-        }
-    }
-
-    private func advanceAutoscroll(_ zone: SidebarScrubLogic.EdgeZone) {
-        guard let session = scrub,
-              let next = SidebarScrubLogic.autoscrollTarget(
-                  from: session.wrappedValue.previewed,
-                  in: scrubDestinations,
-                  zone: zone
-              ),
-              SidebarScrubLogic.isAutoscrollable(next) else { return }
-        autoscrollTarget = next
-        if session.wrappedValue.move(to: next) {
-            UISelectionFeedbackGenerator().selectionChanged()
-            UIAccessibility.post(notification: .announcement, argument: next.title)
-        }
-    }
-
-    private func stopAutoscroll() {
-        autoscrollTask?.cancel()
-        autoscrollTask = nil
-        autoscrollZone = nil
-    }
-
-    private func resetScrubVisuals() {
-        scrubAnchorLocation = nil
-        scrubAnchorFrames = [:]
-        if reduceMotion {
-            scrubContentOffsetY = 0
-        } else {
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                scrubContentOffsetY = 0
-            }
-        }
-    }
-
-    // Committing routes through the exact paths a tap uses — the preview never
-    // navigated, so this is the session's single real navigation.
-    private func commitScrub(_ destination: SidebarDestination) {
+    // Committing routes through the exact paths a tap uses.
+    private func commit(_ destination: SidebarDestination) {
         switch destination {
         case .primary(let tab):
             environment.navigation.selectPrimary(tab)
@@ -799,10 +600,17 @@ private struct SourceList: View {
         }
     }
 
+    private func isPicked(_ destination: SidebarDestination) -> Bool {
+        model.engagement > 0.01 && model.pickedDestination == destination
+    }
+
+    // MARK: - Rows
+
     private func sourceButton(_ destination: PrimaryTab) -> some View {
         let selected = environment.navigation.selectedTab == destination
             && (destination != .work || environment.navigation.areaRoute == nil)
         return Button {
+            guard !model.suppressesRowTaps else { return }
             environment.navigation.selectPrimary(destination)
             onSelect()
         } label: {
@@ -810,8 +618,13 @@ private struct SourceList: View {
                 Image(systemName: destination.symbol)
                     .font(.body)
                     .frame(width: 20)
-                Text(destination.title)
-                    .font(.body.weight(selected ? .semibold : .regular))
+                SidebarRowTitle(
+                    text: destination.title,
+                    font: .body,
+                    model: model,
+                    destination: .primary(destination),
+                    restingWeight: selected ? .semibold : .regular
+                )
                 Spacer(minLength: 0)
             }
             .foregroundStyle(.primary)
@@ -819,22 +632,68 @@ private struct SourceList: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(.rect)
             .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.primary.opacity(0.075))
-                }
+                SidebarRowBackground(selected: selected, model: model)
             }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-        .id(SidebarDestination.primary(destination))
-        .sidebarScrubRow(.primary(destination), frames: $rowFrames)
-        .sidebarScrubHighlight(isScrubbing(.primary(destination)))
-        .sidebarScrubWheel(distance: wheelDistance(to: .primary(destination)))
+    }
+
+    private func areaButton(_ area: AreaSummary) -> some View {
+        let destination = SidebarDestination.area(id: area.id, name: area.name)
+        return Button {
+            guard !model.suppressesRowTaps else { return }
+            environment.navigation.openArea(id: area.id, name: area.name)
+            onSelect()
+        } label: {
+            HStack(spacing: 10) {
+                AreaIdentityMark(
+                    name: area.name,
+                    seed: area.id,
+                    imageURL: area.imageURL,
+                    faviconURL: area.faviconURL,
+                    size: 30
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    SidebarRowTitle(
+                        text: area.name,
+                        font: .body,
+                        model: model,
+                        destination: destination,
+                        restingWeight: .regular
+                    )
+                    // The open page has room the closed ones do not, so it is
+                    // the one that shows its status.
+                    SidebarRowDetail(
+                        resting: area.overview?.statusLine ?? area.detail,
+                        bloomed: area.overview?.statusLine ?? area.detail,
+                        model: model,
+                        destination: destination
+                    )
+                }
+                Spacer(minLength: 4)
+                if area.overview?.needsAttention == true {
+                    Circle()
+                        .fill(environment.theme.accent2Color)
+                        .frame(width: 7, height: 7)
+                        .accessibilityLabel("Needs attention")
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+            .contentShape(.rect)
+            .background {
+                SidebarRowBackground(selected: isSelected(area), model: model)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(areaAccessibilityLabel(area))
+        .accessibilityAddTraits(isSelected(area) ? [.isButton, .isSelected] : .isButton)
     }
 
     private func mailFilterButton(_ category: MailCategoryScope) -> some View {
         Button {
+            guard !model.suppressesRowTaps else { return }
             environment.navigation.selectPrimary(.mail)
             environment.navigation.pendingMailCategory = category.rawValue
             onSelect()
@@ -844,8 +703,13 @@ private struct SourceList: View {
                     .font(.footnote)
                     .frame(width: 20)
                     .foregroundStyle(.secondary)
-                Text(category.title)
-                    .font(.subheadline)
+                SidebarRowTitle(
+                    text: category.title,
+                    font: .subheadline,
+                    model: model,
+                    destination: .mail(category),
+                    restingWeight: .regular
+                )
                 Spacer(minLength: 0)
             }
             .foregroundStyle(.primary)
@@ -854,10 +718,6 @@ private struct SourceList: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .id(SidebarDestination.mail(category))
-        .sidebarScrubRow(.mail(category), frames: $rowFrames)
-        .sidebarScrubHighlight(isScrubbing(.mail(category)))
-        .sidebarScrubWheel(distance: wheelDistance(to: .mail(category)))
     }
 
     @ViewBuilder private var areaState: some View {
@@ -869,19 +729,19 @@ private struct SourceList: View {
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
-            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         } else if environment.store.workError != nil {
             Button("Retry loading Areas") {
                 Task { await environment.store.refreshWork() }
             }
             .padding(.horizontal, 12)
-            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         } else {
             Text("No active areas")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
-                .frame(minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
     }
 
@@ -895,6 +755,89 @@ private struct SourceList: View {
         if let status = area.overview?.statusLine { parts.append(status) }
         if area.overview?.needsAttention == true { parts.append("needs attention") }
         return parts.joined(separator: ", ")
+    }
+}
+
+// MARK: - Row pieces that follow the pick
+
+// These read `detent` and nothing else, so the pick can move without dragging
+// whole rows — avatars, icons, backgrounds — through a rebuild with it.
+
+private struct SidebarRowTitle: View {
+    let text: String
+    let font: Font
+    let model: SidebarWheelModel
+    let destination: SidebarDestination
+    let restingWeight: Font.Weight
+
+    @Environment(AppEnvironment.self) private var environment
+
+    var body: some View {
+        let picked = model.engagement > 0.01 && model.pickedDestination == destination
+        let accent = environment.theme.accentColor
+        // Neither font size nor weight interpolates, so either one flipped on
+        // pick would snap. The size comes from `scaleEffect`, which does
+        // animate, anchored leading so the word grows out from the spine like
+        // everything else. The two weights crossfade underneath it, and the
+        // glow rides in on the same curve.
+        Text(text)
+            .font(font.weight(.semibold))
+            .lineLimit(1)
+            .hidden()
+            .overlay(alignment: .leading) {
+                ZStack(alignment: .leading) {
+                    Text(text)
+                        .font(font.weight(restingWeight))
+                        .foregroundStyle(.primary)
+                        .opacity(picked ? 0 : 1)
+                    Text(text)
+                        .font(font.weight(.semibold))
+                        // Accent-tinted rather than a dark halo: on warm paper a
+                        // grey shadow reads as a smudge, where a chromatic one
+                        // reads as light.
+                        .foregroundStyle(accent)
+                        .shadow(color: accent.opacity(0.55), radius: 4)
+                        .shadow(color: accent.opacity(0.32), radius: 11)
+                        .shadow(color: accent.opacity(0.18), radius: 22)
+                        .opacity(picked ? 1 : 0)
+                }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .scaleEffect(picked ? 1.12 : 1, anchor: .leading)
+                .animation(.smooth(duration: 0.26), value: picked)
+            }
+    }
+}
+
+private struct SidebarRowDetail: View {
+    let resting: String?
+    let bloomed: String?
+    let model: SidebarWheelModel
+    let destination: SidebarDestination
+
+    var body: some View {
+        let picked = model.engagement > 0.01 && model.pickedDestination == destination
+        if let line = picked ? bloomed : resting, !line.isEmpty {
+            Text(line)
+                .font(.caption)
+                .foregroundStyle(picked ? .primary : .secondary)
+                .lineLimit(picked ? 2 : 1)
+        }
+    }
+}
+
+// The resting selection block is suppressed while the wheel is turning, so the
+// pick is marked by weight and the open page alone rather than by two competing
+// highlights.
+private struct SidebarRowBackground: View {
+    let selected: Bool
+    let model: SidebarWheelModel
+
+    var body: some View {
+        if selected, model.engagement <= 0.01 {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.075))
+        }
     }
 }
 
