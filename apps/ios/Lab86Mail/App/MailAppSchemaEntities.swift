@@ -1,19 +1,8 @@
-// Apple Intelligence assistant schemas are not bound here.
-//
-// The mail schema shape differs between the iOS 26 and iOS 27 SDKs — iOS 27
-// adds `.mail.category`, `.mail.openDraft` and `.mail.openMessage`, and its
-// `.mail.message` requires a schema-bound category — and the app must build
-// against the released iOS 26 SDK for App Store Connect to accept the upload.
-// These are therefore plain App Intents entities: still available to Siri and
-// Shortcuts, but not bound to the assistant schemas.
-//
-// Rebinding them is tracked; see the iOS 27 Siri and Intelligence issue.
 import AppIntents
 import Foundation
 
-enum AlbatrossMailCategory: String, AppEnum {
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Mail Category"
-
+@AppEnum(schema: .mail.category)
+enum AlbatrossMailCategory: String {
     case primary
     case social
     case promotions
@@ -29,9 +18,8 @@ enum AlbatrossMailCategory: String, AppEnum {
     ]
 }
 
-struct AlbatrossMailAccountEntity: AppEntity {
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Mail Account"
-
+@AppEntity(schema: .mail.account)
+struct AlbatrossMailAccountEntity {
     static let defaultQuery = AccountQuery()
 
     let id: String
@@ -66,9 +54,8 @@ struct AlbatrossMailAccountEntity: AppEntity {
     }
 }
 
-struct AlbatrossMailboxEntity: AppEntity {
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Mailbox"
-
+@AppEntity(schema: .mail.mailbox)
+struct AlbatrossMailboxEntity {
     static let defaultQuery = MailboxQuery()
 
     let id: String
@@ -103,9 +90,8 @@ struct AlbatrossMailboxEntity: AppEntity {
     }
 }
 
-struct AlbatrossMailDraftEntity: AppEntity {
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Mail Draft"
-
+@AppEntity(schema: .mail.draft)
+struct AlbatrossMailDraftEntity {
     static let defaultQuery = DraftQuery()
 
     let id: String
@@ -159,9 +145,8 @@ struct AlbatrossMailDraftEntity: AppEntity {
     }
 }
 
-struct AlbatrossMailMessageEntity: AppEntity {
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Mail Message"
-
+@AppEntity(schema: .mail.message)
+struct AlbatrossMailMessageEntity {
     static let defaultQuery = MessageQuery()
 
     let id: String

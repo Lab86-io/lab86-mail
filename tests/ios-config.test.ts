@@ -186,12 +186,9 @@ describe('native iOS authentication configuration', () => {
       'utf8',
     );
 
-    // Xcode Cloud builds with Xcode 26.6 — the released iOS 26 SDK — because
-    // App Store Connect rejects uploads built with a beta SDK. These four are
-    // all iOS 27 additions and must stay out until the deployment target moves.
-    expect(shell).not.toContain('ToolbarOverflowMenu');
-    expect(shell).not.toContain('.visibilityPriority(');
-    expect(shell).not.toContain('.topBarPinnedTrailing');
+    expect(shell).toContain('ToolbarOverflowMenu');
+    expect(shell).toContain('.visibilityPriority(.high)');
+    expect(shell).toContain('.topBarPinnedTrailing');
     expect(shell).not.toContain('toolbarMinimizeBehavior');
   });
 

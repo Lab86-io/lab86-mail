@@ -90,6 +90,7 @@ struct TasksView: View {
                     Label("Boards", systemImage: "square.stack")
                 }
             }
+            .visibilityPriority(.low)
         }
         .sheet(isPresented: $showsProjects) {
             ProjectsSheet()
@@ -145,10 +146,27 @@ struct TasksView: View {
             .padding(.vertical, 12)
         }
         .scrollTargetBehavior(.viewAligned)
-        // Drag-to-reorder uses SwiftUI's reorder container, which is an iOS 27
-        // addition. The app builds against the released iOS 26 SDK, so the
-        // board is read-only for ordering until the deployment target moves;
-        // `store.reorderTask` and its server contract are untouched.
+        .reorderContainer(
+            for: TaskSummary.self,
+            in: String.self,
+            isEnabled: store.taskBoardRole != "viewer"
+        ) { difference in
+            guard let taskID = difference.sources.first else { return }
+            let destinationID: String? = switch difference.destination.position {
+            case .before(let id): id
+            case .end: nil
+            }
+            // One confirmation tick when the drop lands; the lift/placeholder
+            // feedback during the drag is the native reorder container's.
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task {
+                await store.reorderTask(
+                    id: taskID,
+                    to: difference.destination.collectionID,
+                    before: destinationID
+                )
+            }
+        }
     }
 
     private var taskList: some View {
@@ -226,6 +244,7 @@ struct TasksView: View {
                     ForEach(cards) { task in
                         card(task)
                     }
+                    .reorderable(collectionID: column)
                     if cards.isEmpty {
                         Button {
                             newCard = NewCardContext(column: column)
