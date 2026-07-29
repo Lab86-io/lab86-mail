@@ -3,9 +3,12 @@ name: Lab86Mail
 options:
   bundleIdPrefix: io.lab86
   createIntermediateGroups: true
+  # Built against the released iOS 26 SDK. App Store Connect rejects uploads
+  # built with a beta SDK (error 90534), and Xcode 27 is still beta, so a 27.0
+  # deployment target cannot be distributed to TestFlight.
   deploymentTarget:
-    iOS: "27.0"
-  xcodeVersion: "27.0"
+    iOS: "26.0"
+  xcodeVersion: "26.0"
 
 packages:
   MobileAPI:
