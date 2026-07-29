@@ -17,6 +17,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        // A code push is the one case where the wake has a specific job: get the
+        // code into AutoFill before the user reaches the field they are about to
+        // fill. Announced separately from the general refresh so it is not
+        // waiting behind a full mail sync.
+        if userInfo["codeAvailable"] as? Bool == true {
+            NotificationCenter.default.post(name: .lab86OneTimeCodeAvailable, object: nil)
+        }
         Task { @MainActor in
             await BackgroundRefreshCoordinator.shared.runRemoteNotification(completion: completionHandler)
         }

@@ -12,9 +12,14 @@ export interface APNsPayload {
   aps: {
     alert: { title: string; body: string };
     sound: 'default';
-    category: 'LAB86_CHECKIN' | 'LAB86_COMMITMENT' | 'LAB86_MAIL' | 'LAB86_BRIEF';
+    category: 'LAB86_CHECKIN' | 'LAB86_COMMITMENT' | 'LAB86_MAIL' | 'LAB86_BRIEF' | 'LAB86_URGENT';
     'thread-id': string;
     'content-available': 1;
+    // Only urgent mail carries an elevated level. Applying it more widely is
+    // how an app loses the Focus exemption the user granted it, since the
+    // setting is per-app rather than per-notification.
+    'interruption-level'?: 'time-sensitive';
+    'relevance-score'?: number;
   };
   notificationId: string;
   route: string;
@@ -23,6 +28,8 @@ export interface APNsPayload {
   threadId?: string;
   messageId?: string;
   promptKind?: 'reflection' | 'tomorrow';
+  /** Tells the woken app to refresh one-time codes before doing anything else. */
+  codeAvailable?: true;
 }
 
 interface APNsConfiguration {
@@ -88,8 +95,10 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
   const messageId = deepLink.searchParams.get('message');
   const promptKind =
     deepLink.searchParams.get('prompt') === 'tomorrow' ? ('tomorrow' as const) : ('reflection' as const);
-  const category =
-    envelope.type === 'brief_ready'
+  const urgent = envelope.type === 'urgent_mail';
+  const category = urgent
+    ? 'LAB86_URGENT'
+    : envelope.type === 'brief_ready'
       ? 'LAB86_BRIEF'
       : route.startsWith('/checkin')
         ? 'LAB86_CHECKIN'
@@ -108,9 +117,11 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
       category,
       'thread-id': accountId && threadId ? `mail.${accountId}.${threadId}` : `albatross.${envelope.id}`,
       'content-available': 1,
+      ...(urgent ? ({ 'interruption-level': 'time-sensitive', 'relevance-score': 1 } as const) : {}),
     },
     notificationId: envelope.id,
     route,
+    ...(envelope.codeAvailable ? ({ codeAvailable: true } as const) : {}),
     ...(suggestionId ? { suggestionId } : {}),
     ...(accountId ? { accountId } : {}),
     ...(threadId ? { threadId } : {}),

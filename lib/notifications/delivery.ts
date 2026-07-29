@@ -35,6 +35,8 @@ export interface NotificationEnvelope {
   title: string;
   body: string;
   deepLink: string;
+  /** Set when the message carried a one-time code the app should go fetch. */
+  codeAvailable?: true;
 }
 
 function linkSecret() {

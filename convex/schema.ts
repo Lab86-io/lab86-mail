@@ -1135,6 +1135,42 @@ export default defineSchema({
     .index('by_status', ['status'])
     .index('by_received', ['receivedAt']),
 
+  // One-time codes lifted out of incoming mail so the phone can offer them to
+  // AutoFill. These are live authentication secrets with a very short useful
+  // life, so rows carry a hard expiry, are purged on use, and keep only the
+  // code itself rather than the message that carried it.
+  mailOneTimeCodes: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    providerThreadId: v.string(),
+    code: v.string(),
+    label: v.string(),
+    issuer: v.string(),
+    // Domains the code may be offered for, most specific first.
+    serviceIdentifiers: v.array(v.string()),
+    confidence: v.number(),
+    receivedAt: v.number(),
+    expiresAt: v.number(),
+    status: v.union(v.literal('active'), v.literal('used'), v.literal('expired')),
+    usedAt: v.optional(v.number()),
+    // Whether the mail that carried this code has been cleaned up, and how it
+    // went. Recorded so a failed cleanup is visible rather than silent.
+    cleanup: v.optional(
+      v.union(v.literal('pending'), v.literal('archived'), v.literal('trashed'), v.literal('failed')),
+    ),
+    cleanupError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_status_expires', ['userId', 'status', 'expiresAt'])
+    .index('by_user_message', ['userId', 'providerMessageId'])
+    // Deletion cascades sweep by these two. Codes are live secrets, so they
+    // must go with the account and the user, not linger until they expire.
+    .index('by_user', ['userId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_expires', ['expiresAt']),
+
   dailyReports: defineTable({
     userId: v.string(),
     accountIds: v.array(v.string()),
@@ -1762,6 +1798,10 @@ export default defineSchema({
       // remain readable while they age out of the notification center.
       v.literal('event_suggestion'),
       v.literal('mail_message'),
+      // Mail that justified breaking through Focus. Kept distinct from
+      // 'mail_message' so the two can be muted independently and so the
+      // time-sensitive interruption level is never applied to ordinary mail.
+      v.literal('urgent_mail'),
       v.literal('brief_ready'),
       v.literal('agent_error'),
     ),
@@ -1809,8 +1849,14 @@ export default defineSchema({
     webPushEnabled: v.boolean(),
     nativePushEnabled: v.optional(v.boolean()),
     newMailPushEnabled: v.optional(v.boolean()),
+    urgentMailPushEnabled: v.optional(v.boolean()),
     eventSuggestionPushEnabled: v.optional(v.boolean()),
     morningBriefEnabled: v.optional(v.boolean()),
+    // One-time code AutoFill. Offering codes above the keyboard and deleting
+    // the mail that carried them are separate consents: the first is a
+    // convenience, the second destroys mail, so it is opted into on its own.
+    oneTimeCodeAutofillEnabled: v.optional(v.boolean()),
+    oneTimeCodeCleanupEnabled: v.optional(v.boolean()),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
     // Explicitly opted-in approximate iPhone location for morning weather.

@@ -1,7 +1,10 @@
 export interface MobileNotificationPreferences {
   nativePushEnabled: boolean;
   newMailPushEnabled: boolean;
+  urgentMailPushEnabled: boolean;
   eventSuggestionPushEnabled: boolean;
+  oneTimeCodeAutofillEnabled: boolean;
+  oneTimeCodeCleanupEnabled: boolean;
   morningBriefEnabled: boolean;
   eveningCheckinEnabled: boolean;
   eveningCheckinLocalTime: string;
@@ -33,6 +36,17 @@ export function parseMobileNotificationPreferences(value: unknown): MobileNotifi
   if (typeof morningBriefEnabled !== 'boolean') {
     throw new Error('morningBriefEnabled must be a boolean.');
   }
+  // Optional with a default rather than required, so an app build that predates
+  // these settings keeps saving its preferences instead of being rejected.
+  const optionalFlag = (key: string, fallback: boolean) => {
+    const value = body[key];
+    if (value === undefined) return fallback;
+    if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean.`);
+    return value;
+  };
+  const urgentMailPushEnabled = optionalFlag('urgentMailPushEnabled', true);
+  const oneTimeCodeAutofillEnabled = optionalFlag('oneTimeCodeAutofillEnabled', true);
+  const oneTimeCodeCleanupEnabled = optionalFlag('oneTimeCodeCleanupEnabled', false);
   const briefLocationEnabled = body.briefLocationEnabled === undefined ? false : body.briefLocationEnabled;
   if (typeof briefLocationEnabled !== 'boolean') {
     throw new Error('briefLocationEnabled must be a boolean.');
@@ -99,7 +113,10 @@ export function parseMobileNotificationPreferences(value: unknown): MobileNotifi
   return {
     nativePushEnabled: body.nativePushEnabled as boolean,
     newMailPushEnabled: body.newMailPushEnabled as boolean,
+    urgentMailPushEnabled,
     eventSuggestionPushEnabled: body.eventSuggestionPushEnabled as boolean,
+    oneTimeCodeAutofillEnabled,
+    oneTimeCodeCleanupEnabled,
     morningBriefEnabled,
     eveningCheckinEnabled: body.eveningCheckinEnabled as boolean,
     eveningCheckinLocalTime,
@@ -123,6 +140,12 @@ export function nativePushDisabledReason(
   if (preference?.nativePushEnabled === false) return 'native_push_disabled' as const;
   if (notificationType === 'mail_message' && preference?.newMailPushEnabled === false) {
     return 'new_mail_disabled' as const;
+  }
+  // Urgent mail is gated on its own switch only. Muting routine new-mail push
+  // is the common setting, and it must not also silence the alerts the user
+  // turned this feature on for.
+  if (notificationType === 'urgent_mail' && preference?.urgentMailPushEnabled === false) {
+    return 'urgent_mail_disabled' as const;
   }
   if (notificationType === 'event_suggestion' && preference?.eventSuggestionPushEnabled === false) {
     return 'event_suggestions_disabled' as const;

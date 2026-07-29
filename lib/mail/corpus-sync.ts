@@ -7,6 +7,7 @@ import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 import { detectMailSuggestions } from './suggestion-detectors';
+import { detectUrgentMailAndCodes } from './urgent-detectors';
 
 const mailCorpusApi = (api as any).mailCorpus;
 const accountsApi = (api as any).accounts;
@@ -519,6 +520,11 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
   }
   const messages = [corpusMessageFromNylas(row, raw.data || payload)];
   detectMailSuggestions(row, messages);
+  // Awaited, unlike the suggestion detectors: the value of an urgent alert is
+  // entirely in how soon it lands, and this path already runs off the webhook
+  // request (the route ACKs before ingest). Awaiting also gives the queue real
+  // backpressure instead of letting alerts race a process restart.
+  await detectUrgentMailAndCodes(row, messages).catch(() => undefined);
   await upsertCorpus(row, {
     messages,
     threads: corpusThreadsFromMessages(messages),

@@ -72,6 +72,7 @@ function notificationPayload(input: {
     | 'completion_suggestion'
     | 'event_suggestion'
     | 'mail_message'
+    | 'urgent_mail'
     | 'brief_ready'
     | 'agent_error';
   title: string;
@@ -281,8 +282,14 @@ export const mobilePreferences = query({
     return {
       nativePushEnabled: row?.nativePushEnabled ?? true,
       newMailPushEnabled: row?.newMailPushEnabled ?? true,
+      urgentMailPushEnabled: row?.urgentMailPushEnabled ?? true,
       eventSuggestionPushEnabled: row?.eventSuggestionPushEnabled ?? true,
       morningBriefEnabled: row?.morningBriefEnabled ?? true,
+      // AutoFill is on by default because it does nothing until the user also
+      // enables Albatross as a credential provider in Settings. Cleanup is off
+      // by default because it deletes mail.
+      oneTimeCodeAutofillEnabled: row?.oneTimeCodeAutofillEnabled ?? true,
+      oneTimeCodeCleanupEnabled: row?.oneTimeCodeCleanupEnabled ?? false,
       eveningCheckinEnabled: row?.eveningCheckinEnabled ?? true,
       eveningCheckinLocalTime: row?.eveningCheckinLocalTime ?? DEFAULT_CHECKIN_TIME,
       inAppEnabled: row?.inAppEnabled ?? true,
@@ -305,8 +312,11 @@ export const saveMobilePreferences = mutation({
     userId: v.string(),
     nativePushEnabled: v.boolean(),
     newMailPushEnabled: v.boolean(),
+    urgentMailPushEnabled: v.optional(v.boolean()),
     eventSuggestionPushEnabled: v.boolean(),
     morningBriefEnabled: v.optional(v.boolean()),
+    oneTimeCodeAutofillEnabled: v.optional(v.boolean()),
+    oneTimeCodeCleanupEnabled: v.optional(v.boolean()),
     eveningCheckinEnabled: v.boolean(),
     eveningCheckinLocalTime: v.string(),
     inAppEnabled: v.boolean(),
@@ -354,8 +364,13 @@ export const saveMobilePreferences = mutation({
     const mobile = {
       nativePushEnabled: args.nativePushEnabled,
       newMailPushEnabled: args.newMailPushEnabled,
+      urgentMailPushEnabled: args.urgentMailPushEnabled ?? existing?.urgentMailPushEnabled ?? true,
       eventSuggestionPushEnabled: args.eventSuggestionPushEnabled,
       morningBriefEnabled: args.morningBriefEnabled ?? existing?.morningBriefEnabled ?? true,
+      oneTimeCodeAutofillEnabled:
+        args.oneTimeCodeAutofillEnabled ?? existing?.oneTimeCodeAutofillEnabled ?? true,
+      oneTimeCodeCleanupEnabled:
+        args.oneTimeCodeCleanupEnabled ?? existing?.oneTimeCodeCleanupEnabled ?? false,
       eveningCheckinEnabled: args.eveningCheckinEnabled,
       eveningCheckinLocalTime: args.eveningCheckinLocalTime,
       inAppEnabled: args.inAppEnabled,
@@ -616,6 +631,70 @@ export const queueMailNotification = mutation({
         type: 'mail_message',
         title: (args.sender.trim() || 'New email').slice(0, 180),
         body: (args.subject.trim() || args.snippet.trim() || 'New message').slice(0, 1_000),
+        entityKind: 'thread',
+        entityId: args.threadId,
+        deepLink: `/mail/thread?${query.toString()}`,
+        dedupeKey,
+        scheduledFor: ts,
+      }),
+    );
+    await ctx.db.insert('notificationDeliveries', {
+      userId: args.userId,
+      notificationId,
+      channel: 'in_app',
+      status: 'sent',
+      attemptCount: 1,
+      scheduledFor: ts,
+      sentAt: ts,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await ctx.db.patch(notificationId, { status: 'delivered', updatedAt: ts });
+    return { notificationId, created: true };
+  },
+});
+
+// Urgent mail dedupes on its own key rather than sharing 'mail-message:' with
+// the ordinary notifier. If the two collided, whichever fired first would
+// suppress the other — and a routine new-mail alert silently swallowing the
+// urgent one is the wrong way round.
+export const queueUrgentMailNotification = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.string(),
+    sender: v.string(),
+    subject: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const dedupeKey = `urgent-mail:${args.accountId}:${args.messageId}`;
+    const existing = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    if (existing) return { notificationId: existing._id, created: false };
+    const ts = now();
+    const query = new URLSearchParams({
+      account: args.accountId,
+      thread: args.threadId,
+      message: args.messageId,
+      urgent: '1',
+    });
+    const subject = args.subject.trim();
+    const reason = args.reason.trim();
+    const notificationId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'urgent_mail',
+        title: (args.sender.trim() || 'Urgent email').slice(0, 180),
+        // The reason is why this one interrupted, so it earns its place in the
+        // body rather than being hidden behind a tap.
+        body: [subject, reason].filter(Boolean).join(' — ').slice(0, 1_000) || 'Needs your attention',
         entityKind: 'thread',
         entityId: args.threadId,
         deepLink: `/mail/thread?${query.toString()}`,

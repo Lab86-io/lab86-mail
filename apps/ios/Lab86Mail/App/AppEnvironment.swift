@@ -19,6 +19,7 @@ final class AppEnvironment {
     let navigation = NavigationModel()
     let theme = ThemeStore()
     let notifications: NotificationCoordinator
+    let oneTimeCodes: OneTimeCodeCoordinator
     let modelRouter: ModelRouter
     let webAuthentication: WebAuthenticationCoordinator
     let convex: ConvexClientWithAuth<String>?
@@ -102,6 +103,7 @@ final class AppEnvironment {
             backend: backend,
             responseOutbox: notificationResponseOutbox
         )
+        oneTimeCodes = OneTimeCodeCoordinator(backend: backend)
         modelRouter = ModelRouter(tools: tools)
         NotificationCoordinator.installTextResponseHandler { [backend, store] response in
             do {

@@ -29,6 +29,8 @@ struct NotificationSettingsView: View {
                 Toggle("Allow Albatross notifications", isOn: $preferences.nativePushEnabled)
                 Toggle("New mail", isOn: $preferences.newMailPushEnabled)
                     .disabled(!preferences.nativePushEnabled)
+                Toggle("Urgent mail", isOn: $preferences.urgentMailPushEnabled)
+                    .disabled(!preferences.nativePushEnabled)
                 Toggle("Calendar suggestions from mail", isOn: $preferences.eventSuggestionPushEnabled)
                     .disabled(!preferences.nativePushEnabled)
                 Toggle("Morning Brief is ready", isOn: $preferences.morningBriefEnabled)
@@ -37,8 +39,10 @@ struct NotificationSettingsView: View {
             } header: {
                 Text("Delivery")
             } footer: {
-                Text("iOS Focus and per-app notification settings still take precedence.")
+                Text("Urgent mail is delivered as time-sensitive, so it can reach you through a Focus. Everything else follows iOS Focus and per-app notification settings.")
             }
+
+            oneTimeCodeSection
 
             Section {
                 Toggle("Evening check-in", isOn: $preferences.eveningCheckinEnabled)
@@ -130,6 +134,10 @@ struct NotificationSettingsView: View {
         }
         .task {
             await environment.notifications.refreshAuthorizationStatus()
+            // Whether Albatross is on as a credential provider can change in
+            // iOS Settings while the app is backgrounded, so it is read here
+            // rather than trusted from the last refresh.
+            await environment.oneTimeCodes.refreshProviderState()
             await environment.notifications.loadPreferences()
             preferences = environment.notifications.preferences
             isLoaded = true
@@ -150,6 +158,47 @@ struct NotificationSettingsView: View {
             guard preferences.briefLocationEnabled, let label, !label.isEmpty else { return }
             preferences.briefLocationLabel = label
         }
+    }
+
+    /// Codes from mail, offered above the keyboard.
+    ///
+    /// The provider state is stated first and plainly, because everything else
+    /// in this section is inert until the user turns Albatross on in the iOS
+    /// AutoFill settings — and nothing in the app can do that for them.
+    @ViewBuilder
+    private var oneTimeCodeSection: some View {
+        Section {
+            Toggle("Offer codes from mail", isOn: $preferences.oneTimeCodeAutofillEnabled)
+            if preferences.oneTimeCodeAutofillEnabled {
+                LabeledContent("Set up in iOS") {
+                    Text(environment.oneTimeCodes.isEnabledAsProvider ? "On" : "Not yet")
+                        .foregroundStyle(environment.oneTimeCodes.isEnabledAsProvider ? .secondary : .orange)
+                }
+                if !environment.oneTimeCodes.isEnabledAsProvider {
+                    Button("Open AutoFill settings") {
+                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                        UIApplication.shared.open(url)
+                    }
+                }
+                Toggle("Archive the email after filling", isOn: $preferences.oneTimeCodeCleanupEnabled)
+            }
+        } header: {
+            Text("Codes from mail")
+        } footer: {
+            Text(codeSectionFooter)
+        }
+    }
+
+    private var codeSectionFooter: String {
+        guard preferences.oneTimeCodeAutofillEnabled else {
+            return "Codes stay in your mail and are never offered to other apps."
+        }
+        guard environment.oneTimeCodes.isEnabledAsProvider else {
+            return "Turn Albatross on under Settings ▸ General ▸ AutoFill & Passwords before codes can appear above the keyboard."
+        }
+        return preferences.oneTimeCodeCleanupEnabled
+            ? "Codes appear above the keyboard for a few minutes after they arrive. The email is archived once you use one, so it can still be found in All Mail."
+            : "Codes appear above the keyboard for a few minutes after they arrive."
     }
 
     private var checkinTimeBinding: Binding<Date> {
