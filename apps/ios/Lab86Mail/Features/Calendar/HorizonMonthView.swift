@@ -198,10 +198,10 @@ struct HorizonMonthView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(day: day, date: date, entries: dayEvents.count + dayTasks.count))
         // The day view's heading marks selection; without it here VoiceOver
-        // cannot tell the selected day in the month grid from any other.
-        .accessibilityAddTraits(
-            calendar.isDate(date, inSameDayAs: selectedDay) ? [.isButton, .isSelected] : .isButton
-        )
+        // cannot tell the selected day in the month grid from any other. Uses
+        // the unwrapped value computed above — `date` is optional for the
+        // leading and trailing blanks that pad the grid to whole weeks.
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
     private func numberColor(isToday: Bool) -> Color {
