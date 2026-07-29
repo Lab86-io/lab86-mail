@@ -845,24 +845,20 @@ private struct ShellToolbarModifier: ViewModifier {
         content
             .toolbar {
                 if includesCompose {
-                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                    // .topBarPinnedTrailing and .visibilityPriority are iOS 27
+                    // only; the app builds against the released iOS 26 SDK.
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             environment.navigation.sheet = .compose
                         } label: {
                             Label("Compose", systemImage: "square.and.pencil")
                         }
                     }
-                    .visibilityPriority(.high)
                 }
-                if horizontalSizeClass == .regular {
-                    ToolbarOverflowMenu {
-                        activityButton
-                    }
-                } else {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        activityButton
-                    }
-                    .visibilityPriority(.low)
+                // ToolbarOverflowMenu is iOS 27 only, so both size classes use
+                // a plain trailing item.
+                ToolbarItem(placement: .topBarTrailing) {
+                    activityButton
                 }
             }
     }
