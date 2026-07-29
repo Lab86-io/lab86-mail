@@ -90,6 +90,7 @@ struct TasksView: View {
                     Label("Boards", systemImage: "square.stack")
                 }
             }
+            .visibilityPriority(.low)
         }
         .sheet(isPresented: $showsProjects) {
             ProjectsSheet()
