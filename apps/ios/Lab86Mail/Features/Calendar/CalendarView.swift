@@ -266,7 +266,11 @@ struct CalendarView: View {
         YearGridView(
             anchor: selectedDay,
             onSelectMonth: { monthStart in
-                selectedDay = monthStart
+                // Every other selection path routes through select(day:), which
+                // normalises to startOfDay and re-syncs weekPage. Assigning
+                // directly here left week and day mode showing the previously
+                // paged week while selectedDay sat in another month.
+                select(day: monthStart)
                 viewMode = "month"
             },
             onVisibleYearChange: { visibleYear = $0 },

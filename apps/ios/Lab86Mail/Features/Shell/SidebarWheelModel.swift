@@ -41,6 +41,10 @@ final class SidebarWheelModel {
     var destinations: [SidebarDestination] = [] {
         didSet {
             guard destinations != oldValue else { return }
+            // The index a fling is coasting toward means nothing once the
+            // ordering changes underneath it — areas load asynchronously, so
+            // this is reachable — and a bounds check cannot catch a reorder.
+            pendingCommit = nil
             engine.setCount(destinations.count)
             sync()
         }
@@ -209,11 +213,16 @@ final class SidebarWheelModel {
         onCommit?(destinations[index])
     }
 
+    // Assign only on change. `@Observable` fires the observation on assignment
+    // rather than on difference, so writing these unconditionally invalidated
+    // every row at display-link rate and the split into separate properties
+    // bought nothing. Away from the ends `focusY` is the slot and `engagement`
+    // is pinned at 1, so guarding leaves `position` as the only per-frame write.
     private func sync() {
-        position = engine.position
-        engagement = engine.engagement
-        detent = engine.detent
-        focusY = SidebarWheelPlacement.focus(
+        if position != engine.position { position = engine.position }
+        if engagement != engine.engagement { engagement = engine.engagement }
+        if detent != engine.detent { detent = engine.detent }
+        let focus = SidebarWheelPlacement.focus(
             position: engine.position,
             centers: restingCenters,
             slotY: slotY,
@@ -221,6 +230,13 @@ final class SidebarWheelModel {
             total: contentHeight,
             engagement: engine.engagement
         )
+        if focusY != focus { focusY = focus }
+    }
+
+    // One definition of what "picked" means, rather than the same threshold
+    // written out at each row.
+    func isPicked(_ destination: SidebarDestination) -> Bool {
+        engagement > 0.01 && pickedDestination == destination
     }
 
     private func play(_ index: Int) {

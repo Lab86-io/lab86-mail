@@ -600,10 +600,6 @@ private struct SourceList: View {
         }
     }
 
-    private func isPicked(_ destination: SidebarDestination) -> Bool {
-        model.engagement > 0.01 && model.pickedDestination == destination
-    }
-
     // MARK: - Rows
 
     private func sourceButton(_ destination: PrimaryTab) -> some View {
@@ -663,15 +659,16 @@ private struct SourceList: View {
                         restingWeight: .regular
                     )
                     // The open page has room the closed ones do not, so it is
-                    // the one that shows its status.
+                    // the one allowed to run to a second line.
                     SidebarRowDetail(
-                        resting: area.overview?.statusLine ?? area.detail,
-                        bloomed: area.overview?.statusLine ?? area.detail,
+                        line: area.overview?.statusLine ?? area.detail,
                         model: model,
                         destination: destination
                     )
                 }
-                Spacer(minLength: 4)
+                // Clearance for the picked title, which renders 12% wider than
+                // the width it reserves.
+                Spacer(minLength: 14)
                 if area.overview?.needsAttention == true {
                     Circle()
                         .fill(environment.theme.accent2Color)
@@ -773,7 +770,7 @@ private struct SidebarRowTitle: View {
     @Environment(AppEnvironment.self) private var environment
 
     var body: some View {
-        let picked = model.engagement > 0.01 && model.pickedDestination == destination
+        let picked = model.isPicked(destination)
         let accent = environment.theme.accentColor
         // Neither font size nor weight interpolates, so either one flipped on
         // pick would snap. The size comes from `scaleEffect`, which does
@@ -802,7 +799,6 @@ private struct SidebarRowTitle: View {
                         .opacity(picked ? 1 : 0)
                 }
                 .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
                 .scaleEffect(picked ? 1.12 : 1, anchor: .leading)
                 .animation(.smooth(duration: 0.26), value: picked)
             }
@@ -810,14 +806,13 @@ private struct SidebarRowTitle: View {
 }
 
 private struct SidebarRowDetail: View {
-    let resting: String?
-    let bloomed: String?
+    let line: String?
     let model: SidebarWheelModel
     let destination: SidebarDestination
 
     var body: some View {
-        let picked = model.engagement > 0.01 && model.pickedDestination == destination
-        if let line = picked ? bloomed : resting, !line.isEmpty {
+        let picked = model.isPicked(destination)
+        if let line, !line.isEmpty {
             Text(line)
                 .font(.caption)
                 .foregroundStyle(picked ? .primary : .secondary)

@@ -28,13 +28,23 @@ final class SidebarWheelRecognizer: UIGestureRecognizer {
     // the moment of lift cannot throw the wheel across the list.
     private(set) var velocity: CGPoint = .zero
 
+    // Exactly one touch drives the wheel. A second finger arriving mid-drag
+    // used to re-enter the begin path and reset the origin while the model
+    // still held the travel already spent, which made the wheel jump by that
+    // amount; and reading `touches.first` rather than the tracked touch let a
+    // stray finger steer it.
+    private var trackedTouch: UITouch?
     private var startPoint: CGPoint = .zero
     private var lastPoint: CGPoint = .zero
     private var lastTimestamp: TimeInterval = 0
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
-        guard touches.count == 1, let touch = touches.first else {
+        guard trackedTouch == nil else {
+            for touch in touches { ignore(touch, for: event) }
+            return
+        }
+        guard let touch = touches.first else {
             state = .failed
             return
         }
@@ -43,6 +53,8 @@ final class SidebarWheelRecognizer: UIGestureRecognizer {
             state = .failed
             return
         }
+        trackedTouch = touch
+        for extra in touches where extra !== touch { ignore(extra, for: event) }
         startPoint = point
         startLocation = point
         lastPoint = point
@@ -53,7 +65,7 @@ final class SidebarWheelRecognizer: UIGestureRecognizer {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesMoved(touches, with: event)
-        guard state != .failed, let touch = touches.first else { return }
+        guard state != .failed, let touch = trackedTouch, touches.contains(touch) else { return }
         let point = touch.location(in: nil)
         translation = CGPoint(x: point.x - startPoint.x, y: point.y - startPoint.y)
 
@@ -87,6 +99,7 @@ final class SidebarWheelRecognizer: UIGestureRecognizer {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesEnded(touches, with: event)
+        guard let touch = trackedTouch, touches.contains(touch) else { return }
         // `touchesMoved` stops arriving the moment the thumb stops, so the
         // smoothed velocity keeps whatever it held when motion last ended.
         // Lifting after a deliberate pause would then fling the wheel off the
@@ -101,11 +114,13 @@ final class SidebarWheelRecognizer: UIGestureRecognizer {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesCancelled(touches, with: event)
+        guard let touch = trackedTouch, touches.contains(touch) else { return }
         state = .cancelled
     }
 
     override func reset() {
         super.reset()
+        trackedTouch = nil
         translation = .zero
         velocity = .zero
         startLocation = .zero

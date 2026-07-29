@@ -148,7 +148,7 @@ struct SidebarWheelEngine: Equatable, Sendable {
     // Abandon the gesture by rolling home rather than by snapping — the wheel
     // never teleports.
     mutating func cancel() {
-        guard phase != .idle else { return }
+        guard phase != .idle, count > 0 else { return }
         velocity = 0
         target = Double(min(count - 1, max(0, origin)))
         phase = .settling

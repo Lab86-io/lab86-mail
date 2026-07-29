@@ -197,7 +197,11 @@ struct HorizonMonthView: View {
         .contentShape(.rect)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(day: day, date: date, entries: dayEvents.count + dayTasks.count))
-        .accessibilityAddTraits(.isButton)
+        // The day view's heading marks selection; without it here VoiceOver
+        // cannot tell the selected day in the month grid from any other.
+        .accessibilityAddTraits(
+            calendar.isDate(date, inSameDayAs: selectedDay) ? [.isButton, .isSelected] : .isButton
+        )
     }
 
     private func numberColor(isToday: Bool) -> Color {
