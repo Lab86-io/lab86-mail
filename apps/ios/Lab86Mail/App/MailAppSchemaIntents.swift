@@ -1,3 +1,6 @@
+// Apple Intelligence assistant schemas are not bound here — see the note in
+// MailAppSchemaEntities.swift. These remain full App Intents, available to Siri
+// and Shortcuts; only the `schema:` binding is gone.
 import AppIntents
 import Foundation
 
@@ -56,18 +59,18 @@ private enum MailIntentDefaults {
     }
 }
 
-@AppIntent(schema: .mail.createDraft)
-struct AlbatrossCreateDraftIntent {
+struct AlbatrossCreateDraftIntent: AppIntent {
+    static let title: LocalizedStringResource = "Create Draft"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let openAppWhenRun = true
 
-    var body: AttributedString?
-    var to: [IntentPerson]
-    var subject: String?
-    var cc: [IntentPerson]
-    var bcc: [IntentPerson]
-    var account: AlbatrossMailAccountEntity?
-    var attachments: [IntentFile]
+    @Parameter var body: AttributedString?
+    @Parameter var to: [IntentPerson]
+    @Parameter var subject: String?
+    @Parameter var cc: [IntentPerson]
+    @Parameter var bcc: [IntentPerson]
+    @Parameter var account: AlbatrossMailAccountEntity?
+    @Parameter var attachments: [IntentFile]
 
     func perform() async throws -> some ReturnsValue<AlbatrossMailDraftEntity> {
         let draft = try await MailIntentService.shared.createDraft(
@@ -95,18 +98,18 @@ struct AlbatrossCreateDraftIntent {
     }
 }
 
-@AppIntent(schema: .mail.updateDraft)
-struct AlbatrossUpdateDraftIntent {
+struct AlbatrossUpdateDraftIntent: AppIntent {
+    static let title: LocalizedStringResource = "Update Draft"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
-    var target: AlbatrossMailDraftEntity
-    var to: [IntentPerson]?
-    var cc: [IntentPerson]?
-    var bcc: [IntentPerson]?
-    var subject: String?
-    var body: AttributedString?
-    var account: AlbatrossMailAccountEntity?
-    var attachments: [IntentFile]?
+    @Parameter var target: AlbatrossMailDraftEntity
+    @Parameter var to: [IntentPerson]?
+    @Parameter var cc: [IntentPerson]?
+    @Parameter var bcc: [IntentPerson]?
+    @Parameter var subject: String?
+    @Parameter var body: AttributedString?
+    @Parameter var account: AlbatrossMailAccountEntity?
+    @Parameter var attachments: [IntentFile]?
 
     func perform() async throws -> some IntentResult {
         try await MailIntentService.shared.updateDraft(
@@ -123,11 +126,11 @@ struct AlbatrossUpdateDraftIntent {
     }
 }
 
-@AppIntent(schema: .mail.saveDraft)
-struct AlbatrossSaveDraftIntent {
+struct AlbatrossSaveDraftIntent: AppIntent {
+    static let title: LocalizedStringResource = "Save Draft"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
-    var target: AlbatrossMailDraftEntity
+    @Parameter var target: AlbatrossMailDraftEntity
 
     func perform() async throws -> some IntentResult {
         try await MailIntentService.shared.updateDraft(
@@ -144,11 +147,11 @@ struct AlbatrossSaveDraftIntent {
     }
 }
 
-@AppIntent(schema: .mail.openDraft)
 struct AlbatrossOpenDraftIntent: OpenIntent {
+    static let title: LocalizedStringResource = "Open Draft"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
 
-    var target: AlbatrossMailDraftEntity
+    @Parameter var target: AlbatrossMailDraftEntity
 
     func perform() async throws -> some IntentResult {
         let reference = MailEntityReference(identifier: target.id)
@@ -168,11 +171,11 @@ struct AlbatrossOpenDraftIntent: OpenIntent {
     }
 }
 
-@AppIntent(schema: .mail.deleteDraft)
 struct AlbatrossDeleteDraftIntent: DeleteIntent {
+    static let title: LocalizedStringResource = "Delete Drafts"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
 
-    var entities: [AlbatrossMailDraftEntity]
+    @Parameter var entities: [AlbatrossMailDraftEntity]
 
     func perform() async throws -> some IntentResult {
         try await MailIntentService.shared.deleteDrafts(entities)
@@ -180,12 +183,12 @@ struct AlbatrossDeleteDraftIntent: DeleteIntent {
     }
 }
 
-@AppIntent(schema: .mail.sendDraft)
-struct AlbatrossSendDraftIntent {
+struct AlbatrossSendDraftIntent: AppIntent {
+    static let title: LocalizedStringResource = "Send Draft"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
-    var target: AlbatrossMailDraftEntity
-    var sendLaterDate: Date?
+    @Parameter var target: AlbatrossMailDraftEntity
+    @Parameter var sendLaterDate: Date?
 
     func perform() async throws -> some IntentResult {
         try await MailIntentService.shared.sendDraft(target, later: sendLaterDate)
@@ -193,11 +196,11 @@ struct AlbatrossSendDraftIntent {
     }
 }
 
-@AppIntent(schema: .mail.openMessage)
 struct AlbatrossOpenMessageIntent: OpenIntent {
+    static let title: LocalizedStringResource = "Open Message"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
 
-    var target: AlbatrossMailMessageEntity
+    @Parameter var target: AlbatrossMailMessageEntity
 
     func perform() async throws -> some IntentResult {
         let reference = try await MailIntentService.shared.resolveMessageReference(target)
@@ -206,20 +209,20 @@ struct AlbatrossOpenMessageIntent: OpenIntent {
     }
 }
 
-@AppIntent(schema: .mail.replyMail)
-struct AlbatrossReplyMailIntent {
+struct AlbatrossReplyMailIntent: AppIntent {
+    static let title: LocalizedStringResource = "Reply to Mail"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let openAppWhenRun = true
 
-    var isReplyAll: Bool
-    var target: AlbatrossMailMessageEntity
-    var body: AttributedString?
-    var subject: String?
-    var account: AlbatrossMailAccountEntity?
-    var attachments: [IntentFile]
-    var to: [IntentPerson]
-    var cc: [IntentPerson]
-    var bcc: [IntentPerson]
+    @Parameter var isReplyAll: Bool
+    @Parameter var target: AlbatrossMailMessageEntity
+    @Parameter var body: AttributedString?
+    @Parameter var subject: String?
+    @Parameter var account: AlbatrossMailAccountEntity?
+    @Parameter var attachments: [IntentFile]
+    @Parameter var to: [IntentPerson]
+    @Parameter var cc: [IntentPerson]
+    @Parameter var bcc: [IntentPerson]
 
     func perform() async throws -> some IntentResult {
         let reference = try await MailIntentService.shared.resolveMessageReference(target)
@@ -242,19 +245,19 @@ struct AlbatrossReplyMailIntent {
     }
 }
 
-@AppIntent(schema: .mail.forwardMail)
-struct AlbatrossForwardMailIntent {
+struct AlbatrossForwardMailIntent: AppIntent {
+    static let title: LocalizedStringResource = "Forward Mail"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let openAppWhenRun = true
 
-    var target: AlbatrossMailMessageEntity
-    var to: [IntentPerson]
-    var body: AttributedString?
-    var cc: [IntentPerson]
-    var bcc: [IntentPerson]
-    var subject: String?
-    var account: AlbatrossMailAccountEntity?
-    var attachments: [IntentFile]
+    @Parameter var target: AlbatrossMailMessageEntity
+    @Parameter var to: [IntentPerson]
+    @Parameter var body: AttributedString?
+    @Parameter var cc: [IntentPerson]
+    @Parameter var bcc: [IntentPerson]
+    @Parameter var subject: String?
+    @Parameter var account: AlbatrossMailAccountEntity?
+    @Parameter var attachments: [IntentFile]
 
     func perform() async throws -> some IntentResult {
         let reference = try await MailIntentService.shared.resolveMessageReference(target)
@@ -275,15 +278,15 @@ struct AlbatrossForwardMailIntent {
     }
 }
 
-@AppIntent(schema: .mail.updateMail)
-struct AlbatrossUpdateMailIntent {
+struct AlbatrossUpdateMailIntent: AppIntent {
+    static let title: LocalizedStringResource = "Update Mail"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
-    var target: [AlbatrossMailMessageEntity]
-    var isRead: Bool?
-    var isFlagged: Bool?
-    var isJunk: Bool?
-    var mailbox: AlbatrossMailboxEntity?
+    @Parameter var target: [AlbatrossMailMessageEntity]
+    @Parameter var isRead: Bool?
+    @Parameter var isFlagged: Bool?
+    @Parameter var isJunk: Bool?
+    @Parameter var mailbox: AlbatrossMailboxEntity?
 
     func perform() async throws -> some IntentResult {
         try await MailIntentService.shared.update(
@@ -297,11 +300,11 @@ struct AlbatrossUpdateMailIntent {
     }
 }
 
-@AppIntent(schema: .mail.archiveMail)
-struct AlbatrossArchiveMailIntent {
+struct AlbatrossArchiveMailIntent: AppIntent {
+    static let title: LocalizedStringResource = "Archive Mail"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
-    var entities: [AlbatrossMailMessageEntity]
+    @Parameter var entities: [AlbatrossMailMessageEntity]
 
     func perform() async throws -> some IntentResult {
         try await MailIntentService.shared.archive(entities)
@@ -309,11 +312,11 @@ struct AlbatrossArchiveMailIntent {
     }
 }
 
-@AppIntent(schema: .mail.deleteMail)
 struct AlbatrossDeleteMailIntent: DeleteIntent {
+    static let title: LocalizedStringResource = "Delete Mail"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
-    var entities: [AlbatrossMailMessageEntity]
+    @Parameter var entities: [AlbatrossMailMessageEntity]
 
     func perform() async throws -> some IntentResult {
         try await MailIntentService.shared.delete(entities)
