@@ -1,4 +1,4 @@
-MARKETING_VERSION = 0.9.3
+MARKETING_VERSION = 0.9.4
 CURRENT_PROJECT_VERSION = 1
 
 // xcconfig interprets // as a comment, so the empty expansion preserves the
