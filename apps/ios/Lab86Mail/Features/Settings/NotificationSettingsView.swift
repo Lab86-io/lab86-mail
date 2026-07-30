@@ -182,10 +182,14 @@ struct NotificationSettingsView: View {
                         Task { await environment.oneTimeCodes.enableAsProvider() }
                     } label: {
                         LabeledContent("AutoFill in iOS") {
-                            Text("Off").foregroundStyle(.secondary)
+                            Text("Off").foregroundStyle(Color.secondary)
                         }
                     }
-                    .tint(.primary)
+                    // `.buttonStyle(.plain)` rather than `.tint(.primary)`:
+                    // inside a Form the tint overload makes `.primary` and
+                    // `.secondary` resolve against TintShapeStyle, which does
+                    // not have them.
+                    .buttonStyle(.plain)
                 }
                 Toggle("Archive the email after filling", isOn: $preferences.oneTimeCodeCleanupEnabled)
             }
