@@ -15,6 +15,8 @@ let dropped = 0;
 // A redelivered backlog can fail in bursts (Nylas 5xx on stale/deleted
 // resources); logging every one floods Railway. Sample the failures instead.
 let ingestFailures = 0;
+// Failure reason -> count, so each distinct fault is reported at least once.
+const failureReasons = new Map<string, number>();
 
 // Returns false when the buffer is full so the caller can reject the delivery
 // with a non-2xx — that tells Nylas to retry it later instead of the event
