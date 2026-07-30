@@ -460,6 +460,13 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
     return { ok: true, duplicate: true, eventId: metadata.eventId };
   }
   if (!metadata.grantId || !row) {
+    // Loud on purpose. This branch returns ok:false without throwing, so it
+    // never reached the queue's failure log, and it touches no sync state —
+    // which is exactly how a mailbox can stop ingesting indefinitely while
+    // still reporting "ready". If it happens it has to be visible.
+    console.error(
+      `[nylas-webhook] no connected account for grant ${metadata.grantId ?? '(none)'}; dropping ${metadata.type}`,
+    );
     await markWebhookProcessed(metadata, 'error', 'Webhook did not map to a connected grant.');
     return { ok: false, eventId: metadata.eventId, error: 'unknown grant' };
   }

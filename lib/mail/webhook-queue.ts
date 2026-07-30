@@ -45,10 +45,18 @@ function pump() {
     void ingestNylasWebhookPayload(payload)
       .catch((err: any) => {
         ingestFailures += 1;
-        // Sample: log the first, then every 50th, with a running total so a
-        // backlog burst is visible without drowning the logs.
-        if (ingestFailures === 1 || ingestFailures % 50 === 0) {
-          console.error(`[nylas-webhook] ingest failed (${ingestFailures} total): ${err?.message || err}`);
+        // Sample by *distinct reason*, not by raw count. Counting hid a real
+        // outage: one fault repeating on every delivery for weeks printed
+        // roughly one line, because only the 1st and every 50th were kept.
+        // Per-reason sampling still bounds a burst, but a new failure mode is
+        // always reported at least once.
+        const reason = String(err?.message || err).slice(0, 200);
+        const seen = (failureReasons.get(reason) ?? 0) + 1;
+        failureReasons.set(reason, seen);
+        if (seen === 1 || seen % 50 === 0) {
+          console.error(
+            `[nylas-webhook] ingest failed (${seen}x this reason, ${ingestFailures} total): ${reason}`,
+          );
         }
       })
       .finally(() => {
