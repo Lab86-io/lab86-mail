@@ -55,17 +55,55 @@ async function confirmUrgency(userId: string, message: UrgentScanMessage): Promi
   return verdict.urgent ? verdict.reason : null;
 }
 
+export interface UrgentDetectorDependencies {
+  query: typeof convexQuery;
+  mutate: typeof convexMutation;
+  dispatch: typeof dispatchNativeNotification;
+  confirm: typeof confirmUrgency;
+}
+
+const defaultDependencies: UrgentDetectorDependencies = {
+  query: convexQuery,
+  mutate: convexMutation,
+  dispatch: dispatchNativeNotification,
+  confirm: confirmUrgency,
+};
+
+/**
+ * Ingest-path entry point. Owns its own failure containment so the caller in
+ * `corpus-sync` is a single unguarded statement: mail sync must not be able to
+ * fail because an alert did, and burying that guarantee at the call site makes
+ * it easy to drop when the call moves.
+ */
+export async function scanIngestedMail(
+  row: NylasAccountRow,
+  messages: UrgentScanMessage[],
+  dependencies: UrgentDetectorDependencies = defaultDependencies,
+) {
+  try {
+    return await detectUrgentMailAndCodes(row, messages, dependencies);
+  } catch {
+    return { codes: 0, urgent: 0 };
+  }
+}
+
 /**
  * Scans freshly ingested mail for one-time codes and for messages worth
  * interrupting over. Both outcomes are best-effort: this never blocks or fails
  * mail sync, because a missed alert is recoverable and a stalled corpus is not.
  */
-export async function detectUrgentMailAndCodes(row: NylasAccountRow, messages: UrgentScanMessage[]) {
+export async function detectUrgentMailAndCodes(
+  row: NylasAccountRow,
+  messages: UrgentScanMessage[],
+  dependencies: UrgentDetectorDependencies = defaultDependencies,
+) {
   if (!messages.length) return { codes: 0, urgent: 0 };
 
-  const preference = await convexQuery<ScanPreferences | null>(notificationsApi.mobilePreferences, {
-    userId: row.userId,
-  }).catch(() => null);
+  const preference = await dependencies
+    .query<ScanPreferences | null>(notificationsApi.mobilePreferences, {
+      userId: row.userId,
+    })
+    .catch(() => null);
   const pushEnabled = preference?.nativePushEnabled !== false && preference?.urgentMailPushEnabled !== false;
   const codesEnabled = preference?.oneTimeCodeAutofillEnabled !== false;
   if (!pushEnabled && !codesEnabled) return { codes: 0, urgent: 0 };
@@ -79,7 +117,7 @@ export async function detectUrgentMailAndCodes(row: NylasAccountRow, messages: U
       const candidate = codesEnabled ? extractOneTimeCode(message) : null;
       let codeRecorded = false;
       if (candidate) {
-        const result = await convexMutation<{ created: boolean }>(oneTimeCodesApi.recordCode, {
+        const result = await dependencies.mutate<{ created: boolean }>(oneTimeCodesApi.recordCode, {
           userId: row.userId,
           accountId: row.accountId,
           providerMessageId: message.providerMessageId,
@@ -110,12 +148,12 @@ export async function detectUrgentMailAndCodes(row: NylasAccountRow, messages: U
       if (assessment.needsConfirmation) {
         if (confirmations >= MAX_CONFIRMATIONS_PER_BATCH) continue;
         confirmations += 1;
-        const confirmed = await confirmUrgency(row.userId, message).catch(() => null);
+        const confirmed = await dependencies.confirm(row.userId, message).catch(() => null);
         if (!confirmed) continue;
         reason = confirmed;
       }
 
-      const queued = await convexMutation<{ notificationId: string; created: boolean }>(
+      const queued = await dependencies.mutate<{ notificationId: string; created: boolean }>(
         notificationsApi.queueUrgentMailNotification,
         {
           userId: row.userId,
@@ -129,12 +167,9 @@ export async function detectUrgentMailAndCodes(row: NylasAccountRow, messages: U
       );
       if (!queued.created) continue;
       urgent += 1;
-      await dispatchNativeNotification(
-        row.userId,
-        queued.notificationId,
-        undefined,
-        codeRecorded ? { codeAvailable: true } : {},
-      ).catch(() => undefined);
+      await dependencies
+        .dispatch(row.userId, queued.notificationId, undefined, codeRecorded ? { codeAvailable: true } : {})
+        .catch(() => undefined);
     } catch {
       // Detection is advisory. Mail sync owns the corpus and must complete.
     }

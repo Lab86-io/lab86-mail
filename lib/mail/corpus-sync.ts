@@ -7,7 +7,7 @@ import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 import { detectMailSuggestions } from './suggestion-detectors';
-import { detectUrgentMailAndCodes } from './urgent-detectors';
+import { scanIngestedMail } from './urgent-detectors';
 
 const mailCorpusApi = (api as any).mailCorpus;
 const accountsApi = (api as any).accounts;
@@ -429,10 +429,25 @@ export async function reconcileMailCorpusAccount({
   }
 }
 
+// Convex access on the webhook path is injectable so the idempotency and
+// unknown-grant guards can be tested without a deployment. Only this path is
+// seamed; the rest of the module still calls Convex directly, because those
+// paths are exercised through their own entry points.
+interface WebhookIngestDeps {
+  query: typeof convexQuery;
+  mutate: typeof convexMutation;
+}
+
+let webhookDeps: WebhookIngestDeps = { query: convexQuery, mutate: convexMutation };
+
+export function __setWebhookIngestDepsForTest(overrides: Partial<WebhookIngestDeps> = {}) {
+  webhookDeps = { query: convexQuery, mutate: convexMutation, ...overrides };
+}
+
 export async function ingestNylasWebhookPayload(payload: unknown) {
   const metadata = extractNylasWebhookMetadata(payload);
   const row = metadata.grantId ? await getConnectedAccountByGrant(metadata.grantId) : null;
-  const event = await convexMutation<{ duplicate?: boolean }>(mailCorpusApi.recordWebhookEvent, {
+  const event = await webhookDeps.mutate<{ duplicate?: boolean }>(mailCorpusApi.recordWebhookEvent, {
     eventId: metadata.eventId,
     type: metadata.type,
     userId: row?.userId,
@@ -524,7 +539,7 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
   // entirely in how soon it lands, and this path already runs off the webhook
   // request (the route ACKs before ingest). Awaiting also gives the queue real
   // backpressure instead of letting alerts race a process restart.
-  await detectUrgentMailAndCodes(row, messages).catch(() => undefined);
+  await scanIngestedMail(row, messages);
   await upsertCorpus(row, {
     messages,
     threads: corpusThreadsFromMessages(messages),
@@ -547,7 +562,9 @@ async function getConnectedAccount(userId: string, accountId: string) {
 }
 
 async function getConnectedAccountByGrant(grantId: string) {
-  const row = await convexQuery<NylasAccountRow | null>(accountsApi.getConnectedAccountByGrant, { grantId });
+  const row = await webhookDeps.query<NylasAccountRow | null>(accountsApi.getConnectedAccountByGrant, {
+    grantId,
+  });
   return row?.status === 'connected' ? row : null;
 }
 
@@ -615,7 +632,7 @@ async function markWebhookProcessed(
   status: 'processed' | 'error',
   error?: string,
 ) {
-  await convexMutation(mailCorpusApi.markWebhookEventProcessed, {
+  await webhookDeps.mutate(mailCorpusApi.markWebhookEventProcessed, {
     eventId: metadata.eventId,
     status,
     error,
