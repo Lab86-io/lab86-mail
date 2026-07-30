@@ -4,17 +4,28 @@
 <dict>
 	<key>aps-environment</key>
 	<string>$(APS_ENVIRONMENT)</string>
-	<!-- Lets urgent mail break through Focus. The elevated level is applied per
-	     notification by the server, but the exemption is granted per app, which
-	     is why only 'urgent_mail' ever sets it. -->
-	<key>com.apple.developer.usernotifications.time-sensitive</key>
-	<true/>
-	<!-- Shared with the AutoFill extension, which reads one-time codes the app
-	     has already fetched. -->
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>group.io.lab86.mail</string>
-	</array>
+	<!--
+	  Time Sensitive Notifications and the group.io.lab86.mail App Group both
+	  belong here, and the code for both is written and merged. They are held
+	  out because neither can be provisioned from the App Store Connect API:
+	  the time-sensitive capability is not a valid capabilityType, and the
+	  appGroups endpoint returns 404. Both need one visit to Certificates,
+	  Identifiers & Profiles. Shipping them unprovisioned fails the build
+	  outright, which blocks everything else in the release.
+
+	  To restore, in the developer portal:
+	    1. Identifiers > App Groups > create group.io.lab86.mail
+	    2. Identifiers > io.lab86.mail (and .dev) > App Groups > assign it
+	    3. Same App IDs > enable Time Sensitive Notifications
+	  then re-add the two keys below and the Lab86MailAutoFill target in
+	  apps/ios/project.yml.
+
+	  <key>com.apple.developer.usernotifications.time-sensitive</key>
+	  <true/>
+	  <key>com.apple.security.application-groups</key>
+	  <array><string>group.io.lab86.mail</string></array>
+	-->
+
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:mail.lab86.io</string>
