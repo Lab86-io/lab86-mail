@@ -19,6 +19,15 @@ export const BRIEF_DOCUMENT_LIMITS = {
   tableColumns: 8,
   tableRows: 24,
   progressSteps: 12,
+  weatherHours: 12,
+  weatherDays: 7,
+  planItems: 12,
+  decisionOptions: 6,
+  citations: 12,
+  mapMarkers: 24,
+  mapRoutes: 6,
+  mapRoutePoints: 48,
+  technicalText: 12_000,
   title: 160,
   summary: 1_200,
   regionSummary: 1_000,
@@ -148,6 +157,92 @@ const progressStepSchema = z.object({
   status: z.enum(['pending', 'in-progress', 'completed', 'failed']).default('pending'),
 });
 
+const weatherConditionSchema = z.enum([
+  'clear',
+  'partly-cloudy',
+  'cloudy',
+  'overcast',
+  'fog',
+  'drizzle',
+  'rain',
+  'heavy-rain',
+  'thunderstorm',
+  'snow',
+  'sleet',
+  'hail',
+  'windy',
+]);
+
+const weatherCurrentSchema = z.object({
+  conditionCode: weatherConditionSchema,
+  temperature: z.number().finite(),
+  tempMin: z.number().finite(),
+  tempMax: z.number().finite(),
+  windSpeed: z.number().finite().nonnegative().optional(),
+  humidity: z.number().finite().min(0).max(100).optional(),
+  precipitationChance: z.number().finite().min(0).max(100).optional(),
+  visibility: z.number().finite().nonnegative().optional(),
+});
+
+const weatherHourSchema = z.object({
+  label: z.string().trim().min(1).max(40),
+  conditionCode: weatherConditionSchema,
+  temperature: z.number().finite(),
+  precipitationChance: z.number().finite().min(0).max(100).optional(),
+});
+
+const weatherDaySchema = z.object({
+  label: z.string().trim().min(1).max(40),
+  conditionCode: weatherConditionSchema,
+  tempMin: z.number().finite(),
+  tempMax: z.number().finite(),
+  precipitationChance: z.number().finite().min(0).max(100).optional(),
+});
+
+const planItemSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  label: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
+  description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+  status: z.enum(['pending', 'in_progress', 'completed', 'cancelled']).default('pending'),
+  ref: BriefSourceRefV2Schema.optional(),
+  action: BriefActionV2Schema.optional(),
+});
+
+const decisionOptionSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  label: z.string().trim().min(1).max(160),
+  description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+  action: BriefActionV2Schema,
+});
+
+const citationSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  href: z.url(),
+  title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+  snippet: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+  domain: z.string().max(160).optional(),
+  type: z.enum(['webpage', 'document', 'article', 'api', 'code', 'other']).default('other'),
+});
+
+const geoMapMarkerSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  lat: z.number().finite().min(-90).max(90),
+  lng: z.number().finite().min(-180).max(180),
+  label: z.string().max(160).optional(),
+  description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+});
+
+const geoMapRoutePointSchema = z.object({
+  lat: z.number().finite().min(-90).max(90),
+  lng: z.number().finite().min(-180).max(180),
+});
+
+const geoMapRouteSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  label: z.string().max(160).optional(),
+  points: z.array(geoMapRoutePointSchema).min(2).max(BRIEF_DOCUMENT_LIMITS.mapRoutePoints),
+});
+
 const timelineItemSchema = z.object({
   label: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
   at: z.number().finite().nullable().optional(),
@@ -234,7 +329,7 @@ const dataLeafSchemas = [
   z.object({
     ...commonNodeShape,
     kind: z.literal('chart'),
-    variant: z.enum(['bar', 'stacked_bar', 'donut', 'line']).default('bar'),
+    variant: z.enum(['bar', 'stacked_bar', 'donut', 'line', 'area']).default('bar'),
     title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
     description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
     data: z.array(chartPointSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.chartPoints),
@@ -255,6 +350,93 @@ const dataLeafSchemas = [
     title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
     description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
     steps: z.array(progressStepSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.progressSteps),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('weather'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    location: z.string().trim().min(1).max(160),
+    latitude: z.number().finite().min(-90).max(90),
+    longitude: z.number().finite().min(-180).max(180),
+    timezone: z.string().trim().min(1).max(120),
+    unit: z.enum(['celsius', 'fahrenheit']),
+    current: weatherCurrentSchema,
+    hourly: z.array(weatherHourSchema).max(BRIEF_DOCUMENT_LIMITS.weatherHours).default([]),
+    daily: z.array(weatherDaySchema).min(1).max(BRIEF_DOCUMENT_LIMITS.weatherDays),
+    source: z.string().trim().min(1).max(120),
+    attributionURL: z.url(),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('plan'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+    items: z.array(planItemSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.planItems),
+    actions: z.array(BriefActionV2Schema).max(BRIEF_DOCUMENT_LIMITS.actions).default([]),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('email_preview'),
+    channel: z.enum(['email', 'slack']).default('email'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    sender: z.string().trim().min(1).max(320),
+    recipients: z.array(z.string().trim().min(1).max(320)).max(12).default([]),
+    sentAt: z.number().finite().optional(),
+    snippet: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.body),
+    attachmentCount: z.number().int().min(0).max(99).default(0),
+    messageCount: z.number().int().min(1).max(999).default(1),
+    ref: BriefSourceRefV2Schema,
+    actions: z.array(BriefActionV2Schema).max(BRIEF_DOCUMENT_LIMITS.actions).default([]),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('decision'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+    options: z.array(decisionOptionSchema).min(2).max(BRIEF_DOCUMENT_LIMITS.decisionOptions),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('citations'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title).optional(),
+    citations: z.array(citationSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.citations),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('geo_map'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    description: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+    markers: z.array(geoMapMarkerSchema).min(1).max(BRIEF_DOCUMENT_LIMITS.mapMarkers),
+    routes: z.array(geoMapRouteSchema).max(BRIEF_DOCUMENT_LIMITS.mapRoutes).default([]),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('code_diff'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    filename: z.string().trim().min(1).max(240),
+    language: z.string().trim().min(1).max(80).default('text'),
+    oldCode: z.string().max(BRIEF_DOCUMENT_LIMITS.technicalText).default(''),
+    newCode: z.string().max(BRIEF_DOCUMENT_LIMITS.technicalText).default(''),
+    sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
+  }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('terminal'),
+    title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
+    command: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText),
+    stdout: z.string().max(BRIEF_DOCUMENT_LIMITS.technicalText).default(''),
+    stderr: z.string().max(BRIEF_DOCUMENT_LIMITS.technicalText).default(''),
+    exitCode: z.number().int().min(0).max(255),
+    durationMs: z.number().finite().nonnegative().optional(),
+    cwd: z.string().max(500).optional(),
+    truncated: z.boolean().default(false),
     sourceRefs: z.array(BriefSourceRefV2Schema).min(1).max(BRIEF_DOCUMENT_LIMITS.entityItems),
   }),
   z.object({
@@ -415,6 +597,14 @@ const leafKinds = new Set([
   'chart',
   'data_table',
   'progress',
+  'weather',
+  'plan',
+  'email_preview',
+  'decision',
+  'citations',
+  'geo_map',
+  'code_diff',
+  'terminal',
   'timeline',
   'checklist',
   'collection',
@@ -818,7 +1008,7 @@ function repairLeaf(
       return {
         kind,
         ...common,
-        variant: oneOf(node.variant, ['bar', 'stacked_bar', 'donut', 'line'], 'bar'),
+        variant: oneOf(node.variant, ['bar', 'stacked_bar', 'donut', 'line', 'area'], 'bar'),
         title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Chart',
         ...(clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText)
           ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
@@ -903,6 +1093,350 @@ function repairLeaf(
           ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
           : {}),
         steps,
+        sourceRefs,
+      };
+    }
+    case 'weather': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      const current = record(node.current);
+      const latitude = finiteNumber(node.latitude);
+      const longitude = finiteNumber(node.longitude);
+      const attributionURL = safeUrl(node.attributionURL);
+      const conditionCode = weatherCondition(current?.conditionCode);
+      const temperature = finiteNumber(current?.temperature);
+      const tempMin = finiteNumber(current?.tempMin);
+      const tempMax = finiteNumber(current?.tempMax);
+      if (
+        !sourceRefs.length ||
+        latitude === undefined ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude === undefined ||
+        longitude < -180 ||
+        longitude > 180 ||
+        !attributionURL ||
+        !conditionCode ||
+        temperature === undefined ||
+        tempMin === undefined ||
+        tempMax === undefined
+      ) {
+        return fallbackNode(summary);
+      }
+      const daily = (Array.isArray(node.daily) ? node.daily : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.weatherDays)
+        .flatMap((entry) => {
+          const day = record(entry);
+          const label = clippedString(day?.label, 40);
+          const dayCondition = weatherCondition(day?.conditionCode);
+          const dayMin = finiteNumber(day?.tempMin);
+          const dayMax = finiteNumber(day?.tempMax);
+          if (!day || !label || !dayCondition || dayMin === undefined || dayMax === undefined) {
+            return [];
+          }
+          return [
+            {
+              label,
+              conditionCode: dayCondition,
+              tempMin: dayMin,
+              tempMax: dayMax,
+              ...percentageField('precipitationChance', day.precipitationChance),
+            },
+          ];
+        });
+      if (!daily.length) return fallbackNode(summary);
+      const hourly = (Array.isArray(node.hourly) ? node.hourly : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.weatherHours)
+        .flatMap((entry) => {
+          const hour = record(entry);
+          const label = clippedString(hour?.label, 40);
+          const hourCondition = weatherCondition(hour?.conditionCode);
+          const hourTemperature = finiteNumber(hour?.temperature);
+          if (!hour || !label || !hourCondition || hourTemperature === undefined) return [];
+          return [
+            {
+              label,
+              conditionCode: hourCondition,
+              temperature: hourTemperature,
+              ...percentageField('precipitationChance', hour.precipitationChance),
+            },
+          ];
+        });
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Weather',
+        location: clippedString(node.location, 160) || 'Current location',
+        latitude,
+        longitude,
+        timezone: clippedString(node.timezone, 120) || 'UTC',
+        unit: oneOf(node.unit, ['celsius', 'fahrenheit'], 'fahrenheit'),
+        current: {
+          conditionCode,
+          temperature,
+          tempMin,
+          tempMax,
+          ...(finiteNonnegative(current?.windSpeed) !== undefined
+            ? { windSpeed: finiteNonnegative(current?.windSpeed) }
+            : {}),
+          ...percentageField('humidity', current?.humidity),
+          ...percentageField('precipitationChance', current?.precipitationChance),
+          ...(finiteNonnegative(current?.visibility) !== undefined
+            ? { visibility: finiteNonnegative(current?.visibility) }
+            : {}),
+        },
+        hourly,
+        daily,
+        source: clippedString(node.source, 120) || 'Weather',
+        attributionURL,
+        sourceRefs,
+      };
+    }
+    case 'plan': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
+      const seenIds = new Set<string>();
+      const items = (Array.isArray(node.items) ? node.items : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.planItems)
+        .flatMap((entry, index) => {
+          const item = record(entry);
+          const label = clippedString(item?.label, BRIEF_DOCUMENT_LIMITS.shortText);
+          if (!item || !label) return [];
+          const baseId = clippedString(item.id, 120) || `plan-${index + 1}`;
+          const id = allocateUniqueBriefId(baseId, seenIds);
+          seenIds.add(id);
+          const sourceRef = ref(item.ref);
+          const [action] = cleanActions(item.action ? [item.action] : []);
+          return [
+            {
+              id,
+              label,
+              ...(clippedString(item.description, BRIEF_DOCUMENT_LIMITS.shortText)
+                ? { description: clippedString(item.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+                : {}),
+              status: oneOf(item.status, ['pending', 'in_progress', 'completed', 'cancelled'], 'pending'),
+              ...(sourceRef ? { ref: sourceRef } : {}),
+              ...(action ? { action } : {}),
+            },
+          ];
+        });
+      if (!items.length) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Today’s runway',
+        ...(clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText)
+          ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+          : {}),
+        items,
+        actions: cleanActions(node.actions),
+        sourceRefs,
+      };
+    }
+    case 'email_preview': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      const messageRef = ref(node.ref);
+      const snippet = clippedString(node.snippet, BRIEF_DOCUMENT_LIMITS.body);
+      if (!sourceRefs.length || !messageRef || !snippet) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        channel: oneOf(node.channel, ['email', 'slack'], 'email'),
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Message',
+        sender: clippedString(node.sender, 320) || messageRef.label || 'Unknown sender',
+        recipients: (Array.isArray(node.recipients) ? node.recipients : [])
+          .map((recipient) => clippedString(recipient, 320))
+          .filter((recipient): recipient is string => Boolean(recipient))
+          .slice(0, 12),
+        ...(finiteNumber(node.sentAt) !== undefined ? { sentAt: finiteNumber(node.sentAt) } : {}),
+        snippet,
+        attachmentCount: clampInteger(node.attachmentCount, 0, 99, 0),
+        messageCount: clampInteger(node.messageCount, 1, 999, 1),
+        ref: messageRef,
+        actions: cleanActions(node.actions),
+        sourceRefs,
+      };
+    }
+    case 'decision': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
+      const seenIds = new Set<string>();
+      const options = (Array.isArray(node.options) ? node.options : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.decisionOptions)
+        .flatMap((entry, index) => {
+          const option = record(entry);
+          const label = clippedString(option?.label, 160);
+          const [action] = cleanActions(option?.action ? [option.action] : []);
+          if (!option || !label || !action) return [];
+          const baseId = clippedString(option.id, 120) || `option-${index + 1}`;
+          const id = allocateUniqueBriefId(baseId, seenIds);
+          seenIds.add(id);
+          return [
+            {
+              id,
+              label,
+              ...(clippedString(option.description, BRIEF_DOCUMENT_LIMITS.shortText)
+                ? { description: clippedString(option.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+                : {}),
+              action,
+            },
+          ];
+        });
+      if (options.length < 2) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Decision',
+        ...(clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText)
+          ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+          : {}),
+        options,
+        sourceRefs,
+      };
+    }
+    case 'citations': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
+      const seenIds = new Set<string>();
+      const citations = (Array.isArray(node.citations) ? node.citations : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.citations)
+        .flatMap((entry, index) => {
+          const citation = record(entry);
+          const href = safeUrl(citation?.href);
+          const title = clippedString(citation?.title, BRIEF_DOCUMENT_LIMITS.title);
+          if (!citation || !href || !title) return [];
+          const baseId = clippedString(citation.id, 120) || `citation-${index + 1}`;
+          const id = allocateUniqueBriefId(baseId, seenIds);
+          seenIds.add(id);
+          return [
+            {
+              id,
+              href,
+              title,
+              ...(clippedString(citation.snippet, BRIEF_DOCUMENT_LIMITS.shortText)
+                ? { snippet: clippedString(citation.snippet, BRIEF_DOCUMENT_LIMITS.shortText) }
+                : {}),
+              ...(clippedString(citation.domain, 160) ? { domain: clippedString(citation.domain, 160) } : {}),
+              type: oneOf(citation.type, ['webpage', 'document', 'article', 'api', 'code', 'other'], 'other'),
+            },
+          ];
+        });
+      if (!citations.length) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        ...(clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title)
+          ? { title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) }
+          : {}),
+        citations,
+        sourceRefs,
+      };
+    }
+    case 'geo_map': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      if (!sourceRefs.length) return fallbackNode(summary);
+      const markers = (Array.isArray(node.markers) ? node.markers : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.mapMarkers)
+        .flatMap((entry, index) => {
+          const marker = record(entry);
+          const lat = finiteNumber(marker?.lat);
+          const lng = finiteNumber(marker?.lng);
+          if (
+            !marker ||
+            lat === undefined ||
+            lat < -90 ||
+            lat > 90 ||
+            lng === undefined ||
+            lng < -180 ||
+            lng > 180
+          ) {
+            return [];
+          }
+          return [
+            {
+              id: clippedString(marker.id, 120) || `marker-${index + 1}`,
+              lat,
+              lng,
+              ...(clippedString(marker.label, 160) ? { label: clippedString(marker.label, 160) } : {}),
+              ...(clippedString(marker.description, BRIEF_DOCUMENT_LIMITS.shortText)
+                ? { description: clippedString(marker.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+                : {}),
+            },
+          ];
+        });
+      if (!markers.length) return fallbackNode(summary);
+      const routes = (Array.isArray(node.routes) ? node.routes : [])
+        .slice(0, BRIEF_DOCUMENT_LIMITS.mapRoutes)
+        .flatMap((entry, index) => {
+          const route = record(entry);
+          const points = (Array.isArray(route?.points) ? route.points : [])
+            .slice(0, BRIEF_DOCUMENT_LIMITS.mapRoutePoints)
+            .flatMap((pointEntry) => {
+              const point = record(pointEntry);
+              const lat = finiteNumber(point?.lat);
+              const lng = finiteNumber(point?.lng);
+              return lat !== undefined &&
+                lat >= -90 &&
+                lat <= 90 &&
+                lng !== undefined &&
+                lng >= -180 &&
+                lng <= 180
+                ? [{ lat, lng }]
+                : [];
+            });
+          if (!route || points.length < 2) return [];
+          return [
+            {
+              id: clippedString(route.id, 120) || `route-${index + 1}`,
+              ...(clippedString(route.label, 160) ? { label: clippedString(route.label, 160) } : {}),
+              points,
+            },
+          ];
+        });
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Map',
+        ...(clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText)
+          ? { description: clippedString(node.description, BRIEF_DOCUMENT_LIMITS.shortText) }
+          : {}),
+        markers,
+        routes,
+        sourceRefs,
+      };
+    }
+    case 'code_diff': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      const oldCode = rawString(node.oldCode, BRIEF_DOCUMENT_LIMITS.technicalText);
+      const newCode = rawString(node.newCode, BRIEF_DOCUMENT_LIMITS.technicalText);
+      if (!sourceRefs.length || (!oldCode && !newCode)) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Code change',
+        filename: clippedString(node.filename, 240) || 'change',
+        language: clippedString(node.language, 80) || 'text',
+        oldCode,
+        newCode,
+        sourceRefs,
+      };
+    }
+    case 'terminal': {
+      const sourceRefs = repairSourceRefs(node.sourceRefs, ref);
+      const command = rawString(node.command, BRIEF_DOCUMENT_LIMITS.shortText);
+      if (!sourceRefs.length || !command) return fallbackNode(summary);
+      return {
+        kind,
+        ...common,
+        title: clippedString(node.title, BRIEF_DOCUMENT_LIMITS.title) || 'Command output',
+        command,
+        stdout: rawString(node.stdout, BRIEF_DOCUMENT_LIMITS.technicalText),
+        stderr: rawString(node.stderr, BRIEF_DOCUMENT_LIMITS.technicalText),
+        exitCode: clampInteger(node.exitCode, 0, 255, 0),
+        ...(finiteNonnegative(node.durationMs) !== undefined
+          ? { durationMs: finiteNonnegative(node.durationMs) }
+          : {}),
+        ...(clippedString(node.cwd, 500) ? { cwd: clippedString(node.cwd, 500) } : {}),
+        truncated: Boolean(node.truncated),
         sourceRefs,
       };
     }
@@ -1184,6 +1718,11 @@ function actionsInNode(node: BriefNode) {
   if (node.kind === 'collection') return node.items.flatMap((item) => item.actions);
   if (node.kind === 'timeline') return node.items.flatMap((item) => item.actions);
   if (node.kind === 'checklist') return node.items.flatMap((item) => (item.action ? [item.action] : []));
+  if (node.kind === 'plan') {
+    return [...node.actions, ...node.items.flatMap((item) => (item.action ? [item.action] : []))];
+  }
+  if (node.kind === 'email_preview') return node.actions;
+  if (node.kind === 'decision') return node.options.map((option) => option.action);
   return [];
 }
 
@@ -1211,6 +1750,44 @@ function clippedString(value: unknown, max: number): string | undefined {
 
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function finiteNonnegative(value: unknown): number | undefined {
+  const number = finiteNumber(value);
+  return number !== undefined && number >= 0 ? number : undefined;
+}
+
+function rawString(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.slice(0, max) : '';
+}
+
+function percentageField<K extends string>(key: K, value: unknown): Partial<Record<K, number>> {
+  const number = finiteNumber(value);
+  return number !== undefined && number >= 0 && number <= 100 ? ({ [key]: number } as Record<K, number>) : {};
+}
+
+function weatherCondition(value: unknown) {
+  return (
+    oneOf(
+      value,
+      [
+        'clear',
+        'partly-cloudy',
+        'cloudy',
+        'overcast',
+        'fog',
+        'drizzle',
+        'rain',
+        'heavy-rain',
+        'thunderstorm',
+        'snow',
+        'sleet',
+        'hail',
+        'windy',
+      ],
+      '',
+    ) || undefined
+  );
 }
 
 function clampInteger(value: unknown, min: number, max: number, fallback: number) {

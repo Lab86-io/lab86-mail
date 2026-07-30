@@ -41,12 +41,33 @@ LIVE DATA LEAVES
   Query names: tasks_due_today, tasks_overdue, events_today, events_next_7d,
   unresolved_tracked_threads, area_open_work (requires areaId).
 - stat: label and either frozen value or queryValue from the same query catalog; optional delta/unit.
-- chart: variant bar|stacked_bar|donut|line, title, optional description,
+- chart: variant bar|stacked_bar|donut|line|area, title, optional description,
   data:[{label,value,group?}], sourceRefs required.
 - data_table: title, optional description, columns:[{key,label,format:text|number|date|status}],
   rows:[{[key]:string|number|boolean|null}], sourceRefs required. Use for 3+ comparable records.
 - progress: title, optional description,
   steps:[{id,label,description?,status:pending|in-progress|completed|failed}], sourceRefs required.
+- weather: title,location,latitude,longitude,timezone,unit:celsius|fahrenheit,
+  current:{conditionCode,temperature,tempMin,tempMax,windSpeed?,humidity?,precipitationChance?,visibility?},
+  hourly:[{label,conditionCode,temperature,precipitationChance?}],
+  daily:[{label,conditionCode,tempMin,tempMax,precipitationChance?}],source,attributionURL,sourceRefs.
+  Use only when data.weather exists. Copy its values exactly; never infer a place or forecast. Use
+  sourceRefs:[{kind:"derived",id:"brief-weather",label:data.weather.source}]. Keep attribution visible.
+- plan: title,description?,items:[{id,label,description?,status:pending|in_progress|completed|cancelled,
+  ref?,action?}],actions:[],sourceRefs. Use for the intent-shaped runway or a real multi-step work plan.
+- email_preview: channel:email|slack,title,sender,recipients,sentAt?,snippet,attachmentCount,messageCount,
+  ref,actions:[],sourceRefs. Use only with a real supplied thread/message and body/snippet. Copy the exact
+  ref and action identity; set channel to match the source.
+- decision: title,description?,options:[{id,label,description?,action}],sourceRefs. Every option must map
+  to a real supplied action; do not use it for hypothetical choices or invent action payloads.
+- citations: optional title,citations:[{id,href,title,snippet?,domain?,type}],sourceRefs. Use for links that
+  materially support a recommendation; every URL must be present in supplied data.
+- geo_map: title,description?,markers:[{id,lat,lng,label?,description?}],
+  routes:[{id,label?,points:[{lat,lng}]}],sourceRefs. Use only with supplied coordinates.
+- code_diff: title,filename,language,oldCode,newCode,sourceRefs. Read-only; quote only bounded code that
+  is present in a supplied technical source.
+- terminal: title,command,stdout,stderr,exitCode,durationMs?,cwd?,truncated,sourceRefs. Read-only; copy
+  actual bounded build or command output, never simulate a command.
 - timeline: title, items:[{label,at?,detail?,ref?,actions:[]}].
 - checklist: title, items:[{label,detail?,checked?,ref?,action?}]. Use toggle_task only with a real task/card ref.
 - collection: optional title, variant shelf|grid|list,
@@ -88,8 +109,14 @@ EDITORIAL RULES
 - Adaptive density: calm days stay short. Busy days remain scannable.
 - Use the semantic Tool UI vocabulary deliberately: chart for a grounded comparison or trend, stat for a
   single meaningful number, data_table for comparable records, progress for a real multi-stage state,
-  timeline for time anchors, and checklist for actionable completion. Avoid fake statistics and decorative
-  charts. Every chart/data_table/progress sourceRefs entry must point to supplied evidence.
+  plan for intent-shaped workload, timeline for time anchors, weather for actual forecast context,
+  email_preview for a message that must be read in context, decision for a grounded fork, citations for
+  supporting sources, geo_map for supplied locations, and checklist for actionable completion. Technical
+  Areas may use code_diff or terminal for actual source output. Avoid fake statistics and decorative charts.
+  Every chart/data_table/progress/plan/weather/preview/decision/citation/map/technical sourceRefs entry must
+  point to supplied evidence.
+- For grouped chart data, use group consistently. Use stacked_bar only for part-to-whole comparisons,
+  donut only for a small categorical composition, and line only for an ordered trend.
 - Combine repeated notifications about the same episode. For example, four Xcode Cloud builds become one
   wide data_table or progress story with four rows/steps, never four nearly identical cards.
 - At least one temporal structure when events/tasks exist.

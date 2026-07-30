@@ -108,4 +108,57 @@ describe('Brief handoff hydration', () => {
       { kind: 'work', id: 'work-2' },
     ]);
   });
+
+  test('collects refs from plans, previews, and grounded rich tools without duplicating them', () => {
+    const shared = { kind: 'task' as const, id: 'task-rich' };
+    const document: BriefDocumentV2 = {
+      version: 2,
+      title: 'Daily Brief',
+      summary: 'Rich tools.',
+      generatedAt: Date.parse('2026-07-27T12:00:00Z'),
+      regions: [
+        {
+          id: 'rich',
+          summary: 'Plan and preview.',
+          tree: {
+            kind: 'stack',
+            emphasis: 'standard',
+            tone: 'neutral',
+            density: 'standard',
+            children: [
+              {
+                kind: 'plan',
+                emphasis: 'standard',
+                tone: 'neutral',
+                title: 'Runway',
+                items: [{ id: 'one', label: 'Finish', status: 'pending', ref: shared }],
+                actions: [],
+                sourceRefs: [shared],
+              },
+              {
+                kind: 'email_preview',
+                emphasis: 'standard',
+                tone: 'neutral',
+                channel: 'email',
+                title: 'Message',
+                sender: 'Maya',
+                recipients: [],
+                snippet: 'Please confirm.',
+                attachmentCount: 0,
+                messageCount: 1,
+                ref: { kind: 'thread', id: 'thread-rich', account: 'mail@example.com' },
+                actions: [],
+                sourceRefs: [shared],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    expect(collectBriefRefs(document)).toEqual([
+      shared,
+      { kind: 'thread', id: 'thread-rich', account: 'mail@example.com' },
+    ]);
+  });
 });

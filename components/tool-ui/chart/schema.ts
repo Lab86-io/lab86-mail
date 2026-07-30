@@ -19,7 +19,7 @@ export const ChartPropsSchema = z
     id: ToolUIIdSchema,
     role: ToolUIRoleSchema.optional(),
     receipt: ToolUIReceiptSchema.optional(),
-    type: z.enum(["bar", "line"]),
+    type: z.enum(["bar", "stacked_bar", "line", "area", "donut"]),
     title: z.string().optional(),
     description: z.string().optional(),
     data: z.array(z.record(z.string(), z.unknown())).min(1),

@@ -302,6 +302,170 @@ describe('BriefCanvas degradation', () => {
     }
   });
 
+  test('renders the rich brief Tool UI vocabulary on web', () => {
+    const evidence: BriefSourceRefV2[] = [{ kind: 'mcp', id: 'rich-tools' }];
+    const open: BriefActionV2 = {
+      action: 'open_view',
+      label: 'Open inbox',
+      payload: { view: 'inbox' },
+      style: 'secondary',
+    };
+    const document: BriefDocumentV2 = {
+      version: 2,
+      title: 'Tool brief',
+      summary: 'Rich grounded tools.',
+      generatedAt: 1_790_000_000_000,
+      regions: [
+        {
+          id: 'tools',
+          summary: 'Weather, runway, evidence, and technical state.',
+          tree: {
+            kind: 'stack',
+            emphasis: 'standard',
+            tone: 'neutral',
+            density: 'standard',
+            children: [
+              {
+                kind: 'weather',
+                emphasis: 'primary',
+                tone: 'neutral',
+                title: 'Lake weather',
+                location: 'Lake George, New York',
+                latitude: 43.4262,
+                longitude: -73.7123,
+                timezone: 'America/New_York',
+                unit: 'fahrenheit',
+                current: {
+                  conditionCode: 'clear',
+                  temperature: 78,
+                  tempMin: 61,
+                  tempMax: 81,
+                },
+                hourly: [],
+                daily: [{ label: 'Today', conditionCode: 'clear', tempMin: 61, tempMax: 81 }],
+                source: 'Apple Weather',
+                attributionURL: 'https://weatherkit.apple.com/legal-attribution.html',
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'plan',
+                emphasis: 'primary',
+                tone: 'neutral',
+                title: 'Today’s runway',
+                items: [{ id: 'focus', label: 'One hour of Card Hunt', status: 'in_progress' }],
+                actions: [],
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'email_preview',
+                emphasis: 'standard',
+                tone: 'neutral',
+                channel: 'email',
+                title: 'Confirm the date',
+                sender: 'Maya',
+                recipients: ['Jakob'],
+                snippet: 'Can we confirm the launch date?',
+                attachmentCount: 1,
+                messageCount: 2,
+                ref: { kind: 'thread', id: 'thread-rich', account: 'mail@example.com' },
+                actions: [open],
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'decision',
+                emphasis: 'standard',
+                tone: 'warning',
+                title: 'Choose a release path',
+                options: [
+                  { id: 'stage', label: 'Stage first', action: open },
+                  { id: 'hold', label: 'Hold', action: { ...open, label: 'Hold' } },
+                ],
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'citations',
+                emphasis: 'muted',
+                tone: 'neutral',
+                title: 'Sources',
+                citations: [
+                  {
+                    id: 'release',
+                    href: 'https://example.com/release',
+                    title: 'Release notes',
+                    type: 'document',
+                  },
+                ],
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'geo_map',
+                emphasis: 'standard',
+                tone: 'neutral',
+                title: 'Lake plan',
+                markers: [{ id: 'lake', lat: 43.4262, lng: -73.7123, label: 'Lake George' }],
+                routes: [],
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'code_diff',
+                emphasis: 'standard',
+                tone: 'neutral',
+                title: 'Notification change',
+                filename: 'Push.swift',
+                language: 'swift',
+                oldCode: 'let enabled = false',
+                newCode: 'let enabled = true',
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'terminal',
+                emphasis: 'standard',
+                tone: 'positive',
+                title: 'Build verification',
+                command: 'xcodebuild test',
+                stdout: 'TEST SUCCEEDED',
+                stderr: '',
+                exitCode: 0,
+                truncated: false,
+                sourceRefs: evidence,
+              },
+              {
+                kind: 'chart',
+                emphasis: 'standard',
+                tone: 'neutral',
+                title: 'Build duration',
+                variant: 'area',
+                data: [
+                  { label: '84', value: 9, group: 'iOS' },
+                  { label: '85', value: 7, group: 'iOS' },
+                ],
+                sourceRefs: evidence,
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const html = render(document);
+    for (const slot of [
+      'weather-widget',
+      'plan',
+      'brief-email-preview',
+      'option-list',
+      'citation-list',
+      'brief-geo-map',
+      'code-diff',
+      'terminal',
+      'chart',
+    ]) {
+      expect(html).toContain(`data-slot="${slot}"`);
+    }
+    expect(html).toContain('Weather data by Apple Weather');
+    expect(html).toContain('One hour of Card Hunt');
+    expect(html).toContain('Can we confirm the launch date?');
+  });
+
   test('the masthead title is bold and carries the editorial accent', () => {
     const html = render(richBriefDocumentFixture, { masthead: true });
     expect(html).toContain('font-bold');

@@ -3,8 +3,13 @@
 import { useMemo, useCallback, memo } from "react";
 import {
   BarChart,
+  AreaChart,
+  PieChart,
   LineChart,
   Bar,
+  Area,
+  Pie,
+  Cell,
   Line,
   XAxis,
   YAxis,
@@ -93,15 +98,105 @@ export const Chart = memo(function Chart({
     [onDataPointClick, xKey],
   );
 
-  const ChartComponent = type === "bar" ? BarChart : LineChart;
-
-  const chartContent = (
+  const chartContent = type === "donut" ? (
     <ChartContainer
       config={chartConfig}
       className="min-h-[200px] w-full"
       data-tool-ui-id={id}
     >
-      <ChartComponent data={data} accessibilityLayer>
+      <PieChart accessibilityLayer>
+        <ChartTooltip content={<ChartTooltipContent />} />
+        <Pie
+          data={data}
+          dataKey={series[0].key}
+          nameKey={xKey}
+          innerRadius="52%"
+          outerRadius="82%"
+          paddingAngle={2}
+          onClick={(payload, index) => {
+            handleDataPointClick(
+              series[0].key,
+              series[0].label,
+              payload as unknown as Record<string, unknown>,
+              index,
+            );
+          }}
+          cursor={onDataPointClick ? "pointer" : undefined}
+        >
+          {data.map((_, index) => (
+            <Cell key={`${id}-slice-${index}`} fill={palette[index % palette.length]} />
+          ))}
+        </Pie>
+        {showLegend && <ChartLegend content={<ChartLegendContent />} />}
+      </PieChart>
+    </ChartContainer>
+  ) : (
+    <ChartContainer
+      config={chartConfig}
+      className="min-h-[200px] w-full"
+      data-tool-ui-id={id}
+    >
+      {type === "line" ? (
+        <LineChart data={data} accessibilityLayer>
+          {showGrid && <CartesianGrid vertical={false} />}
+          <XAxis dataKey={xKey} tickLine={false} tickMargin={10} axisLine={false} />
+          <YAxis tickLine={false} axisLine={false} tickMargin={10} />
+          <ChartTooltip content={<ChartTooltipContent />} />
+          {showLegend && <ChartLegend content={<ChartLegendContent />} />}
+          {series.map((s, i) => (
+            <Line
+              key={s.key}
+              dataKey={s.key}
+              type="monotone"
+              stroke={seriesColors[i]}
+              strokeWidth={2}
+              dot={{ r: 4, cursor: onDataPointClick ? "pointer" : undefined }}
+              activeDot={
+                {
+                  r: 6,
+                  cursor: onDataPointClick ? "pointer" : undefined,
+                  onClick: ((
+                    _: unknown,
+                    dotData: {
+                      payload: Record<string, unknown>;
+                      index: number;
+                    },
+                  ) => {
+                    handleDataPointClick(
+                      s.key,
+                      s.label,
+                      dotData.payload,
+                      dotData.index,
+                    );
+                  }) as unknown as React.MouseEventHandler,
+                } as unknown as NonNullable<
+                  React.ComponentProps<typeof Line>["activeDot"]
+                >
+              }
+            />
+          ))}
+        </LineChart>
+      ) : type === "area" ? (
+        <AreaChart data={data} accessibilityLayer>
+          {showGrid && <CartesianGrid vertical={false} />}
+          <XAxis dataKey={xKey} tickLine={false} tickMargin={10} axisLine={false} />
+          <YAxis tickLine={false} axisLine={false} tickMargin={10} />
+          <ChartTooltip content={<ChartTooltipContent />} />
+          {showLegend && <ChartLegend content={<ChartLegendContent />} />}
+          {series.map((s, i) => (
+            <Area
+              key={s.key}
+              dataKey={s.key}
+              type="monotone"
+              stroke={seriesColors[i]}
+              fill={seriesColors[i]}
+              fillOpacity={0.2}
+              strokeWidth={2}
+            />
+          ))}
+        </AreaChart>
+      ) : (
+        <BarChart data={data} accessibilityLayer>
         {showGrid && <CartesianGrid vertical={false} />}
         <XAxis
           dataKey={xKey}
@@ -113,12 +208,12 @@ export const Chart = memo(function Chart({
         <ChartTooltip content={<ChartTooltipContent />} />
         {showLegend && <ChartLegend content={<ChartLegendContent />} />}
 
-        {type === "bar" &&
-          series.map((s, i) => (
+        {series.map((s, i) => (
             <Bar
               key={s.key}
               dataKey={s.key}
               fill={seriesColors[i]}
+              stackId={type === "stacked_bar" ? "brief-stack" : undefined}
               radius={4}
               onClick={(data) => {
                 // Recharts 3 types omit index/payload on BarRectangleItem but
@@ -132,41 +227,8 @@ export const Chart = memo(function Chart({
               cursor={onDataPointClick ? "pointer" : undefined}
             />
           ))}
-
-        {type === "line" &&
-          series.map((s, i) => (
-            <Line
-              key={s.key}
-              dataKey={s.key}
-              type="monotone"
-              stroke={seriesColors[i]}
-              strokeWidth={2}
-              dot={{ r: 4, cursor: onDataPointClick ? "pointer" : undefined }}
-              activeDot={
-                {
-                  r: 6,
-                  cursor: onDataPointClick ? "pointer" : undefined,
-                  // Recharts types are incorrect - onClick receives (event, dotData) at runtime
-                  onClick: ((
-                    _: unknown,
-                    dotData: { payload: Record<string, unknown>; index: number },
-                  ) => {
-                    handleDataPointClick(
-                      s.key,
-                      s.label,
-                      dotData.payload,
-                      dotData.index,
-                    );
-                  }) as unknown as React.MouseEventHandler,
-                  // Recharts 3 narrowed the activeDot prop type; the object
-                  // form still works at runtime.
-                } as unknown as NonNullable<
-                  React.ComponentProps<typeof Line>["activeDot"]
-                >
-              }
-            />
-          ))}
-      </ChartComponent>
+        </BarChart>
+      )}
     </ChartContainer>
   );
 
