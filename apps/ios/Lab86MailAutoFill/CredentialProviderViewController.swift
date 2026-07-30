@@ -49,11 +49,17 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         )
     }
 
-    /// Called when the user opens the full list from the AutoFill bar.
-    override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+    /// Called when the user taps the key icon to see every available code.
+    ///
+    /// This is the one-time-code list, which is a different entry point from
+    /// `prepareCredentialList(for:)` — that one is the password list, and a
+    /// provider declaring only `ProvidesOneTimeCodes` never receives it.
+    override func prepareOneTimeCodeCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        // Apple orders these most-specific first, so preserving order keeps the
+        // best match at the top of the list.
         let matches = serviceIdentifiers.flatMap { codes(for: $0) }
-        // With no service to go on the system is asking for everything on hand,
-        // which is the case where the user has gone looking deliberately.
+        // The array is allowed to be empty, and the system still expects a list
+        // to choose from — that is the case where the user went looking.
         let unique = Self.deduplicated(matches.isEmpty ? vault.activeCodes() : matches)
         present(codes: unique, completion: .oneTimeCode, scopedToService: !matches.isEmpty)
     }

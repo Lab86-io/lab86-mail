@@ -65,6 +65,26 @@ final class OneTimeCodeCoordinator {
         isEnabledAsProvider = await identityStore.isEnabled()
     }
 
+    /// Asks iOS to turn Albatross on as a credential provider without leaving
+    /// the app. iOS 18 added this; before it, the only route was sending the
+    /// user to Settings and hoping they found the right screen.
+    ///
+    /// Multiple providers can be enabled at once, so this does not displace an
+    /// existing password manager — Albatross supplies codes alongside it.
+    func requestProviderEnable() async {
+        _ = await ASSettingsHelper.requestToTurnOnCredentialProviderExtension()
+        await refreshProviderState()
+        // Identities are only accepted once the provider is on, so whatever the
+        // user decided, republish against the new state.
+        if isEnabledAsProvider { await refresh() }
+    }
+
+    /// Fallback for when the in-place prompt is declined or unavailable: opens
+    /// the verification-code settings directly rather than the app's root page.
+    func openVerificationCodeSettings() async {
+        try? await ASSettingsHelper.openVerificationCodeAppSettings()
+    }
+
     /// Reports consumptions the extension could not send itself.
     ///
     /// The extension is torn down as soon as it hands over a credential, so its

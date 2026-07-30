@@ -175,10 +175,13 @@ struct NotificationSettingsView: View {
                         .foregroundStyle(environment.oneTimeCodes.isEnabledAsProvider ? .secondary : .orange)
                 }
                 if !environment.oneTimeCodes.isEnabledAsProvider {
-                    Button("Open AutoFill settings") {
-                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(url)
+                    Button("Turn on in iOS") {
+                        Task { await environment.oneTimeCodes.requestProviderEnable() }
                     }
+                    Button("Open AutoFill settings") {
+                        Task { await environment.oneTimeCodes.openVerificationCodeSettings() }
+                    }
+                    .font(.footnote)
                 }
                 Toggle("Archive the email after filling", isOn: $preferences.oneTimeCodeCleanupEnabled)
             }
@@ -194,7 +197,7 @@ struct NotificationSettingsView: View {
             return "Codes stay in your mail and are never offered to other apps."
         }
         guard environment.oneTimeCodes.isEnabledAsProvider else {
-            return "Turn Albatross on under Settings ▸ General ▸ AutoFill & Passwords before codes can appear above the keyboard."
+            return "Albatross has to be on as an AutoFill provider before codes can appear above the keyboard. It sits alongside your password manager rather than replacing it."
         }
         return preferences.oneTimeCodeCleanupEnabled
             ? "Codes appear above the keyboard for a few minutes after they arrive. The email is archived once you use one, so it can still be found in All Mail."
