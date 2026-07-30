@@ -18,8 +18,20 @@ export interface UrgentScanMessage extends OneTimeCodeMessage {
 
 interface ScanPreferences {
   nativePushEnabled?: boolean;
+  newMailPushEnabled?: boolean;
   urgentMailPushEnabled?: boolean;
   oneTimeCodeAutofillEnabled?: boolean;
+}
+
+// Mail the user never wants pinged about, whatever their settings say: their
+// own outbound copies, drafts, and anything the provider already filed away.
+const UNNOTIFIABLE_LABELS = new Set(['SENT', 'DRAFT', 'DRAFTS', 'SPAM', 'JUNK', 'TRASH']);
+
+function isNotifiableArrival(message: UrgentScanMessage, now: number): boolean {
+  if ((message.labels || []).some((label) => UNNOTIFIABLE_LABELS.has(label.toUpperCase()))) return false;
+  // A redelivered backlog would otherwise fire a burst of alerts for mail that
+  // was read days ago. Same reasoning as the urgency staleness gate.
+  return !message.receivedAt || message.receivedAt >= now - STALE_ARRIVAL_MS;
 }
 
 // This runs inline with webhook ingest, so a burst must not turn into a burst
@@ -33,6 +45,8 @@ const MAX_CONFIRMATIONS_PER_BATCH = 3;
 // alert that arrives late is worthless anyway — so the call is abandoned rather
 // than waited on, and a timed-out confirmation simply reads as "not urgent".
 const CONFIRMATION_TIMEOUT_MS = 8_000;
+
+const STALE_ARRIVAL_MS = 6 * 60 * 60_000;
 
 async function confirmUrgency(userId: string, message: UrgentScanMessage): Promise<string | null> {
   const source = [message.subject, message.snippet, message.textBody]
@@ -83,7 +97,7 @@ export async function scanIngestedMail(
   try {
     return await detectUrgentMailAndCodes(row, messages, dependencies);
   } catch {
-    return { codes: 0, urgent: 0 };
+    return { codes: 0, urgent: 0, newMail: 0 };
   }
 }
 
@@ -97,19 +111,23 @@ export async function detectUrgentMailAndCodes(
   messages: UrgentScanMessage[],
   dependencies: UrgentDetectorDependencies = defaultDependencies,
 ) {
-  if (!messages.length) return { codes: 0, urgent: 0 };
+  if (!messages.length) return { codes: 0, urgent: 0, newMail: 0 };
 
   const preference = await dependencies
     .query<ScanPreferences | null>(notificationsApi.mobilePreferences, {
       userId: row.userId,
     })
     .catch(() => null);
-  const pushEnabled = preference?.nativePushEnabled !== false && preference?.urgentMailPushEnabled !== false;
+  const nativeEnabled = preference?.nativePushEnabled !== false;
+  const pushEnabled = nativeEnabled && preference?.urgentMailPushEnabled !== false;
+  const newMailEnabled = nativeEnabled && preference?.newMailPushEnabled !== false;
   const codesEnabled = preference?.oneTimeCodeAutofillEnabled !== false;
-  if (!pushEnabled && !codesEnabled) return { codes: 0, urgent: 0 };
+  if (!pushEnabled && !codesEnabled && !newMailEnabled) return { codes: 0, urgent: 0, newMail: 0 };
 
+  const now = Date.now();
   let codes = 0;
   let urgent = 0;
+  let newMail = 0;
   let confirmations = 0;
 
   for (const message of messages) {
@@ -140,9 +158,35 @@ export async function detectUrgentMailAndCodes(
         }
       }
 
-      if (!pushEnabled) continue;
-      const assessment = assessUrgency(message, { hasOneTimeCode: Boolean(candidate) });
-      if (!assessment.urgent) continue;
+      // Whether this message earns the elevated, Focus-piercing alert. When it
+      // does it is the only alert sent, so a code never buzzes twice.
+      const assessment = pushEnabled
+        ? assessUrgency(message, { hasOneTimeCode: Boolean(candidate) })
+        : { urgent: false, reason: '', kind: 'language' as const, needsConfirmation: false };
+
+      if (!assessment.urgent) {
+        if (newMailEnabled && isNotifiableArrival(message, now)) {
+          const queued = await dependencies.mutate<{ notificationId: string; created: boolean }>(
+            notificationsApi.queueMailNotification,
+            {
+              userId: row.userId,
+              accountId: row.accountId,
+              threadId: message.providerThreadId,
+              messageId: message.providerMessageId,
+              sender: message.from,
+              subject: message.subject,
+              snippet: message.snippet || '',
+            },
+          );
+          if (queued.created) {
+            newMail += 1;
+            await dependencies
+              .dispatch(row.userId, queued.notificationId, undefined, {})
+              .catch(() => undefined);
+          }
+        }
+        continue;
+      }
 
       let reason = assessment.reason;
       if (assessment.needsConfirmation) {
@@ -174,5 +218,5 @@ export async function detectUrgentMailAndCodes(
       // Detection is advisory. Mail sync owns the corpus and must complete.
     }
   }
-  return { codes, urgent };
+  return { codes, urgent, newMail };
 }

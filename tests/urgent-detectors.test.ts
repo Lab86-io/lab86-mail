@@ -46,6 +46,10 @@ function harness(options: HarnessOptions = {}) {
       calls.push({ name: 'recordCode', args });
       return { created: options.recordCreated ?? true };
     }
+    if (args?.reason === undefined && args?.snippet !== undefined) {
+      calls.push({ name: 'newMail', args });
+      return { notificationId: 'notif-mail', created: options.queueCreated ?? true };
+    }
     calls.push({ name: 'queueUrgent', args });
     return { notificationId: 'notif-1', created: options.queueCreated ?? true };
   }) as any;
@@ -62,22 +66,27 @@ function harness(options: HarnessOptions = {}) {
 }
 
 describe('detectUrgentMailAndCodes preferences', () => {
-  test('does no work when both features are off', async () => {
+  test('does no work when every feature is off', async () => {
     const { deps, calls } = harness({
       preference: {
         nativePushEnabled: true,
+        newMailPushEnabled: false,
         urgentMailPushEnabled: false,
         oneTimeCodeAutofillEnabled: false,
       },
     });
     const result = await detectUrgentMailAndCodes(ROW, [message(CODE_MAIL)], deps);
-    expect(result).toEqual({ codes: 0, urgent: 0 });
+    expect(result).toEqual({ codes: 0, urgent: 0, newMail: 0 });
     expect(calls).toHaveLength(0);
   });
 
-  test('records codes but stays silent when only push is off', async () => {
+  test('records codes but sends no urgent alert when urgent push is off', async () => {
     const { deps, calls, dispatches } = harness({
-      preference: { urgentMailPushEnabled: false, oneTimeCodeAutofillEnabled: true },
+      preference: {
+        newMailPushEnabled: false,
+        urgentMailPushEnabled: false,
+        oneTimeCodeAutofillEnabled: true,
+      },
     });
     const result = await detectUrgentMailAndCodes(ROW, [message(CODE_MAIL)], deps);
     expect(result.codes).toBe(1);
@@ -88,7 +97,7 @@ describe('detectUrgentMailAndCodes preferences', () => {
 
   test('pushes but records nothing when only AutoFill is off', async () => {
     const { deps, calls } = harness({
-      preference: { oneTimeCodeAutofillEnabled: false },
+      preference: { newMailPushEnabled: false, oneTimeCodeAutofillEnabled: false },
     });
     const result = await detectUrgentMailAndCodes(
       ROW,
@@ -108,7 +117,7 @@ describe('detectUrgentMailAndCodes preferences', () => {
 
   test('short-circuits on an empty batch', async () => {
     const { deps, calls } = harness();
-    expect(await detectUrgentMailAndCodes(ROW, [], deps)).toEqual({ codes: 0, urgent: 0 });
+    expect(await detectUrgentMailAndCodes(ROW, [], deps)).toEqual({ codes: 0, urgent: 0, newMail: 0 });
     expect(calls).toHaveLength(0);
   });
 });
@@ -118,7 +127,7 @@ describe('detectUrgentMailAndCodes code handling', () => {
     const { deps, calls, dispatches } = harness();
     const result = await detectUrgentMailAndCodes(ROW, [message(CODE_MAIL)], deps);
 
-    expect(result).toEqual({ codes: 1, urgent: 1 });
+    expect(result).toEqual({ codes: 1, urgent: 1, newMail: 0 });
     const recorded = calls.find((c) => c.name === 'recordCode');
     expect(recorded?.args.code).toBe('284917');
     expect(recorded?.args.serviceIdentifiers).toContain('google.com');
@@ -130,7 +139,7 @@ describe('detectUrgentMailAndCodes code handling', () => {
     const { deps, calls, dispatches } = harness({ recordCreated: false });
     const result = await detectUrgentMailAndCodes(ROW, [message(CODE_MAIL)], deps);
 
-    expect(result).toEqual({ codes: 0, urgent: 0 });
+    expect(result).toEqual({ codes: 0, urgent: 0, newMail: 0 });
     expect(calls.map((c) => c.name)).toEqual(['recordCode']);
     expect(dispatches).toHaveLength(0);
   });
@@ -231,10 +240,11 @@ describe('detectUrgentMailAndCodes resilience', () => {
     expect(result.codes).toBe(1);
   });
 
-  test('ordinary mail produces nothing at all', async () => {
+  test('ordinary mail produces a plain notification and nothing else', async () => {
     const { deps, calls } = harness();
-    expect(await detectUrgentMailAndCodes(ROW, [message()], deps)).toEqual({ codes: 0, urgent: 0 });
-    expect(calls).toHaveLength(0);
+    const result = await detectUrgentMailAndCodes(ROW, [message()], deps);
+    expect(result).toEqual({ codes: 0, urgent: 0, newMail: 1 });
+    expect(calls.map((c) => c.name)).toEqual(['newMail']);
   });
 });
 
@@ -259,11 +269,70 @@ describe('scanIngestedMail', () => {
     expect(await scanIngestedMail(ROW, [message(CODE_MAIL)], thrower)).toEqual({
       codes: 0,
       urgent: 0,
+      newMail: 0,
     });
   });
 
   test('passes results through when nothing goes wrong', async () => {
     const { deps } = harness();
-    expect(await scanIngestedMail(ROW, [message(CODE_MAIL)], deps)).toEqual({ codes: 1, urgent: 1 });
+    expect(await scanIngestedMail(ROW, [message(CODE_MAIL)], deps)).toEqual({
+      codes: 1,
+      urgent: 1,
+      newMail: 0,
+    });
+  });
+});
+
+describe('per-message new-mail notifications', () => {
+  const ORDINARY = { subject: 'Lunch tomorrow?', textBody: 'Are you free around one?' };
+
+  test('every ordinary arrival gets a notification', async () => {
+    const { deps, calls, dispatches } = harness();
+    const result = await detectUrgentMailAndCodes(ROW, [message(ORDINARY)], deps);
+
+    expect(result.newMail).toBe(1);
+    const queued = calls.find((c) => c.name === 'newMail');
+    expect(queued?.args.sender).toContain('ari@example.com');
+    expect(dispatches).toHaveLength(1);
+    // Ordinary mail must not carry the code flag or the elevated level.
+    expect(dispatches[0].options).toEqual({});
+  });
+
+  test('an urgent message sends one alert, not two', async () => {
+    // A code is urgent, so it must not also produce an ordinary new-mail ping.
+    const { deps, calls } = harness();
+    const result = await detectUrgentMailAndCodes(ROW, [message(CODE_MAIL)], deps);
+
+    expect(result.urgent).toBe(1);
+    expect(result.newMail).toBe(0);
+    expect(calls.filter((c) => c.name === 'newMail')).toHaveLength(0);
+  });
+
+  test('respects the new-mail switch independently of the urgent switch', async () => {
+    const { deps, calls } = harness({
+      preference: { newMailPushEnabled: false, urgentMailPushEnabled: true },
+    });
+    const result = await detectUrgentMailAndCodes(ROW, [message(ORDINARY)], deps);
+    expect(result.newMail).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('the master switch silences ordinary mail too', async () => {
+    const { deps } = harness({ preference: { nativePushEnabled: false } });
+    expect((await detectUrgentMailAndCodes(ROW, [message(ORDINARY)], deps)).newMail).toBe(0);
+  });
+
+  test('never pings for the user’s own sent mail, drafts, spam or trash', async () => {
+    for (const label of ['SENT', 'DRAFT', 'SPAM', 'TRASH']) {
+      const { deps } = harness();
+      const result = await detectUrgentMailAndCodes(ROW, [message({ ...ORDINARY, labels: [label] })], deps);
+      expect(result.newMail).toBe(0);
+    }
+  });
+
+  test('a redelivered backlog does not fire a burst of stale pings', async () => {
+    const { deps } = harness();
+    const stale = message({ ...ORDINARY, receivedAt: Date.now() - 24 * 3_600_000 });
+    expect((await detectUrgentMailAndCodes(ROW, [stale], deps)).newMail).toBe(0);
   });
 });
