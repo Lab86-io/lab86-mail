@@ -1061,49 +1061,7 @@ private struct BriefChartView: View {
                 Text(description).font(.caption).foregroundStyle(.secondary)
             }
             Chart(node.data ?? []) { point in
-                if node.variant == "donut" {
-                    SectorMark(
-                        angle: .value("Value", point.value),
-                        innerRadius: .ratio(0.54),
-                        angularInset: 2
-                    )
-                    .foregroundStyle(by: .value("Category", point.label))
-                    .cornerRadius(4)
-                } else if node.variant == "line" {
-                    LineMark(
-                        x: .value("Label", point.label),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
-                    PointMark(
-                        x: .value("Label", point.label),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
-                } else if node.variant == "area" {
-                    AreaMark(
-                        x: .value("Label", point.label),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
-                    .opacity(0.3)
-                    LineMark(
-                        x: .value("Label", point.label),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(by: .value("Series", point.group ?? node.title ?? "Value"))
-                } else {
-                    BarMark(
-                        x: .value("Label", point.label),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(by: .value("Series", point.group ?? point.label))
-                    .position(by: .value(
-                        "Series",
-                        node.variant == "stacked_bar" ? "Stack" : point.group ?? point.label
-                    ))
-                    .cornerRadius(4)
-                }
+                marks(for: point)
             }
             .chartYAxis { AxisMarks(position: .leading) }
             .frame(height: 190)
@@ -1111,6 +1069,69 @@ private struct BriefChartView: View {
         }
         .padding(15)
         .surfaceCard(cornerRadius: 16)
+    }
+
+    /// Split out of the `Chart` closure, and split again per variant.
+    ///
+    /// Four differently-typed mark bodies behind if/else in one closure is what
+    /// the type-checker gives up on — it has to unify every branch and every
+    /// modifier chain in a single expression. Each variant now type-checks on
+    /// its own, which is also why `series(for:)` exists rather than repeating
+    /// the coalescing chain inline at each call.
+    @ChartContentBuilder
+    private func marks(for point: BriefChartPoint) -> some ChartContent {
+        switch node.variant ?? "" {
+        case "donut": donutMark(for: point)
+        case "line": lineMarks(for: point)
+        case "area": areaMarks(for: point)
+        default: barMark(for: point)
+        }
+    }
+
+    private func series(for point: BriefChartPoint) -> String {
+        point.group ?? node.title ?? "Value"
+    }
+
+    /// Bars group by their own label when no series is given, and a stacked bar
+    /// collapses every bar onto one position.
+    private func barGroup(for point: BriefChartPoint) -> String {
+        point.group ?? point.label
+    }
+
+    private func barPosition(for point: BriefChartPoint) -> String {
+        node.variant == "stacked_bar" ? "Stack" : barGroup(for: point)
+    }
+
+    @ChartContentBuilder
+    private func donutMark(for point: BriefChartPoint) -> some ChartContent {
+        SectorMark(angle: .value("Value", point.value), innerRadius: .ratio(0.54), angularInset: 2)
+            .foregroundStyle(by: .value("Category", point.label))
+            .cornerRadius(4)
+    }
+
+    @ChartContentBuilder
+    private func lineMarks(for point: BriefChartPoint) -> some ChartContent {
+        LineMark(x: .value("Label", point.label), y: .value("Value", point.value))
+            .foregroundStyle(by: .value("Series", series(for: point)))
+        PointMark(x: .value("Label", point.label), y: .value("Value", point.value))
+            .foregroundStyle(by: .value("Series", series(for: point)))
+    }
+
+    @ChartContentBuilder
+    private func areaMarks(for point: BriefChartPoint) -> some ChartContent {
+        AreaMark(x: .value("Label", point.label), y: .value("Value", point.value))
+            .foregroundStyle(by: .value("Series", series(for: point)))
+            .opacity(0.3)
+        LineMark(x: .value("Label", point.label), y: .value("Value", point.value))
+            .foregroundStyle(by: .value("Series", series(for: point)))
+    }
+
+    @ChartContentBuilder
+    private func barMark(for point: BriefChartPoint) -> some ChartContent {
+        BarMark(x: .value("Label", point.label), y: .value("Value", point.value))
+            .foregroundStyle(by: .value("Series", barGroup(for: point)))
+            .position(by: .value("Series", barPosition(for: point)))
+            .cornerRadius(4)
     }
 }
 

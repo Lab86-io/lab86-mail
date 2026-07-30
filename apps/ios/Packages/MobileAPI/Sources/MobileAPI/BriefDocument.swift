@@ -820,10 +820,17 @@ public struct BriefQuery: Codable, Hashable, Sendable {
     }
 }
 
-public struct BriefChartPoint: Codable, Hashable, Sendable {
+public struct BriefChartPoint: Codable, Hashable, Sendable, Identifiable {
     public let label: String
     public let value: Double
     public let group: String?
+
+    /// `Chart(_:content:)` needs an identity for each datum. A label alone
+    /// repeats across series in a grouped chart, so the series is part of it —
+    /// otherwise two points from different series collide and one is dropped.
+    /// Computed, so the Codable synthesis is unaffected and the wire shape
+    /// stays exactly as the server sends it.
+    public var id: String { group.map { "\($0)\u{001F}\(label)" } ?? label }
 }
 
 public struct BriefTableColumn: Codable, Hashable, Sendable {
