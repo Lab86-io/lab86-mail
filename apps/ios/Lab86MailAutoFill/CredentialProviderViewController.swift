@@ -22,6 +22,8 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     private let vault = OneTimeCodeVault()
     private let reporter = OneTimeCodeConsumeReporter()
 
+    deinit {}
+
     // MARK: - Supplying a code for a specific request
 
     /// The fast path: can a code be supplied with no UI at all?

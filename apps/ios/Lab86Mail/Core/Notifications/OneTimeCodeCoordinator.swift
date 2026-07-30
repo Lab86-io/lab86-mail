@@ -25,6 +25,8 @@ final class OneTimeCodeCoordinator {
     /// Mirrors the server's setting; the server is the only writer.
     private(set) var autofillEnabled = true
     private(set) var cleanupMode: OneTimeCodeCleanup = .none
+    /// Coalesces concurrent refreshes; see `refresh()`.
+    private var refreshTask: Task<Void, Never>?
 
     init(
         backend: BackendClient,
@@ -38,12 +40,29 @@ final class OneTimeCodeCoordinator {
         self.identityStore = identityStore
     }
 
+    deinit {}
+
     /// Pulls the current codes and republishes them.
     ///
     /// Called on foreground and whenever a push says a code has arrived. The
     /// foreground path is what makes this work at all on a build that cannot
     /// receive push, so it is not merely a fallback.
     func refresh() async {
+        // Foreground and a code push routinely land together, and two refreshes
+        // interleaving would publish the older response last — leaving the
+        // freshly arrived code out of the identity store, which is the one
+        // moment it needs to be there.
+        if let inFlight = refreshTask {
+            await inFlight.value
+            return
+        }
+        let task = Task { await performRefresh() }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
+    }
+
+    private func performRefresh() async {
         await refreshProviderState()
         do {
             let response = try await backend.get(path: "/api/mobile/one-time-codes")
@@ -71,18 +90,23 @@ final class OneTimeCodeCoordinator {
     ///
     /// Multiple providers can be enabled at once, so this does not displace an
     /// existing password manager — Albatross supplies codes alongside it.
-    func requestProviderEnable() async {
-        _ = await ASSettingsHelper.requestToTurnOnCredentialProviderExtension()
+    /// Turns Albatross on as a credential provider, asking in place first.
+    ///
+    /// One entry point rather than two buttons: the in-app prompt is strictly
+    /// better when it works, and sending someone to Settings is a fallback, not
+    /// a choice they should have to make. If the prompt is declined or the
+    /// system cannot present it, this opens the verification-code settings
+    /// screen directly rather than the app's root page.
+    func enableAsProvider() async {
+        let granted = await ASSettingsHelper.requestToTurnOnCredentialProviderExtension()
         await refreshProviderState()
-        // Identities are only accepted once the provider is on, so whatever the
-        // user decided, republish against the new state.
-        if isEnabledAsProvider { await refresh() }
-    }
-
-    /// Fallback for when the in-place prompt is declined or unavailable: opens
-    /// the verification-code settings directly rather than the app's root page.
-    func openVerificationCodeSettings() async {
-        try? await ASSettingsHelper.openVerificationCodeAppSettings()
+        if isEnabledAsProvider {
+            // Identities are only accepted once the provider is on, so publish
+            // the codes we already hold rather than waiting for a refresh.
+            await refresh()
+            return
+        }
+        if !granted { try? await ASSettingsHelper.openVerificationCodeAppSettings() }
     }
 
     /// Reports consumptions the extension could not send itself.

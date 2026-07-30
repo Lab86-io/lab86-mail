@@ -170,18 +170,22 @@ struct NotificationSettingsView: View {
         Section {
             Toggle("Offer codes from mail", isOn: $preferences.oneTimeCodeAutofillEnabled)
             if preferences.oneTimeCodeAutofillEnabled {
-                LabeledContent("Set up in iOS") {
-                    Text(environment.oneTimeCodes.isEnabledAsProvider ? "On" : "Not yet")
-                        .foregroundStyle(environment.oneTimeCodes.isEnabledAsProvider ? .secondary : .orange)
-                }
-                if !environment.oneTimeCodes.isEnabledAsProvider {
-                    Button("Turn on in iOS") {
-                        Task { await environment.oneTimeCodes.requestProviderEnable() }
+                // A single row carrying its own status, after the pattern
+                // Google Passwords and Opera both use for the same problem —
+                // a system setting the app can prompt for but not set. Two
+                // stacked buttons made the user choose between two routes to
+                // one outcome; none of the researched apps do that.
+                if environment.oneTimeCodes.isEnabledAsProvider {
+                    LabeledContent("AutoFill in iOS", value: "On")
+                } else {
+                    Button {
+                        Task { await environment.oneTimeCodes.enableAsProvider() }
+                    } label: {
+                        LabeledContent("AutoFill in iOS") {
+                            Text("Off").foregroundStyle(.secondary)
+                        }
                     }
-                    Button("Open AutoFill settings") {
-                        Task { await environment.oneTimeCodes.openVerificationCodeSettings() }
-                    }
-                    .font(.footnote)
+                    .tint(.primary)
                 }
                 Toggle("Archive the email after filling", isOn: $preferences.oneTimeCodeCleanupEnabled)
             }
