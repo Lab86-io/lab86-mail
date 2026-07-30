@@ -156,25 +156,7 @@ final class OneTimeCodeCoordinator {
             apiBaseURL: AppConfiguration.current.apiBaseURL?.absoluteString
         )
         activeCodeCount = codes.count
-        await identityStore.replaceAll(identities(for: codes))
-    }
-
-    private func identities(for codes: [StoredOneTimeCode]) -> [any ASCredentialIdentity] {
-        // One identity per service a code is valid for. iOS matches the
-        // requesting site against these, so a code registered only under its
-        // sender's domain would never surface on the site it is actually for.
-        codes.flatMap { code in
-            code.serviceIdentifiers.map { identifier in
-                ASOneTimeCodeCredentialIdentity(
-                    serviceIdentifier: ASCredentialServiceIdentifier(
-                        identifier: identifier,
-                        type: .domain
-                    ),
-                    label: code.label,
-                    recordIdentifier: code.id
-                )
-            }
-        }
+        await identityStore.replaceAll(with: codes)
     }
 
     private static func decode(_ value: JSONValue) -> StoredOneTimeCode? {
@@ -208,9 +190,14 @@ enum OneTimeCodeCleanup: String, Sendable {
 
 /// Seam over `ASCredentialIdentityStore` so the coordinator is testable without
 /// the real system store, which is unavailable in a unit test host.
+/// Takes the codes rather than built identities: `ASCredentialIdentity` is not
+/// `Sendable`, so handing an array of them from the main actor to a nonisolated
+/// implementation is a data race under strict concurrency. `StoredOneTimeCode`
+/// is Sendable, so the AS types are constructed on the far side of the hop —
+/// which also keeps AuthenticationServices out of the coordinator entirely.
 protocol CredentialIdentityStoring: Sendable {
     func isEnabled() async -> Bool
-    func replaceAll(_ identities: [any ASCredentialIdentity]) async
+    func replaceAll(with codes: [StoredOneTimeCode]) async
     func removeAll() async
 }
 
@@ -219,10 +206,22 @@ struct SystemCredentialIdentityStore: CredentialIdentityStoring {
         await ASCredentialIdentityStore.shared.state().isEnabled
     }
 
-    func replaceAll(_ identities: [any ASCredentialIdentity]) async {
+    func replaceAll(with codes: [StoredOneTimeCode]) async {
         // Replace rather than save: a code the server has dropped must stop
         // being offered, and saving alone would leave the stale one behind.
         guard await isEnabled() else { return }
+        // One identity per service a code is valid for. iOS matches the
+        // requesting site against these, so a code registered only under its
+        // sender's domain would never surface on the site it is actually for.
+        let identities: [any ASCredentialIdentity] = codes.flatMap { code in
+            code.serviceIdentifiers.map { identifier in
+                ASOneTimeCodeCredentialIdentity(
+                    serviceIdentifier: ASCredentialServiceIdentifier(identifier: identifier, type: .domain),
+                    label: code.label,
+                    recordIdentifier: code.id
+                )
+            }
+        }
         try? await ASCredentialIdentityStore.shared.replaceCredentialIdentities(identities)
     }
 

@@ -184,11 +184,11 @@ private struct OneTimeCodePickerView: View {
                                     Text(code.issuer.isEmpty ? code.label : code.issuer)
                                     Text(code.receivedAt, style: .relative)
                                         .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(Color.secondary)
                                 }
                             }
                         }
-                        .tint(.primary)
+                        .buttonStyle(.plain)
                     }
                 }
             }
