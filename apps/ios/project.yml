@@ -53,6 +53,10 @@ targets:
     platform: iOS
     sources:
       - path: Lab86Mail
+      # Compiled into the app and the AutoFill extension both. The extension is
+      # a separate process with its own memory budget, so this stays a small set
+      # of dependency-free types rather than becoming a shared framework.
+      - path: Shared
     configFiles:
       Debug: Config/Debug.xcconfig
       Release: Config/Release.xcconfig
@@ -94,11 +98,35 @@ targets:
         product: ClerkConvex
       - package: Convex
         product: ConvexMobile
+      - target: Lab86MailAutoFill
     scheme:
       testTargets:
         - Lab86MailTests
         - Lab86MailUITests
       gatherCoverageData: true
+
+  # Supplies one-time codes from mail to system AutoFill. Deliberately depends
+  # on nothing but the shared vault types: it runs in a short-lived, memory
+  # constrained process and reads only what the app has already fetched.
+  Lab86MailAutoFill:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Lab86MailAutoFill
+      - path: Shared
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.autofill
+        PRODUCT_NAME: Lab86MailAutoFill
+        PRODUCT_MODULE_NAME: Lab86MailAutoFill
+        INFOPLIST_FILE: Lab86MailAutoFill/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Lab86MailAutoFill/Resources/Lab86MailAutoFill.entitlements
+        GENERATE_INFOPLIST_FILE: false
+        SUPPORTS_MACCATALYST: false
+        SKIP_INSTALL: true
 
   Lab86MailTests:
     type: bundle.unit-test
