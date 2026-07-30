@@ -47,6 +47,30 @@ describe('assessUrgency', () => {
     expect(assessUrgency(message(), { now: NOW }).urgent).toBe(false);
   });
 
+  test('promotes a code even when the mail looks like bulk', () => {
+    // Services routinely send verification codes through the same ESP as their
+    // marketing, so the mail carries List-Unsubscribe and an unsubscribe
+    // footer. Letting the bulk gate win here silently kills the whole feature.
+    const verdict = assessUrgency(
+      message({
+        subject: 'Your verification code',
+        textBody: 'Your code is 284917. Unsubscribe at any time.',
+        headers: [{ name: 'List-Unsubscribe', value: '<mailto:x@y.z>' }],
+      }),
+      { hasOneTimeCode: true, now: NOW },
+    );
+    expect(verdict.urgent).toBe(true);
+    expect(verdict.kind).toBe('code');
+  });
+
+  test('still drops a code-bearing message that is stale', () => {
+    const verdict = assessUrgency(message({ receivedAt: NOW - 24 * 3_600_000 }), {
+      hasOneTimeCode: true,
+      now: NOW,
+    });
+    expect(verdict.urgent).toBe(false);
+  });
+
   test('never promotes bulk mail, however loud it is', () => {
     const verdict = assessUrgency(
       message({

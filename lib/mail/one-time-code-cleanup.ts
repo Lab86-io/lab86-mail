@@ -5,6 +5,18 @@ const oneTimeCodesApi = (api as any).mailOneTimeCodes;
 
 export type CodeCleanupMode = 'none' | 'archive' | 'trash';
 
+/**
+ * A code id that does not resolve to a row for this user. Typed rather than
+ * matched on message text, so a Convex error that merely happens to contain
+ * "not found" cannot be misreported to the client as a 404.
+ */
+export class OneTimeCodeNotFoundError extends Error {
+  constructor(message = 'Code not found.') {
+    super(message);
+    this.name = 'OneTimeCodeNotFoundError';
+  }
+}
+
 export function parseCleanupMode(value: unknown): CodeCleanupMode {
   if (value === 'archive' || value === 'trash' || value === 'none') return value;
   // An unrecognised mode must not silently delete mail.
@@ -42,13 +54,25 @@ export async function consumeOneTimeCode(
   input: { userId: string; codeId: string; cleanup: CodeCleanupMode },
   dependencies: ConsumeDependencies = defaultDependencies,
 ): Promise<ConsumeOneTimeCodeResult> {
-  const used = await dependencies.mutate<{
+  let used: {
     accountId: string;
     providerMessageId: string;
     providerThreadId: string;
     alreadyUsed: boolean;
     cleanup: string | null;
-  }>(oneTimeCodesApi.markUsed, { userId: input.userId, codeId: input.codeId });
+  };
+  try {
+    used = await dependencies.mutate(oneTimeCodesApi.markUsed, {
+      userId: input.userId,
+      codeId: input.codeId,
+    });
+  } catch (error) {
+    // Convex raises a plain Error for both an unknown id and one belonging to
+    // another user; both are "no such code for you" from the caller's side.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/code not found/i.test(message)) throw new OneTimeCodeNotFoundError();
+    throw error;
+  }
 
   if (input.cleanup === 'none') {
     return { ok: true, cleanup: 'none', cleanupStatus: 'skipped', alreadyUsed: used.alreadyUsed };

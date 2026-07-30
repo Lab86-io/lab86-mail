@@ -1,6 +1,10 @@
 import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { consumeOneTimeCode, parseCleanupMode } from '@/lib/mail/one-time-code-cleanup';
+import {
+  consumeOneTimeCode,
+  OneTimeCodeNotFoundError,
+  parseCleanupMode,
+} from '@/lib/mail/one-time-code-cleanup';
 import { verifyConsumeToken } from '@/lib/mail/one-time-code-token';
 
 export const runtime = 'nodejs';
@@ -56,7 +60,7 @@ export function createConsumeHandlers(deps: ConsumeDependencies = defaultDepende
         return Response.json({ ok: false, error: 'Request body must be valid JSON.' }, { status: 400 });
       }
       // A code id that does not resolve is the client's problem, not a fault.
-      if (error instanceof Error && /not found/i.test(error.message)) {
+      if (error instanceof OneTimeCodeNotFoundError) {
         return Response.json({ ok: false, error: 'Code not found.' }, { status: 404 });
       }
       deps.reportUnexpectedError(error);

@@ -27,16 +27,25 @@ interface ScanPreferences {
 // urgency signals do, and those are capped per batch.
 const MAX_CONFIRMATIONS_PER_BATCH = 3;
 
+// This scan is awaited by the webhook ingest path, so a provider that accepts
+// the connection and then stalls would hold up mail sync itself, not just the
+// alert. The model only ever adjudicates the softer urgency signals, and an
+// alert that arrives late is worthless anyway — so the call is abandoned rather
+// than waited on, and a timed-out confirmation simply reads as "not urgent".
+const CONFIRMATION_TIMEOUT_MS = 8_000;
+
 async function confirmUrgency(userId: string, message: UrgentScanMessage): Promise<string | null> {
   const source = [message.subject, message.snippet, message.textBody]
     .filter(Boolean)
     .join('\n\n')
     .slice(0, 4_000);
+  const abort = AbortSignal.timeout(CONFIRMATION_TIMEOUT_MS);
   const { text } = await generateTextForCurrentUser({
     feature: 'mail_urgency',
     speed: 'nano',
     userId,
     maxOutputTokens: 200,
+    abortSignal: abort,
     system: URGENCY_CONFIRMATION_SYSTEM_PROMPT,
     prompt: `Received: ${new Date(message.receivedAt).toISOString()}\nFrom: ${message.from}\nTo: ${
       message.to || ''

@@ -39,10 +39,19 @@ private struct VaultContents: Codable, Sendable {
 
 /// Shared storage for one-time codes, backed by the app group container.
 ///
-/// The app writes; the extension reads and appends consumption records. Access
-/// is serialised through a coordinated file rather than `UserDefaults` because
-/// two processes genuinely contend here — an AutoFill request can land while a
-/// background push is writing a freshly arrived code.
+/// The app writes the code set; the extension removes a spent code and appends
+/// a consumption record. Two processes genuinely contend here — an AutoFill
+/// request can land while a push is writing a freshly arrived code.
+///
+/// There is deliberately **no** `NSFileCoordinator` around this. Writes are
+/// atomic, so no reader ever sees a torn file, and the only true interleaving
+/// is a lost update: the app's `replace` landing between the extension's read
+/// and write could resurrect a code the extension just spent. That window is
+/// milliseconds wide and self-correcting — the code is already marked used
+/// server-side, so the next `refresh` drops it again, and a code offered once
+/// more inside that window still fills correctly. Coordination would add a
+/// cross-process lock to the AutoFill hot path, where the extension has a hard
+/// time budget, to prevent something the server already makes idempotent.
 struct OneTimeCodeVault: Sendable {
     static let appGroupIdentifier = "group.io.lab86.mail"
 

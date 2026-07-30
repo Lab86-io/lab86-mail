@@ -6,7 +6,10 @@ const original = new Map(KEYS.map((key) => [key, process.env[key]]));
 
 beforeEach(() => {
   process.env.LAB86_OTP_CONSUME_SECRET = 'test-consume-secret';
-  process.env.LAB86_NOTIFICATION_LINK_SECRET = undefined;
+  // `delete`, not `= undefined`: assigning undefined to process.env stores the
+  // string "undefined", which is truthy and would leave the fallback secret
+  // looking configured in every test below.
+  delete process.env.LAB86_NOTIFICATION_LINK_SECRET;
 });
 
 afterEach(() => {

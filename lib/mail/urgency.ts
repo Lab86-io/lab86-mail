@@ -105,13 +105,13 @@ export function assessUrgency(
   // common way old messages reach this path, and pushing that batch would fire
   // a burst of alerts for mail the user read days ago.
   if (message.receivedAt && message.receivedAt < now - 6 * HOUR_MS) return notUrgent;
-  if (isBulkMail(message)) return notUrgent;
 
-  const text = `${message.subject || ''}\n${message.snippet || ''}\n${message.textBody || ''}`.slice(
-    0,
-    8_000,
-  );
-
+  // Checked before the bulk gate, not after. Plenty of services send
+  // verification codes through the same ESP as their marketing, so the mail
+  // carries List-Unsubscribe and an unsubscribe footer and reads as bulk on
+  // every signal available here. Suppressing those would silently drop exactly
+  // the alert this feature exists for. A message with a live code in it is
+  // transactional whatever its headers say.
   if (options.hasOneTimeCode) {
     return {
       urgent: true,
@@ -120,6 +120,14 @@ export function assessUrgency(
       needsConfirmation: false,
     };
   }
+
+  if (isBulkMail(message)) return notUrgent;
+
+  const text = `${message.subject || ''}\n${message.snippet || ''}\n${message.textBody || ''}`.slice(
+    0,
+    8_000,
+  );
+
   if (SECURITY_SIGNAL.test(text)) {
     return {
       urgent: true,
