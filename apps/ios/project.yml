@@ -126,7 +126,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Lab86MailAutoFill/Resources/Lab86MailAutoFill.entitlements
         GENERATE_INFOPLIST_FILE: false
         SUPPORTS_MACCATALYST: false
-        SKIP_INSTALL: true
 
   Lab86MailTests:
     type: bundle.unit-test
