@@ -8,6 +8,7 @@ extension Notification.Name {
     static let lab86OpenRoute = Notification.Name("io.lab86.mail.open-route")
     static let lab86NotificationAction = Notification.Name("io.lab86.mail.notification-action")
     static let lab86MailNotificationAction = Notification.Name("io.lab86.mail.mail-notification-action")
+    static let lab86OneTimeCodeAvailable = Notification.Name("io.lab86.mail.one-time-code-available")
 }
 
 enum NotificationCategoryID {
@@ -15,6 +16,7 @@ enum NotificationCategoryID {
     static let checkIn = "LAB86_CHECKIN"
     static let mail = "LAB86_MAIL"
     static let brief = "LAB86_BRIEF"
+    static let urgent = "LAB86_URGENT"
 }
 
 struct NotificationTextResponse: Codable, Equatable, Sendable {
@@ -30,7 +32,10 @@ struct NotificationTextResponse: Codable, Equatable, Sendable {
 struct MobileNotificationPreferences: Equatable, Sendable {
     var nativePushEnabled = true
     var newMailPushEnabled = true
+    var urgentMailPushEnabled = true
     var eventSuggestionPushEnabled = true
+    var oneTimeCodeAutofillEnabled = true
+    var oneTimeCodeCleanupEnabled = false
     var morningBriefEnabled = true
     var eveningCheckinEnabled = true
     var eveningCheckinLocalTime = "19:00"
@@ -131,7 +136,10 @@ final class NotificationCoordinator {
             preferences = MobileNotificationPreferences(
                 nativePushEnabled: value["nativePushEnabled"]?.boolValue ?? true,
                 newMailPushEnabled: value["newMailPushEnabled"]?.boolValue ?? true,
+                urgentMailPushEnabled: value["urgentMailPushEnabled"]?.boolValue ?? true,
                 eventSuggestionPushEnabled: value["eventSuggestionPushEnabled"]?.boolValue ?? true,
+                oneTimeCodeAutofillEnabled: value["oneTimeCodeAutofillEnabled"]?.boolValue ?? true,
+                oneTimeCodeCleanupEnabled: value["oneTimeCodeCleanupEnabled"]?.boolValue ?? false,
                 morningBriefEnabled: value["morningBriefEnabled"]?.boolValue ?? true,
                 eveningCheckinEnabled: value["eveningCheckinEnabled"]?.boolValue ?? true,
                 eveningCheckinLocalTime: value["eveningCheckinLocalTime"]?.stringValue ?? "19:00",
@@ -159,7 +167,10 @@ final class NotificationCoordinator {
             var body: [String: JSONValue] = [
                 "nativePushEnabled": .bool(value.nativePushEnabled),
                 "newMailPushEnabled": .bool(value.newMailPushEnabled),
+                "urgentMailPushEnabled": .bool(value.urgentMailPushEnabled),
                 "eventSuggestionPushEnabled": .bool(value.eventSuggestionPushEnabled),
+                "oneTimeCodeAutofillEnabled": .bool(value.oneTimeCodeAutofillEnabled),
+                "oneTimeCodeCleanupEnabled": .bool(value.oneTimeCodeCleanupEnabled),
                 "morningBriefEnabled": .bool(value.morningBriefEnabled),
                 "eveningCheckinEnabled": .bool(value.eveningCheckinEnabled),
                 "eveningCheckinLocalTime": .string(value.eveningCheckinLocalTime),
@@ -273,7 +284,16 @@ final class NotificationCoordinator {
             actions: [openBrief],
             intentIdentifiers: []
         )
-        UNUserNotificationCenter.current().setNotificationCategories([commitment, checkIn, mail, brief])
+        // Urgent mail offers the same actions as ordinary mail. What differs is
+        // the interruption level the server sets on it, not what can be done
+        // from the banner.
+        let urgent = UNNotificationCategory(
+            identifier: NotificationCategoryID.urgent,
+            actions: [reply, markRead, archive],
+            intentIdentifiers: []
+        )
+        UNUserNotificationCenter.current()
+            .setNotificationCategories([commitment, checkIn, mail, brief, urgent])
     }
 
     private static var pushEnvironment: String {

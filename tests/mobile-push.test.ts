@@ -229,6 +229,35 @@ describe('mobile notification preferences', () => {
     timezone: 'America/New_York',
   };
 
+  test('defaults the newer flags so an older app build can still save', () => {
+    const parsed = parseMobileNotificationPreferences(validPreferences);
+    expect(parsed.urgentMailPushEnabled).toBe(true);
+    expect(parsed.oneTimeCodeAutofillEnabled).toBe(true);
+    // Cleanup deletes mail, so it is the one that stays off until asked for.
+    expect(parsed.oneTimeCodeCleanupEnabled).toBe(false);
+  });
+
+  test('rejects a non-boolean value for a newer flag rather than coercing it', () => {
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, urgentMailPushEnabled: 'yes' }),
+    ).toThrow('urgentMailPushEnabled must be a boolean.');
+    expect(() =>
+      parseMobileNotificationPreferences({ ...validPreferences, oneTimeCodeCleanupEnabled: 1 }),
+    ).toThrow('oneTimeCodeCleanupEnabled must be a boolean.');
+  });
+
+  test('honours the newer flags when the client does send them', () => {
+    const parsed = parseMobileNotificationPreferences({
+      ...validPreferences,
+      urgentMailPushEnabled: false,
+      oneTimeCodeAutofillEnabled: false,
+      oneTimeCodeCleanupEnabled: true,
+    });
+    expect(parsed.urgentMailPushEnabled).toBe(false);
+    expect(parsed.oneTimeCodeAutofillEnabled).toBe(false);
+    expect(parsed.oneTimeCodeCleanupEnabled).toBe(true);
+  });
+
   test('validates the complete account-level native preference contract', () => {
     expect(
       parseMobileNotificationPreferences({

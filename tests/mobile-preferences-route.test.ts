@@ -100,6 +100,11 @@ describe('mobile preferences route', () => {
     expect(deps.convexMutation.mock.calls[0][1]).toEqual({
       userId: user.userId,
       ...located,
+      // Defaulted rather than sent: an app build predating these settings must
+      // still be able to save the ones it does know about.
+      urgentMailPushEnabled: true,
+      oneTimeCodeAutofillEnabled: true,
+      oneTimeCodeCleanupEnabled: false,
     });
   });
 

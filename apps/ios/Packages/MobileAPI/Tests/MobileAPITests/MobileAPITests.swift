@@ -125,6 +125,66 @@ func briefDocumentPreservesBoundedEditorialFootprints() throws {
 }
 
 @Test
+func briefDocumentDecodesCrossClientToolNodes() throws {
+    let data = Data(
+        """
+        {"version":2,"title":"Tool brief","summary":"Rich tools.","generatedAt":1,
+         "regions":[{"id":"tools","summary":"Grounded tools.","tree":{"kind":"stack","children":[
+           {"kind":"data_table","title":"Builds","columns":[{"key":"build","label":"Build","format":"number"}],
+            "rows":[{"build":85}],"sourceRefs":[{"kind":"mcp","id":"builds"}]},
+           {"kind":"progress","title":"Release","steps":[{"id":"ship","label":"Ship","status":"in-progress"}],
+            "sourceRefs":[{"kind":"mcp","id":"release"}]},
+           {"kind":"weather","title":"Lake weather","location":"Lake George","latitude":43.42,"longitude":-73.71,
+            "timezone":"America/New_York","unit":"fahrenheit",
+            "current":{"conditionCode":"clear","temperature":78,"tempMin":61,"tempMax":81},
+            "hourly":[{"label":"9 AM","conditionCode":"clear","temperature":72}],
+            "daily":[{"label":"Today","conditionCode":"clear","tempMin":61,"tempMax":81}],
+            "source":"Apple Weather","attributionURL":"https://weatherkit.apple.com/legal-attribution.html",
+            "sourceRefs":[{"kind":"mcp","id":"weather"}]},
+           {"kind":"plan","title":"Runway","items":[{"id":"focus","label":"Focus","status":"in_progress",
+            "ref":{"kind":"task","id":"task-1"}}],"actions":[],"sourceRefs":[{"kind":"task","id":"task-1"}]},
+           {"kind":"email_preview","channel":"email","title":"Confirm","sender":"Maya","recipients":["Jakob"],"snippet":"Confirm the date.",
+            "attachmentCount":1,"messageCount":2,"ref":{"kind":"thread","id":"thread-1","account":"mail@example.com"},
+            "actions":[],"sourceRefs":[{"kind":"thread","id":"thread-1","account":"mail@example.com"}]},
+           {"kind":"decision","title":"Path","options":[
+              {"id":"stage","label":"Stage","action":{"action":"open_view","label":"Open","payload":{}}},
+              {"id":"hold","label":"Hold","action":{"action":"open_view","label":"Hold","payload":{}}}],
+            "sourceRefs":[{"kind":"mcp","id":"decision"}]},
+           {"kind":"citations","title":"Sources","citations":[
+              {"id":"one","href":"https://example.com","title":"Source","type":"document"}],
+            "sourceRefs":[{"kind":"mcp","id":"sources"}]},
+           {"kind":"geo_map","title":"Lake","markers":[{"id":"lake","lat":43.42,"lng":-73.71,"label":"Lake"}],
+            "routes":[],"sourceRefs":[{"kind":"event","id":"event-1"}]},
+           {"kind":"code_diff","title":"Change","filename":"Push.swift","language":"swift",
+            "oldCode":"false","newCode":"true","sourceRefs":[{"kind":"mcp","id":"diff"}]},
+           {"kind":"terminal","title":"Build","command":"xcodebuild test","stdout":"TEST SUCCEEDED","stderr":"",
+            "exitCode":0,"truncated":false,"sourceRefs":[{"kind":"mcp","id":"terminal"}]}
+         ]}}]}
+        """.utf8
+    )
+
+    let document = try #require(BriefDocumentV2.decode(data))
+    let children = try #require(document.regions.first?.tree.children)
+    #expect(children.map(\.kind) == [
+        "data_table", "progress", "weather", "plan", "email_preview",
+        "decision", "citations", "geo_map", "code_diff", "terminal",
+    ])
+    #expect(children[0].tableColumns?.first?.key == "build")
+    #expect(children[0].tableRows?.first?["build"]?.doubleValue == 85)
+    #expect(children[1].progressSteps?.first?.status == "in-progress")
+    #expect(children[2].weatherCurrent?.conditionCode == "clear")
+    #expect(children[2].attributionURL?.host == "weatherkit.apple.com")
+    #expect(children[3].planItems?.first?.ref?.id == "task-1")
+    #expect(children[4].previewRef?.id == "thread-1")
+    #expect(children[4].channel == "email")
+    #expect(children[5].decisionOptions?.count == 2)
+    #expect(children[6].citations?.first?.title == "Source")
+    #expect(children[7].mapMarkers?.first?.lat == 43.42)
+    #expect(children[8].filename == "Push.swift")
+    #expect(children[9].exitCode == 0)
+}
+
+@Test
 func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601

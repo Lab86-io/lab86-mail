@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(Clerk.self) private var clerk
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showsAuthentication = false
     @State private var authenticationRetry = 0
     @State private var onboardingCompletedOwners: Set<String> = []
@@ -31,8 +32,26 @@ struct RootView: View {
             }
         }
         .task(id: environment.sessionStore.ownerID) {
-            guard environment.sessionStore.ownerID != nil else { return }
+            guard environment.sessionStore.ownerID != nil else {
+                // Codes belong to the account that received them, so signing
+                // out has to take them off the keyboard as well as out of the
+                // vault.
+                await environment.oneTimeCodes.clear()
+                return
+            }
             await environment.notifications.activateForSignedInUser()
+            await environment.oneTimeCodes.refresh()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Refreshing on foreground is what keeps AutoFill current on a
+            // build that receives no push, and it covers the ordinary case
+            // where a code arrived while the app was suspended.
+            guard phase == .active, environment.sessionStore.ownerID != nil else { return }
+            Task { await environment.oneTimeCodes.refresh() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lab86OneTimeCodeAvailable)) { _ in
+            guard environment.sessionStore.ownerID != nil else { return }
+            Task { await environment.oneTimeCodes.refresh() }
         }
     }
 

@@ -31,6 +31,10 @@ describe('Brief Document v2', () => {
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('exact thread id and');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('data_table');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('progress');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('email_preview');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('geo_map');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('code_diff');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('data.weather');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('four Xcode Cloud builds');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('never a request for artificial empty height');
   });
@@ -266,6 +270,125 @@ describe('Brief Document v2', () => {
     expect(json).not.toContain('"kind":"data_table"');
     expect(json).not.toContain('"kind":"progress"');
     expect(json).toContain('No valid evidence.');
+  });
+
+  test('repairs the cross-client source-grounded Tool UI vocabulary', () => {
+    const sourceRefs = [{ kind: 'mcp', id: 'grounded-tool-data' }];
+    const action = { action: 'open_view', label: 'Open', payload: { view: 'inbox' }, style: 'secondary' };
+    const repaired = parseBriefDocument({
+      ...quietBriefDocumentFixture,
+      regions: [
+        {
+          id: 'tool-ui',
+          summary: 'Grounded tools.',
+          tree: {
+            kind: 'stack',
+            children: [
+              {
+                kind: 'weather',
+                title: 'Lake weather',
+                location: 'Lake George, New York',
+                latitude: 43.4262,
+                longitude: -73.7123,
+                timezone: 'America/New_York',
+                unit: 'fahrenheit',
+                current: {
+                  conditionCode: 'clear',
+                  temperature: 78,
+                  tempMin: 61,
+                  tempMax: 81,
+                  humidity: 52,
+                },
+                hourly: [{ label: '9 AM', conditionCode: 'clear', temperature: 72 }],
+                daily: [{ label: 'Today', conditionCode: 'clear', tempMin: 61, tempMax: 81 }],
+                source: 'Apple Weather',
+                attributionURL: 'https://weatherkit.apple.com/legal-attribution.html',
+                sourceRefs,
+              },
+              {
+                kind: 'plan',
+                title: 'Today’s runway',
+                items: [{ id: 'focus', label: 'One hour of Card Hunt', status: 'in_progress', action }],
+                actions: [],
+                sourceRefs,
+              },
+              {
+                kind: 'email_preview',
+                title: 'Launch decision',
+                sender: 'Maya',
+                recipients: ['Jakob'],
+                snippet: 'Can we confirm the launch date?',
+                ref: { kind: 'thread', id: 'thread-1', account: 'jakob@example.com' },
+                actions: [action],
+                sourceRefs,
+              },
+              {
+                kind: 'decision',
+                title: 'Choose a release path',
+                options: [
+                  { id: 'stage', label: 'Stage first', action },
+                  { id: 'hold', label: 'Hold', action: { ...action, label: 'Hold' } },
+                ],
+                sourceRefs,
+              },
+              {
+                kind: 'citations',
+                title: 'Sources',
+                citations: [
+                  {
+                    id: 'source',
+                    href: 'https://example.com/release',
+                    title: 'Release notes',
+                    type: 'document',
+                  },
+                ],
+                sourceRefs,
+              },
+              {
+                kind: 'geo_map',
+                title: 'Lake plan',
+                markers: [{ id: 'lake', lat: 43.4262, lng: -73.7123, label: 'Lake George' }],
+                routes: [],
+                sourceRefs,
+              },
+              {
+                kind: 'code_diff',
+                title: 'Notification change',
+                filename: 'Push.swift',
+                language: 'swift',
+                oldCode: 'let enabled = false',
+                newCode: 'let enabled = true',
+                sourceRefs,
+              },
+              {
+                kind: 'terminal',
+                title: 'Build verification',
+                command: 'xcodebuild test',
+                stdout: 'TEST SUCCEEDED',
+                exitCode: 0,
+                sourceRefs,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const json = JSON.stringify(repaired);
+    for (const kind of [
+      'weather',
+      'plan',
+      'email_preview',
+      'decision',
+      'citations',
+      'geo_map',
+      'code_diff',
+      'terminal',
+    ]) {
+      expect(json).toContain(`"kind":"${kind}"`);
+    }
+    expect(json).toContain('"conditionCode":"clear"');
+    expect(json).toContain('"status":"in_progress"');
+    expect(json).toContain('weatherkit.apple.com');
   });
 });
 

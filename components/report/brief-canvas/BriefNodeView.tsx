@@ -1,12 +1,29 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, Circle, CircleCheck, Clock3, ImageIcon } from 'lucide-react';
+import {
+  ChevronDown,
+  Circle,
+  CircleCheck,
+  Clock3,
+  ImageIcon,
+  Mail,
+  MessageSquare,
+  Paperclip,
+  Users,
+} from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { Chart } from '@/components/tool-ui/chart';
+import { CitationList } from '@/components/tool-ui/citation';
+import { CodeDiff } from '@/components/tool-ui/code-diff';
 import { type Column, DataTable, type DataTableRowData } from '@/components/tool-ui/data-table';
+import { OptionList } from '@/components/tool-ui/option-list';
+import { Plan } from '@/components/tool-ui/plan';
 import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
 import { StatsDisplay } from '@/components/tool-ui/stats-display';
+import { Terminal } from '@/components/tool-ui/terminal';
+import { WeatherWidget } from '@/components/tool-ui/weather-widget/runtime';
 import { Button } from '@/components/ui/button';
 import { Markdown } from '@/components/ui/markdown';
 import { briefQueryKeys, briefRefKey } from '@/lib/brief/hydration';
@@ -23,6 +40,15 @@ import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
 import { BriefCanvasLeaf } from './BriefCanvasLeaf';
 import type { BriefActionPayload } from './brief-action-runtime';
+
+const BriefGeoMap = dynamic(() => import('@/components/tool-ui/geo-map').then((module) => module.GeoMap), {
+  ssr: false,
+  loading: () => (
+    <div className="grid h-[320px] place-items-center rounded-lg border text-sm text-[var(--color-text-muted)]">
+      Loading map…
+    </div>
+  ),
+});
 
 export interface BriefNodeContext {
   entities: Map<string, BriefHydratedEntity>;
@@ -257,23 +283,7 @@ function BriefLeaf({
     case 'stat':
       return <BriefStat node={node} topLevel={topLevel} />;
     case 'chart':
-      return (
-        <Chart
-          id={node.id ?? `brief-chart-${node.title}`}
-          type={node.variant === 'line' ? 'line' : 'bar'}
-          title={node.title}
-          description={node.description}
-          data={node.data.map((point) => ({ label: point.label, value: point.value }))}
-          xKey="label"
-          series={[{ key: 'value', label: node.title }]}
-          showGrid={node.variant !== 'donut'}
-          className={cn(
-            'min-w-0 max-w-none gap-3 py-4 shadow-none [&_[data-slot=card-content]]:px-4 [&_[data-slot=card-header]]:px-4',
-            topLevel &&
-              'border-0 bg-transparent py-0 [&_[data-slot=card-content]]:px-0 [&_[data-slot=card-header]]:px-0',
-          )}
-        />
-      );
+      return <BriefChart node={node} topLevel={topLevel} />;
     case 'data_table':
       return <BriefDataTable node={node} topLevel={topLevel} />;
     case 'progress':
@@ -292,6 +302,109 @@ function BriefLeaf({
             steps={node.steps}
             surface={topLevel ? 'bare' : 'card'}
             className={cn('min-w-0 max-w-none', topLevel && '[&[data-slot=progress-tracker]]:max-w-none')}
+          />
+        </section>
+      );
+    case 'weather':
+      return (
+        <section className={cn('space-y-2', !topLevel && nodeClass(node))}>
+          <WeatherWidget
+            version="3.1"
+            id={node.id ?? `brief-weather-${node.location}`}
+            location={{ name: node.location }}
+            units={{ temperature: node.unit }}
+            current={{
+              conditionCode: node.current.conditionCode,
+              temperature: node.current.temperature,
+              tempMin: node.current.tempMin,
+              tempMax: node.current.tempMax,
+              windSpeed: node.current.windSpeed,
+              visibility: node.current.visibility,
+            }}
+            forecast={node.daily.map((day) => ({
+              label: day.label,
+              conditionCode: day.conditionCode,
+              tempMin: day.tempMin,
+              tempMax: day.tempMax,
+            }))}
+            time={{}}
+            effects={{ quality: 'auto' }}
+            className="max-w-none"
+          />
+          <a
+            href={node.attributionURL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-8 items-center text-xs text-[var(--color-text-muted)] underline-offset-4 hover:underline"
+          >
+            Weather data by {node.source}
+          </a>
+        </section>
+      );
+    case 'plan':
+      return <BriefPlan node={node} context={context} topLevel={topLevel} />;
+    case 'email_preview':
+      return <BriefEmailPreview node={node} context={context} />;
+    case 'decision':
+      return <BriefDecision node={node} context={context} />;
+    case 'citations':
+      return (
+        <section className={cn('space-y-3', !topLevel && nodeClass(node))}>
+          {node.title ? <h3 className="font-display text-lg font-semibold">{node.title}</h3> : null}
+          <CitationList
+            id={node.id ?? 'brief-citations'}
+            citations={node.citations}
+            maxVisible={6}
+            className="max-w-none"
+          />
+        </section>
+      );
+    case 'geo_map':
+      return (
+        <div data-slot="brief-geo-map">
+          <BriefGeoMap
+            id={node.id ?? `brief-map-${node.title}`}
+            title={node.title}
+            description={node.description}
+            markers={node.markers.map((marker) => ({ ...marker, tooltip: 'hover' }))}
+            routes={node.routes}
+            viewport={{ mode: 'fit', target: 'all', padding: 36, maxZoom: 14 }}
+            className={cn('min-w-0', !topLevel && nodeClass(node))}
+          />
+        </div>
+      );
+    case 'code_diff':
+      return (
+        <section className={cn('space-y-3', !topLevel && nodeClass(node))}>
+          <h3 className="font-display text-lg font-semibold">{node.title}</h3>
+          <CodeDiff
+            id={node.id ?? `brief-diff-${node.filename}`}
+            filename={node.filename}
+            language={node.language}
+            oldCode={node.oldCode}
+            newCode={node.newCode}
+            lineNumbers="visible"
+            diffStyle="unified"
+            maxCollapsedLines={18}
+            className="max-w-none"
+          />
+        </section>
+      );
+    case 'terminal':
+      return (
+        <section className={cn('space-y-3', !topLevel && nodeClass(node))}>
+          <h3 className="font-display text-lg font-semibold">{node.title}</h3>
+          <Terminal
+            id={node.id ?? `brief-terminal-${node.title}`}
+            command={node.command}
+            stdout={node.stdout}
+            stderr={node.stderr}
+            exitCode={node.exitCode}
+            durationMs={node.durationMs}
+            cwd={node.cwd}
+            truncated={node.truncated}
+            maxCollapsedLines={18}
+            className="max-w-none"
           />
         </section>
       );
@@ -450,6 +563,204 @@ function BriefLeaf({
         />
       );
   }
+}
+
+function BriefChart({
+  node,
+  topLevel,
+}: {
+  node: Extract<BriefContentLeaf, { kind: 'chart' }>;
+  topLevel: boolean;
+}) {
+  const groups = [...new Set(node.data.flatMap((point) => (point.group ? [point.group] : [])))];
+  const grouped = groups.length > 0 && node.variant !== 'donut';
+  const series = grouped
+    ? groups.map((group, index) => ({ key: `series_${index}`, label: group }))
+    : [{ key: 'value', label: node.title }];
+  const data = grouped
+    ? [...new Set(node.data.map((point) => point.label))].map((label) => ({
+        label,
+        ...Object.fromEntries(
+          groups.map((group, index) => [
+            `series_${index}`,
+            node.data.find((point) => point.label === label && point.group === group)?.value ?? null,
+          ]),
+        ),
+      }))
+    : node.data.map((point) => ({ label: point.label, value: point.value }));
+
+  return (
+    <Chart
+      id={node.id ?? `brief-chart-${node.title}`}
+      type={node.variant}
+      title={node.title}
+      description={node.description}
+      data={data}
+      xKey="label"
+      series={series}
+      showLegend={grouped || node.variant === 'donut'}
+      showGrid={!['donut'].includes(node.variant)}
+      className={cn(
+        'min-w-0 max-w-none gap-3 py-4 shadow-none [&_[data-slot=card-content]]:px-4 [&_[data-slot=card-header]]:px-4',
+        topLevel &&
+          'border-0 bg-transparent py-0 [&_[data-slot=card-content]]:px-0 [&_[data-slot=card-header]]:px-0',
+      )}
+    />
+  );
+}
+
+function BriefPlan({
+  node,
+  context,
+  topLevel,
+}: {
+  node: Extract<BriefContentLeaf, { kind: 'plan' }>;
+  context: BriefNodeContext;
+  topLevel: boolean;
+}) {
+  return (
+    <section className={cn('space-y-3', !topLevel && nodeClass(node))}>
+      <Plan
+        id={node.id ?? `brief-plan-${node.title}`}
+        title={node.title}
+        description={node.description}
+        todos={node.items.map((item) => ({
+          id: item.id,
+          label: item.label,
+          description: item.description,
+          status: item.status,
+        }))}
+        maxVisibleTodos={8}
+        className="max-w-none"
+      />
+      {node.items.some((item) => item.action) ? (
+        <div className="divide-y divide-[var(--color-border)]">
+          {node.items.flatMap((item) =>
+            item.action ? (
+              <div
+                key={`${item.id}:${item.action.action}`}
+                className="flex items-center justify-between gap-3 py-2"
+              >
+                <span className="min-w-0 truncate text-xs text-[var(--color-text-muted)]">{item.label}</span>
+                <BriefActions
+                  actions={[item.action]}
+                  sourceRef={item.ref}
+                  compact
+                  onAction={(action, payload) => context.onAction(action, payload, item.ref)}
+                />
+              </div>
+            ) : (
+              []
+            ),
+          )}
+        </div>
+      ) : null}
+      <BriefActions
+        actions={node.actions}
+        compact
+        onAction={(action, payload) => context.onAction(action, payload, node.sourceRefs[0])}
+      />
+    </section>
+  );
+}
+
+function BriefEmailPreview({
+  node,
+  context,
+}: {
+  node: Extract<BriefContentLeaf, { kind: 'email_preview' }>;
+  context: BriefNodeContext;
+}) {
+  return (
+    <article
+      data-slot="brief-email-preview"
+      className={cn(
+        'overflow-hidden rounded-2xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+        nodeClass(node),
+      )}
+    >
+      <header className="flex items-start gap-3 border-b border-[var(--color-border)] px-4 py-3">
+        <div className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--color-bg-muted)]">
+          {node.channel === 'slack' ? (
+            <MessageSquare className="size-4 text-[var(--color-accent)]" />
+          ) : (
+            <Mail className="size-4 text-[var(--color-accent)]" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-display text-base font-semibold">{node.title}</h3>
+          <p className="truncate text-xs text-[var(--color-text-muted)]">{node.sender}</p>
+        </div>
+        {node.sentAt ? (
+          <time className="shrink-0 text-[11px] text-[var(--color-text-muted)]">
+            {formatBriefTime(node.sentAt)}
+          </time>
+        ) : null}
+      </header>
+      <div className="space-y-3 px-4 py-4">
+        <p className="line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed">{node.snippet}</p>
+        <div className="flex flex-wrap gap-3 text-[11px] text-[var(--color-text-muted)]">
+          {node.recipients.length ? (
+            <span className="inline-flex items-center gap-1">
+              <Users className="size-3.5" />
+              {node.recipients.slice(0, 2).join(', ')}
+            </span>
+          ) : null}
+          {node.attachmentCount ? (
+            <span className="inline-flex items-center gap-1">
+              <Paperclip className="size-3.5" />
+              {node.attachmentCount} attachment{node.attachmentCount === 1 ? '' : 's'}
+            </span>
+          ) : null}
+          {node.messageCount > 1 ? <span>{node.messageCount} messages</span> : null}
+        </div>
+        <BriefActions
+          actions={node.actions}
+          sourceRef={node.ref}
+          onAction={(action, payload) => context.onAction(action, payload, node.ref)}
+        />
+      </div>
+    </article>
+  );
+}
+
+function BriefDecision({
+  node,
+  context,
+}: {
+  node: Extract<BriefContentLeaf, { kind: 'decision' }>;
+  context: BriefNodeContext;
+}) {
+  const [selection, setSelection] = useState<string | null>(null);
+  const selected = node.options.find((option) => option.id === selection);
+  return (
+    <section className={cn('space-y-3', nodeClass(node))}>
+      <div>
+        <h3 className="font-display text-lg font-semibold">{node.title}</h3>
+        {node.description ? (
+          <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">{node.description}</p>
+        ) : null}
+      </div>
+      <OptionList
+        id={node.id ?? `brief-decision-${node.title}`}
+        options={node.options.map(({ id, label, description }) => ({ id, label, description }))}
+        selectionMode="single"
+        value={selection}
+        onChange={(value) => setSelection(typeof value === 'string' ? value : null)}
+        hideActions
+        density="compact"
+      />
+      {selected ? (
+        <BriefActions
+          actions={[selected.action]}
+          sourceRef={node.sourceRefs[0]}
+          onAction={(action, payload) => context.onAction(action, payload, node.sourceRefs[0])}
+        />
+      ) : (
+        <p className="text-xs text-[var(--color-text-muted)]">Choose an option to review the next action.</p>
+      )}
+    </section>
+  );
 }
 
 type EntityRow = {

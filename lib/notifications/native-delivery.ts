@@ -24,8 +24,14 @@ interface NativeDeliveryContext {
   preference?: {
     nativePushEnabled?: boolean;
     newMailPushEnabled?: boolean;
+    urgentMailPushEnabled?: boolean;
     eventSuggestionPushEnabled?: boolean;
   } | null;
+}
+
+export interface NativeDeliveryOptions {
+  /** Marks the push so the woken app refreshes one-time codes on arrival. */
+  codeAvailable?: true;
 }
 
 interface NativeDeliveryDependencies {
@@ -44,6 +50,7 @@ export async function dispatchNativeNotification(
   userId: string,
   notificationId: string,
   dependencies: NativeDeliveryDependencies = defaultDependencies,
+  options: NativeDeliveryOptions = {},
 ) {
   const context = await dependencies.query<NativeDeliveryContext | null>(
     (api as any).albatrossNotifications.nativeDeliveryContext,
@@ -85,6 +92,7 @@ export async function dispatchNativeNotification(
     title: context.notification.title,
     body: context.notification.body,
     deepLink: context.notification.deepLink,
+    ...(options.codeAvailable ? ({ codeAvailable: true } as const) : {}),
   };
   let sent = 0;
   let failed = 0;

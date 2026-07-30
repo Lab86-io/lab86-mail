@@ -249,6 +249,9 @@ const ACCOUNT_BULK_TABLES = [
   'mailCorpusThreads',
   'mailCorpusMessages',
   'mailWebhookEvents',
+  // One-time codes are live authentication secrets. They expire on their own,
+  // but a disconnected account's codes must not outlive the disconnection.
+  'mailOneTimeCodes',
   'calendarEvents',
   'calendarEventCorpus',
   'areaArtifactLinks',
