@@ -187,7 +187,7 @@ struct BriefPlanNodeView: View {
                 HStack(alignment: .top, spacing: 11) {
                     VStack(spacing: 4) {
                         Image(systemName: planSymbol(item.status))
-                            .foregroundStyle(item.status == "in_progress" ? .tint : .secondary)
+                            .foregroundStyle(item.status == "in_progress" ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                         if index < (node.planItems?.count ?? 0) - 1 {
                             Rectangle().fill(.quaternary).frame(width: 1, height: 34)
                         }
@@ -283,7 +283,7 @@ struct BriefDecisionNodeView: View {
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: selectedID == option.id ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(selectedID == option.id ? .tint : .secondary)
+                            .foregroundStyle(selectedID == option.id ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(option.label).font(.subheadline.weight(.medium))
                             if let description = option.description {
