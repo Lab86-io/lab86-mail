@@ -11,6 +11,10 @@
 	<true/>
 	<!-- Shared with the AutoFill extension, which reads one-time codes the app
 	     has already fetched. -->
+	<!-- Required on the host app as well as the extension: App Store validation
+	     rejects the bundle if either is missing it (error 90729). -->
+	<key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.io.lab86.mail</string>
