@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { pickAccountForGrant } from '../lib/mail/grant-account';
 import { internal } from './_generated/api';
 import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -89,26 +90,14 @@ export const getConnectedAccountByGrant = query({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    // Deliberately not `.unique()`. That throws when a grant maps to more than
-    // one row, and this query is the first thing every inbound webhook does —
-    // so a single duplicated row silently killed all mail ingest for that
-    // mailbox, indefinitely, while the sync state still read "ready". A
-    // duplicate is a data problem worth fixing, but it must not be able to
-    // freeze someone's mailbox.
-    //
-    // `by_grant` is a global index, so the duplicate need not even belong to
-    // the same user. A connected row always wins; otherwise take the newest,
-    // so a stale disconnected row cannot shadow a live one.
+    // Deliberately not `.unique()`: it throws when a grant matches more than
+    // one row, and this is the first thing every inbound webhook does. See
+    // pickAccountForGrant for why that mattered.
     const rows = await ctx.db
       .query('connectedAccounts')
       .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
       .collect();
-    if (rows.length <= 1) return rows[0] ?? null;
-    const connected = rows.filter((row) => row.status === 'connected');
-    const candidates = connected.length ? connected : rows;
-    return candidates.reduce((newest, row) =>
-      (row.createdAt ?? 0) > (newest.createdAt ?? 0) ? row : newest,
-    );
+    return pickAccountForGrant(rows);
   },
 });
 

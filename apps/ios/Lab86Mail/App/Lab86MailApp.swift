@@ -55,18 +55,14 @@ struct Lab86MailApp: App {
                     guard let token = notification.object as? Data else { return }
                     Task { await environment.notifications.register(deviceToken: token) }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: .lab86OpenRoute)) { notification in
-                    guard let route = notification.object as? String else { return }
-                    environment.navigation.open(route: route)
+                .onReceive(NotificationCenter.default.publisher(for: .lab86NotificationRequest)) { _ in
+                    environment.navigation.consumeAppIntentRequests()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .lab86NotificationAction)) { notification in
                     guard let input = notification.object as? [String: String],
                           let suggestionId = input["suggestionId"],
                           let action = input["action"] else { return }
-                    Task {
-                        await environment.store.actOnSuggestion(id: suggestionId, action: action)
-                        if let route = input["route"] { environment.navigation.open(route: route) }
-                    }
+                    Task { await environment.store.actOnSuggestion(id: suggestionId, action: action) }
                 }
                 .onContinueUserActivity(CSSearchableItemActionType) { activity in
                     guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
