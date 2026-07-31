@@ -43,6 +43,15 @@ export function webhookQueueDepth() {
   return { queued: queue.length, active };
 }
 
+// The sampling counters are process-global on purpose, which makes them shared
+// state between tests. Clearing them keeps each test's assertion about "the
+// first occurrence" true rather than dependent on what ran before it.
+export function __resetWebhookSamplingForTest() {
+  failureReasons.clear();
+  ingestFailures = 0;
+  dropped = 0;
+}
+
 function pump() {
   while (active < CONCURRENCY && queue.length) {
     const payload = queue.shift();
