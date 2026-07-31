@@ -85,7 +85,9 @@ describe('webhook queue failure reporting', () => {
         await settle();
       };
       const linesForFirstReason = () =>
-        errors.mock.calls.map((call) => String(call[0])).filter((line) => line.endsWith('reason for delivery 1'));
+        errors.mock.calls
+          .map((call) => String(call[0]))
+          .filter((line) => line.endsWith('reason for delivery 1'));
 
       // Fill the table exactly, then show the first reason is still counted.
       // An implementation that gave up early would report it as new here.
