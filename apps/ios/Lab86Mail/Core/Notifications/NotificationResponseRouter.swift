@@ -112,6 +112,11 @@ enum NotificationResponseRouter {
         NotificationActionID.mailReply,
     ]
 
+    private static let suggestionActionIdentifiers: Set<String> = [
+        NotificationActionID.addToCalendar,
+        NotificationActionID.dismiss,
+    ]
+
     static func plan(for input: NotificationResponseInput) -> NotificationResponsePlan {
         let route = input.route ?? input.deepLink ?? fallbackRoute
         let text = input.userText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -147,8 +152,7 @@ enum NotificationResponseRouter {
         }
         var plan = NotificationResponsePlan()
         if let suggestionID = input.suggestionID,
-           input.actionIdentifier == NotificationActionID.addToCalendar
-            || input.actionIdentifier == NotificationActionID.dismiss {
+           suggestionActionIdentifiers.contains(input.actionIdentifier) {
             plan.suggestion = SuggestionDecision(
                 suggestionID: suggestionID,
                 action: input.actionIdentifier == NotificationActionID.addToCalendar ? "accept" : "dismiss"
