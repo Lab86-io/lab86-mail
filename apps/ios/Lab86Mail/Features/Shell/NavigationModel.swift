@@ -333,15 +333,22 @@ final class NavigationModel {
         }
     }
 
+    // A notification tap and a Siri deep link both write the route down before
+    // announcing it, because the tap that launches the app has nobody to
+    // announce to. Reading it here, once, is what makes either arrival open the
+    // destination exactly one time.
+    func consumePendingDeepLink(defaults: UserDefaults = .standard) {
+        guard let route = defaults.string(forKey: "pendingAlbatrossDeepLink") else { return }
+        defaults.removeObject(forKey: "pendingAlbatrossDeepLink")
+        open(route: route)
+    }
+
     func consumeAppIntentRequests(defaults: UserDefaults = .standard) {
         if defaults.string(forKey: "pendingAlbatrossRoute") == "today" {
             defaults.removeObject(forKey: "pendingAlbatrossRoute")
             selectPrimary(.today)
         }
-        if let route = defaults.string(forKey: "pendingAlbatrossDeepLink") {
-            defaults.removeObject(forKey: "pendingAlbatrossDeepLink")
-            open(route: route)
-        }
+        consumePendingDeepLink(defaults: defaults)
         if let query = defaults.string(forKey: "pendingAlbatrossMailSearch") {
             defaults.removeObject(forKey: "pendingAlbatrossMailSearch")
             selectPrimary(.mail)

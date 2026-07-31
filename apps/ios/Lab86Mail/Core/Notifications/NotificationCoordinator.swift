@@ -243,31 +243,47 @@ final class NotificationCoordinator {
     }
 
     static func configureCategories() {
-        let add = UNNotificationAction(identifier: "ADD_TO_CALENDAR", title: "Add to Calendar", options: [.foreground])
-        let view = UNNotificationAction(identifier: "VIEW", title: "View Email", options: [.foreground])
-        let dismiss = UNNotificationAction(identifier: "DISMISS", title: "Dismiss", options: [.foreground, .destructive])
+        let add = UNNotificationAction(
+            identifier: NotificationActionID.addToCalendar,
+            title: "Add to Calendar",
+            options: [.foreground]
+        )
+        let view = UNNotificationAction(
+            identifier: NotificationActionID.view,
+            title: "View Email",
+            options: [.foreground]
+        )
+        let dismiss = UNNotificationAction(
+            identifier: NotificationActionID.dismiss,
+            title: "Dismiss",
+            options: [.foreground, .destructive]
+        )
         let commitment = UNNotificationCategory(
             identifier: NotificationCategoryID.commitment,
             actions: [add, view, dismiss],
             intentIdentifiers: []
         )
         let answer = UNTextInputNotificationAction(
-            identifier: "ANSWER_CHECKIN",
+            identifier: NotificationActionID.answerCheckIn,
             title: "Reply",
             options: [],
             textInputButtonTitle: "Send",
             textInputPlaceholder: "Type or dictate your answer"
         )
-        let later = UNNotificationAction(identifier: "CHECKIN_LATER", title: "Later")
+        let later = UNNotificationAction(identifier: NotificationActionID.checkInLater, title: "Later")
         let checkIn = UNNotificationCategory(
             identifier: NotificationCategoryID.checkIn,
             actions: [answer, later],
             intentIdentifiers: []
         )
-        let markRead = UNNotificationAction(identifier: "MAIL_MARK_READ", title: "Mark Read")
-        let archive = UNNotificationAction(identifier: "MAIL_ARCHIVE", title: "Archive", options: [.destructive])
+        let markRead = UNNotificationAction(identifier: NotificationActionID.mailMarkRead, title: "Mark Read")
+        let archive = UNNotificationAction(
+            identifier: NotificationActionID.mailArchive,
+            title: "Archive",
+            options: [.destructive]
+        )
         let reply = UNTextInputNotificationAction(
-            identifier: "MAIL_REPLY",
+            identifier: NotificationActionID.mailReply,
             title: "Reply",
             options: [],
             textInputButtonTitle: "Send",
@@ -278,7 +294,11 @@ final class NotificationCoordinator {
             actions: [reply, markRead, archive],
             intentIdentifiers: []
         )
-        let openBrief = UNNotificationAction(identifier: "OPEN_BRIEF", title: "Open Brief", options: [.foreground])
+        let openBrief = UNNotificationAction(
+            identifier: NotificationActionID.openBrief,
+            title: "Open Brief",
+            options: [.foreground]
+        )
         let brief = UNNotificationCategory(
             identifier: NotificationCategoryID.brief,
             actions: [openBrief],

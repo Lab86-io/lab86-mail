@@ -1,7 +1,15 @@
 import UIKit
 import UserNotifications
 
-final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+// UNUserNotificationCenterDelegate is imported without isolation, so an async
+// method that satisfies it completes wherever its task ends. The compiler then
+// calls the Objective-C completion handler from there, and UIKit does real work
+// inside that handler — it updates the state-restoration archive and the app
+// snapshot, both of which assert that they are on the main thread. A response
+// handler left off the main actor therefore aborts the app at the moment the
+// user taps the notification. The conformance is declared @preconcurrency so
+// these methods can stay main-actor isolated, which is where they belong.
+final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -37,93 +45,75 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         NotificationCenter.default.post(name: .lab86DeviceToken, object: nil, userInfo: ["error": error])
     }
 
-    nonisolated func userNotificationCenter(
+    @MainActor
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound, .badge]
     }
 
-    nonisolated func userNotificationCenter(
+    @MainActor
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let info = response.notification.request.content.userInfo
-        let route = info["route"] as? String
-            ?? info["deepLink"] as? String
-            ?? "/activity"
-        if let textResponse = response as? UNTextInputNotificationResponse {
-            let text = textResponse.userText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let input: NotificationTextResponse?
-            if response.actionIdentifier == "ANSWER_CHECKIN",
-               let notificationID = info["notificationId"] as? String {
-                input = NotificationTextResponse(
-                    kind: .checkIn(
-                        notificationID: notificationID,
-                        promptKind: info["promptKind"] as? String ?? "reflection"
-                    ),
-                    text: text
-                )
-            } else if response.actionIdentifier == "MAIL_REPLY",
-                      let accountID = info["accountId"] as? String,
-                      let threadID = info["threadId"] as? String,
-                      let messageID = info["messageId"] as? String {
-                input = NotificationTextResponse(
-                    kind: .mail(
-                        accountID: accountID,
-                        threadID: threadID,
-                        messageID: messageID
-                    ),
-                    text: text
-                )
-            } else {
-                input = nil
-            }
-            if let input, !text.isEmpty {
-                let handled = await NotificationCoordinator.handleTextResponse(input)
-                if !handled {
-                    await notifyResponseFailure()
-                }
-                return
-            }
-        }
-        if let accountID = info["accountId"] as? String,
-           let threadID = info["threadId"] as? String,
-           ["MAIL_MARK_READ", "MAIL_ARCHIVE", "MAIL_REPLY"].contains(response.actionIdentifier) {
-            if response.actionIdentifier == "MAIL_REPLY" {
-                let defaults = UserDefaults.standard
-                defaults.set("reply", forKey: "pendingAlbatrossComposeMode")
-                defaults.set(accountID, forKey: "pendingAlbatrossComposeAccount")
-                defaults.set(threadID, forKey: "pendingAlbatrossComposeThread")
-                defaults.set(info["messageId"] as? String, forKey: "pendingAlbatrossComposeMessage")
-                defaults.set("", forKey: "pendingAlbatrossComposeRecipient")
-                defaults.set("", forKey: "pendingAlbatrossComposeSubject")
-                defaults.set("", forKey: "pendingAlbatrossComposeBody")
-            } else {
-                let defaults = UserDefaults.standard
-                defaults.set(
-                    response.actionIdentifier == "MAIL_MARK_READ" ? "mark_read" : "archive",
-                    forKey: "pendingAlbatrossMailNotificationAction"
-                )
-                defaults.set(accountID, forKey: "pendingAlbatrossMailNotificationAccount")
-                defaults.set(threadID, forKey: "pendingAlbatrossMailNotificationThread")
-                NotificationCenter.default.post(name: .lab86MailNotificationAction, object: nil)
+        let plan = NotificationResponseRouter.plan(
+            for: NotificationResponseInput(
+                actionIdentifier: response.actionIdentifier,
+                userInfo: response.notification.request.content.userInfo,
+                userText: (response as? UNTextInputNotificationResponse)?.userText
+            )
+        )
+        if let textResponse = plan.textResponse {
+            let handled = await NotificationCoordinator.handleTextResponse(textResponse)
+            if !handled {
+                await notifyResponseFailure()
             }
             return
         }
-        if response.actionIdentifier == "CHECKIN_LATER" { return }
-        if let suggestionId = info["suggestionId"] as? String,
-           (response.actionIdentifier == "ADD_TO_CALENDAR" || response.actionIdentifier == "DISMISS") {
+        Self.apply(plan)
+    }
+
+    @MainActor
+    static func apply(_ plan: NotificationResponsePlan) {
+        apply(plan, defaults: .standard)
+    }
+
+    @MainActor
+    static func apply(_ plan: NotificationResponsePlan, defaults: UserDefaults) {
+        if let reply = plan.bannerReply {
+            defaults.set("reply", forKey: "pendingAlbatrossComposeMode")
+            defaults.set(reply.accountID, forKey: "pendingAlbatrossComposeAccount")
+            defaults.set(reply.threadID, forKey: "pendingAlbatrossComposeThread")
+            defaults.set(reply.messageID, forKey: "pendingAlbatrossComposeMessage")
+            defaults.set("", forKey: "pendingAlbatrossComposeRecipient")
+            defaults.set("", forKey: "pendingAlbatrossComposeSubject")
+            defaults.set("", forKey: "pendingAlbatrossComposeBody")
+        }
+        if let action = plan.bannerAction {
+            defaults.set(action.kind.rawValue, forKey: "pendingAlbatrossMailNotificationAction")
+            defaults.set(action.accountID, forKey: "pendingAlbatrossMailNotificationAccount")
+            defaults.set(action.threadID, forKey: "pendingAlbatrossMailNotificationThread")
+            NotificationCenter.default.post(name: .lab86MailNotificationAction, object: nil)
+        }
+        if let suggestion = plan.suggestion {
             NotificationCenter.default.post(
                 name: .lab86NotificationAction,
                 object: [
-                    "suggestionId": suggestionId,
-                    "action": response.actionIdentifier == "ADD_TO_CALENDAR" ? "accept" : "dismiss",
-                    "route": route,
+                    "suggestionId": suggestion.suggestionID,
+                    "action": suggestion.action,
                 ]
             )
         }
-        NotificationCenter.default.post(name: .lab86OpenRoute, object: route)
+        if let route = plan.route {
+            // A tap that launches the app arrives before the shell exists to
+            // hear an announcement, so the route is written down first. The
+            // post only asks whoever is already listening to read it now; the
+            // shell reads the same key when it appears.
+            defaults.set(route, forKey: "pendingAlbatrossDeepLink")
+            NotificationCenter.default.post(name: .lab86OpenRoute, object: route)
+        }
     }
 
     private nonisolated func notifyResponseFailure() async {
