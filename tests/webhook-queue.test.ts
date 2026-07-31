@@ -89,11 +89,42 @@ describe('webhook queue failure reporting', () => {
     }
   });
 
-  test('rejects a delivery when the buffer is full so Nylas retries it', () => {
-    // The reconciler does not replay deletes, so a dropped delivery is data
-    // loss; refusing it is what makes Nylas send it again.
-    expect(typeof enqueueNylasWebhook(payload())).toBe('boolean');
-    expect(webhookQueueDepth()).toHaveProperty('queued');
-    expect(webhookQueueDepth()).toHaveProperty('active');
+  // The buffer holds 5000 and the pump keeps 4 in flight, so the 5005th
+  // delivery is the first one the queue cannot take. Holding the ingest open is
+  // what lets the buffer reach that depth at all.
+  test('rejects a delivery when the buffer is full so Nylas retries it', async () => {
+    let held = true;
+    __setWebhookIngestDepsForTest({
+      query: (async () => {
+        while (held) await new Promise((resolve) => setTimeout(resolve, 5));
+        return CONNECTED;
+      }) as any,
+      mutate: (async () => ({ duplicate: true })) as any,
+    });
+    const errors = spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      let accepted = 0;
+      for (let i = 0; i < 5_004; i += 1) if (enqueueNylasWebhook(payload())) accepted += 1;
+      expect(accepted).toBe(5_004);
+      expect(webhookQueueDepth().queued).toBe(5_000);
+
+      // The reconciler does not replay deletes, so a dropped delivery is data
+      // loss. Refusing it is what makes Nylas send it again.
+      expect(enqueueNylasWebhook(payload())).toBe(false);
+      const full = errors.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('queue full'));
+      expect(full).toHaveLength(1);
+      expect(full[0]).toContain('rejected 1 events for retry');
+    } finally {
+      // Drain before the next test, or the leftover backlog reaches the real
+      // Convex client when afterEach restores it.
+      held = false;
+      for (let i = 0; i < 600 && webhookQueueDepth().queued + webhookQueueDepth().active > 0; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      errors.mockRestore();
+    }
+    expect(webhookQueueDepth()).toEqual({ queued: 0, active: 0 });
   });
 });
