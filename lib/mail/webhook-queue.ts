@@ -16,6 +16,11 @@ let dropped = 0;
 // resources); logging every one floods Railway. Sample the failures instead.
 let ingestFailures = 0;
 // Failure reason -> count, so each distinct fault is reported at least once.
+// Reasons often carry an id, so the set of distinct strings is unbounded in a
+// process that runs for weeks. Keep the map bounded and start again when it
+// fills: reporting a reason a second time costs one log line, and holding
+// every reason forever costs memory that is never returned.
+const MAX_FAILURE_REASONS = 500;
 const failureReasons = new Map<string, number>();
 
 // Returns false when the buffer is full so the caller can reject the delivery
@@ -51,6 +56,9 @@ function pump() {
         // Per-reason sampling still bounds a burst, but a new failure mode is
         // always reported at least once.
         const reason = String(err?.message || err).slice(0, 200);
+        if (!failureReasons.has(reason) && failureReasons.size >= MAX_FAILURE_REASONS) {
+          failureReasons.clear();
+        }
         const seen = (failureReasons.get(reason) ?? 0) + 1;
         failureReasons.set(reason, seen);
         if (seen === 1 || seen % 50 === 0) {

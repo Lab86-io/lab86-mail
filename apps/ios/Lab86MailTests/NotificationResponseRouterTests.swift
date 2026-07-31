@@ -76,8 +76,34 @@ struct NotificationResponseRouterTests {
             for: mailInput(actionIdentifier: NotificationActionID.mailReply, userText: "   ")
         )
         #expect(empty.textResponse == nil)
-        #expect(empty.bannerReply == MailBannerReply(accountID: "acct-1", threadID: "thread-1", messageID: "msg-1"))
+        #expect(
+            empty.bannerReply == MailBannerReply(
+                accountID: "acct-1",
+                threadID: "thread-1",
+                messageID: "msg-1",
+                text: ""
+            )
+        )
         #expect(empty.route == nil)
+    }
+
+    // A reply the banner cannot send must not take the user's words with it.
+    @Test
+    func aReplyToAPayloadWithNoMessageKeepsTheTextForTheComposer() {
+        var input = mailInput(actionIdentifier: NotificationActionID.mailReply, userText: "Ten minutes late.")
+        input.messageID = nil
+
+        let plan = NotificationResponseRouter.plan(for: input)
+
+        #expect(plan.textResponse == nil)
+        #expect(
+            plan.bannerReply == MailBannerReply(
+                accountID: "acct-1",
+                threadID: "thread-1",
+                messageID: nil,
+                text: "Ten minutes late."
+            )
+        )
     }
 
     @Test
@@ -245,10 +271,40 @@ struct NotificationResponseRouterTests {
     }
 
     @Test @MainActor
-    func anEmptyBannerReplyPrefillsTheComposer() {
+    func aBannerReplyPrefillsTheComposerWithWhateverTheUserWrote() {
         let suite = "Lab86MailTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
+        var input = mailInput(actionIdentifier: NotificationActionID.mailReply, userText: "Ten minutes late.")
+        input.messageID = nil
+
+        AppDelegate.apply(NotificationResponseRouter.plan(for: input), defaults: defaults)
+        let navigation = NavigationModel()
+        navigation.consumeAppIntentRequests(defaults: defaults)
+
+        #expect(navigation.pendingCompose?.mode == "reply")
+        #expect(navigation.pendingCompose?.accountID == "acct-1")
+        #expect(navigation.pendingCompose?.threadID == "thread-1")
+        #expect(navigation.pendingCompose?.body == "Ten minutes late.")
+    }
+
+    // The response has to reach an app that is already in front of the user,
+    // which never sees an activation.
+    @Test @MainActor
+    func everyDurableResponseIsAnnouncedForAnAppThatIsAlreadyRunning() {
+        let suite = "Lab86MailTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let announcements = AnnouncementCounter()
+        let token = NotificationCenter.default.addObserver(
+            forName: .lab86NotificationRequest,
+            object: nil,
+            queue: nil
+        ) { _ in announcements.count += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        AppDelegate.apply(NotificationResponseRouter.plan(for: mailInput()), defaults: defaults)
+        #expect(announcements.count == 1)
 
         AppDelegate.apply(
             NotificationResponseRouter.plan(
@@ -256,12 +312,21 @@ struct NotificationResponseRouterTests {
             ),
             defaults: defaults
         )
-        let navigation = NavigationModel()
-        navigation.consumeAppIntentRequests(defaults: defaults)
+        #expect(announcements.count == 2)
 
-        #expect(navigation.pendingCompose?.mode == "reply")
-        #expect(navigation.pendingCompose?.accountID == "acct-1")
-        #expect(navigation.pendingCompose?.threadID == "thread-1")
-        #expect(navigation.pendingCompose?.messageID == "msg-1")
+        // Marking read writes nothing the shell must route to, so it announces
+        // on its own channel and not on this one.
+        AppDelegate.apply(
+            NotificationResponseRouter.plan(for: mailInput(actionIdentifier: NotificationActionID.mailMarkRead)),
+            defaults: defaults
+        )
+        #expect(announcements.count == 2)
     }
+}
+
+// The announcement is posted and observed synchronously on the main actor, but
+// the observer block is a Sendable escaping closure, so the count needs a
+// reference rather than a captured local.
+private final class AnnouncementCounter: @unchecked Sendable {
+    var count = 0
 }

@@ -71,6 +71,9 @@ struct MailBannerReply: Equatable, Sendable {
     let accountID: String
     let threadID: String
     let messageID: String?
+    // Empty when the user sent nothing. Non-empty when they wrote a reply the
+    // banner could not send, which happens if the payload names no message.
+    let text: String
 }
 
 struct MailBannerAction: Equatable, Sendable {
@@ -127,13 +130,15 @@ enum NotificationResponseRouter {
            let threadID = input.threadID,
            mailActionIdentifiers.contains(input.actionIdentifier) {
             if input.actionIdentifier == NotificationActionID.mailReply {
-                // Dictation that came back empty. Hand the reply to the
-                // composer rather than sending nothing.
+                // The banner could not send it: either the user wrote nothing,
+                // or the payload names no message to reply to. Hand whatever
+                // they did write to the composer rather than dropping it.
                 return NotificationResponsePlan(
                     bannerReply: MailBannerReply(
                         accountID: accountID,
                         threadID: threadID,
-                        messageID: input.messageID
+                        messageID: input.messageID,
+                        text: text
                     )
                 )
             }

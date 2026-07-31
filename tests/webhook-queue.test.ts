@@ -35,7 +35,7 @@ async function settle() {
 afterEach(() => __setWebhookIngestDepsForTest());
 
 describe('webhook queue failure reporting', () => {
-  test('a repeated fault is reported once, not once per delivery and not never', async () => {
+  test('a repeated fault is reported once, then sampled at every fiftieth', async () => {
     __setWebhookIngestDepsForTest({
       query: (async () => CONNECTED) as any,
       mutate: (async () => {
@@ -44,20 +44,59 @@ describe('webhook queue failure reporting', () => {
     });
     const errors = spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      for (let i = 0; i < 5; i += 1) enqueueNylasWebhook(payload());
+      for (let i = 0; i < 50; i += 1) enqueueNylasWebhook(payload());
       await settle();
 
       const mine = errors.mock.calls
         .map((call) => String(call[0]))
         .filter((line) => line.includes('by_grant matched more than one row'));
-      // Exactly one: the first occurrence. Five identical failures must not
-      // print five lines, and must not print zero.
-      expect(mine).toHaveLength(1);
-      expect(mine[0]).toContain('[nylas-webhook] ingest failed');
+      // The first occurrence and the fiftieth. Fifty identical failures must
+      // not print fifty lines, and must not print zero.
+      expect(mine).toHaveLength(2);
+      expect(mine[0]).toContain('[nylas-webhook] ingest failed (1x this reason');
+      expect(mine[1]).toContain('(50x this reason');
     } finally {
       errors.mockRestore();
     }
   });
+
+  // Reasons carry ids, so the set of distinct strings has no natural bound in
+  // a process that runs for weeks.
+  test('the reason table is bounded rather than growing for the life of the process', async () => {
+    const errors = spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      let distinct = 0;
+      __setWebhookIngestDepsForTest({
+        query: (async () => CONNECTED) as any,
+        mutate: (async () => {
+          distinct += 1;
+          throw new Error(`reason for delivery ${distinct}`);
+        }) as any,
+      });
+      for (let i = 0; i < 501; i += 1) enqueueNylasWebhook(payload());
+      await settle();
+
+      errors.mockClear();
+      __setWebhookIngestDepsForTest({
+        query: (async () => CONNECTED) as any,
+        mutate: (async () => {
+          throw new Error('reason for delivery 1');
+        }) as any,
+      });
+      enqueueNylasWebhook(payload());
+      await settle();
+
+      // The first reason reports again, which it could only do if the table
+      // dropped it rather than remembering it forever.
+      const repeated = errors.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.endsWith('reason for delivery 1'));
+      expect(repeated).toHaveLength(1);
+      expect(repeated[0]).toContain('(1x this reason');
+    } finally {
+      errors.mockRestore();
+    }
+  }, 30_000);
 
   test('a different fault is always reported, even after another has been seen', async () => {
     const errors = spyOn(console, 'error').mockImplementation(() => undefined);

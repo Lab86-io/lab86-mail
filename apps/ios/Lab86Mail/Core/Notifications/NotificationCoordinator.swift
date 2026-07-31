@@ -5,7 +5,11 @@ import UserNotifications
 
 extension Notification.Name {
     static let lab86DeviceToken = Notification.Name("io.lab86.mail.device-token")
-    static let lab86OpenRoute = Notification.Name("io.lab86.mail.open-route")
+    // A notification response wrote something down for the shell to read. It
+    // carries no payload on purpose: the durable keys are the payload, so an
+    // app that was started by the response reads exactly the same thing as an
+    // app that was already running.
+    static let lab86NotificationRequest = Notification.Name("io.lab86.mail.notification-request")
     static let lab86NotificationAction = Notification.Name("io.lab86.mail.notification-action")
     static let lab86MailNotificationAction = Notification.Name("io.lab86.mail.mail-notification-action")
     static let lab86OneTimeCodeAvailable = Notification.Name("io.lab86.mail.one-time-code-available")
