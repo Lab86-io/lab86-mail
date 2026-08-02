@@ -26,11 +26,11 @@ export default async function SignInPage() {
         <div className="max-w-sm text-center md:text-left">
           <div className="text-[13px] font-medium text-[var(--color-accent)]">Albatross</div>
           <h1 className="mt-2 text-[28px] font-semibold leading-tight tracking-tight text-[var(--color-text)]">
-            All your mail, one sharp inbox.
+            Tell it what is weighing on you.
           </h1>
           <p className="mt-3 text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
-            Gmail, Outlook, and iCloud together — instant private search, smart triage, an AI chief-of-staff,
-            and a daily brief that actually reads your mail.
+            Albatross works out what you actually want, finds the context across your mail and calendar,
+            carries the parts it can, and tells you when something is genuinely done.
           </p>
         </div>
         <SignIn

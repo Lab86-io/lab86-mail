@@ -3,13 +3,15 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { ArrowLeft, CheckCircle2, CircleAlert, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { EvidenceCard, OutcomeHeader } from '@/components/albatross/primitives';
 import { WorkDetailArtifactFrame } from '@/components/albatross/WorkDetailArtifactFrame';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { injectPlanArtifactRuntime } from '@/lib/albatross/plan-artifact-runtime';
+import type { EvidenceLike } from '@/lib/albatross/proof';
+import { workStateKey } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
@@ -54,21 +56,13 @@ interface WorkDetailData {
   project: null | { _id: string; title: string; outcome?: string; status: string; activeSprintId?: string };
   questions: WorkQuestion[];
   areaLinks: Array<{ areaId: string; role: string; status: string; reason?: string }>;
+  evidence: EvidenceLike[];
   application: null | {
     _id: string;
     status: string;
     operationIds: string[];
     artifacts: Array<{ kind: string; id: string; title?: string; operationId?: string }>;
   };
-}
-
-function stateLabel(work: WorkDetailData['work']) {
-  if (work.agentState === 'needs_input') return 'Needs you';
-  if (work.agentState === 'researching') return 'Researching';
-  if (work.agentState === 'applying') return 'Creating';
-  if (work.agentState === 'error') return 'Needs attention';
-  if (work.workState === 'done') return 'Done';
-  return work.workState || work.status;
 }
 
 export function WorkDetail({ workId }: { workId: string }) {
@@ -165,43 +159,36 @@ export function WorkDetail({ workId }: { workId: string }) {
         </Button>
         <span className="text-[11px] text-[var(--color-text-faint)]">/</span>
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Albatross</span>
-        <Badge variant="outline" className="capitalize">
-          {stateLabel(work)}
-        </Badge>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-14 pt-6">
         <div className="mx-auto max-w-4xl">
-          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--color-border)] pb-6">
-            <div className="min-w-0 max-w-2xl">
-              <p className="text-[11.5px] text-[var(--color-text-faint)]">Outcome</p>
-              <h1 className="mt-2 font-serif text-[clamp(25px,4vw,38px)] font-semibold leading-[1.08] tracking-tight">
-                {plan?.outcome || work.title || work.rawText}
-              </h1>
-              {plan?.summary ? (
-                <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
-                  {plan.summary}
-                </p>
-              ) : null}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setChatScope({ kind: 'work', workId });
-                  setAiBarOpen(true);
-                }}
-              >
-                <MessageCircle className="size-3.5" /> Discuss
-              </Button>
-              <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
-                <RefreshCw className={cn('size-3.5', advancing && 'animate-spin')} />
-                {advancing ? 'Working…' : 'Continue'}
-              </Button>
-            </div>
-          </div>
+          <OutcomeHeader
+            outcome={plan?.outcome || work.title || work.rawText}
+            summary={plan?.summary}
+            work={{ ...work, openQuestions: pendingQuestions.length }}
+            evidence={detail.evidence || []}
+            state={workStateKey({ ...work, openQuestions: pendingQuestions.length })}
+            actions={
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setChatScope({ kind: 'work', workId });
+                    setAiBarOpen(true);
+                  }}
+                >
+                  <MessageCircle className="size-3.5" /> Discuss
+                </Button>
+                <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
+                  <RefreshCw className={cn('size-3.5', advancing && 'animate-spin')} />
+                  {advancing ? 'Working…' : 'Continue'}
+                </Button>
+              </>
+            }
+          />
 
           {pendingQuestions.length ? (
             <section className="mt-6">
@@ -321,6 +308,20 @@ export function WorkDetail({ workId }: { workId: string }) {
                   {undoing ? 'Undoing…' : 'Undo latest'}
                 </Button>
               </div>
+            </section>
+          ) : null}
+
+          {detail.evidence?.length ? (
+            <section className="border-b border-[var(--color-border)] py-5">
+              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">Proof</h2>
+              <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
+                What Albatross has seen that bears on whether this is done.
+              </p>
+              <ul className="mt-2 divide-y divide-[var(--color-border)]/60">
+                {detail.evidence.map((row) => (
+                  <EvidenceCard key={row._id} evidence={row} />
+                ))}
+              </ul>
             </section>
           ) : null}
 

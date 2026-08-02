@@ -168,10 +168,10 @@ export function WelcomeFlow() {
     },
     onSuccess: () => {
       setApiKey('');
-      toast.success('AI preference saved');
+      toast.success('Saved');
       qc.invalidateQueries({ queryKey: ['ai-settings'] });
     },
-    onError: (err: any) => toast.error(err?.message || 'Could not save AI preference'),
+    onError: (err: any) => toast.error(err?.message || 'Could not save that preference'),
   });
 
   const complete = () => {
@@ -310,15 +310,15 @@ export function WelcomeFlow() {
           <StepHeading
             step={2}
             done={false}
-            title="Choose how AI runs"
-            blurb="Summaries, triage, drafts, and the daily brief — hosted by Lab86 or on your own key."
+            title="Choose how Albatross thinks"
+            blurb="Planning, drafting and the work Albatross does for you — hosted by Lab86, or on your own key."
           />
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <ModeCard
               active={aiMode === 'lab86'}
               disabled={requireOpenRouter}
               icon={<Brain className="size-4" />}
-              title="Lab86 AI"
+              title="Included with Albatross"
               description="Included with Pro. Curated models, zero setup, budgeted automatically."
               onClick={() => setAiMode('lab86')}
             />

@@ -3,6 +3,7 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { LoaderCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { AlbatrossRow } from '@/components/albatross/primitives';
 import { api } from '@/convex/_generated/api';
 import {
   needsYou,
@@ -29,48 +30,29 @@ export interface WorkListItem {
   createdAt: number;
 }
 
-function workTitle(item: WorkListItem): string {
-  const title = (item.title || '').trim();
-  if (title) return title;
-  const raw = item.rawText.trim().replace(/\s+/g, ' ');
-  return raw.length > 96 ? `${raw.slice(0, 95)}…` : raw || 'Untitled';
+/** `all` is every Albatross; `needs_you` is the short list; `unhomed` is what
+ *  the old Unassigned review queue used to be — a filter, not a destination. */
+export type ListFilter = 'all' | 'needs_you' | 'unhomed';
+
+export function filterWork(rows: WorkListItem[], filter: ListFilter, areaId: string | null) {
+  return rows.filter((row) => {
+    if (areaId && row.primaryAreaId !== areaId) return false;
+    if (filter === 'needs_you') return needsYou(row);
+    if (filter === 'unhomed') return !row.primaryAreaId;
+    return true;
+  });
 }
 
-/**
- * What the user should do next, in words. This is deliberately short and never
- * says "0 items" or shows a score.
- */
-export function nextMoveLine(item: WorkListItem): string {
-  if (item.openQuestions === 1) return 'One question waiting for you';
-  if (item.openQuestions > 1) return `${item.openQuestions} questions waiting for you`;
-  if (item.workState === 'archived') return 'You put this down';
-  if (item.agentState === 'error') return 'Something went wrong — take a look';
-  if (item.agentState === 'researching') return 'Albatross is looking into it';
-  if (item.agentState === 'applying') return 'Albatross is making the changes';
-  if (item.workState === 'waiting' || item.workState === 'blocked') return 'Waiting on somebody else';
-  if (item.workState === 'paused') return 'Paused by you';
-  if (item.workState === 'done') return 'Finished';
-  return 'Albatross is carrying this';
-}
-
-/** Shape and weight carry the state. Colour never does the work alone. */
-export function StateChip({ state }: { state: WorkStateKey }) {
-  return (
-    <span
-      data-state={state}
-      className={cn(
-        'shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none',
-        state === 'needs_you'
-          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)] shadow-[var(--shadow-soft)]'
-          : state === 'waiting' || state === 'unresolved'
-            ? 'border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]'
-            : state === 'done' || state === 'archived'
-              ? 'text-[var(--color-text-faint)]'
-              : 'border border-[var(--color-border)] text-[var(--color-text-muted)]',
-      )}
-    >
-      {WORK_STATE_LABEL[state]}
-    </span>
+export function groupWork(rows: WorkListItem[]) {
+  const byState = new Map<WorkStateKey, WorkListItem[]>();
+  for (const item of rows) {
+    const key = workStateKey(item);
+    const bucket = byState.get(key);
+    if (bucket) bucket.push(item);
+    else byState.set(key, [item]);
+  }
+  return WORK_STATE_ORDER.map((key) => ({ key, items: byState.get(key) || [] })).filter(
+    (group) => group.items.length > 0,
   );
 }
 
@@ -78,22 +60,22 @@ export function AlbatrossesSurface() {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const [showClosed, setShowClosed] = useState(false);
+  const [filter, setFilter] = useState<ListFilter>('all');
+  const [areaId, setAreaId] = useState<string | null>(null);
   const rows = useQuery(api.albatrossWorkV2.allWork, isAuthenticated ? {} : 'skip') as
     | WorkListItem[]
     | undefined;
 
-  const groups = useMemo(() => {
-    const byState = new Map<WorkStateKey, WorkListItem[]>();
-    for (const item of rows || []) {
-      const key = workStateKey(item);
-      const bucket = byState.get(key);
-      if (bucket) bucket.push(item);
-      else byState.set(key, [item]);
+  const areas = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const row of rows || []) {
+      if (row.primaryAreaId && row.areaName) seen.set(row.primaryAreaId, row.areaName);
     }
-    return WORK_STATE_ORDER.map((key) => ({ key, items: byState.get(key) || [] })).filter(
-      (group) => group.items.length > 0,
-    );
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
   }, [rows]);
+
+  const groups = useMemo(() => groupWork(filterWork(rows || [], filter, areaId)), [rows, filter, areaId]);
+  const unhomedCount = useMemo(() => (rows || []).filter((row) => !row.primaryAreaId).length, [rows]);
 
   // 'unresolved' stays in the open half on purpose: those questions are the
   // whole reason this surface exists, and hiding them behind "Show finished"
@@ -113,22 +95,54 @@ export function AlbatrossesSurface() {
 
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <header className="flex items-baseline justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3">
-        <h1 className="font-serif text-[17px] font-semibold tracking-tight">Albatrosses</h1>
-        {closedCount ? (
-          <button
-            type="button"
-            onClick={() => setShowClosed((value) => !value)}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-          >
-            {showClosed ? 'Hide finished' : 'Show finished'}
-          </button>
-        ) : null}
+      <header className="border-b border-[var(--color-border)] px-5 py-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <h1 className="font-serif text-[17px] font-semibold tracking-tight">Albatrosses</h1>
+          {closedCount ? (
+            <button
+              type="button"
+              onClick={() => setShowClosed((value) => !value)}
+              className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >
+              {showClosed ? 'Hide finished' : 'Show finished'}
+            </button>
+          ) : null}
+        </div>
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          <FilterPill active={filter === 'all'} onClick={() => setFilter('all')}>
+            Everything
+          </FilterPill>
+          <FilterPill active={filter === 'needs_you'} onClick={() => setFilter('needs_you')}>
+            Needs you
+          </FilterPill>
+          {/* The old Unassigned review queue. It was a route nobody could reach;
+              as a filter it is one click from the list it belongs to. */}
+          {unhomedCount ? (
+            <FilterPill active={filter === 'unhomed'} onClick={() => setFilter('unhomed')}>
+              No area yet
+            </FilterPill>
+          ) : null}
+
+          {areas.length > 1 ? (
+            <>
+              <span aria-hidden className="mx-1 h-4 w-px bg-[var(--color-border)]" />
+              <FilterPill active={areaId === null} onClick={() => setAreaId(null)}>
+                All areas
+              </FilterPill>
+              {areas.map((area) => (
+                <FilterPill key={area.id} active={areaId === area.id} onClick={() => setAreaId(area.id)}>
+                  {area.name}
+                </FilterPill>
+              ))}
+            </>
+          ) : null}
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">
         <div className="mx-auto max-w-3xl">
-          {visibleGroups.length === 0 ? <EmptyState /> : null}
+          {visibleGroups.length === 0 ? <EmptyState filter={filter} /> : null}
           {visibleGroups.map((group) => (
             <div key={group.key} className="mb-8">
               <div className="mb-2 flex items-baseline gap-2">
@@ -138,32 +152,7 @@ export function AlbatrossesSurface() {
               <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                 {group.items.map((item) => (
                   <li key={item._id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedWorkId(item._id)}
-                      className={cn(
-                        'flex w-full items-start gap-3 px-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
-                        needsYou(item) || workStateKey(item) === 'unresolved' ? 'py-4' : 'py-3',
-                      )}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={cn(
-                            'block truncate',
-                            needsYou(item) || workStateKey(item) === 'unresolved'
-                              ? 'font-serif text-[16px] font-semibold'
-                              : 'text-[13.5px] font-medium',
-                          )}
-                        >
-                          {workTitle(item)}
-                        </span>
-                        <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
-                          {nextMoveLine(item)}
-                          {item.areaName ? ` · ${item.areaName}` : ''}
-                        </span>
-                      </span>
-                      <StateChip state={workStateKey(item)} />
-                    </button>
+                    <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
                   </li>
                 ))}
               </ul>
@@ -175,8 +164,54 @@ export function AlbatrossesSurface() {
   );
 }
 
-function EmptyState() {
+function FilterPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'rounded-full px-3 py-1 text-[12.5px] transition-colors',
+        active
+          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function EmptyState({ filter }: { filter: ListFilter }) {
   const setCaptureOpen = useClientStore((state) => state.setCaptureOpen);
+  if (filter === 'needs_you') {
+    return (
+      <div className="mx-auto max-w-md py-20 text-center">
+        <h2 className="font-serif text-[20px] font-semibold">Nothing needs you</h2>
+        <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+          Albatross is carrying everything that is open. It will ask when it cannot go further on its own.
+        </p>
+      </div>
+    );
+  }
+  if (filter === 'unhomed') {
+    return (
+      <div className="mx-auto max-w-md py-20 text-center">
+        <h2 className="font-serif text-[20px] font-semibold">Everything has a home</h2>
+        <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+          Every Albatross belongs to an area of your life.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="mx-auto max-w-md py-20 text-center">
       <h2 className="font-serif text-[20px] font-semibold">Nothing on your shoulders yet</h2>

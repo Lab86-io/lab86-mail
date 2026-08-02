@@ -606,7 +606,7 @@ export const workDetail = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
-    const [plan, project, questions, areaLinks, applications] = await Promise.all([
+    const [plan, project, questions, areaLinks, applications, evidence] = await Promise.all([
       work.latestPlanId ? ctx.db.get(work.latestPlanId) : null,
       work.primaryProjectId ? ctx.db.get(work.primaryProjectId) : null,
       ctx.db
@@ -623,9 +623,34 @@ export const workDetail = query({
         .query('albatrossPlanApplications')
         .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', String(args.workId)))
         .collect(),
+      // Proof that the outcome actually happened. The stored confidence stays
+      // here; the client renders the trust ladder in words instead.
+      ctx.db
+        .query('albatrossEvidence')
+        .withIndex('by_user_target', (q) =>
+          q.eq('userId', userId).eq('targetKind', 'work').eq('targetId', String(args.workId)),
+        )
+        .order('desc')
+        .take(40),
     ]);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
-    return { work, plan, project, questions, areaLinks, application };
+    return {
+      work,
+      plan,
+      project,
+      questions,
+      areaLinks,
+      application,
+      evidence: evidence.map((row) => ({
+        _id: String(row._id),
+        title: row.title,
+        summary: row.summary ?? null,
+        url: row.url ?? null,
+        sourceKind: row.sourceKind,
+        occurredAt: row.occurredAt,
+        trust: row.trust,
+      })),
+    };
   },
 });
 

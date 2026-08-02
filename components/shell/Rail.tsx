@@ -2,7 +2,11 @@
 
 import { UserButton } from '@clerk/nextjs';
 import { useQuery } from '@tanstack/react-query';
-import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
+import {
+  useConvexAuth,
+  useMutation as useConvexMutation,
+  useQuery_experimental as useConvexQuery,
+} from 'convex/react';
 import { Search, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
@@ -138,6 +142,26 @@ export function Rail({
   const { isMobile, setOpenMobile } = useSidebar();
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
+  };
+  const [addingArea, setAddingArea] = useState(false);
+  const [newAreaName, setNewAreaName] = useState('');
+  const [creatingArea, setCreatingArea] = useState(false);
+  const createAreaMutation = useConvexMutation(api.albatross.createArea);
+  const createArea = async () => {
+    const name = newAreaName.trim();
+    if (!name || creatingArea) return;
+    setCreatingArea(true);
+    try {
+      const areaId = await createAreaMutation({ name });
+      setNewAreaName('');
+      setAddingArea(false);
+      if (areaId) openArea(String(areaId));
+    } catch {
+      // Leave the field open with what the user typed; the rail must not eat
+      // the name it just asked for.
+    } finally {
+      setCreatingArea(false);
+    }
   };
 
   const { data: accountsData } = useQuery({
@@ -371,16 +395,46 @@ export function Rail({
                 </SidebarMenuItem>
               ) : null}
               <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip="New area"
-                  onClick={() => {
-                    window.location.href = '/settings?tab=areas';
-                  }}
-                  className="text-[var(--color-text-muted)]"
-                >
-                  <PlusIcon size={16} />
-                  <span>New area</span>
-                </SidebarMenuButton>
+                {/* Naming a part of your life is a one-field act. It used to
+                    throw the user out of the app into a settings tab. */}
+                {addingArea ? (
+                  <form
+                    className="px-2 py-1"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void createArea();
+                    }}
+                  >
+                    <input
+                      // biome-ignore lint/a11y/noAutofocus: the field only exists because the user just asked for it.
+                      autoFocus
+                      value={newAreaName}
+                      onChange={(event) => setNewAreaName(event.target.value)}
+                      onBlur={() => {
+                        if (!newAreaName.trim()) setAddingArea(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          setNewAreaName('');
+                          setAddingArea(false);
+                        }
+                      }}
+                      placeholder="Work, Money, Home…"
+                      aria-label="Name the new area"
+                      disabled={creatingArea}
+                      className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
+                    />
+                  </form>
+                ) : (
+                  <SidebarMenuButton
+                    tooltip="New area"
+                    onClick={() => setAddingArea(true)}
+                    className="text-[var(--color-text-muted)]"
+                  >
+                    <PlusIcon size={16} />
+                    <span>New area</span>
+                  </SidebarMenuButton>
+                )}
               </SidebarMenuItem>
               {/* A failed query must not silently erase the section. */}
               {areasResult.status === 'error' ? (

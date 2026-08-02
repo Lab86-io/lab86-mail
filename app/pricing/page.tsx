@@ -17,7 +17,7 @@ export default function PricingPage() {
         <h1 className="text-2xl font-semibold">Albatross</h1>
         <p className="max-w-2xl text-sm text-[var(--color-text-muted)]">
           Two plans, one product. Pro (${B2C_MONTHLY_PRICE_USD}/month or ${B2C_ANNUAL_PRICE_USD}/year)
-          includes Lab86-hosted AI with a monthly usage budget. Bring-your-own-key ($
+          includes hosted intelligence with a monthly usage budget. Bring-your-own-key ($
           {B2C_BYOK_MONTHLY_PRICE_USD}/month or ${B2C_BYOK_ANNUAL_PRICE_USD}/year) unlocks the same full
           feature set with your own OpenRouter, OpenAI, or Anthropic API key — you pay your model provider
           directly.
