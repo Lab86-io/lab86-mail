@@ -91,7 +91,7 @@ describe('the product names itself', () => {
   test('the rail badge is words, never a number', () => {
     const rail = read('components/shell/Rail.tsx');
     expect(rail).toContain('railWorkBadge');
-    expect(rail).not.toMatch(/SidebarMenuBadge[^]*\{\s*pending\s*\}/);
+    expect(rail).not.toMatch(/SidebarMenuBadge[\s\S]*\{\s*pending\s*\}/);
   });
 });
 
