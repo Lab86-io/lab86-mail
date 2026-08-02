@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { Capacity } from './albatross/today';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
 import { migratePrimaryView, type PrimaryView } from './shared/types';
 
@@ -67,6 +68,9 @@ export interface ClientState {
   // The column board is an optional lens, off by default. It used to be a
   // top-level surface, which made it a second system to maintain.
   boardSurfaceEnabled: boolean;
+  // The user's own statement about the day. It changes how much Today puts in
+  // front of them; it never changes what they are allowed to see.
+  capacity: Capacity;
   compose: ComposeState;
   // Exact attachment blobs staged for the next composer (Undo Send or a
   // brief-generated deliverable). Transient by design; the composer persists
@@ -145,6 +149,7 @@ export interface ClientState {
   setPaletteOpen: (open: boolean) => void;
   setCaptureOpen: (open: boolean) => void;
   setBoardSurfaceEnabled: (enabled: boolean) => void;
+  setCapacity: (capacity: Capacity) => void;
   openComposeNew: (prefill?: ComposePrefill) => void;
   openComposeReply: (input: {
     mode: 'reply' | 'reply_all' | 'forward';
@@ -214,6 +219,7 @@ export function persistedClientState(s: ClientState) {
     account: s.account,
     primaryView: s.primaryView,
     boardSurfaceEnabled: s.boardSurfaceEnabled,
+    capacity: s.capacity,
     query: s.query,
     smartCategory: s.smartCategory,
     selectedAreaId: s.selectedAreaId,
@@ -264,6 +270,7 @@ export const useClientStore = create<ClientState>()(
       paletteOpen: false,
       captureOpen: false,
       boardSurfaceEnabled: false,
+      capacity: 'normal',
       compose: initialCompose,
       composeRecoveredFiles: [],
       shortcutsOpen: false,
@@ -340,6 +347,7 @@ export const useClientStore = create<ClientState>()(
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
       setCaptureOpen: (captureOpen) => set({ captureOpen }),
       setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),
+      setCapacity: (capacity) => set({ capacity }),
       openComposeNew: (prefill) =>
         set((s) => ({
           compose: {

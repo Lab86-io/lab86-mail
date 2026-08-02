@@ -105,6 +105,25 @@ describe('Mail tells the truth when nothing is connected', () => {
   });
 });
 
+describe('Today puts responsibility above decoration', () => {
+  test('the surface leads with what needs the user, not with the weather', () => {
+    const today = read('components/report/TodaySurface.tsx');
+    expect(today.indexOf('Needs you')).toBeLessThan(today.indexOf('Fixed schedule'));
+    expect(today).not.toContain('weather');
+  });
+
+  test('the brief is a section of Today, not the whole of it', () => {
+    const shell = read('components/shell/AppShell.tsx');
+    expect(shell).toContain('<Today />');
+    expect(shell).not.toContain('<DailyReport />');
+  });
+
+  test('no surface claims a generated brief is Live', () => {
+    const report = read('components/report/DailyReport.tsx');
+    expect(report).not.toContain('Live · updates without regenerating');
+  });
+});
+
 describe('the questions are answerable where they are shown', () => {
   test('the Albatross page renders every waiting question', () => {
     const detail = read('components/albatross/WorkDetail.tsx');

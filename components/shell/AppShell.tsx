@@ -21,7 +21,7 @@ import { FilesSurface } from '@/components/files/FilesSurface';
 import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
-import { DailyReport } from '@/components/report/DailyReport';
+import { Today } from '@/components/report/Today';
 import { TasksSurface } from '@/components/tasks/TasksSurface';
 import { ThreadView } from '@/components/thread/ThreadView';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
@@ -348,7 +348,11 @@ export function AppShell({
 function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedWorkId?: string | null }) {
   switch (view) {
     case 'today':
-      return <DailyReport />;
+      return (
+        <SurfaceErrorBoundary surface="Today">
+          <Today />
+        </SurfaceErrorBoundary>
+      );
     case 'albatrosses':
       // One Albatross when the user picked one, otherwise the whole list.
       return (

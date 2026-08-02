@@ -510,14 +510,29 @@ describe('brief weather in the data pack', () => {
 });
 
 describe('artifact brief prompt', () => {
-  test('specifies the weather module with its visual anatomy', () => {
-    expect(HTML_ARTIFACT_BRIEF).toContain('WEATHER MODULE');
+  test('asks for one weather line, not a weather instrument', () => {
+    // The brief used to mandate a weather module as front matter, which is how
+    // the largest data graphic in the product came to be a temperature chart
+    // for something that carries no responsibility.
+    expect(HTML_ARTIFACT_BRIEF).toContain('WEATHER LINE');
     expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.current.temp');
-    expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.hourly');
-    expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.daily');
-    expect(HTML_ARTIFACT_BRIEF).toContain('near the masthead/lede');
+    expect(HTML_ARTIFACT_BRIEF).toContain('ONE quiet line');
     expect(HTML_ARTIFACT_BRIEF).toContain('never invent weather');
     expect(HTML_ARTIFACT_BRIEF).toContain('Weather data by Apple Weather');
+  });
+
+  test('forbids the chart shapes that made weather the loudest thing on the page', () => {
+    expect(HTML_ARTIFACT_BRIEF).not.toContain('WEATHER MODULE');
+    expect(HTML_ARTIFACT_BRIEF).toContain('No temperature chart');
+    expect(HTML_ARTIFACT_BRIEF).toContain('no seven-day grid');
+    expect(HTML_ARTIFACT_BRIEF).not.toContain('slim horizontal range bars');
+  });
+
+  test('puts what the reader owes above everything else', () => {
+    expect(HTML_ARTIFACT_BRIEF).toContain('WHAT THE READER OWES');
+    expect(HTML_ARTIFACT_BRIEF).toContain('largest type in the body');
+    // A day with nothing owing should say so, not grow a section to fill space.
+    expect(HTML_ARTIFACT_BRIEF).toContain('Do not\n  manufacture a section');
   });
 
   test('uses the second accent for headers and rules, with a safe fallback', () => {

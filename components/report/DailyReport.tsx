@@ -36,6 +36,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { api } from '@/convex/_generated/api';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
+import { isClosed } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { confirmDailyReportAction } from '@/lib/daily-report-action-review';
@@ -1608,13 +1609,19 @@ function DailyBriefLiveState() {
   ) as
     | Array<{
         question: { _id: string; prompt: string };
-        work: null | { _id: string; title?: string; rawText: string };
+        work: null | { _id: string; title?: string; rawText: string; workState?: string; status?: string };
       }>
     | undefined;
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const [checkinOpen, setCheckinOpen] = useState(false);
-  const pending = questions?.filter((row) => row.work) || [];
+  // The same needs-you definition Today, the rail and the list use. This bar
+  // used to count questions on Albatrosses the user had already put down, so it
+  // could claim three things needed you on a day when nothing did.
+  const pending =
+    questions?.filter(
+      (row) => row.work && !isClosed({ workState: row.work.workState, status: row.work.status }),
+    ) || [];
   if (!checkin && !pending.length) return null;
   const today = new Intl.DateTimeFormat('en-CA').format(new Date());
   const carryover = checkin && checkin.localDate !== today;
@@ -1635,16 +1642,15 @@ function DailyBriefLiveState() {
             type="button"
             onClick={() => {
               setSelectedWorkId(String(pending[0].work!._id));
-              setPrimaryView('areas');
+              setPrimaryView('albatrosses');
             }}
             className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
           >
-            {pending.length} Work {pending.length === 1 ? 'question' : 'questions'} need you
+            {pending.length === 1 ? 'One question needs you' : `${pending.length} questions need you`}
           </button>
         ) : null}
-        <span className="ml-auto text-[10.5px] text-[var(--color-text-faint)]">
-          Live · updates without regenerating the brief
-        </span>
+        {/* This used to read "Live", on a page that could be describing a day
+            three weeks old. Today owns the freshness stamp now. */}
       </div>
       <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
     </>

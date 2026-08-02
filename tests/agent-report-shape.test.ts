@@ -267,8 +267,12 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('TIMELINE STANDARD');
     expect(HTML_ARTIFACT_BRIEF).toContain('ACTION DESIGN');
     expect(HTML_ARTIFACT_BRIEF).toContain('STYLIZED LEDE SYSTEM');
-    expect(HTML_ARTIFACT_BRIEF).toContain('internal lede treatment library');
-    expect(HTML_ARTIFACT_BRIEF).toContain('Illuminated brief');
+    // The treatments are layout choices. Their names used to reach the page as
+    // section headers ("Quiet bulletin", "Main tension"), which is invented
+    // vocabulary the reader never asked for.
+    expect(HTML_ARTIFACT_BRIEF).toContain('never print their names as section headers');
+    expect(HTML_ARTIFACT_BRIEF).not.toContain('Quiet bulletin');
+    expect(HTML_ARTIFACT_BRIEF).not.toContain('Decision ledger:');
     expect(HTML_ARTIFACT_BRIEF).toContain('LIGHT AND DARK MODE REQUIREMENTS');
     expect(HTML_ARTIFACT_BRIEF).toContain('prefers-color-scheme: dark');
     expect(HTML_ARTIFACT_BRIEF).toContain('AI SLOP BAN LIST');
