@@ -170,11 +170,6 @@ export function isPrimaryView(view: unknown): view is PrimaryView {
   return typeof view === 'string' && (PRIMARY_VIEWS as readonly string[]).includes(view);
 }
 
-/** A view the app can route, whether it arrives under its current or legacy name. */
-export function isAnyPrimaryView(view: unknown): boolean {
-  return isPrimaryView(view) || (typeof view === 'string' && view in LEGACY_PRIMARY_VIEWS);
-}
-
 export function migratePrimaryView(view: unknown): PrimaryView | null {
   if (isPrimaryView(view)) return view;
   if (typeof view === 'string' && view in LEGACY_PRIMARY_VIEWS) return LEGACY_PRIMARY_VIEWS[view];

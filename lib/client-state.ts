@@ -204,6 +204,42 @@ export function migratePersistedClientState(persisted: any) {
   return persisted;
 }
 
+/**
+ * What survives a reload. Anything absent here is deliberately transient:
+ * `captureOpen` is a one-shot request, not a preference, and restoring it
+ * would open the capture takeover over a cold start.
+ */
+export function persistedClientState(s: ClientState) {
+  return {
+    account: s.account,
+    primaryView: s.primaryView,
+    boardSurfaceEnabled: s.boardSurfaceEnabled,
+    query: s.query,
+    smartCategory: s.smartCategory,
+    selectedAreaId: s.selectedAreaId,
+    selectedWorkId: s.selectedWorkId,
+    rightRailOpen: s.rightRailOpen,
+    railOpen: s.railOpen,
+    railWidth: s.railWidth,
+    lastChatId: s.lastChatId,
+    lastChatAt: s.lastChatAt,
+    accentHue: s.accentHue,
+    accentChroma: s.accentChroma,
+    accent2Hue: s.accent2Hue,
+    accent2Chroma: s.accent2Chroma,
+    accent3Hue: s.accent3Hue,
+    accent3Chroma: s.accent3Chroma,
+    bgHue: s.bgHue,
+    surfaceTint: s.surfaceTint,
+    depthSpread: s.depthSpread,
+    washOpacity: s.washOpacity,
+    bgWashOpacity: s.bgWashOpacity,
+    grainOpacity: s.grainOpacity,
+    grainScale: s.grainScale,
+    appFont: s.appFont,
+  };
+}
+
 export const useClientStore = create<ClientState>()(
   persist(
     (set) => ({
@@ -359,34 +395,7 @@ export const useClientStore = create<ClientState>()(
       migrate: (persisted: any) => {
         return migratePersistedClientState(persisted);
       },
-      partialize: (s) => ({
-        account: s.account,
-        primaryView: s.primaryView,
-        boardSurfaceEnabled: s.boardSurfaceEnabled,
-        query: s.query,
-        smartCategory: s.smartCategory,
-        selectedAreaId: s.selectedAreaId,
-        selectedWorkId: s.selectedWorkId,
-        rightRailOpen: s.rightRailOpen,
-        railOpen: s.railOpen,
-        railWidth: s.railWidth,
-        lastChatId: s.lastChatId,
-        lastChatAt: s.lastChatAt,
-        accentHue: s.accentHue,
-        accentChroma: s.accentChroma,
-        accent2Hue: s.accent2Hue,
-        accent2Chroma: s.accent2Chroma,
-        accent3Hue: s.accent3Hue,
-        accent3Chroma: s.accent3Chroma,
-        bgHue: s.bgHue,
-        surfaceTint: s.surfaceTint,
-        depthSpread: s.depthSpread,
-        washOpacity: s.washOpacity,
-        bgWashOpacity: s.bgWashOpacity,
-        grainOpacity: s.grainOpacity,
-        grainScale: s.grainScale,
-        appFont: s.appFont,
-      }),
+      partialize: persistedClientState,
     },
   ),
 );
