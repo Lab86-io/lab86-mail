@@ -37,9 +37,7 @@ export default async function PublicBoardPage({ params }: { params: Promise<{ to
   return (
     <main className="min-h-dvh bg-[var(--color-bg)] px-6 py-8">
       <header className="mx-auto mb-6 max-w-6xl">
-        <p className="text-[11px] uppercase tracking-[0.12em] text-[var(--color-text-faint)]">
-          Shared board · read-only
-        </p>
+        <p className="text-[11px] text-[var(--color-text-faint)]">Shared board · read-only</p>
         <h1 className="font-display text-[24px] font-semibold tracking-tight text-[var(--color-text)]">
           {board.title}
         </h1>
@@ -50,7 +48,7 @@ export default async function PublicBoardPage({ params }: { params: Promise<{ to
             key={column.columnId}
             className="w-72 shrink-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
           >
-            <h2 className="border-b border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+            <h2 className="border-b border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text-muted)]">
               {column.name}
               <span className="ml-2 font-normal tabular-nums text-[var(--color-text-faint)]">
                 {(cardsByColumn.get(column.columnId) || []).length}

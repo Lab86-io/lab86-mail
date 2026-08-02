@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
-import { isAlbatrossPrimaryView, isCorePrimaryView, type PrimaryView } from './shared/types';
+import { migratePrimaryView, type PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
   to?: string;
@@ -61,6 +61,12 @@ export interface ClientState {
   selectedThreadId: string | null;
   selectedIds: string[];
   paletteOpen: boolean;
+  // Set by any surface that wants the capture takeover — the rail, an empty
+  // state, a shortcut. The launcher owns the overlay; this is only the door.
+  captureOpen: boolean;
+  // The column board is an optional lens, off by default. It used to be a
+  // top-level surface, which made it a second system to maintain.
+  boardSurfaceEnabled: boolean;
   compose: ComposeState;
   // Exact attachment blobs staged for the next composer (Undo Send or a
   // brief-generated deliverable). Transient by design; the composer persists
@@ -137,6 +143,8 @@ export interface ClientState {
   clearSelected: () => void;
   selectMany: (ids: string[]) => void;
   setPaletteOpen: (open: boolean) => void;
+  setCaptureOpen: (open: boolean) => void;
+  setBoardSurfaceEnabled: (enabled: boolean) => void;
   openComposeNew: (prefill?: ComposePrefill) => void;
   openComposeReply: (input: {
     mode: 'reply' | 'reply_all' | 'forward';
@@ -190,10 +198,9 @@ export function migratePersistedClientState(persisted: any) {
   persisted.account = '';
   if (persisted.query === '-in:trash newer_than:365d') persisted.query = DEFAULT_QUERY;
   if (persisted.smartCategory === 'waiting') persisted.smartCategory = 'review';
-  if (persisted.primaryView === 'intents') persisted.primaryView = 'areas';
-  if (!isCorePrimaryView(persisted.primaryView) && !isAlbatrossPrimaryView(persisted.primaryView)) {
-    persisted.primaryView = 'daily_report';
-  }
+  // Every earlier view name maps forward. An unknown value lands on Today
+  // rather than on a blank pane.
+  persisted.primaryView = migratePrimaryView(persisted.primaryView) ?? 'today';
   return persisted;
 }
 
@@ -202,7 +209,7 @@ export const useClientStore = create<ClientState>()(
     (set) => ({
       account: '',
       accountFilter: [],
-      primaryView: 'daily_report',
+      primaryView: 'today',
       threadAccount: null,
       primaryAccount: '',
       query: DEFAULT_QUERY,
@@ -219,6 +226,8 @@ export const useClientStore = create<ClientState>()(
       selectedThreadId: null,
       selectedIds: [],
       paletteOpen: false,
+      captureOpen: false,
+      boardSurfaceEnabled: false,
       compose: initialCompose,
       composeRecoveredFiles: [],
       shortcutsOpen: false,
@@ -293,6 +302,8 @@ export const useClientStore = create<ClientState>()(
       clearSelected: () => set({ selectedIds: [] }),
       selectMany: (ids) => set({ selectedIds: ids }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+      setCaptureOpen: (captureOpen) => set({ captureOpen }),
+      setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),
       openComposeNew: (prefill) =>
         set((s) => ({
           compose: {
@@ -351,6 +362,7 @@ export const useClientStore = create<ClientState>()(
       partialize: (s) => ({
         account: s.account,
         primaryView: s.primaryView,
+        boardSurfaceEnabled: s.boardSurfaceEnabled,
         query: s.query,
         smartCategory: s.smartCategory,
         selectedAreaId: s.selectedAreaId,

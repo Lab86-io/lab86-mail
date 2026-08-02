@@ -209,10 +209,9 @@ function priorityTone(priority: number): Tone {
   return priority <= 1 ? 'danger' : priority === 2 ? 'warning' : 'neutral';
 }
 
-function confidenceLabel(value: number): string {
-  if (value >= 0.85) return 'High confidence';
-  if (value >= 0.6) return 'Medium confidence';
-  return 'Low confidence';
+/** A score is machinery. The user only needs to know when to look twice. */
+function confidenceNote(value: number): string | null {
+  return value >= 0.6 ? null : 'Worth a check';
 }
 
 /* ------------------------------------------------------------------ */
@@ -384,7 +383,7 @@ function ReviewQueueButton() {
       type="button"
       size="sm"
       variant="outline"
-      onClick={() => setPrimaryView('unassigned')}
+      onClick={() => setPrimaryView('albatrosses')}
       className="gap-1.5"
     >
       <Inbox className="size-3.5" />
@@ -492,7 +491,9 @@ function AreasSurface() {
                   <div className="mt-0.5 flex items-center gap-x-2 text-[11.5px] text-[var(--color-text-faint)]">
                     <span>{AREA_KIND_LABEL[area.kind] ?? titleCase(area.kind)}</span>
                     <span aria-hidden>/</span>
-                    <span>{factCounts.verified} verified</span>
+                    <span>
+                      {factCounts.verified === 1 ? '1 thing known' : `${factCounts.verified} things known`}
+                    </span>
                     {needsReview ? (
                       <span className="ml-auto inline-flex items-center gap-1 text-[var(--color-warning)]">
                         <Dot tone="warning" />
@@ -539,7 +540,7 @@ function AreaInspector({ detail, drafts = [] }: { detail: AreaDetail; drafts?: D
           <Prop label="Facts">
             {verified.length} verified / {candidate.length} candidate / {rejected.length} rejected
           </Prop>
-          <Prop label="Linked">{detail.links.length} artifacts</Prop>
+          <Prop label="Linked">{detail.links.length} items</Prop>
           {detail.projects.length ? (
             <Prop label="Projects">
               {detail.projects.map((project) => project.title ?? titleCase(project.status)).join(', ')}
@@ -1950,8 +1951,12 @@ function ContextItemRow({
       </div>
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-[var(--color-text-faint)]">
         <span className="min-w-0 truncate">{item.detail}</span>
-        <span aria-hidden>/</span>
-        <span>{confidenceLabel(item.confidence)}</span>
+        {confidenceNote(item.confidence) ? (
+          <>
+            <span aria-hidden>/</span>
+            <span>{confidenceNote(item.confidence)}</span>
+          </>
+        ) : null}
       </div>
       <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{item.reason}</p>
       {item.sourceRefs.length ? (
@@ -3614,7 +3619,7 @@ function AssignmentRow({
         </Tag>
       </div>
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-[var(--color-text-faint)]">
-        <span>{confidenceLabel(assignment.confidence)}</span>
+        {confidenceNote(assignment.confidence) ? <span>{confidenceNote(assignment.confidence)}</span> : null}
         <span aria-hidden>/</span>
         <span className="min-w-0">{assignment.reason}</span>
       </div>

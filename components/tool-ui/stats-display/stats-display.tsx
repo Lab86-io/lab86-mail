@@ -188,7 +188,7 @@ function StatCard({
         />
       )}
       <span
-        className="text-muted-foreground relative text-xs font-normal tracking-wider uppercase opacity-90 animate-in fade-in slide-in-from-bottom-1 duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] fill-mode-both"
+        className="text-muted-foreground relative text-xs font-normal tracking-wider  opacity-90 animate-in fade-in slide-in-from-bottom-1 duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] fill-mode-both"
         style={{ animationDelay: `${baseDelay + 75}ms` }}
       >
         {stat.label}

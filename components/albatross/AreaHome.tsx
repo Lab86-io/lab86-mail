@@ -397,8 +397,8 @@ function AreaChooser() {
       ) : areas.length === 0 ? (
         <div className="px-4 py-8">
           <p className="max-w-md text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-            No areas yet. Set up the parts of your life you are responsible for and the classifier starts
-            sorting mail, events, and tasks against them.
+            No areas yet. Name the parts of your life you are responsible for, and Albatross starts sorting
+            your mail, events and work into them.
           </p>
           <Button asChild size="sm" className="mt-4">
             <a href="/settings?tab=areas">Set up areas</a>
@@ -456,15 +456,13 @@ function AreaChooserCard({ area, onOpen }: { area: AreaOverviewRow; onOpen: () =
         </p>
       ) : (
         <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
-          {area.factCounts.verified} verified context facts · {area.factCounts.candidate} waiting.
+          Albatross is still learning what belongs here.
         </p>
       )}
       <div className="mt-auto flex flex-wrap gap-1.5 pt-3">
-        {badges.length ? (
-          badges.map((badge) => <OverviewBadge key={badge.id} label={badge.label} tone={badge.tone} />)
-        ) : (
-          <OverviewBadge label={`${area.factCounts.verified} verified`} tone="quiet" />
-        )}
+        {badges.map((badge) => (
+          <OverviewBadge key={badge.id} label={badge.label} tone={badge.tone} />
+        ))}
       </div>
       <span className="mt-3 flex items-center gap-1 text-[11.5px] font-medium text-[var(--color-accent)] opacity-0 transition-opacity group-hover:opacity-100">
         Open brief <ArrowRight className="size-3" aria-hidden />
@@ -1984,7 +1982,7 @@ function NeedsYouSection({ rows, bounded }: { rows: NeedsYouRow[]; bounded: bool
       {bounded ? (
         <div className="flex items-center gap-2 border-t border-[var(--color-warning)]/15 px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
           <span className="min-w-0 flex-1">This is a bounded preview; more may be waiting.</span>
-          <ViewLink view="intents">Open work</ViewLink>
+          <ViewLink view="albatrosses">Open work</ViewLink>
           <ViewLink view="tasks">Open tasks</ViewLink>
         </div>
       ) : null}
@@ -2205,7 +2203,7 @@ function PlacesSection({ places, count }: { places: AreaPlaceRow[]; count: numbe
       <OverflowRow
         overflow={rows.overflow}
         noun="places"
-        action={<ViewLink view="intents">Open plans</ViewLink>}
+        action={<ViewLink view="albatrosses">Open plans</ViewLink>}
       />
     </section>
   );
@@ -2533,7 +2531,7 @@ function ViewLink({
   view,
   children,
 }: {
-  view: 'mail' | 'calendar' | 'tasks' | 'intents';
+  view: 'mail' | 'calendar' | 'tasks' | 'albatrosses';
   children: ReactNode;
 }) {
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);

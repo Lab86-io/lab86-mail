@@ -86,7 +86,7 @@ export function DailyCheckin({
             />
             {checkin.candidateItems.length ? (
               <div>
-                <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--color-text-faint)]">
+                <p className="mb-2 text-[11px] font-medium text-[var(--color-text-faint)]">
                   Mark anything that is truly done
                 </p>
                 <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">

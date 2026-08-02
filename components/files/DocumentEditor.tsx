@@ -1147,9 +1147,7 @@ function DocumentAiRail({
         </div>
         <div className="mt-5 flex items-center gap-2">
           <PanelRight className="size-3.5 text-[var(--color-text-faint)]" />
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-            Suggestions
-          </h2>
+          <h2 className="text-[11px] font-medium text-[var(--color-text-faint)]">Suggestions</h2>
         </div>
         <div className="mt-2 space-y-2">
           {localSuggestions.length ? (
@@ -1282,9 +1280,7 @@ function GoogleDocumentAiRail({
         </div>
         <div className="mt-5 flex items-center gap-2">
           <PanelRight className="size-3.5 text-[var(--color-text-faint)]" />
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-            Suggestions
-          </h2>
+          <h2 className="text-[11px] font-medium text-[var(--color-text-faint)]">Suggestions</h2>
         </div>
         <div className="mt-2 space-y-2">
           {suggestions.length ? (

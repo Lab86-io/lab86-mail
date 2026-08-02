@@ -22,11 +22,7 @@ import {
   type Provider,
   setProviderForByok,
 } from './ai-options';
-import {
-  ONBOARDING_DISMISSED_STORAGE_KEY,
-  shouldExitWelcome,
-  shouldRedirectToWelcome,
-} from './onboarding-state';
+import { ONBOARDING_DISMISSED_STORAGE_KEY, shouldExitWelcome } from './onboarding-state';
 
 interface NylasAccount {
   accountId: string;
@@ -48,12 +44,11 @@ interface NylasStatus {
   capabilities?: NylasCapability[];
 }
 
-// First-run gate rendered inside the app shell: route only a settled,
-// genuinely new account to /welcome. Returning and explicitly skipped users
-// must never be interrupted by onboarding.
+// First run no longer blocks the product. A new account lands in Albatross and
+// can capture straight away; connecting a mailbox is an offer inside the app,
+// not a gate in front of it. This component only records that the user has
+// mailboxes, so the setup screen stops offering itself.
 export function FirstRunRedirect() {
-  const router = useRouter();
-  const [dismissed, setDismissed] = useState<boolean | null>(null);
   const {
     data: nylas,
     isLoading,
@@ -64,21 +59,11 @@ export function FirstRunRedirect() {
     retry: false,
   });
   useEffect(() => {
-    setDismissed(window.localStorage.getItem(ONBOARDING_DISMISSED_STORAGE_KEY) === '1');
-  }, []);
-  useEffect(() => {
-    const hasAccounts = (nylas?.accounts || []).length > 0;
-    if (hasAccounts && !isLoading && !isError) {
-      if (dismissed !== true) {
-        window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
-        setDismissed(true);
-      }
-      return;
-    }
-    if (shouldRedirectToWelcome({ dismissed, hasAccounts, isLoading, isError })) {
-      router.replace('/welcome');
-    }
-  }, [dismissed, isLoading, isError, nylas, router]);
+    if (isLoading || isError) return;
+    if (!(nylas?.accounts || []).length) return;
+    if (window.localStorage.getItem(ONBOARDING_DISMISSED_STORAGE_KEY) === '1') return;
+    window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
+  }, [isLoading, isError, nylas]);
   return null;
 }
 
@@ -214,7 +199,7 @@ export function WelcomeFlow() {
     <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft,0_8px_40px_rgb(0_0_0/0.08))]">
       <div className="flex flex-col items-start justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 pb-5 pt-6 sm:flex-row sm:gap-4">
         <div>
-          <h1 className="text-[19px] font-semibold tracking-tight">Welcome to Lab86 Mail</h1>
+          <h1 className="text-[19px] font-semibold tracking-tight">Set up Albatross</h1>
           <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
             Two quick steps personalize your workspace. You can skip now and finish anytime in Settings.
           </p>

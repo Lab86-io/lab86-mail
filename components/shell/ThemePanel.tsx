@@ -240,9 +240,7 @@ function PaletteWheel({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="border-t border-[var(--color-border)]/60 pt-2.5 first:border-t-0 first:pt-0">
-      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-        {title}
-      </div>
+      <div className="mb-1.5 text-[10px] font-medium text-[var(--color-text-faint)]">{title}</div>
       {children}
     </div>
   );

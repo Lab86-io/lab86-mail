@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { shouldExitWelcome, shouldRedirectToWelcome } from '../components/hosted/onboarding-state';
+import { shouldExitWelcome, shouldOfferWelcome } from '../components/hosted/onboarding-state';
 
-describe('hosted onboarding routing', () => {
+describe('hosted onboarding offer', () => {
   test('does not interrupt returning users with connected accounts', () => {
     expect(
-      shouldRedirectToWelcome({
+      shouldOfferWelcome({
         dismissed: false,
         hasAccounts: true,
         isLoading: false,
@@ -16,7 +16,7 @@ describe('hosted onboarding routing', () => {
 
   test('persists a user-controlled skip without requiring a mailbox', () => {
     expect(
-      shouldRedirectToWelcome({
+      shouldOfferWelcome({
         dismissed: true,
         hasAccounts: false,
         isLoading: false,
@@ -25,9 +25,9 @@ describe('hosted onboarding routing', () => {
     ).toBe(false);
   });
 
-  test('redirects only a settled first run with no account or dismissal', () => {
+  test('offers setup only on a settled first run with no account or dismissal', () => {
     expect(
-      shouldRedirectToWelcome({
+      shouldOfferWelcome({
         dismissed: false,
         hasAccounts: false,
         isLoading: false,
@@ -35,7 +35,7 @@ describe('hosted onboarding routing', () => {
       }),
     ).toBe(true);
     expect(
-      shouldRedirectToWelcome({
+      shouldOfferWelcome({
         dismissed: false,
         hasAccounts: false,
         isLoading: true,
@@ -43,7 +43,7 @@ describe('hosted onboarding routing', () => {
       }),
     ).toBe(false);
     expect(
-      shouldRedirectToWelcome({
+      shouldOfferWelcome({
         dismissed: false,
         hasAccounts: false,
         isLoading: false,

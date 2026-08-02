@@ -272,7 +272,7 @@ export function ProjectsLens({ onOpenTask }: { onOpenTask: (boardId: string, car
               type="button"
               onClick={() => setDoneOpen((open) => !open)}
               aria-expanded={doneOpen}
-              className="flex h-7 w-full items-center gap-2 rounded-md px-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"
+              className="flex h-7 w-full items-center gap-2 rounded-md px-1.5 text-left text-[11px] font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"
             >
               Done
               <span className="tabular-nums normal-case tracking-normal">{groups.done.length}</span>
@@ -315,9 +315,7 @@ export function ProjectsLens({ onOpenTask }: { onOpenTask: (boardId: string, car
 
 function GroupLabel({ children }: { children: string }) {
   return (
-    <h2 className="mb-1 mt-3 px-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
-      {children}
-    </h2>
+    <h2 className="mb-1 mt-3 px-1.5 text-[11px] font-semibold text-[var(--color-text-faint)]">{children}</h2>
   );
 }
 

@@ -49,7 +49,7 @@ const hanken = Hanken_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: 'Lab86 Mail',
+  title: 'Albatross',
   description: 'AI-native mail across connected accounts',
   icons: {
     icon: [

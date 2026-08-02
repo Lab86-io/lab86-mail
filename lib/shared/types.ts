@@ -147,36 +147,59 @@ export interface LabelRecord {
 export type Priority = 1 | 2 | 3;
 export type TriageAction = 'reply' | 'read' | 'archive' | 'delegate' | 'wait';
 
-export const CORE_PRIMARY_VIEWS = ['daily_report', 'mail', 'calendar', 'tasks', 'files'] as const;
-export const ALBATROSS_PRIMARY_VIEWS = ['areas', 'intents', 'unassigned'] as const;
+// The Albatross surfaces. `tasks` stays routable so a saved board link still
+// opens, but it left the rail — the board is an optional lens, not a peer of
+// the surfaces above it.
+export const PRIMARY_VIEWS = ['today', 'albatrosses', 'mail', 'calendar', 'files', 'areas', 'tasks'] as const;
 
-export type CorePrimaryView = (typeof CORE_PRIMARY_VIEWS)[number];
-export type AlbatrossPrimaryView = (typeof ALBATROSS_PRIMARY_VIEWS)[number];
-export type PrimaryView = CorePrimaryView | AlbatrossPrimaryView;
+export type PrimaryView = (typeof PRIMARY_VIEWS)[number];
 
-export function isCorePrimaryView(view: unknown): view is CorePrimaryView {
-  return typeof view === 'string' && (CORE_PRIMARY_VIEWS as readonly string[]).includes(view);
+// Views from earlier shapes of the product. Every one maps forward so a saved
+// URL or a persisted store value never renders a blank pane, and never silently
+// lands the user on a different surface than the one they asked for.
+export const LEGACY_PRIMARY_VIEWS: Record<string, PrimaryView> = {
+  daily_report: 'today',
+  intents: 'albatrosses',
+  unassigned: 'albatrosses',
+  plans: 'albatrosses',
+  work: 'albatrosses',
+  inbox: 'mail',
+};
+
+export function isPrimaryView(view: unknown): view is PrimaryView {
+  return typeof view === 'string' && (PRIMARY_VIEWS as readonly string[]).includes(view);
 }
 
-export function isAlbatrossPrimaryView(view: unknown): view is AlbatrossPrimaryView {
-  return typeof view === 'string' && (ALBATROSS_PRIMARY_VIEWS as readonly string[]).includes(view);
+/** A view the app can route, whether it arrives under its current or legacy name. */
+export function isAnyPrimaryView(view: unknown): boolean {
+  return isPrimaryView(view) || (typeof view === 'string' && view in LEGACY_PRIMARY_VIEWS);
 }
 
-export function isAnyPrimaryView(view: unknown): view is PrimaryView {
-  return isCorePrimaryView(view) || isAlbatrossPrimaryView(view);
+export function migratePrimaryView(view: unknown): PrimaryView | null {
+  if (isPrimaryView(view)) return view;
+  if (typeof view === 'string' && view in LEGACY_PRIMARY_VIEWS) return LEGACY_PRIMARY_VIEWS[view];
+  return null;
 }
 
 export function primaryViewFromSearch(search: string): PrimaryView | null {
-  const requested = new URLSearchParams(search).get('view');
-  return isAnyPrimaryView(requested) ? requested : null;
+  return migratePrimaryView(new URLSearchParams(search).get('view'));
+}
+
+/** `?work=<id>` opens one Albatross directly. */
+export function workIdFromSearch(search: string): string | null {
+  return new URLSearchParams(search).get('work') || null;
+}
+
+/** `?area=<id>` opens one Area directly. */
+export function areaIdFromSearch(search: string): string | null {
+  return new URLSearchParams(search).get('area') || null;
 }
 
 export function persistedPrimaryViewFromStorage(raw: string | null): PrimaryView | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    const view = parsed?.state?.primaryView;
-    return isAnyPrimaryView(view) ? view : null;
+    return migratePrimaryView(parsed?.state?.primaryView);
   } catch {
     return null;
   }
@@ -186,24 +209,18 @@ export function hasPersistedPrimaryViewValue(raw: string | null): boolean {
   return persistedPrimaryViewFromStorage(raw) !== null;
 }
 
-export function normalizePrimaryView(view: unknown, albatrossEnabled: boolean): PrimaryView {
-  if (isCorePrimaryView(view)) return view;
-  if (view === 'intents') return albatrossEnabled ? 'areas' : 'daily_report';
-  if (albatrossEnabled && isAlbatrossPrimaryView(view)) return view;
-  return 'daily_report';
+export function normalizePrimaryView(view: unknown): PrimaryView {
+  return migratePrimaryView(view) ?? 'today';
 }
 
 export function resolveInitialPrimaryView(
   currentView: unknown,
-  albatrossEnabled: boolean,
   initialView?: PrimaryView,
   hasSavedPrimaryView = true,
 ): PrimaryView {
-  const normalizedCurrent = normalizePrimaryView(currentView, albatrossEnabled);
+  const normalizedCurrent = normalizePrimaryView(currentView);
   if (!initialView || hasSavedPrimaryView) return normalizedCurrent;
-
-  const normalizedInitial = normalizePrimaryView(initialView, albatrossEnabled);
-  return normalizedInitial === initialView ? normalizedInitial : normalizedCurrent;
+  return normalizePrimaryView(initialView);
 }
 
 export type SmartCategoryId =

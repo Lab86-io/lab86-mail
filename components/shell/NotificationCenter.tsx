@@ -64,7 +64,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
     await mark({ notificationId: row._id as Id<'albatrossNotifications'>, status: 'acted' });
     if (row.entityKind === 'work' && row.entityId) {
       setSelectedWorkId(row.entityId);
-      setPrimaryView('areas');
+      setPrimaryView('albatrosses');
       setOpen(false);
       return;
     }
@@ -76,7 +76,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
       setOpen(false);
       return;
     }
-    if (row.deepLink?.includes('daily')) setPrimaryView('daily_report');
+    if (row.deepLink?.includes('daily')) setPrimaryView('today');
     setOpen(false);
   };
 
@@ -132,7 +132,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
                   setSelectedWorkId(row.work ? String(row.work._id) : null);
                   const areaId = row.routine?.areaId || row.project?.areaId;
                   setSelectedAreaId(areaId ? String(areaId) : null);
-                  setPrimaryView('areas');
+                  setPrimaryView('albatrosses');
                   setOpen(false);
                 }}
                 className="flex w-full gap-2 border-b border-[var(--color-border)]/60 bg-[var(--color-warning-soft)]/45 px-3.5 py-3 text-left hover:bg-[var(--color-warning-soft)]"
@@ -157,7 +157,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
                 onClick={() => {
                   if (approval.intentId) {
                     setSelectedWorkId(approval.intentId);
-                    setPrimaryView('areas');
+                    setPrimaryView('albatrosses');
                   }
                   setOpen(false);
                 }}

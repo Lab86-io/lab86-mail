@@ -171,7 +171,7 @@ function SourceAttribution({
           decoding="async"
         />
       ) : fallbackInitial ? (
-        <div className="bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold uppercase">
+        <div className="bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ">
           {fallbackInitial}
         </div>
       ) : null}

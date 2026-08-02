@@ -877,7 +877,7 @@ function FullArtifactUnavailable({
           {failures.length ? (
             failures.map((failure) => (
               <div key={`${failure.stage}-${failure.at}`} className="space-y-1">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent)]">
+                <div className="text-[10px] font-semibold text-[var(--color-accent)]">
                   {artifactStageLabel(failure.stage)}
                 </div>
                 <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
@@ -1231,13 +1231,13 @@ export function DailyReport() {
                 The Daily Brief
               </h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <p className="font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                <p className="font-serif text-[11px] text-[var(--color-text-muted)]">
                   {report ? formatDateline(report) : 'From your mail & calendar'}
                 </p>
                 {report && report.status !== 'partial' ? (
                   <span
                     title="The rich artifact is not present for this edition."
-                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--color-text-muted)]"
+                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
                   >
                     Fallback view
                   </span>
@@ -1487,7 +1487,7 @@ export function DailyReport() {
                 className="blur-in rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-5 py-5 shadow-[var(--shadow-soft)]"
                 style={{ animationDelay: '60ms' }}
               >
-                <Markdown className="space-y-3 text-[13px] leading-6 text-[var(--color-text-muted)] [&_h1]:font-serif [&_h1]:text-[20px] [&_h1]:font-semibold [&_h1]:italic [&_h1]:leading-tight [&_h1]:text-[var(--color-text)] [&_h2]:mt-4 [&_h2]:font-serif [&_h2]:text-[16px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:text-[var(--color-text)] [&_h3]:mt-3 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:uppercase [&_h3]:tracking-[0.12em] [&_h3]:text-[var(--color-accent)] [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_strong]:font-semibold [&_strong]:text-[var(--color-text)]">
+                <Markdown className="space-y-3 text-[13px] leading-6 text-[var(--color-text-muted)] [&_h1]:font-serif [&_h1]:text-[20px] [&_h1]:font-semibold [&_h1]:italic [&_h1]:leading-tight [&_h1]:text-[var(--color-text)] [&_h2]:mt-4 [&_h2]:font-serif [&_h2]:text-[16px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:text-[var(--color-text)] [&_h3]:mt-3 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]: [&_h3]:tracking-[0.12em] [&_h3]:text-[var(--color-accent)] [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_strong]:font-semibold [&_strong]:text-[var(--color-text)]">
                   {stripEmojiPreservingMarkdown(report.narrative)}
                 </Markdown>
               </section>
@@ -1510,9 +1510,7 @@ export function DailyReport() {
                     className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 text-left shadow-[var(--shadow-soft)] enabled:hover:border-[var(--color-border-strong)] enabled:hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
                   >
                     <div className="flex items-baseline justify-between">
-                      <div className="font-serif text-[11px] uppercase tracking-[0.16em] text-[var(--color-accent)]">
-                        {label}
-                      </div>
+                      <div className="font-serif text-[11px] text-[var(--color-accent)]">{label}</div>
                       <div className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
                         {items.length || ''}
                       </div>
@@ -1719,9 +1717,7 @@ function TaskCalendarBrief({
     <section className="blur-in grid gap-3 @[700px]:grid-cols-2" style={{ animationDelay: `${delay}ms` }}>
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
-            Task Board
-          </h2>
+          <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text)]">Task Board</h2>
           <button
             type="button"
             onClick={onOpenTasks}
@@ -1820,9 +1816,7 @@ function TaskCalendarBrief({
 
       <div className="@container rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)] @[700px]:col-span-2">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
-            Calendar
-          </h2>
+          <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text)]">Calendar</h2>
           <button
             type="button"
             onClick={onOpenCalendar}
@@ -2071,9 +2065,7 @@ function ReportSection({
   return (
     <section className="blur-in" style={{ animationDelay: `${delay}ms` }}>
       <div className="mb-1.5 flex items-center gap-3">
-        <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
-          {label}
-        </h2>
+        <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text)]">{label}</h2>
         <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{countLabel}</span>
         <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
       </div>
@@ -2162,9 +2154,7 @@ function ReportRow({
         </span>
         {item.nextAction ? (
           <div className="mt-2 rounded-lg bg-[var(--color-bg-muted)] px-2.5 py-2">
-            <span className="block text-[9.5px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-              Your move
-            </span>
+            <span className="block text-[9.5px] font-semibold text-[var(--color-text-muted)]">Your move</span>
             <span
               className={cn(
                 'mt-0.5 block text-[12px] font-medium leading-[1.45] text-[var(--color-text)]',
@@ -2215,7 +2205,7 @@ function ReportRow({
                     {pills.map((code) => (
                       <span
                         key={code}
-                        className="rounded-sm bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.08em]"
+                        className="rounded-sm bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[9.5px] font-medium "
                       >
                         {PILL_LABELS[code]}
                       </span>
@@ -2334,7 +2324,7 @@ function BulkTail({
             !open && '-rotate-90',
           )}
         />
-        <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+        <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text-muted)]">
           Bulk &amp; automated
         </h2>
         <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{items.length}</span>
@@ -2356,7 +2346,7 @@ function BulkTail({
                 {item.people[0] ? `${stripEmoji(item.people[0])} · ` : ''}
                 {stripEmoji(item.subject || '(no subject)')}
               </span>
-              <span className="shrink-0 justify-self-end text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
+              <span className="shrink-0 justify-self-end text-[10px] text-[var(--color-text-faint)]">
                 {item.demotionReason || 'Bulk'}
               </span>
             </button>

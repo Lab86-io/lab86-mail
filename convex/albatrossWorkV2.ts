@@ -542,6 +542,62 @@ export const areaWork = query({
   },
 });
 
+// Every Albatross the user carries, newest movement first. The Albatrosses
+// surface groups these by state; the query stays flat so the grouping rule
+// lives in one place on the client and can change without a schema push.
+export const allWork = query({
+  args: {
+    ...callerArgs,
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(limit);
+    const [areas, pendingQuestions] = await Promise.all([
+      ctx.db
+        .query('areas')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+      ctx.db
+        .query('albatrossWorkQuestions')
+        .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
+        .take(200),
+    ]);
+    const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
+    // The question table is the live one. The inline `questions` array on the
+    // row is the older shape; count both so no waiting question is invisible.
+    const questionCounts = new Map<string, number>();
+    for (const question of pendingQuestions) {
+      if (!question.workId) continue;
+      const key = String(question.workId);
+      questionCounts.set(key, (questionCounts.get(key) || 0) + 1);
+    }
+    return rows.map((row) => ({
+      _id: row._id,
+      title: row.title || null,
+      rawText: row.rawText,
+      status: row.status,
+      workState: row.workState || null,
+      agentState: row.agentState || null,
+      primaryAreaId: row.primaryAreaId ? String(row.primaryAreaId) : null,
+      areaName: row.primaryAreaId ? areaNames.get(String(row.primaryAreaId)) || null : null,
+      // The same question lives in both shapes during the migration, so adding
+      // the two counts reports every question twice. The table is the live one;
+      // the inline array only answers for rows the table never received.
+      openQuestions:
+        questionCounts.get(String(row._id)) ??
+        (row.questions || []).filter((question) => !question.answeredAt).length,
+      updatedAt: row.updatedAt,
+      createdAt: row.createdAt,
+    }));
+  },
+});
+
 export const workDetail = query({
   args: {
     ...callerArgs,

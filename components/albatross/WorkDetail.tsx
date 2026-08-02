@@ -125,9 +125,9 @@ export function WorkDetail({ workId }: { workId: string }) {
         body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not continue this Work.');
+      if (!response.ok) throw new Error(body.error || 'Could not continue this Albatross.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not continue this Work.');
+      setError(cause instanceof Error ? cause.message : 'Could not continue this Albatross.');
     } finally {
       setAdvancing(false);
     }
@@ -136,7 +136,7 @@ export function WorkDetail({ workId }: { workId: string }) {
   if (detail === undefined) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-        <LoaderCircle className="size-4 animate-spin" /> Loading Work…
+        <LoaderCircle className="size-4 animate-spin" /> Loading
       </div>
     );
   }
@@ -144,9 +144,9 @@ export function WorkDetail({ workId }: { workId: string }) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center">
         <div>
-          <p className="text-[14px] font-medium">This Work is no longer available.</p>
+          <p className="text-[14px] font-medium">This Albatross is no longer available.</p>
           <Button className="mt-4" size="sm" variant="outline" onClick={() => setSelectedWorkId(null)}>
-            Back to Area
+            Back to Albatrosses
           </Button>
         </div>
       </div>
@@ -154,17 +154,17 @@ export function WorkDetail({ workId }: { workId: string }) {
   }
 
   const { work, plan, project } = detail;
-  const pendingQuestion = detail.questions.find((question) => question.status === 'pending');
+  const pendingQuestions = detail.questions.filter((question) => question.status === 'pending');
   const completedTasks = projectTasks?.filter((task) => task.completedAt).length ?? 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
         <Button type="button" size="xs" variant="ghost" onClick={() => setSelectedWorkId(null)}>
-          <ArrowLeft className="size-3.5" /> Back to Area
+          <ArrowLeft className="size-3.5" /> Back
         </Button>
         <span className="text-[11px] text-[var(--color-text-faint)]">/</span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Work</span>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Albatross</span>
         <Badge variant="outline" className="capitalize">
           {stateLabel(work)}
         </Badge>
@@ -174,9 +174,7 @@ export function WorkDetail({ workId }: { workId: string }) {
         <div className="mx-auto max-w-4xl">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--color-border)] pb-6">
             <div className="min-w-0 max-w-2xl">
-              <p className="font-serif text-[10.5px] uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
-                Desired outcome
-              </p>
+              <p className="text-[11.5px] text-[var(--color-text-faint)]">Outcome</p>
               <h1 className="mt-2 font-serif text-[clamp(25px,4vw,38px)] font-semibold leading-[1.08] tracking-tight">
                 {plan?.outcome || work.title || work.rawText}
               </h1>
@@ -205,15 +203,24 @@ export function WorkDetail({ workId }: { workId: string }) {
             </div>
           </div>
 
-          {pendingQuestion ? <WorkQuestionCard question={pendingQuestion} /> : null}
+          {pendingQuestions.length ? (
+            <section className="mt-6">
+              <h2 className="text-[13px] font-medium text-[var(--color-warning)]">
+                {pendingQuestions.length === 1
+                  ? 'Albatross needs one thing'
+                  : `Albatross needs ${pendingQuestions.length} things`}
+              </h2>
+              {pendingQuestions.map((question) => (
+                <WorkQuestionCard key={question._id} question={question} />
+              ))}
+            </section>
+          ) : null}
 
           {project ? (
             <section className="border-b border-[var(--color-border)] py-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-[var(--color-text-faint)]">
-                    Project / Epic
-                  </p>
+                  <p className="text-[11.5px] text-[var(--color-text-faint)]">Project</p>
                   <h2 className="mt-1.5 font-serif text-[19px] font-semibold">{project.title}</h2>
                   {project.outcome ? (
                     <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">{project.outcome}</p>
@@ -248,9 +255,7 @@ export function WorkDetail({ workId }: { workId: string }) {
 
           {plan?.digitalActions?.length || plan?.physicalActions?.length ? (
             <section className="border-b border-[var(--color-border)] py-5">
-              <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                What Albatross created
-              </h2>
+              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">What Albatross created</h2>
               <div className="mt-2 divide-y divide-[var(--color-border)]/60">
                 {(plan.digitalActions || []).map((action) => {
                   const done = plan.appliedSteps?.some((step) => step.stepKey === action.key);
@@ -287,9 +292,7 @@ export function WorkDetail({ workId }: { workId: string }) {
             <section className="border-b border-[var(--color-border)] py-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                    Recent changes
-                  </h2>
+                  <h2 className="text-[13px] font-semibold text-[var(--color-text)]">Recent changes</h2>
                   <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
                     Private changes were created automatically. Undo is available while the underlying
                     provider allows it.
@@ -323,22 +326,18 @@ export function WorkDetail({ workId }: { workId: string }) {
 
           {plan?.document && plan.artifactSource === 'document-v2' ? (
             <section className="py-5">
-              <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                Brief
-              </h2>
+              <h2 className="mb-3 text-[13px] font-semibold text-[var(--color-text)]">Brief</h2>
               <div className="h-[min(72vh,780px)] overflow-hidden rounded-xl border border-[var(--color-border)]">
                 <BriefCanvas value={plan.document} />
               </div>
             </section>
           ) : artifact ? (
             <section className="py-5">
-              <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                Brief
-              </h2>
+              <h2 className="mb-3 text-[13px] font-semibold text-[var(--color-text)]">Brief</h2>
               <WorkDetailArtifactFrame
                 artifact={artifact}
                 frameRef={artifactFrameRef}
-                title={`Brief for ${work.title || 'Work'}`}
+                title={`Brief for ${work.title || 'this Albatross'}`}
                 onLoad={postTheme}
               />
             </section>
@@ -382,7 +381,17 @@ export function WorkDetail({ workId }: { workId: string }) {
   );
 }
 
+// The `reason` field carries pipeline notes as often as it carries something a
+// person would want to read ("Migrated from the current plan question."). Show
+// it only when it explains the question rather than the machinery.
+function humanReason(reason: string | undefined): string | null {
+  if (!reason) return null;
+  const internal = /\b(migrat|plan question|pipeline|classifier|backfill)\b/i;
+  return internal.test(reason) ? null : reason;
+}
+
 function WorkQuestionCard({ question }: { question: WorkQuestion }) {
+  const reason = humanReason(question.reason);
   const [answer, setAnswer] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -419,13 +428,8 @@ function WorkQuestionCard({ question }: { question: WorkQuestion }) {
 
   return (
     <section className="my-5 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)] p-4">
-      <p className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[var(--color-warning)]">
-        Albatross needs one thing
-      </p>
-      <h2 className="mt-1.5 text-[15px] font-medium leading-snug">{question.prompt}</h2>
-      {question.reason ? (
-        <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">{question.reason}</p>
-      ) : null}
+      <h3 className="text-[15px] font-medium leading-snug">{question.prompt}</h3>
+      {reason ? <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">{reason}</p> : null}
       {question.options?.length ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {question.options.map((option) => (

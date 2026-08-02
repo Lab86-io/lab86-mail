@@ -39,6 +39,7 @@ import {
   ConfirmationRequest,
   ConfirmationTitle,
 } from '@/components/ai-elements/confirmation';
+import { MailNav } from '@/components/inbox/MailNav';
 import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
@@ -802,6 +803,9 @@ export function Inbox() {
   return (
     <section className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+        {/* Compose, the categories, and the folders live with the mail now,
+            not in the product's navigation rail. */}
+        <MailNav />
         <div
           className={cn(
             'flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5',
@@ -837,7 +841,7 @@ export function Inbox() {
                     clearSearch();
                   }
                 }}
-                placeholder='Ask for mail or type search filters, e.g. "order updates from this week"'
+                placeholder="Search your mail, or ask for it in your own words"
                 className="text-[13px]"
               />
               {searchInput ? (
@@ -970,7 +974,11 @@ export function Inbox() {
         </AnimatePresence>
 
         <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
-          {showInitialLoading ? (
+          {/* No mailbox connected means no mail is coming. Skeleton rows here
+              read as "still loading" forever, which is a lie. */}
+          {!authedAccounts.length ? (
+            <NoMailboxState />
+          ) : showInitialLoading ? (
             <SkeletonRows />
           ) : isError ? (
             <SearchErrorState
@@ -1426,7 +1434,6 @@ export const InboxThreadRow = memo(function InboxThreadRow({
                   <div className="font-medium text-[var(--color-text)]">Why this is here</div>
                   <p className="text-[var(--color-text-muted)]">{smart.reason}</p>
                   <div className="flex flex-wrap gap-1">
-                    <Badge variant="outline">{Math.round((smart.confidence || 0) * 100)}%</Badge>
                     {smart.needsAttention ? <Badge variant="outline">needs attention</Badge> : null}
                     {smart.isHumanLike ? <Badge variant="outline">human-like</Badge> : null}
                   </div>
@@ -1562,6 +1569,31 @@ function SkeletonRows({ count = 8 }: { count?: number }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function NoMailboxState() {
+  return (
+    <Empty className="grid flex-1 place-items-center px-6 py-12 text-center">
+      <EmptyHeader>
+        <EmptyMedia>
+          <InboxIcon className="h-4 w-4 text-[var(--color-text-faint)]" />
+        </EmptyMedia>
+        <EmptyTitle className="font-display">No mailbox connected</EmptyTitle>
+        <EmptyDescription>
+          Connect a mailbox and Albatross reads it for the things you are already carrying — requests,
+          receipts, confirmations, and replies you are waiting on.
+        </EmptyDescription>
+      </EmptyHeader>
+      <Button
+        size="sm"
+        onClick={() => {
+          window.location.href = '/settings';
+        }}
+      >
+        Connect a mailbox
+      </Button>
+    </Empty>
   );
 }
 

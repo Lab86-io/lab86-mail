@@ -628,16 +628,11 @@ function PlaceResultCard({ result, areaName }: { result: PlaceLookupResult; area
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
       <div className="flex items-center gap-2">
         <span className="text-[13.5px] font-semibold">{profile.resolvedName}</span>
-        <Badge
-          variant="outline"
-          className={cn(
-            'px-1.5 py-0 text-[10px] capitalize',
-            profile.confidence === 'high' && 'border-emerald-500/40 text-emerald-600',
-            profile.confidence === 'low' && 'border-amber-500/40 text-amber-600',
-          )}
-        >
-          {profile.confidence} confidence
-        </Badge>
+        {profile.confidence === 'low' ? (
+          <Badge variant="outline" className="border-amber-500/40 px-1.5 py-0 text-[10px] text-amber-600">
+            Check this one
+          </Badge>
+        ) : null}
       </div>
       <div className="mt-2 space-y-1.5 text-[12.5px]">
         {profile.address ? (

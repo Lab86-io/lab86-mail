@@ -57,6 +57,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/convex/_generated/api';
 import { SETTINGS_TABS, type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
+import { useClientStore } from '@/lib/client-state';
 import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 
@@ -77,8 +78,40 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   notifications: () => <NotificationsSection />,
   ai: () => <AiSection />,
   shortcuts: () => <ShortcutsSection />,
+  advanced: () => <AdvancedSection />,
   account: () => <AccountSection />,
 };
+
+// Surfaces that are not part of the product's spine. The board is one: a place
+// the user has to maintain, which is the opposite of what Albatross is for.
+// It stays available for the people who want it, and off by default.
+function AdvancedSection() {
+  const boardEnabled = useClientStore((s) => s.boardSurfaceEnabled);
+  const setBoardEnabled = useClientStore((s) => s.setBoardSurfaceEnabled);
+  return (
+    <section>
+      <SectionHeading
+        title="Advanced"
+        blurb="Optional surfaces. Albatross does not need any of these to work."
+      />
+      <label className="flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+        <input
+          type="checkbox"
+          checked={boardEnabled}
+          onChange={(event) => setBoardEnabled(event.target.checked)}
+          className="mt-0.5 size-4 accent-[var(--color-accent)]"
+        />
+        <span>
+          <span className="block text-[13.5px] font-medium">Show the board</span>
+          <span className="mt-0.5 block text-[12.5px] text-[var(--color-text-muted)]">
+            A column board for the tasks behind your Albatrosses. Albatross keeps the plan either way — the
+            board is a view, not a place you have to keep tidy.
+          </span>
+        </span>
+      </label>
+    </section>
+  );
+}
 
 function SettingsPageBody() {
   const searchParams = useSearchParams();
@@ -110,11 +143,11 @@ function SettingsPageBody() {
             className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
           >
             <ArrowLeft className="size-3.5" />
-            Back to inbox
+            Back to Albatross
           </Link>
           <h1 className="text-[26px] font-semibold tracking-tight">Settings</h1>
           <p className="mt-1 text-[13.5px] text-[var(--color-text-muted)]">
-            Your mailboxes, your models, your rules.
+            Your mailboxes, your areas, and how Albatross behaves.
           </p>
         </header>
         <div className="flex flex-col gap-6 md:grid md:grid-cols-[180px_minmax(0,1fr)] md:gap-10">
@@ -164,7 +197,7 @@ function BetaBadge() {
   return (
     <Badge
       variant="outline"
-      className="border-amber-500/40 bg-amber-500/10 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+      className="border-amber-500/40 bg-amber-500/10 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
     >
       Beta
     </Badge>
@@ -1423,7 +1456,7 @@ function AccountSection() {
             disabled={deleteAccount.isPending}
             onClick={() => {
               const confirmed = window.confirm(
-                'Delete your Lab86 Mail account and all Lab86-hosted mail data? This cannot be undone.',
+                'Delete your Albatross account and all Lab86-hosted mail data? This cannot be undone.',
               );
               if (confirmed) deleteAccount.mutate();
             }}

@@ -758,7 +758,9 @@ function AreaManagementList() {
                     </Badge>
                   </div>
                   <div className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-muted)]">
-                    {area.factCounts.verified} verified
+                    {area.factCounts.verified === 1
+                      ? '1 thing Albatross knows'
+                      : `${area.factCounts.verified} things Albatross knows`}
                     {area.factCounts.candidate ? ` · ${area.factCounts.candidate} to confirm` : ''}
                     {area.primaryDomain ? ` · ${area.primaryDomain}` : ''}
                   </div>

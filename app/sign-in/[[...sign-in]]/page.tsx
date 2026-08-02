@@ -24,9 +24,7 @@ export default async function SignInPage() {
       <DotGridGlow />
       <div className="relative z-10 flex w-full max-w-4xl flex-col items-center gap-10 md:flex-row md:justify-center md:gap-16">
         <div className="max-w-sm text-center md:text-left">
-          <div className="text-[13px] font-medium uppercase tracking-[0.2em] text-[var(--color-accent)]">
-            Lab86 Mail
-          </div>
+          <div className="text-[13px] font-medium text-[var(--color-accent)]">Albatross</div>
           <h1 className="mt-2 text-[28px] font-semibold leading-tight tracking-tight text-[var(--color-text)]">
             All your mail, one sharp inbox.
           </h1>

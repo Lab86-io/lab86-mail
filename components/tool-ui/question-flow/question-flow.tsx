@@ -499,7 +499,7 @@ function StepContent({
         <div className="flex flex-col gap-1">
           <div className="flex flex-col gap-2">
             <span
-              className="text-muted-foreground text-xs font-medium uppercase tracking-wide"
+              className="text-muted-foreground text-xs font-medium "
               aria-label={stepLabel}
             >
               {stepLabel}
