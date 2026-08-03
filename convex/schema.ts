@@ -696,6 +696,12 @@ export default defineSchema({
     title: v.string(),
     summary: v.optional(v.string()),
     url: v.optional(v.string()),
+    // What this artifact is claimed to prove, and what it cannot settle.
+    // Storing only "email 123" makes an attachment list; storing the claim
+    // makes an evidence graph, where one artifact can support several claims
+    // and one claim can rest on several artifacts.
+    claim: v.optional(v.string()),
+    limits: v.optional(v.string()),
     occurredAt: v.number(),
     weight: v.number(),
     confidence: v.number(),
@@ -1006,6 +1012,36 @@ export default defineSchema({
           answeredAt: v.optional(v.number()),
         }),
       ),
+    ),
+    // The outcome contract. Before Albatross can say something is done it has
+    // to know what done means and what would prove it — otherwise "closed" is
+    // just a status somebody typed.
+    contract: v.optional(
+      v.object({
+        // Not "work on renter's insurance" — "an active policy meeting the
+        // lease requirement exists, and proof was delivered to the office".
+        outcome: v.string(),
+        // The things that would settle it, each in plain words.
+        proofs: v.array(
+          v.object({
+            id: v.string(),
+            what: v.string(),
+            satisfiedBy: v.optional(v.string()),
+            satisfiedAt: v.optional(v.number()),
+          }),
+        ),
+        // How much proof is enough before Albatross may close it by itself.
+        // Some outcomes must never close without a person saying so.
+        closeWhen: v.union(
+          v.literal('action_succeeded'),
+          v.literal('outcome_likely'),
+          v.literal('outcome_confirmed'),
+          v.literal('never_automatically'),
+        ),
+        // What would reopen it: a bounce, a reversal, a cancellation.
+        contradictions: v.optional(v.array(v.string())),
+        updatedAt: v.number(),
+      }),
     ),
     planError: v.optional(v.string()),
     // Auto-retry counter for the plan-reconcile cron: generations killed by a

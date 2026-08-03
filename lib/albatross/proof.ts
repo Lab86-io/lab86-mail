@@ -12,6 +12,10 @@ export interface EvidenceLike {
   _id?: string;
   title: string;
   summary?: string | null;
+  /** What this artifact is claimed to prove. */
+  claim?: string | null;
+  /** What it cannot settle — stated so a claim never overreaches. */
+  limits?: string | null;
   url?: string | null;
   sourceKind: string;
   occurredAt: number;

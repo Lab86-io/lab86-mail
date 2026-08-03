@@ -252,6 +252,141 @@ export const resolveLapse = mutation({
   },
 });
 
+/** Write or correct what would settle an outcome. */
+export const saveContract = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    outcome: v.string(),
+    proofs: v.array(
+      v.object({
+        id: v.string(),
+        what: v.string(),
+        satisfiedBy: v.optional(v.string()),
+        satisfiedAt: v.optional(v.number()),
+      }),
+    ),
+    closeWhen: v.union(
+      v.literal('action_succeeded'),
+      v.literal('outcome_likely'),
+      v.literal('outcome_confirmed'),
+      v.literal('never_automatically'),
+    ),
+    contradictions: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      contract: {
+        outcome: args.outcome.slice(0, 600),
+        proofs: args.proofs.slice(0, 12),
+        closeWhen: args.closeWhen,
+        contradictions: args.contradictions?.slice(0, 12),
+        updatedAt: ts,
+      },
+      updatedAt: ts,
+    });
+  },
+});
+
+/**
+ * Attach a piece of mail to an outcome as proof of a specific claim.
+ *
+ * The claim is the point. Storing "email 123" produces an attachment list;
+ * storing what it is claimed to prove produces something that can actually
+ * close an outcome.
+ */
+export const attachProof = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    claim: v.string(),
+    title: v.string(),
+    summary: v.optional(v.string()),
+    url: v.optional(v.string()),
+    limits: v.optional(v.string()),
+    sourceKind: v.union(v.literal('mail_thread'), v.literal('calendar_event'), v.literal('manual')),
+    sourceId: v.string(),
+    trust: v.union(v.literal('observed'), v.literal('inferred'), v.literal('confirmed')),
+    proofId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    const dedupeKey = `proof:${String(args.workId)}:${args.sourceKind}:${args.sourceId}`;
+    const existing = await ctx.db
+      .query('albatrossEvidence')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))
+      .first();
+    const row = {
+      userId,
+      targetKind: 'work' as const,
+      targetId: String(args.workId),
+      sourceKind: args.sourceKind,
+      sourceId: args.sourceId,
+      title: bounded(args.title, 300) || 'Untitled',
+      summary: bounded(args.summary, 600),
+      claim: bounded(args.claim, 400),
+      limits: bounded(args.limits, 400),
+      url: bounded(args.url, 2000),
+      occurredAt: ts,
+      weight: 1,
+      // The user pointing at something is the strongest signal there is, so it
+      // does not need a model's opinion attached to it.
+      confidence: 0.95,
+      trust: args.trust,
+      dedupeKey,
+      searchText: [args.claim, args.title, args.summary].filter(Boolean).join(' ').slice(0, 4000),
+      updatedAt: ts,
+    };
+    if (existing) await ctx.db.patch(existing._id, row);
+    else await ctx.db.insert('albatrossEvidence', { ...row, createdAt: ts });
+
+    // Tick off the contract condition this proof settles.
+    if (args.proofId && work.contract) {
+      await ctx.db.patch(args.workId, {
+        contract: {
+          ...work.contract,
+          proofs: work.contract.proofs.map((proof) =>
+            proof.id === args.proofId
+              ? { ...proof, satisfiedBy: bounded(args.title, 300), satisfiedAt: ts }
+              : proof,
+          ),
+          updatedAt: ts,
+        },
+        lastEvidenceAt: ts,
+        updatedAt: ts,
+      });
+    } else {
+      await ctx.db.patch(args.workId, { lastEvidenceAt: ts, updatedAt: ts });
+    }
+  },
+});
+
+/** Open Albatrosses a thread could plausibly be proof for. */
+export const openWorkForProof = query({
+  args: { ...callerArgs, limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(60);
+    return rows
+      .filter((row) => !['done', 'released', 'archived'].includes(row.workState || 'active'))
+      .slice(0, Math.min(Math.max(args.limit ?? 8, 1), 20))
+      .map((row) => ({
+        _id: String(row._id),
+        title: row.title || row.rawText.slice(0, 90),
+        contract: row.contract ? { outcome: row.contract.outcome, proofs: row.contract.proofs } : null,
+      }));
+  },
+});
+
 export const lapsesForWork = query({
   args: { ...callerArgs, workId: v.id('albatrossIntents'), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -795,10 +930,13 @@ export const workDetail = query({
       questions,
       areaLinks,
       application,
+      contract: work.contract ?? null,
       evidence: evidence.map((row) => ({
         _id: String(row._id),
         title: row.title,
         summary: row.summary ?? null,
+        claim: row.claim ?? null,
+        limits: row.limits ?? null,
         url: row.url ?? null,
         sourceKind: row.sourceKind,
         occurredAt: row.occurredAt,

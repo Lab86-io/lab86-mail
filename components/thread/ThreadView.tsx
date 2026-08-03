@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { ProofOffer } from '@/components/thread/ProofOffer';
 import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -555,6 +556,10 @@ export function ThreadView() {
           </div>
         </div>
       </header>
+
+      {/* Most proof that a real-life thing happened arrives by email. The offer
+          sits directly under the thread that might be it. */}
+      <ProofOffer threadId={threadId || ''} subject={data.subject} />
 
       <div className="scrollable flex-1 px-5 py-4">
         {canSummarizeThread ? (

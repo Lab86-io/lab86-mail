@@ -4,12 +4,14 @@ import { useConvexAuth, useQuery } from 'convex/react';
 import { ArrowLeft, CheckCircle2, CircleAlert, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReleaseSheet } from '@/components/albatross/Forgiveness';
-import { EvidenceCard, OutcomeHeader } from '@/components/albatross/primitives';
+import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
+import { OutcomeHeader } from '@/components/albatross/primitives';
 import { WorkDetailArtifactFrame } from '@/components/albatross/WorkDetailArtifactFrame';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import type { OutcomeContract } from '@/lib/albatross/contract';
 import { injectPlanArtifactRuntime } from '@/lib/albatross/plan-artifact-runtime';
 import type { EvidenceLike } from '@/lib/albatross/proof';
 import { workStateKey } from '@/lib/albatross/work-state';
@@ -57,6 +59,7 @@ interface WorkDetailData {
   project: null | { _id: string; title: string; outcome?: string; status: string; activeSprintId?: string };
   questions: WorkQuestion[];
   areaLinks: Array<{ areaId: string; role: string; status: string; reason?: string }>;
+  contract: OutcomeContract | null;
   evidence: EvidenceLike[];
   application: null | {
     _id: string;
@@ -343,17 +346,15 @@ export function WorkDetail({ workId }: { workId: string }) {
             </section>
           ) : null}
 
+          {detail.contract ? (
+            <section className="border-b border-[var(--color-border)] py-5">
+              <OutcomeContractCard contract={detail.contract} evidence={detail.evidence || []} />
+            </section>
+          ) : null}
+
           {detail.evidence?.length ? (
             <section className="border-b border-[var(--color-border)] py-5">
-              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">Proof</h2>
-              <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
-                What Albatross has seen that bears on whether this is done.
-              </p>
-              <ul className="mt-2 divide-y divide-[var(--color-border)]/60">
-                {detail.evidence.map((row) => (
-                  <EvidenceCard key={row._id} evidence={row} />
-                ))}
-              </ul>
+              <ProofTimeline evidence={detail.evidence} contract={detail.contract} />
             </section>
           ) : null}
 
