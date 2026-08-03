@@ -139,3 +139,55 @@ describe('advanceWork orchestration', () => {
     }
   });
 });
+
+describe('Albatross never repeats an action it already took', () => {
+  // The single failure that would make the product untrustworthy is doing a
+  // real-world thing twice — sending the same email, booking the same slot.
+  // When every digital action in a plan has already been applied, advancing
+  // must settle to ready rather than run them again.
+  test('a fully applied plan settles to ready without invoking any tool', async () => {
+    let toolCalls = 0;
+    const state = harness(
+      {
+        intent: { questions: [] },
+        plan: {
+          _id: 'plan_1',
+          digitalActions: [
+            { actionKey: 'step_1', key: 'step_1', kind: 'email_draft', title: 'Send the 1099' },
+            { actionKey: 'step_2', key: 'step_2', kind: 'calendar_event', title: 'Hold the slot' },
+          ],
+        },
+      },
+      {
+        applications: [
+          {
+            _id: 'application_1',
+            planId: 'plan_1',
+            // Applied work is recorded as artifacts keyed by actionKey — that
+            // is the join unappliedActions uses to decide what is left.
+            artifacts: [{ actionKey: 'step_1' }, { actionKey: 'step_2' }],
+          },
+        ],
+      },
+    );
+    const restoreTool = setWorkOrchestratorDependenciesForTest({
+      invokeTool: (async () => {
+        toolCalls += 1;
+        return {};
+      }) as any,
+    });
+    try {
+      const result = await advanceWork(input);
+      expect(result.status).toBe('ready');
+      expect(result.workId).toBe('work_1');
+      // Nothing was executed a second time.
+      expect(toolCalls).toBe(0);
+      // The agent stops working rather than sitting in a busy state forever.
+      const agentStates = state.mutations.filter((m) => m.agentState).map((m) => m.agentState);
+      expect(agentStates).toContain('idle');
+    } finally {
+      restoreTool();
+      state.restore();
+    }
+  });
+});

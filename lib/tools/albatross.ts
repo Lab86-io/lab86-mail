@@ -143,14 +143,20 @@ function batchContext(ctx: ToolContext, operationBatchId: string): ToolContext {
   return { ...ctx, operationBatchId };
 }
 
-function approvalKind(step: AlbatrossApplicationStep) {
+/** Which consent an executable step needs before it touches the world. */
+export function approvalKind(step: AlbatrossApplicationStep) {
   if (step.kind === 'email_send') return 'email_send';
   if (step.kind === 'calendar_rsvp') return 'calendar_rsvp';
   if (step.kind === 'calendar_event') return 'calendar_invite';
   return 'external_action';
 }
 
-function statusForApplication(input: { operations: unknown[]; approvals: unknown[]; unresolved: unknown[] }) {
+/** How much of a plan actually landed. Partial is a real, common outcome. */
+export function statusForApplication(input: {
+  operations: unknown[];
+  approvals: unknown[];
+  unresolved: unknown[];
+}) {
   if (input.operations.length && (input.approvals.length || input.unresolved.length))
     return 'partially_applied';
   if (input.operations.length) return 'applied';
