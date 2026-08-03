@@ -111,6 +111,160 @@ export const updateWorkState = mutation({
   },
 });
 
+/**
+ * Put an Albatross down on purpose.
+ *
+ * This is an ending, not a failure, and the data says so: it is its own state
+ * with its own reason, and it records whether the user chose it or Albatross
+ * suggested it. A release nobody proposed reads very differently from one the
+ * system nudged.
+ */
+export const releaseWork = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    reason: v.optional(v.string()),
+    proposedBy: v.optional(v.union(v.literal('user'), v.literal('system'))),
+    reviewAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      workState: 'released',
+      status: 'archived',
+      releaseReason: bounded(args.reason, 400),
+      releaseProposedBy: args.proposedBy ?? 'user',
+      releasedAt: ts,
+      reviewAt: args.reviewAt,
+      updatedAt: ts,
+    });
+    return { releasedAt: ts };
+  },
+});
+
+/** Picking something back up is always allowed, and costs nothing to say. */
+export const reopenWork = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      workState: 'active',
+      status: 'ready',
+      releaseReason: undefined,
+      releaseProposedBy: undefined,
+      releasedAt: undefined,
+      reviewAt: undefined,
+      updatedAt: ts,
+    });
+    return { reopenedAt: ts };
+  },
+});
+
+/**
+ * A step did not happen. Record what came of that, not merely that it slipped.
+ */
+export const recordLapse = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    stepKey: v.optional(v.string()),
+    stepTitle: v.optional(v.string()),
+    plannedAt: v.optional(v.number()),
+    reason: v.optional(v.string()),
+    reasonKind: v.optional(
+      v.union(
+        v.literal('no_energy'),
+        v.literal('no_time'),
+        v.literal('something_else_came_first'),
+        v.literal('blocked'),
+        v.literal('need_help'),
+        v.literal('step_too_large'),
+        v.literal('matters_less_now'),
+        v.literal('forgot'),
+        v.literal('other'),
+      ),
+    ),
+    reasonSource: v.optional(v.union(v.literal('user'), v.literal('inferred'))),
+    recovery: v.optional(
+      v.union(
+        v.literal('move'),
+        v.literal('shrink'),
+        v.literal('wait'),
+        v.literal('delegate'),
+        v.literal('pause'),
+        v.literal('release'),
+        v.literal('rebuild'),
+      ),
+    ),
+    revisedStep: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    const lapseId = await ctx.db.insert('albatrossLapses', {
+      userId,
+      workId: args.workId,
+      stepKey: bounded(args.stepKey, 200),
+      stepTitle: bounded(args.stepTitle, 300),
+      plannedAt: args.plannedAt,
+      reason: bounded(args.reason, 400),
+      reasonKind: args.reasonKind,
+      reasonSource: args.reasonSource ?? 'user',
+      recovery: args.recovery,
+      revisedStep: bounded(args.revisedStep, 300),
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    // The recovery the user picked is a statement about the work's state, so
+    // apply it rather than only writing it down.
+    if (args.recovery === 'pause') {
+      await ctx.db.patch(args.workId, { workState: 'paused', updatedAt: ts });
+    } else if (args.recovery === 'wait') {
+      await ctx.db.patch(args.workId, { workState: 'waiting', updatedAt: ts });
+    } else if (args.recovery === 'release') {
+      await ctx.db.patch(args.workId, {
+        workState: 'released',
+        status: 'archived',
+        releaseReason: bounded(args.reason, 400),
+        releaseProposedBy: 'user',
+        releasedAt: ts,
+        updatedAt: ts,
+      });
+    }
+    return lapseId;
+  },
+});
+
+/** Did the smaller step actually happen? This is what makes the record teach. */
+export const resolveLapse = mutation({
+  args: { ...callerArgs, lapseId: v.id('albatrossLapses'), held: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const lapse = await ctx.db.get(args.lapseId);
+    if (!lapse || lapse.userId !== userId) throw new Error('Lapse not found.');
+    const ts = now();
+    await ctx.db.patch(args.lapseId, { revisionHeld: args.held, resolvedAt: ts, updatedAt: ts });
+  },
+});
+
+export const lapsesForWork = query({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    return ctx.db
+      .query('albatrossLapses')
+      .withIndex('by_work', (q) => q.eq('workId', args.workId))
+      .order('desc')
+      .take(Math.min(Math.max(args.limit ?? 20, 1), 100));
+  },
+});
+
 export const finishCapture = mutation({
   args: {
     ...callerArgs,

@@ -3,6 +3,7 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { ArrowLeft, CheckCircle2, CircleAlert, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { EvidenceCard, OutcomeHeader } from '@/components/albatross/primitives';
 import { WorkDetailArtifactFrame } from '@/components/albatross/WorkDetailArtifactFrame';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
@@ -82,6 +83,7 @@ export function WorkDetail({ workId }: { workId: string }) {
       : 'skip',
   ) as Array<{ cardId: string; title: string; completedAt?: number }> | undefined;
   const [advancing, setAdvancing] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
   const artifactFrameRef = useRef<HTMLIFrameElement>(null);
@@ -186,9 +188,32 @@ export function WorkDetail({ workId }: { workId: string }) {
                   <RefreshCw className={cn('size-3.5', advancing && 'animate-spin')} />
                   {advancing ? 'Working…' : 'Continue'}
                 </Button>
+                {/* Putting something down is a first-class ending, so it sits
+                    beside the action that continues it — not buried in a menu. */}
+                {work.workState !== 'released' && work.workState !== 'done' ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setReleasing((value) => !value)}
+                  >
+                    Put it down
+                  </Button>
+                ) : null}
               </>
             }
           />
+
+          {releasing ? (
+            <div className="mt-6">
+              <ReleaseSheet
+                workId={workId}
+                title={plan?.outcome || work.title || work.rawText}
+                onReleased={() => setReleasing(false)}
+                onCancel={() => setReleasing(false)}
+              />
+            </div>
+          ) : null}
 
           {pendingQuestions.length ? (
             <section className="mt-6">

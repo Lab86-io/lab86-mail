@@ -74,6 +74,9 @@ export interface ClientState {
   // The user's own statement about the day. It changes how much Today puts in
   // front of them; it never changes what they are allowed to see.
   capacity: Capacity;
+  // When the user last opened Albatross. Coming back after a while gets a
+  // different first screen — never a wall of accumulated overdue work.
+  lastSeenAt: number | null;
   compose: ComposeState;
   // Exact attachment blobs staged for the next composer (Undo Send or a
   // brief-generated deliverable). Transient by design; the composer persists
@@ -154,6 +157,7 @@ export interface ClientState {
   openCaptureWith: (seed: string) => void;
   setBoardSurfaceEnabled: (enabled: boolean) => void;
   setCapacity: (capacity: Capacity) => void;
+  markSeen: () => void;
   openComposeNew: (prefill?: ComposePrefill) => void;
   openComposeReply: (input: {
     mode: 'reply' | 'reply_all' | 'forward';
@@ -224,6 +228,7 @@ export function persistedClientState(s: ClientState) {
     primaryView: s.primaryView,
     boardSurfaceEnabled: s.boardSurfaceEnabled,
     capacity: s.capacity,
+    lastSeenAt: s.lastSeenAt,
     query: s.query,
     smartCategory: s.smartCategory,
     selectedAreaId: s.selectedAreaId,
@@ -276,6 +281,7 @@ export const useClientStore = create<ClientState>()(
       captureSeed: null,
       boardSurfaceEnabled: false,
       capacity: 'normal',
+      lastSeenAt: null,
       compose: initialCompose,
       composeRecoveredFiles: [],
       shortcutsOpen: false,
@@ -354,6 +360,7 @@ export const useClientStore = create<ClientState>()(
       openCaptureWith: (captureSeed) => set({ captureSeed, captureOpen: true }),
       setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),
       setCapacity: (capacity) => set({ capacity }),
+      markSeen: () => set({ lastSeenAt: Date.now() }),
       openComposeNew: (prefill) =>
         set((s) => ({
           compose: {

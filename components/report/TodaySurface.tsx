@@ -3,10 +3,12 @@
 import { useQuery as useReactQuery } from '@tanstack/react-query';
 import { useConvexAuth, useQuery } from 'convex/react';
 import { CalendarDays, LoaderCircle } from 'lucide-react';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
+import { ReEntry, ReviewBatch } from '@/components/albatross/Forgiveness';
 import { AlbatrossRow } from '@/components/albatross/primitives';
 import { api } from '@/convex/_generated/api';
+import { reEntryDaysAway, reviewBatch, shouldOfferReEntry } from '@/lib/albatross/forgiveness';
 import {
   CAPACITY_LABEL,
   type Capacity,
@@ -102,6 +104,19 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
     })),
   );
 
+  // Re-entry and the staleness review both live at the top of Today, above
+  // everything else, because they change what the rest of the page means.
+  const lastSeenAt = useClientStore((s) => s.lastSeenAt);
+  const markSeen = useClientStore((s) => s.markSeen);
+  const [reEntryDismissed, setReEntryDismissed] = useState(false);
+  const [reviewDismissed, setReviewDismissed] = useState(false);
+  const [awayDays] = useState(() => reEntryDaysAway(lastSeenAt, Date.now()));
+  const [showReEntry] = useState(() => shouldOfferReEntry(lastSeenAt, Date.now()));
+  useEffect(() => {
+    markSeen();
+  }, [markSeen]);
+  const stale = useMemo(() => reviewBatch(rows, nowMs), [rows, nowMs]);
+
   const shape = dayShapeLine({
     needsYouCount: attention.work.length + attention.approvals.length,
     eventCount: schedule.length,
@@ -181,6 +196,29 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-6">
         <div className="mx-auto grid max-w-5xl gap-8 @container lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
           <div className="min-w-0">
+            {showReEntry && !reEntryDismissed ? (
+              <div className="mb-8">
+                <ReEntry
+                  days={awayDays}
+                  onShowUrgent={() => {
+                    setCapacity('low');
+                    setReEntryDismissed(true);
+                  }}
+                  onReviewOld={() => {
+                    setReviewDismissed(false);
+                    setReEntryDismissed(true);
+                  }}
+                  onDismiss={() => setReEntryDismissed(true)}
+                />
+              </div>
+            ) : null}
+
+            {stale.length && !reviewDismissed ? (
+              <div className="mb-8">
+                <ReviewBatch items={stale} />
+              </div>
+            ) : null}
+
             {loading ? (
               <p className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
                 <LoaderCircle className="size-4 animate-spin" /> Loading

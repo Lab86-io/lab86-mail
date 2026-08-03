@@ -25,7 +25,7 @@ export function StateChip({ state, className }: { state: WorkStateKey; className
           ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)] shadow-[var(--shadow-soft)]'
           : state === 'waiting' || state === 'unresolved'
             ? 'border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]'
-            : state === 'done' || state === 'archived'
+            : state === 'done' || state === 'released' || state === 'archived'
               ? 'text-[var(--color-text-faint)]'
               : 'border border-[var(--color-border)] text-[var(--color-text-muted)]',
         className,
@@ -48,7 +48,8 @@ export function nextMoveLine(work: WorkStateInput & { openQuestions?: number }):
   if (work.agentState === 'applying') return 'Albatross is making the changes';
   if (work.workState === 'waiting' || work.workState === 'blocked') return 'Waiting on somebody else';
   if (work.workState === 'paused') return 'Paused by you';
-  if (work.workState === 'archived') return 'You put this down';
+  if (work.workState === 'released') return 'You put this down';
+  if (work.workState === 'archived') return 'Archived';
   if (work.workState === 'done') return 'Finished';
   return 'Albatross is carrying this';
 }

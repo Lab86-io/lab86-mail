@@ -81,8 +81,9 @@ export function AlbatrossesSurface() {
   // 'unresolved' stays in the open half on purpose: those questions are the
   // whole reason this surface exists, and hiding them behind "Show finished"
   // would repeat the bug this round set out to fix.
-  const openGroups = groups.filter((group) => group.key !== 'done' && group.key !== 'archived');
-  const closedGroups = groups.filter((group) => group.key === 'done' || group.key === 'archived');
+  const CLOSED: WorkStateKey[] = ['done', 'released', 'archived'];
+  const openGroups = groups.filter((group) => !CLOSED.includes(group.key));
+  const closedGroups = groups.filter((group) => CLOSED.includes(group.key));
   const visibleGroups = showClosed ? [...openGroups, ...closedGroups] : openGroups;
   const closedCount = closedGroups.reduce((total, group) => total + group.items.length, 0);
 

@@ -11,6 +11,7 @@ export type WorkStateKey =
   | 'unresolved'
   | 'paused'
   | 'done'
+  | 'released'
   | 'archived';
 
 export interface WorkStateInput {
@@ -35,7 +36,7 @@ export function needsYou(work: WorkStateInput): boolean {
 
 export function isClosed(work: WorkStateInput): boolean {
   const state = work.workState || work.status;
-  return state === 'done' || state === 'archived';
+  return state === 'done' || state === 'released' || state === 'archived';
 }
 
 /** Closed on paper, but Albatross is still waiting on an answer. */
@@ -45,6 +46,10 @@ export function isUnresolved(work: WorkStateInput): boolean {
 
 export function workStateKey(work: WorkStateInput): WorkStateKey {
   if (isUnresolved(work)) return 'unresolved';
+  // Released is checked before archived: a thing put down on purpose must
+  // never be filed under "hidden", or the product can never tell the user how
+  // much they consciously chose to stop carrying.
+  if (work.workState === 'released') return 'released';
   if (work.workState === 'archived' || work.status === 'archived') return 'archived';
   if (work.workState === 'done' || work.status === 'done') return 'done';
   if (needsYou(work)) return 'needs_you';
@@ -60,7 +65,8 @@ export const WORK_STATE_LABEL: Record<WorkStateKey, string> = {
   unresolved: 'Still asking',
   paused: 'Paused',
   done: 'Done',
-  archived: 'Put down',
+  released: 'Put down',
+  archived: 'Archived',
 };
 
 // Group order on the Albatrosses surface. What needs the user comes first;
@@ -72,6 +78,7 @@ export const WORK_STATE_ORDER: WorkStateKey[] = [
   'unresolved',
   'paused',
   'done',
+  'released',
   'archived',
 ];
 
@@ -82,7 +89,8 @@ export const WORK_STATE_HINT: Record<WorkStateKey, string> = {
   unresolved: 'You put these down, but Albatross never got an answer.',
   paused: 'You stopped these on purpose.',
   done: 'These reached the outcome you wanted.',
-  archived: 'You put these down.',
+  released: 'You decided these no longer deserved your attention.',
+  archived: 'Hidden from the list.',
 };
 
 /**
