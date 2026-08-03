@@ -121,6 +121,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
     needsYouCount: attention.work.length + attention.approvals.length,
     eventCount: schedule.length,
     capacity,
+    carryingCount: openWork(rows).length,
   });
 
   return (
@@ -138,11 +139,18 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                 pattern, but it does not diagnose anybody's day for them. */}
             <button
               type="button"
+              aria-expanded={dayChangedOpen}
               onClick={() => setDayChangedOpen((value) => !value)}
-              className="mr-1 rounded-full px-3 py-1 text-[12px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+              className={cn(
+                'mr-2 rounded-lg border border-dashed px-3 py-1 text-[12px] transition-colors',
+                dayChangedOpen
+                  ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                  : 'border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)]',
+              )}
             >
               My day changed
             </button>
+            <span aria-hidden className="mr-1 h-4 w-px bg-[var(--color-border)]" />
             {(['low', 'normal', 'high'] as Capacity[]).map((option) => (
               <button
                 key={option}
@@ -391,7 +399,11 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
           </div>
         </div>
 
-        {brief ? <div className="mx-auto mt-10 max-w-5xl">{brief}</div> : null}
+        {brief ? (
+          <div className="mx-auto mt-10 grid max-w-5xl lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+            <div className="min-w-0">{brief}</div>
+          </div>
+        ) : null}
       </div>
       <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
     </section>

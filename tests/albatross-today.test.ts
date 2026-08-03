@@ -173,6 +173,17 @@ describe('dayShapeLine', () => {
     );
   });
 
+  test('a day with carried work does not claim to be empty', () => {
+    // Live defect: the header read "The day is yours" while "Could move today"
+    // showed an Albatross underneath it — a system not reading its own page.
+    expect(dayShapeLine({ needsYouCount: 0, eventCount: 0, capacity: 'normal', carryingCount: 1 })).toBe(
+      'Nothing needs you today. Albatross is carrying one thing on its own.',
+    );
+    expect(dayShapeLine({ needsYouCount: 0, eventCount: 0, capacity: 'normal', carryingCount: 3 })).toContain(
+      'carrying 3 things',
+    );
+  });
+
   test('counts read as sentences, not as tallies', () => {
     expect(dayShapeLine({ needsYouCount: 1, eventCount: 2, capacity: 'normal' })).toBe(
       'One thing needs you, and 2 things are booked.',

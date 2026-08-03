@@ -126,9 +126,19 @@ export function dayShapeLine(input: {
   needsYouCount: number;
   eventCount: number;
   capacity: Capacity;
+  /** Open Albatrosses Albatross is carrying but that need nothing from you. */
+  carryingCount?: number;
 }): string {
   const { needsYouCount, eventCount, capacity } = input;
+  const carrying = input.carryingCount ?? 0;
   if (needsYouCount === 0 && eventCount === 0) {
+    // "The day is yours" is only true when there is genuinely nothing in it.
+    // Saying it while Albatross is visibly carrying work reads as a system
+    // that has not looked at its own page.
+    if (carrying === 1) return 'Nothing needs you today. Albatross is carrying one thing on its own.';
+    if (carrying > 1) {
+      return `Nothing needs you today. Albatross is carrying ${carrying} things on its own.`;
+    }
     return 'Nothing needs you and nothing is booked. The day is yours.';
   }
   const parts: string[] = [];
