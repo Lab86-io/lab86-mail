@@ -3,6 +3,7 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { CalendarDays, LoaderCircle } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
+import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
 import { AlbatrossRow } from '@/components/albatross/primitives';
 import { api } from '@/convex/_generated/api';
 import {
@@ -13,6 +14,7 @@ import {
   eventWindowLabel,
   fixedSchedule,
   needsYouToday,
+  openWork,
   readyToMove,
   type TodayApproval,
   type TodayEvent,
@@ -57,8 +59,19 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const attention = needsYouToday(rows, approvals || []);
   const schedule = fixedSchedule(events || []);
   const ready = readyToMove(rows, capacity);
+  const [showAllReady, setShowAllReady] = useState(false);
+  const readyItems = showAllReady ? openWork(rows) : ready.items;
   const waiting = waitingOnSomebody(rows);
   const loading = work === undefined;
+
+  const checkin = useQuery(api.albatrossNotifications.currentCheckin, isAuthenticated ? {} : 'skip') as
+    | DailyCheckinData
+    | null
+    | undefined;
+  const [checkinOpen, setCheckinOpen] = useState(false);
+  const carryoverCheckin = Boolean(
+    checkin && checkin.localDate !== new Intl.DateTimeFormat('en-CA').format(new Date(nowMs)),
+  );
 
   const shape = dayShapeLine({
     needsYouCount: attention.work.length + attention.approvals.length,
@@ -145,15 +158,44 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
               </Section>
             ) : null}
 
-            {ready.length ? (
+            {readyItems.length ? (
               <Section title="Could move today" note="Albatross is carrying these. None of them is booked.">
                 <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  {ready.map((item) => (
+                  {readyItems.map((item) => (
                     <li key={item._id}>
                       <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
                     </li>
                   ))}
                 </ul>
+                {/* Capacity shortens the day; it never hides it. */}
+                {ready.heldBack && !showAllReady ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllReady(true)}
+                    className="mt-2 text-[12px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
+                  >
+                    {ready.heldBack === 1
+                      ? 'One more is held back for the capacity you set — show it'
+                      : `${ready.heldBack} more are held back for the capacity you set — show them`}
+                  </button>
+                ) : null}
+              </Section>
+            ) : null}
+
+            {checkin ? (
+              <Section title="Evening check-in" note="How did the day actually go?">
+                <button
+                  type="button"
+                  onClick={() => setCheckinOpen(true)}
+                  className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
+                >
+                  <span className="block text-[13.5px] font-medium">
+                    {carryoverCheckin ? 'Yesterday’s check-in is still open' : 'Ready when you are'}
+                  </span>
+                  <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
+                    What moved, what changed, and what tomorrow should protect.
+                  </span>
+                </button>
               </Section>
             ) : null}
 
@@ -169,7 +211,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
               </Section>
             ) : null}
 
-            {!loading && !attention.work.length && !attention.approvals.length && !ready.length ? (
+            {!loading && !attention.work.length && !attention.approvals.length && !readyItems.length ? (
               <div className="mt-2">
                 <button
                   type="button"
@@ -210,6 +252,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
 
         {brief ? <div className="mx-auto mt-10 max-w-5xl">{brief}</div> : null}
       </div>
+      <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
     </section>
   );
 }

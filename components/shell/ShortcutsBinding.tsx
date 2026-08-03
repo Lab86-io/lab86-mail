@@ -23,6 +23,7 @@ export function ShortcutsBinding() {
   const setQuery = useClientStore((s) => s.setQuery);
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
+  const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
@@ -78,6 +79,10 @@ export function ShortcutsBinding() {
         pendingG = 0;
       }
       switch (e.key) {
+        case 'n':
+          e.preventDefault();
+          setCaptureOpen(true);
+          break;
         case 'c':
           e.preventDefault();
           openComposeNew();
@@ -158,6 +163,7 @@ export function ShortcutsBinding() {
     setQuery,
     setSmartCategory,
     openComposeNew,
+    setCaptureOpen,
     setShortcutsOpen,
     setSelectedThread,
     setPaletteOpen,

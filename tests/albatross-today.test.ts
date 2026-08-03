@@ -8,6 +8,7 @@ import {
   eventWindowLabel,
   fixedSchedule,
   needsYouToday,
+  openWork,
   readyToMove,
   type TodayEvent,
   type TodayWork,
@@ -81,12 +82,15 @@ describe('readyToMove', () => {
   const rows = Array.from({ length: 8 }, (_, index) => work({ _id: `w${index}`, updatedAt: index }));
 
   test('never repeats what already appears under Needs you', () => {
-    const items = readyToMove([work({ _id: 'asks', openQuestions: 2 }), work({ _id: 'quiet' })], 'normal');
+    const { items } = readyToMove(
+      [work({ _id: 'asks', openQuestions: 2 }), work({ _id: 'quiet' })],
+      'normal',
+    );
     expect(items.map((row) => row._id)).toEqual(['quiet']);
   });
 
   test('leaves out what is waiting, paused or finished', () => {
-    const items = readyToMove(
+    const { items } = readyToMove(
       [
         work({ _id: 'waiting', workState: 'waiting' }),
         work({ _id: 'paused', workState: 'paused' }),
@@ -100,15 +104,32 @@ describe('readyToMove', () => {
 
   test('capacity changes how much is put in front of the user', () => {
     const counts: Record<Capacity, number> = {
-      low: readyToMove(rows, 'low').length,
-      normal: readyToMove(rows, 'normal').length,
-      high: readyToMove(rows, 'high').length,
+      low: readyToMove(rows, 'low').items.length,
+      normal: readyToMove(rows, 'normal').items.length,
+      high: readyToMove(rows, 'high').items.length,
     };
     expect(counts.low).toBe(1);
     expect(counts.normal).toBe(3);
     expect(counts.high).toBe(6);
     expect(counts.low).toBeLessThan(counts.normal);
     expect(counts.normal).toBeLessThan(counts.high);
+  });
+
+  test('says how much it held back, rather than dropping it quietly', () => {
+    // A cap that hides without saying so is a list of overdue work in a nicer
+    // coat. The surface offers the remainder; it never silently truncates.
+    const low = readyToMove(rows, 'low');
+    expect(low.items).toHaveLength(1);
+    expect(low.heldBack).toBe(7);
+    expect(low.items.length + low.heldBack).toBe(openWork(rows).length);
+
+    const high = readyToMove(rows, 'high');
+    expect(high.items.length + high.heldBack).toBe(openWork(rows).length);
+  });
+
+  test('holds nothing back when everything already fits', () => {
+    const few = [work({ _id: 'a' }), work({ _id: 'b' })];
+    expect(readyToMove(few, 'normal').heldBack).toBe(0);
   });
 });
 

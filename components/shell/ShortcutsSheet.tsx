@@ -7,6 +7,7 @@ export const SHORTCUTS: [string[], string][] = [
   [['u', 'esc'], 'Close thread'],
   [['e'], 'Archive'],
   [['#'], 'Trash'],
+  [['n'], 'Get this off my mind'],
   [['c'], 'Compose'],
   [['/'], 'Focus search'],
   [['s'], 'Summarize current thread'],

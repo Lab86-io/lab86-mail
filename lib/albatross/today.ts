@@ -86,8 +86,8 @@ export function needsYouToday(work: TodayWork[], approvals: TodayApproval[]) {
  * reserved time is a different idea, and it does not exist yet. Calling these
  * "scheduled" would be a lie the calendar could not back up.
  */
-export function readyToMove(work: TodayWork[], capacity: Capacity): TodayWork[] {
-  const open = work.filter(
+export function openWork(work: TodayWork[]): TodayWork[] {
+  return work.filter(
     (row) =>
       !needsYou(row) &&
       row.workState !== 'waiting' &&
@@ -96,11 +96,20 @@ export function readyToMove(work: TodayWork[], capacity: Capacity): TodayWork[] 
       row.workState !== 'done' &&
       row.workState !== 'archived',
   );
-  const sorted = open.sort((a, b) => b.updatedAt - a.updatedAt);
-  // Capacity is the user's own statement about their day, so it changes how
-  // much Albatross puts in front of them — never what it hides from them.
-  const cap = capacity === 'low' ? 1 : capacity === 'high' ? 6 : 3;
-  return sorted.slice(0, cap);
+}
+
+export const CAPACITY_SHOWN: Record<Capacity, number> = { low: 1, normal: 3, high: 6 };
+
+/**
+ * Capacity is the user's own statement about their day, so it changes how much
+ * Albatross puts in front of them. It must never quietly drop the rest: a cap
+ * that hides without saying so is the same sin as a list of overdue work, just
+ * politer. `heldBack` exists so the surface can offer the remainder.
+ */
+export function readyToMove(work: TodayWork[], capacity: Capacity): { items: TodayWork[]; heldBack: number } {
+  const sorted = openWork(work).sort((a, b) => b.updatedAt - a.updatedAt);
+  const shown = sorted.slice(0, CAPACITY_SHOWN[capacity]);
+  return { items: shown, heldBack: sorted.length - shown.length };
 }
 
 export function waitingOnSomebody(work: TodayWork[]): TodayWork[] {
