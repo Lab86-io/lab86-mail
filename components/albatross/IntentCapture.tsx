@@ -239,6 +239,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   // launcher yields while it is open, exactly like Ask Assistant used to.
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const captureOpen = useClientStore((s) => s.captureOpen);
+  const captureSeed = useClientStore((s) => s.captureSeed);
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
 
   const [state, setState] = useState<CaptureState>('closed');
@@ -267,8 +268,11 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   useEffect(() => {
     if (!captureOpen) return;
     setCaptureOpen(false);
+    // A thread or a selection arrives as the starting text; the user still
+    // edits it in their own words before handing it over.
+    if (captureSeed) setText(captureSeed);
     send({ type: 'open' });
-  }, [captureOpen, send, setCaptureOpen]);
+  }, [captureOpen, captureSeed, send, setCaptureOpen]);
 
   // Dot-morph squish only makes sense on hover-capable pointers (SmoothUI).
   useEffect(() => {

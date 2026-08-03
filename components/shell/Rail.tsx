@@ -7,7 +7,7 @@ import {
   useMutation as useConvexMutation,
   useQuery_experimental as useConvexQuery,
 } from 'convex/react';
-import { Search, Settings } from 'lucide-react';
+import { History, Search, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -467,6 +467,19 @@ export function Rail({
                 >
                   <Search className="size-4 shrink-0" aria-hidden />
                   <span>Search</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={visiblePrimaryView === 'activity'}
+                  tooltip="Activity"
+                  onClick={() => {
+                    setPrimaryView('activity');
+                    closeMobileSidebar();
+                  }}
+                >
+                  <History className="size-4 shrink-0" aria-hidden />
+                  <span>Activity</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

@@ -24,6 +24,7 @@ export function ShortcutsBinding() {
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
+  const openCaptureWith = useClientStore((s) => s.openCaptureWith);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
@@ -79,10 +80,14 @@ export function ShortcutsBinding() {
         pendingG = 0;
       }
       switch (e.key) {
-        case 'n':
+        case 'n': {
           e.preventDefault();
-          setCaptureOpen(true);
+          // A selection is already the user saying "this is the thing".
+          const selected = window.getSelection()?.toString().trim() || '';
+          if (selected) openCaptureWith(selected.slice(0, 4000));
+          else setCaptureOpen(true);
           break;
+        }
         case 'c':
           e.preventDefault();
           openComposeNew();
@@ -164,6 +169,7 @@ export function ShortcutsBinding() {
     setSmartCategory,
     openComposeNew,
     setCaptureOpen,
+    openCaptureWith,
     setShortcutsOpen,
     setSelectedThread,
     setPaletteOpen,

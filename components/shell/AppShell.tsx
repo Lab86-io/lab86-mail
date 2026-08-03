@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { ActivitySurface } from '@/components/albatross/ActivitySurface';
 import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
 import { AlbatrossesSurface } from '@/components/albatross/AlbatrossesSurface';
 import { AreaHome } from '@/components/albatross/AreaHome';
@@ -366,6 +367,12 @@ function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedW
       return (
         <SurfaceErrorBoundary surface="Areas">
           {selectedWorkId ? <WorkDetail workId={selectedWorkId} /> : <AreaHome />}
+        </SurfaceErrorBoundary>
+      );
+    case 'activity':
+      return (
+        <SurfaceErrorBoundary surface="Activity">
+          <ActivitySurface />
         </SurfaceErrorBoundary>
       );
     case 'calendar':

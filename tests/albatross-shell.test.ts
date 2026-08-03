@@ -23,6 +23,7 @@ describe('the Albatross surfaces', () => {
       'calendar',
       'files',
       'areas',
+      'activity',
       'tasks',
     ]);
   });

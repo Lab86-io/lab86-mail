@@ -243,6 +243,13 @@ export function WorkDetail({ workId }: { workId: string }) {
           {plan?.digitalActions?.length || plan?.physicalActions?.length ? (
             <section className="border-b border-[var(--color-border)] py-5">
               <h2 className="text-[13px] font-semibold text-[var(--color-text)]">What Albatross created</h2>
+              {/* A plan is Albatross's best current guess, not a commitment the
+                  user signed. Saying so is what makes correcting it feel
+                  ordinary rather than an admission of failure. */}
+              <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
+                This is Albatross&apos;s best guess at the way through. Tell it if the plan is wrong and it
+                will find another one.
+              </p>
               <div className="mt-2 divide-y divide-[var(--color-border)]/60">
                 {(plan.digitalActions || []).map((action) => {
                   const done = plan.appliedSteps?.some((step) => step.stepKey === action.key);

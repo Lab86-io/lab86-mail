@@ -170,3 +170,47 @@ export function briefIsStale(generatedAt: number | null, nowMs: number): boolean
   if (!generatedAt) return false;
   return nowMs - generatedAt > 36 * 3_600_000;
 }
+
+export interface TodayPractice {
+  _id: string;
+  title: string;
+  cadence: string;
+  nextRunAt: number | null;
+  areaName?: string | null;
+}
+
+export const CADENCE_LABEL: Record<string, string> = {
+  daily: 'Most days',
+  weekdays: 'Weekdays',
+  weekly: 'Once a week',
+  custom: 'On your own rhythm',
+};
+
+/**
+ * A practice is not a project and must never be scored. No streak, no percent,
+ * no broken chain — the north star is explicit that consistency and recovery
+ * matter and that perfect weeks do not.
+ */
+export function practiceLine(practice: TodayPractice, nowMs: number): string {
+  const cadence = CADENCE_LABEL[practice.cadence] || CADENCE_LABEL.custom;
+  if (!practice.nextRunAt) return cadence;
+  if (practice.nextRunAt <= nowMs) return `${cadence} · there is room for it today`;
+  const sameDay = new Date(practice.nextRunAt).toDateString() === new Date(nowMs).toDateString();
+  return sameDay ? `${cadence} · later today` : cadence;
+}
+
+export interface TodayMail {
+  id: string;
+  subject: string;
+  from: string;
+  reason?: string | null;
+}
+
+/**
+ * Only mail that bears on today. The north star is strict here: this section
+ * is not an inbox digest, and every item in it should be something a person
+ * would be annoyed to have missed.
+ */
+export function importantMailToday(items: TodayMail[], limit = 4): TodayMail[] {
+  return items.slice(0, limit);
+}

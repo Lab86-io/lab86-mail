@@ -1,5 +1,6 @@
 'use client';
 
+import { useQuery as useReactQuery } from '@tanstack/react-query';
 import { useConvexAuth, useQuery } from 'convex/react';
 import { CalendarDays, LoaderCircle } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
@@ -13,15 +14,19 @@ import {
   dayWindow,
   eventWindowLabel,
   fixedSchedule,
+  importantMailToday,
   needsYouToday,
   openWork,
+  practiceLine,
   readyToMove,
   type TodayApproval,
   type TodayEvent,
+  type TodayPractice,
   type TodayWork,
   todayDateline,
   waitingOnSomebody,
 } from '@/lib/albatross/today';
+import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -60,6 +65,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const schedule = fixedSchedule(events || []);
   const ready = readyToMove(rows, capacity);
   const [showAllReady, setShowAllReady] = useState(false);
+  const [dayChangedOpen, setDayChangedOpen] = useState(false);
   const readyItems = showAllReady ? openWork(rows) : ready.items;
   const waiting = waitingOnSomebody(rows);
   const loading = work === undefined;
@@ -71,6 +77,29 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const [checkinOpen, setCheckinOpen] = useState(false);
   const carryoverCheckin = Boolean(
     checkin && checkin.localDate !== new Intl.DateTimeFormat('en-CA').format(new Date(nowMs)),
+  );
+
+  const practices = useQuery(
+    api.albatrossRoutines.activePractices,
+    isAuthenticated ? { limit: 2 } : 'skip',
+  ) as TodayPractice[] | undefined;
+
+  // Important mail rides on the brief's own attention index — the same source
+  // that decides what the brief leads with. Today does not build a second one.
+  const latestBrief = useReactQuery({
+    queryKey: ['daily-report', 'today-mail'],
+    queryFn: async () =>
+      callTool<{ report?: { sections?: Record<string, unknown> } | null }>('get_latest_daily_report'),
+    staleTime: 120_000,
+    retry: false,
+  });
+  const mail = importantMailToday(
+    ((latestBrief.data?.report?.sections?.needsReply as any[]) || []).map((item: any) => ({
+      id: String(item.id ?? item.threadId ?? item.subject),
+      subject: String(item.subject || 'Untitled'),
+      from: String(item.from || item.fromName || ''),
+      reason: item.reason ?? item.why ?? null,
+    })),
   );
 
   const shape = dayShapeLine({
@@ -92,6 +121,13 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
           <div className="flex shrink-0 items-center gap-1">
             {/* The user states their own capacity. Albatross may later notice a
                 pattern, but it does not diagnose anybody's day for them. */}
+            <button
+              type="button"
+              onClick={() => setDayChangedOpen((value) => !value)}
+              className="mr-1 rounded-full px-3 py-1 text-[12px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            >
+              My day changed
+            </button>
             {(['low', 'normal', 'high'] as Capacity[]).map((option) => (
               <button
                 key={option}
@@ -110,6 +146,36 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
             ))}
           </div>
         </div>
+        {dayChangedOpen ? (
+          <div className="mx-auto mt-3 max-w-5xl rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
+            <p className="text-[13px] font-medium">What changed?</p>
+            <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+              Today's plan was a guess. Tell Albatross how the day actually looks and it will use less of it —
+              nothing is lost either way.
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {(
+                [
+                  ['I have less time than I thought', 'low'],
+                  ['I have more room than I thought', 'high'],
+                  ['It is about what I expected', 'normal'],
+                ] as Array<[string, Capacity]>
+              ).map(([label, next]) => (
+                <button
+                  key={next}
+                  type="button"
+                  onClick={() => {
+                    setCapacity(next);
+                    setDayChangedOpen(false);
+                  }}
+                  className="rounded-full border border-[var(--color-border)] px-3 py-1 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-6">
@@ -182,6 +248,22 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
               </Section>
             ) : null}
 
+            {practices?.length ? (
+              <Section title="Ongoing practices" note="Kept over time, not scored week by week.">
+                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                  {practices.map((practice) => (
+                    <li key={practice._id} className="px-4 py-3">
+                      <p className="text-[13.5px] font-medium">{practice.title}</p>
+                      <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+                        {practiceLine(practice, nowMs)}
+                        {practice.areaName ? ` · ${practice.areaName}` : ''}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            ) : null}
+
             {checkin ? (
               <Section title="Evening check-in" note="How did the day actually go?">
                 <button
@@ -196,6 +278,27 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                     What moved, what changed, and what tomorrow should protect.
                   </span>
                 </button>
+              </Section>
+            ) : null}
+
+            {mail.length ? (
+              <Section title="Important mail" note="Only what bears on an open Albatross or on today.">
+                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                  {mail.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => setPrimaryView('mail')}
+                        className="w-full px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
+                      >
+                        <span className="block truncate text-[13.5px] font-medium">{item.subject}</span>
+                        <span className="mt-0.5 block truncate text-[12px] text-[var(--color-text-muted)]">
+                          {item.reason || item.from}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </Section>
             ) : null}
 

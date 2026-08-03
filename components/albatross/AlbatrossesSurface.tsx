@@ -3,6 +3,7 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { LoaderCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
 import { AlbatrossRow } from '@/components/albatross/primitives';
 import { api } from '@/convex/_generated/api';
 import {
@@ -214,6 +215,7 @@ function EmptyState({ filter }: { filter: ListFilter }) {
   }
   return (
     <div className="mx-auto max-w-md py-20 text-center">
+      <AlbatrossMark className="mx-auto mb-4 size-10 text-[var(--color-text-faint)]" />
       <h2 className="font-serif text-[20px] font-semibold">Nothing on your shoulders yet</h2>
       <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
         Tell Albatross what you keep meaning to handle. It works out what you want, finds the context, and

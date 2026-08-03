@@ -65,6 +65,9 @@ export interface ClientState {
   // Set by any surface that wants the capture takeover — the rail, an empty
   // state, a shortcut. The launcher owns the overlay; this is only the door.
   captureOpen: boolean;
+  // Text the capture sheet should open with — a mail thread the user pointed
+  // at, or a selection they highlighted. Transient; never persisted.
+  captureSeed: string | null;
   // The column board is an optional lens, off by default. It used to be a
   // top-level surface, which made it a second system to maintain.
   boardSurfaceEnabled: boolean;
@@ -148,6 +151,7 @@ export interface ClientState {
   selectMany: (ids: string[]) => void;
   setPaletteOpen: (open: boolean) => void;
   setCaptureOpen: (open: boolean) => void;
+  openCaptureWith: (seed: string) => void;
   setBoardSurfaceEnabled: (enabled: boolean) => void;
   setCapacity: (capacity: Capacity) => void;
   openComposeNew: (prefill?: ComposePrefill) => void;
@@ -269,6 +273,7 @@ export const useClientStore = create<ClientState>()(
       selectedIds: [],
       paletteOpen: false,
       captureOpen: false,
+      captureSeed: null,
       boardSurfaceEnabled: false,
       capacity: 'normal',
       compose: initialCompose,
@@ -345,7 +350,8 @@ export const useClientStore = create<ClientState>()(
       clearSelected: () => set({ selectedIds: [] }),
       selectMany: (ids) => set({ selectedIds: ids }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
-      setCaptureOpen: (captureOpen) => set({ captureOpen }),
+      setCaptureOpen: (captureOpen) => set({ captureOpen, ...(captureOpen ? {} : { captureSeed: null }) }),
+      openCaptureWith: (captureSeed) => set({ captureSeed, captureOpen: true }),
       setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),
       setCapacity: (capacity) => set({ capacity }),
       openComposeNew: (prefill) =>

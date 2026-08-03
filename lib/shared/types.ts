@@ -150,7 +150,16 @@ export type TriageAction = 'reply' | 'read' | 'archive' | 'delegate' | 'wait';
 // The Albatross surfaces. `tasks` stays routable so a saved board link still
 // opens, but it left the rail — the board is an optional lens, not a peer of
 // the surfaces above it.
-export const PRIMARY_VIEWS = ['today', 'albatrosses', 'mail', 'calendar', 'files', 'areas', 'tasks'] as const;
+export const PRIMARY_VIEWS = [
+  'today',
+  'albatrosses',
+  'mail',
+  'calendar',
+  'files',
+  'areas',
+  'activity',
+  'tasks',
+] as const;
 
 export type PrimaryView = (typeof PRIMARY_VIEWS)[number];
 
