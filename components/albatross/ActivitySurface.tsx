@@ -40,6 +40,29 @@ function whoActed(row: OperationRow): string {
   return row.agent === 'ai' ? 'Albatross did this' : 'You did this';
 }
 
+/** Days as datelines. A record of actions reads by the day they happened. */
+function groupByDay(rows: OperationRow[]): Array<{ key: string; label: string; rows: OperationRow[] }> {
+  const today = new Date().toDateString();
+  const yesterday = new Date(Date.now() - 86_400_000).toDateString();
+  const buckets = new Map<string, OperationRow[]>();
+  for (const row of rows) {
+    const key = new Date(row.createdAt).toDateString();
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(row);
+    else buckets.set(key, [row]);
+  }
+  return [...buckets.entries()].map(([key, group]) => ({
+    key,
+    label:
+      key === today
+        ? 'Today'
+        : key === yesterday
+          ? 'Yesterday'
+          : new Date(key).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
+    rows: group,
+  }));
+}
+
 function whenActed(ms: number): string {
   const date = new Date(ms);
   const today = new Date().toDateString() === date.toDateString();
@@ -110,53 +133,73 @@ export function ActivitySurface() {
               </p>
             </div>
           ) : (
-            <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-              {rows.map((row) => (
-                <li key={row._id} className="flex items-start gap-3 px-4 py-3.5">
-                  <span
-                    aria-hidden
-                    className={cn(
-                      'mt-1.5 size-1.5 shrink-0 rounded-full',
-                      row.agent === 'ai' ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border-strong)]',
-                    )}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13.5px] font-medium">{row.summary}</p>
-                    <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-                      {whoActed(row)} · {SURFACE_LABEL[row.surface] || row.surface} ·{' '}
-                      {whenActed(row.createdAt)}
-                      {row.target?.accountId ? ` · ${row.target.accountId}` : ''}
-                    </p>
-                    {STATUS_NOTE[row.status] ? (
-                      <p
-                        className={cn(
-                          'mt-0.5 text-[11.5px]',
-                          row.status === 'undo_failed'
-                            ? 'text-[var(--color-danger)]'
-                            : 'text-[var(--color-text-faint)]',
-                        )}
-                      >
-                        {STATUS_NOTE[row.status]}
-                        {row.error ? ` — ${row.error}` : ''}
-                      </p>
-                    ) : null}
+            <div className="relative">
+              {/* One spine down the page. Activity is a record, and a record
+                  reads as a column of time rather than a stack of cards. */}
+              <span
+                aria-hidden
+                className="absolute bottom-2 left-[7px] top-2 w-px bg-[var(--color-border)]"
+              />
+              {groupByDay(rows).map((day) => (
+                <div key={day.key} className="relative">
+                  <div className="flex items-center gap-2 py-3 pl-6">
+                    <span
+                      aria-hidden
+                      className="absolute left-0 size-[15px] rounded-full border-2 border-[var(--color-bg)] bg-[var(--color-border-strong)]"
+                    />
+                    <h2 className="font-serif text-[14px] font-semibold">{day.label}</h2>
+                    <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
                   </div>
-                  {/* Only offer the button when an inverse actually exists. A
-                      dead undo is worse than none. */}
-                  {row.inverse && row.status === 'applied' ? (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      disabled={undoing === row._id}
-                      onClick={() => void undo(row._id)}
-                    >
-                      {undoing === row._id ? 'Undoing…' : 'Undo'}
-                    </Button>
-                  ) : null}
-                </li>
+                  <ul className="pl-6">
+                    {day.rows.map((row) => (
+                      <li key={row._id} className="relative flex items-start gap-3 py-3">
+                        <span
+                          aria-hidden
+                          className={cn(
+                            'absolute -left-6 top-[18px] size-[9px] rounded-full border-2 border-[var(--color-bg)]',
+                            row.agent === 'ai'
+                              ? 'bg-[var(--color-accent)]'
+                              : 'bg-[var(--color-border-strong)]',
+                          )}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13.5px] font-medium">{row.summary}</p>
+                          <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+                            {whoActed(row)} · {SURFACE_LABEL[row.surface] || row.surface} ·{' '}
+                            <span className="font-mono tabular-nums">{whenActed(row.createdAt)}</span>
+                            {row.target?.accountId ? ` · ${row.target.accountId}` : ''}
+                          </p>
+                          {STATUS_NOTE[row.status] ? (
+                            <p
+                              className={cn(
+                                'mt-0.5 text-[11.5px]',
+                                row.status === 'undo_failed'
+                                  ? 'text-[var(--color-danger)]'
+                                  : 'text-[var(--color-text-faint)]',
+                              )}
+                            >
+                              {STATUS_NOTE[row.status]}
+                              {row.error ? ` — ${row.error}` : ''}
+                            </p>
+                          ) : null}
+                        </div>
+                        {row.inverse && row.status === 'applied' ? (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={undoing === row._id}
+                            onClick={() => void undo(row._id)}
+                          >
+                            {undoing === row._id ? 'Undoing…' : 'Undo'}
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       </div>

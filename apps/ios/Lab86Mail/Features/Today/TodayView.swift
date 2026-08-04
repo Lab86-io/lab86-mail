@@ -182,17 +182,21 @@ struct TodayView: View {
                 }
             }
 
-            Section("Schedule") {
+            // The day drawn to scale rather than listed. Where the open air is
+            // decides what can move today, and a list never says it.
+            Section("Your day") {
                 let today = store.todaysEvents
                 if today.isEmpty {
                     scheduleEmptyState
                 } else {
-                    ForEach(today) { event in
-                        Button { environment.navigation.openEvent(event) } label: {
-                            EventRow(event: event)
-                        }
-                        .buttonStyle(.plain)
+                    DayRibbonView(events: today, now: Date()) { event in
+                        environment.navigation.openEvent(event)
                     }
+                    .padding(.vertical, 6)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 16))
+                    Text("Solid is booked. Dashed is open air.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
 

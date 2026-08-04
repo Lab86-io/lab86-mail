@@ -147,9 +147,21 @@ export function AlbatrossesSurface() {
           {visibleGroups.length === 0 ? <EmptyState filter={filter} /> : null}
           {visibleGroups.map((group) => (
             <div key={group.key} className="mb-8">
+              {/* A section rule, weighted by whether the group is asking for
+                  anything. Needs-you carries the accent; the rest are hairlines. */}
               <div className="mb-2 flex items-baseline gap-2">
+                <span
+                  aria-hidden
+                  className={cn(
+                    'h-px w-5 shrink-0',
+                    group.key === 'needs_you' || group.key === 'unresolved'
+                      ? 'bg-[var(--color-accent)]'
+                      : 'bg-[var(--color-border-strong)]',
+                  )}
+                />
                 <h2 className="font-serif text-[15px] font-semibold">{WORK_STATE_LABEL[group.key]}</h2>
                 <p className="text-[12px] text-[var(--color-text-faint)]">{WORK_STATE_HINT[group.key]}</p>
+                <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
               </div>
               <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                 {group.items.map((item) => (

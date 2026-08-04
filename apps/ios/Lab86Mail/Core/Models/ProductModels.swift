@@ -1528,11 +1528,101 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let operationIDs: [String]
     }
 
+    // The outcome contract. Albatross may not say a thing is done until it has
+    // written down what done means and what would settle it.
+    struct Contract: Hashable, Codable, Sendable {
+        struct Proof: Identifiable, Hashable, Codable, Sendable {
+            let id: String
+            let what: String
+            let satisfiedBy: String?
+            let satisfiedAt: Date?
+            var isMet: Bool { satisfiedAt != nil }
+        }
+
+        let outcome: String
+        let proofs: [Proof]
+        let closeWhen: String
+
+        var outstanding: [Proof] { proofs.filter { !$0.isMet } }
+
+        var closeWhenLabel: String {
+            switch closeWhen {
+            case "action_succeeded": "When the action goes through"
+            case "outcome_likely": "When it looks done"
+            case "outcome_confirmed": "Only when something confirms it"
+            default: "Never without asking me"
+            }
+        }
+
+        var statusLine: String {
+            if proofs.isEmpty { return "Nothing named yet that would settle this." }
+            let left = outstanding.count
+            if left == proofs.count { return "Nothing has settled any of the \(proofs.count) things this needs." }
+            if left == 1 { return "One thing left to settle this." }
+            if left > 1 { return "\(left) things left to settle this." }
+            return "Everything this needs has been settled."
+        }
+    }
+
+    // One piece of proof, and what it is claimed to prove.
+    struct Evidence: Identifiable, Hashable, Codable, Sendable {
+        let id: String
+        let title: String
+        let summary: String?
+        let claim: String?
+        let limits: String?
+        let url: String?
+        let sourceKind: String
+        let occurredAt: Date?
+        let trust: String
+
+        var isRejected: Bool { trust == "rejected" }
+        var isConfirmed: Bool { trust == "confirmed" }
+
+        var sourceLabel: String {
+            switch sourceKind {
+            case "mail_thread": "An email"
+            case "calendar_event": "A calendar event"
+            case "question_answer": "Your answer"
+            case "manual": "You"
+            default: "A connected service"
+            }
+        }
+    }
+
     let work: Work
     let plan: Plan?
     let project: Project?
     let questions: [Question]
     let application: Application?
+    let contract: Contract?
+    let evidence: [Evidence]
+
+    /// What the outcome as a whole stands at. A single confirmed receipt is not
+    /// a confirmed outcome while contract conditions remain outstanding — the
+    /// same clamp the web applies, so the two clients cannot disagree.
+    var proofStanding: String {
+        // The strongest thing the proof supports. Rejected proof proves nothing,
+        // so it never raises the level — it only stops a claim from standing.
+        var level = "none"
+        for row in evidence {
+            if row.trust == "confirmed" { level = "confirmed"; break }
+            if row.trust == "inferred" { level = "likely" }
+            else if row.trust == "observed" && level == "none" { level = "seen" }
+        }
+        if let contract, !contract.proofs.isEmpty {
+            if !contract.outstanding.isEmpty {
+                return level == "none" ? "Nothing has settled this yet" : "Partly settled"
+            }
+            if contract.closeWhen == "never_automatically" { return "Settled — waiting on you" }
+        }
+        switch level {
+        case "confirmed": return "Confirmed done"
+        case "likely": return "Looks done"
+        case "seen": return "Something happened"
+        default: return "No proof yet"
+        }
+    }
 
     init?(json: JSONValue) {
         guard let workID = json["work"]?["_id"]?.stringValue ?? json["work"]?["id"]?.stringValue else {
@@ -1610,6 +1700,42 @@ struct WorkDetail: Hashable, Codable, Sendable {
             )
         } else {
             project = nil
+        }
+
+        if let contractJSON = json["contract"], contractJSON.objectValue != nil,
+           let outcome = contractJSON["outcome"]?.stringValue?.nilIfBlank {
+            contract = Contract(
+                outcome: outcome,
+                proofs: (contractJSON["proofs"]?.arrayValue ?? []).compactMap { row in
+                    guard let id = row["id"]?.stringValue,
+                          let what = row["what"]?.stringValue?.nilIfBlank else { return nil }
+                    return Contract.Proof(
+                        id: id,
+                        what: what,
+                        satisfiedBy: row["satisfiedBy"]?.stringValue?.nilIfBlank,
+                        satisfiedAt: CalendarDateParser.date(row["satisfiedAt"])
+                    )
+                },
+                closeWhen: contractJSON["closeWhen"]?.stringValue ?? "outcome_confirmed"
+            )
+        } else {
+            contract = nil
+        }
+
+        evidence = (json["evidence"]?.arrayValue ?? []).compactMap { row in
+            guard let id = row["_id"]?.stringValue ?? row["id"]?.stringValue,
+                  let title = row["title"]?.stringValue?.nilIfBlank else { return nil }
+            return Evidence(
+                id: id,
+                title: title,
+                summary: row["summary"]?.stringValue?.nilIfBlank,
+                claim: row["claim"]?.stringValue?.nilIfBlank,
+                limits: row["limits"]?.stringValue?.nilIfBlank,
+                url: row["url"]?.stringValue?.nilIfBlank,
+                sourceKind: row["sourceKind"]?.stringValue ?? "manual",
+                occurredAt: CalendarDateParser.date(row["occurredAt"]),
+                trust: row["trust"]?.stringValue ?? "observed"
+            )
         }
 
         questions = (json["questions"]?.arrayValue ?? []).compactMap { row in

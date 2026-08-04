@@ -33,7 +33,7 @@ struct WorkView: View {
                 }
             }
         }
-        .navigationTitle("Areas")
+        .navigationTitle("Albatrosses")
         .refreshable { await store.refreshWork() }
         .shellToolbar()
     }

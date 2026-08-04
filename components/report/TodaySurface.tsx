@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
 import { ReEntry, ReviewBatch } from '@/components/albatross/Forgiveness';
 import { AlbatrossRow } from '@/components/albatross/primitives';
+import { DayRibbon } from '@/components/report/DayRibbon';
 import { api } from '@/convex/_generated/api';
 import { reEntryDaysAway, reviewBatch, shouldOfferReEntry } from '@/lib/albatross/forgiveness';
 import {
@@ -14,7 +15,6 @@ import {
   type Capacity,
   dayShapeLine,
   dayWindow,
-  eventWindowLabel,
   fixedSchedule,
   importantMailToday,
   needsYouToday,
@@ -129,10 +129,20 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
       <header className="border-b border-[var(--color-border)] px-5 py-4">
         <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
-            <h1 className="font-serif text-[clamp(21px,3.4vw,28px)] font-semibold leading-none tracking-tight">
+            {/* A dateline, not a page title: rule, day, deck. The one place
+                the product lets itself be a newspaper. */}
+            <div className="flex items-center gap-2">
+              <span aria-hidden className="h-px w-6 bg-[var(--color-accent)]" />
+              <span className="font-mono text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
+                {new Date(nowMs).toLocaleDateString('en-US', { year: 'numeric' })}
+              </span>
+            </div>
+            <h1 className="mt-1.5 font-serif text-[clamp(22px,3.6vw,30px)] font-semibold leading-none tracking-tight">
               {todayDateline(nowMs)}
             </h1>
-            <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">{shape}</p>
+            <p className="mt-2 max-w-xl text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+              {shape}
+            </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {/* The user states their own capacity. Albatross may later notice a
@@ -374,25 +384,15 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
           </div>
 
           <div className="min-w-0">
-            <Section title="Fixed schedule" note="Booked by somebody, including you.">
+            <Section title="Your day" note="Solid is booked. Dashed is open air.">
               {schedule.length ? (
-                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  {schedule.map((event) => (
-                    <li key={event._id} className="px-4 py-3">
-                      {/* Fixed events read solid. Round 4 adds the dashed
-                          counterpart for time Albatross merely reserved. */}
-                      <p className="text-[13.5px] font-medium">{event.title}</p>
-                      <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-                        {eventWindowLabel(event)}
-                        {event.location ? ` · ${event.location}` : ''}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-3">
+                  <DayRibbon events={schedule} nowMs={nowMs} />
+                </div>
               ) : (
                 <p className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
                   <CalendarDays className="size-4 shrink-0" aria-hidden />
-                  Nothing is booked today.
+                  Nothing is booked today. The whole day is open air.
                 </p>
               )}
             </Section>

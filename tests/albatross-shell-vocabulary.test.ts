@@ -108,7 +108,7 @@ describe('Mail tells the truth when nothing is connected', () => {
 describe('Today puts responsibility above decoration', () => {
   test('the surface leads with what needs the user, not with the weather', () => {
     const today = read('components/report/TodaySurface.tsx');
-    expect(today.indexOf('Needs you')).toBeLessThan(today.indexOf('Fixed schedule'));
+    expect(today.indexOf('Needs you')).toBeLessThan(today.indexOf('Your day'));
     expect(today).not.toContain('weather');
   });
 
@@ -121,6 +121,15 @@ describe('Today puts responsibility above decoration', () => {
   test('no surface claims a generated brief is Live', () => {
     const report = read('components/report/DailyReport.tsx');
     expect(report).not.toContain('Live · updates without regenerating');
+  });
+});
+
+describe('no surface tallies open work', () => {
+  test('the Albatrosses groups do not count what you are carrying', () => {
+    // A number beside "Needs you" is a tally of weights, which is the exact
+    // thing the rail badge was changed to avoid.
+    const list = read('components/albatross/AlbatrossesSurface.tsx');
+    expect(list).not.toContain('{group.items.length}');
   });
 });
 

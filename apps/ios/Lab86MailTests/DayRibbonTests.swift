@@ -1,0 +1,177 @@
+import Foundation
+import Testing
+@testable import Lab86Mail
+
+// The day drawn to scale. These are the same rules `tests/albatross-day-ribbon.test.ts`
+// pins for the web, so the two clients cannot draw the same day differently.
+struct DayRibbonTests {
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .gmt
+        return calendar
+    }
+
+    private func at(_ hour: Int, _ minute: Int = 0) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 8, day: 3, hour: hour, minute: minute))!
+    }
+
+    private func event(
+        _ id: String,
+        from start: Date,
+        to end: Date,
+        allDay: Bool = false,
+        title: String = "Meeting",
+        location: String? = nil
+    ) -> CalendarEventSummary {
+        CalendarEventSummary(
+            id: id,
+            accountID: "acct",
+            calendarID: "cal",
+            title: title,
+            start: start,
+            end: end,
+            allDay: allDay,
+            location: location
+        )
+    }
+
+    // MARK: The ribbon covers the whole day it is given
+
+    @Test func quietDayUsesTheWakingWindow() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        #expect(window.startHour == DayRibbon.defaultStartHour)
+        #expect(window.endHour == DayRibbon.defaultEndHour)
+    }
+
+    @Test func earlyFlightIsNeverClippedOffTheTop() {
+        let window = DayRibbon.window(
+            events: [event("a", from: at(5), to: at(7))],
+            now: at(12),
+            calendar: calendar
+        )
+        #expect(window.startHour <= 5)
+    }
+
+    @Test func lateConcertIsNeverClippedOffTheBottom() {
+        let window = DayRibbon.window(
+            events: [event("a", from: at(21), to: at(23, 30))],
+            now: at(12),
+            calendar: calendar
+        )
+        #expect(window.endHour >= 23)
+    }
+
+    @Test func nowAlwaysSitsSomewhereOnTheRibbon() {
+        let earlyMorning = at(4)
+        let window = DayRibbon.window(events: [], now: earlyMorning, calendar: calendar)
+        #expect(DayRibbon.nowMarker(earlyMorning, window, calendar: calendar) != nil)
+    }
+
+    // MARK: Blocks are drawn to scale
+
+    @Test func longerMeetingIsTallerThanAShorterOne() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let blocks = DayRibbon.blocks(
+            events: [
+                event("short", from: at(9), to: at(9, 30)),
+                event("long", from: at(14), to: at(17)),
+            ],
+            window: window,
+            calendar: calendar
+        )
+        #expect(blocks[1].height > blocks[0].height)
+        #expect(blocks[0].top < blocks[1].top)
+    }
+
+    @Test func fifteenMinuteStandUpIsStillReadable() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let blocks = DayRibbon.blocks(
+            events: [event("a", from: at(9), to: at(9, 15))],
+            window: window,
+            calendar: calendar
+        )
+        // Drawn strictly to scale it would be a hairline nobody could read or tap.
+        #expect(blocks[0].height >= DayRibbon.minimumBlockHeight)
+    }
+
+    @Test func allDayEventsStayOffTheTimedRibbon() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let blocks = DayRibbon.blocks(
+            events: [
+                event("holiday", from: at(0), to: at(23), allDay: true),
+                event("real", from: at(10), to: at(11)),
+            ],
+            window: window,
+            calendar: calendar
+        )
+        #expect(blocks.map(\.id) == ["real"])
+    }
+
+    // MARK: Open air is the fact an agenda never states
+
+    @Test func realGapAfterAMeetingIsFoundAndMeasured() {
+        let now = at(8)
+        let window = DayRibbon.window(events: [], now: now, calendar: calendar)
+        let blocks = DayRibbon.blocks(
+            events: [event("a", from: at(9), to: at(10))],
+            window: window,
+            calendar: calendar
+        )
+        let gaps = DayRibbon.gaps(blocks: blocks, window: window, now: now, calendar: calendar)
+        #expect(!gaps.isEmpty)
+        #expect(gaps.contains { $0.minutes >= DayRibbon.minimumOpeningMinutes })
+    }
+
+    @Test func corridorBetweenTwoMeetingsIsNotCalledFreeTime() {
+        let now = at(8)
+        let window = DayRibbon.window(events: [], now: now, calendar: calendar)
+        let blocks = DayRibbon.blocks(
+            events: [
+                event("a", from: at(9), to: at(10)),
+                event("b", from: at(10, 20), to: at(11)),
+            ],
+            window: window,
+            calendar: calendar
+        )
+        let gaps = DayRibbon.gaps(blocks: blocks, window: window, now: now, calendar: calendar)
+        // Twenty minutes between two meetings is a corridor, not an opening.
+        #expect(gaps.allSatisfy { $0.minutes >= DayRibbon.minimumOpeningMinutes })
+    }
+
+    @Test func timeAlreadyGoneIsNeverOfferedAsOpen() {
+        let now = at(20)
+        let window = DayRibbon.window(events: [], now: now, calendar: calendar)
+        let gaps = DayRibbon.gaps(blocks: [], window: window, now: now, calendar: calendar)
+        // At 8pm the morning is not available, however empty it was.
+        #expect(gaps.allSatisfy { $0.top >= 0.8 })
+    }
+
+    @Test func fullyBookedDaySaysSoPlainly() {
+        #expect(DayRibbon.openAirLine([]) == "No real openings left today.")
+    }
+
+    @Test func summaryCountsOpeningsRatherThanScoringTheDay() {
+        let line = DayRibbon.openAirLine([
+            DayRibbon.Gap(top: 0, height: 0.1, minutes: 60, label: "1 hour free"),
+            DayRibbon.Gap(top: 0.5, height: 0.1, minutes: 90, label: "1h 30m free"),
+        ])
+        #expect(line.contains("2 openings"))
+        #expect(!line.lowercased().contains("productiv"))
+        #expect(!line.contains("%"))
+    }
+
+    // MARK: The hour rail stays legible
+
+    @Test func longDayThinsItsTicksRatherThanCrowdingThem() {
+        let short = DayRibbon.ticks(DayRibbon.Window(startHour: 9, endHour: 15))
+        let long = DayRibbon.ticks(DayRibbon.Window(startHour: 5, endHour: 23))
+        #expect(long.count <= short.count + 2)
+    }
+
+    @Test func hoursReadAsAPersonSaysThem() {
+        let labels = DayRibbon.ticks(DayRibbon.Window(startHour: 11, endHour: 14)).map(\.label)
+        #expect(labels.contains("11am"))
+        #expect(labels.contains("12pm"))
+        #expect(!labels.contains("0pm"))
+    }
+}
