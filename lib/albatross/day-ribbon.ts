@@ -27,6 +27,8 @@ export interface RibbonBlock {
   allDay: boolean;
   label: string;
   location?: string | null;
+  /** True when the block is too short to carry a title and a time on two lines. */
+  compact?: boolean;
 }
 
 export interface RibbonGap {
@@ -95,6 +97,36 @@ export function ribbonBlocks(events: TodayEvent[], window: RibbonWindow, locale 
       };
     })
     .sort((a, b) => a.top - b.top);
+}
+
+/**
+ * Make the drawn blocks legible without lying about the day.
+ *
+ * Two problems only appear once the ribbon has a real pixel height. A quarter-
+ * hour block is shorter than the two lines of text inside it, so the text gets
+ * cut in half. And a stand-up at nine followed by a review at half past nine
+ * are close enough that the first block's minimum height runs into the second.
+ *
+ * So: anything with less room than `twoLineHeight` is marked compact and drawn
+ * on one line, nothing is drawn shorter than `minHeight`, and a block that
+ * would run into the one above it is nudged down to clear it. The label always
+ * states the true time, so a nudge changes the drawing, never the claim.
+ */
+export function stackBlocks(
+  blocks: RibbonBlock[],
+  minHeight: number,
+  twoLineHeight = minHeight,
+): RibbonBlock[] {
+  const stacked: RibbonBlock[] = [];
+  let floor = 0;
+  for (const block of blocks) {
+    const compact = block.height < twoLineHeight;
+    const height = Math.min(Math.max(block.height, minHeight), 1);
+    const top = Math.min(Math.max(block.top, floor), Math.max(0, 1 - height));
+    stacked.push({ ...block, top, height, compact });
+    floor = top + height;
+  }
+  return stacked;
 }
 
 function describeGap(minutes: number): string {

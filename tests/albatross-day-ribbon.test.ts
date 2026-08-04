@@ -8,6 +8,7 @@ import {
   ribbonGaps,
   ribbonTicks,
   ribbonWindow,
+  stackBlocks,
 } from '../lib/albatross/day-ribbon';
 import type { TodayEvent } from '../lib/albatross/today';
 
@@ -81,6 +82,91 @@ describe('blocks are drawn to scale', () => {
       window,
     );
     expect(blocks.map((b) => b.id)).toEqual(['real']);
+  });
+});
+
+describe('the drawing stays legible without lying', () => {
+  const window = ribbonWindow([], NOON);
+  // 26px and 42px of a 420px ribbon: the room one line and two lines need.
+  const MIN = 26 / 420;
+  const TWO = 42 / 420;
+
+  test('a block too short for two lines is marked compact', () => {
+    // Live defect: "Stand-up" was drawn 15px tall with two lines inside it, so
+    // the screenshot showed a title cut through the middle.
+    const stacked = stackBlocks(
+      ribbonBlocks(
+        [
+          event({ _id: 'standup', startAt: at(9), endAt: at(9, 15) }),
+          event({ _id: 'review', startAt: at(14), endAt: at(17) }),
+        ],
+        window,
+      ),
+      MIN,
+      TWO,
+    );
+    expect(stacked[0].compact).toBe(true);
+    expect(stacked[1].compact).toBe(false);
+  });
+
+  test('an hour on a long day is still one line, because that is all it fits', () => {
+    // Live defect: an hour of a fifteen-hour day is 28px. It cleared the
+    // one-line minimum, so it kept two lines and cut the second one in half.
+    const [block] = stackBlocks(
+      ribbonBlocks([event({ _id: 'review', startAt: at(9, 30), endAt: at(10, 30) })], window),
+      MIN,
+      TWO,
+    );
+    expect(block.compact).toBe(true);
+  });
+
+  test('two meetings close together never sit on top of each other', () => {
+    // Live defect: a 9:00 stand-up and a 9:30 review overlapped, because the
+    // first block's minimum height ran past the second block's start.
+    const stacked = stackBlocks(
+      ribbonBlocks(
+        [
+          event({ _id: 'standup', startAt: at(9), endAt: at(9, 15) }),
+          event({ _id: 'review', startAt: at(9, 30), endAt: at(10, 30) }),
+        ],
+        window,
+      ),
+      MIN,
+      TWO,
+    );
+    expect(stacked[1].top).toBeGreaterThanOrEqual(stacked[0].top + stacked[0].height);
+  });
+
+  test('a nudged block still states its real time', () => {
+    const stacked = stackBlocks(
+      ribbonBlocks(
+        [
+          event({ _id: 'a', startAt: at(9), endAt: at(9, 10) }),
+          event({ _id: 'b', startAt: at(9, 15), endAt: at(9, 25) }),
+        ],
+        window,
+      ),
+      MIN,
+      TWO,
+    );
+    // The drawing may move. The claim may not.
+    expect(stacked[1].label).toContain('9:15');
+  });
+
+  test('the last block of a long day is never pushed off the bottom', () => {
+    const stacked = stackBlocks(
+      ribbonBlocks([event({ _id: 'late', startAt: at(21, 50), endAt: at(22) })], window),
+      MIN,
+      TWO,
+    );
+    expect(stacked[0].top + stacked[0].height).toBeLessThanOrEqual(1.0001);
+  });
+
+  test('a roomy day is left exactly where it belongs', () => {
+    const blocks = ribbonBlocks([event({ _id: 'a', startAt: at(14), endAt: at(17) })], window);
+    const stacked = stackBlocks(blocks, MIN, TWO);
+    expect(stacked[0].top).toBeCloseTo(blocks[0].top, 10);
+    expect(stacked[0].height).toBeCloseTo(blocks[0].height, 10);
   });
 });
 

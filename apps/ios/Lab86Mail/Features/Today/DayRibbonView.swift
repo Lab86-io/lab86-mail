@@ -27,10 +27,12 @@ enum DayRibbon {
         let id: String
         let title: String
         /// 0…1 down the ribbon.
-        let top: Double
-        let height: Double
+        var top: Double
+        var height: Double
         let label: String
         let location: String?
+        /// True when the block is too short to carry a title and a time on two lines.
+        var compact: Bool = false
     }
 
     struct Gap: Equatable {
@@ -107,6 +109,34 @@ enum DayRibbon {
                 )
             }
             .sorted { $0.top < $1.top }
+    }
+
+    /// Make the drawn blocks legible without lying about the day.
+    ///
+    /// Two problems only appear once the ribbon has a real pixel height. A
+    /// quarter-hour block is shorter than the two lines of text inside it, so
+    /// the text gets cut in half. And a stand-up at nine followed by a review at
+    /// half past nine are close enough that the first block's minimum height
+    /// runs into the second.
+    ///
+    /// So: anything with less room than `twoLineHeight` is marked compact and
+    /// drawn on one line, nothing is drawn shorter than `minHeight`, and a block
+    /// that would run into the one above it is nudged down to clear it. The
+    /// label always states the true time, so a nudge changes the drawing, never
+    /// the claim.
+    static func stack(_ blocks: [Block], minHeight: Double, twoLineHeight: Double? = nil) -> [Block] {
+        let twoLine = twoLineHeight ?? minHeight
+        var stacked: [Block] = []
+        var floor = 0.0
+        for block in blocks {
+            var placed = block
+            placed.compact = block.height < twoLine
+            placed.height = min(max(block.height, minHeight), 1)
+            placed.top = min(max(block.top, floor), max(0, 1 - placed.height))
+            stacked.append(placed)
+            floor = placed.top + placed.height
+        }
+        return stacked
     }
 
     static func describe(minutes: Int) -> String {
@@ -190,7 +220,14 @@ struct DayRibbonView: View {
 
     var body: some View {
         let window = DayRibbon.window(events: events, now: now)
-        let blocks = DayRibbon.blocks(events: events, window: window)
+        // One line of text needs about 26 points and two lines need about 42. A
+        // block with room for neither cannot carry a title, so the drawing gives
+        // it the room rather than cut the words in half.
+        let blocks = DayRibbon.stack(
+            DayRibbon.blocks(events: events, window: window),
+            minHeight: 26 / Double(height),
+            twoLineHeight: 42 / Double(height)
+        )
         let gaps = DayRibbon.gaps(blocks: blocks, window: window, now: now)
         let ticks = DayRibbon.ticks(window)
         let marker = DayRibbon.nowMarker(now, window)
@@ -255,20 +292,33 @@ struct DayRibbonView: View {
                                 .offset(y: gap.top * full)
                         }
 
+                        // The now-line runs behind the blocks. Over them it reads
+                        // as a rule struck through the title of whatever meeting
+                        // you are in.
+                        if let marker {
+                            Rectangle()
+                                .fill(Color.accentColor.opacity(0.7))
+                                .frame(height: 1)
+                                .offset(y: marker * full)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+
                         // Fixed blocks, solid — somebody is expecting these.
                         ForEach(blocks) { block in
                             blockView(block, height: max(block.height * full, 22))
                                 .offset(y: block.top * full)
                         }
 
+                        // Only the cap sits on top, so the present is still the
+                        // first thing the eye finds.
                         if let marker {
-                            HStack(spacing: 0) {
-                                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
-                                Rectangle().fill(Color.accentColor.opacity(0.7)).frame(height: 1)
-                            }
-                            .offset(y: marker * full - 3)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
+                            Circle()
+                                .fill(Color.accentColor)
+                                .frame(width: 6, height: 6)
+                                .offset(x: -3, y: marker * full - 3)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
                         }
                     }
                     .padding(.leading, 8)
@@ -287,18 +337,40 @@ struct DayRibbonView: View {
 
     @ViewBuilder
     private func blockView(_ block: DayRibbon.Block, height: CGFloat) -> some View {
-        let content = VStack(alignment: .leading, spacing: 1) {
-            Text(block.title)
-                .font(.footnote.weight(.medium))
-                .lineLimit(1)
-            Text(block.location.map { "\(block.label) · \($0)" } ?? block.label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        // A short block puts its title and time on one line rather than cutting
+        // the words in half.
+        let content = Group {
+            if block.compact {
+                HStack(spacing: 8) {
+                    Text(block.title)
+                        .font(.footnote.weight(.medium))
+                        .lineLimit(1)
+                    Text(block.label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(block.title)
+                        .font(.footnote.weight(.medium))
+                        .lineLimit(1)
+                    Text(block.location.map { "\(block.label) · \($0)" } ?? block.label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
+        .padding(.vertical, block.compact ? 0 : 6)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: height,
+            maxHeight: height,
+            alignment: block.compact ? .leading : .topLeading
+        )
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(.secondarySystemGroupedBackground))

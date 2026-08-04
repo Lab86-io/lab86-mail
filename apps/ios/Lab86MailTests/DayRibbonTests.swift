@@ -107,6 +107,107 @@ struct DayRibbonTests {
         #expect(blocks.map(\.id) == ["real"])
     }
 
+    // MARK: The drawing stays legible without lying
+
+    /// 26 and 42 points of a 420-point ribbon: the room one line and two lines need.
+    private var minHeight: Double { 26.0 / 420.0 }
+    private var twoLineHeight: Double { 42.0 / 420.0 }
+
+    @Test func blockTooShortForTwoLinesIsMarkedCompact() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let stacked = DayRibbon.stack(
+            DayRibbon.blocks(
+                events: [
+                    event("standup", from: at(9), to: at(9, 15)),
+                    event("review", from: at(14), to: at(17)),
+                ],
+                window: window,
+                calendar: calendar
+            ),
+            minHeight: minHeight,
+            twoLineHeight: twoLineHeight
+        )
+        #expect(stacked[0].compact)
+        #expect(!stacked[1].compact)
+    }
+
+    @Test func anHourOnALongDayIsStillOneLineBecauseThatIsAllItFits() {
+        // Live defect: an hour of a fifteen-hour day is 28 points. It cleared
+        // the one-line minimum, so it kept two lines and cut the second in half.
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let stacked = DayRibbon.stack(
+            DayRibbon.blocks(
+                events: [event("review", from: at(9, 30), to: at(10, 30))],
+                window: window,
+                calendar: calendar
+            ),
+            minHeight: minHeight,
+            twoLineHeight: twoLineHeight
+        )
+        #expect(stacked[0].compact)
+    }
+
+    @Test func twoMeetingsCloseTogetherNeverSitOnTopOfEachOther() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let stacked = DayRibbon.stack(
+            DayRibbon.blocks(
+                events: [
+                    event("standup", from: at(9), to: at(9, 15)),
+                    event("review", from: at(9, 30), to: at(10, 30)),
+                ],
+                window: window,
+                calendar: calendar
+            ),
+            minHeight: minHeight,
+            twoLineHeight: twoLineHeight
+        )
+        #expect(stacked[1].top >= stacked[0].top + stacked[0].height)
+    }
+
+    @Test func nudgedBlockStillStatesItsRealTime() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let stacked = DayRibbon.stack(
+            DayRibbon.blocks(
+                events: [
+                    event("a", from: at(9), to: at(9, 10)),
+                    event("b", from: at(9, 15), to: at(9, 25)),
+                ],
+                window: window,
+                calendar: calendar
+            ),
+            minHeight: minHeight,
+            twoLineHeight: twoLineHeight
+        )
+        // The drawing may move. The claim may not.
+        #expect(stacked[1].label.contains("9:15"))
+    }
+
+    @Test func lastBlockOfALongDayIsNeverPushedOffTheBottom() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let stacked = DayRibbon.stack(
+            DayRibbon.blocks(
+                events: [event("late", from: at(21, 50), to: at(22))],
+                window: window,
+                calendar: calendar
+            ),
+            minHeight: minHeight,
+            twoLineHeight: twoLineHeight
+        )
+        #expect(stacked[0].top + stacked[0].height <= 1.0001)
+    }
+
+    @Test func roomyDayIsLeftExactlyWhereItBelongs() {
+        let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
+        let blocks = DayRibbon.blocks(
+            events: [event("a", from: at(14), to: at(17))],
+            window: window,
+            calendar: calendar
+        )
+        let stacked = DayRibbon.stack(blocks, minHeight: minHeight, twoLineHeight: twoLineHeight)
+        #expect(abs(stacked[0].top - blocks[0].top) < 0.000_001)
+        #expect(abs(stacked[0].height - blocks[0].height) < 0.000_001)
+    }
+
     // MARK: Open air is the fact an agenda never states
 
     @Test func realGapAfterAMeetingIsFoundAndMeasured() {

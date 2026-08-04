@@ -108,11 +108,14 @@ export function ActivitySurface() {
 
   return (
     <section className="flex h-full min-h-0 flex-col">
+      {/* The header shares the measure of the ledger below it. */}
       <header className="border-b border-[var(--color-border)] px-5 py-3">
-        <h1 className="font-serif text-[17px] font-semibold tracking-tight">Activity</h1>
-        <p className="mt-0.5 text-[12px] text-[var(--color-text-faint)]">
-          Everything Albatross and you have changed, and what can still be taken back.
-        </p>
+        <div className="mx-auto max-w-3xl">
+          <h1 className="font-serif text-[17px] font-semibold tracking-tight">Activity</h1>
+          <p className="mt-0.5 text-[12px] text-[var(--color-text-faint)]">
+            Everything Albatross and you have changed, and what can still be taken back.
+          </p>
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">

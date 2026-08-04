@@ -97,48 +97,52 @@ export function AlbatrossesSurface() {
 
   return (
     <section className="flex h-full min-h-0 flex-col">
+      {/* The header shares the measure of the list below it. A title that starts
+          somewhere the content does not is a page that looks assembled. */}
       <header className="border-b border-[var(--color-border)] px-5 py-3">
-        <div className="flex items-baseline justify-between gap-3">
-          <h1 className="font-serif text-[17px] font-semibold tracking-tight">Albatrosses</h1>
-          {closedCount ? (
-            <button
-              type="button"
-              onClick={() => setShowClosed((value) => !value)}
-              className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            >
-              {showClosed ? 'Hide finished' : 'Show finished'}
-            </button>
-          ) : null}
-        </div>
+        <div className="mx-auto max-w-3xl">
+          <div className="flex items-baseline justify-between gap-3">
+            <h1 className="font-serif text-[17px] font-semibold tracking-tight">Albatrosses</h1>
+            {closedCount ? (
+              <button
+                type="button"
+                onClick={() => setShowClosed((value) => !value)}
+                className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >
+                {showClosed ? 'Hide finished' : 'Show finished'}
+              </button>
+            ) : null}
+          </div>
 
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          <FilterPill active={filter === 'all'} onClick={() => setFilter('all')}>
-            Everything
-          </FilterPill>
-          <FilterPill active={filter === 'needs_you'} onClick={() => setFilter('needs_you')}>
-            Needs you
-          </FilterPill>
-          {/* The old Unassigned review queue. It was a route nobody could reach;
-              as a filter it is one click from the list it belongs to. */}
-          {unhomedCount ? (
-            <FilterPill active={filter === 'unhomed'} onClick={() => setFilter('unhomed')}>
-              No area yet
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            <FilterPill active={filter === 'all'} onClick={() => setFilter('all')}>
+              Everything
             </FilterPill>
-          ) : null}
-
-          {areas.length > 1 ? (
-            <>
-              <span aria-hidden className="mx-1 h-4 w-px bg-[var(--color-border)]" />
-              <FilterPill active={areaId === null} onClick={() => setAreaId(null)}>
-                All areas
+            <FilterPill active={filter === 'needs_you'} onClick={() => setFilter('needs_you')}>
+              Needs you
+            </FilterPill>
+            {/* The old Unassigned review queue. It was a route nobody could reach;
+              as a filter it is one click from the list it belongs to. */}
+            {unhomedCount ? (
+              <FilterPill active={filter === 'unhomed'} onClick={() => setFilter('unhomed')}>
+                No area yet
               </FilterPill>
-              {areas.map((area) => (
-                <FilterPill key={area.id} active={areaId === area.id} onClick={() => setAreaId(area.id)}>
-                  {area.name}
+            ) : null}
+
+            {areas.length > 1 ? (
+              <>
+                <span aria-hidden className="mx-1 h-4 w-px bg-[var(--color-border)]" />
+                <FilterPill active={areaId === null} onClick={() => setAreaId(null)}>
+                  All areas
                 </FilterPill>
-              ))}
-            </>
-          ) : null}
+                {areas.map((area) => (
+                  <FilterPill key={area.id} active={areaId === area.id} onClick={() => setAreaId(area.id)}>
+                    {area.name}
+                  </FilterPill>
+                ))}
+              </>
+            ) : null}
+          </div>
         </div>
       </header>
 

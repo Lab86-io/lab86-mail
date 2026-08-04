@@ -8,6 +8,7 @@ import {
   ribbonGaps,
   ribbonTicks,
   ribbonWindow,
+  stackBlocks,
 } from '@/lib/albatross/day-ribbon';
 import type { TodayEvent } from '@/lib/albatross/today';
 import { cn } from '@/lib/utils';
@@ -33,7 +34,15 @@ export function DayRibbon({
   height?: number;
 }) {
   const window = useMemo(() => ribbonWindow(events, nowMs), [events, nowMs]);
-  const blocks = useMemo(() => ribbonBlocks(events, window), [events, window]);
+  // One line of text needs about 26 pixels and two lines need about 42. A block
+  // with room for neither cannot carry a title, so the drawing gives it the room
+  // rather than cut the words in half.
+  const minHeight = 26 / height;
+  const twoLineHeight = 42 / height;
+  const blocks = useMemo(
+    () => stackBlocks(ribbonBlocks(events, window), minHeight, twoLineHeight),
+    [events, window, minHeight, twoLineHeight],
+  );
   const gaps = useMemo(() => ribbonGaps(blocks, window, nowMs), [blocks, window, nowMs]);
   const ticks = useMemo(() => ribbonTicks(window), [window]);
   const marker = nowMarker(nowMs, window);
@@ -90,30 +99,46 @@ export function DayRibbon({
             </div>
           ))}
 
-          {/* Fixed blocks, solid — somebody is expecting these. */}
+          {/* Fixed blocks, solid — somebody is expecting these. A short one puts
+              its title and time on one line rather than cutting the words. */}
           {blocks.map((block) => (
             <div
               key={block.id}
-              className="absolute inset-x-1 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 shadow-[var(--shadow-soft)]"
+              className={cn(
+                'absolute inset-x-1 z-[1] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 shadow-[var(--shadow-soft)]',
+                block.compact ? 'flex items-center gap-2 py-0' : 'py-1.5',
+              )}
               style={{ top: `${block.top * 100}%`, height: `${block.height * 100}%` }}
             >
               <p className="truncate text-[12.5px] font-medium leading-tight">{block.title}</p>
-              <p className="truncate text-[11px] text-[var(--color-text-muted)]">
+              <p
+                className={cn(
+                  'truncate text-[11px] text-[var(--color-text-muted)]',
+                  block.compact && 'shrink-0',
+                )}
+              >
                 {block.label}
-                {block.location ? ` · ${block.location}` : ''}
+                {block.location && !block.compact ? ` · ${block.location}` : ''}
               </p>
             </div>
           ))}
 
+          {/* The now-line runs behind the blocks. Over them it reads as a rule
+              struck through the title of whatever meeting you are in. Only the
+              cap sits on top, so the present is still the first thing found. */}
           {marker !== null ? (
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-x-0 z-10 flex items-center"
-              style={{ top: `${marker * 100}%` }}
-            >
-              <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
-              <span className="h-px flex-1 bg-[var(--color-accent)]/70" />
-            </div>
+            <>
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-x-0 h-px bg-[var(--color-accent)]/70"
+                style={{ top: `${marker * 100}%` }}
+              />
+              <span
+                aria-hidden
+                className="pointer-events-none absolute left-0 z-10 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--color-accent)]"
+                style={{ top: `${marker * 100}%` }}
+              />
+            </>
           ) : null}
         </div>
       </div>
